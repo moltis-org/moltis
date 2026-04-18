@@ -336,17 +336,11 @@ function DeliveryRow({ delivery }: { delivery: Delivery }): VNode {
 					{d.status}
 				</span>
 				<span className="text-[var(--muted)]">{d.eventType || "\u2014"}</span>
-				<span className="text-[var(--muted)]">
-					{d.receivedAt ? new Date(d.receivedAt).toLocaleString() : ""}
-				</span>
+				<span className="text-[var(--muted)]">{d.receivedAt ? new Date(d.receivedAt).toLocaleString() : ""}</span>
 				{d.durationMs != null ? <span className="text-[var(--muted)]">{d.durationMs}ms</span> : ""}
 			</div>
 			<div className="flex items-center gap-2">
-				{d.sessionKey ? (
-					<span className="text-[var(--muted)] font-mono text-[10px]">{d.sessionKey}</span>
-				) : (
-					""
-				)}
+				{d.sessionKey ? <span className="text-[var(--muted)] font-mono text-[10px]">{d.sessionKey}</span> : ""}
 			</div>
 		</div>
 	);
@@ -370,15 +364,11 @@ function WebhookModal(): VNode | null {
 	const authMode = useSignal(isEdit ? editingWebhook.value?.authMode || "static_header" : "static_header");
 	const sessionMode = useSignal(isEdit ? editingWebhook.value?.sessionMode || "per_delivery" : "per_delivery");
 
-	const gonAgents = parseAgentsListPayload(
-		gon.get("agents") as Parameters<typeof parseAgentsListPayload>[0],
-	);
-	const agentOptions: ComboOption[] = (Array.isArray(gonAgents?.agents) ? gonAgents.agents : []).map(
-		(a) => ({
-			value: a.id as string,
-			label: (a.name as string) || (a.id as string),
-		}),
-	);
+	const gonAgents = parseAgentsListPayload(gon.get("agents") as Parameters<typeof parseAgentsListPayload>[0]);
+	const agentOptions: ComboOption[] = (Array.isArray(gonAgents?.agents) ? gonAgents.agents : []).map((a) => ({
+		value: a.id as string,
+		label: (a.name as string) || (a.id as string),
+	}));
 
 	useEffect(() => {
 		if (editingWebhook.value) {
@@ -514,9 +504,7 @@ function WebhookModal(): VNode | null {
 					disabled={isEdit}
 					onChange={(e) => {
 						sourceProfile.value = (e.target as HTMLSelectElement).value;
-						const prof = profiles.value.find(
-							(p) => p.id === (e.target as HTMLSelectElement).value,
-						);
+						const prof = profiles.value.find((p) => p.id === (e.target as HTMLSelectElement).value);
 						if (prof?.defaultAuthMode) authMode.value = prof.defaultAuthMode;
 					}}
 				>

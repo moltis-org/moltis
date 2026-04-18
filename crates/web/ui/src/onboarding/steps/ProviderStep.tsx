@@ -384,7 +384,12 @@ export function OnboardingProviderRow(props: OnboardingProviderRowProps): VNode 
 					) : null}
 					{error ? <ErrorPanel message={error} /> : null}
 					<div className="flex items-center gap-2 mt-1">
-						<button type="submit" className="provider-btn provider-btn-sm" disabled={phase === "validating"}>
+						<button
+							key={`prov-${phase}`}
+							type="submit"
+							className="provider-btn provider-btn-sm"
+							disabled={phase === "validating"}
+						>
 							{phase === "validating" ? "Saving\u2026" : "Save"}
 						</button>
 						<button

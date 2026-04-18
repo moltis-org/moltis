@@ -32,7 +32,11 @@ export function sessionPath(key: string): string {
 const pageContent = S.$("pageContent")!;
 const sessionsPanel = S.$("sessionsPanel")!;
 
-export function registerPage(path: string, init: (container: HTMLElement, param?: string | null) => void, teardown?: () => void): void {
+export function registerPage(
+	path: string,
+	init: (container: HTMLElement, param?: string | null) => void,
+	teardown?: () => void,
+): void {
 	pages[path] = {
 		init: init,
 		teardown:
@@ -43,7 +47,11 @@ export function registerPage(path: string, init: (container: HTMLElement, param?
 	};
 }
 
-export function registerPrefix(prefix: string, init: (container: HTMLElement, param?: string | null) => void, teardown?: () => void): void {
+export function registerPrefix(
+	prefix: string,
+	init: (container: HTMLElement, param?: string | null) => void,
+	teardown?: () => void,
+): void {
 	prefixRoutes.push({
 		prefix: prefix,
 		init: init,
@@ -94,7 +102,8 @@ function updateNavActiveState(path: string): void {
 
 	const settingsBtn = document.getElementById("settingsBtn");
 	if (settingsBtn) {
-		const settingsActive = path === routes.settings || (routes.settings != null && path.indexOf(`${routes.settings}/`) === 0);
+		const settingsActive =
+			path === routes.settings || (routes.settings != null && path.indexOf(`${routes.settings}/`) === 0);
 		settingsBtn.classList.toggle("active", settingsActive);
 	}
 }

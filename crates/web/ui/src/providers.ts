@@ -6,6 +6,7 @@ import { ensureProviderModal } from "./modals";
 import { fetchModels } from "./models";
 import { providerApiKeyHelp } from "./provider-key-help";
 import { completeProviderOAuth, startProviderOAuth } from "./provider-oauth";
+import type { TestModelResult } from "./provider-validation";
 import {
 	humanizeProbeError,
 	isModelServiceNotConfigured,
@@ -14,9 +15,8 @@ import {
 	testModel,
 	validateProviderKey,
 } from "./provider-validation";
-import type { TestModelResult } from "./provider-validation";
-import type { RpcResponse } from "./types";
 import * as S from "./state";
+import type { RpcResponse } from "./types";
 
 // ── Interfaces ──────────────────────────────────────────────
 
@@ -197,7 +197,10 @@ function normalizeEndpointForCompare(rawUrl: string | null | undefined): string 
 	}
 }
 
-function shouldUseCustomProviderForOpenAi(provider: ProviderInfo | null | undefined, endpointVal: string | null | undefined): boolean {
+function shouldUseCustomProviderForOpenAi(
+	provider: ProviderInfo | null | undefined,
+	endpointVal: string | null | undefined,
+): boolean {
 	if (provider?.name !== "openai") return false;
 	const normalizedEndpoint = normalizeEndpointForCompare(endpointVal);
 	if (!normalizedEndpoint) return false;
@@ -387,7 +390,9 @@ function normalizeAttempt(value: number | undefined, fallback: number): number {
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: maps backend validation phases to progress UI updates.
-function progressFromValidationEvent(payload: ValidationEventPayload | null | undefined): ValidationProgressUpdate | null {
+function progressFromValidationEvent(
+	payload: ValidationEventPayload | null | undefined,
+): ValidationProgressUpdate | null {
 	if (!payload?.phase) return null;
 	const phase = payload.phase;
 	if (phase === "start") {
@@ -423,7 +428,10 @@ function progressFromValidationEvent(payload: ValidationEventPayload | null | un
 	return null;
 }
 
-function bindValidationProgressEvents(state: ValidationProgressState | null, requestId: string | undefined): () => void {
+function bindValidationProgressEvents(
+	state: ValidationProgressState | null,
+	requestId: string | undefined,
+): () => void {
 	if (!(state && requestId)) return () => undefined;
 	const off = onEvent(VALIDATION_PROGRESS_EVENT, (payload: unknown) => {
 		const p = payload as ValidationEventPayload;
@@ -764,7 +772,14 @@ export function showApiKeyForm(provider: ProviderInfo): void {
 	keyInp.focus();
 }
 
-function showModelSelector(provider: ProviderInfo, models: ModelEntry[], keyVal: string | null, endpointVal: string | null, modelVal: string | null, skipSave?: boolean): void {
+function showModelSelector(
+	provider: ProviderInfo,
+	models: ModelEntry[],
+	keyVal: string | null,
+	endpointVal: string | null,
+	modelVal: string | null,
+	skipSave?: boolean,
+): void {
 	const m = els();
 	m.title.textContent = `${provider.displayName} \u2014 Select Models`;
 	m.body.textContent = "";
@@ -801,7 +816,9 @@ function showModelSelector(provider: ProviderInfo, models: ModelEntry[], keyVal:
 		const currentFilter = searchInp?.value.trim() || null;
 		if (!currentFilter) return models;
 		const q = currentFilter.toLowerCase();
-		return models.filter((mdl: ModelEntry) => mdl.displayName.toLowerCase().includes(q) || mdl.id.toLowerCase().includes(q));
+		return models.filter(
+			(mdl: ModelEntry) => mdl.displayName.toLowerCase().includes(q) || mdl.id.toLowerCase().includes(q),
+		);
 	}
 
 	function updateSelectAllLabel(): void {
@@ -848,7 +865,9 @@ function showModelSelector(provider: ProviderInfo, models: ModelEntry[], keyVal:
 		let filtered = models;
 		if (filter) {
 			const q = filter.toLowerCase();
-			filtered = models.filter((mdl: ModelEntry) => mdl.displayName.toLowerCase().includes(q) || mdl.id.toLowerCase().includes(q));
+			filtered = models.filter(
+				(mdl: ModelEntry) => mdl.displayName.toLowerCase().includes(q) || mdl.id.toLowerCase().includes(q),
+			);
 		}
 		if (filtered.length === 0) {
 			const empty = document.createElement("div");
@@ -958,9 +977,20 @@ function showModelSelector(provider: ProviderInfo, models: ModelEntry[], keyVal:
 	m.body.appendChild(wrapper);
 }
 
-function saveAndFinishProvider(provider: ProviderInfo, keyVal: string | null, endpointVal: string | null, modelVal: string | null, selectedModelIds: string[] | null, skipSave: boolean): void {
+function saveAndFinishProvider(
+	provider: ProviderInfo,
+	keyVal: string | null,
+	endpointVal: string | null,
+	modelVal: string | null,
+	selectedModelIds: string[] | null,
+	skipSave: boolean,
+): void {
 	// selectedModelIds can be a single string (legacy callers) or an array
-	const modelIds: string[] = Array.isArray(selectedModelIds) ? selectedModelIds : selectedModelIds ? [selectedModelIds] : [];
+	const modelIds: string[] = Array.isArray(selectedModelIds)
+		? selectedModelIds
+		: selectedModelIds
+			? [selectedModelIds]
+			: [];
 
 	const m = els();
 	const saveAsCustomProvider = !skipSave && shouldUseCustomProviderForOpenAi(provider, endpointVal);
@@ -994,7 +1024,9 @@ function saveAndFinishProvider(provider: ProviderInfo, keyVal: string | null, en
 				showError(res?.error?.message || "Failed to save credentials.");
 				return;
 			}
-			const savedProviderName = saveAsCustomProvider ? (res?.payload as AddCustomPayload)?.providerName || provider.name : provider.name;
+			const savedProviderName = saveAsCustomProvider
+				? (res?.payload as AddCustomPayload)?.providerName || provider.name
+				: provider.name;
 			const successDisplayName = saveAsCustomProvider
 				? (res?.payload as AddCustomPayload)?.displayName || provider.displayName
 				: provider.displayName;
@@ -1230,7 +1262,9 @@ function showOAuthModelSelector(provider: ProviderInfo): void {
 	sendRpc<ModelEntry[]>("models.list", {}).then((modelsRes: RpcResponse<ModelEntry[]>) => {
 		const allModels: ModelEntry[] = modelsRes?.ok ? (modelsRes.payload as ModelEntry[]) || [] : [];
 		const needle = provider.name.replace(/-/g, "").toLowerCase();
-		const provModels = allModels.filter((entry: ModelEntry) => entry.provider?.toLowerCase().replace(/-/g, "").includes(needle));
+		const provModels = allModels.filter((entry: ModelEntry) =>
+			entry.provider?.toLowerCase().replace(/-/g, "").includes(needle),
+		);
 
 		if (provModels.length > 0) {
 			const mapped: ModelEntry[] = provModels.map((entry: ModelEntry) => ({
@@ -1262,52 +1296,63 @@ export function openModelSelectorForProvider(providerName: string, providerDispl
 	m.title.textContent = `${providerDisplayName} \u2014 Preferred Models`;
 	m.body.textContent = "Loading models...";
 
-	Promise.all([sendRpc<ModelEntry[]>("models.list", {}), sendRpc<ProviderInfo[]>("providers.available", {})]).then(([modelsRes, providersRes]: [RpcResponse<ModelEntry[]>, RpcResponse<ProviderInfo[]>]) => {
-		const allModels: ModelEntry[] = modelsRes?.ok ? (modelsRes.payload as ModelEntry[]) || [] : [];
-		const needle = providerName.replace(/-/g, "").toLowerCase();
-		const provModels = allModels.filter((entry: ModelEntry) => entry.provider?.toLowerCase().replace(/-/g, "").includes(needle));
+	Promise.all([sendRpc<ModelEntry[]>("models.list", {}), sendRpc<ProviderInfo[]>("providers.available", {})]).then(
+		([modelsRes, providersRes]: [RpcResponse<ModelEntry[]>, RpcResponse<ProviderInfo[]>]) => {
+			const allModels: ModelEntry[] = modelsRes?.ok ? (modelsRes.payload as ModelEntry[]) || [] : [];
+			const needle = providerName.replace(/-/g, "").toLowerCase();
+			const provModels = allModels.filter((entry: ModelEntry) =>
+				entry.provider?.toLowerCase().replace(/-/g, "").includes(needle),
+			);
 
-		if (provModels.length === 0) {
-			m.body.textContent = "";
-			const wrapper = document.createElement("div");
-			wrapper.className = "provider-key-form";
-			const msg = document.createElement("div");
-			msg.className = "text-xs text-[var(--muted)] py-4 text-center";
-			msg.textContent = "No models available yet. Try running Detect All Models first.";
-			wrapper.appendChild(msg);
-			const btns = document.createElement("div");
-			btns.className = "btn-row mt-3";
-			const closeBtn = document.createElement("button");
-			closeBtn.className = "provider-btn provider-btn-secondary";
-			closeBtn.textContent = "Close";
-			closeBtn.addEventListener("click", closeProviderModal);
-			btns.appendChild(closeBtn);
-			wrapper.appendChild(btns);
-			m.body.appendChild(wrapper);
-			return;
-		}
-
-		// Get saved preferred models for this provider.
-		const savedModels: Set<string> = new Set();
-		if (providersRes?.ok) {
-			const providerMeta = ((providersRes.payload as ProviderInfo[]) || []).find((p: ProviderInfo) => p.name === providerName);
-			if (providerMeta?.models) {
-				for (const sm of providerMeta.models) savedModels.add(sm);
+			if (provModels.length === 0) {
+				m.body.textContent = "";
+				const wrapper = document.createElement("div");
+				wrapper.className = "provider-key-form";
+				const msg = document.createElement("div");
+				msg.className = "text-xs text-[var(--muted)] py-4 text-center";
+				msg.textContent = "No models available yet. Try running Detect All Models first.";
+				wrapper.appendChild(msg);
+				const btns = document.createElement("div");
+				btns.className = "btn-row mt-3";
+				const closeBtn = document.createElement("button");
+				closeBtn.className = "provider-btn provider-btn-secondary";
+				closeBtn.textContent = "Close";
+				closeBtn.addEventListener("click", closeProviderModal);
+				btns.appendChild(closeBtn);
+				wrapper.appendChild(btns);
+				m.body.appendChild(wrapper);
+				return;
 			}
-		}
 
-		const mapped: ModelEntry[] = provModels.map((entry: ModelEntry) => ({
-			id: entry.id,
-			displayName: entry.displayName || entry.id,
-			provider: entry.provider,
-			supportsTools: entry.supportsTools,
-			createdAt: entry.createdAt || 0,
-		}));
-		showMultiModelSelector(providerName, providerDisplayName, mapped, savedModels);
-	});
+			// Get saved preferred models for this provider.
+			const savedModels: Set<string> = new Set();
+			if (providersRes?.ok) {
+				const providerMeta = ((providersRes.payload as ProviderInfo[]) || []).find(
+					(p: ProviderInfo) => p.name === providerName,
+				);
+				if (providerMeta?.models) {
+					for (const sm of providerMeta.models) savedModels.add(sm);
+				}
+			}
+
+			const mapped: ModelEntry[] = provModels.map((entry: ModelEntry) => ({
+				id: entry.id,
+				displayName: entry.displayName || entry.id,
+				provider: entry.provider,
+				supportsTools: entry.supportsTools,
+				createdAt: entry.createdAt || 0,
+			}));
+			showMultiModelSelector(providerName, providerDisplayName, mapped, savedModels);
+		},
+	);
 }
 
-function showMultiModelSelector(providerName: string, providerDisplayName: string, models: ModelEntry[], savedModels: Set<string>): void {
+function showMultiModelSelector(
+	providerName: string,
+	providerDisplayName: string,
+	models: ModelEntry[],
+	savedModels: Set<string>,
+): void {
 	const m = els();
 	m.title.textContent = `${providerDisplayName} \u2014 Preferred Models`;
 	m.body.textContent = "";
@@ -1329,7 +1374,10 @@ function showMultiModelSelector(providerName: string, providerDisplayName: strin
 				// Timeout -- model may still work, local servers need time to load.
 				probeResults.set(modelId, { error: "Slow to respond (may still work)", timeout: true });
 			} else {
-				probeResults.set(modelId, result.ok ? "ok" : { error: humanizeProbeError(result.error || "Unsupported") as string });
+				probeResults.set(
+					modelId,
+					result.ok ? "ok" : { error: humanizeProbeError(result.error || "Unsupported") as string },
+				);
 			}
 			renderCards(searchInp?.value.trim() || null);
 		});
@@ -1993,7 +2041,10 @@ function createHfSearchResultCard(model: HfSearchResult, provider: ProviderInfo)
 		if (res?.ok) {
 			fetchModels();
 			if (S.refreshProvidersPage) S.refreshProvidersPage();
-			showModelDownloadProgress({ id: (res.payload as { modelId: string }).modelId, displayName: model.displayName }, provider);
+			showModelDownloadProgress(
+				{ id: (res.payload as { modelId: string }).modelId, displayName: model.displayName },
+				provider,
+			);
 		} else {
 			const err = res?.error?.message || "Failed to configure model";
 			statusText.className = "text-sm text-[var(--error)]";
@@ -2220,7 +2271,13 @@ function selectLocalModel(model: LocalModelInfo, provider: ProviderInfo): void {
 	});
 }
 
-function pollLocalStatus(model: { id: string; displayName: string }, _provider: ProviderInfo, statusEl: HTMLElement, progressEl: HTMLElement, offEvent: (() => void) | null): void {
+function pollLocalStatus(
+	model: { id: string; displayName: string },
+	_provider: ProviderInfo,
+	statusEl: HTMLElement,
+	progressEl: HTMLElement,
+	offEvent: (() => void) | null,
+): void {
 	let attempts = 0;
 	const maxAttempts = 300; // 10 minutes with 2s interval
 	let completed = false;
@@ -2239,28 +2296,30 @@ function pollLocalStatus(model: { id: string; displayName: string }, _provider: 
 		}
 
 		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: status polling with many state transitions
-		sendRpc<{ status: string; error?: string }>("providers.local.status", {}).then((res: RpcResponse<{ status: string; error?: string }>) => {
-			if (!res?.ok) return;
-			const st = res.payload as { status: string; error?: string };
+		sendRpc<{ status: string; error?: string }>("providers.local.status", {}).then(
+			(res: RpcResponse<{ status: string; error?: string }>) => {
+				if (!res?.ok) return;
+				const st = res.payload as { status: string; error?: string };
 
-			if (st.status === "ready" || st.status === "loaded") {
-				completed = true;
-				clearInterval(timer);
-				if (offEvent) offEvent();
-				statusEl.textContent = `${model.displayName} configured successfully!`;
-				statusEl.className = "provider-status";
-				progressEl.style.display = "none";
-				fetchModels();
-				if (S.refreshProvidersPage) S.refreshProvidersPage();
-				setTimeout(closeProviderModal, 1500);
-			} else if (st.status === "error") {
-				completed = true;
-				clearInterval(timer);
-				if (offEvent) offEvent();
-				statusEl.textContent = st.error || "Configuration failed";
-				statusEl.className = "text-sm text-[var(--error)]";
-			}
-			// Don't update progress here - let WebSocket events handle it
-		});
+				if (st.status === "ready" || st.status === "loaded") {
+					completed = true;
+					clearInterval(timer);
+					if (offEvent) offEvent();
+					statusEl.textContent = `${model.displayName} configured successfully!`;
+					statusEl.className = "provider-status";
+					progressEl.style.display = "none";
+					fetchModels();
+					if (S.refreshProvidersPage) S.refreshProvidersPage();
+					setTimeout(closeProviderModal, 1500);
+				} else if (st.status === "error") {
+					completed = true;
+					clearInterval(timer);
+					if (offEvent) offEvent();
+					statusEl.textContent = st.error || "Configuration failed";
+					statusEl.className = "text-sm text-[var(--error)]";
+				}
+				// Don't update progress here - let WebSocket events handle it
+			},
+		);
 	}, 2000);
 }

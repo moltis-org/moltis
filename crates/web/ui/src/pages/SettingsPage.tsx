@@ -11,21 +11,6 @@ import { refresh as refreshGon } from "../gon";
 import { localizedApiErrorMessage, sendRpc } from "../helpers";
 import { setLocale } from "../i18n";
 import { updateIdentity, validateIdentityFields } from "../identity-utils";
-import { initAgents, teardownAgents } from "./AgentsPage";
-import { initChannels, teardownChannels } from "./ChannelsPage";
-import { initCrons, teardownCrons } from "./CronsPage";
-import { initHooks, teardownHooks } from "./HooksPage";
-import { initImages, teardownImages } from "./ImagesPage";
-import { initLogs, teardownLogs } from "./LogsPage";
-import { initMcp, teardownMcp } from "./McpPage";
-import { initMonitoring, teardownMonitoring } from "./MetricsPage";
-import { initNetworkAudit, teardownNetworkAudit } from "./NetworkAuditPage";
-import { initNodes, teardownNodes } from "./NodesPage";
-import { initProjects, teardownProjects } from "./ProjectsPage";
-import { initProviders, teardownProviders } from "./ProvidersPage";
-import { initSkills, teardownSkills } from "./SkillsPage";
-import { initTerminal, teardownTerminal } from "./TerminalPage";
-import { initWebhooks, teardownWebhooks } from "./WebhooksPage";
 import { detectPasskeyName } from "../passkey-detect";
 import * as push from "../push";
 import { isStandalone } from "../pwa";
@@ -44,6 +29,21 @@ import {
 	toggleVoiceProvider,
 	transcribeAudio,
 } from "../voice-utils";
+import { initAgents, teardownAgents } from "./AgentsPage";
+import { initChannels, teardownChannels } from "./ChannelsPage";
+import { initCrons, teardownCrons } from "./CronsPage";
+import { initHooks, teardownHooks } from "./HooksPage";
+import { initImages, teardownImages } from "./ImagesPage";
+import { initLogs, teardownLogs } from "./LogsPage";
+import { initMcp, teardownMcp } from "./McpPage";
+import { initMonitoring, teardownMonitoring } from "./MetricsPage";
+import { initNetworkAudit, teardownNetworkAudit } from "./NetworkAuditPage";
+import { initNodes, teardownNodes } from "./NodesPage";
+import { initProjects, teardownProjects } from "./ProjectsPage";
+import { initProviders, teardownProviders } from "./ProvidersPage";
+import { initSkills, teardownSkills } from "./SkillsPage";
+import { initTerminal, teardownTerminal } from "./TerminalPage";
+import { initWebhooks, teardownWebhooks } from "./WebhooksPage";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -455,11 +455,12 @@ function SettingsSidebar(): VNode {
 			</div>
 			<div className="settings-sidebar-nav">
 				{getVisibleSections().map((s) =>
-					s.group
-						? <div key={s.group} className="settings-group-label">
+					s.group ? (
+						<div key={s.group} className="settings-group-label">
 							{s.group}
 						</div>
-						: <button
+					) : (
+						<button
 							key={s.id}
 							className={`settings-nav-item ${activeSection.value === s.id ? "active" : ""}`}
 							data-section={s.id}
@@ -472,7 +473,8 @@ function SettingsSidebar(): VNode {
 							}}
 						>
 							{s.label}
-						</button>,
+						</button>
+					),
 				)}
 			</div>
 		</div>
@@ -608,7 +610,7 @@ function IdentitySection(): VNode {
 	function autoSaveNameField(field: string, value: string): void {
 		if (saving || emojiSaving || nameSaving || userNameSaving) return;
 		const trimmed = value.trim();
-		const currentValue = (identity.value?.[field] as string || "").trim();
+		const currentValue = ((identity.value?.[field] as string) || "").trim();
 		if (trimmed === currentValue) return;
 
 		if (!trimmed) {
@@ -694,63 +696,106 @@ function IdentitySection(): VNode {
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">Identity</h2>
-			{isNew
-				? <p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
+			{isNew ? (
+				<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
 					Welcome! Set up your agent's identity to get started.
 				</p>
-				: null
-			}
+			) : null}
 			<form onSubmit={onSave} style={{ maxWidth: "600px", display: "flex", flexDirection: "column", gap: "16px" }}>
 				{/* Agent section */}
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Agent</h3>
-					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>Saved to <code>IDENTITY.md</code> in your workspace root.</p>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Agent
+					</h3>
+					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
+						Saved to <code>IDENTITY.md</code> in your workspace root.
+					</p>
 					<div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px" }}>
 						<div>
-							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>Name *</div>
-							<input type="text" className="provider-key-input" style={{ width: "100%" }}
-								value={name} onInput={(e: Event) => setName((e.target as HTMLInputElement).value)} onBlur={onNameBlur}
-								placeholder="e.g. Rex" />
+							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
+								Name *
+							</div>
+							<input
+								type="text"
+								className="provider-key-input"
+								style={{ width: "100%" }}
+								value={name}
+								onInput={(e: Event) => setName((e.target as HTMLInputElement).value)}
+								onBlur={onNameBlur}
+								placeholder="e.g. Rex"
+							/>
 						</div>
 						<div>
-							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>Emoji</div>
+							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
+								Emoji
+							</div>
 							<EmojiPicker value={emoji} onChange={setEmoji} onSelect={onEmojiSelect} />
 						</div>
 						<div style={{ gridColumn: "1/-1" }}>
-							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>Theme</div>
-							<input type="text" className="provider-key-input" style={{ width: "100%" }}
-								value={theme} onInput={(e: Event) => setTheme((e.target as HTMLInputElement).value)}
-								placeholder="e.g. wise owl, chill fox" />
+							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
+								Theme
+							</div>
+							<input
+								type="text"
+								className="provider-key-input"
+								style={{ width: "100%" }}
+								value={theme}
+								onInput={(e: Event) => setTheme((e.target as HTMLInputElement).value)}
+								placeholder="e.g. wise owl, chill fox"
+							/>
 						</div>
 					</div>
-					{showFaviconReloadHint
-						? <div className="mt-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-xs text-[var(--muted)]">
-							favicon updates requires reload and may be cached for minutes, <button type="button" className="cursor-pointer bg-transparent p-0 text-xs text-[var(--text)] underline" onClick={onReloadForFavicon}>requires reload</button>.
+					{showFaviconReloadHint ? (
+						<div className="mt-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-xs text-[var(--muted)]">
+							favicon updates requires reload and may be cached for minutes,{" "}
+							<button
+								type="button"
+								className="cursor-pointer bg-transparent p-0 text-xs text-[var(--text)] underline"
+								onClick={onReloadForFavicon}
+							>
+								requires reload
+							</button>
+							.
 						</div>
-						: null
-					}
+					) : null}
 				</div>
 
 				{/* User section */}
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>User</h3>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						User
+					</h3>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Saved to your user profile. Depending on memory settings, Moltis may also mirror it to <code>USER.md</code>.
 					</p>
 					<div>
-						<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>Your name *</div>
-						<input type="text" className="provider-key-input" style={{ width: "100%", maxWidth: "280px" }}
-							value={userName} onInput={(e: Event) => setUserName((e.target as HTMLInputElement).value)} onBlur={onUserNameBlur}
-							placeholder="e.g. Alice" />
+						<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
+							Your name *
+						</div>
+						<input
+							type="text"
+							className="provider-key-input"
+							style={{ width: "100%", maxWidth: "280px" }}
+							value={userName}
+							onInput={(e: Event) => setUserName((e.target as HTMLInputElement).value)}
+							onBlur={onUserNameBlur}
+							placeholder="e.g. Alice"
+						/>
 					</div>
 				</div>
 
 				{/* Language section */}
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Language</h3>
-					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>Choose the UI language for this browser.</p>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Language
+					</h3>
+					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
+						Choose the UI language for this browser.
+					</p>
 					<div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-						<label htmlFor="identityLanguageSelect" className="text-xs text-[var(--muted)]">UI language</label>
+						<label htmlFor="identityLanguageSelect" className="text-xs text-[var(--muted)]">
+							UI language
+						</label>
 						<select
 							id="identityLanguageSelect"
 							className="provider-key-input"
@@ -777,15 +822,28 @@ function IdentitySection(): VNode {
 						>
 							{languageSaving ? "Applying..." : "Apply language"}
 						</button>
-						{languageSaved ? <span className="text-xs" style={{ color: "var(--accent)" }}>Language updated</span> : null}
-						{languageError ? <span className="text-xs" style={{ color: "var(--error)" }}>{languageError}</span> : null}
+						{languageSaved ? (
+							<span className="text-xs" style={{ color: "var(--accent)" }}>
+								Language updated
+							</span>
+						) : null}
+						{languageError ? (
+							<span className="text-xs" style={{ color: "var(--error)" }}>
+								{languageError}
+							</span>
+						) : null}
 					</div>
 				</div>
 
 				{/* Soul section */}
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "4px" }}>Soul</h3>
-					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>Personality and tone injected into every conversation. Saved to <code>SOUL.md</code> in your workspace root. Leave empty for the default.</p>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "4px" }}>
+						Soul
+					</h3>
+					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
+						Personality and tone injected into every conversation. Saved to <code>SOUL.md</code> in your workspace root.
+						Leave empty for the default.
+					</p>
 					<textarea
 						className="provider-key-input"
 						rows={8}
@@ -794,22 +852,43 @@ function IdentitySection(): VNode {
 						value={soul}
 						onInput={(e: Event) => setSoul((e.target as HTMLTextAreaElement).value)}
 					/>
-					{soul
-						? <button type="button" className="provider-btn" style={{ marginTop: "6px", fontSize: ".75rem" }}
-							onClick={onResetSoul}>Reset to default</button>
-						: null
-					}
+					{soul ? (
+						<button
+							type="button"
+							className="provider-btn"
+							style={{ marginTop: "6px", fontSize: ".75rem" }}
+							onClick={onResetSoul}
+						>
+							Reset to default
+						</button>
+					) : null}
 				</div>
 
 				<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-					<button type="submit" className="provider-btn" disabled={saving || emojiSaving || nameSaving || userNameSaving}>
+					<button
+						type="submit"
+						className="provider-btn"
+						disabled={saving || emojiSaving || nameSaving || userNameSaving}
+					>
 						{saving || emojiSaving || nameSaving || userNameSaving ? "Saving\u2026" : "Save"}
 					</button>
-					{saved ? <span className="text-xs" style={{ color: "var(--accent)" }}>Saved</span> : null}
-					{error ? <span className="text-xs" style={{ color: "var(--error)" }}>{error}</span> : null}
+					{saved ? (
+						<span className="text-xs" style={{ color: "var(--accent)" }}>
+							Saved
+						</span>
+					) : null}
+					{error ? (
+						<span className="text-xs" style={{ color: "var(--error)" }}>
+							{error}
+						</span>
+					) : null}
 				</div>
 			</form>
-			{gon.get("version") ? <p className="text-xs text-[var(--muted)]" style={{ marginTop: "auto", paddingTop: "16px" }}>v{gon.get("version")}</p> : null}
+			{gon.get("version") ? (
+				<p className="text-xs text-[var(--muted)]" style={{ marginTop: "auto", paddingTop: "16px" }}>
+					v{gon.get("version")}
+				</p>
+			) : null}
 		</div>
 	);
 }
@@ -878,7 +957,13 @@ function EnvironmentSection(): VNode {
 					}, 2000);
 					fetchEnvVars();
 				} else {
-					return r.json().then((d: unknown) => setEnvErr(localizedApiErrorMessage(d as Parameters<typeof localizedApiErrorMessage>[0], "Failed to save")));
+					return r
+						.json()
+						.then((d: unknown) =>
+							setEnvErr(
+								localizedApiErrorMessage(d as Parameters<typeof localizedApiErrorMessage>[0], "Failed to save"),
+							),
+						);
 				}
 				setSaving(false);
 				rerender();
@@ -928,38 +1013,68 @@ function EnvironmentSection(): VNode {
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
 				Environment variables are injected into sandbox command execution. Values are write-only and never displayed.
 			</p>
-			{envVaultStatus && envVaultStatus !== "disabled"
-				? <div className="text-xs" style={{ maxWidth: "600px", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)" }}>
-					{envVaultStatus === "unsealed"
-						? <><span style={{ color: "var(--accent)" }}>Vault unlocked.</span> Your keys are stored encrypted.</>
-						: envVaultStatus === "sealed"
-							? <><span style={{ color: "var(--warning,var(--error))" }}>Vault locked.</span> Encrypted keys can{"\u2019"}t be read {"\u2014"} sandbox commands won{"\u2019"}t work. <a href="/settings/vault" style={{ color: "inherit", textDecoration: "underline" }}>Unlock in Encryption settings.</a></>
-							: <><span className="text-[var(--muted)]">Vault not set up.</span> <a href="/settings/security" style={{ color: "inherit", textDecoration: "underline" }}>Set a password</a> to encrypt your stored keys.</>
-					}
+			{envVaultStatus && envVaultStatus !== "disabled" ? (
+				<div
+					className="text-xs"
+					style={{
+						maxWidth: "600px",
+						padding: "8px 12px",
+						borderRadius: "6px",
+						border: "1px solid var(--border)",
+						background: "var(--bg)",
+					}}
+				>
+					{envVaultStatus === "unsealed" ? (
+						<>
+							<span style={{ color: "var(--accent)" }}>Vault unlocked.</span> Your keys are stored encrypted.
+						</>
+					) : envVaultStatus === "sealed" ? (
+						<>
+							<span style={{ color: "var(--warning,var(--error))" }}>Vault locked.</span> Encrypted keys can{"\u2019"}t
+							be read {"\u2014"} sandbox commands won{"\u2019"}t work.{" "}
+							<a href="/settings/vault" style={{ color: "inherit", textDecoration: "underline" }}>
+								Unlock in Encryption settings.
+							</a>
+						</>
+					) : (
+						<>
+							<span className="text-[var(--muted)]">Vault not set up.</span>{" "}
+							<a href="/settings/security" style={{ color: "inherit", textDecoration: "underline" }}>
+								Set a password
+							</a>{" "}
+							to encrypt your stored keys.
+						</>
+					)}
 				</div>
-				: null
-			}
+			) : null}
 
-			{envLoading
-				? <div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
-				: <>
+			{envLoading ? (
+				<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
+			) : (
+				<>
 					{/* Existing variables */}
 					<div style={{ maxWidth: "600px" }}>
-						{envVars.length > 0
-							? <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
+						{envVars.length > 0 ? (
+							<div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
 								{envVars.map((v) => (
 									<div className="provider-item" style={{ marginBottom: 0 }} key={v.id}>
-										{updateId === v.id
-											? <form style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1 }} onSubmit={(e: Event) => {
-												e.preventDefault();
-												onConfirmUpdate(v.key);
-											}}>
+										{updateId === v.id ? (
+											<form
+												style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1 }}
+												onSubmit={(e: Event) => {
+													e.preventDefault();
+													onConfirmUpdate(v.key);
+												}}
+											>
 												<code style={{ fontSize: "0.8rem", fontFamily: "var(--font-mono)" }}>{v.key}</code>
-												{v.encrypted
-													? <span className="provider-item-badge configured">Encrypted</span>
-													: <span className="provider-item-badge muted">Plaintext</span>
-												}
-												<input type="password" className="provider-key-input"
+												{v.encrypted ? (
+													<span className="provider-item-badge configured">Encrypted</span>
+												) : (
+													<span className="provider-item-badge muted">Plaintext</span>
+												)}
+												<input
+													type="password"
+													className="provider-key-input"
 													name="env_update_value"
 													autoComplete="new-password"
 													autoCorrect="off"
@@ -967,42 +1082,81 @@ function EnvironmentSection(): VNode {
 													spellcheck={false}
 													value={updateValue}
 													onInput={(e: Event) => setUpdateValue((e.target as HTMLInputElement).value)}
-													placeholder="New value" style={{ flex: 1 }} autoFocus />
-												<button type="submit" className="provider-btn">Save</button>
-												<button type="button" className="provider-btn" onClick={onCancelUpdate}>Cancel</button>
+													placeholder="New value"
+													style={{ flex: 1 }}
+													autoFocus
+												/>
+												<button type="submit" className="provider-btn">
+													Save
+												</button>
+												<button type="button" className="provider-btn" onClick={onCancelUpdate}>
+													Cancel
+												</button>
 											</form>
-											: <><div style={{ flex: 1, minWidth: 0 }}>
-												<div className="provider-item-name" style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}>
-													{v.key}
-													{v.encrypted
-														? <span className="provider-item-badge configured" style={{ marginLeft: "6px" }}>Encrypted</span>
-														: <span className="provider-item-badge muted" style={{ marginLeft: "6px" }}>Plaintext</span>
-													}
+										) : (
+											<>
+												<div style={{ flex: 1, minWidth: 0 }}>
+													<div
+														className="provider-item-name"
+														style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
+													>
+														{v.key}
+														{v.encrypted ? (
+															<span className="provider-item-badge configured" style={{ marginLeft: "6px" }}>
+																Encrypted
+															</span>
+														) : (
+															<span className="provider-item-badge muted" style={{ marginLeft: "6px" }}>
+																Plaintext
+															</span>
+														)}
+													</div>
+													<div
+														style={{
+															fontSize: ".7rem",
+															color: "var(--muted)",
+															marginTop: "2px",
+															display: "flex",
+															gap: "12px",
+														}}
+													>
+														<span>{"\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"}</span>
+														<time dateTime={v.updated_at}>{v.updated_at}</time>
+													</div>
 												</div>
-												<div style={{ fontSize: ".7rem", color: "var(--muted)", marginTop: "2px", display: "flex", gap: "12px" }}>
-													<span>{"\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"}</span>
-													<time dateTime={v.updated_at}>{v.updated_at}</time>
+												<div style={{ display: "flex", gap: "4px" }}>
+													<button className="provider-btn provider-btn-sm" onClick={() => onStartUpdate(v.id)}>
+														Update
+													</button>
+													<button
+														className="provider-btn provider-btn-sm provider-btn-danger"
+														onClick={() => onDelete(v.id)}
+													>
+														Delete
+													</button>
 												</div>
-											</div>
-											<div style={{ display: "flex", gap: "4px" }}>
-												<button className="provider-btn provider-btn-sm" onClick={() => onStartUpdate(v.id)}>Update</button>
-												<button className="provider-btn provider-btn-sm provider-btn-danger"
-													onClick={() => onDelete(v.id)}>Delete</button>
-											</div></>
-										}
+											</>
+										)}
 									</div>
 								))}
 							</div>
-							: <div className="text-xs text-[var(--muted)]" style={{ padding: "12px 0" }}>No environment variables set.</div>
-						}
+						) : (
+							<div className="text-xs text-[var(--muted)]" style={{ padding: "12px 0" }}>
+								No environment variables set.
+							</div>
+						)}
 					</div>
 
 					{/* Add variable */}
 					<div style={{ maxWidth: "600px", borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
-						<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Add Variable</h3>
+						<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+							Add Variable
+						</h3>
 						<form onSubmit={onAdd}>
 							<div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-								<input type="text" className="provider-key-input"
+								<input
+									type="text"
+									className="provider-key-input"
 									name="env_key"
 									autoComplete="off"
 									autoCorrect="off"
@@ -1010,8 +1164,12 @@ function EnvironmentSection(): VNode {
 									spellcheck={false}
 									value={newKey}
 									onInput={(e: Event) => setNewKey((e.target as HTMLInputElement).value)}
-									placeholder="KEY_NAME" style={{ flex: 1, minWidth: "120px", fontFamily: "var(--font-mono)", fontSize: ".8rem" }} />
-								<input type="password" className="provider-key-input"
+									placeholder="KEY_NAME"
+									style={{ flex: 1, minWidth: "120px", fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
+								/>
+								<input
+									type="password"
+									className="provider-key-input"
 									name="env_value"
 									autoComplete="new-password"
 									autoCorrect="off"
@@ -1019,17 +1177,27 @@ function EnvironmentSection(): VNode {
 									spellcheck={false}
 									value={newValue}
 									onInput={(e: Event) => setNewValue((e.target as HTMLInputElement).value)}
-									placeholder="Value" style={{ flex: 2, minWidth: "200px" }} />
+									placeholder="Value"
+									style={{ flex: 2, minWidth: "200px" }}
+								/>
 								<button type="submit" className="provider-btn" disabled={saving || !newKey.trim()}>
 									{saving ? "Saving\u2026" : "Add"}
 								</button>
 							</div>
-							{envMsg ? <div className="text-xs" style={{ marginTop: "6px", color: "var(--accent)" }}>{envMsg}</div> : null}
-							{envErr ? <div className="text-xs" style={{ marginTop: "6px", color: "var(--error)" }}>{envErr}</div> : null}
+							{envMsg ? (
+								<div className="text-xs" style={{ marginTop: "6px", color: "var(--accent)" }}>
+									{envMsg}
+								</div>
+							) : null}
+							{envErr ? (
+								<div className="text-xs" style={{ marginTop: "6px", color: "var(--error)" }}>
+									{envErr}
+								</div>
+							) : null}
 						</form>
 					</div>
 				</>
-			}
+			)}
 		</div>
 	);
 }
@@ -1118,17 +1286,29 @@ function SecuritySection(): VNode {
 	useEffect(() => {
 		fetch("/api/auth/status")
 			.then((r) => (r.ok ? r.json() : null))
-			.then((d: { auth_disabled?: boolean; localhost_only?: boolean; has_password?: boolean; has_passkeys?: boolean; setup_complete?: boolean; passkey_origins?: string[]; passkey_host_update_hosts?: string[] } | null) => {
-				if (typeof d?.auth_disabled === "boolean") setAuthDisabled(d.auth_disabled);
-				if (typeof d?.localhost_only === "boolean") setLocalhostOnly(d.localhost_only);
-				if (typeof d?.has_password === "boolean") setHasPassword(d.has_password);
-				if (typeof d?.has_passkeys === "boolean") setHasPasskeys(d.has_passkeys);
-				if (typeof d?.setup_complete === "boolean") setSetupComplete(d.setup_complete);
-				if (Array.isArray(d?.passkey_origins)) setPasskeyOrigins(d!.passkey_origins!);
-				if (Array.isArray(d?.passkey_host_update_hosts)) setPasskeyHostUpdateHosts(d!.passkey_host_update_hosts!);
-				setAuthLoading(false);
-				rerender();
-			})
+			.then(
+				(
+					d: {
+						auth_disabled?: boolean;
+						localhost_only?: boolean;
+						has_password?: boolean;
+						has_passkeys?: boolean;
+						setup_complete?: boolean;
+						passkey_origins?: string[];
+						passkey_host_update_hosts?: string[];
+					} | null,
+				) => {
+					if (typeof d?.auth_disabled === "boolean") setAuthDisabled(d.auth_disabled);
+					if (typeof d?.localhost_only === "boolean") setLocalhostOnly(d.localhost_only);
+					if (typeof d?.has_password === "boolean") setHasPassword(d.has_password);
+					if (typeof d?.has_passkeys === "boolean") setHasPasskeys(d.has_passkeys);
+					if (typeof d?.setup_complete === "boolean") setSetupComplete(d.setup_complete);
+					if (Array.isArray(d?.passkey_origins)) setPasskeyOrigins(d!.passkey_origins!);
+					if (Array.isArray(d?.passkey_host_update_hosts)) setPasskeyHostUpdateHosts(d!.passkey_host_update_hosts!);
+					setAuthLoading(false);
+					rerender();
+				},
+			)
 			.catch(() => {
 				setAuthLoading(false);
 				rerender();
@@ -1234,18 +1414,32 @@ function SecuritySection(): VNode {
 		let requestedRpId: string | null = null;
 		fetch("/api/auth/passkey/register/begin", { method: "POST" })
 			.then((r) => r.json())
-			.then((data: { options: { publicKey: PublicKeyCredentialCreationOptions & { challenge: string; user: { id: string } } }; challenge_id: string }) => {
-				const opts = data.options;
-				requestedRpId = (opts.publicKey.rp as { id?: string })?.id || null;
-				(opts.publicKey as unknown as Record<string, unknown>).challenge = b64ToBuf(opts.publicKey.challenge as unknown as string);
-				(opts.publicKey.user as unknown as Record<string, unknown>).id = b64ToBuf(opts.publicKey.user.id as unknown as string);
-				if ((opts.publicKey as unknown as { excludeCredentials?: Array<{ id: string | ArrayBuffer }> }).excludeCredentials) {
-					for (const c of (opts.publicKey as unknown as { excludeCredentials: Array<{ id: string | ArrayBuffer }> }).excludeCredentials) (c as unknown as Record<string, unknown>).id = b64ToBuf(c.id as string);
-				}
-				return navigator.credentials
-					.create({ publicKey: opts.publicKey as unknown as PublicKeyCredentialCreationOptions })
-					.then((cred) => ({ cred: cred as PublicKeyCredential, challengeId: data.challenge_id }));
-			})
+			.then(
+				(data: {
+					options: { publicKey: PublicKeyCredentialCreationOptions & { challenge: string; user: { id: string } } };
+					challenge_id: string;
+				}) => {
+					const opts = data.options;
+					requestedRpId = (opts.publicKey.rp as { id?: string })?.id || null;
+					(opts.publicKey as unknown as Record<string, unknown>).challenge = b64ToBuf(
+						opts.publicKey.challenge as unknown as string,
+					);
+					(opts.publicKey.user as unknown as Record<string, unknown>).id = b64ToBuf(
+						opts.publicKey.user.id as unknown as string,
+					);
+					if (
+						(opts.publicKey as unknown as { excludeCredentials?: Array<{ id: string | ArrayBuffer }> })
+							.excludeCredentials
+					) {
+						for (const c of (opts.publicKey as unknown as { excludeCredentials: Array<{ id: string | ArrayBuffer }> })
+							.excludeCredentials)
+							(c as unknown as Record<string, unknown>).id = b64ToBuf(c.id as string);
+					}
+					return navigator.credentials
+						.create({ publicKey: opts.publicKey as unknown as PublicKeyCredentialCreationOptions })
+						.then((cred) => ({ cred: cred as PublicKeyCredential, challengeId: data.challenge_id }));
+				},
+			)
 			.then(({ cred, challengeId }: { cred: PublicKeyCredential; challengeId: string }) => {
 				const response = cred.response as AuthenticatorAttestationResponse;
 				const body = {
@@ -1442,15 +1636,29 @@ function SecuritySection(): VNode {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Authentication</h2>
-				<div style={{ maxWidth: "600px", padding: "12px 16px", borderRadius: "6px", border: "1px solid var(--error)", background: "color-mix(in srgb, var(--error) 5%, transparent)" }}>
+				<div
+					style={{
+						maxWidth: "600px",
+						padding: "12px 16px",
+						borderRadius: "6px",
+						border: "1px solid var(--error)",
+						background: "color-mix(in srgb, var(--error) 5%, transparent)",
+					}}
+				>
 					<strong style={{ color: "var(--error)" }}>Authentication is disabled</strong>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
 						Anyone with network access can control moltis and your computer. Set up a password to protect your instance.
 					</p>
-					<button type="button" className="provider-btn" style={{ marginTop: "10px" }}
+					<button
+						type="button"
+						className="provider-btn"
+						style={{ marginTop: "10px" }}
 						onClick={() => {
 							window.location.assign("/onboarding");
-						}}>Set up authentication</button>
+						}}
+					>
+						Set up authentication
+					</button>
 				</div>
 			</div>
 		);
@@ -1460,264 +1668,495 @@ function SecuritySection(): VNode {
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">Authentication</h2>
 
-			{authDisabled && localhostOnly
-				? <div style={{ maxWidth: "600px", padding: "12px 16px", borderRadius: "6px", border: "1px solid var(--error)", background: "color-mix(in srgb, var(--error) 5%, transparent)" }}>
+			{authDisabled && localhostOnly ? (
+				<div
+					style={{
+						maxWidth: "600px",
+						padding: "12px 16px",
+						borderRadius: "6px",
+						border: "1px solid var(--error)",
+						background: "color-mix(in srgb, var(--error) 5%, transparent)",
+					}}
+				>
 					<strong style={{ color: "var(--error)" }}>Authentication is disabled</strong>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
-						Localhost-only access is safe, but localhost bypass is active. Until you add a password or passkey, this browser has full access and Sign out has no effect.
-						Add credentials below to require login on localhost and before exposing Moltis to your network.
+						Localhost-only access is safe, but localhost bypass is active. Until you add a password or passkey, this
+						browser has full access and Sign out has no effect. Add credentials below to require login on localhost and
+						before exposing Moltis to your network.
 					</p>
 				</div>
-				: null
-			}
+			) : null}
 
-			{localhostOnly && !hasPassword && !hasPasskeys && !authDisabled
-				? <div className="alert-info-text max-w-form">
+			{localhostOnly && !hasPassword && !hasPasskeys && !authDisabled ? (
+				<div className="alert-info-text max-w-form">
 					<span className="alert-label-info">Note: </span>
-					Localhost bypass is active. Until you add a password or passkey, this browser has full access and Sign out has no effect.
-					Add credentials to require login on localhost and before exposing Moltis to your network.
+					Localhost bypass is active. Until you add a password or passkey, this browser has full access and Sign out has
+					no effect. Add credentials to require login on localhost and before exposing Moltis to your network.
 				</div>
-				: null
-			}
+			) : null}
 
 			{/* Password */}
 			<div style={{ maxWidth: "600px" }}>
-				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>{hasPassword ? "Change Password" : "Set Password"}</h3>
+				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+					{hasPassword ? "Change Password" : "Set Password"}
+				</h3>
 				<form onSubmit={onChangePw}>
 					<div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "10px" }}>
-						{hasPassword
-							? <div>
-								<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>Current password</div>
-								<input type="password" className="provider-key-input" style={{ width: "100%" }} value={curPw}
-									onInput={(e: Event) => setCurPw((e.target as HTMLInputElement).value)} />
+						{hasPassword ? (
+							<div>
+								<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
+									Current password
+								</div>
+								<input
+									type="password"
+									className="provider-key-input"
+									style={{ width: "100%" }}
+									value={curPw}
+									onInput={(e: Event) => setCurPw((e.target as HTMLInputElement).value)}
+								/>
 							</div>
-							: null
-						}
+						) : null}
 						<div>
-							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>{hasPassword ? "New password" : "Password"}</div>
-							<input type="password" className="provider-key-input" style={{ width: "100%" }} value={newPw}
-								onInput={(e: Event) => setNewPw((e.target as HTMLInputElement).value)} placeholder="At least 12 characters" />
+							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
+								{hasPassword ? "New password" : "Password"}
+							</div>
+							<input
+								type="password"
+								className="provider-key-input"
+								style={{ width: "100%" }}
+								value={newPw}
+								onInput={(e: Event) => setNewPw((e.target as HTMLInputElement).value)}
+								placeholder="At least 12 characters"
+							/>
 						</div>
 						<div>
-							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>Confirm {hasPassword ? "new " : ""}password</div>
-							<input type="password" className="provider-key-input" style={{ width: "100%" }} value={confirmPw}
-								onInput={(e: Event) => setConfirmPw((e.target as HTMLInputElement).value)} />
+							<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
+								Confirm {hasPassword ? "new " : ""}password
+							</div>
+							<input
+								type="password"
+								className="provider-key-input"
+								style={{ width: "100%" }}
+								value={confirmPw}
+								onInput={(e: Event) => setConfirmPw((e.target as HTMLInputElement).value)}
+							/>
 						</div>
 					</div>
 					<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
 						<button type="submit" className="provider-btn" disabled={pwSaving}>
-							{pwSaving ? (hasPassword ? "Changing\u2026" : "Setting\u2026") : hasPassword ? "Change password" : "Set password"}
+							{pwSaving
+								? hasPassword
+									? "Changing\u2026"
+									: "Setting\u2026"
+								: hasPassword
+									? "Change password"
+									: "Set password"}
 						</button>
-						{pwMsg ? <span className="text-xs" style={{ color: "var(--accent)" }}>{pwMsg}</span> : null}
-						{pwErr ? <span className="text-xs" style={{ color: "var(--error)" }}>{pwErr}</span> : null}
+						{pwMsg ? (
+							<span className="text-xs" style={{ color: "var(--accent)" }}>
+								{pwMsg}
+							</span>
+						) : null}
+						{pwErr ? (
+							<span className="text-xs" style={{ color: "var(--error)" }}>
+								{pwErr}
+							</span>
+						) : null}
 					</div>
 				</form>
-				{pwRecoveryKey
-					? <div style={{ marginTop: "12px", padding: "12px 16px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)" }}>
-						<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>Vault initialized {"\u2014"} save this recovery key</div>
-						<code className="select-all break-all" style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem", color: "var(--text-strong)", display: "block", lineHeight: 1.5 }}>{pwRecoveryKey}</code>
+				{pwRecoveryKey ? (
+					<div
+						style={{
+							marginTop: "12px",
+							padding: "12px 16px",
+							borderRadius: "6px",
+							border: "1px solid var(--border)",
+							background: "var(--bg)",
+						}}
+					>
+						<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
+							Vault initialized {"\u2014"} save this recovery key
+						</div>
+						<code
+							className="select-all break-all"
+							style={{
+								fontFamily: "var(--font-mono)",
+								fontSize: ".8rem",
+								color: "var(--text-strong)",
+								display: "block",
+								lineHeight: 1.5,
+							}}
+						>
+							{pwRecoveryKey}
+						</code>
 						<div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "8px" }}>
-							<button type="button" className="provider-btn provider-btn-secondary" onClick={() => {
-								navigator.clipboard.writeText(pwRecoveryKey).then(() => {
-									setPwRecoveryCopied(true);
-									setTimeout(() => {
-										setPwRecoveryCopied(false);
+							<button
+								type="button"
+								className="provider-btn provider-btn-secondary"
+								onClick={() => {
+									navigator.clipboard.writeText(pwRecoveryKey).then(() => {
+										setPwRecoveryCopied(true);
+										setTimeout(() => {
+											setPwRecoveryCopied(false);
+											rerender();
+										}, 2000);
 										rerender();
-									}, 2000);
-									rerender();
-								});
-							}}>{pwRecoveryCopied ? "Copied!" : "Copy"}</button>
-							{pwAwaitingReauth
-								? <button type="button" className="provider-btn" onClick={() => {
-									clearPasswordChangedRedirectDeferral();
-									window.location.assign("/login");
-								}}>Continue to sign in</button>
-								: null
-							}
+									});
+								}}
+							>
+								{pwRecoveryCopied ? "Copied!" : "Copy"}
+							</button>
+							{pwAwaitingReauth ? (
+								<button
+									type="button"
+									className="provider-btn"
+									onClick={() => {
+										clearPasswordChangedRedirectDeferral();
+										window.location.assign("/login");
+									}}
+								>
+									Continue to sign in
+								</button>
+							) : null}
 						</div>
 						<div className="text-xs" style={{ color: "var(--error)", marginTop: "8px" }}>
 							This key will not be shown again. You need it to unlock the vault if you forget your password.
 						</div>
 					</div>
-					: null
-				}
+				) : null}
 			</div>
 
 			{/* Passkeys */}
 			<div style={{ maxWidth: "600px", borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
-				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Passkeys</h3>
-				{passkeyOrigins.length > 1 && <div className="text-xs text-[var(--muted)]" style={{ marginBottom: "8px" }}>Passkeys will work when visiting: {passkeyOrigins.map((o) => o.replace(/^https?:\/\//, "")).join(", ")}</div>}
-				{hasPasskeys && passkeyHostUpdateHosts.length > 0
-					? <div className="alert-warning-text max-w-form" style={{ marginBottom: "8px" }}>
-						<span className="alert-label-warning">Passkey update needed: </span>
-						New host detected ({passkeyHostUpdateHosts.join(", ")}). Sign in with your password on that host, then register a new passkey there.
+				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+					Passkeys
+				</h3>
+				{passkeyOrigins.length > 1 && (
+					<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "8px" }}>
+						Passkeys will work when visiting: {passkeyOrigins.map((o) => o.replace(/^https?:\/\//, "")).join(", ")}
 					</div>
-					: null
-				}
-				{pkLoading
-					? <div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
-					: <>
-						{passkeys.length > 0
-							? <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
+				)}
+				{hasPasskeys && passkeyHostUpdateHosts.length > 0 ? (
+					<div className="alert-warning-text max-w-form" style={{ marginBottom: "8px" }}>
+						<span className="alert-label-warning">Passkey update needed: </span>
+						New host detected ({passkeyHostUpdateHosts.join(", ")}). Sign in with your password on that host, then
+						register a new passkey there.
+					</div>
+				) : null}
+				{pkLoading ? (
+					<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
+				) : (
+					<>
+						{passkeys.length > 0 ? (
+							<div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
 								{passkeys.map((pk) => (
 									<div className="provider-item" style={{ marginBottom: 0 }} key={pk.id}>
-										{editingPk === pk.id
-											? <form style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1 }} onSubmit={(e: Event) => {
-												e.preventDefault();
-												onConfirmRename(pk.id);
-											}}>
-												<input type="text" className="provider-key-input" value={editingPkName}
+										{editingPk === pk.id ? (
+											<form
+												style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1 }}
+												onSubmit={(e: Event) => {
+													e.preventDefault();
+													onConfirmRename(pk.id);
+												}}
+											>
+												<input
+													type="text"
+													className="provider-key-input"
+													value={editingPkName}
 													onInput={(e: Event) => setEditingPkName((e.target as HTMLInputElement).value)}
-													style={{ flex: 1 }} autoFocus />
-												<button type="submit" className="provider-btn provider-btn-sm">Save</button>
-												<button type="button" className="provider-btn provider-btn-sm provider-btn-secondary" onClick={onCancelRename}>Cancel</button>
+													style={{ flex: 1 }}
+													autoFocus
+												/>
+												<button type="submit" className="provider-btn provider-btn-sm">
+													Save
+												</button>
+												<button
+													type="button"
+													className="provider-btn provider-btn-sm provider-btn-secondary"
+													onClick={onCancelRename}
+												>
+													Cancel
+												</button>
 											</form>
-											: <><div style={{ flex: 1, minWidth: 0 }}>
-												<div className="provider-item-name" style={{ fontSize: ".85rem" }}>{pk.name}</div>
-												<div style={{ fontSize: ".7rem", color: "var(--muted)", marginTop: "2px" }}><time dateTime={pk.created_at}>{pk.created_at}</time></div>
-											</div>
-											<div style={{ display: "flex", gap: "4px" }}>
-												<button className="provider-btn provider-btn-sm provider-btn-secondary" onClick={() => onStartRename(pk.id, pk.name)}>Rename</button>
-												<button className="provider-btn provider-btn-sm provider-btn-danger"
-													onClick={() => onRemovePasskey(pk.id)}>Remove</button>
-											</div></>
-										}
+										) : (
+											<>
+												<div style={{ flex: 1, minWidth: 0 }}>
+													<div className="provider-item-name" style={{ fontSize: ".85rem" }}>
+														{pk.name}
+													</div>
+													<div style={{ fontSize: ".7rem", color: "var(--muted)", marginTop: "2px" }}>
+														<time dateTime={pk.created_at}>{pk.created_at}</time>
+													</div>
+												</div>
+												<div style={{ display: "flex", gap: "4px" }}>
+													<button
+														className="provider-btn provider-btn-sm provider-btn-secondary"
+														onClick={() => onStartRename(pk.id, pk.name)}
+													>
+														Rename
+													</button>
+													<button
+														className="provider-btn provider-btn-sm provider-btn-danger"
+														onClick={() => onRemovePasskey(pk.id)}
+													>
+														Remove
+													</button>
+												</div>
+											</>
+										)}
 									</div>
 								))}
 							</div>
-							: <div className="text-xs text-[var(--muted)]" style={{ padding: "4px 0 12px" }}>No passkeys registered.</div>
-						}
+						) : (
+							<div className="text-xs text-[var(--muted)]" style={{ padding: "4px 0 12px" }}>
+								No passkeys registered.
+							</div>
+						)}
 						<div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-							<input type="text" className="provider-key-input" value={pkName}
+							<input
+								type="text"
+								className="provider-key-input"
+								value={pkName}
 								onInput={(e: Event) => setPkName((e.target as HTMLInputElement).value)}
-								placeholder="Passkey name (e.g. MacBook Touch ID)" style={{ flex: 1 }} />
-							<button type="button" className="provider-btn" onClick={onAddPasskey}>Add passkey</button>
+								placeholder="Passkey name (e.g. MacBook Touch ID)"
+								style={{ flex: 1 }}
+							/>
+							<button type="button" className="provider-btn" onClick={onAddPasskey}>
+								Add passkey
+							</button>
 						</div>
-						{pkMsg ? <div className="text-xs text-[var(--muted)]" style={{ marginTop: "6px" }}>{pkMsg}</div> : null}
+						{pkMsg ? (
+							<div className="text-xs text-[var(--muted)]" style={{ marginTop: "6px" }}>
+								{pkMsg}
+							</div>
+						) : null}
 					</>
-				}
+				)}
 			</div>
 
 			{/* API Keys */}
 			<div style={{ maxWidth: "600px", borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
-				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "4px" }}>API Keys</h3>
+				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "4px" }}>
+					API Keys
+				</h3>
 				<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: "0 0 12px" }}>
-					API keys authenticate external tools and scripts connecting to moltis over the WebSocket protocol. Pass the key as the <code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>api_key</code> field in the <code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>auth</code> object of the <code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>connect</code> handshake.
+					API keys authenticate external tools and scripts connecting to moltis over the WebSocket protocol. Pass the
+					key as the <code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>api_key</code> field in the{" "}
+					<code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>auth</code> object of the{" "}
+					<code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>connect</code> handshake.
 				</p>
-				{akLoading
-					? <div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
-					: <>
-						{akNew
-							? <div style={{ marginBottom: "12px", padding: "10px 12px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: "6px" }}>
-								<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>Copy this key now. It won't be shown again.</div>
-								<code style={{ fontFamily: "var(--font-mono)", fontSize: ".78rem", wordBreak: "break-all", color: "var(--text-strong)" }}>{akNew}</code>
+				{akLoading ? (
+					<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
+				) : (
+					<>
+						{akNew ? (
+							<div
+								style={{
+									marginBottom: "12px",
+									padding: "10px 12px",
+									background: "var(--bg)",
+									border: "1px solid var(--border)",
+									borderRadius: "6px",
+								}}
+							>
+								<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "4px" }}>
+									Copy this key now. It won't be shown again.
+								</div>
+								<code
+									style={{
+										fontFamily: "var(--font-mono)",
+										fontSize: ".78rem",
+										wordBreak: "break-all",
+										color: "var(--text-strong)",
+									}}
+								>
+									{akNew}
+								</code>
 							</div>
-							: null
-						}
-						{apiKeys.length > 0
-							? <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
+						) : null}
+						{apiKeys.length > 0 ? (
+							<div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "12px" }}>
 								{apiKeys.map((ak) => (
 									<div className="provider-item" style={{ marginBottom: 0 }} key={ak.id}>
 										<div style={{ flex: 1, minWidth: 0 }}>
-											<div className="provider-item-name" style={{ fontSize: ".85rem" }}>{ak.label}</div>
-											<div style={{ fontSize: ".7rem", color: "var(--muted)", marginTop: "2px", display: "flex", gap: "12px", flexWrap: "wrap" }}>
+											<div className="provider-item-name" style={{ fontSize: ".85rem" }}>
+												{ak.label}
+											</div>
+											<div
+												style={{
+													fontSize: ".7rem",
+													color: "var(--muted)",
+													marginTop: "2px",
+													display: "flex",
+													gap: "12px",
+													flexWrap: "wrap",
+												}}
+											>
 												<span style={{ fontFamily: "var(--font-mono)" }}>{ak.key_prefix}...</span>
-												<span><time dateTime={ak.created_at}>{ak.created_at}</time></span>
-												{ak.scopes ? <span style={{ color: "var(--accent)" }}>{ak.scopes.join(", ")}</span> : <span style={{ color: "var(--accent)" }}>Full access</span>}
+												<span>
+													<time dateTime={ak.created_at}>{ak.created_at}</time>
+												</span>
+												{ak.scopes ? (
+													<span style={{ color: "var(--accent)" }}>{ak.scopes.join(", ")}</span>
+												) : (
+													<span style={{ color: "var(--accent)" }}>Full access</span>
+												)}
 											</div>
 										</div>
-										<button className="provider-btn provider-btn-danger"
-											onClick={() => onRevokeApiKey(ak.id)}>Revoke</button>
+										<button className="provider-btn provider-btn-danger" onClick={() => onRevokeApiKey(ak.id)}>
+											Revoke
+										</button>
 									</div>
 								))}
 							</div>
-							: <div className="text-xs text-[var(--muted)]" style={{ padding: "4px 0 12px" }}>No API keys.</div>
-						}
+						) : (
+							<div className="text-xs text-[var(--muted)]" style={{ padding: "4px 0 12px" }}>
+								No API keys.
+							</div>
+						)}
 						<div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
 							<div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-								<input type="text" className="provider-key-input" value={akLabel}
+								<input
+									type="text"
+									className="provider-key-input"
+									value={akLabel}
 									onInput={(e: Event) => setAkLabel((e.target as HTMLInputElement).value)}
-									placeholder="Key label (e.g. CLI tool)" style={{ flex: 1 }} />
+									placeholder="Key label (e.g. CLI tool)"
+									style={{ flex: 1 }}
+								/>
 							</div>
 							<div>
 								<label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
-									<input type="checkbox" checked={akFullAccess}
+									<input
+										type="checkbox"
+										checked={akFullAccess}
 										onChange={() => {
 											setAkFullAccess(!akFullAccess);
 											rerender();
-										}} />
+										}}
+									/>
 									<span className="text-xs text-[var(--text)]">Full access (all permissions)</span>
 								</label>
 							</div>
-							{akFullAccess
-								? null
-								: <div style={{ paddingLeft: "20px", display: "flex", flexDirection: "column", gap: "6px" }}>
-									<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "2px" }}>Select permissions:</div>
+							{akFullAccess ? null : (
+								<div style={{ paddingLeft: "20px", display: "flex", flexDirection: "column", gap: "6px" }}>
+									<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "2px" }}>
+										Select permissions:
+									</div>
 									<label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
-										<input type="checkbox" checked={akScopes["operator.read"]}
-											onChange={() => toggleScope("operator.read")} />
+										<input
+											type="checkbox"
+											checked={akScopes["operator.read"]}
+											onChange={() => toggleScope("operator.read")}
+										/>
 										<span className="text-xs text-[var(--text)]">operator.read</span>
 										<span className="text-xs text-[var(--muted)]">{"\u2014"} View data and status</span>
 									</label>
 									<label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
-										<input type="checkbox" checked={akScopes["operator.write"]}
-											onChange={() => toggleScope("operator.write")} />
+										<input
+											type="checkbox"
+											checked={akScopes["operator.write"]}
+											onChange={() => toggleScope("operator.write")}
+										/>
 										<span className="text-xs text-[var(--text)]">operator.write</span>
 										<span className="text-xs text-[var(--muted)]">{"\u2014"} Create, update, delete</span>
 									</label>
 									<label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
-										<input type="checkbox" checked={akScopes["operator.approvals"]}
-											onChange={() => toggleScope("operator.approvals")} />
+										<input
+											type="checkbox"
+											checked={akScopes["operator.approvals"]}
+											onChange={() => toggleScope("operator.approvals")}
+										/>
 										<span className="text-xs text-[var(--text)]">operator.approvals</span>
 										<span className="text-xs text-[var(--muted)]">{"\u2014"} Handle exec approvals</span>
 									</label>
 									<label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
-										<input type="checkbox" checked={akScopes["operator.pairing"]}
-											onChange={() => toggleScope("operator.pairing")} />
+										<input
+											type="checkbox"
+											checked={akScopes["operator.pairing"]}
+											onChange={() => toggleScope("operator.pairing")}
+										/>
 										<span className="text-xs text-[var(--text)]">operator.pairing</span>
 										<span className="text-xs text-[var(--muted)]">{"\u2014"} Device/node pairing</span>
 									</label>
 								</div>
-							}
+							)}
 							<div>
-								<button type="button" className="provider-btn" onClick={onCreateApiKey}
-									disabled={!(akLabel.trim() && (akFullAccess || Object.values(akScopes).some((v) => v)))}>
+								<button
+									type="button"
+									className="provider-btn"
+									onClick={onCreateApiKey}
+									disabled={!(akLabel.trim() && (akFullAccess || Object.values(akScopes).some((v) => v)))}
+								>
 									Generate key
 								</button>
 							</div>
 						</div>
 					</>
-				}
+				)}
 			</div>
 
 			{/* Danger zone (only when auth has been set up) */}
-			{setupComplete
-				? <div style={{ maxWidth: "600px", marginTop: "8px", borderTop: "1px solid var(--error)", paddingTop: "16px" }}>
-					<h3 className="text-sm font-medium" style={{ color: "var(--error)", marginBottom: "8px" }}>Danger Zone</h3>
-					<div style={{ padding: "12px 16px", border: "1px solid var(--error)", borderRadius: "6px", background: "color-mix(in srgb, var(--error) 5%, transparent)" }}>
-						<strong className="text-sm" style={{ color: "var(--text-strong)" }}>Remove all authentication</strong>
+			{setupComplete ? (
+				<div style={{ maxWidth: "600px", marginTop: "8px", borderTop: "1px solid var(--error)", paddingTop: "16px" }}>
+					<h3 className="text-sm font-medium" style={{ color: "var(--error)", marginBottom: "8px" }}>
+						Danger Zone
+					</h3>
+					<div
+						style={{
+							padding: "12px 16px",
+							border: "1px solid var(--error)",
+							borderRadius: "6px",
+							background: "color-mix(in srgb, var(--error) 5%, transparent)",
+						}}
+					>
+						<strong className="text-sm" style={{ color: "var(--text-strong)" }}>
+							Remove all authentication
+						</strong>
 						<p className="text-xs text-[var(--muted)]" style={{ margin: "6px 0 0" }}>
-							If you know what you're doing, you can fully disable authentication.
-							Anyone with network access will be able to access moltis and your computer.
-							This removes your password, all passkeys, all API keys, and all sessions.
+							If you know what you're doing, you can fully disable authentication. Anyone with network access will be
+							able to access moltis and your computer. This removes your password, all passkeys, all API keys, and all
+							sessions.
 						</p>
-						{resetConfirm
-							? <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "10px" }}>
-								<span className="text-xs" style={{ color: "var(--error)" }}>Are you sure? This cannot be undone.</span>
-								<button type="button" className="provider-btn provider-btn-danger" disabled={resetBusy}
-									onClick={onResetAuth}>{resetBusy ? "Removing\u2026" : "Yes, remove all auth"}</button>
-								<button type="button" className="provider-btn" onClick={() => {
-									setResetConfirm(false);
-									rerender();
-								}}>Cancel</button>
+						{resetConfirm ? (
+							<div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "10px" }}>
+								<span className="text-xs" style={{ color: "var(--error)" }}>
+									Are you sure? This cannot be undone.
+								</span>
+								<button
+									type="button"
+									className="provider-btn provider-btn-danger"
+									disabled={resetBusy}
+									onClick={onResetAuth}
+								>
+									{resetBusy ? "Removing\u2026" : "Yes, remove all auth"}
+								</button>
+								<button
+									type="button"
+									className="provider-btn"
+									onClick={() => {
+										setResetConfirm(false);
+										rerender();
+									}}
+								>
+									Cancel
+								</button>
 							</div>
-							: <button type="button" className="provider-btn provider-btn-danger" style={{ marginTop: "10px" }}
-								onClick={onResetAuth}>Remove all authentication</button>
-						}
+						) : (
+							<button
+								type="button"
+								className="provider-btn provider-btn-danger"
+								style={{ marginTop: "10px" }}
+								onClick={onResetAuth}
+							>
+								Remove all authentication
+							</button>
+						)}
 					</div>
 				</div>
-				: ""
-			}
+			) : (
+				""
+			)}
 		</div>
 	);
 }
@@ -1801,10 +2240,15 @@ function VaultSection(): VNode {
 			<div style={{ maxWidth: "600px" }}>
 				<div className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3 mb-4">
 					<p className="text-xs text-[var(--muted)] leading-relaxed m-0 mb-1.5">
-						Your API keys and secrets are encrypted at rest using <strong className="text-[var(--text)]">XChaCha20-Poly1305</strong> AEAD with keys derived from your password via <strong className="text-[var(--text)]">Argon2id</strong>.
+						Your API keys and secrets are encrypted at rest using{" "}
+						<strong className="text-[var(--text)]">XChaCha20-Poly1305</strong> AEAD with keys derived from your password
+						via <strong className="text-[var(--text)]">Argon2id</strong>.
 					</p>
 					<p className="text-xs text-[var(--muted)] leading-relaxed m-0 mb-1.5">
-						The vault uses a two-layer key hierarchy: your password derives a Key Encryption Key (KEK) which unwraps a random 256-bit Data Encryption Key (DEK). Changing your password only re-wraps the DEK {"\u2014"} all encrypted data stays intact. A recovery key (shown once at setup) provides emergency access if you forget your password.
+						The vault uses a two-layer key hierarchy: your password derives a Key Encryption Key (KEK) which unwraps a
+						random 256-bit Data Encryption Key (DEK). Changing your password only re-wraps the DEK {"\u2014"} all
+						encrypted data stays intact. A recovery key (shown once at setup) provides emergency access if you forget
+						your password.
 					</p>
 					<p className="text-xs text-[var(--muted)] leading-relaxed m-0">
 						The vault locks automatically when the server restarts and unlocks when you log in.
@@ -1812,25 +2256,36 @@ function VaultSection(): VNode {
 				</div>
 
 				<div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
-					<span className={`provider-item-badge ${vaultStatus === "unsealed" ? "configured" : vaultStatus === "sealed" ? "warning" : "muted"}`}>
+					<span
+						className={`provider-item-badge ${vaultStatus === "unsealed" ? "configured" : vaultStatus === "sealed" ? "warning" : "muted"}`}
+					>
 						{vaultStatus === "unsealed" ? "Unlocked" : vaultStatus === "sealed" ? "Locked" : "Off"}
 					</span>
-					<span className="text-xs text-[var(--muted)]">{
-						vaultStatus === "unsealed"
+					<span className="text-xs text-[var(--muted)]">
+						{vaultStatus === "unsealed"
 							? "Your API keys and secrets are encrypted in the database. Everything is working."
 							: vaultStatus === "sealed"
 								? "Log in or unlock below to access your encrypted keys."
-								: "Set a password in Authentication settings to start encrypting your stored keys."
-					}</span>
+								: "Set a password in Authentication settings to start encrypting your stored keys."}
+					</span>
 				</div>
 
-				{vaultStatus === "sealed"
-					? <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+				{vaultStatus === "sealed" ? (
+					<div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
 						<form onSubmit={onUnlockPw} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
 							<div className="text-xs text-[var(--muted)]">Unlock with password</div>
 							<div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-								<input type="password" className="provider-key-input" style={{ flex: 1 }} value={unlockPw} onInput={(e: Event) => setUnlockPw((e.target as HTMLInputElement).value)} placeholder="Your password" />
-								<button type="submit" className="provider-btn" disabled={unlockingPw || !unlockPw.trim()}>{unlockingPw ? "Unlocking\u2026" : "Unlock"}</button>
+								<input
+									type="password"
+									className="provider-key-input"
+									style={{ flex: 1 }}
+									value={unlockPw}
+									onInput={(e: Event) => setUnlockPw((e.target as HTMLInputElement).value)}
+									placeholder="Your password"
+								/>
+								<button type="submit" className="provider-btn" disabled={unlockingPw || !unlockPw.trim()}>
+									{unlockingPw ? "Unlocking\u2026" : "Unlock"}
+								</button>
 							</div>
 						</form>
 						<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
@@ -1841,22 +2296,43 @@ function VaultSection(): VNode {
 						<form onSubmit={onUnlockRecovery} style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
 							<div className="text-xs text-[var(--muted)]">Unlock with recovery key</div>
 							<div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-								<input type="password" className="provider-key-input" style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: ".78rem" }} value={recoveryKey} onInput={(e: Event) => setRecoveryKey((e.target as HTMLInputElement).value)} placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" />
-								<button type="submit" className="provider-btn" disabled={unlockingRk || !recoveryKey.trim()}>{unlockingRk ? "Unlocking\u2026" : "Unlock"}</button>
+								<input
+									type="password"
+									className="provider-key-input"
+									style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: ".78rem" }}
+									value={recoveryKey}
+									onInput={(e: Event) => setRecoveryKey((e.target as HTMLInputElement).value)}
+									placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX"
+								/>
+								<button type="submit" className="provider-btn" disabled={unlockingRk || !recoveryKey.trim()}>
+									{unlockingRk ? "Unlocking\u2026" : "Unlock"}
+								</button>
 							</div>
 						</form>
-						{msg ? <div className="text-xs" style={{ color: "var(--accent)" }}>{msg}</div> : null}
-						{err ? <div className="text-xs" style={{ color: "var(--error)" }}>{err}</div> : null}
+						{msg ? (
+							<div className="text-xs" style={{ color: "var(--accent)" }}>
+								{msg}
+							</div>
+						) : null}
+						{err ? (
+							<div className="text-xs" style={{ color: "var(--error)" }}>
+								{err}
+							</div>
+						) : null}
 					</div>
-					: null
-				}
+				) : null}
 
-				{vaultStatus === "uninitialized"
-					? <div style={{ marginTop: "4px" }}>
-						<a href="/settings/security" className="provider-btn provider-btn-secondary" style={{ fontSize: ".75rem", textDecoration: "none", display: "inline-block" }}>Set a password</a>
+				{vaultStatus === "uninitialized" ? (
+					<div style={{ marginTop: "4px" }}>
+						<a
+							href="/settings/security"
+							className="provider-btn provider-btn-secondary"
+							style={{ fontSize: ".75rem", textDecoration: "none", display: "inline-block" }}
+						>
+							Set a password
+						</a>
 					</div>
-					: null
-				}
+				) : null}
 			</div>
 		</div>
 	);
@@ -1875,14 +2351,16 @@ function ToolsSection(): VNode {
 			.then((results) => {
 				const contextResult = results[0];
 				if (contextResult.status !== "fulfilled" || !(contextResult.value as RpcResponse)?.ok) {
-					const errValue = contextResult.status === "fulfilled" ? contextResult.value as RpcResponse : null;
+					const errValue = contextResult.status === "fulfilled" ? (contextResult.value as RpcResponse) : null;
 					throw new Error(errValue?.error?.message || "Failed to load tools overview.");
 				}
 				const nextToolData = ((contextResult.value as RpcResponse).payload || {}) as ToolsContextData;
 				const nodesResult = results[1];
 				const nextNodeInventory =
-					nodesResult.status === "fulfilled" && (nodesResult.value as RpcResponse)?.ok && Array.isArray((nodesResult.value as RpcResponse).payload)
-						? (nodesResult.value as RpcResponse).payload as NodeInventoryEntry[]
+					nodesResult.status === "fulfilled" &&
+					(nodesResult.value as RpcResponse)?.ok &&
+					Array.isArray((nodesResult.value as RpcResponse).payload)
+						? ((nodesResult.value as RpcResponse).payload as NodeInventoryEntry[])
 						: [];
 				setToolData(nextToolData);
 				setNodeInventory(nextNodeInventory);
@@ -1898,7 +2376,7 @@ function ToolsSection(): VNode {
 		loadToolsOverview();
 	}, []);
 
-	const data = toolData || {} as ToolsContextData;
+	const data = toolData || ({} as ToolsContextData);
 	const session = data.session || {};
 	const execution = data.execution || {};
 	const sandbox = data.sandbox || {};
@@ -1929,9 +2407,8 @@ function ToolsSection(): VNode {
 				<div className="min-w-0">
 					<h2 className="text-lg font-medium text-[var(--text-strong)]">Tools</h2>
 					<p className="text-xs text-[var(--muted)] mt-1 max-w-[900px] leading-relaxed">
-						This page shows the effective tool inventory for the active session and model. Change the
-						current LLM, disable MCP for a session, or switch execution routes and the inventory here will
-						change with it.
+						This page shows the effective tool inventory for the active session and model. Change the current LLM,
+						disable MCP for a session, or switch execution routes and the inventory here will change with it.
 					</p>
 				</div>
 				<button
@@ -1946,23 +2423,43 @@ function ToolsSection(): VNode {
 
 			<div className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[1100px]">
 				<div className="text-xs text-[var(--muted)] leading-relaxed">
-					Use this as the operator view of what the model can currently reach. For setup changes, jump straight
-					to the relevant control surface.
+					Use this as the operator view of what the model can currently reach. For setup changes, jump straight to the
+					relevant control surface.
 				</div>
 				<div className="mt-3 flex gap-2 flex-wrap">
-					<button type="button" className="provider-btn provider-btn-secondary" onClick={() => navigate(settingsPath("providers"))}>
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						onClick={() => navigate(settingsPath("providers"))}
+					>
 						LLMs
 					</button>
-					<button type="button" className="provider-btn provider-btn-secondary" onClick={() => navigate(settingsPath("mcp"))}>
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						onClick={() => navigate(settingsPath("mcp"))}
+					>
 						MCP
 					</button>
-					<button type="button" className="provider-btn provider-btn-secondary" onClick={() => navigate(settingsPath("skills"))}>
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						onClick={() => navigate(settingsPath("skills"))}
+					>
 						Skills
 					</button>
-					<button type="button" className="provider-btn provider-btn-secondary" onClick={() => navigate(settingsPath("nodes"))}>
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						onClick={() => navigate(settingsPath("nodes"))}
+					>
 						Nodes
 					</button>
-					<button type="button" className="provider-btn provider-btn-secondary" onClick={() => navigate(settingsPath("ssh"))}>
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						onClick={() => navigate(settingsPath("ssh"))}
+					>
 						SSH
 					</button>
 				</div>
@@ -1984,8 +2481,7 @@ function ToolsSection(): VNode {
 					<div className="text-xs text-[var(--muted)] mt-2 leading-relaxed">
 						{data.supportsTools === false
 							? "The current model is chat-only, so the agent cannot call tools in this session."
-							: "Built-in, MCP, and runtime-routed tools available to the active model."
-						}
+							: "Built-in, MCP, and runtime-routed tools available to the active model."}
 					</div>
 				</div>
 
@@ -2003,21 +2499,22 @@ function ToolsSection(): VNode {
 				<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
 					<div className="text-xs uppercase tracking-wide text-[var(--muted)]">MCP</div>
 					<div className="mt-2 flex items-center gap-2 flex-wrap">
-						<span className={`provider-item-badge ${
-							data.supportsTools === false || data.mcpDisabled
-								? "warning"
-								: runningMcpServers.length > 0
-									? "configured"
-									: "muted"
-						}`}>
+						<span
+							className={`provider-item-badge ${
+								data.supportsTools === false || data.mcpDisabled
+									? "warning"
+									: runningMcpServers.length > 0
+										? "configured"
+										: "muted"
+							}`}
+						>
 							{data.supportsTools === false
 								? "Unavailable"
 								: data.mcpDisabled
 									? "Off for session"
 									: runningMcpServers.length > 0
 										? "Active"
-										: "No running servers"
-							}
+										: "No running servers"}
 						</span>
 						<span className="text-sm font-medium text-[var(--text)]">
 							{pluralizeToolsCount(runningMcpToolCount, "MCP tool")}
@@ -2031,27 +2528,24 @@ function ToolsSection(): VNode {
 
 				<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
 					<div className="text-xs uppercase tracking-wide text-[var(--muted)]">Execution Routes</div>
-					<div className="mt-2 text-sm font-medium text-[var(--text)]">
-						{routeDetails.join(" \u00b7 ")}
-					</div>
+					<div className="mt-2 text-sm font-medium text-[var(--text)]">{routeDetails.join(" \u00b7 ")}</div>
 					<div className="text-xs text-[var(--muted)] mt-2 leading-relaxed">
 						{sandbox.enabled ? `Sandbox backend: ${sandbox.backend || "configured"}. ` : ""}
 						{execution.promptSymbol ? `Prompt symbol: ${execution.promptSymbol}. ` : ""}
-						The <code className="text-[var(--text)]">exec</code> tool uses these routes rather than exposing SSH as
-						a separate command runner.
+						The <code className="text-[var(--text)]">exec</code> tool uses these routes rather than exposing SSH as a
+						separate command runner.
 					</div>
 				</div>
 			</div>
 
-			{data.supportsTools === false
-				? <div className="rounded border border-[var(--warn)] bg-[var(--surface2)] p-3 max-w-[1100px]">
+			{data.supportsTools === false ? (
+				<div className="rounded border border-[var(--warn)] bg-[var(--surface2)] p-3 max-w-[1100px]">
 					<div className="text-xs text-[var(--muted)] leading-relaxed">
 						Tools are unavailable because the current model does not support tool calling. Switch to a tool-capable
 						model in <strong className="text-[var(--text)]">Settings {"\u2192"} LLMs</strong> and refresh this page.
 					</div>
 				</div>
-				: null
-			}
+			) : null}
 
 			<div className="grid gap-4 md:grid-cols-2 max-w-[1100px]">
 				<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -2059,8 +2553,8 @@ function ToolsSection(): VNode {
 						<h3 className="text-sm font-medium text-[var(--text-strong)] m-0">Registered Tools</h3>
 						<span className="provider-item-badge muted">{tools.length}</span>
 					</div>
-					{toolGroups.length > 0
-						? <div className="mt-3 flex flex-col gap-3">
+					{toolGroups.length > 0 ? (
+						<div className="mt-3 flex flex-col gap-3">
 							{toolGroups.map((group) => (
 								<div key={group.label}>
 									<div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-2">
@@ -2068,16 +2562,12 @@ function ToolsSection(): VNode {
 									</div>
 									<div className="flex flex-col gap-2">
 										{group.tools.map((tool) => (
-											<div
-												key={tool.name}
-												className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3"
-											>
+											<div key={tool.name} className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3">
 												<div className="flex items-center justify-between gap-2 flex-wrap">
 													<div className="text-xs font-medium text-[var(--text)] break-words">{tool.name}</div>
-													{tool.name?.startsWith("mcp__")
-														? <span className="provider-item-badge configured">MCP</span>
-														: null
-													}
+													{tool.name?.startsWith("mcp__") ? (
+														<span className="provider-item-badge configured">MCP</span>
+													) : null}
 												</div>
 												<div className="text-xs text-[var(--muted)] mt-1 leading-relaxed">
 													{tool.description || "No description provided."}
@@ -2088,10 +2578,9 @@ function ToolsSection(): VNode {
 								</div>
 							))}
 						</div>
-						: <div className="text-xs text-[var(--muted)] mt-3">
-							No tools are currently exposed to this session.
-						</div>
-					}
+					) : (
+						<div className="text-xs text-[var(--muted)] mt-3">No tools are currently exposed to this session.</div>
+					)}
 				</div>
 
 				<div className="flex flex-col gap-4">
@@ -2103,13 +2592,10 @@ function ToolsSection(): VNode {
 						<div className="text-xs text-[var(--muted)] mt-3 leading-relaxed">
 							{pluralizeToolsCount(personalSkillCount, "skill")}, {pluralizeToolsCount(pluginCount, "plugin")}.
 						</div>
-						{skills.length > 0
-							? <div className="mt-3 flex flex-col gap-2">
+						{skills.length > 0 ? (
+							<div className="mt-3 flex flex-col gap-2">
 								{skills.map((entry) => (
-									<div
-										key={entry.name}
-										className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3"
-									>
+									<div key={entry.name} className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3">
 										<div className="flex items-center justify-between gap-2 flex-wrap">
 											<div className="text-xs font-medium text-[var(--text)]">{entry.name}</div>
 											<span className={`provider-item-badge ${entry.source === "plugin" ? "configured" : "muted"}`}>
@@ -2122,8 +2608,9 @@ function ToolsSection(): VNode {
 									</div>
 								))}
 							</div>
-							: <div className="text-xs text-[var(--muted)] mt-3">No skills or plugins enabled.</div>
-						}
+						) : (
+							<div className="text-xs text-[var(--muted)] mt-3">No skills or plugins enabled.</div>
+						)}
 					</div>
 
 					<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
@@ -2131,13 +2618,10 @@ function ToolsSection(): VNode {
 							<h3 className="text-sm font-medium text-[var(--text-strong)] m-0">MCP Servers</h3>
 							<span className="provider-item-badge muted">{mcpServers.length}</span>
 						</div>
-						{mcpServers.length > 0
-							? <div className="mt-3 flex flex-col gap-2">
+						{mcpServers.length > 0 ? (
+							<div className="mt-3 flex flex-col gap-2">
 								{mcpServers.map((entry) => (
-									<div
-										key={entry.name}
-										className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3"
-									>
+									<div key={entry.name} className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3">
 										<div className="flex items-center justify-between gap-2 flex-wrap">
 											<div className="text-xs font-medium text-[var(--text)]">{entry.name}</div>
 											<span className={`provider-item-badge ${entry.state === "running" ? "configured" : "warning"}`}>
@@ -2150,8 +2634,9 @@ function ToolsSection(): VNode {
 									</div>
 								))}
 							</div>
-							: <div className="text-xs text-[var(--muted)] mt-3">No MCP servers configured.</div>
-						}
+						) : (
+							<div className="text-xs text-[var(--muted)] mt-3">No MCP servers configured.</div>
+						)}
 					</div>
 				</div>
 			</div>
@@ -2226,7 +2711,13 @@ function SshSection(): VNode {
 		fetchSshStatus();
 	}, []);
 
-	function runSshAction(actionKey: string, url: string, payload: Record<string, unknown> | null, successMessage: string, afterSuccess?: (data: unknown) => void | Promise<void>): Promise<void> {
+	function runSshAction(
+		actionKey: string,
+		url: string,
+		payload: Record<string, unknown> | null,
+		successMessage: string,
+		afterSuccess?: (data: unknown) => void | Promise<void>,
+	): Promise<void> {
 		clearFlash();
 		setBusyAction(actionKey);
 		rerender();
@@ -2533,9 +3024,9 @@ function SshSection(): VNode {
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">SSH</h2>
 			<div className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[760px]">
 				<p className="text-xs text-[var(--muted)] m-0 mb-1.5 leading-relaxed">
-					Manage outbound SSH keys and named remote exec targets. Generated deploy keys use <strong className="text-[var(--text)]">Ed25519</strong>,
-					the private half stays inside Moltis,
-					and the public half is shown so you can install it in <code className="text-[var(--text)]">authorized_keys</code>.
+					Manage outbound SSH keys and named remote exec targets. Generated deploy keys use{" "}
+					<strong className="text-[var(--text)]">Ed25519</strong>, the private half stays inside Moltis, and the public
+					half is shown so you can install it in <code className="text-[var(--text)]">authorized_keys</code>.
 				</p>
 				<p className="text-xs text-[var(--muted)] m-0 leading-relaxed">
 					Current auth path:
@@ -2544,8 +3035,7 @@ function SshSection(): VNode {
 							? " vault-backed managed keys are available"
 							: vaultStatus === "sealed"
 								? " vault is locked, managed keys cannot be used until unlocked"
-								: " system OpenSSH remains available, managed keys stay plaintext until the vault is enabled"
-						}
+								: " system OpenSSH remains available, managed keys stay plaintext until the vault is enabled"}
 					</strong>
 				</p>
 			</div>
@@ -2557,7 +3047,8 @@ function SshSection(): VNode {
 				<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
 					<h3 className="text-sm font-medium text-[var(--text-strong)] m-0 mb-2">Deploy Keys</h3>
 					<p className="text-xs text-[var(--muted)] m-0 mb-3">
-						Generate a new keypair for a host, or import an existing private key. Passphrase-protected imports are decrypted once and then stored under Moltis control.
+						Generate a new keypair for a host, or import an existing private key. Passphrase-protected imports are
+						decrypted once and then stored under Moltis control.
 					</p>
 					<div className="mb-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-xs text-[var(--muted)] leading-relaxed">
 						Recommended flow: generate one deploy key per remote host, copy the public key below, add it to that
@@ -2608,46 +3099,56 @@ function SshSection(): VNode {
 					</form>
 
 					<div className="mt-4 flex flex-col gap-2">
-						{loadingSsh
-							? <div className="text-xs text-[var(--muted)]">Loading keys{"\u2026"}</div>
-							: keys.length === 0
-								? <div className="text-xs text-[var(--muted)]">No managed SSH keys yet.</div>
-								: keys.map((entry) => (
-									<div className="provider-item items-start gap-4" key={entry.id}>
-										<div className="flex-1 min-w-0">
-											<div className="provider-item-name">{entry.name}</div>
-											<div className="text-xs text-[var(--muted)] break-all mt-1">
-												<span className="text-[var(--text)]">Fingerprint (SHA256):</span> {entry.fingerprint}
-											</div>
-											<div className="text-xs text-[var(--muted)] mt-1">
-												{entry.encrypted ? "Encrypted in vault" : "Stored plaintext until the vault is available"}
-												{(entry.target_count ?? 0) > 0 ? `, used by ${entry.target_count} target${entry.target_count === 1 ? "" : "s"}` : ""}
-											</div>
-											<pre className="mt-3 whitespace-pre-wrap break-all rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-[11px] leading-relaxed text-[var(--muted)]">{entry.public_key}</pre>
+						{loadingSsh ? (
+							<div className="text-xs text-[var(--muted)]">Loading keys{"\u2026"}</div>
+						) : keys.length === 0 ? (
+							<div className="text-xs text-[var(--muted)]">No managed SSH keys yet.</div>
+						) : (
+							keys.map((entry) => (
+								<div className="provider-item items-start gap-4" key={entry.id}>
+									<div className="flex-1 min-w-0">
+										<div className="provider-item-name">{entry.name}</div>
+										<div className="text-xs text-[var(--muted)] break-all mt-1">
+											<span className="text-[var(--text)]">Fingerprint (SHA256):</span> {entry.fingerprint}
 										</div>
-										<div className="flex flex-col gap-2 shrink-0 self-start">
-											<button type="button" className="provider-btn provider-btn-secondary" onClick={() => onCopyPublicKey(entry)}>
-												{copiedKeyId === entry.id ? "Copied" : "Copy Public Key"}
-											</button>
-											<button
-												type="button"
-												className="provider-btn provider-btn-danger"
-												onClick={() => onDeleteKey(entry.id)}
-												disabled={busyAction === `delete-key:${entry.id}` || (entry.target_count ?? 0) > 0}
-											>
-												{busyAction === `delete-key:${entry.id}` ? "Deleting\u2026" : "Delete"}
-											</button>
+										<div className="text-xs text-[var(--muted)] mt-1">
+											{entry.encrypted ? "Encrypted in vault" : "Stored plaintext until the vault is available"}
+											{(entry.target_count ?? 0) > 0
+												? `, used by ${entry.target_count} target${entry.target_count === 1 ? "" : "s"}`
+												: ""}
 										</div>
+										<pre className="mt-3 whitespace-pre-wrap break-all rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-[11px] leading-relaxed text-[var(--muted)]">
+											{entry.public_key}
+										</pre>
 									</div>
-								))
-						}
+									<div className="flex flex-col gap-2 shrink-0 self-start">
+										<button
+											type="button"
+											className="provider-btn provider-btn-secondary"
+											onClick={() => onCopyPublicKey(entry)}
+										>
+											{copiedKeyId === entry.id ? "Copied" : "Copy Public Key"}
+										</button>
+										<button
+											type="button"
+											className="provider-btn provider-btn-danger"
+											onClick={() => onDeleteKey(entry.id)}
+											disabled={busyAction === `delete-key:${entry.id}` || (entry.target_count ?? 0) > 0}
+										>
+											{busyAction === `delete-key:${entry.id}` ? "Deleting\u2026" : "Delete"}
+										</button>
+									</div>
+								</div>
+							))
+						)}
 					</div>
 				</div>
 
 				<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
 					<h3 className="text-sm font-medium text-[var(--text-strong)] m-0 mb-2">SSH Targets</h3>
 					<p className="text-xs text-[var(--muted)] m-0 mb-3">
-						Add named hosts for remote execution. Targets can use your system OpenSSH setup or one of the managed keys above.
+						Add named hosts for remote execution. Targets can use your system OpenSSH setup or one of the managed keys
+						above.
 					</p>
 					<form onSubmit={onCreateTarget} className="flex flex-col gap-2 mb-4">
 						<input
@@ -2690,7 +3191,8 @@ function SshSection(): VNode {
 							placeholder="Optional known_hosts line from ssh-keyscan -H host"
 						/>
 						<div className="text-xs text-[var(--muted)]">
-							If you paste a <code className="text-[var(--text)]">known_hosts</code> line here, Moltis will use strict host-key checking for this target instead of trusting your global SSH config.
+							If you paste a <code className="text-[var(--text)]">known_hosts</code> line here, Moltis will use strict
+							host-key checking for this target instead of trusting your global SSH config.
 						</div>
 						<button
 							type="button"
@@ -2700,25 +3202,32 @@ function SshSection(): VNode {
 						>
 							{busyAction === "scan-create-target" ? "Scanning\u2026" : "Scan Host Key"}
 						</button>
-						{targetAuthMode === "managed"
-							? <select
+						{targetAuthMode === "managed" ? (
+							<select
 								className="provider-key-input"
 								value={targetKeyId}
 								onInput={(e: Event) => setTargetKeyId((e.target as HTMLSelectElement).value)}
 							>
 								<option value="">Choose a managed key</option>
-								{keys.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
+								{keys.map((entry) => (
+									<option key={entry.id} value={entry.id}>
+										{entry.name}
+									</option>
+								))}
 							</select>
-							: null
-						}
-						{targetAuthMode === "managed" && keys.length === 0
-							? <div className="text-xs text-[var(--muted)]">
-								Generate or import a deploy key first. Moltis cannot connect with a managed target until a private key exists.
+						) : null}
+						{targetAuthMode === "managed" && keys.length === 0 ? (
+							<div className="text-xs text-[var(--muted)]">
+								Generate or import a deploy key first. Moltis cannot connect with a managed target until a private key
+								exists.
 							</div>
-							: null
-						}
+						) : null}
 						<label className="text-xs text-[var(--muted)] flex items-center gap-2">
-							<input type="checkbox" checked={targetIsDefault} onInput={(e: Event) => setTargetIsDefault((e.target as HTMLInputElement).checked)} />
+							<input
+								type="checkbox"
+								checked={targetIsDefault}
+								onInput={(e: Event) => setTargetIsDefault((e.target as HTMLInputElement).checked)}
+							/>
 							Set as default remote SSH target
 						</label>
 						<button
@@ -2731,74 +3240,101 @@ function SshSection(): VNode {
 					</form>
 
 					<div className="flex flex-col gap-2">
-						{loadingSsh
-							? <div className="text-xs text-[var(--muted)]">Loading targets{"\u2026"}</div>
-							: targets.length === 0
-								? <div className="text-xs text-[var(--muted)]">No SSH targets configured.</div>
-								: targets.map((entry) => (
-									<div className="provider-item" key={entry.id}>
-										<div className="flex-1 min-w-0">
-											<div className="provider-item-name flex items-center gap-2 flex-wrap">
-												<span>{entry.label}</span>
-												{entry.is_default ? <span className="provider-item-badge configured">Default</span> : null}
-												<span className="provider-item-badge muted">{entry.auth_mode === "managed" ? "Managed key" : "System SSH"}</span>
-												{entry.known_host ? <span className="provider-item-badge configured">Host pinned</span> : <span className="provider-item-badge warning">Uses global known_hosts</span>}
-											</div>
-											<div className="text-xs text-[var(--muted)] break-all">
-												{entry.target}{entry.port ? `:${entry.port}` : ""}
-											</div>
-											<div className="text-xs text-[var(--muted)]">
-												{entry.key_name ? `Key: ${entry.key_name}` : "Uses your local ssh config / agent"}
-											</div>
-											{testResults[entry.id]
-												? <div className="mt-1">
-													<div className={`text-xs ${testResults[entry.id].reachable ? "text-[var(--accent)]" : "text-[var(--error)]"}`}>
-														{testResults[entry.id].reachable ? "Reachable" : "Unreachable"}
-													</div>
-													{testResults[entry.id].failure_hint
-														? <div className="text-xs text-[var(--text-muted)] mt-1">
-															Hint: {testResults[entry.id].failure_hint}
-														</div>
-														: null
-													}
-												</div>
-												: null
-											}
+						{loadingSsh ? (
+							<div className="text-xs text-[var(--muted)]">Loading targets{"\u2026"}</div>
+						) : targets.length === 0 ? (
+							<div className="text-xs text-[var(--muted)]">No SSH targets configured.</div>
+						) : (
+							targets.map((entry) => (
+								<div className="provider-item" key={entry.id}>
+									<div className="flex-1 min-w-0">
+										<div className="provider-item-name flex items-center gap-2 flex-wrap">
+											<span>{entry.label}</span>
+											{entry.is_default ? <span className="provider-item-badge configured">Default</span> : null}
+											<span className="provider-item-badge muted">
+												{entry.auth_mode === "managed" ? "Managed key" : "System SSH"}
+											</span>
+											{entry.known_host ? (
+												<span className="provider-item-badge configured">Host pinned</span>
+											) : (
+												<span className="provider-item-badge warning">Uses global known_hosts</span>
+											)}
 										</div>
-										<div className="flex flex-col gap-2">
-											<button type="button" className="provider-btn provider-btn-secondary" onClick={() => onTestTarget(entry.id)} disabled={busyAction === `test-target:${entry.id}`}>
-												{busyAction === `test-target:${entry.id}` ? "Testing\u2026" : "Test"}
-											</button>
+										<div className="text-xs text-[var(--muted)] break-all">
+											{entry.target}
+											{entry.port ? `:${entry.port}` : ""}
+										</div>
+										<div className="text-xs text-[var(--muted)]">
+											{entry.key_name ? `Key: ${entry.key_name}` : "Uses your local ssh config / agent"}
+										</div>
+										{testResults[entry.id] ? (
+											<div className="mt-1">
+												<div
+													className={`text-xs ${testResults[entry.id].reachable ? "text-[var(--accent)]" : "text-[var(--error)]"}`}
+												>
+													{testResults[entry.id].reachable ? "Reachable" : "Unreachable"}
+												</div>
+												{testResults[entry.id].failure_hint ? (
+													<div className="text-xs text-[var(--text-muted)] mt-1">
+														Hint: {testResults[entry.id].failure_hint}
+													</div>
+												) : null}
+											</div>
+										) : null}
+									</div>
+									<div className="flex flex-col gap-2">
+										<button
+											type="button"
+											className="provider-btn provider-btn-secondary"
+											onClick={() => onTestTarget(entry.id)}
+											disabled={busyAction === `test-target:${entry.id}`}
+										>
+											{busyAction === `test-target:${entry.id}` ? "Testing\u2026" : "Test"}
+										</button>
+										<button
+											type="button"
+											className="provider-btn provider-btn-secondary"
+											onClick={() => onScanAndPinTarget(entry)}
+											disabled={busyAction === `pin-target:${entry.id}`}
+										>
+											{busyAction === `pin-target:${entry.id}`
+												? "Scanning\u2026"
+												: entry.known_host
+													? "Refresh Pin"
+													: "Scan & Pin"}
+										</button>
+										{entry.known_host ? (
 											<button
 												type="button"
 												className="provider-btn provider-btn-secondary"
-												onClick={() => onScanAndPinTarget(entry)}
-												disabled={busyAction === `pin-target:${entry.id}`}
+												onClick={() => onClearTargetPin(entry)}
+												disabled={busyAction === `clear-pin:${entry.id}`}
 											>
-												{busyAction === `pin-target:${entry.id}` ? "Scanning\u2026" : entry.known_host ? "Refresh Pin" : "Scan & Pin"}
+												{busyAction === `clear-pin:${entry.id}` ? "Clearing\u2026" : "Clear Pin"}
 											</button>
-											{entry.known_host
-												? <button
-													type="button"
-													className="provider-btn provider-btn-secondary"
-													onClick={() => onClearTargetPin(entry)}
-													disabled={busyAction === `clear-pin:${entry.id}`}
-												>
-													{busyAction === `clear-pin:${entry.id}` ? "Clearing\u2026" : "Clear Pin"}
-												</button>
-												: null
-											}
-											{entry.is_default
-												? null
-												: <button type="button" className="provider-btn provider-btn-secondary" onClick={() => onSetDefaultTarget(entry.id)} disabled={busyAction === `default-target:${entry.id}`}>Make Default</button>
-											}
-											<button type="button" className="provider-btn provider-btn-danger" onClick={() => onDeleteTarget(entry.id)} disabled={busyAction === `delete-target:${entry.id}`}>
-												{busyAction === `delete-target:${entry.id}` ? "Deleting\u2026" : "Delete"}
+										) : null}
+										{entry.is_default ? null : (
+											<button
+												type="button"
+												className="provider-btn provider-btn-secondary"
+												onClick={() => onSetDefaultTarget(entry.id)}
+												disabled={busyAction === `default-target:${entry.id}`}
+											>
+												Make Default
 											</button>
-										</div>
+										)}
+										<button
+											type="button"
+											className="provider-btn provider-btn-danger"
+											onClick={() => onDeleteTarget(entry.id)}
+											disabled={busyAction === `delete-target:${entry.id}`}
+										>
+											{busyAction === `delete-target:${entry.id}` ? "Deleting\u2026" : "Delete"}
+										</button>
 									</div>
-								))
-						}
+								</div>
+							))
+						)}
 					</div>
 				</div>
 			</div>
@@ -2945,8 +3481,18 @@ function OpenClawImportSection(): VNode {
 
 	const categories = [
 		{ key: "identity", label: "Identity", available: scan.identity_available, detail: undefined as string | undefined },
-		{ key: "providers", label: "Providers", available: scan.providers_available, detail: undefined as string | undefined },
-		{ key: "skills", label: "Skills", available: (scan.skills_count || 0) > 0, detail: `${scan.skills_count} skill(s)` },
+		{
+			key: "providers",
+			label: "Providers",
+			available: scan.providers_available,
+			detail: undefined as string | undefined,
+		},
+		{
+			key: "skills",
+			label: "Skills",
+			available: (scan.skills_count || 0) > 0,
+			detail: `${scan.skills_count} skill(s)`,
+		},
 		{
 			key: "memory",
 			label: "Memory",
@@ -2972,39 +3518,56 @@ function OpenClawImportSection(): VNode {
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
-				Import data from your OpenClaw installation at <code className="text-[var(--text)]">{scan.home_dir}</code>.
-				This is a read-only copy {"\u2014"} your OpenClaw files will not be modified or removed.
-				You can keep using both side by side and re-import whenever you like.
+				Import data from your OpenClaw installation at <code className="text-[var(--text)]">{scan.home_dir}</code>. This
+				is a read-only copy {"\u2014"} your OpenClaw files will not be modified or removed. You can keep using both side
+				by side and re-import whenever you like.
 			</p>
-			{error
-				? <div role="alert" className="alert-error-text whitespace-pre-line" style={{ maxWidth: "600px" }}>
+			{error ? (
+				<div role="alert" className="alert-error-text whitespace-pre-line" style={{ maxWidth: "600px" }}>
 					<span className="text-[var(--error)] font-medium">Error:</span> {error}
 				</div>
-				: null
-			}
-			{done && result
-				? <div className="flex flex-col gap-2" style={{ maxWidth: "600px" }}>
-					<div className="text-sm font-medium text-[var(--ok)]">Import complete: {(result.categories || []).reduce((sum, cat) => sum + (Number(cat.items_imported) || 0), 0)} item(s) imported.</div>
-					{result.categories
-						? <div className="flex flex-col gap-1">
+			) : null}
+			{done && result ? (
+				<div className="flex flex-col gap-2" style={{ maxWidth: "600px" }}>
+					<div className="text-sm font-medium text-[var(--ok)]">
+						Import complete:{" "}
+						{(result.categories || []).reduce((sum, cat) => sum + (Number(cat.items_imported) || 0), 0)} item(s)
+						imported.
+					</div>
+					{result.categories ? (
+						<div className="flex flex-col gap-1">
 							{result.categories.map((cat) => (
 								<div key={cat.category} className="text-xs text-[var(--text)]">
-									<span className="font-mono">[{cat.status === "success" ? "\u2713" : cat.status === "partial" ? "~" : cat.status === "skipped" ? "-" : "!"}]</span>
-									{" "}{cat.category}: {cat.items_imported} imported, {cat.items_skipped} skipped
+									<span className="font-mono">
+										[
+										{cat.status === "success"
+											? "\u2713"
+											: cat.status === "partial"
+												? "~"
+												: cat.status === "skipped"
+													? "-"
+													: "!"}
+										]
+									</span>{" "}
+									{cat.category}: {cat.items_imported} imported, {cat.items_skipped} skipped
 								</div>
 							))}
 						</div>
-						: null
-					}
-					<button className="provider-btn provider-btn-secondary mt-2" style={{ width: "fit-content" }} onClick={() => {
-						setDone(false);
-						setResult(null);
-						rerender();
-					}}>
+					) : null}
+					<button
+						className="provider-btn provider-btn-secondary mt-2"
+						style={{ width: "fit-content" }}
+						onClick={() => {
+							setDone(false);
+							setResult(null);
+							rerender();
+						}}
+					>
 						Import Again
 					</button>
 				</div>
-				: <div className="flex flex-col gap-2" style={{ maxWidth: "400px" }}>
+			) : (
+				<div className="flex flex-col gap-2" style={{ maxWidth: "400px" }}>
 					{categories.map((cat) => (
 						<label
 							key={cat.key}
@@ -3022,15 +3585,14 @@ function OpenClawImportSection(): VNode {
 						</label>
 					))}
 				</div>
-			}
-			{!done && unsupportedChannels.length > 0
-				? <p className="text-xs text-[var(--muted)]" style={{ maxWidth: "600px" }}>
+			)}
+			{!done && unsupportedChannels.length > 0 ? (
+				<p className="text-xs text-[var(--muted)]" style={{ maxWidth: "600px" }}>
 					Unsupported channels (coming soon): {unsupportedChannels.join(", ")}
 				</p>
-				: null
-			}
-			{!done
-				? <button
+			) : null}
+			{done ? null : (
+				<button
 					className="provider-btn mt-2"
 					style={{ width: "fit-content" }}
 					onClick={doImport}
@@ -3038,8 +3600,7 @@ function OpenClawImportSection(): VNode {
 				>
 					{importing ? "Importing\u2026" : "Import Selected"}
 				</button>
-				: null
-			}
+			)}
 		</div>
 	);
 }
@@ -3141,23 +3702,28 @@ function GraphqlSection(): VNode {
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<div style={{ maxWidth: "900px", padding: "12px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--surface)" }}>
+			<div
+				style={{
+					maxWidth: "900px",
+					padding: "12px 14px",
+					borderRadius: "8px",
+					border: "1px solid var(--border)",
+					background: "var(--surface)",
+				}}
+			>
 				<div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
 					<div>
 						<div className="text-sm font-medium text-[var(--text-strong)]">GraphQL server</div>
-						{enabled
-							? <div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px" }}>
+						{enabled ? (
+							<div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px" }}>
 								<div>
-									HTTP endpoint:{" "}
-									<code>{httpEndpoint}</code>
+									HTTP endpoint: <code>{httpEndpoint}</code>
 								</div>
 								<div style={{ marginTop: "2px" }}>
-									WebSocket endpoint:{" "}
-									<code>{wsEndpoint}</code>
+									WebSocket endpoint: <code>{wsEndpoint}</code>
 								</div>
 							</div>
-							: null
-						}
+						) : null}
 					</div>
 					<label id="graphqlToggleSwitch" className="toggle-switch">
 						<input
@@ -3170,13 +3736,25 @@ function GraphqlSection(): VNode {
 						<span className="toggle-slider" />
 					</label>
 				</div>
-				{saving ? <div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px" }}>Applying...</div> : null}
-				{msg ? <div className="text-xs text-[var(--ok)]" style={{ marginTop: "8px" }}>{msg}</div> : null}
-				{err ? <div className="text-xs text-[var(--error)]" style={{ marginTop: "8px" }}>{err}</div> : null}
+				{saving ? (
+					<div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px" }}>
+						Applying...
+					</div>
+				) : null}
+				{msg ? (
+					<div className="text-xs text-[var(--ok)]" style={{ marginTop: "8px" }}>
+						{msg}
+					</div>
+				) : null}
+				{err ? (
+					<div className="text-xs text-[var(--error)]" style={{ marginTop: "8px" }}>
+						{err}
+					</div>
+				) : null}
 			</div>
 
-			{enabled
-				? <div className="flex-1 min-h-0 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)]">
+			{enabled ? (
+				<div className="flex-1 min-h-0 overflow-hidden rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)]">
 					<iframe
 						src="/graphql"
 						className="h-full w-full border-0"
@@ -3184,8 +3762,7 @@ function GraphqlSection(): VNode {
 						allow="clipboard-write"
 					/>
 				</div>
-				: null
-			}
+			) : null}
 		</div>
 	);
 }
@@ -3438,22 +4015,37 @@ function ConfigSection(): VNode {
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "700px", margin: 0 }}>
 				Edit the full moltis configuration. This includes server, tools, LLM providers, auth, and all other settings.
 				Test your changes before saving. Changes require a restart to take effect.{" "}
-				<a href="https://docs.moltis.org/configuration.html" target="_blank" rel="noopener"
-					style={{ color: "var(--accent)", textDecoration: "underline" }}>View documentation {"\u2197"}</a>
+				<a
+					href="https://docs.moltis.org/configuration.html"
+					target="_blank"
+					rel="noopener"
+					style={{ color: "var(--accent)", textDecoration: "underline" }}
+				>
+					View documentation {"\u2197"}
+				</a>
 			</p>
-			{configPath
-				? <div className="text-xs text-[var(--muted)]" style={{ fontFamily: "var(--font-mono)" }}>
+			{configPath ? (
+				<div className="text-xs text-[var(--muted)]" style={{ fontFamily: "var(--font-mono)" }}>
 					<span style={{ opacity: 0.7 }}>File:</span> {configPath}
 				</div>
-				: null
-			}
+			) : null}
 
 			<form onSubmit={onSave} style={{ maxWidth: "800px" }}>
 				<div style={{ marginBottom: "12px" }}>
 					<textarea
 						className="provider-key-input"
 						rows={20}
-						style={{ width: "100%", minHeight: "320px", resize: "vertical", fontFamily: "var(--font-mono)", fontSize: ".78rem", lineHeight: 1.5, whiteSpace: "pre", overflowWrap: "normal", overflowX: "auto" }}
+						style={{
+							width: "100%",
+							minHeight: "320px",
+							resize: "vertical",
+							fontFamily: "var(--font-mono)",
+							fontSize: ".78rem",
+							lineHeight: 1.5,
+							whiteSpace: "pre",
+							overflowWrap: "normal",
+							overflowX: "auto",
+						}}
 						value={toml}
 						onInput={(e: Event) => {
 							setToml((e.target as HTMLTextAreaElement).value);
@@ -3465,43 +4057,90 @@ function ConfigSection(): VNode {
 					/>
 				</div>
 
-				{warnings.length > 0
-					? <div style={{ marginBottom: "12px", padding: "10px 12px", background: "color-mix(in srgb, orange 10%, transparent)", border: "1px solid orange", borderRadius: "6px" }}>
-						<div className="text-xs font-medium" style={{ color: "orange", marginBottom: "6px" }}>Warnings:</div>
+				{warnings.length > 0 ? (
+					<div
+						style={{
+							marginBottom: "12px",
+							padding: "10px 12px",
+							background: "color-mix(in srgb, orange 10%, transparent)",
+							border: "1px solid orange",
+							borderRadius: "6px",
+						}}
+					>
+						<div className="text-xs font-medium" style={{ color: "orange", marginBottom: "6px" }}>
+							Warnings:
+						</div>
 						<ul style={{ margin: 0, paddingLeft: "16px" }}>
-							{warnings.map((w, i) => <li key={i} className="text-xs text-[var(--muted)]" style={{ margin: "4px 0" }}>{w}</li>)}
+							{warnings.map((w, i) => (
+								<li key={i} className="text-xs text-[var(--muted)]" style={{ margin: "4px 0" }}>
+									{w}
+								</li>
+							))}
 						</ul>
 					</div>
-					: null
-				}
+				) : null}
 
 				<div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-					<button type="button" className="provider-btn provider-btn-secondary" onClick={onTest} disabled={testing || saving || resettingTemplate || restarting}>
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						onClick={onTest}
+						disabled={testing || saving || resettingTemplate || restarting}
+					>
 						{testing ? "Testing\u2026" : "Test"}
 					</button>
-					<button type="button" className="provider-btn provider-btn-secondary" onClick={onReset} disabled={saving || testing || resettingTemplate || restarting}>
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						onClick={onReset}
+						disabled={saving || testing || resettingTemplate || restarting}
+					>
 						Reload
 					</button>
-					<button type="button" className="provider-btn provider-btn-secondary" onClick={onResetToTemplate} disabled={saving || testing || resettingTemplate || restarting}>
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						onClick={onResetToTemplate}
+						disabled={saving || testing || resettingTemplate || restarting}
+					>
 						{resettingTemplate ? "Resetting\u2026" : "Reset to defaults"}
 					</button>
-					<button type="button" className="provider-btn provider-btn-danger" onClick={onRestart} disabled={saving || testing || resettingTemplate || restarting}>
+					<button
+						type="button"
+						className="provider-btn provider-btn-danger"
+						onClick={onRestart}
+						disabled={saving || testing || resettingTemplate || restarting}
+					>
 						{restarting ? "Restarting\u2026" : "Restart"}
 					</button>
 					<div style={{ flex: 1 }} />
-					<button type="submit" className="provider-btn" disabled={saving || testing || resettingTemplate || restarting}>
+					<button
+						type="submit"
+						className="provider-btn"
+						disabled={saving || testing || resettingTemplate || restarting}
+					>
 						{saving ? "Saving\u2026" : "Save"}
 					</button>
 				</div>
 
-				{msg ? <div className="text-xs" style={{ marginTop: "8px", color: "var(--accent)" }}>{msg}</div> : null}
-				{err ? <div className="text-xs" style={{ marginTop: "8px", color: "var(--error)", whiteSpace: "pre-wrap", fontFamily: "var(--font-mono)" }}>{err}</div> : null}
-				{restarting
-					? <div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px" }}>
+				{msg ? (
+					<div className="text-xs" style={{ marginTop: "8px", color: "var(--accent)" }}>
+						{msg}
+					</div>
+				) : null}
+				{err ? (
+					<div
+						className="text-xs"
+						style={{ marginTop: "8px", color: "var(--error)", whiteSpace: "pre-wrap", fontFamily: "var(--font-mono)" }}
+					>
+						{err}
+					</div>
+				) : null}
+				{restarting ? (
+					<div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px" }}>
 						The page will reload automatically when the server is back up.
 					</div>
-					: null
-				}
+				) : null}
 			</form>
 
 			<div style={{ maxWidth: "800px", marginTop: "8px", paddingTop: "16px", borderTop: "1px solid var(--border)" }}>
@@ -3521,17 +4160,13 @@ function renderLinkedText(text: string): (string | VNode)[] {
 		.split(/(https?:\/\/[^\s]+)/g)
 		.filter(Boolean)
 		.map((part, index) =>
-			/^https?:\/\//.test(part)
-				? <a
-					key={index}
-					href={part}
-					target="_blank"
-					rel="noopener"
-					className="underline break-all"
-				>
+			/^https?:\/\//.test(part) ? (
+				<a key={index} href={part} target="_blank" rel="noopener" className="underline break-all">
 					{part}
 				</a>
-				: part,
+			) : (
+				part
+			),
 		);
 }
 
@@ -3820,67 +4455,59 @@ function RemoteAccessSection(): VNode {
 				<div className="flex flex-col gap-1">
 					<h3 className="text-base font-medium text-[var(--text-strong)]">Tailscale</h3>
 					<p className="text-xs text-[var(--muted)] leading-relaxed">
-						Expose the gateway via Tailscale Serve (tailnet-only HTTPS) or Funnel (public HTTPS). The
-						gateway stays bound to localhost while Tailscale proxies traffic to it.
+						Expose the gateway via Tailscale Serve (tailnet-only HTTPS) or Funnel (public HTTPS). The gateway stays
+						bound to localhost while Tailscale proxies traffic to it.
 					</p>
 				</div>
 
-				{tsLoading
-					? <div className="text-xs text-[var(--muted)]">Loading{"\u2026"} this can take a few seconds.</div>
-					: null
-				}
-				{tsStatus?.installed
-					? <div className="info-bar">
+				{tsLoading ? (
+					<div className="text-xs text-[var(--muted)]">Loading{"\u2026"} this can take a few seconds.</div>
+				) : null}
+				{tsStatus?.installed ? (
+					<div className="info-bar">
 						<span className="info-field">
 							<span className="status-dot connected" />
 							<span className="info-label">Installed</span>
 							{tsStatus.version ? <span className="info-version">v{tsStatus.version.split("-")[0]}</span> : null}
 						</span>
-						{tsStatus.tailnet
-							? <span className="info-field">
+						{tsStatus.tailnet ? (
+							<span className="info-field">
 								<span className="info-label">Tailnet:</span>
 								<span className="info-value-strong">{tsStatus.tailnet}</span>
 							</span>
-							: null
-						}
-						{tsStatus.login_name
-							? <span className="info-field">
+						) : null}
+						{tsStatus.login_name ? (
+							<span className="info-field">
 								<span className="info-label">Account:</span>
 								<span className="info-value">{tsStatus.login_name}</span>
 							</span>
-							: null
-						}
-						{tsStatus.tailscale_ip
-							? <span className="info-field">
+						) : null}
+						{tsStatus.tailscale_ip ? (
+							<span className="info-field">
 								<span className="info-label">IP:</span>
 								<span className="info-value-mono">{tsStatus.tailscale_ip}</span>
 							</span>
-							: null
-						}
+						) : null}
 					</div>
-					: null
-				}
-				{tsError
-					? <div className="settings-alert-error whitespace-pre-line max-w-form">
+				) : null}
+				{tsError ? (
+					<div className="settings-alert-error whitespace-pre-line max-w-form">
 						<span className="icon icon-lg icon-warn-triangle shrink-0 mt-0.5" />
 						<span>{renderLinkedText(tsError)}</span>
 					</div>
-					: null
-				}
-				{tsVaultBlocked
-					? <button
-						type="button"
-						className="provider-btn self-start"
-						onClick={() => navigate(settingsPath("vault"))}
-					>
+				) : null}
+				{tsVaultBlocked ? (
+					<button type="button" className="provider-btn self-start" onClick={() => navigate(settingsPath("vault"))}>
 						Unlock in Encryption settings
 					</button>
-					: null
-				}
+				) : null}
 				{tsWarning ? <div className="alert-warning-text max-w-form">{tsWarning}</div> : null}
 
-				{tsStatus?.installed === false
-					? <div className="info-bar" style={{ justifyContent: "center", flexDirection: "column", gap: "12px", textAlign: "center" }}>
+				{tsStatus?.installed === false ? (
+					<div
+						className="info-bar"
+						style={{ justifyContent: "center", flexDirection: "column", gap: "12px", textAlign: "center" }}
+					>
 						<p className="text-sm text-[var(--text)]">
 							The <code className="font-mono text-sm">tailscale</code> CLI was not found on this machine.
 						</p>
@@ -3899,45 +4526,39 @@ function RemoteAccessSection(): VNode {
 							</button>
 						</div>
 					</div>
-					: null
-				}
+				) : null}
 
-				{!tsLoading && tsStatus?.installed !== false
-					? <div className="flex flex-col gap-4">
-						{tsStatus?.tailscale_up === false
-							? <div className="alert-warning-text max-w-form">
-								<span className="alert-label-warn">Warning:</span>
-								{" "}Tailscale is not running. Start it with <code className="font-mono">tailscale up</code> or
-								open the Tailscale app.
+				{!tsLoading && tsStatus?.installed !== false ? (
+					<div className="flex flex-col gap-4">
+						{tsStatus?.tailscale_up === false ? (
+							<div className="alert-warning-text max-w-form">
+								<span className="alert-label-warn">Warning:</span> Tailscale is not running. Start it with{" "}
+								<code className="font-mono">tailscale up</code> or open the Tailscale app.
 							</div>
-							: null
-						}
+						) : null}
 
 						<div className="max-w-form flex flex-col gap-2">
 							<h4 className="text-sm font-medium text-[var(--text-strong)]">Mode</h4>
 							<div className="flex gap-2 flex-wrap">
 								{(["off", "serve", "funnel"] as const).map((mode) => renderTailscaleModeButton(mode, currentMode))}
 							</div>
-							{configuring
-								? <div className="text-xs text-[var(--muted)]">
-									Configuring tailscale {configuringMode}{"\u2026"} This can take up to 10 seconds.
+							{configuring ? (
+								<div className="text-xs text-[var(--muted)]">
+									Configuring tailscale {configuringMode}
+									{"\u2026"} This can take up to 10 seconds.
 								</div>
-								: null
-							}
+							) : null}
 						</div>
 
 						<div className="alert-warning-text max-w-form">
-							<span className="alert-label-warn">Warning:</span>{" "}
-							Enabling Funnel exposes moltis to the public internet. This code has not been security-audited.
-							Use at your own risk.
+							<span className="alert-label-warn">Warning:</span> Enabling Funnel exposes moltis to the public internet.
+							This code has not been security-audited. Use at your own risk.
 						</div>
-						{authReady
-							? null
-							: <div className="flex flex-col gap-2 max-w-form">
+						{authReady ? null : (
+							<div className="flex flex-col gap-2 max-w-form">
 								<div className="alert-warning-text">
-									<span className="alert-label-warn">Warning:</span>
-									{" "}Funnel can be enabled now, but remote visitors will see the setup-required page until
-									authentication is configured.
+									<span className="alert-label-warn">Warning:</span> Funnel can be enabled now, but remote visitors will
+									see the setup-required page until authentication is configured.
 								</div>
 								<button
 									type="button"
@@ -3947,13 +4568,13 @@ function RemoteAccessSection(): VNode {
 									Set up authentication
 								</button>
 							</div>
-						}
+						)}
 
-						{tsStatus?.hostname
-							? <div className="max-w-form">
+						{tsStatus?.hostname ? (
+							<div className="max-w-form">
 								<h4 className="text-sm font-medium text-[var(--text-strong)] mb-1">Hostname</h4>
-								{tsStatus.url && currentMode !== "off"
-									? <a
+								{tsStatus.url && currentMode !== "off" ? (
+									<a
 										href={tsStatus.url}
 										target="_blank"
 										rel="noopener"
@@ -3961,13 +4582,13 @@ function RemoteAccessSection(): VNode {
 									>
 										{tsStatus.hostname}
 									</a>
-									: <div className="font-mono text-sm">{tsStatus.hostname}</div>
-								}
+								) : (
+									<div className="font-mono text-sm">{tsStatus.hostname}</div>
+								)}
 							</div>
-							: null
-						}
-						{tsStatus?.url && currentMode !== "off"
-							? <div className="max-w-form">
+						) : null}
+						{tsStatus?.url && currentMode !== "off" ? (
+							<div className="max-w-form">
 								<h4 className="text-sm font-medium text-[var(--text-strong)] mb-1">URL</h4>
 								<a
 									href={tsStatus.url}
@@ -3978,19 +4599,15 @@ function RemoteAccessSection(): VNode {
 									{tsStatus.url}
 								</a>
 							</div>
-							: null
-						}
-						{currentMode === "funnel"
-							? <div className="alert-warning-text max-w-form">
-								<span className="alert-label-warn">Warning:</span>
-								{" "}Funnel exposes your gateway to the public internet. Make sure password authentication is
-								configured.
+						) : null}
+						{currentMode === "funnel" ? (
+							<div className="alert-warning-text max-w-form">
+								<span className="alert-label-warn">Warning:</span> Funnel exposes your gateway to the public internet.
+								Make sure password authentication is configured.
 							</div>
-							: null
-						}
+						) : null}
 					</div>
-					: null
-				}
+				) : null}
 			</section>
 		);
 	}
@@ -4009,36 +4626,27 @@ function RemoteAccessSection(): VNode {
 				<div className="flex flex-col gap-1">
 					<h3 className="text-base font-medium text-[var(--text-strong)]">ngrok</h3>
 					<p className="text-xs text-[var(--muted)] leading-relaxed">
-						Create a public HTTPS endpoint without installing an external binary. Changes apply
-						immediately.
+						Create a public HTTPS endpoint without installing an external binary. Changes apply immediately.
 					</p>
 				</div>
 
-				{ngLoading
-					? <div className="text-xs text-[var(--muted)]">Loading{"\u2026"} this can take a few seconds.</div>
-					: null
-				}
-				{ngError
-					? <div className="settings-alert-error whitespace-pre-line max-w-form">
+				{ngLoading ? (
+					<div className="text-xs text-[var(--muted)]">Loading{"\u2026"} this can take a few seconds.</div>
+				) : null}
+				{ngError ? (
+					<div className="settings-alert-error whitespace-pre-line max-w-form">
 						<span className="icon icon-lg icon-warn-triangle shrink-0 mt-0.5" />
 						<span>{renderLinkedText(ngError)}</span>
 					</div>
-					: null
-				}
-				{ngVaultBlocked
-					? <button
-						type="button"
-						className="provider-btn self-start"
-						onClick={() => navigate(settingsPath("vault"))}
-					>
+				) : null}
+				{ngVaultBlocked ? (
+					<button type="button" className="provider-btn self-start" onClick={() => navigate(settingsPath("vault"))}>
 						Unlock in Encryption settings
 					</button>
-					: null
-				}
+				) : null}
 
-				{ngLoading || ngError
-					? null
-					: <form className="flex flex-col gap-4" onSubmit={saveNgrokConfig}>
+				{ngLoading || ngError ? null : (
+					<form className="flex flex-col gap-4" onSubmit={saveNgrokConfig}>
 						<div className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2.5 flex items-center justify-between gap-3">
 							<div>
 								<div className="text-sm font-medium text-[var(--text-strong)]">
@@ -4048,12 +4656,7 @@ function RemoteAccessSection(): VNode {
 									Public HTTPS endpoint for demos, shared testing, and team access.
 								</div>
 							</div>
-							<button
-								type="button"
-								className="provider-btn"
-								disabled={ngSaving}
-								onClick={toggleNgrokEnabled}
-							>
+							<button type="button" className="provider-btn" disabled={ngSaving} onClick={toggleNgrokEnabled}>
 								{ngSaving ? "Saving\u2026" : ngForm.enabled ? "Disable ngrok" : "Enable ngrok"}
 							</button>
 						</div>
@@ -4066,7 +4669,9 @@ function RemoteAccessSection(): VNode {
 								id="ngrok-authtoken"
 								type="password"
 								className="w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--text)]"
-								placeholder={ngStatus?.authtoken_source ? "Leave blank to keep the current token" : "Paste your ngrok authtoken"}
+								placeholder={
+									ngStatus?.authtoken_source ? "Leave blank to keep the current token" : "Paste your ngrok authtoken"
+								}
 								value={ngForm.authtoken}
 								onInput={(e: Event) => setNgForm({ ...ngForm, authtoken: (e.currentTarget as HTMLInputElement).value })}
 							/>
@@ -4080,10 +4685,11 @@ function RemoteAccessSection(): VNode {
 									className="text-[var(--accent)] no-underline hover:underline"
 								>
 									ngrok dashboard
-								</a>.
+								</a>
+								.
 							</div>
-							{ngStatus?.authtoken_source === "config"
-								? <div className="flex flex-col gap-1">
+							{ngStatus?.authtoken_source === "config" ? (
+								<div className="flex flex-col gap-1">
 									<button
 										type="button"
 										className="text-xs text-[var(--accent)] self-start bg-transparent border-0 p-0 cursor-pointer hover:underline"
@@ -4091,15 +4697,13 @@ function RemoteAccessSection(): VNode {
 									>
 										{ngForm.clearAuthtoken ? "Keep current token" : "Delete current token"}
 									</button>
-									{ngForm.clearAuthtoken
-										? <div className="text-xs text-[var(--muted)]">
+									{ngForm.clearAuthtoken ? (
+										<div className="text-xs text-[var(--muted)]">
 											The saved config token will be deleted when you save.
 										</div>
-										: null
-									}
+									) : null}
 								</div>
-								: null
-							}
+							) : null}
 						</div>
 
 						<div className="flex flex-col gap-1">
@@ -4119,8 +4723,8 @@ function RemoteAccessSection(): VNode {
 							</div>
 						</div>
 
-						{ngStatus?.public_url
-							? <div className="flex flex-col gap-1">
+						{ngStatus?.public_url ? (
+							<div className="flex flex-col gap-1">
 								<h4 className="text-sm font-medium text-[var(--text-strong)]">Active public URL</h4>
 								<a
 									href={ngStatus.public_url}
@@ -4131,20 +4735,16 @@ function RemoteAccessSection(): VNode {
 									{ngStatus.public_url}
 								</a>
 							</div>
-							: null
-						}
-						{ngStatus?.passkey_warning
-							? <div className="alert-warning-text max-w-form">{ngStatus.passkey_warning}</div>
-							: null
-						}
-						{ngForm.enabled && !authReady
-							? <div className="alert-warning-text max-w-form">
-								<span className="alert-label-warn">Warning:</span>{" "}
-								ngrok can be enabled now, but remote visitors will see the setup-required
-								page until authentication is configured.
+						) : null}
+						{ngStatus?.passkey_warning ? (
+							<div className="alert-warning-text max-w-form">{ngStatus.passkey_warning}</div>
+						) : null}
+						{ngForm.enabled && !authReady ? (
+							<div className="alert-warning-text max-w-form">
+								<span className="alert-label-warn">Warning:</span> ngrok can be enabled now, but remote visitors will
+								see the setup-required page until authentication is configured.
 							</div>
-							: null
-						}
+						) : null}
 						{ngMsg ? <div className="text-xs text-[var(--ok)]">{ngMsg}</div> : null}
 
 						<div className="flex flex-wrap gap-2">
@@ -4153,7 +4753,7 @@ function RemoteAccessSection(): VNode {
 							</button>
 						</div>
 					</form>
-				}
+				)}
 			</section>
 		);
 	}
@@ -4162,9 +4762,8 @@ function RemoteAccessSection(): VNode {
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">Remote Access</h2>
 			<p className="text-xs text-[var(--muted)] leading-relaxed max-w-[60rem]" style={{ margin: 0 }}>
-				Choose how moltis is exposed beyond localhost. Tailscale is the safer default for tailnet access and
-				optional public Funnel, while ngrok gives you a managed public HTTPS URL for teams, demos, and shared
-				endpoints.
+				Choose how moltis is exposed beyond localhost. Tailscale is the safer default for tailnet access and optional
+				public Funnel, while ngrok gives you a managed public HTTPS URL for teams, demos, and shared endpoints.
 			</p>
 			<div className="flex flex-col gap-4">
 				{renderTailscaleCard()}
@@ -4347,12 +4946,7 @@ function VoiceSection(): VNode {
 					// Decode base64 audio and play it
 					const bytes = decodeBase64Safe(payload.audio);
 					const audioMime = payload.mimeType || payload.content_type || "audio/mpeg";
-					console.log(
-						"[TTS] audio received: %d bytes, mime=%s, format=%s",
-						bytes.length,
-						audioMime,
-						payload.format,
-					);
+					console.log("[TTS] audio received: %d bytes, mime=%s, format=%s", bytes.length, audioMime, payload.format);
 					const blob = new Blob([bytes as BlobPart], { type: audioMime });
 					const url = URL.createObjectURL(blob);
 					const audio = new Audio(url);
@@ -4410,7 +5004,12 @@ function VoiceSection(): VNode {
 						const resp = await transcribeAudio(S.activeSessionKey, providerId, audioBlob);
 						console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
 						if (resp.ok) {
-							const sttRes = await resp.json() as { ok?: boolean; transcription?: { text?: string }; transcriptionError?: string; error?: string };
+							const sttRes = (await resp.json()) as {
+								ok?: boolean;
+								transcription?: { text?: string };
+								transcriptionError?: string;
+								error?: string;
+							};
 
 							if (sttRes.ok && typeof sttRes.transcription?.text === "string") {
 								const transcriptText = sttRes.transcription.text.trim();
@@ -4474,7 +5073,8 @@ function VoiceSection(): VNode {
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">Voice</h2>
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
-				Configure text-to-speech (TTS) and speech-to-text (STT) providers. STT lets you use the microphone button in chat to record voice input. TTS lets you hear responses as audio.
+				Configure text-to-speech (TTS) and speech-to-text (STT) providers. STT lets you use the microphone button in
+				chat to record voice input. TTS lets you hear responses as audio.
 			</p>
 
 			{voiceMsg ? <div className="text-xs text-[var(--accent)]">{voiceMsg}</div> : null}
@@ -4562,7 +5162,17 @@ interface VoiceProviderRowProps {
 	onTest: () => void;
 }
 
-function VoiceProviderRow({ provider, meta, type, saving, testState, testResult, onToggle, onConfigure, onTest }: VoiceProviderRowProps): VNode {
+function VoiceProviderRow({
+	provider,
+	meta,
+	type,
+	saving,
+	testState,
+	testResult,
+	onToggle,
+	onConfigure,
+	onTest,
+}: VoiceProviderRowProps): VNode {
 	const canEnable = provider.available;
 	const keySourceLabel =
 		provider.keySource === "env" ? "(from env)" : provider.keySource === "llm_provider" ? "(from LLM provider)" : "";
@@ -4584,7 +5194,10 @@ function VoiceProviderRow({ provider, meta, type, saving, testState, testResult,
 	}
 
 	return (
-		<div className="provider-card" style={{ padding: "10px 14px", borderRadius: "8px", display: "flex", alignItems: "center", gap: "12px" }}>
+		<div
+			className="provider-card"
+			style={{ padding: "10px 14px", borderRadius: "8px", display: "flex", alignItems: "center", gap: "12px" }}
+		>
 			<div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "2px" }}>
 				<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
 					<span className="text-sm text-[var(--text-strong)]">{meta.name}</span>
@@ -4592,46 +5205,52 @@ function VoiceProviderRow({ provider, meta, type, saving, testState, testResult,
 					{keySourceLabel ? <span className="text-xs text-[var(--muted)]">{keySourceLabel}</span> : null}
 				</div>
 				<span className="text-xs text-[var(--muted)]">{meta.description}</span>
-				{provider.settingsSummary ? <span className="text-xs text-[var(--muted)]">Voice: {provider.settingsSummary}</span> : null}
-				{provider.binaryPath ? <span className="text-xs text-[var(--muted)]">Found at: {provider.binaryPath}</span> : null}
-				{!canEnable && provider.statusMessage ? <span className="text-xs text-[var(--muted)]">{provider.statusMessage}</span> : null}
-				{testState?.phase === "recording"
-					? <div className="voice-recording-hint">
+				{provider.settingsSummary ? (
+					<span className="text-xs text-[var(--muted)]">Voice: {provider.settingsSummary}</span>
+				) : null}
+				{provider.binaryPath ? (
+					<span className="text-xs text-[var(--muted)]">Found at: {provider.binaryPath}</span>
+				) : null}
+				{!canEnable && provider.statusMessage ? (
+					<span className="text-xs text-[var(--muted)]">{provider.statusMessage}</span>
+				) : null}
+				{testState?.phase === "recording" ? (
+					<div className="voice-recording-hint">
 						<span className="voice-recording-dot" />
 						<span>Speak now, then click Stop when finished</span>
 					</div>
-					: null
-				}
-				{testState?.phase === "transcribing" ? <span className="text-xs text-[var(--muted)]">Transcribing...</span> : null}
-				{testState?.phase === "testing" && type === "tts" ? <span className="text-xs text-[var(--muted)]">Playing audio...</span> : null}
-				{testResult?.text
-					? <div className="voice-transcription-result">
+				) : null}
+				{testState?.phase === "transcribing" ? (
+					<span className="text-xs text-[var(--muted)]">Transcribing...</span>
+				) : null}
+				{testState?.phase === "testing" && type === "tts" ? (
+					<span className="text-xs text-[var(--muted)]">Playing audio...</span>
+				) : null}
+				{testResult?.text ? (
+					<div className="voice-transcription-result">
 						<span className="voice-transcription-label">Transcribed:</span>
 						<span className="voice-transcription-text">"{testResult.text}"</span>
 					</div>
-					: null
-				}
-				{testResult?.success === true
-					? <div className="voice-success-result">
+				) : null}
+				{testResult?.success === true ? (
+					<div className="voice-success-result">
 						<span className="icon icon-md icon-check-circle" />
 						<span>Audio played successfully</span>
 					</div>
-					: null
-				}
-				{testResult?.error
-					? <div className="voice-error-result">
+				) : null}
+				{testResult?.error ? (
+					<div className="voice-error-result">
 						<span className="icon icon-md icon-x-circle" />
 						<span>{testResult.error}</span>
 					</div>
-					: null
-				}
+				) : null}
 			</div>
 			<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
 				<button className="provider-btn provider-btn-secondary provider-btn-sm" onClick={onConfigure}>
 					Configure
 				</button>
-				{showTestBtn
-					? <button
+				{showTestBtn ? (
+					<button
 						className="provider-btn provider-btn-secondary provider-btn-sm"
 						onClick={onTest}
 						disabled={buttonDisabled}
@@ -4639,20 +5258,20 @@ function VoiceProviderRow({ provider, meta, type, saving, testState, testResult,
 					>
 						{buttonText}
 					</button>
-					: null
-				}
-				{canEnable
-					? <label className="toggle-switch">
-						<input type="checkbox"
+				) : null}
+				{canEnable ? (
+					<label className="toggle-switch">
+						<input
+							type="checkbox"
 							checked={provider.enabled}
 							disabled={saving}
-							onChange={(e: Event) => onToggle((e.target as HTMLInputElement).checked)} />
+							onChange={(e: Event) => onToggle((e.target as HTMLInputElement).checked)}
+						/>
 						<span className="toggle-slider" />
 					</label>
-					: provider.category === "local"
-						? <span className="text-xs text-[var(--muted)]">Install required</span>
-						: null
-				}
+				) : provider.category === "local" ? (
+					<span className="text-xs text-[var(--muted)]">Install required</span>
+				) : null}
 			</div>
 		</div>
 	);
@@ -4749,7 +5368,11 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }: 
 	const [voiceValue, setVoiceValue] = useState("");
 	const [modelValue, setModelValue] = useState("");
 	const [languageCodeValue, setLanguageCodeValue] = useState("");
-	const [elevenlabsCatalog, setElevenlabsCatalog] = useState<ElevenlabsCatalog>({ voices: [], models: [], warning: null });
+	const [elevenlabsCatalog, setElevenlabsCatalog] = useState<ElevenlabsCatalog>({
+		voices: [],
+		models: [],
+		warning: null,
+	});
 	const [elevenlabsCatalogLoading, setElevenlabsCatalogLoading] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState("");
@@ -4844,7 +5467,11 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }: 
 		sendRpc("voice.elevenlabs.catalog", {})
 			.then((res: RpcResponse) => {
 				if (res?.ok) {
-					const payload = res.payload as { voices?: { id: string; name: string }[]; models?: { id: string; name: string }[]; warning?: string };
+					const payload = res.payload as {
+						voices?: { id: string; name: string }[];
+						models?: { id: string; name: string }[];
+						warning?: string;
+					};
 					setElevenlabsCatalog({
 						voices: payload?.voices || [],
 						models: payload?.models || [],
@@ -4877,95 +5504,164 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }: 
 						<div className="mb-3 text-xs text-[var(--muted)]">{providerMeta.description}</div>
 
 						<label className="text-xs text-[var(--muted)]">API Key</label>
-						<input type="password" className="provider-key-input w-full"
-							value={apiKey} onInput={(e: Event) => setApiKey((e.target as HTMLInputElement).value)}
-							placeholder={providerMeta.keyPlaceholder || "Leave blank to keep existing key"} />
-						{providerMeta.keyUrl
-							? <div className="text-xs text-[var(--muted)]">
-								Get your API key at <a href={providerMeta.keyUrl} target="_blank" rel="noopener" className="hover:underline text-[var(--accent)]">{providerMeta.keyUrlLabel}</a>
+						<input
+							type="password"
+							className="provider-key-input w-full"
+							value={apiKey}
+							onInput={(e: Event) => setApiKey((e.target as HTMLInputElement).value)}
+							placeholder={providerMeta.keyPlaceholder || "Leave blank to keep existing key"}
+						/>
+						{providerMeta.keyUrl ? (
+							<div className="text-xs text-[var(--muted)]">
+								Get your API key at{" "}
+								<a
+									href={providerMeta.keyUrl}
+									target="_blank"
+									rel="noopener"
+									className="hover:underline text-[var(--accent)]"
+								>
+									{providerMeta.keyUrlLabel}
+								</a>
 							</div>
-							: null
-						}
+						) : null}
 
-						{supportsBaseUrl
-							? <div className="mt-2 flex flex-col gap-2">
+						{supportsBaseUrl ? (
+							<div className="mt-2 flex flex-col gap-2">
 								<label className="text-xs text-[var(--muted)]">Base URL</label>
-								<input type="text" className="provider-key-input w-full"
+								<input
+									type="text"
+									className="provider-key-input w-full"
 									data-field="baseUrl"
-									value={baseUrlValue} onInput={(e: Event) => setBaseUrlValue((e.target as HTMLInputElement).value)}
-									placeholder="http://localhost:8000/v1" />
+									value={baseUrlValue}
+									onInput={(e: Event) => setBaseUrlValue((e.target as HTMLInputElement).value)}
+									placeholder="http://localhost:8000/v1"
+								/>
 								<div className="text-xs text-[var(--muted)]">
-									Use this for a local or OpenAI-compatible server. Leave the API key blank if your endpoint does not require one.
+									Use this for a local or OpenAI-compatible server. Leave the API key blank if your endpoint does not
+									require one.
 								</div>
 							</div>
-							: null
-						}
+						) : null}
 
-						{supportsTtsVoiceSettings
-							? <div className="flex flex-col gap-2">
+						{supportsTtsVoiceSettings ? (
+							<div className="flex flex-col gap-2">
 								<label className="text-xs text-[var(--muted)]">Voice</label>
-								{isElevenLabsProvider && elevenlabsCatalogLoading ? <div className="text-xs text-[var(--muted)]">Loading ElevenLabs voices...</div> : null}
-								{isElevenLabsProvider && elevenlabsCatalog.warning ? <div className="text-xs text-[var(--muted)]">{elevenlabsCatalog.warning}</div> : null}
-								{isElevenLabsProvider && elevenlabsCatalog.voices.length > 0
-									? <select className="provider-key-input w-full" onChange={(e: Event) => setVoiceValue((e.target as HTMLSelectElement).value)}>
+								{isElevenLabsProvider && elevenlabsCatalogLoading ? (
+									<div className="text-xs text-[var(--muted)]">Loading ElevenLabs voices...</div>
+								) : null}
+								{isElevenLabsProvider && elevenlabsCatalog.warning ? (
+									<div className="text-xs text-[var(--muted)]">{elevenlabsCatalog.warning}</div>
+								) : null}
+								{isElevenLabsProvider && elevenlabsCatalog.voices.length > 0 ? (
+									<select
+										className="provider-key-input w-full"
+										onChange={(e: Event) => setVoiceValue((e.target as HTMLSelectElement).value)}
+									>
 										<option value="">Pick a voice from your account...</option>
-										{elevenlabsCatalog.voices.map((v) => <option key={v.id} value={v.id}>{v.name} ({v.id})</option>)}
+										{elevenlabsCatalog.voices.map((v) => (
+											<option key={v.id} value={v.id}>
+												{v.name} ({v.id})
+											</option>
+										))}
 									</select>
-									: null
-								}
-								<input type="text" className="provider-key-input w-full"
-									value={voiceValue} onInput={(e: Event) => setVoiceValue((e.target as HTMLInputElement).value)}
+								) : null}
+								<input
+									type="text"
+									className="provider-key-input w-full"
+									value={voiceValue}
+									onInput={(e: Event) => setVoiceValue((e.target as HTMLInputElement).value)}
 									list={isElevenLabsProvider ? "elevenlabs-voice-options" : undefined}
-									placeholder="voice id / name (optional)" />
-								{isElevenLabsProvider
-									? <datalist id="elevenlabs-voice-options">
-										{elevenlabsCatalog.voices.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+									placeholder="voice id / name (optional)"
+								/>
+								{isElevenLabsProvider ? (
+									<datalist id="elevenlabs-voice-options">
+										{elevenlabsCatalog.voices.map((v) => (
+											<option key={v.id} value={v.id}>
+												{v.name}
+											</option>
+										))}
 									</datalist>
-									: null
-								}
+								) : null}
 
 								<label className="text-xs text-[var(--muted)]">Model</label>
-								{isElevenLabsProvider && elevenlabsCatalog.models.length > 0
-									? <select className="provider-key-input w-full" onChange={(e: Event) => setModelValue((e.target as HTMLSelectElement).value)}>
+								{isElevenLabsProvider && elevenlabsCatalog.models.length > 0 ? (
+									<select
+										className="provider-key-input w-full"
+										onChange={(e: Event) => setModelValue((e.target as HTMLSelectElement).value)}
+									>
 										<option value="">Pick a model...</option>
-										{elevenlabsCatalog.models.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.id})</option>)}
+										{elevenlabsCatalog.models.map((m) => (
+											<option key={m.id} value={m.id}>
+												{m.name} ({m.id})
+											</option>
+										))}
 									</select>
-									: null
-								}
-								<input type="text" className="provider-key-input w-full"
-									value={modelValue} onInput={(e: Event) => setModelValue((e.target as HTMLInputElement).value)}
+								) : null}
+								<input
+									type="text"
+									className="provider-key-input w-full"
+									value={modelValue}
+									onInput={(e: Event) => setModelValue((e.target as HTMLInputElement).value)}
 									list={isElevenLabsProvider ? "elevenlabs-model-options" : undefined}
-									placeholder="model (optional)" />
-								{isElevenLabsProvider
-									? <datalist id="elevenlabs-model-options">
-										{elevenlabsCatalog.models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+									placeholder="model (optional)"
+								/>
+								{isElevenLabsProvider ? (
+									<datalist id="elevenlabs-model-options">
+										{elevenlabsCatalog.models.map((m) => (
+											<option key={m.id} value={m.id}>
+												{m.name}
+											</option>
+										))}
 									</datalist>
-									: null
-								}
+								) : null}
 
-								{selectedProvider === "google" || selectedProvider === "google-tts"
-									? <div className="flex flex-col gap-2">
+								{selectedProvider === "google" || selectedProvider === "google-tts" ? (
+									<div className="flex flex-col gap-2">
 										<label className="text-xs text-[var(--muted)]">Language Code</label>
-										<input type="text" className="provider-key-input w-full"
-											value={languageCodeValue} onInput={(e: Event) => setLanguageCodeValue((e.target as HTMLInputElement).value)}
-											placeholder="en-US (optional)" />
+										<input
+											type="text"
+											className="provider-key-input w-full"
+											value={languageCodeValue}
+											onInput={(e: Event) => setLanguageCodeValue((e.target as HTMLInputElement).value)}
+											placeholder="en-US (optional)"
+										/>
 									</div>
-									: null
-								}
+								) : null}
 							</div>
-							: null
-						}
+						) : null}
 
-						{providerMeta.hint ? <div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px", padding: "8px", background: "var(--surface-alt)", borderRadius: "4px", fontStyle: "italic" }}>{providerMeta.hint}</div> : null}
+						{providerMeta.hint ? (
+							<div
+								className="text-xs text-[var(--muted)]"
+								style={{
+									marginTop: "8px",
+									padding: "8px",
+									background: "var(--surface-alt)",
+									borderRadius: "4px",
+									fontStyle: "italic",
+								}}
+							>
+								{providerMeta.hint}
+							</div>
+						) : null}
 
-						{error ? <div className="text-xs" style={{ color: "var(--error)" }}>{error}</div> : null}
+						{error ? (
+							<div className="text-xs" style={{ color: "var(--error)" }}>
+								{error}
+							</div>
+						) : null}
 
 						<div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-							<button className="provider-btn provider-btn-secondary" onClick={() => {
-								voiceSelectedProvider.value = null;
-								setApiKey("");
-								setError("");
-							}}>Back</button>
+							<button
+								className="provider-btn provider-btn-secondary"
+								onClick={() => {
+									voiceSelectedProvider.value = null;
+									setApiKey("");
+									setError("");
+								}}
+							>
+								Back
+							</button>
 							<button className="provider-btn" disabled={saving} onClick={onSaveKey}>
 								{saving ? "Saving\u2026" : "Save"}
 							</button>
@@ -4981,12 +5677,19 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }: 
 				<Modal show={voiceShowAddModal.value} onClose={onClose} title={`Add ${providerMeta.name}`}>
 					<div className="channel-form">
 						<div className="text-sm text-[var(--text-strong)]">{providerMeta.name}</div>
-						<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "12px" }}>{providerMeta.description}</div>
+						<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "12px" }}>
+							{providerMeta.description}
+						</div>
 						<LocalProviderInstructions providerId={selectedProvider} voxtralReqs={voxtralReqs} />
 						<div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-							<button className="provider-btn provider-btn-secondary" onClick={() => {
-								voiceSelectedProvider.value = null;
-							}}>Back</button>
+							<button
+								className="provider-btn provider-btn-secondary"
+								onClick={() => {
+									voiceSelectedProvider.value = null;
+								}}
+							>
+								Back
+							</button>
 						</div>
 					</div>
 				</Modal>
@@ -4998,13 +5701,29 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }: 
 	return (
 		<Modal show={voiceShowAddModal.value} onClose={onClose} title="Add Voice Provider">
 			<div className="channel-form" style={{ gap: "16px" }}>
-				{sttCloud.length > 0
-					? <div>
-						<h4 className="text-xs font-medium text-[var(--muted)]" style={{ margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Speech-to-Text (Cloud)</h4>
+				{sttCloud.length > 0 ? (
+					<div>
+						<h4
+							className="text-xs font-medium text-[var(--muted)]"
+							style={{ margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.5px" }}
+						>
+							Speech-to-Text (Cloud)
+						</h4>
 						<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
 							{sttCloud.map((p) => (
-								<button key={p.id} className="provider-card" style={{ padding: "10px 12px", borderRadius: "6px", cursor: "pointer", textAlign: "left", border: "1px solid var(--border)", background: "var(--surface)" }}
-									onClick={() => onSelectProvider(p.id)}>
+								<button
+									key={p.id}
+									className="provider-card"
+									style={{
+										padding: "10px 12px",
+										borderRadius: "6px",
+										cursor: "pointer",
+										textAlign: "left",
+										border: "1px solid var(--border)",
+										background: "var(--surface)",
+									}}
+									onClick={() => onSelectProvider(p.id)}
+								>
 									<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
 										<div style={{ flex: 1 }}>
 											<div className="text-sm text-[var(--text-strong)]">{p.name}</div>
@@ -5016,16 +5735,31 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }: 
 							))}
 						</div>
 					</div>
-					: null
-				}
+				) : null}
 
-				{sttLocal.length > 0
-					? <div>
-						<h4 className="text-xs font-medium text-[var(--muted)]" style={{ margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Speech-to-Text (Local)</h4>
+				{sttLocal.length > 0 ? (
+					<div>
+						<h4
+							className="text-xs font-medium text-[var(--muted)]"
+							style={{ margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.5px" }}
+						>
+							Speech-to-Text (Local)
+						</h4>
 						<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
 							{sttLocal.map((p) => (
-								<button key={p.id} className="provider-card" style={{ padding: "10px 12px", borderRadius: "6px", cursor: "pointer", textAlign: "left", border: "1px solid var(--border)", background: "var(--surface)" }}
-									onClick={() => onSelectProvider(p.id)}>
+								<button
+									key={p.id}
+									className="provider-card"
+									style={{
+										padding: "10px 12px",
+										borderRadius: "6px",
+										cursor: "pointer",
+										textAlign: "left",
+										border: "1px solid var(--border)",
+										background: "var(--surface)",
+									}}
+									onClick={() => onSelectProvider(p.id)}
+								>
 									<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
 										<div style={{ flex: 1 }}>
 											<div className="text-sm text-[var(--text-strong)]">{p.name}</div>
@@ -5037,16 +5771,31 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }: 
 							))}
 						</div>
 					</div>
-					: null
-				}
+				) : null}
 
-				{ttsProviders.length > 0
-					? <div>
-						<h4 className="text-xs font-medium text-[var(--muted)]" style={{ margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>Text-to-Speech</h4>
+				{ttsProviders.length > 0 ? (
+					<div>
+						<h4
+							className="text-xs font-medium text-[var(--muted)]"
+							style={{ margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.5px" }}
+						>
+							Text-to-Speech
+						</h4>
 						<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
 							{ttsProviders.map((p) => (
-								<button key={p.id} className="provider-card" style={{ padding: "10px 12px", borderRadius: "6px", cursor: "pointer", textAlign: "left", border: "1px solid var(--border)", background: "var(--surface)" }}
-									onClick={() => onSelectProvider(p.id)}>
+								<button
+									key={p.id}
+									className="provider-card"
+									style={{
+										padding: "10px 12px",
+										borderRadius: "6px",
+										cursor: "pointer",
+										textAlign: "left",
+										border: "1px solid var(--border)",
+										background: "var(--surface)",
+									}}
+									onClick={() => onSelectProvider(p.id)}
+								>
 									<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
 										<div style={{ flex: 1 }}>
 											<div className="text-sm text-[var(--text-strong)]">{p.name}</div>
@@ -5058,15 +5807,13 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }: 
 							))}
 						</div>
 					</div>
-					: null
-				}
+				) : null}
 
-				{unconfiguredProviders.length === 0
-					? <div className="text-sm text-[var(--muted)]" style={{ textAlign: "center", padding: "20px 0" }}>
+				{unconfiguredProviders.length === 0 ? (
+					<div className="text-sm text-[var(--muted)]" style={{ textAlign: "center", padding: "20px 0" }}>
 						All available providers are already configured.
 					</div>
-					: null
-				}
+				) : null}
 			</div>
 		</Modal>
 	);
@@ -5204,48 +5951,75 @@ function MemorySection(): VNode {
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">Memory</h2>
 			<p className="text-xs text-[var(--muted)] leading-relaxed max-w-form" style={{ margin: 0 }}>
-				Configure how the agent stores and retrieves long-term memory. Memory enables the agent
-				to recall past conversations, notes, and context across sessions.
+				Configure how the agent stores and retrieves long-term memory. Memory enables the agent to recall past
+				conversations, notes, and context across sessions.
 			</p>
 
 			{/* Status */}
-			{memStatus
-				? <div style={{ maxWidth: "600px", padding: "12px 16px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)" }}>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Status</h3>
+			{memStatus ? (
+				<div
+					style={{
+						maxWidth: "600px",
+						padding: "12px 16px",
+						borderRadius: "6px",
+						border: "1px solid var(--border)",
+						background: "var(--bg)",
+					}}
+				>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Status
+					</h3>
 					<div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: "8px 16px", fontSize: ".8rem" }}>
 						<div>
 							<span className="text-[var(--muted)]">Files:</span>
-							<span className="text-[var(--text)]" style={{ marginLeft: "6px" }}>{memStatus.total_files || 0}</span>
+							<span className="text-[var(--text)]" style={{ marginLeft: "6px" }}>
+								{memStatus.total_files || 0}
+							</span>
 						</div>
 						<div>
 							<span className="text-[var(--muted)]">Chunks:</span>
-							<span className="text-[var(--text)]" style={{ marginLeft: "6px" }}>{memStatus.total_chunks || 0}</span>
+							<span className="text-[var(--text)]" style={{ marginLeft: "6px" }}>
+								{memStatus.total_chunks || 0}
+							</span>
 						</div>
 						<div>
 							<span className="text-[var(--muted)]">Model:</span>
-							<span className="text-[var(--text)]" style={{ marginLeft: "6px", fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>{memStatus.embedding_model || "none"}</span>
+							<span
+								className="text-[var(--text)]"
+								style={{ marginLeft: "6px", fontFamily: "var(--font-mono)", fontSize: ".75rem" }}
+							>
+								{memStatus.embedding_model || "none"}
+							</span>
 						</div>
 						<div>
 							<span className="text-[var(--muted)]">DB Size:</span>
-							<span className="text-[var(--text)]" style={{ marginLeft: "6px" }}>{memStatus.db_size_display || "0 B"}</span>
+							<span className="text-[var(--text)]" style={{ marginLeft: "6px" }}>
+								{memStatus.db_size_display || "0 B"}
+							</span>
 						</div>
 					</div>
 				</div>
-				: null
-			}
+			) : null}
 
 			{/* Configuration */}
 			<form onSubmit={onSave} style={{ maxWidth: "600px", display: "flex", flexDirection: "column", gap: "16px" }}>
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Memory Style</h3>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Memory Style
+					</h3>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
-						Choose the high-level orchestration model. This controls whether prompt-visible <code>MEMORY.md</code> and memory tools are both active, one is active, or both are off.
+						Choose the high-level orchestration model. This controls whether prompt-visible <code>MEMORY.md</code> and
+						memory tools are both active, one is active, or both are off.
 					</p>
-					<select className="provider-key-input" style={{ width: "auto", minWidth: "240px" }}
-						value={style} onChange={(e: Event) => {
+					<select
+						className="provider-key-input"
+						style={{ width: "auto", minWidth: "240px" }}
+						value={style}
+						onChange={(e: Event) => {
 							setStyle((e.target as HTMLSelectElement).value);
 							rerender();
-						}}>
+						}}
+					>
 						<option value="hybrid">Hybrid</option>
 						<option value="prompt-only">Prompt-only</option>
 						<option value="search-only">Search-only</option>
@@ -5255,23 +6029,42 @@ function MemorySection(): VNode {
 
 				{/* Backend selection */}
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Backend</h3>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Backend
+					</h3>
 
 					{/* Comparison table */}
-					<div style={{ marginBottom: "12px", padding: "12px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)", fontSize: ".75rem" }}>
+					<div
+						style={{
+							marginBottom: "12px",
+							padding: "12px",
+							borderRadius: "6px",
+							border: "1px solid var(--border)",
+							background: "var(--bg)",
+							fontSize: ".75rem",
+						}}
+					>
 						<table style={{ width: "100%", borderCollapse: "collapse" }}>
 							<thead>
 								<tr style={{ borderBottom: "1px solid var(--border)" }}>
-									<th style={{ textAlign: "left", padding: "4px 8px 8px 0", color: "var(--muted)", fontWeight: 500 }}>Feature</th>
-									<th style={{ textAlign: "center", padding: "4px 8px 8px", color: "var(--muted)", fontWeight: 500 }}>Built-in</th>
-									<th style={{ textAlign: "center", padding: "4px 8px 8px", color: "var(--muted)", fontWeight: 500 }}>QMD</th>
+									<th style={{ textAlign: "left", padding: "4px 8px 8px 0", color: "var(--muted)", fontWeight: 500 }}>
+										Feature
+									</th>
+									<th style={{ textAlign: "center", padding: "4px 8px 8px", color: "var(--muted)", fontWeight: 500 }}>
+										Built-in
+									</th>
+									<th style={{ textAlign: "center", padding: "4px 8px 8px", color: "var(--muted)", fontWeight: 500 }}>
+										QMD
+									</th>
 								</tr>
 							</thead>
 							<tbody>
 								<tr>
 									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>Search type</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>FTS5 + vector</td>
-									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>BM25 + vector + LLM</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>
+										BM25 + vector + LLM
+									</td>
 								</tr>
 								<tr>
 									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>External dependency</td>
@@ -5285,7 +6078,9 @@ function MemorySection(): VNode {
 								</tr>
 								<tr>
 									<td style={{ padding: "6px 8px 6px 0", color: "var(--text)" }}>OpenAI batch API</td>
-									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>{"\u2713"} (50% cheaper)</td>
+									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--accent)" }}>
+										{"\u2713"} (50% cheaper)
+									</td>
 									<td style={{ padding: "6px 8px", textAlign: "center", color: "var(--muted)" }}>{"\u2717"}</td>
 								</tr>
 								<tr>
@@ -5308,95 +6103,166 @@ function MemorySection(): VNode {
 					</div>
 
 					<div style={{ display: "flex", gap: "8px" }}>
-						<button type="button"
+						<button
+							type="button"
 							className={`provider-btn ${backend === "builtin" ? "" : "provider-btn-secondary"}`}
 							onClick={() => {
 								setBackend("builtin");
 								rerender();
-							}}>
+							}}
+						>
 							Built-in (Recommended)
 						</button>
-						<button type="button"
+						<button
+							type="button"
 							className={`provider-btn ${backend === "qmd" ? "" : "provider-btn-secondary"}`}
 							disabled={!qmdFeatureEnabled}
 							onClick={() => {
 								setBackend("qmd");
 								rerender();
-							}}>
+							}}
+						>
 							QMD
 						</button>
 					</div>
 
-					{qmdFeatureEnabled
-						? null
-						: <div className="text-xs text-[var(--error)]" style={{ marginTop: "8px" }}>
-							QMD feature is not enabled. Rebuild moltis with <code style={{ fontFamily: "var(--font-mono)", fontSize: ".7rem" }}>--features qmd</code>
+					{qmdFeatureEnabled ? null : (
+						<div className="text-xs text-[var(--error)]" style={{ marginTop: "8px" }}>
+							QMD feature is not enabled. Rebuild moltis with{" "}
+							<code style={{ fontFamily: "var(--font-mono)", fontSize: ".7rem" }}>--features qmd</code>
 						</div>
-					}
+					)}
 
-					{backend === "qmd"
-						? <div style={{ marginTop: "12px", padding: "12px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--bg)" }}>
-							<h4 className="text-xs font-medium text-[var(--text-strong)]" style={{ margin: "0 0 8px" }}>QMD Status</h4>
-							{qmdAvailable
-								? <div className="text-xs" style={{ color: "var(--accent)", display: "flex", alignItems: "center", gap: "6px" }}>
-									<span>{"\u2713"}</span> QMD is installed {qmdStatus?.version ? <span className="text-[var(--muted)]">({qmdStatus.version})</span> : null}
+					{backend === "qmd" ? (
+						<div
+							style={{
+								marginTop: "12px",
+								padding: "12px",
+								borderRadius: "6px",
+								border: "1px solid var(--border)",
+								background: "var(--bg)",
+							}}
+						>
+							<h4 className="text-xs font-medium text-[var(--text-strong)]" style={{ margin: "0 0 8px" }}>
+								QMD Status
+							</h4>
+							{qmdAvailable ? (
+								<div
+									className="text-xs"
+									style={{ color: "var(--accent)", display: "flex", alignItems: "center", gap: "6px" }}
+								>
+									<span>{"\u2713"}</span> QMD is installed{" "}
+									{qmdStatus?.version ? <span className="text-[var(--muted)]">({qmdStatus.version})</span> : null}
 								</div>
-								: <div>
+							) : (
+								<div>
 									<div className="text-xs" style={{ color: "var(--error)", marginBottom: "8px" }}>
 										{"\u2717"} QMD is not installed or not found in PATH
 									</div>
 									<div className="text-xs text-[var(--muted)]" style={{ lineHeight: 1.6 }}>
-										<strong style={{ color: "var(--text)" }}>Installation:</strong><br/>
-										<code style={{ fontFamily: "var(--font-mono)", fontSize: ".7rem", background: "var(--surface)", padding: "2px 4px", borderRadius: "3px" }}>npm install -g @tobilu/qmd</code>
+										<strong style={{ color: "var(--text)" }}>Installation:</strong>
+										<br />
+										<code
+											style={{
+												fontFamily: "var(--font-mono)",
+												fontSize: ".7rem",
+												background: "var(--surface)",
+												padding: "2px 4px",
+												borderRadius: "3px",
+											}}
+										>
+											npm install -g @tobilu/qmd
+										</code>
 										<span style={{ margin: "0 4px" }}>or</span>
-										<code style={{ fontFamily: "var(--font-mono)", fontSize: ".7rem", background: "var(--surface)", padding: "2px 4px", borderRadius: "3px" }}>bun install -g @tobilu/qmd</code>
-										<br/><br/>
+										<code
+											style={{
+												fontFamily: "var(--font-mono)",
+												fontSize: ".7rem",
+												background: "var(--surface)",
+												padding: "2px 4px",
+												borderRadius: "3px",
+											}}
+										>
+											bun install -g @tobilu/qmd
+										</code>
+										<br />
+										<br />
 										Verify the CLI is available:
-										<code style={{ display: "block", marginTop: "4px", fontFamily: "var(--font-mono)", fontSize: ".7rem", background: "var(--surface)", padding: "2px 4px", borderRadius: "3px" }}>qmd --version</code>
-										<br/>
-										<a href="https://github.com/tobi/qmd" target="_blank" rel="noopener"
-											style={{ color: "var(--accent)" }}>View documentation {"\u2192"}</a>
+										<code
+											style={{
+												display: "block",
+												marginTop: "4px",
+												fontFamily: "var(--font-mono)",
+												fontSize: ".7rem",
+												background: "var(--surface)",
+												padding: "2px 4px",
+												borderRadius: "3px",
+											}}
+										>
+											qmd --version
+										</code>
+										<br />
+										<a
+											href="https://github.com/tobi/qmd"
+											target="_blank"
+											rel="noopener"
+											style={{ color: "var(--accent)" }}
+										>
+											View documentation {"\u2192"}
+										</a>
 									</div>
 								</div>
-							}
+							)}
 						</div>
-						: null
-					}
+					) : null}
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Prompt Memory Mode</h3>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Prompt Memory Mode
+					</h3>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
-						When prompt memory is enabled, choose whether <code>MEMORY.md</code> is reread on every turn or frozen when the session starts.
+						When prompt memory is enabled, choose whether <code>MEMORY.md</code> is reread on every turn or frozen when
+						the session starts.
 					</p>
-					<select className="provider-key-input" style={{ width: "auto", minWidth: "260px" }}
+					<select
+						className="provider-key-input"
+						style={{ width: "auto", minWidth: "260px" }}
 						value={promptMemoryMode}
 						disabled={style === "search-only" || style === "off"}
 						onChange={(e: Event) => {
 							setPromptMemoryMode((e.target as HTMLSelectElement).value);
 							rerender();
-						}}>
+						}}
+					>
 						<option value="live-reload">Live reload</option>
 						<option value="frozen-at-session-start">Frozen at session start</option>
 					</select>
-					{style === "search-only" || style === "off"
-						? <div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px" }}>
-							Prompt memory is disabled by the current memory style, so this setting will only matter after you re-enable prompt memory.
+					{style === "search-only" || style === "off" ? (
+						<div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px" }}>
+							Prompt memory is disabled by the current memory style, so this setting will only matter after you
+							re-enable prompt memory.
 						</div>
-						: null
-					}
+					) : null}
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Agent Memory Writes</h3>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Agent Memory Writes
+					</h3>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
-						Control where agent-authored memory writes can land. This affects <code>memory_save</code> and silent compaction memory flushes.
+						Control where agent-authored memory writes can land. This affects <code>memory_save</code> and silent
+						compaction memory flushes.
 					</p>
-					<select className="provider-key-input" style={{ width: "auto", minWidth: "220px" }}
-						value={agentWriteMode} onChange={(e: Event) => {
+					<select
+						className="provider-key-input"
+						style={{ width: "auto", minWidth: "220px" }}
+						value={agentWriteMode}
+						onChange={(e: Event) => {
 							setAgentWriteMode((e.target as HTMLSelectElement).value);
 							rerender();
-						}}>
+						}}
+					>
 						<option value="hybrid">Hybrid (MEMORY.md and memory/*.md)</option>
 						<option value="prompt-only">Prompt-only (MEMORY.md only)</option>
 						<option value="search-only">Search-only (memory/*.md only)</option>
@@ -5405,15 +6271,22 @@ function MemorySection(): VNode {
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>USER.md Writes</h3>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						USER.md Writes
+					</h3>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
-						Control whether Moltis mirrors your profile into <code>USER.md</code>, and whether browser or channel timezone/location signals can update it silently.
+						Control whether Moltis mirrors your profile into <code>USER.md</code>, and whether browser or channel
+						timezone/location signals can update it silently.
 					</p>
-					<select className="provider-key-input" style={{ width: "auto", minWidth: "250px" }}
-						value={userProfileWriteMode} onChange={(e: Event) => {
+					<select
+						className="provider-key-input"
+						style={{ width: "auto", minWidth: "250px" }}
+						value={userProfileWriteMode}
+						onChange={(e: Event) => {
 							setUserProfileWriteMode((e.target as HTMLSelectElement).value);
 							rerender();
-						}}>
+						}}
+					>
 						<option value="explicit-and-auto">Explicit and auto</option>
 						<option value="explicit-only">Explicit only</option>
 						<option value="off">Off (moltis.toml only)</option>
@@ -5422,41 +6295,52 @@ function MemorySection(): VNode {
 
 				{/* Citations */}
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Embedding Provider</h3>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Embedding Provider
+					</h3>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
-						Select which embedding provider the built-in memory backend should use for RAG. QMD manages retrieval separately, so this setting is ignored while the QMD backend is active.
+						Select which embedding provider the built-in memory backend should use for RAG. QMD manages retrieval
+						separately, so this setting is ignored while the QMD backend is active.
 					</p>
-					<select className="provider-key-input" style={{ width: "auto", minWidth: "220px" }}
+					<select
+						className="provider-key-input"
+						style={{ width: "auto", minWidth: "220px" }}
 						value={provider}
 						disabled={backend === "qmd"}
 						onChange={(e: Event) => {
 							setProvider((e.target as HTMLSelectElement).value);
 							rerender();
-						}}>
+						}}
+					>
 						<option value="auto">Auto-detect</option>
 						<option value="local">Local GGUF</option>
 						<option value="ollama">Ollama</option>
 						<option value="openai">OpenAI</option>
 						<option value="custom">Custom OpenAI-compatible</option>
 					</select>
-					{backend === "qmd"
-						? <div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px" }}>
+					{backend === "qmd" ? (
+						<div className="text-xs text-[var(--muted)]" style={{ marginTop: "8px" }}>
 							This setting is kept for when you switch back to the built-in backend.
 						</div>
-						: null
-					}
+					) : null}
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Citations</h3>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Citations
+					</h3>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Include source file and line number with search results to help track where information comes from.
 					</p>
-					<select className="provider-key-input" style={{ width: "auto", minWidth: "150px" }}
-						value={citations} onChange={(e: Event) => {
+					<select
+						className="provider-key-input"
+						style={{ width: "auto", minWidth: "150px" }}
+						value={citations}
+						onChange={(e: Event) => {
 							setCitations((e.target as HTMLSelectElement).value);
 							rerender();
-						}}>
+						}}
+					>
 						<option value="auto">Auto (multi-file only)</option>
 						<option value="on">Always</option>
 						<option value="off">Never</option>
@@ -5464,15 +6348,21 @@ function MemorySection(): VNode {
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Search Merge Strategy</h3>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Search Merge Strategy
+					</h3>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Choose how Moltis blends vector and keyword memory hits before optional reranking.
 					</p>
-					<select className="provider-key-input" style={{ width: "auto", minWidth: "180px" }}
-						value={searchMergeStrategy} onChange={(e: Event) => {
+					<select
+						className="provider-key-input"
+						style={{ width: "auto", minWidth: "180px" }}
+						value={searchMergeStrategy}
+						onChange={(e: Event) => {
 							setSearchMergeStrategy((e.target as HTMLSelectElement).value);
 							rerender();
-						}}>
+						}}
+					>
 						<option value="rrf">RRF</option>
 						<option value="linear">Linear</option>
 					</select>
@@ -5481,11 +6371,14 @@ function MemorySection(): VNode {
 				{/* LLM Reranking */}
 				<div>
 					<label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
-						<input type="checkbox" checked={llmReranking}
+						<input
+							type="checkbox"
+							checked={llmReranking}
 							onChange={(e: Event) => {
 								setLlmReranking((e.target as HTMLInputElement).checked);
 								rerender();
-							}} />
+							}}
+						/>
 						<div>
 							<span className="text-sm font-medium text-[var(--text-strong)]">LLM Reranking</span>
 							<p className="text-xs text-[var(--muted)]" style={{ margin: "2px 0 0" }}>
@@ -5497,26 +6390,48 @@ function MemorySection(): VNode {
 
 				{/* Session Export */}
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>Session Export</h3>
+					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+						Session Export
+					</h3>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Export session transcripts into searchable memory when a session is rolled over.
 					</p>
-					<select className="provider-key-input" style={{ width: "auto", minWidth: "220px" }}
-						value={sessionExport} onChange={(e: Event) => {
+					<select
+						className="provider-key-input"
+						style={{ width: "auto", minWidth: "220px" }}
+						value={sessionExport}
+						onChange={(e: Event) => {
 							setSessionExport((e.target as HTMLSelectElement).value);
 							rerender();
-						}}>
+						}}
+					>
 						<option value="on-new-or-reset">On /new and /reset</option>
 						<option value="off">Off</option>
 					</select>
 				</div>
 
-				<div style={{ display: "flex", alignItems: "center", gap: "8px", paddingTop: "8px", borderTop: "1px solid var(--border)" }}>
+				<div
+					style={{
+						display: "flex",
+						alignItems: "center",
+						gap: "8px",
+						paddingTop: "8px",
+						borderTop: "1px solid var(--border)",
+					}}
+				>
 					<button type="submit" className="provider-btn" disabled={saving}>
 						{saving ? "Saving\u2026" : "Save"}
 					</button>
-					{saved ? <span className="text-xs" style={{ color: "var(--accent)" }}>Saved</span> : null}
-					{error ? <span className="text-xs" style={{ color: "var(--error)" }}>{error}</span> : null}
+					{saved ? (
+						<span className="text-xs" style={{ color: "var(--accent)" }}>
+							Saved
+						</span>
+					) : null}
+					{error ? (
+						<span className="text-xs" style={{ color: "var(--error)" }}>
+							{error}
+						</span>
+					) : null}
 				</div>
 			</form>
 		</div>
@@ -5623,7 +6538,15 @@ function NotificationsSection(): VNode {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Notifications</h2>
-				<div style={{ maxWidth: "600px", padding: "12px 16px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)" }}>
+				<div
+					style={{
+						maxWidth: "600px",
+						padding: "12px 16px",
+						borderRadius: "6px",
+						border: "1px solid var(--border)",
+						background: "var(--surface)",
+					}}
+				>
 					<p className="text-sm text-[var(--text)]" style={{ margin: 0 }}>
 						Push notifications are not supported in this browser.
 					</p>
@@ -5639,12 +6562,21 @@ function NotificationsSection(): VNode {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Notifications</h2>
-				<div style={{ maxWidth: "600px", padding: "12px 16px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)" }}>
+				<div
+					style={{
+						maxWidth: "600px",
+						padding: "12px 16px",
+						borderRadius: "6px",
+						border: "1px solid var(--border)",
+						background: "var(--surface)",
+					}}
+				>
 					<p className="text-sm text-[var(--text)]" style={{ margin: 0 }}>
 						Push notifications are not configured on the server.
 					</p>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
-						The server was built without the <code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>push-notifications</code> feature.
+						The server was built without the{" "}
+						<code style={{ fontFamily: "var(--font-mono)", fontSize: ".75rem" }}>push-notifications</code> feature.
 					</p>
 				</div>
 			</div>
@@ -5666,7 +6598,9 @@ function NotificationsSection(): VNode {
 			<div style={{ maxWidth: "600px" }}>
 				<div className="provider-item" style={{ marginBottom: 0 }}>
 					<div style={{ flex: 1, minWidth: 0 }}>
-						<div className="provider-item-name" style={{ fontSize: ".9rem" }}>Push Notifications</div>
+						<div className="provider-item-name" style={{ fontSize: ".9rem" }}>
+							Push Notifications
+						</div>
 						<div style={{ fontSize: ".75rem", color: "var(--muted)", marginTop: "2px" }}>
 							{needsInstall
 								? "Add this app to your Dock to enable notifications."
@@ -5674,8 +6608,7 @@ function NotificationsSection(): VNode {
 									? "You will receive notifications on this device."
 									: permission === "denied"
 										? "Notifications are blocked. Enable them in browser settings."
-										: "Enable to receive notifications on this device."
-							}
+										: "Enable to receive notifications on this device."}
 						</div>
 					</div>
 					<button
@@ -5686,62 +6619,94 @@ function NotificationsSection(): VNode {
 						{toggling ? "\u2026" : subscribed ? "Disable" : "Enable"}
 					</button>
 				</div>
-				{error ? <div className="text-xs" style={{ marginTop: "8px", color: "var(--error)" }}>{error}</div> : null}
+				{error ? (
+					<div className="text-xs" style={{ marginTop: "8px", color: "var(--error)" }}>
+						{error}
+					</div>
+				) : null}
 			</div>
 
 			{/* Install required notice */}
-			{needsInstall
-				? <div style={{ maxWidth: "600px", padding: "12px 16px", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)" }}>
+			{needsInstall ? (
+				<div
+					style={{
+						maxWidth: "600px",
+						padding: "12px 16px",
+						borderRadius: "6px",
+						border: "1px solid var(--border)",
+						background: "var(--surface)",
+					}}
+				>
 					<p className="text-sm text-[var(--text)]" style={{ margin: 0, fontWeight: 500 }}>
 						Installation required
 					</p>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
-						On Safari, push notifications are only available for installed apps. Add moltis to your Dock using <strong>File {"\u2192"} Add to Dock</strong> (or Share {"\u2192"} Add to Dock on iOS), then open it from there.
+						On Safari, push notifications are only available for installed apps. Add moltis to your Dock using{" "}
+						<strong>File {"\u2192"} Add to Dock</strong> (or Share {"\u2192"} Add to Dock on iOS), then open it from
+						there.
 					</p>
 				</div>
-				: null
-			}
+			) : null}
 
 			{/* Permission status */}
-			{permission === "denied" && !needsInstall
-				? <div style={{ maxWidth: "600px", padding: "12px 16px", borderRadius: "6px", border: "1px solid var(--error)", background: "color-mix(in srgb, var(--error) 5%, transparent)" }}>
+			{permission === "denied" && !needsInstall ? (
+				<div
+					style={{
+						maxWidth: "600px",
+						padding: "12px 16px",
+						borderRadius: "6px",
+						border: "1px solid var(--error)",
+						background: "color-mix(in srgb, var(--error) 5%, transparent)",
+					}}
+				>
 					<p className="text-sm" style={{ color: "var(--error)", margin: 0, fontWeight: 500 }}>
 						Notifications are blocked
 					</p>
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "8px 0 0" }}>
-						You previously blocked notifications for this site. To enable them, you'll need to update your browser's site settings and allow notifications for this origin.
+						You previously blocked notifications for this site. To enable them, you'll need to update your browser's
+						site settings and allow notifications for this origin.
 					</p>
 				</div>
-				: null
-			}
+			) : null}
 
 			{/* Subscribed devices */}
 			<div style={{ maxWidth: "600px", borderTop: "1px solid var(--border)", paddingTop: "16px", marginTop: "8px" }}>
 				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
 					Subscribed Devices ({serverStatus?.subscription_count || 0})
 				</h3>
-				{(serverStatus?.subscriptions?.length || 0) > 0
-					? <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+				{(serverStatus?.subscriptions?.length || 0) > 0 ? (
+					<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
 						{serverStatus?.subscriptions?.map((sub) => (
 							<div className="provider-item" style={{ marginBottom: 0 }} key={sub.endpoint}>
 								<div style={{ flex: 1, minWidth: 0 }}>
-									<div className="provider-item-name" style={{ fontSize: ".85rem" }}>{sub.device}</div>
-									<div style={{ fontSize: ".7rem", color: "var(--muted)", marginTop: "2px", display: "flex", gap: "12px", flexWrap: "wrap" }}>
+									<div className="provider-item-name" style={{ fontSize: ".85rem" }}>
+										{sub.device}
+									</div>
+									<div
+										style={{
+											fontSize: ".7rem",
+											color: "var(--muted)",
+											marginTop: "2px",
+											display: "flex",
+											gap: "12px",
+											flexWrap: "wrap",
+										}}
+									>
 										{sub.ip ? <span style={{ fontFamily: "var(--font-mono)" }}>{sub.ip}</span> : null}
 										<time dateTime={sub.created_at}>{new Date(sub.created_at || "").toLocaleDateString()}</time>
 									</div>
 								</div>
-								<button
-									className="provider-btn provider-btn-danger"
-									onClick={() => onRemoveSubscription(sub.endpoint)}
-								>
+								<button className="provider-btn provider-btn-danger" onClick={() => onRemoveSubscription(sub.endpoint)}>
 									Remove
 								</button>
 							</div>
 						))}
 					</div>
-					: <div className="text-xs text-[var(--muted)]" style={{ padding: "4px 0" }}>No devices subscribed yet.</div>
-				}
+				) : (
+					<div className="text-xs text-[var(--muted)]" style={{ padding: "4px 0" }}>
+						No devices subscribed yet.
+					</div>
+				)}
 			</div>
 		</div>
 	);
@@ -5798,12 +6763,7 @@ function PageSection({ initFn, teardownFn, subPath }: PageSectionProps): VNode {
 			if (teardownFn) teardownFn();
 		};
 	}, [initFn, teardownFn, subPath]);
-	return (
-		<div
-			ref={ref}
-			className="flex-1 flex flex-col min-w-0 overflow-hidden"
-		/>
-	);
+	return <div ref={ref} className="flex-1 flex flex-col min-w-0 overflow-hidden" />;
 }
 
 // ── Main layout ──────────────────────────────────────────────
@@ -5824,15 +6784,11 @@ function SettingsPage(): VNode {
 	return (
 		<div className={`settings-layout ${mobile && !showSidebar ? "settings-layout-mobile-collapsed" : ""}`}>
 			{showSidebar ? <SettingsSidebar /> : null}
-			{showContent
-				? <div className="settings-content-wrap">
-					{mobile
-						? <div className="settings-mobile-controls">
-							<button
-								className="settings-mobile-chat-btn"
-								type="button"
-								onClick={() => navigate(routes.chats!)}
-							>
+			{showContent ? (
+				<div className="settings-content-wrap">
+					{mobile ? (
+						<div className="settings-mobile-controls">
+							<button className="settings-mobile-chat-btn" type="button" onClick={() => navigate(routes.chats!)}>
 								<span className="icon icon-chat" />
 								<span>Back to Chats</span>
 							</button>
@@ -5848,21 +6804,21 @@ function SettingsPage(): VNode {
 								<span>{mobileSectionsLabel}</span>
 							</button>
 						</div>
-						: null
-					}
-					{ps
-						? section === "terminal" && gon.get("terminal_enabled") !== true
-							? <div className="flex-1 flex flex-col min-w-0 p-4 gap-3 overflow-y-auto">
+					) : null}
+					{ps ? (
+						section === "terminal" && gon.get("terminal_enabled") !== true ? (
+							<div className="flex-1 flex flex-col min-w-0 p-4 gap-3 overflow-y-auto">
 								<h2 className="text-base font-medium text-[var(--text-strong)]">Terminal</h2>
 								<div className="text-xs text-[var(--muted)] max-w-form">
-									The host terminal has been disabled by the server administrator.
-									To re-enable it, set <code>terminal_enabled = true</code> under <code>[server]</code> in the configuration file,
-									or remove the <code>MOLTIS_TERMINAL_DISABLED</code> environment variable if it is set.
+									The host terminal has been disabled by the server administrator. To re-enable it, set{" "}
+									<code>terminal_enabled = true</code> under <code>[server]</code> in the configuration file, or remove
+									the <code>MOLTIS_TERMINAL_DISABLED</code> environment variable if it is set.
 								</div>
 							</div>
-							: <PageSection key={`${section}:${subPath}`} initFn={ps.init} teardownFn={ps.teardown} subPath={subPath} />
-						: null
-					}
+						) : (
+							<PageSection key={`${section}:${subPath}`} initFn={ps.init} teardownFn={ps.teardown} subPath={subPath} />
+						)
+					) : null}
 					{section === "identity" ? <IdentitySection /> : null}
 					{section === "memory" ? <MemorySection /> : null}
 					{section === "environment" ? <EnvironmentSection /> : null}
@@ -5871,24 +6827,25 @@ function SettingsPage(): VNode {
 					{section === "vault" ? <VaultSection /> : null}
 					{section === "ssh" ? <SshSection /> : null}
 					{section === "remote-access" ? <RemoteAccessSection /> : null}
-					{section === "voice"
-						? gon.get("voice_enabled") === true
-							? <VoiceSection />
-							: <div className="flex-1 flex flex-col min-w-0 p-4 gap-3 overflow-y-auto">
+					{section === "voice" ? (
+						gon.get("voice_enabled") === true ? (
+							<VoiceSection />
+						) : (
+							<div className="flex-1 flex flex-col min-w-0 p-4 gap-3 overflow-y-auto">
 								<h2 className="text-base font-medium text-[var(--text-strong)]">Voice</h2>
 								<div className="text-xs text-[var(--muted)] max-w-form">
-									Voice settings are unavailable in this build. Start a binary with the voice feature enabled to configure STT/TTS providers.
+									Voice settings are unavailable in this build. Start a binary with the voice feature enabled to
+									configure STT/TTS providers.
 								</div>
 							</div>
-						: null
-					}
+						)
+					) : null}
 					{section === "notifications" ? <NotificationsSection /> : null}
 					{section === "import" ? <OpenClawImportSection /> : null}
 					{section === "graphql" ? <GraphqlSection /> : null}
 					{section === "config" ? <ConfigSection /> : null}
 				</div>
-				: null
-			}
+			) : null}
 		</div>
 	);
 }

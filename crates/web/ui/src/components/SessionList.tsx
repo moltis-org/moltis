@@ -115,8 +115,8 @@ function SessionIcon({ session, isBranch }: SessionIconProps): VNode {
 
 	return (
 		<span className="session-icon" style={iconStyle} title={title}>
-			<span ref={iconRef}></span>
-			<span className="session-spinner"></span>
+			<span ref={iconRef} />
+			<span className="session-spinner" />
 			{count > 0 && (
 				<span className="session-badge" data-session-key={session.key}>
 					{count > 99 ? "99+" : String(count)}
@@ -162,7 +162,7 @@ function SessionMeta({ session }: SessionMetaProps): VNode {
 		}
 	}, [session.projectId, session.forkPoint, session.worktree_branch]);
 
-	return <div className="session-meta" data-session-key={session.key} ref={ref}></div>;
+	return <div className="session-meta" data-session-key={session.key} ref={ref} />;
 }
 
 // ── SessionItem component ───────────���───────────────────────
@@ -310,9 +310,5 @@ export function SessionList(): VNode {
 		);
 	}
 
-	return (
-		<div ref={spinnersRef}>
-			{roots.map((s) => renderTree(s, 0))}
-		</div>
-	);
+	return <div ref={spinnersRef}>{roots.map((s) => renderTree(s, 0))}</div>;
 }

@@ -746,7 +746,10 @@ function toggleDebugPanel(): void {
 	const modal = S.$("debugModal") as HTMLElement | null;
 	if (!modal) return;
 	const opening = modal.classList.contains("hidden");
-	if (!opening) { setDebugModalOpen(false); return; }
+	if (!opening) {
+		setDebugModalOpen(false);
+		return;
+	}
 	setFullContextModalOpen(false);
 	setDebugModalOpen(true);
 	refreshDebugPanel();
@@ -754,8 +757,10 @@ function toggleDebugPanel(): void {
 
 // ── Full context panel ───────────────────────────────────
 const ROLE_COLORS: Record<string, string> = {
-	system: "var(--accent)", user: "var(--ok, #22c55e)",
-	assistant: "var(--info, #3b82f6)", tool: "var(--muted)",
+	system: "var(--accent)",
+	user: "var(--ok, #22c55e)",
+	assistant: "var(--info, #3b82f6)",
+	tool: "var(--muted)",
 };
 
 function ctxMsgBadge(role: string): HTMLElement {
@@ -784,8 +789,11 @@ function ctxMsgToolCall(tc: NonNullable<ContextMessage["tool_calls"]>[number]): 
 	div.appendChild(hdr);
 	if (tc.function?.arguments) {
 		const pre = ctxEl("pre", "text-xs font-mono whitespace-pre-wrap break-words text-[var(--text)]");
-		try { pre.textContent = JSON.stringify(JSON.parse(tc.function.arguments), null, 2); }
-		catch { pre.textContent = tc.function.arguments; }
+		try {
+			pre.textContent = JSON.stringify(JSON.parse(tc.function.arguments), null, 2);
+		} catch {
+			pre.textContent = tc.function.arguments;
+		}
 		div.appendChild(pre);
 	}
 	return div;
@@ -812,7 +820,10 @@ function renderContextMessage(msg: ContextMessage, index: number): HTMLElement {
 		chevron.textContent = open ? "\u25b6" : "\u25bc";
 	});
 	if (contentStr) {
-		const pre = ctxEl("pre", "text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-2 text-[var(--text)]");
+		const pre = ctxEl(
+			"pre",
+			"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-2 text-[var(--text)]",
+		);
 		pre.textContent = contentStr;
 		body.appendChild(pre);
 	}
@@ -823,7 +834,10 @@ function renderContextMessage(msg: ContextMessage, index: number): HTMLElement {
 
 function buildFullContextPromptMemoryBox(pm: PromptMemoryData | null): HTMLElement | null {
 	if (!pm) return null;
-	const box = ctxEl("div", "text-xs mb-3 rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--text)]");
+	const box = ctxEl(
+		"div",
+		"text-xs mb-3 rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--text)]",
+	);
 	const summaryLine = ctxEl("div", "font-semibold");
 	summaryLine.textContent = `Prompt memory: ${buildPromptMemorySummary(pm)}`;
 	box.appendChild(summaryLine);
@@ -837,23 +851,36 @@ function appendFullContextWorkspaceWarnings(panel: HTMLElement, payload: any): v
 	if (!payload.truncated || wf.length === 0) return;
 	const tf = wf.filter((f: any) => f?.truncated);
 	if (tf.length === 0) return;
-	const warning = ctxEl("div", "text-xs mb-3 rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--text)]");
-	warning.textContent = tf.map((f: any) => {
-		const name = typeof f.name === "string" ? f.name : "workspace file";
-		return `${name}: ${Number(f.original_chars || 0).toLocaleString()} chars, limit ${Number(f.limit_chars || 0).toLocaleString()}, truncated by ${Number(f.truncated_chars || 0).toLocaleString()}`;
-	}).join(" | ");
+	const warning = ctxEl(
+		"div",
+		"text-xs mb-3 rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 text-[var(--text)]",
+	);
+	warning.textContent = tf
+		.map((f: any) => {
+			const name = typeof f.name === "string" ? f.name : "workspace file";
+			return `${name}: ${Number(f.original_chars || 0).toLocaleString()} chars, limit ${Number(f.limit_chars || 0).toLocaleString()}, truncated by ${Number(f.truncated_chars || 0).toLocaleString()}`;
+		})
+		.join(" | ");
 	panel.appendChild(warning);
 }
 
-function buildFullContextHeaderRow(payload: any, onRefresh: (btn: HTMLButtonElement) => void): { headerRow: HTMLElement; copyBtn: HTMLElement; downloadBtn: HTMLElement; llmOutputBtn: HTMLElement } {
+function buildFullContextHeaderRow(
+	payload: any,
+	onRefresh: (btn: HTMLButtonElement) => void,
+): { headerRow: HTMLElement; copyBtn: HTMLElement; downloadBtn: HTMLElement; llmOutputBtn: HTMLElement } {
 	const headerRow = ctxEl("div", "flex items-center gap-3 mb-3");
 	const headerText = ctxEl("span", "text-xs text-[var(--muted)]");
 	headerText.textContent = `${payload.messageCount} messages \u00b7 system prompt ${payload.systemPromptChars.toLocaleString()} chars \u00b7 total ${payload.totalChars.toLocaleString()} chars`;
 	headerRow.appendChild(headerText);
-	const copyBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm"); copyBtn.textContent = "Copy";
-	const downloadBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm"); downloadBtn.textContent = "Download";
-	const llmOutputBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm"); llmOutputBtn.textContent = "LLM output";
-	headerRow.appendChild(copyBtn); headerRow.appendChild(downloadBtn); headerRow.appendChild(llmOutputBtn);
+	const copyBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
+	copyBtn.textContent = "Copy";
+	const downloadBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
+	downloadBtn.textContent = "Download";
+	const llmOutputBtn = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm");
+	llmOutputBtn.textContent = "LLM output";
+	headerRow.appendChild(copyBtn);
+	headerRow.appendChild(downloadBtn);
+	headerRow.appendChild(llmOutputBtn);
 	const pm = payload.promptMemory || null;
 	if (pm?.mode === "frozen-at-session-start") {
 		const rb = ctxEl("button", "provider-btn provider-btn-secondary provider-btn-sm") as HTMLButtonElement;
@@ -864,19 +891,30 @@ function buildFullContextHeaderRow(payload: any, onRefresh: (btn: HTMLButtonElem
 	return { headerRow, copyBtn, downloadBtn, llmOutputBtn };
 }
 
-function wireFullContextCopyButton(copyBtn: HTMLElement, messages: ContextMessage[], llmOutputs: any[], llmOutputPanel: HTMLElement): void {
+function wireFullContextCopyButton(
+	copyBtn: HTMLElement,
+	messages: ContextMessage[],
+	llmOutputs: any[],
+	llmOutputPanel: HTMLElement,
+): void {
 	copyBtn.addEventListener("click", () => {
 		const lines = messages.map((m) => {
 			const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
 			const parts = [content];
-			for (const tc of m.tool_calls || []) parts.push(`[tool_call: ${tc.function?.name || "?"} ${tc.function?.arguments || ""}]`);
+			for (const tc of m.tool_calls || [])
+				parts.push(`[tool_call: ${tc.function?.name || "?"} ${tc.function?.arguments || ""}]`);
 			return `[${m.role}] ${parts.join("\n")}`;
 		});
 		const contextText = lines.join("\n");
 		let copyText = contextText;
 		const llmOutputVisible = llmOutputPanel && !llmOutputPanel.classList.contains("hidden");
 		if (llmOutputVisible) copyText = `LLM output:\n${JSON.stringify(llmOutputs, null, 2)}\n\nContext:\n${contextText}`;
-		navigator.clipboard.writeText(copyText).then(() => { copyBtn.textContent = "Copied!"; setTimeout(() => { copyBtn.textContent = "Copy"; }, 1500); });
+		navigator.clipboard.writeText(copyText).then(() => {
+			copyBtn.textContent = "Copied!";
+			setTimeout(() => {
+				copyBtn.textContent = "Copy";
+			}, 1500);
+		});
 	});
 }
 
@@ -895,8 +933,17 @@ function wireFullContextDownloadButton(downloadBtn: HTMLElement, messages: Conte
 
 function buildFullContextLlmOutputPanel(llmOutputs: any[]): HTMLElement {
 	const panel = ctxEl("div", "hidden mb-3");
-	panel.appendChild(ctxEl("div", "text-xs text-[var(--muted)] mb-1", `${llmOutputs.length} assistant output${llmOutputs.length === 1 ? "" : "s"}`));
-	const pre = ctxEl("pre", "text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-2 text-[var(--text)]");
+	panel.appendChild(
+		ctxEl(
+			"div",
+			"text-xs text-[var(--muted)] mb-1",
+			`${llmOutputs.length} assistant output${llmOutputs.length === 1 ? "" : "s"}`,
+		),
+	);
+	const pre = ctxEl(
+		"pre",
+		"text-xs font-mono whitespace-pre-wrap break-words bg-[var(--surface)] border border-[var(--border)] rounded-md p-2 text-[var(--text)]",
+	);
 	pre.id = "fullContextLlmOutput";
 	pre.textContent = JSON.stringify(llmOutputs, null, 2);
 	panel.appendChild(pre);
@@ -912,8 +959,12 @@ function wireFullContextLlmOutputToggle(button: HTMLElement, panel: HTMLElement)
 }
 
 function refreshFullContextMemory(refreshBtn: HTMLButtonElement): void {
-	refreshBtn.disabled = true; refreshBtn.textContent = "Refreshing\u2026";
-	refreshPromptMemoryToolbarSnapshot().then(() => { refreshBtn.disabled = false; refreshBtn.textContent = "Refresh memory"; });
+	refreshBtn.disabled = true;
+	refreshBtn.textContent = "Refreshing\u2026";
+	refreshPromptMemoryToolbarSnapshot().then(() => {
+		refreshBtn.disabled = false;
+		refreshBtn.textContent = "Refresh memory";
+	});
 }
 
 function refreshFullContextPanel(): void {
@@ -923,7 +974,10 @@ function refreshFullContextPanel(): void {
 	panel.appendChild(ctxEl("div", "text-xs text-[var(--muted)]", "Building full context\u2026"));
 	sendRpc("chat.full_context", {}).then((res: any) => {
 		panel.textContent = "";
-		if (!(res?.ok && res.payload)) { panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build context")); return; }
+		if (!(res?.ok && res.payload)) {
+			panel.appendChild(ctxEl("div", "text-xs text-[var(--error)]", "Failed to build context"));
+			return;
+		}
 		const pm = res.payload.promptMemory || null;
 		refreshPromptMemoryToolbarFromPayload(pm);
 		const pmBox = buildFullContextPromptMemoryBox(pm);
@@ -946,7 +1000,10 @@ function toggleFullContextPanel(): void {
 	const modal = S.$("fullContextModal") as HTMLElement | null;
 	if (!modal) return;
 	const opening = modal.classList.contains("hidden");
-	if (!opening) { setFullContextModalOpen(false); return; }
+	if (!opening) {
+		setFullContextModalOpen(false);
+		return;
+	}
 	setDebugModalOpen(false);
 	setFullContextModalOpen(true);
 	refreshFullContextPanel();
@@ -963,11 +1020,13 @@ export function updateMcpToggleUI(enabled: boolean): void {
 	const label = S.$("mcpToggleLabel") as HTMLElement | null;
 	if (!btn) return;
 	if (enabled) {
-		btn.style.color = "var(--ok)"; btn.style.borderColor = "var(--ok)";
+		btn.style.color = "var(--ok)";
+		btn.style.borderColor = "var(--ok)";
 		if (label) label.textContent = "MCP";
 		btn.title = "MCP tools enabled \u2014 click to disable for this session";
 	} else {
-		btn.style.color = "var(--muted)"; btn.style.borderColor = "var(--border)";
+		btn.style.color = "var(--muted)";
+		btn.style.borderColor = "var(--border)";
 		if (label) label.textContent = "MCP off";
 		btn.title = "MCP tools disabled \u2014 click to enable for this session";
 	}
@@ -999,7 +1058,10 @@ export function showModelNotice(model: ModelNotice): void {
 
 // ── Slash command handlers ───────────────────────────────
 function handleSlashCommand(cmdName: string, cmdArgs: string): void {
-	if (cmdName === "clear") { clearActiveSession(); return; }
+	if (cmdName === "clear") {
+		clearActiveSession();
+		return;
+	}
 	if (cmdName === "compact") {
 		chatAddMsg("system", "Compacting conversation\u2026");
 		sendRpc("chat.compact", {}).then((res: any) => {
@@ -1013,8 +1075,11 @@ function handleSlashCommand(cmdName: string, cmdArgs: string): void {
 		sendRpc("chat.context", {}).then((res: any) => {
 			if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
 			if (res?.ok && res.payload) {
-				try { renderContextCard(res.payload); }
-				catch (err: any) { chatAddMsg("error", `Render error: ${err.message}`); }
+				try {
+					renderContextCard(res.payload);
+				} catch (err: any) {
+					chatAddMsg("error", `Render error: ${err.message}`);
+				}
 			} else chatAddMsg("error", res?.error?.message || "Context failed");
 		});
 		return;
@@ -1027,7 +1092,11 @@ function handleSlashCommand(cmdName: string, cmdArgs: string): void {
 			return;
 		}
 		setCommandMode(true);
-		chatAddMsg("system", renderMarkdown(`**Command:** mode enabled (${commandModeSummary()}) \u00b7 exit with /sh off or Esc`), true);
+		chatAddMsg(
+			"system",
+			renderMarkdown(`**Command:** mode enabled (${commandModeSummary()}) \u00b7 exit with /sh off or Esc`),
+			true,
+		);
 	}
 }
 
@@ -1050,7 +1119,9 @@ function rememberChatHistory(text: string): void {
 }
 
 function resetComposerAfterSend(): void {
-	S.setChatHistoryIdx(-1); S.setChatHistoryDraft(""); (S.chatInput as HTMLTextAreaElement).value = "";
+	S.setChatHistoryIdx(-1);
+	S.setChatHistoryDraft("");
+	(S.chatInput as HTMLTextAreaElement).value = "";
 	chatAutoResize();
 	if (window.innerWidth < 768) S.chatInput!.blur();
 }
@@ -1071,11 +1142,18 @@ function applySelectedModelToChatParams(chatParams: Record<string, unknown>): vo
 
 function handleChatSendRpcResponse(res: any, userEl: HTMLElement | null): void {
 	if (res?.ok && res.payload?.runId) setSessionActiveRunId(S.activeSessionKey, res.payload.runId);
-	if (res?.payload?.queued) { markMessageQueued(userEl, S.activeSessionKey); return; }
+	if (res?.payload?.queued) {
+		markMessageQueued(userEl, S.activeSessionKey);
+		return;
+	}
 	if (res && !res.ok && res.error) chatAddMsg("error", res.error.message || "Request failed");
 }
 
-function buildChatMessage(text: string, seq: number, displayText?: string): { params: Record<string, unknown>; el: HTMLElement | null } {
+function buildChatMessage(
+	text: string,
+	seq: number,
+	displayText?: string,
+): { params: Record<string, unknown>; el: HTMLElement | null } {
 	const userText = displayText !== undefined ? displayText : text;
 	const images = hasPendingImages() ? getPendingImages() : [];
 	if (images.length > 0) {
@@ -1119,12 +1197,24 @@ function markMessageQueued(el: HTMLElement | null, sessionKey: string): void {
 	if (!tray) return;
 	console.debug("[queued] marking user message as queued, moving to tray", { sessionKey });
 	el.classList.add("queued");
-	const badge = document.createElement("div"); badge.className = "queued-badge";
-	const label = document.createElement("span"); label.className = "queued-label"; label.textContent = "Queued";
-	const btn = document.createElement("button"); btn.className = "queued-cancel"; btn.title = "Cancel all queued"; btn.textContent = "\u2715";
-	btn.addEventListener("click", (e: MouseEvent) => { e.stopPropagation(); sendRpc("chat.cancel_queued", { sessionKey }); });
-	badge.appendChild(label); badge.appendChild(btn); el.appendChild(badge);
-	tray.appendChild(el); tray.classList.remove("hidden");
+	const badge = document.createElement("div");
+	badge.className = "queued-badge";
+	const label = document.createElement("span");
+	label.className = "queued-label";
+	label.textContent = "Queued";
+	const btn = document.createElement("button");
+	btn.className = "queued-cancel";
+	btn.title = "Cancel all queued";
+	btn.textContent = "\u2715";
+	btn.addEventListener("click", (e: MouseEvent) => {
+		e.stopPropagation();
+		sendRpc("chat.cancel_queued", { sessionKey });
+	});
+	badge.appendChild(label);
+	badge.appendChild(btn);
+	el.appendChild(badge);
+	tray.appendChild(el);
+	tray.classList.remove("hidden");
 }
 
 function chatAutoResize(): void {
@@ -1135,8 +1225,10 @@ function chatAutoResize(): void {
 
 function handleHistoryUp(): void {
 	if (S.chatHistory.length === 0) return;
-	if (S.chatHistoryIdx === -1) { S.setChatHistoryDraft((S.chatInput as HTMLTextAreaElement).value); S.setChatHistoryIdx(S.chatHistory.length - 1); }
-	else if (S.chatHistoryIdx > 0) S.setChatHistoryIdx(S.chatHistoryIdx - 1);
+	if (S.chatHistoryIdx === -1) {
+		S.setChatHistoryDraft((S.chatInput as HTMLTextAreaElement).value);
+		S.setChatHistoryIdx(S.chatHistory.length - 1);
+	} else if (S.chatHistoryIdx > 0) S.setChatHistoryIdx(S.chatHistoryIdx - 1);
 	(S.chatInput as HTMLTextAreaElement).value = S.chatHistory[S.chatHistoryIdx];
 	chatAutoResize();
 }
@@ -1146,7 +1238,10 @@ function handleHistoryDown(): void {
 	if (S.chatHistoryIdx < S.chatHistory.length - 1) {
 		S.setChatHistoryIdx(S.chatHistoryIdx + 1);
 		(S.chatInput as HTMLTextAreaElement).value = S.chatHistory[S.chatHistoryIdx];
-	} else { S.setChatHistoryIdx(-1); (S.chatInput as HTMLTextAreaElement).value = S.chatHistoryDraft; }
+	} else {
+		S.setChatHistoryIdx(-1);
+		(S.chatInput as HTMLTextAreaElement).value = S.chatHistoryDraft;
+	}
 	chatAutoResize();
 }
 
@@ -1185,28 +1280,55 @@ function handleChatCopy(e: ClipboardEvent): void {
 		const text = sel.containsNode(msg, false) ? (msg.textContent || "").trim() : sel.toString().trim();
 		if (text) lines.push(`${role}:\n${text}`);
 	}
-	if (lines.length > 1) { e.preventDefault(); e.clipboardData?.setData("text/plain", lines.join("\n\n")); }
+	if (lines.length > 1) {
+		e.preventDefault();
+		e.clipboardData?.setData("text/plain", lines.join("\n\n"));
+	}
 }
 
 function mountSessionHeaderControls(closeChatMore: () => void): void {
 	const headerToolbarMount = S.$("sessionHeaderToolbarMount");
 	if (headerToolbarMount) {
 		render(
-			<SessionHeader showName={false} showShare={false} showFork={false} showClear={false} showDelete={false} showArchive={false} />,
+			<SessionHeader
+				showName={false}
+				showShare={false}
+				showFork={false}
+				showClear={false}
+				showDelete={false}
+				showArchive={false}
+			/>,
 			headerToolbarMount,
 		);
 	}
 	const headerModalMount = S.$("sessionHeaderModalMount");
 	if (headerModalMount) {
 		render(
-			<SessionHeader showSelectors={false} showStop={false} showFork={false} showShare={false} showDelete={false} showArchive={false} nameOwnLine={true} showRenameButton={true} />,
+			<SessionHeader
+				showSelectors={false}
+				showStop={false}
+				showFork={false}
+				showShare={false}
+				showDelete={false}
+				showArchive={false}
+				nameOwnLine={true}
+				showRenameButton={true}
+			/>,
 			headerModalMount,
 		);
 	}
 	const headerModalTopMount = S.$("sessionHeaderModalTopMount");
 	if (headerModalTopMount) {
 		render(
-			<SessionHeader showSelectors={false} showName={false} showStop={false} actionButtonClass={"provider-btn provider-btn-secondary provider-btn-sm"} onBeforeShare={() => closeChatMore?.()} onBeforeArchive={() => closeChatMore?.()} onBeforeDelete={() => closeChatMore?.()} />,
+			<SessionHeader
+				showSelectors={false}
+				showName={false}
+				showStop={false}
+				actionButtonClass={"provider-btn provider-btn-secondary provider-btn-sm"}
+				onBeforeShare={() => closeChatMore?.()}
+				onBeforeArchive={() => closeChatMore?.()}
+				onBeforeDelete={() => closeChatMore?.()}
+			/>,
 			headerModalTopMount,
 		);
 	}
@@ -1222,24 +1344,44 @@ function bindSessionControlsVisibility(): void {
 	});
 }
 
-function bindChatMoreModal(debugModal: HTMLElement | null, fullContextModal: HTMLElement | null, closeDebugModal: (() => void) | null, closeFullContextModal: (() => void) | null): (() => void) | null {
+function bindChatMoreModal(
+	debugModal: HTMLElement | null,
+	fullContextModal: HTMLElement | null,
+	closeDebugModal: (() => void) | null,
+	closeFullContextModal: (() => void) | null,
+): (() => void) | null {
 	const chatMoreModal = S.$("chatMoreModal") as HTMLElement | null;
 	const chatMoreBtn = S.$("chatMoreBtn") as HTMLElement | null;
 	if (!(chatMoreModal && chatMoreBtn)) return null;
 	const closeChatMore = (): void => {
-		chatMoreModal.classList.add("hidden"); chatMoreBtn.classList.remove("active");
+		chatMoreModal.classList.add("hidden");
+		chatMoreBtn.classList.remove("active");
 		if (S.sandboxImageDropdown) S.sandboxImageDropdown.classList.add("hidden");
 	};
-	const openChatMore = (): void => { setDebugModalOpen(false); setFullContextModalOpen(false); chatMoreModal.classList.remove("hidden"); chatMoreBtn.classList.add("active"); };
+	const openChatMore = (): void => {
+		setDebugModalOpen(false);
+		setFullContextModalOpen(false);
+		chatMoreModal.classList.remove("hidden");
+		chatMoreBtn.classList.add("active");
+	};
 	chatMoreBtn.addEventListener("click", openChatMore);
-	chatMoreModal.addEventListener("click", (e: MouseEvent) => { if (e.target === chatMoreModal) closeChatMore(); });
+	chatMoreModal.addEventListener("click", (e: MouseEvent) => {
+		if (e.target === chatMoreModal) closeChatMore();
+	});
 	for (const id of ["debugPanelBtn", "fullContextBtn"]) {
-		const b = S.$(id); if (b) b.addEventListener("click", closeChatMore);
+		const b = S.$(id);
+		if (b) b.addEventListener("click", closeChatMore);
 	}
 	chatMoreModalKeydownHandler = (e: KeyboardEvent): void => {
 		if (e.key !== "Escape") return;
-		if (fullContextModal && !fullContextModal.classList.contains("hidden")) { closeFullContextModal?.(); return; }
-		if (debugModal && !debugModal.classList.contains("hidden")) { closeDebugModal?.(); return; }
+		if (fullContextModal && !fullContextModal.classList.contains("hidden")) {
+			closeFullContextModal?.();
+			return;
+		}
+		if (debugModal && !debugModal.classList.contains("hidden")) {
+			closeDebugModal?.();
+			return;
+		}
 		closeChatMore();
 	};
 	document.addEventListener("keydown", chatMoreModalKeydownHandler);
@@ -1253,50 +1395,97 @@ function bindDeleteAllSessions(closeChatMore: (() => void) | null): void {
 	let inFlight = false;
 	btn.addEventListener("click", () => {
 		if (inFlight) return;
-		inFlight = true; btn.disabled = true;
+		inFlight = true;
+		btn.disabled = true;
 		if (label) label.textContent = "Deleting\u2026";
 		closeChatMore?.();
 		clearAllSessions()
-			.then((res: any) => { if (res?.ok && !res?.skipped) return; if (res?.cancelled || res?.skipped) return; chatAddMsg("error", res?.error?.message || "Failed to clear sessions"); })
-			.finally(() => { inFlight = false; btn.disabled = false; if (label) label.textContent = "Delete all sessions"; });
+			.then((res: any) => {
+				if (res?.ok && !res?.skipped) return;
+				if (res?.cancelled || res?.skipped) return;
+				chatAddMsg("error", res?.error?.message || "Failed to clear sessions");
+			})
+			.finally(() => {
+				inFlight = false;
+				btn.disabled = false;
+				if (label) label.textContent = "Delete all sessions";
+			});
 	});
 }
 
 function bindChatComposer(): void {
 	const chatInput = S.chatInput as HTMLTextAreaElement;
-	chatInput.addEventListener("input", () => { chatAutoResize(); slashHandleInput(); });
+	chatInput.addEventListener("input", () => {
+		chatAutoResize();
+		slashHandleInput();
+	});
 	chatInput.addEventListener("keydown", (e: KeyboardEvent) => {
 		if (slashHandleKeydown(e)) return;
-		if (e.key === "Escape" && S.commandModeEnabled && !chatInput.value.trim()) { e.preventDefault(); setCommandMode(false); return; }
-		if (e.key === "Enter" && !e.shiftKey && !(e as any).isComposing) { e.preventDefault(); sendChat(); return; }
-		if (e.key === "ArrowUp" && chatInput.selectionStart === 0 && !e.shiftKey) { e.preventDefault(); handleHistoryUp(); return; }
-		if (e.key === "ArrowDown" && chatInput.selectionStart === chatInput.value.length && !e.shiftKey) { e.preventDefault(); handleHistoryDown(); }
+		if (e.key === "Escape" && S.commandModeEnabled && !chatInput.value.trim()) {
+			e.preventDefault();
+			setCommandMode(false);
+			return;
+		}
+		if (e.key === "Enter" && !e.shiftKey && !(e as any).isComposing) {
+			e.preventDefault();
+			sendChat();
+			return;
+		}
+		if (e.key === "ArrowUp" && chatInput.selectionStart === 0 && !e.shiftKey) {
+			e.preventDefault();
+			handleHistoryUp();
+			return;
+		}
+		if (e.key === "ArrowDown" && chatInput.selectionStart === chatInput.value.length && !e.shiftKey) {
+			e.preventDefault();
+			handleHistoryDown();
+		}
 	});
 	S.chatSendBtn!.addEventListener("click", sendChat);
 }
 
 function initializeChatControls(): void {
-	S.setModelCombo(S.$("modelCombo")); S.setModelComboBtn(S.$("modelComboBtn")); S.setModelComboLabel(S.$("modelComboLabel"));
-	S.setModelDropdown(S.$("modelDropdown")); S.setModelSearchInput(S.$("modelSearchInput")); S.setModelDropdownList(S.$("modelDropdownList"));
+	S.setModelCombo(S.$("modelCombo"));
+	S.setModelComboBtn(S.$("modelComboBtn"));
+	S.setModelComboLabel(S.$("modelComboLabel"));
+	S.setModelDropdown(S.$("modelDropdown"));
+	S.setModelSearchInput(S.$("modelSearchInput"));
+	S.setModelDropdownList(S.$("modelDropdownList"));
 	bindModelComboEvents();
 	bindReasoningToggle();
-	S.setNodeCombo(S.$("nodeCombo")); S.setNodeComboBtn(S.$("nodeComboBtn")); S.setNodeComboLabel(S.$("nodeComboLabel"));
-	S.setNodeDropdown(S.$("nodeDropdown")); S.setNodeDropdownList(S.$("nodeDropdownList"));
-	bindNodeComboEvents(); fetchNodes();
-	S.setSandboxToggleBtn(S.$("sandboxToggle")); S.setSandboxLabel(S.$("sandboxLabel"));
-	bindSandboxToggleEvents(); updateSandboxUI(true);
-	S.setSandboxImageBtn(S.$("sandboxImageBtn")); S.setSandboxImageLabel(S.$("sandboxImageLabel")); S.setSandboxImageDropdown(S.$("sandboxImageDropdown"));
-	bindSandboxImageEvents(); updateSandboxImageUI(null);
+	S.setNodeCombo(S.$("nodeCombo"));
+	S.setNodeComboBtn(S.$("nodeComboBtn"));
+	S.setNodeComboLabel(S.$("nodeComboLabel"));
+	S.setNodeDropdown(S.$("nodeDropdown"));
+	S.setNodeDropdownList(S.$("nodeDropdownList"));
+	bindNodeComboEvents();
+	fetchNodes();
+	S.setSandboxToggleBtn(S.$("sandboxToggle"));
+	S.setSandboxLabel(S.$("sandboxLabel"));
+	bindSandboxToggleEvents();
+	updateSandboxUI(true);
+	S.setSandboxImageBtn(S.$("sandboxImageBtn"));
+	S.setSandboxImageLabel(S.$("sandboxImageLabel"));
+	S.setSandboxImageDropdown(S.$("sandboxImageDropdown"));
+	bindSandboxImageEvents();
+	updateSandboxImageUI(null);
 }
 
-function bindContextModals(): { debugModal: HTMLElement | null; fullContextModal: HTMLElement | null; closeDebugModal: (() => void) | null; closeFullContextModal: (() => void) | null } {
+function bindContextModals(): {
+	debugModal: HTMLElement | null;
+	fullContextModal: HTMLElement | null;
+	closeDebugModal: (() => void) | null;
+	closeFullContextModal: (() => void) | null;
+} {
 	const debugModal = S.$("debugModal") as HTMLElement | null;
 	const debugCloseBtn = S.$("debugModalCloseBtn") as HTMLElement | null;
 	let closeDebugModal: (() => void) | null = null;
 	if (debugModal) {
 		closeDebugModal = () => setDebugModalOpen(false);
 		if (debugCloseBtn) debugCloseBtn.addEventListener("click", closeDebugModal);
-		debugModal.addEventListener("click", (e: MouseEvent) => { if (e.target === debugModal) closeDebugModal!(); });
+		debugModal.addEventListener("click", (e: MouseEvent) => {
+			if (e.target === debugModal) closeDebugModal!();
+		});
 	}
 	const fullContextModal = S.$("fullContextModal") as HTMLElement | null;
 	const fcCloseBtn = S.$("fullContextModalCloseBtn") as HTMLElement | null;
@@ -1304,7 +1493,9 @@ function bindContextModals(): { debugModal: HTMLElement | null; fullContextModal
 	if (fullContextModal) {
 		closeFullContextModal = () => setFullContextModalOpen(false);
 		if (fcCloseBtn) fcCloseBtn.addEventListener("click", closeFullContextModal);
-		fullContextModal.addEventListener("click", (e: MouseEvent) => { if (e.target === fullContextModal) closeFullContextModal!(); });
+		fullContextModal.addEventListener("click", (e: MouseEvent) => {
+			if (e.target === fullContextModal) closeFullContextModal!();
+		});
 	}
 	return { debugModal, fullContextModal, closeDebugModal, closeFullContextModal };
 }
@@ -1313,7 +1504,10 @@ function syncModelComboLabel(): void {
 	if (!(S.models.length > 0 && S.modelComboLabel)) return;
 	const models = S.models as Array<{ id: string; displayName?: string }>;
 	const found = models.find((m) => m.id === S.selectedModelId);
-	if (found) { S.modelComboLabel.textContent = found.displayName || found.id; return; }
+	if (found) {
+		S.modelComboLabel.textContent = found.displayName || found.id;
+		return;
+	}
 	if (models[0]) S.modelComboLabel.textContent = models[0].displayName || models[0].id;
 }
 
@@ -1344,7 +1538,9 @@ registerPrefix(
 		// This is a compile-time constant defined above -- no dynamic or user data.
 		container.innerHTML = chatPageHTML;
 
-		S.setChatMsgBox(S.$("messages")); S.setChatInput(S.$("chatInput")); S.setChatSendBtn(S.$("sendBtn"));
+		S.setChatMsgBox(S.$("messages"));
+		S.setChatInput(S.$("chatInput"));
+		S.setChatSendBtn(S.$("sendBtn"));
 		updateCommandInputUI();
 		initializeChatControls();
 
@@ -1374,15 +1570,40 @@ registerPrefix(
 		S.chatInput!.focus();
 	},
 	function teardownChat() {
-		teardownVoiceInput(); teardownMediaDrop(); unbindReasoningToggle(); unbindNodeEvents(); slashHideMenu();
-		if (chatMoreModalKeydownHandler) { document.removeEventListener("keydown", chatMoreModalKeydownHandler); chatMoreModalKeydownHandler = null; }
-		disposeSessionControlsVisibility?.(); disposeSessionControlsVisibility = null;
-		const m1 = S.$("sessionHeaderToolbarMount"); if (m1) render(null, m1);
-		const m2 = S.$("sessionHeaderModalMount"); if (m2) render(null, m2);
-		const m3 = S.$("sessionHeaderModalTopMount"); if (m3) render(null, m3);
-		S.setChatMsgBox(null); S.setChatInput(null); S.setChatSendBtn(null); S.setStreamEl(null); S.setStreamText("");
-		S.setModelCombo(null); S.setModelComboBtn(null); S.setModelComboLabel(null); S.setModelDropdown(null); S.setModelSearchInput(null); S.setModelDropdownList(null);
-		S.setNodeCombo(null); S.setNodeComboBtn(null); S.setNodeComboLabel(null); S.setNodeDropdown(null); S.setNodeDropdownList(null);
-		S.setSandboxToggleBtn(null); S.setSandboxLabel(null);
+		teardownVoiceInput();
+		teardownMediaDrop();
+		unbindReasoningToggle();
+		unbindNodeEvents();
+		slashHideMenu();
+		if (chatMoreModalKeydownHandler) {
+			document.removeEventListener("keydown", chatMoreModalKeydownHandler);
+			chatMoreModalKeydownHandler = null;
+		}
+		disposeSessionControlsVisibility?.();
+		disposeSessionControlsVisibility = null;
+		const m1 = S.$("sessionHeaderToolbarMount");
+		if (m1) render(null, m1);
+		const m2 = S.$("sessionHeaderModalMount");
+		if (m2) render(null, m2);
+		const m3 = S.$("sessionHeaderModalTopMount");
+		if (m3) render(null, m3);
+		S.setChatMsgBox(null);
+		S.setChatInput(null);
+		S.setChatSendBtn(null);
+		S.setStreamEl(null);
+		S.setStreamText("");
+		S.setModelCombo(null);
+		S.setModelComboBtn(null);
+		S.setModelComboLabel(null);
+		S.setModelDropdown(null);
+		S.setModelSearchInput(null);
+		S.setModelDropdownList(null);
+		S.setNodeCombo(null);
+		S.setNodeComboBtn(null);
+		S.setNodeComboLabel(null);
+		S.setNodeDropdown(null);
+		S.setNodeDropdownList(null);
+		S.setSandboxToggleBtn(null);
+		S.setSandboxLabel(null);
 	},
 );

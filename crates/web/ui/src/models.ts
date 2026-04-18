@@ -128,7 +128,10 @@ export function renderModelList(query: string): void {
 	const currentId = modelStore.selectedModelId.value;
 	let lastPreferredIdx = -1;
 	for (let i = filtered.length - 1; i >= 0; i--) {
-		if (filtered[i].preferred) { lastPreferredIdx = i; break; }
+		if (filtered[i].preferred) {
+			lastPreferredIdx = i;
+			break;
+		}
 	}
 	filtered.forEach((m, idx) => {
 		S.modelDropdownList?.appendChild(buildModelItem(m, currentId));

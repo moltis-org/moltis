@@ -1,7 +1,7 @@
 // ── Helpers ──────────────────────────────────────────────────
 import { hasTranslation, t } from "./i18n";
-import type { RpcResponse } from "./types";
 import * as S from "./state";
+import type { RpcResponse } from "./types";
 
 // Extend Window for webkitAudioContext (Safari)
 declare global {
@@ -123,7 +123,11 @@ export function modelVersionScore(id: string): number {
 	return max;
 }
 
-function translatedOrFallback(key: string | undefined, opts: Record<string, unknown> | undefined, fallback: string): string {
+function translatedOrFallback(
+	key: string | undefined,
+	opts: Record<string, unknown> | undefined,
+	fallback: string,
+): string {
 	if (!key) return fallback;
 	if (!hasTranslation(key, opts)) return fallback;
 	const translated = t(key, opts);
@@ -368,7 +372,11 @@ export function formatTokens(n: number): string {
 	return String(n);
 }
 
-export function formatAssistantTokenUsage(inputTokens: number | undefined, outputTokens: number | undefined, cacheReadTokens?: number | undefined): string {
+export function formatAssistantTokenUsage(
+	inputTokens: number | undefined,
+	outputTokens: number | undefined,
+	cacheReadTokens?: number | undefined,
+): string {
 	const input = Number(inputTokens || 0);
 	const output = Number(outputTokens || 0);
 	const cached = Number(cacheReadTokens || 0);
@@ -439,7 +447,9 @@ function classifyStructuredError(errObj: Record<string, unknown>, resetsAt: numb
 }
 
 function classifyUsageLimitError(errObj: Record<string, unknown>, resetsAt: number | null): ParsedError | null {
-	if (!(errObj.type === "usage_limit_reached" || (errObj.message && String(errObj.message).indexOf("usage limit") !== -1))) {
+	if (
+		!(errObj.type === "usage_limit_reached" || (errObj.message && String(errObj.message).indexOf("usage limit") !== -1))
+	) {
 		return null;
 	}
 	return {
@@ -451,7 +461,9 @@ function classifyUsageLimitError(errObj: Record<string, unknown>, resetsAt: numb
 }
 
 function classifyRateLimitError(errObj: Record<string, unknown>, resetsAt: number | null): ParsedError | null {
-	if (!(errObj.type === "rate_limit_exceeded" || (errObj.message && String(errObj.message).indexOf("rate limit") !== -1))) {
+	if (
+		!(errObj.type === "rate_limit_exceeded" || (errObj.message && String(errObj.message).indexOf("rate limit") !== -1))
+	) {
 		return null;
 	}
 	return {
@@ -543,7 +555,11 @@ export function updateCountdown(el: HTMLElement, resetsAtMs: number): boolean {
 }
 
 /** Build a short summary string for a tool call card. */
-export function toolCallSummary(name: string | undefined, args: ToolCallArgs | undefined, executionMode?: string): string {
+export function toolCallSummary(
+	name: string | undefined,
+	args: ToolCallArgs | undefined,
+	executionMode?: string,
+): string {
 	if (!args) return name || "tool";
 	switch (name) {
 		case "exec": {
@@ -713,7 +729,13 @@ function formatDocSize(bytes: number): string {
  * @param mimeType - MIME type for icon selection
  * @param sizeBytes - file size for display
  */
-export function renderDocument(container: HTMLElement, mediaSrc: string, filename: string, mimeType?: string, sizeBytes?: number): void {
+export function renderDocument(
+	container: HTMLElement,
+	mediaSrc: string,
+	filename: string,
+	mimeType?: string,
+	sizeBytes?: number,
+): void {
 	const wrap = document.createElement("div");
 	wrap.className = "document-container";
 
@@ -880,7 +902,7 @@ export function warmAudioPlayback(): void {
 let _activeAudio: HTMLAudioElement | null = null;
 
 function isEditableTarget(el: EventTarget | null): boolean {
-	if (!el || !(el instanceof HTMLElement)) return false;
+	if (!(el && el instanceof HTMLElement)) return false;
 	const tag = el.tagName;
 	if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
 	return el.isContentEditable;
@@ -1081,7 +1103,12 @@ function splitMapLinkText(text: string | undefined): { primary: string; secondar
 	return { primary, secondary };
 }
 
-export function renderMapLinks(container: HTMLElement, links: MapLinks | null | undefined, label?: string, heading?: string): boolean {
+export function renderMapLinks(
+	container: HTMLElement,
+	links: MapLinks | null | undefined,
+	label?: string,
+	heading?: string,
+): boolean {
 	const mapUrl = resolveMapUrl(links);
 	if (!mapUrl) return false;
 
@@ -1110,7 +1137,11 @@ export function renderMapLinks(container: HTMLElement, links: MapLinks | null | 
 	return true;
 }
 
-export function renderMapPointGroups(container: HTMLElement, points: MapPoint[] | null | undefined, fallbackLabel?: string): boolean {
+export function renderMapPointGroups(
+	container: HTMLElement,
+	points: MapPoint[] | null | undefined,
+	fallbackLabel?: string,
+): boolean {
 	if (!Array.isArray(points) || points.length === 0) return false;
 
 	let rendered = false;

@@ -251,6 +251,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 				</div>
 				<div className="flex flex-wrap items-center gap-3 mt-1">
 					<button
+						key={`auth-${saving}`}
 						type="button"
 						className="provider-btn"
 						onClick={() => {
@@ -472,7 +473,13 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 					)}
 					{error && <ErrorPanel message={error} />}
 					<div className="flex flex-wrap items-center gap-3 mt-1">
-						<button type="button" className="provider-btn" disabled={saving} onClick={onPasskeyRegister}>
+						<button
+							key={`pk-${saving}`}
+							type="button"
+							className="provider-btn"
+							disabled={saving}
+							onClick={onPasskeyRegister}
+						>
 							{saving ? "Registering\u2026" : "Register passkey"}
 						</button>
 						{skippable ? (
@@ -523,7 +530,7 @@ export function AuthStep({ onNext, skippable }: { onNext: () => void; skippable:
 					</div>
 					{error && <ErrorPanel message={error} />}
 					<div className="flex flex-wrap items-center gap-3 mt-1">
-						<button type="submit" className="provider-btn" disabled={saving}>
+						<button key={`pw-${saving}`} type="submit" className="provider-btn" disabled={saving}>
 							{saving ? "Setting up\u2026" : localhostOnly && !password ? "Skip" : "Set password"}
 						</button>
 						{skippable ? (

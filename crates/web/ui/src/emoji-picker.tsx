@@ -2,8 +2,8 @@
 //
 // Used by page-settings.js and page-onboarding.js.
 
-import { useEffect, useRef, useState } from "preact/hooks";
 import type { VNode } from "preact";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 export const EMOJI_LIST: string[] = [
 	"\u{1f436}",
@@ -92,11 +92,7 @@ export function EmojiPicker({ value, onChange, onSelect }: EmojiPickerProps): VN
 				onInput={(e: Event) => onChange((e.target as HTMLInputElement).value)}
 				placeholder={"\u{1f43e}"}
 			/>
-			<button
-				type="button"
-				class="provider-btn provider-btn-sm"
-				onClick={() => setOpen(!open)}
-			>
+			<button type="button" class="provider-btn provider-btn-sm" onClick={() => setOpen(!open)}>
 				{open ? "Close" : "Pick"}
 			</button>
 			{open ? (

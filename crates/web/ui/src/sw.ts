@@ -35,11 +35,7 @@ sw.addEventListener("install", (event: ExtendableEvent) => {
 sw.addEventListener("activate", (event: ExtendableEvent) => {
 	event.waitUntil(
 		caches.keys().then((cacheNames) => {
-			return Promise.all(
-				cacheNames
-					.filter((name) => name !== CACHE_NAME)
-					.map((name) => caches.delete(name)),
-			);
+			return Promise.all(cacheNames.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name)));
 		}),
 	);
 	// Take control of all pages immediately
@@ -61,10 +57,7 @@ sw.addEventListener("fetch", (event: FetchEvent) => {
 	}
 
 	// Static assets - cache first, then network
-	if (
-		url.pathname.startsWith("/assets/") ||
-		url.pathname === "/manifest.json"
-	) {
+	if (url.pathname.startsWith("/assets/") || url.pathname === "/manifest.json") {
 		event.respondWith(
 			caches.match(event.request).then((cached) => {
 				if (cached) {
@@ -149,9 +142,7 @@ sw.addEventListener("push", (event: PushEvent) => {
 		requireInteraction: false,
 	};
 
-	event.waitUntil(
-		sw.registration.showNotification((data.title as string) || "moltis", options),
-	);
+	event.waitUntil(sw.registration.showNotification((data.title as string) || "moltis", options));
 });
 
 // Notification click event

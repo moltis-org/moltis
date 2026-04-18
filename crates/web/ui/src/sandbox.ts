@@ -9,6 +9,13 @@ interface SandboxInfoRecord {
 	backend?: string;
 }
 
+interface SessionPatchResult {
+	result?: {
+		sandbox_enabled?: boolean;
+		sandbox_image?: string;
+	};
+}
+
 const SANDBOX_DISABLED_HINT = (): string => t("chat:sandboxDisabledHint");
 
 function sandboxRuntimeAvailable(): boolean {
@@ -102,7 +109,7 @@ export function bindSandboxToggleEvents(): void {
 	toggleBtn.addEventListener("click", () => {
 		if (!sandboxRuntimeAvailable()) return;
 		const newVal = !S.sessionSandboxEnabled;
-		sendRpc("sessions.patch", {
+		sendRpc<SessionPatchResult>("sessions.patch", {
 			key: S.activeSessionKey,
 			sandboxEnabled: newVal,
 		}).then((res) => {
@@ -216,7 +223,10 @@ function positionImageDropdown(): void {
 	}
 
 	dropdownRect = dropdown.getBoundingClientRect();
-	const clampedLeft = Math.max(8, Math.min(Math.round(btnRect.left), Math.round(viewportWidth - dropdownRect.width - 8)));
+	const clampedLeft = Math.max(
+		8,
+		Math.min(Math.round(btnRect.left), Math.round(viewportWidth - dropdownRect.width - 8)),
+	);
 	dropdown.style.left = `${clampedLeft}px`;
 }
 
@@ -285,7 +295,7 @@ function addImageOption(dropdown: HTMLElement, tag: string, isActive: boolean, s
 
 function selectImage(tag: string | null): void {
 	const value = tag || "";
-	sendRpc("sessions.patch", {
+	sendRpc<SessionPatchResult>("sessions.patch", {
 		key: S.activeSessionKey,
 		sandboxImage: value,
 	}).then((res) => {

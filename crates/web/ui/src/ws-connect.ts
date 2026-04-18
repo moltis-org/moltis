@@ -62,8 +62,6 @@ interface WsRpcFrame {
 	channel?: unknown;
 }
 
-
-
 /** Options for connectWs. */
 export interface ConnectOptions {
 	onFrame?: (frame: EventWsFrame) => void;

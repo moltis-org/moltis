@@ -31,17 +31,22 @@ export function Toasts(): VNode {
 			{toasts.value.map((toast) => {
 				const bg = toast.type === "error" ? "var(--error, #e55)" : "var(--accent)";
 				return (
-					<div key={toast.id} style={{
-						pointerEvents: "auto",
-						maxWidth: "420px",
-						padding: "10px 16px",
-						borderRadius: "6px",
-						fontSize: ".8rem",
-						fontWeight: 500,
-						color: "#fff",
-						background: bg,
-						boxShadow: "0 4px 12px rgba(0,0,0,.15)",
-					}}>{toast.message}</div>
+					<div
+						key={toast.id}
+						style={{
+							pointerEvents: "auto",
+							maxWidth: "420px",
+							padding: "10px 16px",
+							borderRadius: "6px",
+							fontSize: ".8rem",
+							fontWeight: 500,
+							color: "#fff",
+							background: bg,
+							boxShadow: "0 4px 12px rgba(0,0,0,.15)",
+						}}
+					>
+						{toast.message}
+					</div>
 				);
 			})}
 		</div>
@@ -78,11 +83,23 @@ export function Modal(props: ModalProps): VNode | null {
 	if (!show) return null;
 
 	return (
-		<div class="modal-overlay" onClick={onBackdrop} style="display:flex;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;align-items:center;justify-content:center;">
-			<div class="modal-box" style="background:var(--surface);border-radius:var(--radius);padding:20px;max-width:500px;width:90%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.25);border:1px solid var(--border);">
+		<div
+			class="modal-overlay"
+			onClick={onBackdrop}
+			style="display:flex;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100;align-items:center;justify-content:center;"
+		>
+			<div
+				class="modal-box"
+				style="background:var(--surface);border-radius:var(--radius);padding:20px;max-width:500px;width:90%;max-height:85vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,.25);border:1px solid var(--border);"
+			>
 				<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
 					<h3 style="margin:0;font-size:.95rem;font-weight:600;color:var(--text-strong)">{title}</h3>
-					<button onClick={onClose} style="background:none;border:none;color:var(--muted);font-size:1.1rem;cursor:pointer;padding:2px 6px">{"\u2715"}</button>
+					<button
+						onClick={onClose}
+						style="background:none;border:none;color:var(--muted);font-size:1.1rem;cursor:pointer;padding:2px 6px"
+					>
+						{"\u2715"}
+					</button>
 				</div>
 				{props.children}
 			</div>
@@ -127,8 +144,12 @@ export function ConfirmDialog(): VNode | null {
 		<Modal show={true} onClose={no} title={t("common:actions.confirm")}>
 			<p style="font-size:.85rem;color:var(--text);margin:0 0 16px;">{s.message}</p>
 			<div style="display:flex;gap:8px;justify-content:flex-end;">
-				<button onClick={no} class="provider-btn provider-btn-secondary">{t("common:actions.cancel")}</button>
-				<button onClick={yes} class={btnClass}>{label}</button>
+				<button onClick={no} class="provider-btn provider-btn-secondary">
+					{t("common:actions.cancel")}
+				</button>
+				<button onClick={yes} class={btnClass}>
+					{label}
+				</button>
 			</div>
 		</Modal>
 	);
@@ -406,21 +427,27 @@ export function ModelSelect({ models, value, onChange, placeholder }: ModelSelec
 		<div class="model-combo" ref={ref} style="width:100%;">
 			<button type="button" class="model-combo-btn" style="width:100%;" onClick={() => setOpen(!open)}>
 				<span class="model-item-label">{label}</span>
-				<span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>
+				<span class="icon icon-sm icon-chevron-down model-combo-chevron" />
 			</button>
 			{open && (
 				<div class="model-dropdown" style="width:100%;" onKeyDown={onKeyDown}>
-					<input class="model-search-input" ref={searchRef} placeholder={"Search models\u2026"}
-						value={query} onInput={(e: Event) => setQuery((e.target as HTMLInputElement).value)} />
+					<input
+						class="model-search-input"
+						ref={searchRef}
+						placeholder={"Search models\u2026"}
+						value={query}
+						onInput={(e: Event) => setQuery((e.target as HTMLInputElement).value)}
+					/>
 					<div class="model-dropdown-list" ref={listRef}>
-						<div class={`model-dropdown-item ${value ? "" : "selected"}`}
-							onClick={() => pick(null)}>
+						<div class={`model-dropdown-item ${value ? "" : "selected"}`} onClick={() => pick(null)}>
 							<span class="model-item-label">{placeholder || "(none)"}</span>
 						</div>
 						{filtered.map((m, i) => (
-							<div key={m.id}
+							<div
+								key={m.id}
 								class={`model-dropdown-item ${m.id === value ? "selected" : ""} ${i === kbIndex ? "kb-active" : ""}`}
-								onClick={() => pick(m)}>
+								onClick={() => pick(m)}
+							>
 								<span class="model-item-label">{m.displayName || m.id}</span>
 								{m.provider && <span class="model-item-provider">{m.provider}</span>}
 							</div>
@@ -561,7 +588,7 @@ export function ComboSelect({
 				disabled={disabled}
 			>
 				<span class="model-item-label">{label}</span>
-				<span class="icon icon-sm icon-chevron-down model-combo-chevron"></span>
+				<span class="icon icon-sm icon-chevron-down model-combo-chevron" />
 			</button>
 			{open && (
 				<div
@@ -572,20 +599,26 @@ export function ComboSelect({
 					onKeyDown={onKeyDown}
 				>
 					{searchable && (
-						<input class="model-search-input" ref={searchRef} placeholder={searchPlaceholder || "Search\u2026"}
-							value={query} onInput={(e: Event) => setQuery((e.target as HTMLInputElement).value)} />
+						<input
+							class="model-search-input"
+							ref={searchRef}
+							placeholder={searchPlaceholder || "Search\u2026"}
+							value={query}
+							onInput={(e: Event) => setQuery((e.target as HTMLInputElement).value)}
+						/>
 					)}
 					<div class="model-dropdown-list">
 						{allowEmpty && (
-							<div class={`model-dropdown-item ${value ? "" : "selected"}`}
-								onClick={() => pick(null)}>
+							<div class={`model-dropdown-item ${value ? "" : "selected"}`} onClick={() => pick(null)}>
 								<span class="model-item-label">{placeholder || "(none)"}</span>
 							</div>
 						)}
 						{filtered.map((o, i) => (
-							<div key={o.value}
+							<div
+								key={o.value}
 								class={`model-dropdown-item ${o.value === value ? "selected" : ""} ${i === kbIndex ? "kb-active" : ""}`}
-								onClick={() => pick(o)}>
+								onClick={() => pick(o)}
+							>
 								<span class="model-item-label">{o.label}</span>
 							</div>
 						))}

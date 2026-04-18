@@ -84,13 +84,18 @@ function OverviewTab({ data }: TabProps): VNode | null {
 			{model ? (
 				<div className="flex gap-4">
 					<span className="text-[var(--muted)]">Model:</span>
-					<span className="font-medium">{provider ? `${provider} / ` : ""}{model}</span>
+					<span className="font-medium">
+						{provider ? `${provider} / ` : ""}
+						{model}
+					</span>
 				</div>
 			) : null}
 			{totalInput + totalOutput > 0 ? (
 				<div className="flex gap-4">
 					<span className="text-[var(--muted)]">Tokens:</span>
-					<span className="font-medium">{totalInput} in / {totalOutput} out</span>
+					<span className="font-medium">
+						{totalInput} in / {totalOutput} out
+					</span>
 				</div>
 			) : null}
 		</div>
@@ -104,15 +109,10 @@ function ActionsTab({ data }: TabProps): VNode | null {
 	return (
 		<div className="flex flex-col gap-2">
 			{toolResults.map((tr, i) => (
-				<div
-					key={i}
-					className="border border-[var(--border)] rounded-md p-2 bg-[var(--surface)] text-xs"
-				>
+				<div key={i} className="border border-[var(--border)] rounded-md p-2 bg-[var(--surface)] text-xs">
 					<div className="flex items-center gap-2">
 						<span className="font-semibold">{tr.tool_name || "unknown"}</span>
-						<span className={tr.success ? "text-green-500" : "text-red-500"}>
-							{tr.success ? "ok" : "error"}
-						</span>
+						<span className={tr.success ? "text-green-500" : "text-red-500"}>{tr.success ? "ok" : "error"}</span>
 					</div>
 					{tr.arguments ? (
 						<pre className="mt-1 font-mono whitespace-pre-wrap break-words text-[var(--muted)]">
@@ -134,10 +134,7 @@ function MessagesTab({ data }: TabProps): VNode | null {
 		<div className="flex flex-col gap-1">
 			{messages.map((m, i) => (
 				<div key={i} className="border-b border-[var(--border)] pb-1 text-xs">
-					<span
-						className="font-semibold uppercase text-[var(--muted)]"
-						style={{ fontSize: "10px" }}
-					>
+					<span className="font-semibold uppercase text-[var(--muted)]" style={{ fontSize: "10px" }}>
 						{m.role}
 					</span>
 					<span className="text-[var(--muted)] ml-1">#{i}</span>
@@ -188,11 +185,7 @@ export function RunDetail({ sessionKey, runId }: RunDetailProps): VNode {
 						<div className="text-xs text-[var(--muted)]">Loading\u2026</div>
 					) : (
 						<div>
-							<TabBar
-								tabs={RUN_DETAIL_TABS}
-								active={activeTab}
-								onChange={setActiveTab}
-							/>
+							<TabBar tabs={RUN_DETAIL_TABS} active={activeTab} onChange={setActiveTab} />
 							{activeTab === "overview" && <OverviewTab data={data} />}
 							{activeTab === "actions" && <ActionsTab data={data} />}
 							{activeTab === "messages" && <MessagesTab data={data} />}

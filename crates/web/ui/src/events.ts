@@ -17,12 +17,12 @@ export function onEvent<E extends WsEventName>(
 ): () => void;
 export function onEvent(eventName: string, handler: EventHandler): () => void;
 export function onEvent(eventName: string, handler: EventHandler): () => void {
-  (eventListeners[eventName] = eventListeners[eventName] || []).push(handler);
-  return function off(): void {
-    const arr = eventListeners[eventName];
-    if (arr) {
-      const idx = arr.indexOf(handler);
-      if (idx !== -1) arr.splice(idx, 1);
-    }
-  };
+	(eventListeners[eventName] = eventListeners[eventName] || []).push(handler);
+	return function off(): void {
+		const arr = eventListeners[eventName];
+		if (arr) {
+			const idx = arr.indexOf(handler);
+			if (idx !== -1) arr.splice(idx, 1);
+		}
+	};
 }

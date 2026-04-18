@@ -209,11 +209,7 @@ function HookCard({ hook }: { hook: Hook }): VNode {
 							{hook.avg_latency_ms > 0 ? <span>{hook.avg_latency_ms}ms avg</span> : null}
 						</>
 					) : null}
-					<span
-						className={
-							"icon icon-chevron-down transition-transform " + (expanded.value ? "rotate-180" : "")
-						}
-					/>
+					<span className={"icon icon-chevron-down transition-transform " + (expanded.value ? "rotate-180" : "")} />
 				</div>
 			</div>
 
@@ -241,9 +237,7 @@ function HookCard({ hook }: { hook: Hook }): VNode {
 							title="Click to copy path"
 							onClick={(e) => {
 								e.stopPropagation();
-								navigator.clipboard
-									.writeText(hook.source_path)
-									.then(() => showToast("Path copied", "success"));
+								navigator.clipboard.writeText(hook.source_path).then(() => showToast("Path copied", "success"));
 							}}
 						>
 							{hook.source_path}
@@ -327,11 +321,7 @@ function HookCard({ hook }: { hook: Hook }): VNode {
 							</button>
 						) : null}
 						{dirty.value ? (
-							<button
-								className="provider-btn provider-btn-sm"
-								onClick={handleSave}
-								disabled={saving.value}
-							>
+							<button className="provider-btn provider-btn-sm" onClick={handleSave} disabled={saving.value}>
 								{saving.value ? "Saving\u2026" : "Save"}
 							</button>
 						) : null}
@@ -384,8 +374,8 @@ function HooksPageComponent(): VNode {
 
 				<div className="max-w-[600px] bg-[var(--surface2)] border border-[var(--border)] rounded-[var(--radius)] px-5 py-4 leading-relaxed">
 					<p className="text-sm text-[var(--text)] mb-2.5">
-						<strong className="text-[var(--text-strong)]">Hooks</strong> run shell commands in response to
-						lifecycle events (tool calls, messages, sessions, etc.). They live in{" "}
+						<strong className="text-[var(--text-strong)]">Hooks</strong> run shell commands in response to lifecycle
+						events (tool calls, messages, sessions, etc.). They live in{" "}
 						<code className="font-mono text-xs">.moltis/hooks/</code> directories.
 					</p>
 					<div className="flex items-center gap-2 my-3 px-3.5 py-2.5 bg-[var(--surface)] rounded-[var(--radius-sm)] font-mono text-xs text-[var(--text-strong)]">
@@ -396,9 +386,9 @@ function HooksPageComponent(): VNode {
 						<span>Continue / Modify / Block</span>
 					</div>
 					<p className="text-xs text-[var(--muted)]">
-						Each hook is a directory containing a <code className="font-mono">HOOK.md</code> file with TOML
-						frontmatter (events, command, requirements) and optional documentation. Edit the content below
-						and click <strong>Save</strong> to update.
+						Each hook is a directory containing a <code className="font-mono">HOOK.md</code> file with TOML frontmatter
+						(events, command, requirements) and optional documentation. Edit the content below and click{" "}
+						<strong>Save</strong> to update.
 					</p>
 				</div>
 

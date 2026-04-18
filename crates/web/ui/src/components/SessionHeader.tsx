@@ -133,7 +133,9 @@ export function SessionHeader({
 	const sessionDataVersion = session?.dataVersion.value || 0;
 	const currentKey = sessionStore.activeSessionKey.value;
 	const gonAgentsPayload = parseAgentsListPayload(gon.get("agents") as never);
-	const initialAgentOptions: AgentOption[] = Array.isArray(gonAgentsPayload?.agents) ? (gonAgentsPayload.agents as AgentOption[]) : [];
+	const initialAgentOptions: AgentOption[] = Array.isArray(gonAgentsPayload?.agents)
+		? (gonAgentsPayload.agents as AgentOption[])
+		: [];
 	const initialDefaultAgentId = typeof gonAgentsPayload?.defaultId === "string" ? gonAgentsPayload.defaultId : "main";
 
 	const [renaming, setRenaming] = useState(false);
@@ -498,15 +500,11 @@ export function SessionHeader({
 			</span>
 		));
 
-	const renameCta =
-		showName &&
-		showRenameButton &&
-		canRename &&
-		!renaming && (
-			<button className={actionButtonClass} onClick={startRename} title="Rename session">
-				Rename
-			</button>
-		);
+	const renameCta = showName && showRenameButton && canRename && !renaming && (
+		<button className={actionButtonClass} onClick={startRename} title="Rename session">
+			Rename
+		</button>
+	);
 
 	return (
 		<div className={nameOwnLine ? "flex flex-col gap-2 w-full" : "flex items-center gap-2"}>
@@ -559,7 +557,7 @@ export function SessionHeader({
 						title="Delete session"
 						style={{ background: "var(--error)", borderColor: "var(--error)", color: "#fff" }}
 					>
-						<span className="icon icon-sm icon-x-circle shrink-0"></span>
+						<span className="icon icon-sm icon-x-circle shrink-0" />
 						Delete
 					</button>
 				)}
@@ -569,7 +567,7 @@ export function SessionHeader({
 						onClick={onFork}
 						title="Fork session"
 					>
-						<span className="icon icon-sm icon-layers shrink-0"></span>
+						<span className="icon icon-sm icon-layers shrink-0" />
 						Fork
 					</button>
 				)}
@@ -579,7 +577,7 @@ export function SessionHeader({
 						onClick={onShare}
 						title="Share snapshot"
 					>
-						<span className="icon icon-sm icon-share shrink-0"></span>
+						<span className="icon icon-sm icon-share shrink-0" />
 						Share
 					</button>
 				)}

@@ -1,13 +1,14 @@
 // ── Shared mutable state ────────────────────────────────────
-import type { RpcResponse, SessionTokens } from "./types";
+
 import * as sig from "./signals";
+import type { RpcResponse, SessionTokens } from "./types";
 
 export let ws: WebSocket | null = null;
 export let reqId = 0;
 export let connected = false;
 export let subscribed = false;
 export let reconnectDelay = 1000;
-export let pending: Record<string, (value: RpcResponse) => void> = {};
+export const pending: Record<string, (value: RpcResponse) => void> = {};
 export let models: unknown[] = [];
 export let activeSessionKey: string = localStorage.getItem("moltis-session") || "main";
 export let activeProjectId: string = localStorage.getItem("moltis-project") || "";

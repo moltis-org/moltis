@@ -54,7 +54,12 @@ function ensureVoicePlayerSlot(messageEl: HTMLElement | null): HTMLElement | nul
 	return slot;
 }
 
-function renderPersistedAudio(messageEl: HTMLElement, sessionKey: string | undefined, audioPath: string | undefined, autoplay: boolean): boolean {
+function renderPersistedAudio(
+	messageEl: HTMLElement,
+	sessionKey: string | undefined,
+	audioPath: string | undefined,
+	autoplay: boolean,
+): boolean {
 	const src = buildSessionMediaUrl(sessionKey, audioPath);
 	if (!src) return false;
 	const slot = ensureVoicePlayerSlot(messageEl);
@@ -124,16 +129,24 @@ export async function attachMessageVoiceControl(options: AttachMessageVoiceContr
 
 		actionBtn!.disabled = true;
 		actionBtn!.textContent = "Voicing...";
-		const result = await sendRpc("sessions.voice.generate", params) as unknown as Record<string, unknown>;
+		const result = (await sendRpc("sessions.voice.generate", params)) as unknown as Record<string, unknown>;
 		if (!(result?.ok && (result.payload as Record<string, unknown> | undefined)?.audio)) {
 			actionBtn!.disabled = false;
 			actionBtn!.textContent = "Retry voice";
-			const errorText = (result?.error as Record<string, unknown> | undefined)?.message as string || "Voice generation failed.";
+			const errorText =
+				((result?.error as Record<string, unknown> | undefined)?.message as string) || "Voice generation failed.";
 			upsertVoiceWarning(messageEl, errorText);
 			return;
 		}
 
-		if (!renderPersistedAudio(messageEl, sessionKey, (result.payload as Record<string, unknown>).audio as string, autoplayOnGenerate)) {
+		if (
+			!renderPersistedAudio(
+				messageEl,
+				sessionKey,
+				(result.payload as Record<string, unknown>).audio as string,
+				autoplayOnGenerate,
+			)
+		) {
 			actionBtn!.disabled = false;
 			actionBtn!.textContent = "Retry voice";
 			upsertVoiceWarning(messageEl, "Voice audio generated but could not be rendered.");

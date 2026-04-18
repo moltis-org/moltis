@@ -155,20 +155,24 @@ export function hasTranslation(key: string, opts?: Record<string, unknown>): boo
  *   const { t } = useTranslation("settings");
  *   return html`<h2>${t("identity.title")}</h2>`;
  */
-export function useTranslation(ns: string): { t: (key: string, opts?: Record<string, unknown>) => string; locale: string } {
+export function useTranslation(ns: string): {
+	t: (key: string, opts?: Record<string, unknown>) => string;
+	locale: string;
+} {
 	// Reading locale.value inside useComputed creates a reactive dependency.
 	// When locale changes, the computed re-evaluates and Preact re-renders.
-	const bound: ReadonlySignal<{ t: (key: string, opts?: Record<string, unknown>) => string; locale: string }> = useComputed(() => {
-		const _lng = locale.value; // subscribe to signal
-		void _lng;
-		return {
-			t: (key: string, opts?: Record<string, unknown>) => {
-				const options = opts ? Object.assign({ ns: ns }, opts) : { ns: ns };
-				return i18next.t(key, options);
-			},
-			locale: locale.value,
-		};
-	});
+	const bound: ReadonlySignal<{ t: (key: string, opts?: Record<string, unknown>) => string; locale: string }> =
+		useComputed(() => {
+			const _lng = locale.value; // subscribe to signal
+			void _lng;
+			return {
+				t: (key: string, opts?: Record<string, unknown>) => {
+					const options = opts ? Object.assign({ ns: ns }, opts) : { ns: ns };
+					return i18next.t(key, options);
+				},
+				locale: locale.value,
+			};
+		});
 	return bound.value;
 }
 
@@ -213,7 +217,9 @@ function applyStaticTranslation(el: Element, key: string | null, attrName?: stri
  */
 export function translateStaticElements(root: Element | null): void {
 	if (!root) return;
-	const elements = root.querySelectorAll("[data-i18n],[data-i18n-title],[data-i18n-placeholder],[data-i18n-aria-label]");
+	const elements = root.querySelectorAll(
+		"[data-i18n],[data-i18n-title],[data-i18n-placeholder],[data-i18n-aria-label]",
+	);
 	for (const el of elements) {
 		applyStaticTranslation(el, el.getAttribute("data-i18n"));
 		applyStaticTranslation(el, el.getAttribute("data-i18n-title"), "title");

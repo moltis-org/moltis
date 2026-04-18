@@ -140,7 +140,9 @@ export function cacheOutgoingUserMessage(key: string, chatParams: ChatParams): v
 	const historyIndex = currentSessionTailIndex(key);
 	const next: OutgoingUserMessage = {
 		role: "user",
-		content: chatParams.content && Array.isArray(chatParams.content) ? chatParams.content : chatParams.text || "",
+		content: (chatParams.content && Array.isArray(chatParams.content)
+			? chatParams.content
+			: chatParams.text || "") as string,
 		created_at: Date.now(),
 		seq: chatParams._seq || null,
 	};

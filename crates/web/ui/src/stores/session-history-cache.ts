@@ -126,7 +126,7 @@ function enforceHistoryBudgets(key: string): void {
 }
 
 function normalizeMessage(message: unknown, fallbackIndex?: number | null): HistoryMessage {
-	let next: HistoryMessage = deepClone(message) as HistoryMessage || {};
+	let next: HistoryMessage = (deepClone(message) as HistoryMessage) || {};
 	if (!(next && typeof next === "object")) {
 		next = { role: "notice", content: String(message || "") };
 	}
@@ -198,7 +198,11 @@ export function replaceSessionHistory(key: string, history: unknown[]): HistoryM
 	return next;
 }
 
-export function upsertSessionHistoryMessage(key: string, message: unknown, historyIndex?: number | null): HistoryMessage {
+export function upsertSessionHistoryMessage(
+	key: string,
+	message: unknown,
+	historyIndex?: number | null,
+): HistoryMessage {
 	let list = historyByKey.get(key);
 	if (!list) {
 		list = [];

@@ -6,13 +6,13 @@ import { signal } from "@preact/signals";
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import prettyBytes from "pretty-bytes";
 import uPlot from "uplot";
 import { TabBar } from "../components/forms";
 import { onEvent } from "../events";
 import { t } from "../i18n";
 import { registerPrefix } from "../router";
 import { routes } from "../routes";
-import prettyBytes from "pretty-bytes";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -180,9 +180,7 @@ function formatUptime(seconds: number | undefined | null): string {
 function EmptyState({ icon, title, description }: { icon: VNode; title: string; description: string }): VNode {
 	return (
 		<div className="flex flex-col items-center justify-center py-20 px-8 bg-[var(--surface)] border border-[var(--border)] rounded-lg">
-			<div className="w-20 h-20 mb-6 text-[var(--muted)] opacity-40">
-				{icon}
-			</div>
+			<div className="w-20 h-20 mb-6 text-[var(--muted)] opacity-40">{icon}</div>
 			<h3 className="text-lg font-medium text-[var(--text)] mb-3">{title}</h3>
 			<p className="text-sm text-[var(--muted)] text-center max-w-md">{description}</p>
 		</div>
@@ -216,7 +214,17 @@ function LiveIndicator({ live }: { live: boolean }): VNode {
 	);
 }
 
-function MetricCard({ title, value, subtitle, trend }: { title: string; value: string; subtitle?: string; trend?: number }): VNode {
+function MetricCard({
+	title,
+	value,
+	subtitle,
+	trend,
+}: {
+	title: string;
+	value: string;
+	subtitle?: string;
+	trend?: number;
+}): VNode {
 	return (
 		<div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg p-6">
 			<div className="text-xs text-[var(--muted)] uppercase tracking-wide mb-2">{title}</div>
@@ -224,7 +232,8 @@ function MetricCard({ title, value, subtitle, trend }: { title: string; value: s
 				<div className="text-2xl font-semibold">{value}</div>
 				{trend !== undefined && (
 					<span className={`text-xs ${trend >= 0 ? "text-green-500" : "text-red-500"}`}>
-						{trend >= 0 ? "+" : ""}{trend}%
+						{trend >= 0 ? "+" : ""}
+						{trend}%
 					</span>
 				)}
 			</div>
@@ -249,7 +258,17 @@ function getCssVar(name: string, fallback: string): string {
 	return style.getPropertyValue(name).trim() || fallback;
 }
 
-function TimeSeriesChart({ title, data, series, height = 220 }: { title: string; data: (number | null)[][]; series: ChartSeries[]; height?: number }): VNode {
+function TimeSeriesChart({
+	title,
+	data,
+	series,
+	height = 220,
+}: {
+	title: string;
+	data: (number | null)[][];
+	series: ChartSeries[];
+	height?: number;
+}): VNode {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const chartRef = useRef<uPlot | null>(null);
 
@@ -398,7 +417,11 @@ function getProviders(points: HistoryPoint[]): string[] {
 }
 
 // Prepare per-provider chart data for a specific metric (input_tokens, output_tokens, etc.)
-function prepareProviderChartData(points: HistoryPoint[], providers: string[], metric: string): (number | null)[][] | null {
+function prepareProviderChartData(
+	points: HistoryPoint[],
+	providers: string[],
+	metric: string,
+): (number | null)[][] | null {
 	if (!points || points.length === 0 || providers.length === 0) {
 		return null;
 	}
@@ -426,7 +449,13 @@ const providerColors = [
 	"#f97316", // orange
 ];
 
-function MetricsGrid({ categories, latestPoint }: { categories?: MetricsCategories; latestPoint?: HistoryPoint }): VNode | null {
+function MetricsGrid({
+	categories,
+	latestPoint,
+}: {
+	categories?: MetricsCategories;
+	latestPoint?: HistoryPoint;
+}): VNode | null {
 	if (!categories) return null;
 
 	const { llm, http, tools, mcp, system } = categories;
@@ -454,7 +483,9 @@ function MetricsGrid({ categories, latestPoint }: { categories?: MetricsCategori
 		<div className="space-y-10">
 			{/* System Overview */}
 			<section>
-				<h3 className="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">{t("metrics:sections.system")}</h3>
+				<h3 className="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">
+					{t("metrics:sections.system")}
+				</h3>
 				<div className="grid grid-cols-2 md:grid-cols-4 gap-6">
 					<MetricCard title={t("metrics:cards.uptime")} value={formatUptime(system?.uptime_seconds)} />
 					<MetricCard title={t("metrics:cards.connectedClients")} value={formatNumber(system?.connected_clients)} />
@@ -466,7 +497,9 @@ function MetricsGrid({ categories, latestPoint }: { categories?: MetricsCategori
 
 			{/* LLM Metrics */}
 			<section>
-				<h3 className="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">{t("metrics:sections.llmUsage")}</h3>
+				<h3 className="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">
+					{t("metrics:sections.llmUsage")}
+				</h3>
 				<div className="grid grid-cols-2 md:grid-cols-4 gap-6">
 					<MetricCard
 						title={t("metrics:cards.completions")}
@@ -478,14 +511,20 @@ function MetricsGrid({ categories, latestPoint }: { categories?: MetricsCategori
 					<MetricCard
 						title={t("metrics:cards.cacheTokens")}
 						value={formatNumber((llm?.cache_read_tokens || 0) + (llm?.cache_write_tokens || 0))}
-						subtitle={llm?.cache_read_tokens ? t("metrics:cacheRead", { value: formatNumber(llm.cache_read_tokens) }) : undefined}
+						subtitle={
+							llm?.cache_read_tokens
+								? t("metrics:cacheRead", { value: formatNumber(llm.cache_read_tokens) })
+								: undefined
+						}
 					/>
 				</div>
 			</section>
 
 			{/* Tools & MCP */}
 			<section>
-				<h3 className="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">{t("metrics:sections.toolsMcp")}</h3>
+				<h3 className="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">
+					{t("metrics:sections.toolsMcp")}
+				</h3>
 				<div className="grid grid-cols-2 md:grid-cols-4 gap-6">
 					<MetricCard
 						title={t("metrics:cards.toolExecutions")}
@@ -505,7 +544,15 @@ function MetricsGrid({ categories, latestPoint }: { categories?: MetricsCategori
 	);
 }
 
-function ChartsSection({ points, timeRange, onTimeRangeChange }: { points: HistoryPoint[]; timeRange: string; onTimeRangeChange: (key: string) => void }): VNode {
+function ChartsSection({
+	points,
+	timeRange,
+	onTimeRangeChange,
+}: {
+	points: HistoryPoint[];
+	timeRange: string;
+	onTimeRangeChange: (key: string) => void;
+}): VNode {
 	const filteredPoints = filterPointsByTimeRange(points, timeRange);
 
 	if (!filteredPoints || filteredPoints.length < 2) {
@@ -628,7 +675,9 @@ function ProviderTable({ byProvider }: { byProvider?: Record<string, ProviderSta
 
 	return (
 		<section>
-			<h3 className="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">{t("metrics:sections.byProvider")}</h3>
+			<h3 className="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">
+				{t("metrics:sections.byProvider")}
+			</h3>
 			<div className="bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
 				<table className="w-full text-sm">
 					<thead>
@@ -647,7 +696,9 @@ function ProviderTable({ byProvider }: { byProvider?: Record<string, ProviderSta
 								<td className="text-right px-6 py-4">{formatNumber(stats.completions)}</td>
 								<td className="text-right px-6 py-4">{formatNumber(stats.input_tokens)}</td>
 								<td className="text-right px-6 py-4">{formatNumber(stats.output_tokens)}</td>
-								<td className={`text-right px-6 py-4 ${(stats.errors ?? 0) > 0 ? "text-[var(--error)]" : ""}`}>{formatNumber(stats.errors)}</td>
+								<td className={`text-right px-6 py-4 ${(stats.errors ?? 0) > 0 ? "text-[var(--error)]" : ""}`}>
+									{formatNumber(stats.errors)}
+								</td>
 							</tr>
 						))}
 					</tbody>
@@ -670,17 +721,16 @@ function PrometheusEndpoint(): VNode {
 
 	return (
 		<section>
-			<h3 className="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">{t("metrics:sections.prometheus")}</h3>
+			<h3 className="text-sm font-medium text-[var(--muted)] uppercase tracking-wide mb-5">
+				{t("metrics:sections.prometheus")}
+			</h3>
 			<div className="p-6 bg-[var(--surface)] border border-[var(--border)] rounded-lg">
-				<p className="text-sm text-[var(--muted)] mb-5">
-					{t("metrics:prometheusDescription")}
-				</p>
+				<p className="text-sm text-[var(--muted)] mb-5">{t("metrics:prometheusDescription")}</p>
 				<div className="flex items-center gap-4">
-					<code className="flex-1 px-4 py-3 bg-[var(--surface2)] rounded-md text-sm font-mono overflow-x-auto">{endpoint}</code>
-					<button
-						className="provider-btn provider-btn-secondary text-sm shrink-0"
-						onClick={copyEndpoint}
-					>
+					<code className="flex-1 px-4 py-3 bg-[var(--surface2)] rounded-md text-sm font-mono overflow-x-auto">
+						{endpoint}
+					</code>
+					<button className="provider-btn provider-btn-secondary text-sm shrink-0" onClick={copyEndpoint}>
 						{copied ? t("common:actions.copied") : t("common:actions.copy")}
 					</button>
 				</div>
@@ -774,11 +824,7 @@ function MonitoringPage({ initialTab }: { initialTab: string }): VNode {
 				)}
 
 				{activeTab === "charts" && (
-					<ChartsSection
-						points={historyPoints.value}
-						timeRange={timeRange}
-						onTimeRangeChange={setTimeRange}
-					/>
+					<ChartsSection points={historyPoints.value} timeRange={timeRange} onTimeRangeChange={setTimeRange} />
 				)}
 			</div>
 		</div>

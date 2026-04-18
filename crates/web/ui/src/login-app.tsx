@@ -102,18 +102,27 @@ function startPasskeyLogin(setError: (v: string | null) => void, setLoading: (v:
 	setLoading(true);
 	fetch("/api/auth/passkey/auth/begin", { method: "POST" })
 		.then((r) => r.json())
-		.then((data: { options: PublicKeyCredentialRequestOptions & { publicKey: { challenge: string; allowCredentials?: Array<{ id: string }> } }; challenge_id: string }) => {
-			const options = data.options;
-			(options.publicKey as unknown as { challenge: ArrayBuffer }).challenge = base64ToBuffer(options.publicKey.challenge as unknown as string);
-			if (options.publicKey.allowCredentials) {
-				for (const c of options.publicKey.allowCredentials) {
-					(c as unknown as { id: ArrayBuffer }).id = base64ToBuffer(c.id as unknown as string);
+		.then(
+			(data: {
+				options: PublicKeyCredentialRequestOptions & {
+					publicKey: { challenge: string; allowCredentials?: Array<{ id: string }> };
+				};
+				challenge_id: string;
+			}) => {
+				const options = data.options;
+				(options.publicKey as unknown as { challenge: ArrayBuffer }).challenge = base64ToBuffer(
+					options.publicKey.challenge as unknown as string,
+				);
+				if (options.publicKey.allowCredentials) {
+					for (const c of options.publicKey.allowCredentials) {
+						(c as unknown as { id: ArrayBuffer }).id = base64ToBuffer(c.id as unknown as string);
+					}
 				}
-			}
-			return navigator.credentials
-				.get({ publicKey: options.publicKey as unknown as PublicKeyCredentialRequestOptions })
-				.then((cred) => ({ cred: cred as PublicKeyCredential, challengeId: data.challenge_id }));
-		})
+				return navigator.credentials
+					.get({ publicKey: options.publicKey as unknown as PublicKeyCredentialRequestOptions })
+					.then((cred) => ({ cred: cred as PublicKeyCredential, challengeId: data.challenge_id }));
+			},
+		)
 		.then(({ cred, challengeId }) => {
 			const assertionResponse = cred.response as AuthenticatorAssertionResponse;
 			const body = {

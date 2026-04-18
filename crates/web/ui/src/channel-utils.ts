@@ -9,12 +9,15 @@ import { ChannelType } from "./types";
 export const MATRIX_DOCS_URL = "https://docs.moltis.org/matrix.html";
 export const MATRIX_DEFAULT_HOMESERVER = "https://matrix.org";
 export const MATRIX_ENCRYPTION_GUIDANCE =
-	"Encrypted Matrix chats require Password auth. Access token auth can connect for plain Matrix traffic, but it reuses an existing Matrix session without that device's private encryption keys, so Moltis cannot reliably decrypt encrypted chats. Use Password so Moltis creates and persists its own Matrix device keys, then finish Element verification in the same Matrix DM or room by sending `verify yes`, `verify no`, `verify show`, or `verify cancel` as normal chat messages.";
+	"Encrypted Matrix chats require OIDC or Password auth. Access token auth can connect for plain Matrix traffic, but it reuses an existing Matrix session without that device's private encryption keys, so Moltis cannot reliably decrypt encrypted chats. Use OIDC or Password so Moltis creates and persists its own Matrix device keys, then finish Element verification in the same Matrix DM or room by sending `verify yes`, `verify no`, `verify show`, or `verify cancel` as normal chat messages.";
 
 export function matrixAuthModeGuidance(authMode: string | undefined): string {
-	return normalizeMatrixAuthMode(authMode) === "password"
-		? "Required for encrypted Matrix chats. Moltis logs in as its own Matrix device and stores the device's encryption keys locally."
-		: "Does not support encrypted Matrix chats. Access tokens authenticate an existing Matrix session, but they do not transfer that device's private encryption keys into Moltis.";
+	const mode = normalizeMatrixAuthMode(authMode);
+	if (mode === "oidc")
+		return "Recommended for homeservers using Matrix Authentication Service (e.g. matrix.org since April 2025). Moltis authenticates via your browser \u2014 no password or token needed.";
+	if (mode === "password")
+		return "Required for encrypted Matrix chats. Moltis logs in as its own Matrix device and stores the device's encryption keys locally.";
+	return "Does not support encrypted Matrix chats. Access tokens authenticate an existing Matrix session, but they do not transfer that device's private encryption keys into Moltis.";
 }
 
 export function channelStorageNote(): string {
@@ -53,7 +56,7 @@ export function validateChannelFields(
 	if (!accountId.trim()) {
 		return { valid: false, error: "Account ID is required." };
 	}
-	if (!credential.trim()) {
+	if (!credential.trim() && normalizeMatrixAuthMode(options.matrixAuthMode) !== "oidc") {
 		if (type === ChannelType.Matrix) {
 			return { valid: false, error: matrixCredentialError(options.matrixAuthMode) };
 		}
@@ -73,7 +76,9 @@ export function validateChannelFields(
 }
 
 export function normalizeMatrixAuthMode(authMode: string | undefined): string {
-	return authMode === "password" ? "password" : "access_token";
+	if (authMode === "oidc") return "oidc";
+	if (authMode === "password") return "password";
+	return "access_token";
 }
 
 export function normalizeMatrixOwnershipMode(mode: string | undefined): string {
@@ -81,7 +86,8 @@ export function normalizeMatrixOwnershipMode(mode: string | undefined): string {
 }
 
 export function matrixOwnershipModeGuidance(authMode: string | undefined, ownershipMode: string | undefined): string {
-	if (normalizeMatrixAuthMode(authMode) !== "password") {
+	const mode = normalizeMatrixAuthMode(authMode);
+	if (mode !== "password" && mode !== "oidc") {
 		return "Access token auth always stays user-managed because it reuses an existing Matrix session instead of giving Moltis full control of the account's encryption state.";
 	}
 	return normalizeMatrixOwnershipMode(ownershipMode) === "moltis_owned"
@@ -253,7 +259,11 @@ export function generateWebhookSecretHex(): string {
 /**
  * Build the full Teams messaging endpoint URL.
  */
-export function buildTeamsEndpoint(baseUrl: string | undefined, accountId: string | undefined, webhookSecret: string | undefined): string {
+export function buildTeamsEndpoint(
+	baseUrl: string | undefined,
+	accountId: string | undefined,
+	webhookSecret: string | undefined,
+): string {
 	const normalizedBase = normalizeBaseUrlForWebhook(baseUrl);
 	const account = (accountId || "").trim();
 	const secret = (webhookSecret || "").trim();

@@ -230,8 +230,6 @@ interface AuthCredentialsPayload {
 	reason?: string;
 }
 
-
-
 interface WsFrame {
 	type: string;
 	event?: string;
@@ -598,7 +596,8 @@ function handleChatToolCallEnd(p: ChatPayload, isActive: boolean, isChatPage: bo
 			tool_name: p.toolName || "",
 			success: p.success === true,
 			result: p.result || null,
-			error: p.error?.detail || p.error?.message || (typeof p.error === "string" ? (p.error as unknown as string) : null),
+			error:
+				p.error?.detail || p.error?.message || (typeof p.error === "string" ? (p.error as unknown as string) : null),
 			created_at: Date.now(),
 		},
 		toolHistoryIndex as number | undefined,
@@ -1129,7 +1128,10 @@ function handleChatError(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 			btn.onclick = () => {
 				btn.disabled = true;
 				btn.textContent = t("errors:chat.continuing", "Continuing...");
-				(S.chatInput as HTMLInputElement).value = t("errors:chat.continueMessage", "Please continue where you left off.");
+				(S.chatInput as HTMLInputElement).value = t(
+					"errors:chat.continueMessage",
+					"Please continue where you left off.",
+				);
 				// Trigger send by clicking the chat send button (sendChat is local to ChatPage)
 				S.chatSendBtn?.click();
 			};
@@ -1155,7 +1157,12 @@ function getAbortedPartialState(p: ChatPayload): AbortedPartialState {
 	};
 }
 
-function cacheAbortedPartial(eventSession: string, p: ChatPayload, abortSession: ReturnType<typeof sessionStore.getByKey>, partialState: AbortedPartialState): void {
+function cacheAbortedPartial(
+	eventSession: string,
+	p: ChatPayload,
+	abortSession: ReturnType<typeof sessionStore.getByKey>,
+	partialState: AbortedPartialState,
+): void {
 	if (!partialState.hasVisiblePartial) return;
 	const partial = partialState.partial;
 	const lastIdx = abortSession ? abortSession.lastHistoryIndex.value : S.lastHistoryIndex;
@@ -1248,7 +1255,7 @@ function handleChatAborted(p: ChatPayload, isActive: boolean, isChatPage: boolea
 function handleChatNotice(p: ChatPayload, isActive: boolean, isChatPage: boolean): void {
 	if (!(isActive && isChatPage)) return;
 	// Render titled notices as markdown so emphasis is visible.
-	const msg = p.title ? `**${p.title}:** ${p.message}` : (p.message || "");
+	const msg = p.title ? `**${p.title}:** ${p.message}` : p.message || "";
 	const noticeEl = p.title ? chatAddMsg("system", renderMarkdown(msg), true) : chatAddMsg("system", msg);
 	if (!(noticeEl && p.title)) return;
 	noticeEl.classList.add("system-notice");

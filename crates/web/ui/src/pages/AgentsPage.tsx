@@ -326,9 +326,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCardProps): VNode {
 	const isMain = agent.id === "main";
 	const isDefault = !!agent.is_default || agent.id === defaultId;
-	const workspacePromptFiles = Array.isArray(agent.workspace_prompt_files)
-		? agent.workspace_prompt_files
-		: [];
+	const workspacePromptFiles = Array.isArray(agent.workspace_prompt_files) ? agent.workspace_prompt_files : [];
 	const truncatedWorkspacePromptFiles = workspacePromptFiles.filter((file) => file?.truncated);
 	return (
 		<div className="backend-card">
@@ -554,8 +552,8 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 				</button>
 			</div>
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
-				Create agent personas with different identities and personalities. Each agent has its own memory and
-				system prompt.
+				Create agent personas with different identities and personalities. Each agent has its own memory and system
+				prompt.
 			</p>
 
 			{error && (

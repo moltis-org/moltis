@@ -43,9 +43,9 @@ import {
 	replaceSessionHistory,
 	upsertSessionHistoryMessage,
 } from "./stores/session-history-cache";
-import { Session, insertSessionInOrder, sessionStore } from "./stores/session-store";
-import { confirmDialog } from "./ui";
+import { insertSessionInOrder, Session, sessionStore } from "./stores/session-store";
 import type { HistoryMessage, RpcResponse, SessionMeta } from "./types";
+import { confirmDialog } from "./ui";
 
 interface SearchContext {
 	query: string;
@@ -628,7 +628,10 @@ export function cacheOutgoingUserMessage(key: string, chatParams: ChatParams): v
 	const historyIndex = currentSessionTailIndex(key);
 	const next: HistoryMessage = {
 		role: "user",
-		content: chatParams.content && Array.isArray(chatParams.content) ? (chatParams.content as unknown as string) : chatParams.text || "",
+		content:
+			chatParams.content && Array.isArray(chatParams.content)
+				? (chatParams.content as unknown as string)
+				: chatParams.text || "",
 	};
 	(next as Record<string, unknown>).created_at = Date.now();
 	(next as Record<string, unknown>).seq = chatParams._seq || null;
@@ -679,7 +682,10 @@ newSessionBtn.addEventListener("click", () => {
 });
 
 export function isArchivableSession(session: SessionMeta): boolean {
-	return session.key !== "main" && ((session as SessionMeta & { activeChannel?: boolean }).activeChannel !== true || session.archived === true);
+	return (
+		session.key !== "main" &&
+		((session as SessionMeta & { activeChannel?: boolean }).activeChannel !== true || session.archived === true)
+	);
 }
 
 function isClearableSession(session: SessionMeta): boolean {
@@ -825,7 +831,7 @@ function renderHistoryUserMessage(msg: UserMsg): HTMLElement | null {
 function createModelFooter(msg: AssistantMsg): HTMLDivElement {
 	const ft = document.createElement("div");
 	ft.className = "msg-model-footer";
-	let ftText = msg.provider ? `${msg.provider} / ${msg.model}` : (msg.model || "");
+	let ftText = msg.provider ? `${msg.provider} / ${msg.model}` : msg.model || "";
 	if (msg.inputTokens || msg.outputTokens) {
 		ftText += ` \u00b7 ${formatAssistantTokenUsage(msg.inputTokens || 0, msg.outputTokens || 0, msg.cacheReadTokens || 0)}`;
 	}
@@ -1387,7 +1393,12 @@ function resetSwitchViewState(): void {
 	updateTokenBar();
 }
 
-function syncHistoryState(key: string, history: HistoryMessage[], historyTailIndex: number, totalCountHint: number | null): void {
+function syncHistoryState(
+	key: string,
+	history: HistoryMessage[],
+	historyTailIndex: number,
+	totalCountHint: number | null,
+): void {
 	const loadedCount = Array.isArray(history) ? history.length : 0;
 	const sessionEntry = sessionStore.getByKey(key);
 	const legacy = (S.sessions as SessionMeta[]).find((s) => s.key === key);
@@ -1449,7 +1460,7 @@ function renderHistory(
 	// so the counter continues from where it left off after reload.
 	let maxSeq = 0;
 	for (const hm of history) {
-		if (hm.role === "user" && (hm as Record<string, unknown>).seq as number > maxSeq) {
+		if (hm.role === "user" && ((hm as Record<string, unknown>).seq as number) > maxSeq) {
 			maxSeq = (hm as Record<string, unknown>).seq as number;
 		}
 	}
@@ -1521,7 +1532,8 @@ async function fetchSessionHistoryViaHttp(
 		payload = null;
 	}
 	if (!response.ok) {
-		const errMsg = (payload as Record<string, unknown> | null)?.error || `Failed to load session history (${response.status})`;
+		const errMsg =
+			(payload as Record<string, unknown> | null)?.error || `Failed to load session history (${response.status})`;
 		throw new Error(errMsg as string);
 	}
 	return payload || {};
@@ -1643,7 +1655,10 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 				}
 				if (appliedServerHistory && historyPayload.hasMore === true) {
 					const total = Number(historyPayload.totalMessages) || resolvedHistory.length;
-					chatAddMsg("system", `Loaded recent history (${resolvedHistory.length} of ${total} messages) for faster loading.`);
+					chatAddMsg(
+						"system",
+						`Loaded recent history (${resolvedHistory.length} of ${total} messages) for faster loading.`,
+					);
 				}
 				if (S.chatInput) S.chatInput.focus();
 			}

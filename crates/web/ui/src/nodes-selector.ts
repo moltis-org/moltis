@@ -30,7 +30,9 @@ function nodeMetaLabel(node: Partial<NodeInfo> | null): string {
 
 function fallbackNodeFromId(nodeId: string | null): Partial<NodeInfo> | null {
 	if (!nodeId) return null;
-	return isSshTargetNode({ nodeId: nodeId } as Partial<NodeInfo>) ? { nodeId: nodeId, platform: "ssh" } : { nodeId: nodeId };
+	return isSshTargetNode({ nodeId: nodeId } as Partial<NodeInfo>)
+		? { nodeId: nodeId, platform: "ssh" }
+		: { nodeId: nodeId };
 }
 
 function getNodeByIdOrFallback(nodeId: string): Partial<NodeInfo> | null {

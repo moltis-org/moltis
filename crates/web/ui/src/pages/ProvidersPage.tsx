@@ -171,7 +171,7 @@ function fetchProviders(): Promise<void> {
 
 			let models: ConfiguredModelEntry[] = [];
 			if (modelsRes?.ok) {
-				models = (modelsRes.payload || []).map((m) => ({
+				models = ((modelsRes.payload as ConfiguredModelEntry[]) || []).map((m) => ({
 					...m,
 					providerDisplayName: providerMeta.get(m.provider)?.displayName || m.provider,
 					authType: providerMeta.get(m.provider)?.authType || "api-key",
@@ -247,10 +247,7 @@ async function cancelDetection(): Promise<void> {
 	}
 }
 
-function groupProviderRows(
-	models: ConfiguredModelEntry[],
-	metaMap: Map<string, ProviderMetaEntry>,
-): ProviderGroup[] {
+function groupProviderRows(models: ConfiguredModelEntry[], metaMap: Map<string, ProviderMetaEntry>): ProviderGroup[] {
 	const groups = new Map<string, ProviderGroup>();
 	for (const row of models) {
 		const key = row.provider;
@@ -319,9 +316,7 @@ function ProviderSection({ group }: { group: ProviderGroup }): VNode {
 				.then((res) => {
 					if (res?.ok) {
 						if (testResult.value?.provider === group.provider) testResult.value = null;
-						configuredModels.value = configuredModels.value.filter(
-							(entry) => entry.provider !== group.provider,
-						);
+						configuredModels.value = configuredModels.value.filter((entry) => entry.provider !== group.provider);
 						fetchModels();
 						fetchProviders();
 						return;
@@ -393,9 +388,7 @@ function ProviderSection({ group }: { group: ProviderGroup }): VNode {
 		<div id={`provider-${group.provider}`} className="max-w-form py-1">
 			<div className="flex items-center justify-between gap-3">
 				<div className="flex items-center gap-2 min-w-0">
-					<h3 className="text-base font-semibold text-[var(--text-strong)] truncate">
-						{group.providerDisplayName}
-					</h3>
+					<h3 className="text-base font-semibold text-[var(--text-strong)] truncate">{group.providerDisplayName}</h3>
 					<span className={"provider-item-badge " + group.authType}>
 						{group.authType === "oauth"
 							? t("providers:oauth")
@@ -415,10 +408,7 @@ function ProviderSection({ group }: { group: ProviderGroup }): VNode {
 						</button>
 					) : null}
 					{group.models.length > 0 ? (
-						<button
-							className="provider-btn provider-btn-secondary provider-btn-sm"
-							onClick={onSelectModels}
-						>
+						<button className="provider-btn provider-btn-secondary provider-btn-sm" onClick={onSelectModels}>
 							{t("providers:preferredModels.button")}
 						</button>
 					) : null}
@@ -427,19 +417,14 @@ function ProviderSection({ group }: { group: ProviderGroup }): VNode {
 						disabled={deletingProvider.value === group.provider}
 						onClick={onDeleteProvider}
 					>
-						{deletingProvider.value === group.provider
-							? t("common:status.deleting")
-							: t("common:actions.delete")}
+						{deletingProvider.value === group.provider ? t("common:status.deleting") : t("common:actions.delete")}
 					</button>
 				</div>
 			</div>
 			{providerTestResult ? (
 				<div
 					className={
-						"mt-1 text-xs " +
-						(providerTestResult.ok
-							? "text-[var(--success,#22c55e)]"
-							: "text-[var(--danger,#ef4444)]")
+						"mt-1 text-xs " + (providerTestResult.ok ? "text-[var(--success,#22c55e)]" : "text-[var(--danger,#ef4444)]")
 					}
 				>
 					{providerTestResult.ok ? t("providers:testSuccess") : providerTestResult.error}
@@ -457,9 +442,7 @@ function ProviderSection({ group }: { group: ProviderGroup }): VNode {
 									<div className="text-sm font-medium text-[var(--text-strong)] truncate">
 										{model.displayName || model.id}
 									</div>
-									{model.preferred ? (
-										<span className="recommended-badge">{t("providers:preferred")}</span>
-									) : null}
+									{model.preferred ? <span className="recommended-badge">{t("providers:preferred")}</span> : null}
 									{model.unsupported ? (
 										<span
 											className="provider-item-badge warning"
@@ -469,19 +452,11 @@ function ProviderSection({ group }: { group: ProviderGroup }): VNode {
 										</span>
 									) : null}
 									{model.supportsTools ? null : (
-										<span className="provider-item-badge warning">
-											{t("providers:chatOnly")}
-										</span>
+										<span className="provider-item-badge warning">{t("providers:chatOnly")}</span>
 									)}
-									{model.disabled ? (
-										<span className="provider-item-badge muted">
-											{t("providers:disabled")}
-										</span>
-									) : null}
+									{model.disabled ? <span className="provider-item-badge muted">{t("providers:disabled")}</span> : null}
 								</div>
-								<div className="mt-1 text-xs text-[var(--muted)] font-mono opacity-75">
-									{model.id}
-								</div>
+								<div className="mt-1 text-xs text-[var(--muted)] font-mono opacity-75">{model.id}</div>
 								{model.unsupported && model.unsupportedReason ? (
 									<div className="mt-0.5 text-xs font-medium text-[var(--danger,#ef4444)]">
 										{model.unsupportedReason}
@@ -508,9 +483,7 @@ function ProviderSection({ group }: { group: ProviderGroup }): VNode {
 							className="text-xs text-[var(--accent)] cursor-pointer bg-transparent border-none py-1 text-left hover:underline"
 							onClick={() => setExpanded(!expanded)}
 						>
-							{expanded
-								? t("providers:showFewerModels")
-								: t("providers:showAllModels", { count: hiddenCount })}
+							{expanded ? t("providers:showFewerModels") : t("providers:showAllModels", { count: hiddenCount })}
 						</button>
 					) : null}
 				</div>
@@ -532,8 +505,7 @@ function ProvidersPageComponent(): VNode {
 	S.setRefreshProvidersPage(fetchProviders);
 
 	const progressValue = detectProgress.value || { total: 0, checked: 0, supported: 0, unsupported: 0, errors: 0 };
-	const progressPercent =
-		progressValue.total > 0 ? Math.round((progressValue.checked / progressValue.total) * 100) : 0;
+	const progressPercent = progressValue.total > 0 ? Math.round((progressValue.checked / progressValue.total) * 100) : 0;
 
 	return (
 		<>
@@ -579,10 +551,7 @@ function ProvidersPageComponent(): VNode {
 									style={{ width: `${progressPercent}%` }}
 								/>
 							</div>
-							<button
-								className="provider-btn provider-btn-danger provider-btn-sm"
-								onClick={cancelDetection}
-							>
+							<button className="provider-btn provider-btn-danger provider-btn-sm" onClick={cancelDetection}>
 								{t("providers:stopDetection")}
 							</button>
 						</div>
@@ -626,11 +595,7 @@ function ProvidersPageComponent(): VNode {
 						);
 					}
 					return (
-						<div
-							id="providersConfiguredList"
-							data-testid="providers-configured-list"
-							style={{ maxWidth: "600px" }}
-						>
+						<div id="providersConfiguredList" data-testid="providers-configured-list" style={{ maxWidth: "600px" }}>
 							{groups.length > 1 ? (
 								<div className="flex flex-wrap gap-1 mb-3">
 									{groups.map((g) => (
@@ -638,9 +603,7 @@ function ProvidersPageComponent(): VNode {
 											key={g.provider}
 											className="text-xs px-2 py-1 rounded-md border border-[var(--border)] bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--border-strong)] cursor-pointer"
 											onClick={() => {
-												const el = document.getElementById(
-													`provider-${g.provider}`,
-												);
+												const el = document.getElementById(`provider-${g.provider}`);
 												if (el)
 													el.scrollIntoView({
 														behavior: "smooth",

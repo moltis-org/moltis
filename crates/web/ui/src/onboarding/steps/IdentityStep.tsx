@@ -112,7 +112,7 @@ export function IdentityStep({ onNext, onBack }: { onNext: () => void; onBack?: 
 							{t("common:actions.back")}
 						</button>
 					) : null}
-					<button type="submit" className="provider-btn" disabled={saving}>
+					<button key={`id-${saving}`} type="submit" className="provider-btn" disabled={saving}>
 						{saving ? "Saving\u2026" : "Continue"}
 					</button>
 				</div>

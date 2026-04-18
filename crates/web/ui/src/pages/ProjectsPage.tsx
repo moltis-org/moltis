@@ -275,9 +275,7 @@ function ProjectCard(props: ProjectCardProps): VNode {
 					{p.detected && <span className="provider-item-badge api-key">{t("projects:badges.auto")}</span>}
 					{p.auto_worktree && <span className="provider-item-badge oauth">{t("projects:badges.worktree")}</span>}
 					{p.setup_command && <span className="provider-item-badge api-key">{t("projects:badges.setup")}</span>}
-					{p.teardown_command && (
-						<span className="provider-item-badge api-key">{t("projects:badges.teardown")}</span>
-					)}
+					{p.teardown_command && <span className="provider-item-badge api-key">{t("projects:badges.teardown")}</span>}
 					{p.branch_prefix && <span className="provider-item-badge oauth">{p.branch_prefix}/*</span>}
 					{p.sandbox_image && (
 						<span className="provider-item-badge api-key" title={p.sandbox_image}>
@@ -316,7 +314,11 @@ function ProjectCard(props: ProjectCardProps): VNode {
 				>
 					{t("projects:card.edit")}
 				</button>
-				<button className="session-action-btn session-delete" title={t("projects:card.removeProject")} onClick={onDelete}>
+				<button
+					className="session-action-btn session-delete"
+					title={t("projects:card.removeProject")}
+					onClick={onDelete}
+				>
 					x
 				</button>
 			</div>
@@ -413,23 +415,19 @@ function ProjectsPageComponent(): VNode {
 				Clear All only removes repository entries from Moltis, it does not delete anything from disk.
 			</p>
 			<p className="text-sm text-[var(--muted)]" style={{ maxWidth: "600px", margin: 0 }}>
-				Projects bind sessions to a codebase directory. When a session is linked to a project, context files
-				(CLAUDE.md, AGENTS.md, .cursorrules, and rule directories) are loaded automatically, scanned for risky
-				prompt-injection patterns, and injected into the system prompt. Enable auto-worktree to give each session
-				its own git branch for isolated work.
+				Projects bind sessions to a codebase directory. When a session is linked to a project, context files (CLAUDE.md,
+				AGENTS.md, .cursorrules, and rule directories) are loaded automatically, scanned for risky prompt-injection
+				patterns, and injected into the system prompt. Enable auto-worktree to give each session its own git branch for
+				isolated work.
 			</p>
 			<p className="text-sm text-[var(--muted)]" style={{ maxWidth: "600px", margin: 0 }}>
-				<strong className="text-[var(--text)]">Auto-detect</strong> scans common directories under your home
-				folder (<code className="font-mono text-xs">~/Projects</code>,{" "}
-				<code className="font-mono text-xs">~/Developer</code>,{" "}
-				<code className="font-mono text-xs">~/src</code>,{" "}
-				<code className="font-mono text-xs">~/code</code>,{" "}
-				<code className="font-mono text-xs">~/repos</code>,{" "}
-				<code className="font-mono text-xs">~/workspace</code>,{" "}
-				<code className="font-mono text-xs">~/dev</code>,{" "}
-				<code className="font-mono text-xs">~/git</code>) and Superset worktrees (
-				<code className="font-mono text-xs">~/.superset/worktrees</code>) for git repositories and adds them as
-				projects.
+				<strong className="text-[var(--text)]">Auto-detect</strong> scans common directories under your home folder (
+				<code className="font-mono text-xs">~/Projects</code>, <code className="font-mono text-xs">~/Developer</code>,{" "}
+				<code className="font-mono text-xs">~/src</code>, <code className="font-mono text-xs">~/code</code>,{" "}
+				<code className="font-mono text-xs">~/repos</code>, <code className="font-mono text-xs">~/workspace</code>,{" "}
+				<code className="font-mono text-xs">~/dev</code>, <code className="font-mono text-xs">~/git</code>) and Superset
+				worktrees (<code className="font-mono text-xs">~/.superset/worktrees</code>) for git repositories and adds them
+				as projects.
 			</p>
 			<div className="project-form-row">
 				<PathInput onAdd={onAdd} />

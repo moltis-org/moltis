@@ -250,12 +250,7 @@ export function renderApprovalCard(requestId: string, command: string): void {
 	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
-export function resolveApproval(
-	requestId: string,
-	decision: string,
-	command: string | null,
-	card: HTMLElement,
-): void {
+export function resolveApproval(requestId: string, decision: string, command: string | null, card: HTMLElement): void {
 	const params: Record<string, string> = { requestId, decision };
 	if (command) params.command = command;
 	sendRpc("exec.approval.resolve", params).then(() => {
@@ -270,11 +265,7 @@ export function resolveApproval(
 	});
 }
 
-export function highlightAndScroll(
-	msgEls: (HTMLElement | null)[],
-	messageIndex: number,
-	query: string,
-): void {
+export function highlightAndScroll(msgEls: (HTMLElement | null)[], messageIndex: number, query: string): void {
 	let target: HTMLElement | null = null;
 	if (messageIndex >= 0 && messageIndex < msgEls.length && msgEls[messageIndex]) {
 		target = msgEls[messageIndex];

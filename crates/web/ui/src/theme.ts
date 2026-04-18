@@ -29,7 +29,9 @@ export function initTheme(): void {
 	};
 	if (typeof mediaQuery.addEventListener === "function") {
 		mediaQuery.addEventListener("change", onSystemThemeChange);
-	} else if (typeof (mediaQuery as MediaQueryList & { addListener?: (fn: () => void) => void }).addListener === "function") {
+	} else if (
+		typeof (mediaQuery as MediaQueryList & { addListener?: (fn: () => void) => void }).addListener === "function"
+	) {
 		// Legacy Safari fallback.
 		(mediaQuery as MediaQueryList & { addListener: (fn: () => void) => void }).addListener(onSystemThemeChange);
 	}

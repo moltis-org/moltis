@@ -5,8 +5,8 @@
 
 /** Error detail inside an RPC response. */
 export interface RpcError {
-  code: string;
-  message: string;
+	code: string;
+	message: string;
 }
 
 /**
@@ -16,9 +16,9 @@ export interface RpcError {
  * Failed responses have `ok: false` and `error` with a code + message.
  */
 export interface RpcResponse<T = unknown> {
-  ok: boolean;
-  payload?: T;
-  error?: RpcError;
+	ok: boolean;
+	payload?: T;
+	error?: RpcError;
 }
 
 /**
@@ -26,6 +26,6 @@ export interface RpcResponse<T = unknown> {
  * Extends the response envelope with the wire-level fields.
  */
 export interface RpcFrame<T = unknown> extends RpcResponse<T> {
-  type: "res";
-  id: string;
+	type: "res";
+	id: string;
 }

@@ -18,12 +18,7 @@ import { initInstallBanner } from "./pwa-install";
 import { mount, navigate, registerPage, sessionPath } from "./router";
 import { routes } from "./routes";
 import { updateSandboxImageUI, updateSandboxUI } from "./sandbox";
-import {
-	fetchSessions,
-	refreshWelcomeCardIfNeeded,
-	removeSessionFromClientState,
-	renderSessionList,
-} from "./sessions";
+import { fetchSessions, refreshWelcomeCardIfNeeded, removeSessionFromClientState, renderSessionList } from "./sessions";
 import * as S from "./state";
 import * as modelStore from "./stores/model-store";
 import * as projectStore from "./stores/project-store";
@@ -228,7 +223,10 @@ function applyMemory(mem: MemInfo | null): void {
 
 applyMemory(gon.get("mem") as MemInfo | null);
 gon.onChange("mem", applyMemory as (v: unknown) => void);
-onEvent("tick", (_payload: unknown) => { const payload = _payload as Record<string, unknown>; applyMemory(payload.mem as MemInfo | null); });
+onEvent("tick", (_payload: unknown) => {
+	const payload = _payload as Record<string, unknown>;
+	applyMemory(payload.mem as MemInfo | null);
+});
 
 // Logout button — wire up click handler once.
 const logoutBtn = document.getElementById("logoutBtn");
@@ -529,7 +527,8 @@ function fetchBootstrap(): void {
 			return r.json();
 		})
 		.then((boot: BootstrapData) => {
-			if (boot.channels) S.setCachedChannels((boot.channels as { channels?: unknown[] }).channels || boot.channels || []);
+			if (boot.channels)
+				S.setCachedChannels((boot.channels as { channels?: unknown[] }).channels || boot.channels || []);
 			if (boot.sessions) {
 				const bootSessions = boot.sessions || [];
 				sessionStore.setAll(bootSessions as never[]);

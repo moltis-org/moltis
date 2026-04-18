@@ -131,7 +131,7 @@ export async function validateProviderKey(
 	if (!res?.ok) {
 		return {
 			valid: false,
-			error: (humanizeProbeError(res?.error?.message || "Failed to validate credentials.") as string),
+			error: humanizeProbeError(res?.error?.message || "Failed to validate credentials.") as string,
 		};
 	}
 
@@ -141,7 +141,7 @@ export async function validateProviderKey(
 	}
 	return {
 		valid: false,
-		error: (humanizeProbeError(data.error || "Validation failed.") as string),
+		error: humanizeProbeError(data.error || "Validation failed.") as string,
 	};
 }
 

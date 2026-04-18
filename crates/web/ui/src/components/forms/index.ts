@@ -7,7 +7,6 @@
 
 export { CheckboxField, SelectField, TextAreaField, TextField } from "./FormField";
 export { Badge, CodeDisplay, CopyButton, DangerZone, EmptyState, ListItem, Loading } from "./ListItem";
-export { TabBar } from "./Tabs";
 export {
 	SaveButton,
 	SectionHeading,
@@ -16,3 +15,4 @@ export {
 	SubHeading,
 	useSaveState,
 } from "./SectionLayout";
+export { TabBar } from "./Tabs";
