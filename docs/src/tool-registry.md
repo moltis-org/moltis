@@ -11,6 +11,7 @@ Every registered tool has a `ToolSource` that identifies its origin:
 - **`Builtin`** — tools shipped with the binary (exec, web_fetch, etc.)
 - **`Mcp { server }`** — tools provided by an MCP server, tagged with the
   server name
+- **`Wasm { component_hash }`** — tools provided by a precompiled WASM component
 
 This replaces the previous convention of identifying MCP tools by their
 `mcp__` name prefix, providing type-safe filtering instead of string matching.
@@ -23,6 +24,15 @@ registry.register(Box::new(MyTool::new()));
 
 // MCP tool — tagged with server name
 registry.register_mcp(Box::new(adapter), "github".to_string());
+
+// WASM component tool
+registry.register_wasm(Box::new(wasm_tool), component_hash);
+
+// Replace existing tool (preserves source metadata)
+let replaced = registry.replace(Box::new(UpdatedTool::new()));
+
+// Remove by name
+let existed = registry.unregister("some_tool");
 ```
 
 ## Filtering
@@ -36,6 +46,15 @@ let no_mcp = registry.clone_without_mcp();
 
 // Remove all MCP tools in-place (used during sync)
 let removed_count = registry.unregister_mcp();
+
+// Clone excluding tools by name
+let filtered = registry.clone_without(&["browser", "sandbox_exec"]);
+
+// Clone excluding tools by name prefix
+let no_mcp_prefix = registry.clone_without_prefix("mcp__");
+
+// Clone keeping only tools matching a predicate
+let allowed = registry.clone_allowed_by(|name| allowed_set.contains(name));
 ```
 
 ## Schema Output
@@ -58,6 +77,16 @@ let removed_count = registry.unregister_mcp();
   "parameters": { ... },
   "source": "mcp",
   "mcpServer": "github"
+}
+```
+
+```json
+{
+  "name": "my_wasm_tool",
+  "description": "A WASM tool",
+  "parameters": { ... },
+  "source": "wasm",
+  "componentHash": "a1b2c3..."
 }
 ```
 
