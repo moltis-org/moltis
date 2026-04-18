@@ -191,8 +191,11 @@ metrics and every 30 seconds for history.
 | `moltis_llm_completion_duration_seconds` | Histogram | provider, model | Completion latency |
 | `moltis_llm_input_tokens_total` | Counter | provider, model | Input tokens processed |
 | `moltis_llm_output_tokens_total` | Counter | provider, model | Output tokens generated |
+| `moltis_llm_cache_read_tokens_total` | Counter | provider, model | Cache read tokens |
+| `moltis_llm_cache_write_tokens_total` | Counter | provider, model | Cache write tokens |
 | `moltis_llm_completion_errors_total` | Counter | provider, model, error_type | Completion failures |
 | `moltis_llm_time_to_first_token_seconds` | Histogram | provider, model | Streaming TTFT |
+| `moltis_llm_tokens_per_second` | Histogram | provider, model | Generation throughput |
 
 #### Provider Aliases
 
@@ -295,10 +298,16 @@ This allows you to:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
+| `moltis_skills_total` | Gauge | — | Total skills discovered |
+| `moltis_skills_discovery_operations_total` | Counter | — | Discovery operations |
+| `moltis_skills_discovery_duration_seconds` | Histogram | — | Discovery time |
+| `moltis_skills_parse_operations_total` | Counter | — | Skill file parse operations |
+| `moltis_skills_parse_errors_total` | Counter | — | Parse failures |
 | `moltis_skills_installation_attempts_total` | Counter | — | Installation attempts |
 | `moltis_skills_installation_duration_seconds` | Histogram | — | Installation time |
-| `moltis_skills_git_clone_total` | Counter | — | Successful git clones |
-| `moltis_skills_git_clone_fallback_total` | Counter | — | Fallbacks to HTTP tarball |
+| `moltis_skills_installation_errors_total` | Counter | — | Installation failures |
+| `moltis_skills_prompt_generation_total` | Counter | — | Prompt generations |
+| `moltis_skills_prompt_generation_duration_seconds` | Histogram | — | Prompt generation time |
 
 ## Tracing Integration
 
