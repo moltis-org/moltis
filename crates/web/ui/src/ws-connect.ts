@@ -159,7 +159,7 @@ export function connectWs(opts: ConnectOptions): void {
 				window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
 			}
 		}
-		if (frame.type === "res" && frame.id && S.pending[frame.id]) {
+		if (frame.type === "res" && frame.id && Object.prototype.hasOwnProperty.call(S.pending, frame.id)) {
 			S.pending[frame.id]({
 				ok: frame.ok ?? false,
 				payload: frame.payload,

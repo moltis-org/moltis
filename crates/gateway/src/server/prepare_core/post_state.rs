@@ -70,6 +70,7 @@ pub(super) struct PostStateInputs {
     pub provider_setup_service: Arc<LiveProviderSetupService>,
     pub live_mcp: Arc<crate::mcp_service::LiveMcpService>,
     pub memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
+    pub code_index: Arc<moltis_code_index::CodeIndex>,
     pub credential_store: Arc<auth::CredentialStore>,
     pub db_pool: sqlx::SqlitePool,
     pub session_store: Arc<SessionStore>,
@@ -133,16 +134,46 @@ async fn build_webauthn_registry(
         "http"
     };
 
-    let explicit_rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID")
-        .or_else(|_| std::env::var("APP_DOMAIN"))
-        .or_else(|_| std::env::var("RENDER_EXTERNAL_HOSTNAME"))
-        .or_else(|_| std::env::var("FLY_APP_NAME").map(|name| format!("{name}.fly.dev")))
-        .or_else(|_| std::env::var("RAILWAY_PUBLIC_DOMAIN"))
-        .ok();
-    let explicit_origin = std::env::var("MOLTIS_WEBAUTHN_ORIGIN")
-        .or_else(|_| std::env::var("APP_URL"))
-        .or_else(|_| std::env::var("RENDER_EXTERNAL_URL"))
-        .ok();
+    // Derive RP ID and origin from server.external_url / MOLTIS_EXTERNAL_URL
+    // when available, before falling back to fine-grained env vars.
+    let (external_rp_id, external_origin) = if let Some(ref ext_url) =
+        config.server.effective_external_url()
+    {
+        match url::Url::parse(ext_url) {
+            Ok(parsed) => {
+                let host = parsed.host_str().unwrap_or_default().to_string();
+                if host.is_empty() {
+                    warn!(
+                        "server.external_url '{ext_url}' parsed successfully but has no hostname; ignoring"
+                    );
+                    (None, None)
+                } else {
+                    (Some(host), Some(ext_url.clone()))
+                }
+            },
+            Err(e) => {
+                warn!("invalid server.external_url '{ext_url}': {e}");
+                (None, None)
+            },
+        }
+    } else {
+        (None, None)
+    };
+
+    let explicit_rp_id = external_rp_id
+        .or_else(|| std::env::var("MOLTIS_WEBAUTHN_RP_ID").ok())
+        .or_else(|| std::env::var("APP_DOMAIN").ok())
+        .or_else(|| std::env::var("RENDER_EXTERNAL_HOSTNAME").ok())
+        .or_else(|| {
+            std::env::var("FLY_APP_NAME")
+                .ok()
+                .map(|name| format!("{name}.fly.dev"))
+        })
+        .or_else(|| std::env::var("RAILWAY_PUBLIC_DOMAIN").ok());
+    let explicit_origin = external_origin
+        .or_else(|| std::env::var("MOLTIS_WEBAUTHN_ORIGIN").ok())
+        .or_else(|| std::env::var("APP_URL").ok())
+        .or_else(|| std::env::var("RENDER_EXTERNAL_URL").ok());
 
     let mut wa_registry = crate::auth_webauthn::WebAuthnRegistry::new();
     let mut any_ok = false;
@@ -275,6 +306,7 @@ pub(super) async fn complete_startup(
         tailscale_mode_override,
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
+        code_index,
     } = inputs;
 
     let openclaw_startup_status = deferred_openclaw_status();
@@ -331,6 +363,13 @@ pub(super) async fn complete_startup(
     #[cfg(not(feature = "tls"))]
     let tls_enabled_for_gateway = false;
 
+    #[cfg(feature = "qmd")]
+    let code_index_for_tools = Arc::clone(&code_index);
+
+    #[cfg(feature = "code-index-builtin")]
+    #[allow(unused_variables)]
+    let code_index_for_tools_builtin = Arc::clone(&code_index);
+
     let state = GatewayState::with_options(
         resolved_auth,
         services,
@@ -343,6 +382,7 @@ pub(super) async fn complete_startup(
         tls_enabled_for_gateway,
         hook_registry.clone(),
         memory_manager.clone(),
+        code_index,
         port,
         config.server.ws_request_logs,
         deploy_platform.clone(),
@@ -810,6 +850,20 @@ pub(super) async fn complete_startup(
                 Arc::clone(&registry),
                 Arc::clone(&session_metadata),
             )));
+        }
+
+        // ── Code index tools ─────────────────────────────────────────────
+        #[cfg(feature = "qmd")]
+        {
+            moltis_code_index::tools::register_tools(&mut tool_registry, code_index_for_tools);
+        }
+
+        #[cfg(all(feature = "code-index-builtin", not(feature = "qmd")))]
+        {
+            moltis_code_index::tools::register_tools(
+                &mut tool_registry,
+                code_index_for_tools_builtin,
+            );
         }
 
         {
