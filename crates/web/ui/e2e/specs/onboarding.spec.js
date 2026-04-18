@@ -738,7 +738,8 @@ test.describe("Onboarding wizard", () => {
 		// Leave account ID empty — the form defaults to "main".
 		// The bug was that the polling useEffect used accountId.trim() (empty)
 		// instead of accountId.trim() || "main", so channel matching failed.
-		const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100"/></svg>';
+		const svg =
+			'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100"/></svg>';
 
 		await page.evaluate(
 			async ({ svgArg }) => {

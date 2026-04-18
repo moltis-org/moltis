@@ -216,7 +216,7 @@ function WebhookCard({ webhook }: { webhook: Webhook }): VNode {
 					)}
 
 					<span
-						className={"provider-item-badge " + (wh.enabled ? "configured" : "")}
+						className={`provider-item-badge ${wh.enabled ? "configured" : ""}`}
 						style={wh.enabled ? undefined : { background: "var(--surface2)", color: "var(--muted)" }}
 					>
 						{wh.enabled ? "active" : "paused"}
@@ -428,7 +428,7 @@ function WebhookModal(): VNode | null {
 		}
 
 		const method = isEdit ? "webhooks.update" : "webhooks.create";
-		const rpcParams = isEdit ? { id: editingWebhook.value!.id, patch: params } : params;
+		const rpcParams = isEdit ? { id: editingWebhook.value?.id, patch: params } : params;
 
 		sendRpc(method, rpcParams).then((res) => {
 			saving.value = false;

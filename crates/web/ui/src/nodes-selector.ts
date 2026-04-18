@@ -172,15 +172,15 @@ export function bindNodeComboEvents(): void {
 	if (!(S.nodeComboBtn && S.nodeDropdownList && S.nodeCombo)) return;
 
 	S.nodeComboBtn.addEventListener("click", () => {
-		if (S.nodeDropdown!.classList.contains("hidden")) {
+		if (S.nodeDropdown?.classList.contains("hidden")) {
 			openNodeDropdown();
 		} else {
 			closeNodeDropdown();
 		}
 	});
 
-	S.nodeDropdown!.addEventListener("keydown", (e: KeyboardEvent) => {
-		const items = S.nodeDropdownList!.querySelectorAll<HTMLElement>(".model-dropdown-item");
+	S.nodeDropdown?.addEventListener("keydown", (e: KeyboardEvent) => {
+		const items = S.nodeDropdownList?.querySelectorAll<HTMLElement>(".model-dropdown-item");
 		if (e.key === "ArrowDown") {
 			e.preventDefault();
 			nodeIdx = Math.min(nodeIdx + 1, items.length - 1);

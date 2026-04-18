@@ -411,7 +411,7 @@ function groupToolsForOverview(tools: ToolEntry[]): ToolGroup[] {
 	(tools || []).forEach((tool) => {
 		const category = toolsOverviewCategory(tool?.name);
 		if (!grouped.has(category)) grouped.set(category, []);
-		grouped.get(category)!.push(tool);
+		grouped.get(category)?.push(tool);
 	});
 	const order = ["Execution", "Sessions", "Memory", "Web & Browser", "Skills", "MCP", "Core"];
 	return order
@@ -419,8 +419,8 @@ function groupToolsForOverview(tools: ToolEntry[]): ToolGroup[] {
 		.map((label) => ({
 			label,
 			tools: grouped
-				.get(label)!
-				.slice()
+				.get(label)
+				?.slice()
 				.sort((left, right) => String(left?.name || "").localeCompare(String(right?.name || ""))),
 		}));
 }
@@ -1084,7 +1084,6 @@ function EnvironmentSection(): VNode {
 													onInput={(e: Event) => setUpdateValue((e.target as HTMLInputElement).value)}
 													placeholder="New value"
 													style={{ flex: 1 }}
-													autoFocus
 												/>
 												<button type="submit" className="provider-btn">
 													Save
@@ -1264,8 +1263,8 @@ function SecuritySection(): VNode {
 			.then((r) => (r.ok ? r.json() : null))
 			.then((status: { passkey_host_update_hosts?: string[]; passkey_origins?: string[] } | null) => {
 				if (Array.isArray(status?.passkey_host_update_hosts))
-					setPasskeyHostUpdateHosts(status!.passkey_host_update_hosts);
-				if (Array.isArray(status?.passkey_origins)) setPasskeyOrigins(status!.passkey_origins);
+					setPasskeyHostUpdateHosts(status?.passkey_host_update_hosts);
+				if (Array.isArray(status?.passkey_origins)) setPasskeyOrigins(status?.passkey_origins);
 			});
 	}
 
@@ -1303,8 +1302,8 @@ function SecuritySection(): VNode {
 					if (typeof d?.has_password === "boolean") setHasPassword(d.has_password);
 					if (typeof d?.has_passkeys === "boolean") setHasPasskeys(d.has_passkeys);
 					if (typeof d?.setup_complete === "boolean") setSetupComplete(d.setup_complete);
-					if (Array.isArray(d?.passkey_origins)) setPasskeyOrigins(d!.passkey_origins!);
-					if (Array.isArray(d?.passkey_host_update_hosts)) setPasskeyHostUpdateHosts(d!.passkey_host_update_hosts!);
+					if (Array.isArray(d?.passkey_origins)) setPasskeyOrigins(d?.passkey_origins!);
+					if (Array.isArray(d?.passkey_host_update_hosts)) setPasskeyHostUpdateHosts(d?.passkey_host_update_hosts!);
 					setAuthLoading(false);
 					rerender();
 				},
@@ -1865,7 +1864,6 @@ function SecuritySection(): VNode {
 													value={editingPkName}
 													onInput={(e: Event) => setEditingPkName((e.target as HTMLInputElement).value)}
 													style={{ flex: 1 }}
-													autoFocus
 												/>
 												<button type="submit" className="provider-btn provider-btn-sm">
 													Save
@@ -2695,7 +2693,7 @@ function SshSection(): VNode {
 				setKeys(data.keys || []);
 				setTargets(data.targets || []);
 				if (!targetKeyId && (data.keys || []).length > 0) {
-					setTargetKeyId(String(data.keys![0].id));
+					setTargetKeyId(String(data.keys?.[0].id));
 				}
 				setLoadingSsh(false);
 				rerender();

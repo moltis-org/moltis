@@ -238,7 +238,7 @@ function parseSessionListPayload(payload: unknown): SessionListPage {
 	}
 
 	const obj = payload as Record<string, unknown> | null;
-	const list = Array.isArray(obj?.sessions) ? (obj!.sessions as SessionMeta[]) : [];
+	const list = Array.isArray(obj?.sessions) ? (obj?.sessions as SessionMeta[]) : [];
 	const nextCursor = toValidCursor(obj?.nextCursor);
 	const hasMore = obj?.hasMore === true && nextCursor !== null;
 	const total = Number(obj?.total);
@@ -265,7 +265,7 @@ function mergeSessionListPage(
 	}
 
 	function withLocalFlags(session: SessionMeta): SessionMeta {
-		if (!(session && session.key)) return session;
+		if (!session?.key) return session;
 		const prev = oldByKey[session.key];
 		if (!prev) return session;
 		const merged = { ...session };
@@ -287,7 +287,7 @@ function mergeSessionListPage(
 	}
 
 	for (const session of incoming) {
-		if (!(session && session.key)) continue;
+		if (!session?.key) continue;
 		const next = withLocalFlags(session);
 		const idx = indexByKey[session.key];
 		if (Number.isInteger(idx)) {
@@ -1101,7 +1101,7 @@ function mergeHistoryPages(existingHistory: HistoryMessage[], olderHistory: Hist
 
 function canLoadOlderHistory(key: string): boolean {
 	const paging = getHistoryPaginationState(key);
-	if (!(paging && paging.hasMore && Number.isInteger(paging.nextCursor))) return false;
+	if (!(paging?.hasMore && Number.isInteger(paging.nextCursor))) return false;
 	if (paging.loadingOlder) return false;
 	return true;
 }
@@ -1166,7 +1166,7 @@ async function loadOlderHistoryPage(key: string): Promise<void> {
 		const merged = getSessionHistory(key) || [];
 		const sessionEntry = sessionStore.getByKey(key);
 		const totalCountHint = Number.isInteger(sessionEntry?.messageCount)
-			? sessionEntry!.messageCount!
+			? sessionEntry?.messageCount!
 			: Number(payload.totalMessages) || merged.length;
 		renderHistory(key, merged, null, null, totalCountHint, true);
 
@@ -1402,8 +1402,8 @@ function syncHistoryState(
 	const loadedCount = Array.isArray(history) ? history.length : 0;
 	const sessionEntry = sessionStore.getByKey(key);
 	const legacy = (S.sessions as SessionMeta[]).find((s) => s.key === key);
-	const existingCount = Number.isInteger(sessionEntry?.messageCount) ? sessionEntry!.messageCount! : 0;
-	const legacyCount = Number.isInteger(legacy?.messageCount) ? legacy!.messageCount! : 0;
+	const existingCount = Number.isInteger(sessionEntry?.messageCount) ? sessionEntry?.messageCount! : 0;
+	const legacyCount = Number.isInteger(legacy?.messageCount) ? legacy?.messageCount! : 0;
 	const hintedCount = Number.isInteger(totalCountHint) ? totalCountHint! : 0;
 	const count = Math.max(loadedCount, existingCount, hintedCount, legacyCount);
 	if (sessionEntry) {
@@ -1563,8 +1563,8 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 	const cacheComplete = hasCache && isHistoryCacheComplete(key);
 	const cachedHistoryCount = cacheComplete
 		? Number.isInteger(cachedEntry?.messageCount)
-			? cachedEntry!.messageCount!
-			: cachedHistory!.length
+			? cachedEntry?.messageCount!
+			: cachedHistory?.length
 		: null;
 	startSessionRefresh(key, !hasCache);
 	if (hasCache) {
@@ -1592,7 +1592,7 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 			ensureSessionInClientStore(key, entry, projectId);
 			const pagingBefore = getHistoryPaginationState(key);
 			const pagingBeforeHasMore = pagingBefore?.hasMore === true;
-			const pagingBeforeCursor = Number.isInteger(pagingBefore?.nextCursor) ? pagingBefore!.nextCursor : null;
+			const pagingBeforeCursor = Number.isInteger(pagingBefore?.nextCursor) ? pagingBefore?.nextCursor : null;
 			let historyPayload: HistoryPayload = {
 				historyCacheHit: switchPayload.historyCacheHit === true,
 				history: Array.isArray(switchPayload.history) ? switchPayload.history : [],
@@ -1622,7 +1622,7 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 			setHistoryPaginationState(key, historyPayload);
 			const pagingAfter = getHistoryPaginationState(key);
 			const pagingAfterHasMore = pagingAfter?.hasMore === true;
-			const pagingAfterCursor = Number.isInteger(pagingAfter?.nextCursor) ? pagingAfter!.nextCursor : null;
+			const pagingAfterCursor = Number.isInteger(pagingAfter?.nextCursor) ? pagingAfter?.nextCursor : null;
 			const paginationChanged = pagingBeforeHasMore !== pagingAfterHasMore || pagingBeforeCursor !== pagingAfterCursor;
 
 			const cacheHit = historyPayload.historyCacheHit === true;

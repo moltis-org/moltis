@@ -183,7 +183,9 @@ test.describe("MCP page", () => {
 			// Fill out the Streamable HTTP custom server form
 			await customServerSection.getByRole("button", { name: "Streamable HTTP", exact: true }).click();
 			await customServerSection.getByPlaceholder("https://mcp.linear.app/mcp").fill(`http://127.0.0.1:${mockMcp.port}`);
-			await customServerSection.getByPlaceholder("Authorization=Bearer ...").fill(`Authorization=Bearer e2e-test-token`);
+			await customServerSection
+				.getByPlaceholder("Authorization=Bearer ...")
+				.fill(`Authorization=Bearer e2e-test-token`);
 
 			// Submit the form (press Enter or click Add)
 			var addBtn = customServerSection.getByRole("button", { name: "Add", exact: true });
@@ -208,7 +210,10 @@ test.describe("MCP page", () => {
 
 			// Check the state badge text — should be "running" now that #732 is fixed.
 			// Use toHaveText with retry to avoid flakes during status transitions.
-			var stateBadge = serverEntry.locator("span").filter({ hasText: /^(running|dead|stopped|connecting)$/ }).first();
+			var stateBadge = serverEntry
+				.locator("span")
+				.filter({ hasText: /^(running|dead|stopped|connecting)$/ })
+				.first();
 			await expect(stateBadge).toHaveText("running", { timeout: 15_000 });
 
 			// Verify the server has 1 tool (mock_echo) — proves POST connection worked

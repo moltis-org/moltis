@@ -768,7 +768,7 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 							onClose={() => {
 								activeDetail.value = null;
 							}}
-							onReload={() => loadDetail({ name: activeDetail.value!.name } as SkillSummary)}
+							onReload={() => loadDetail({ name: activeDetail.value?.name } as SkillSummary)}
 						/>
 					)}
 				</div>
@@ -782,7 +782,7 @@ function ReposSection(): VNode {
 		<div className="skills-section">
 			<h3 className="skills-section-title">Installed Repositories</h3>
 			<div className="skills-section">
-				{!(repos.value && repos.value.length) && (
+				{!repos.value?.length && (
 					<div style={{ padding: "12px", color: "var(--muted)", fontSize: ".82rem" }}>No repositories installed.</div>
 				)}
 				{repos.value.map((r) => (
@@ -936,7 +936,7 @@ function EnabledSkillsTable(): VNode | null {
 						activeDetail.value = null;
 					}}
 					onReload={() =>
-						loadDetail({ name: activeDetail.value!.name, source: activeDetail.value!.source } as SkillSummary)
+						loadDetail({ name: activeDetail.value?.name, source: activeDetail.value?.source } as SkillSummary)
 					}
 				/>
 			)}

@@ -75,7 +75,7 @@ const namespaces: Record<string, (lng: string) => Promise<{ default?: Record<str
 };
 
 // ── Load all namespace bundles for a language ───────────────
-function loadLanguage(lng: string): Promise<void[]> {
+function loadLanguage(lng: string): Promise<undefined[]> {
 	const keys = Object.keys(namespaces);
 	const promises = keys.map((ns) =>
 		namespaces[ns](lng)

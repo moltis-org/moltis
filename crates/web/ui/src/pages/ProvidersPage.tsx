@@ -389,7 +389,7 @@ function ProviderSection({ group }: { group: ProviderGroup }): VNode {
 			<div className="flex items-center justify-between gap-3">
 				<div className="flex items-center gap-2 min-w-0">
 					<h3 className="text-base font-semibold text-[var(--text-strong)] truncate">{group.providerDisplayName}</h3>
-					<span className={"provider-item-badge " + group.authType}>
+					<span className={`provider-item-badge ${group.authType}`}>
 						{group.authType === "oauth"
 							? t("providers:oauth")
 							: group.authType === "local"
@@ -423,9 +423,7 @@ function ProviderSection({ group }: { group: ProviderGroup }): VNode {
 			</div>
 			{providerTestResult ? (
 				<div
-					className={
-						"mt-1 text-xs " + (providerTestResult.ok ? "text-[var(--success,#22c55e)]" : "text-[var(--danger,#ef4444)]")
-					}
+					className={`mt-1 text-xs ${providerTestResult.ok ? "text-[var(--success,#22c55e)]" : "text-[var(--danger,#ef4444)]"}`}
 				>
 					{providerTestResult.ok ? t("providers:testSuccess") : providerTestResult.error}
 				</div>

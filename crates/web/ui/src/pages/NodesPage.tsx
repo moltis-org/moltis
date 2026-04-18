@@ -463,7 +463,7 @@ function ConnectNodeForm(): VNode {
 						<span className="text-xs font-medium text-green-500">Token generated</span>
 						<button
 							className="provider-btn provider-btn-secondary provider-btn-sm"
-							onClick={() => copyToClipboard(generatedToken.value!.command)}
+							onClick={() => copyToClipboard(generatedToken.value?.command)}
 						>
 							Copy command
 						</button>

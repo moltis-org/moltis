@@ -297,10 +297,7 @@ impl QmdManager {
         let output = self.run_with_timeout(command).await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "QMD collection add failed for {name}: {}",
-                stderr.trim()
-            );
+            anyhow::bail!("QMD collection add failed for {name}: {}", stderr.trim());
         }
 
         Ok(())

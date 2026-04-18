@@ -239,7 +239,7 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 	const cacheComplete = hasCache && isHistoryCacheComplete(key);
 	const cachedHistoryCount = cacheComplete
 		? Number.isInteger(cachedEntry?.messageCount)
-			? (cachedEntry!.messageCount as number)
+			? (cachedEntry?.messageCount as number)
 			: cachedHistory?.length
 		: null;
 	startSessionRefresh(key, !hasCache);

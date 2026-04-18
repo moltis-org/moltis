@@ -290,7 +290,7 @@ async function loadOlderHistoryPage(key: string): Promise<void> {
 		const merged = getSessionHistory(key) || [];
 		const sessionEntry = sessionStore.getByKey(key);
 		const totalCountHint = Number.isInteger(sessionEntry?.messageCount)
-			? (sessionEntry!.messageCount as number)
+			? (sessionEntry?.messageCount as number)
 			: Number(payload.totalMessages) || merged.length;
 		renderHistory(key, merged, null, null, totalCountHint, true);
 
@@ -339,8 +339,8 @@ export function syncHistoryState(
 	const loadedCount = Array.isArray(history) ? history.length : 0;
 	const sessionEntry = sessionStore.getByKey(key);
 	const legacy = (S.sessions as import("../types").SessionMeta[]).find((s) => s.key === key);
-	const existingCount = Number.isInteger(sessionEntry?.messageCount) ? (sessionEntry!.messageCount as number) : 0;
-	const legacyCount = Number.isInteger(legacy?.messageCount) ? (legacy!.messageCount as number) : 0;
+	const existingCount = Number.isInteger(sessionEntry?.messageCount) ? (sessionEntry?.messageCount as number) : 0;
+	const legacyCount = Number.isInteger(legacy?.messageCount) ? (legacy?.messageCount as number) : 0;
 	const hintedCount = Number.isInteger(totalCountHint) ? totalCountHint! : 0;
 	const count = Math.max(loadedCount, existingCount, hintedCount, legacyCount);
 	if (sessionEntry) {

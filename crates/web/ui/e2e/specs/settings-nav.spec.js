@@ -884,7 +884,9 @@ test.describe("Settings navigation", () => {
 		await expect(modal.locator('input[data-field="homeserver"]')).toHaveValue("https://matrix.org");
 		await expect(modal.locator('input[data-field="homeserver"]')).toHaveAttribute("placeholder", "https://matrix.org");
 		await expect(modal.locator('select[data-field="authMode"]')).toHaveValue("oidc");
-		await expect(modal.getByText("Encrypted Matrix chats require OIDC or Password auth.", { exact: false })).toBeVisible();
+		await expect(
+			modal.getByText("Encrypted Matrix chats require OIDC or Password auth.", { exact: false }),
+		).toBeVisible();
 		await expect(
 			modal.getByText("Use OIDC (recommended) or Password so Moltis creates and persists its own Matrix device keys", {
 				exact: false,
@@ -925,7 +927,9 @@ test.describe("Settings navigation", () => {
 
 		await modal.locator('input[data-field="homeserver"]').fill("https://matrix.example.com");
 		await modal.locator('select[data-field="authMode"]').selectOption("access_token");
-		await expect(modal.getByText("Settings -> Help & About -> Advanced -> Access Token", { exact: false })).toBeVisible();
+		await expect(
+			modal.getByText("Settings -> Help & About -> Advanced -> Access Token", { exact: false }),
+		).toBeVisible();
 		await expect(modal.getByText("Access token auth always stays user-managed", { exact: false })).toBeVisible();
 		await expect(
 			modal.getByText("do not transfer that device's private encryption keys into Moltis", { exact: false }),

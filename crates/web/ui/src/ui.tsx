@@ -178,7 +178,7 @@ export function VanillaConfirmDialog(): VNode | null {
 	const s = vanillaConfirmState.value;
 	if (!s) return null;
 	function close(v: boolean): void {
-		s!.resolve(v);
+		s?.resolve(v);
 		vanillaConfirmState.value = null;
 	}
 	return (
@@ -218,7 +218,7 @@ export function ShareVisibilityDialog(): VNode | null {
 	const s = shareVisibilityState.value;
 	if (!s) return null;
 	function close(value: string | null): void {
-		s!.resolve(value);
+		s?.resolve(value);
 		shareVisibilityState.value = null;
 	}
 	return (
@@ -267,14 +267,14 @@ export function ShareLinkDialog(): VNode | null {
 	if (!s) return null;
 
 	function close(value: string | null): void {
-		s!.resolve(value);
+		s?.resolve(value);
 		shareLinkState.value = null;
 	}
 
 	async function copyLink(): Promise<void> {
 		try {
 			if (navigator.clipboard?.writeText) {
-				await navigator.clipboard.writeText(s!.url);
+				await navigator.clipboard.writeText(s?.url);
 				showToast(t("chat:share.linkCopied"), "success");
 				close("copied");
 				return;
@@ -320,7 +320,7 @@ export function ShareLinkDialog(): VNode | null {
 					<button
 						class="provider-btn provider-btn-secondary"
 						data-share-link-open="true"
-						onClick={() => window.open(s!.url, "_blank", "noopener,noreferrer")}
+						onClick={() => window.open(s?.url, "_blank", "noopener,noreferrer")}
 					>
 						{t("common:actions.openLink")}
 					</button>

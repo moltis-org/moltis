@@ -136,8 +136,8 @@ export function SecuritySection(): VNode {
 					if (typeof d?.has_password === "boolean") setHasPassword(d.has_password);
 					if (typeof d?.has_passkeys === "boolean") setHasPasskeys(d.has_passkeys);
 					if (typeof d?.setup_complete === "boolean") setSetupComplete(d.setup_complete);
-					if (Array.isArray(d?.passkey_origins)) setPasskeyOrigins(d!.passkey_origins);
-					if (Array.isArray(d?.passkey_host_update_hosts)) setPasskeyHostUpdateHosts(d!.passkey_host_update_hosts);
+					if (Array.isArray(d?.passkey_origins)) setPasskeyOrigins(d?.passkey_origins);
+					if (Array.isArray(d?.passkey_host_update_hosts)) setPasskeyHostUpdateHosts(d?.passkey_host_update_hosts);
 					setAuthLoading(false);
 					rerender();
 				},

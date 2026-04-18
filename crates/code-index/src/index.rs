@@ -663,7 +663,7 @@ impl CodeIndex {
                                 })
                                 .collect()
                         }
-                    }
+                    },
                     Err(e) => {
                         #[cfg(feature = "tracing")]
                         warn!(

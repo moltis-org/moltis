@@ -1881,7 +1881,7 @@ function ProviderStep({ onNext, onBack }: { onNext: () => void; onBack?: (() => 
 				return;
 			}
 			setSysInfo(sysRes.payload!);
-			setSelectedBackend(sysRes.payload!.recommendedBackend || "GGUF");
+			setSelectedBackend(sysRes.payload?.recommendedBackend || "GGUF");
 			sendRpc<{ recommended?: LocalModel[] }>("providers.local.models", {}).then((modelsRes) => {
 				if (modelsRes?.ok) setLocalModels(modelsRes.payload?.recommended || []);
 			});

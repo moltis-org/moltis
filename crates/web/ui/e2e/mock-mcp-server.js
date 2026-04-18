@@ -52,7 +52,7 @@ function parseBody(req) {
 
 function checkAuth(req, res) {
 	if (!bearerToken) return true;
-	var auth = req.headers["authorization"] || "";
+	var auth = req.headers.authorization || "";
 	if (auth === `Bearer ${bearerToken}`) return true;
 	respond(res, 401, { error: "unauthorized" }, { "WWW-Authenticate": 'Bearer realm="mock-mcp"' });
 	return false;
@@ -129,7 +129,7 @@ var server = http.createServer(async (req, res) => {
 		if (!checkAuth(req, res)) return;
 
 		var body = await parseBody(req);
-		if (!body || !body.jsonrpc) {
+		if (!body?.jsonrpc) {
 			return respond(res, 400, { error: "invalid JSON-RPC request" });
 		}
 

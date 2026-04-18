@@ -53,9 +53,7 @@ pub(crate) async fn init_code_index(
         }
 
         #[cfg(feature = "code-index-builtin")]
-        info!(
-            "code-index: QMD binary not found, trying builtin backend"
-        );
+        info!("code-index: QMD binary not found, trying builtin backend");
 
         #[cfg(not(feature = "code-index-builtin"))]
         warn!(
@@ -75,14 +73,14 @@ pub(crate) async fn init_code_index(
                     Box::new(store),
                     None,
                 ));
-            }
+            },
             Err(e) => {
                 warn!(
                     path = %db_path.display(),
                     error = %e,
                     "code-index: failed to initialize builtin backend, falling back to config-only"
                 );
-            }
+            },
         }
     }
 

@@ -179,8 +179,7 @@ fn sanitize_project_id(id: &str) -> Result<&str> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
-    use crate::delta::FileMeta;
+    use {super::*, crate::delta::FileMeta};
 
     fn fake_meta(hash: &str) -> FileMeta {
         FileMeta {

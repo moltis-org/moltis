@@ -866,7 +866,7 @@ function CronModal(): VNode {
 		};
 		saving.value = true;
 		const rpcMethod = isEdit ? "cron.update" : "cron.add";
-		const rpcParams = isEdit ? { id: job!.id, patch: fields } : fields;
+		const rpcParams = isEdit ? { id: job?.id, patch: fields } : fields;
 		sendRpc(rpcMethod, rpcParams).then((res) => {
 			saving.value = false;
 			if (res?.ok) {

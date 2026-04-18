@@ -209,7 +209,7 @@ function HookCard({ hook }: { hook: Hook }): VNode {
 							{hook.avg_latency_ms > 0 ? <span>{hook.avg_latency_ms}ms avg</span> : null}
 						</>
 					) : null}
-					<span className={"icon icon-chevron-down transition-transform " + (expanded.value ? "rotate-180" : "")} />
+					<span className={`icon icon-chevron-down transition-transform ${expanded.value ? "rotate-180" : ""}`} />
 				</div>
 			</div>
 

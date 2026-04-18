@@ -192,7 +192,7 @@ function slashShowMenu(filter: string): void {
 			e.preventDefault();
 			slashSelectItem(i);
 		});
-		slashMenuEl!.appendChild(item);
+		slashMenuEl?.appendChild(item);
 	});
 
 	const inputWrap = S.chatInput?.parentElement;
@@ -1123,7 +1123,7 @@ function resetComposerAfterSend(): void {
 	S.setChatHistoryDraft("");
 	(S.chatInput as HTMLTextAreaElement).value = "";
 	chatAutoResize();
-	if (window.innerWidth < 768) S.chatInput!.blur();
+	if (window.innerWidth < 768) S.chatInput?.blur();
 }
 
 function normalizeOutgoingText(text: string, hasImages: boolean): string {
@@ -1441,7 +1441,7 @@ function bindChatComposer(): void {
 			handleHistoryDown();
 		}
 	});
-	S.chatSendBtn!.addEventListener("click", sendChat);
+	S.chatSendBtn?.addEventListener("click", sendChat);
 }
 
 function initializeChatControls(): void {
@@ -1484,7 +1484,7 @@ function bindContextModals(): {
 		closeDebugModal = () => setDebugModalOpen(false);
 		if (debugCloseBtn) debugCloseBtn.addEventListener("click", closeDebugModal);
 		debugModal.addEventListener("click", (e: MouseEvent) => {
-			if (e.target === debugModal) closeDebugModal!();
+			if (e.target === debugModal) closeDebugModal?.();
 		});
 	}
 	const fullContextModal = S.$("fullContextModal") as HTMLElement | null;
@@ -1494,7 +1494,7 @@ function bindContextModals(): {
 		closeFullContextModal = () => setFullContextModalOpen(false);
 		if (fcCloseBtn) fcCloseBtn.addEventListener("click", closeFullContextModal);
 		fullContextModal.addEventListener("click", (e: MouseEvent) => {
-			if (e.target === fullContextModal) closeFullContextModal!();
+			if (e.target === fullContextModal) closeFullContextModal?.();
 		});
 	}
 	return { debugModal, fullContextModal, closeDebugModal, closeFullContextModal };
@@ -1564,10 +1564,10 @@ registerPrefix(
 		const sessionKey = resolveInitialSessionKey(sessionKeyFromUrl ?? null);
 		startInitialChatSession(sessionKey);
 		bindChatComposer();
-		S.chatMsgBox!.addEventListener("copy", handleChatCopy);
+		S.chatMsgBox?.addEventListener("copy", handleChatCopy);
 		initVoiceInput(S.$("micBtn") as HTMLButtonElement | null);
 		initializeChatMediaDrop();
-		S.chatInput!.focus();
+		S.chatInput?.focus();
 	},
 	function teardownChat() {
 		teardownVoiceInput();

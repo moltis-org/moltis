@@ -49,7 +49,7 @@ function sortedLocaleDirs(baseDir) {
 function sortedNamespaceFiles(enDir) {
 	return fs
 		.readdirSync(enDir, { withFileTypes: true })
-		.filter((entry) => entry.isFile() && entry.name.endsWith(".js"))
+		.filter((entry) => entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".js")))
 		.map((entry) => entry.name)
 		.sort();
 }

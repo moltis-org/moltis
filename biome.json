@@ -13,7 +13,12 @@
 		"rules": {
 			"recommended": true,
 			"a11y": {
-				"recommended": true
+				"recommended": true,
+				"noAutofocus": "warn",
+				"noLabelWithoutControl": "warn",
+				"noStaticElementInteractions": "warn",
+				"useButtonType": "warn",
+				"useKeyWithClickEvents": "warn"
 			},
 			"complexity": {
 				"recommended": true,

@@ -114,9 +114,12 @@ test.describe("Matrix channel", () => {
 
 		// Access token guidance
 		await expect(
-			modal.getByText("Does not support encrypted Matrix chats. Access tokens authenticate an existing Matrix session", {
-				exact: false,
-			}),
+			modal.getByText(
+				"Does not support encrypted Matrix chats. Access tokens authenticate an existing Matrix session",
+				{
+					exact: false,
+				},
+			),
 		).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
@@ -212,8 +215,12 @@ test.describe("Matrix channel", () => {
 		await expect(modal.getByRole("heading", { name: "Connect Matrix", exact: true })).toBeVisible();
 
 		// Encryption guidance banner should mention OIDC
-		await expect(modal.getByText("Encrypted Matrix chats require OIDC or Password auth", { exact: false })).toBeVisible();
-		await expect(modal.getByText("Use OIDC (recommended) or Password so Moltis creates", { exact: false })).toBeVisible();
+		await expect(
+			modal.getByText("Encrypted Matrix chats require OIDC or Password auth", { exact: false }),
+		).toBeVisible();
+		await expect(
+			modal.getByText("Use OIDC (recommended) or Password so Moltis creates", { exact: false }),
+		).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
