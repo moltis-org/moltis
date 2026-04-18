@@ -769,3 +769,46 @@ base_url = "http://127.0.0.1:8001/v1"
         Some("http://127.0.0.1:8001/v1")
     );
 }
+
+#[test]
+fn external_url_defaults_to_none() {
+    let cfg: MoltisConfig = toml::from_str("").unwrap();
+    assert!(cfg.server.external_url.is_none());
+}
+
+#[test]
+fn external_url_parses_from_toml() {
+    let cfg: MoltisConfig =
+        toml::from_str("[server]\nexternal_url = \"https://moltis.example.com\"\n").unwrap();
+    assert_eq!(
+        cfg.server.external_url.as_deref(),
+        Some("https://moltis.example.com")
+    );
+}
+
+#[test]
+fn effective_external_url_returns_config_value() {
+    let cfg: MoltisConfig =
+        toml::from_str("[server]\nexternal_url = \"https://from-config.example.com\"\n").unwrap();
+    // When MOLTIS_EXTERNAL_URL is not set, the config value is returned.
+    // (We cannot test the env-var override here because set_var is unsafe.)
+    let effective = cfg.server.effective_external_url();
+    assert!(effective.is_some());
+    assert_eq!(effective.unwrap(), "https://from-config.example.com");
+}
+
+#[test]
+fn effective_external_url_strips_trailing_slash() {
+    let cfg: MoltisConfig =
+        toml::from_str("[server]\nexternal_url = \"https://example.com/\"\n").unwrap();
+    assert_eq!(
+        cfg.server.effective_external_url().as_deref(),
+        Some("https://example.com")
+    );
+}
+
+#[test]
+fn effective_external_url_returns_none_when_unset() {
+    let cfg: MoltisConfig = toml::from_str("").unwrap();
+    assert!(cfg.server.effective_external_url().is_none());
+}

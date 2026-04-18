@@ -243,6 +243,29 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         }
     }
 
+    // server.external_url: must use http:// or https:// scheme.
+    if let Some(ref url) = config.server.external_url {
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            let scheme = url.split("://").next().unwrap_or("<unknown>");
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "invalid-value",
+                path: "server.external_url".into(),
+                message: format!(
+                    "server.external_url must use http:// or https:// scheme (got \"{scheme}://\")"
+                ),
+            });
+        }
+        if url.ends_with('/') {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "invalid-value",
+                path: "server.external_url".into(),
+                message: "server.external_url has a trailing slash; WebAuthn origins must not end with '/' (it will be stripped at runtime)".into(),
+            });
+        }
+    }
+
     // upstream_proxy: must be a valid URL with a supported scheme.
     if let Some(ref proxy) = config.upstream_proxy {
         let url = proxy.expose_secret();

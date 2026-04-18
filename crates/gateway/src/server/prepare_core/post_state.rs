@@ -134,16 +134,38 @@ async fn build_webauthn_registry(
         "http"
     };
 
-    let explicit_rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID")
-        .or_else(|_| std::env::var("APP_DOMAIN"))
-        .or_else(|_| std::env::var("RENDER_EXTERNAL_HOSTNAME"))
-        .or_else(|_| std::env::var("FLY_APP_NAME").map(|name| format!("{name}.fly.dev")))
-        .or_else(|_| std::env::var("RAILWAY_PUBLIC_DOMAIN"))
-        .ok();
-    let explicit_origin = std::env::var("MOLTIS_WEBAUTHN_ORIGIN")
-        .or_else(|_| std::env::var("APP_URL"))
-        .or_else(|_| std::env::var("RENDER_EXTERNAL_URL"))
-        .ok();
+    // Derive RP ID and origin from server.external_url / MOLTIS_EXTERNAL_URL
+    // when available, before falling back to fine-grained env vars.
+    let (external_rp_id, external_origin) =
+        if let Some(ref ext_url) = config.server.effective_external_url() {
+            match url::Url::parse(ext_url) {
+                Ok(parsed) => {
+                    let host = parsed.host_str().unwrap_or_default().to_string();
+                    (Some(host), Some(ext_url.clone()))
+                },
+                Err(e) => {
+                    warn!("invalid server.external_url '{ext_url}': {e}");
+                    (None, None)
+                },
+            }
+        } else {
+            (None, None)
+        };
+
+    let explicit_rp_id = external_rp_id
+        .or_else(|| std::env::var("MOLTIS_WEBAUTHN_RP_ID").ok())
+        .or_else(|| std::env::var("APP_DOMAIN").ok())
+        .or_else(|| std::env::var("RENDER_EXTERNAL_HOSTNAME").ok())
+        .or_else(|| {
+            std::env::var("FLY_APP_NAME")
+                .ok()
+                .map(|name| format!("{name}.fly.dev"))
+        })
+        .or_else(|| std::env::var("RAILWAY_PUBLIC_DOMAIN").ok());
+    let explicit_origin = external_origin
+        .or_else(|| std::env::var("MOLTIS_WEBAUTHN_ORIGIN").ok())
+        .or_else(|| std::env::var("APP_URL").ok())
+        .or_else(|| std::env::var("RENDER_EXTERNAL_URL").ok());
 
     let mut wa_registry = crate::auth_webauthn::WebAuthnRegistry::new();
     let mut any_ok = false;

@@ -375,6 +375,7 @@ pub(super) fn apply_env_overrides_with(
         "MOLTIS_TAILSCALE",
         "MOLTIS_WEBAUTHN_RP_ID",
         "MOLTIS_WEBAUTHN_ORIGIN",
+        "MOLTIS_EXTERNAL_URL",
     ];
 
     let mut root: Value = match serde_json::to_value(&config) {

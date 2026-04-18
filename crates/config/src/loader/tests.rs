@@ -97,6 +97,21 @@ fn apply_env_overrides_ignores_excluded() {
 }
 
 #[test]
+fn apply_env_overrides_ignores_external_url() {
+    // MOLTIS_EXTERNAL_URL is handled by effective_external_url(), not by
+    // the generic env override mechanism.
+    let vars = vec![(
+        "MOLTIS_EXTERNAL_URL".into(),
+        "https://test.example.com".into(),
+    )];
+    let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
+    assert!(
+        config.server.external_url.is_none(),
+        "MOLTIS_EXTERNAL_URL should be excluded from generic env overrides"
+    );
+}
+
+#[test]
 fn apply_env_overrides_multiple() {
     let vars = vec![
         ("MOLTIS_AUTH__DISABLED".into(), "true".into()),

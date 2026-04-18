@@ -328,6 +328,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("db_pool_max_connections", Leaf),
                 ("shiki_cdn_url", Leaf),
                 ("terminal_enabled", Leaf),
+                ("external_url", Leaf),
             ])),
         ),
         ("providers", MapWithFields {

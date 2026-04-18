@@ -111,6 +111,80 @@ domain = "team-gateway.ngrok.app"
 }
 
 #[test]
+fn external_url_bad_scheme_is_error() {
+    let toml = r#"
+[server]
+external_url = "ftp://moltis.example.com"
+"#;
+    let result = validate_toml_str(toml);
+    let error = result.diagnostics.iter().find(|d| {
+        d.severity == Severity::Error
+            && d.path == "server.external_url"
+            && d.message.contains("http://")
+    });
+    assert!(
+        error.is_some(),
+        "expected error for bad scheme, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn external_url_trailing_slash_is_warning() {
+    let toml = r#"
+[server]
+external_url = "https://moltis.example.com/"
+"#;
+    let result = validate_toml_str(toml);
+    let warning = result.diagnostics.iter().find(|d| {
+        d.severity == Severity::Warning
+            && d.path == "server.external_url"
+            && d.message.contains("trailing slash")
+    });
+    assert!(
+        warning.is_some(),
+        "expected warning for trailing slash, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn external_url_valid_https_no_diagnostics() {
+    let toml = r#"
+[server]
+external_url = "https://moltis.example.com"
+"#;
+    let result = validate_toml_str(toml);
+    let issues: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.path == "server.external_url")
+        .collect();
+    assert!(
+        issues.is_empty(),
+        "valid https external_url should produce no diagnostics, got: {issues:?}"
+    );
+}
+
+#[test]
+fn external_url_valid_http_no_diagnostics() {
+    let toml = r#"
+[server]
+external_url = "http://moltis.local:8080"
+"#;
+    let result = validate_toml_str(toml);
+    let issues: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.path == "server.external_url")
+        .collect();
+    assert!(
+        issues.is_empty(),
+        "valid http external_url should produce no diagnostics, got: {issues:?}"
+    );
+}
+
+#[test]
 fn tls_disabled_non_localhost_warned() {
     let toml = r#"
 [server]

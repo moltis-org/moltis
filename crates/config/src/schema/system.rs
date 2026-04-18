@@ -45,6 +45,13 @@ pub struct ServerConfig {
     /// this field and cannot be changed from the web UI config editor.
     #[serde(default = "default_terminal_enabled")]
     pub terminal_enabled: bool,
+    /// Public URL when running behind a reverse proxy (e.g.
+    /// `https://moltis.example.com`). Used to derive the WebAuthn RP ID
+    /// and origin so passkey auth works with the proxy's public hostname.
+    ///
+    /// The `MOLTIS_EXTERNAL_URL` environment variable takes precedence
+    /// over this field.
+    pub external_url: Option<String>,
 }
 
 fn default_log_buffer_size() -> usize {
@@ -71,6 +78,7 @@ impl Default for ServerConfig {
             db_pool_max_connections: default_db_pool_max_connections(),
             shiki_cdn_url: None,
             terminal_enabled: default_terminal_enabled(),
+            external_url: None,
         }
     }
 }
@@ -87,6 +95,18 @@ impl ServerConfig {
             return false;
         }
         self.terminal_enabled
+    }
+
+    /// Returns the effective external URL, checking `MOLTIS_EXTERNAL_URL`
+    /// env var first, then falling back to the config field. Trailing
+    /// slashes are stripped so the result can be used directly as a
+    /// WebAuthn origin.
+    pub fn effective_external_url(&self) -> Option<String> {
+        let raw = std::env::var("MOLTIS_EXTERNAL_URL")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .or_else(|| self.external_url.clone())?;
+        Some(raw.trim_end_matches('/').to_string())
     }
 }
 

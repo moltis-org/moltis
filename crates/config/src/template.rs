@@ -31,6 +31,9 @@ terminal_enabled = true                   # Enable interactive host terminal in 
                                           # For hard lockdown, set MOLTIS_TERMINAL_DISABLED=1 (env var
                                           # takes precedence and cannot be changed from the web UI).
 update_releases_url = "https://www.moltis.org/releases.json"    # Releases manifest URL for update checks (override to use a custom URL)
+# external_url = "https://moltis.example.com"  # Public URL when behind a reverse proxy.
+                                                 # Used for WebAuthn passkey origins.
+                                                 # Env var MOLTIS_EXTERNAL_URL takes precedence.
 
 # ══════════════════════════════════════════════════════════════════════════════
 # UPSTREAM PROXY

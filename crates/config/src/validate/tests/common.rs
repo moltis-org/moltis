@@ -248,3 +248,20 @@ terminal_enabled = false
         "terminal_enabled should be a known field, got: {unknown:?}"
     );
 }
+
+#[test]
+fn server_external_url_is_known_field() {
+    let toml = r#"
+[server]
+external_url = "https://moltis.example.com"
+"#;
+    let result = validate_toml_str(toml);
+    let unknown = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path.contains("external_url"));
+    assert!(
+        unknown.is_none(),
+        "external_url should be a known field, got: {unknown:?}"
+    );
+}

@@ -499,12 +499,29 @@ server process. In practice:
 - If a proxy rewrites `Host` and does not preserve browser host context,
   passkey routes can fail with "no passkey config for this hostname".
 
-For stable proxy deployments, set explicit WebAuthn identity to your public
-domain:
+For stable proxy deployments, set your public URL in `moltis.toml`:
+
+```toml
+[server]
+external_url = "https://chat.example.com"
+```
+
+Moltis derives the WebAuthn RP ID (domain) and origin from this URL
+automatically. The `MOLTIS_EXTERNAL_URL` environment variable takes
+precedence over the config field, which is useful for container
+deployments:
 
 ```bash
 MOLTIS_BEHIND_PROXY=true
 MOLTIS_NO_TLS=true
+MOLTIS_EXTERNAL_URL=https://chat.example.com
+```
+
+For fine-grained control (e.g. when the RP ID differs from the URL host),
+the existing env vars still work and take precedence after
+`external_url`:
+
+```bash
 MOLTIS_WEBAUTHN_RP_ID=chat.example.com
 MOLTIS_WEBAUTHN_ORIGIN=https://chat.example.com
 ```
@@ -512,7 +529,7 @@ MOLTIS_WEBAUTHN_ORIGIN=https://chat.example.com
 Migration guidance when changing host/domain:
 
 1. Keep password login enabled during migration.
-2. Deploy with the new `MOLTIS_WEBAUTHN_RP_ID`/`MOLTIS_WEBAUTHN_ORIGIN`.
+2. Deploy with the new `server.external_url` (or env var equivalent).
 3. Ask users to register a new passkey on the new host.
 4. Remove old passkeys after new-host login is confirmed.
 
