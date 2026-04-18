@@ -27,7 +27,7 @@ crates/
 ├── gateway/
 │   ├── migrations/
 │   │   └── 20240205100003_init.sql   # auth, message_log, channels
-│   └── src/server.rs                  # orchestrates moltis.db migrations
+│   └── src/server/prepare_core.rs      # orchestrates moltis.db migrations
 └── memory/
     ├── migrations/
     │   └── 20240205100004_init.sql   # files, chunks, embedding_cache, FTS
@@ -45,6 +45,8 @@ Each crate is autonomous and owns its schema:
 | `moltis-projects` | `moltis.db` | `projects` | `20240205100000_init.sql` |
 | `moltis-sessions` | `moltis.db` | `sessions`, `channel_sessions` | `20240205100001_init.sql` |
 | `moltis-cron` | `moltis.db` | `cron_jobs`, `cron_runs` | `20240205100002_init.sql` |
+| `moltis-webhooks` | `moltis.db` | `webhook_configs`, `webhook_deliveries` | `20260407000000_initial.sql` |
+| `moltis-vault` | `moltis.db` | `vault_metadata` | `20260214000001_vault_metadata.sql` |
 | `moltis-gateway` | `moltis.db` | `auth_*`, `passkeys`, `api_keys`, `env_variables`, `message_log`, `channels` | `20240205100003_init.sql` |
 | `moltis-memory` | `memory.db` | `files`, `chunks`, `embedding_cache`, `chunks_fts` | `20240205100004_init.sql` |
 
@@ -53,11 +55,13 @@ Each crate is autonomous and owns its schema:
 The gateway runs migrations in dependency order:
 
 ```rust
-// server.rs
+// prepare_core.rs
 moltis_projects::run_migrations(&db_pool).await?;   // 1. projects first
 moltis_sessions::run_migrations(&db_pool).await?;   // 2. sessions (FK → projects)
 moltis_cron::run_migrations(&db_pool).await?;       // 3. cron (independent)
-sqlx::migrate!("./migrations").run(&db_pool).await?; // 4. gateway tables
+moltis_webhooks::run_migrations(&db_pool).await?;   // 4. webhooks (independent)
+crate::run_migrations(&db_pool).await?;             // 5. gateway tables
+moltis_vault::run_migrations(&db_pool).await?;      // 6. vault (last)
 ```
 
 Sessions depends on projects due to a foreign key (`sessions.project_id` references
@@ -150,7 +154,7 @@ pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
 }
 ```
 
-4. Call it from `server.rs` in the appropriate order:
+4. Call it from `prepare_core.rs` in the appropriate order:
 
 ```rust
 moltis_new_feature::run_migrations(&db_pool).await?;
@@ -235,7 +239,7 @@ In production, migrations handle schema creation.
 
 ### Migration Order Issues
 
-If you see foreign key errors, verify the migration order in `server.rs`. Parent
+If you see foreign key errors, verify the migration order in `prepare_core.rs`. Parent
 tables must be created before child tables with FK references.
 
 ### Checking Migration Status
@@ -267,4 +271,4 @@ cargo run  # Creates fresh database with all migrations
 - Modify existing migration files after deployment
 - Reuse timestamps across crates
 - Put multiple crates' tables in one migration file
-- Skip the dependency order in `server.rs`
+- Skip the dependency order in `prepare_core.rs`

@@ -64,7 +64,7 @@ docker logs moltis
 
 ## Volume Mounts
 
-Moltis uses two directories that should be persisted:
+Moltis uses three directories that should be persisted:
 
 | Path | Contents |
 |------|----------|
