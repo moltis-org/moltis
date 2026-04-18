@@ -5,28 +5,24 @@ tools, enabling the system to extend its own capabilities during a conversation.
 
 ## Overview
 
-Three agent tools manage personal skills by default:
+Four agent tools manage personal skills:
 
 | Tool | Description |
 |------|-------------|
 | `create_skill` | Write a new `SKILL.md` to `<data_dir>/skills/<name>/` |
 | `update_skill` | Overwrite an existing skill's `SKILL.md` |
 | `delete_skill` | Remove a skill directory |
+| `read_skill` | Load a skill's content or access its linked sidecar files |
 
-When `skills.enable_agent_sidecar_files = true`, a fourth tool becomes
-available:
+A fifth tool is available when `skills.enable_agent_sidecar_files = true`:
 
 | Tool | Description |
 |------|-------------|
 | `write_skill_files` | Write supplementary UTF-8 text files inside an existing personal skill directory |
 
-Skills created this way are personal and stored in the configured data
-directory's `skills/` folder. They become available on the next message
-automatically thanks to the skill watcher.
-
-Before any built-in skill mutation runs, Moltis creates an automatic
-checkpoint. Tool results include a `checkpointId` you can later restore with
-`checkpoint_restore`.
+All mutation tools (`create_skill`, `update_skill`, `delete_skill`,
+`write_skill_files`) create an automatic checkpoint before executing.
+Tool results include a `checkpointId` for restoration via `checkpoint_restore`.
 
 ## Skill Watcher
 
@@ -85,6 +81,25 @@ Safety rules:
 - rejects `..`, absolute paths, hidden path components, and `SKILL.md`
 - rejects symlink escapes and oversized batches
 - appends an audit entry to `~/.moltis/logs/security-audit.jsonl`
+
+## Reading a Skill
+
+The `read_skill` tool loads a skill's full content. The primary call (with
+just `name`) returns the SKILL.md body plus:
+
+- Frontmatter metadata (`description`, `display_name`, `license`, `homepage`,
+  `compatibility`, `allowed_tools`, `source`)
+- A `linked_files` list of sidecar files under `references/`, `templates/`,
+  `assets/`, and `scripts/`
+- The skill body is scanned for prompt-injection patterns (warn-only)
+
+Call again with `file_path` to read a specific sidecar file. Nested paths
+are supported (e.g. `references/subdir/deep.md`). Binary files return
+`{ is_binary: true, bytes }`.
+
+Size limits apply: individual skill bodies are capped at 256 KiB, sidecar
+files at 128 KiB each. The sidecar listing is capped at 32 files total
+(8 per subdirectory).
 
 ## Updating a Skill
 
