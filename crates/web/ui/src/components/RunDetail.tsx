@@ -5,6 +5,7 @@
 
 import type { VNode } from "preact";
 import { useCallback, useState } from "preact/hooks";
+import { TabBar } from "../components/forms";
 import { sendRpc } from "../helpers";
 
 // ── Types ────────────────────────────────────────────────────
@@ -33,12 +34,6 @@ interface RunData {
 	messages?: RunMessage[];
 }
 
-interface TabButtonProps {
-	label: string;
-	active: boolean;
-	onClick: () => void;
-}
-
 interface TabProps {
 	data: RunData | null;
 }
@@ -50,22 +45,11 @@ export interface RunDetailProps {
 
 // ── Sub-components ───────────────────────────────────────────
 
-const TABS = ["overview", "actions", "messages"] as const;
-
-function TabButton({ label, active, onClick }: TabButtonProps): VNode {
-	return (
-		<button
-			className={`text-xs px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent border ${
-				active
-					? "border-[var(--accent)] text-[var(--accent)] font-semibold"
-					: "border-[var(--border)] text-[var(--muted)]"
-			}`}
-			onClick={onClick}
-		>
-			{label}
-		</button>
-	);
-}
+const RUN_DETAIL_TABS = [
+	{ id: "overview", label: "Overview" },
+	{ id: "actions", label: "Actions" },
+	{ id: "messages", label: "Messages" },
+];
 
 function OverviewTab({ data }: TabProps): VNode | null {
 	if (!data) return null;
@@ -204,16 +188,11 @@ export function RunDetail({ sessionKey, runId }: RunDetailProps): VNode {
 						<div className="text-xs text-[var(--muted)]">Loading\u2026</div>
 					) : (
 						<div>
-							<div className="flex gap-1 mb-2">
-								{TABS.map((t) => (
-									<TabButton
-										key={t}
-										label={t.charAt(0).toUpperCase() + t.slice(1)}
-										active={activeTab === t}
-										onClick={() => setActiveTab(t)}
-									/>
-								))}
-							</div>
+							<TabBar
+								tabs={RUN_DETAIL_TABS}
+								active={activeTab}
+								onChange={setActiveTab}
+							/>
 							{activeTab === "overview" && <OverviewTab data={data} />}
 							{activeTab === "actions" && <ActionsTab data={data} />}
 							{activeTab === "messages" && <MessagesTab data={data} />}

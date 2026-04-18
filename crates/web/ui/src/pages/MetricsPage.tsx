@@ -7,6 +7,7 @@ import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import uPlot from "uplot";
+import { TabBar } from "../components/forms";
 import { onEvent } from "../events";
 import { t } from "../i18n";
 import { registerPrefix } from "../router";
@@ -751,22 +752,14 @@ function MonitoringPage({ initialTab }: { initialTab: string }): VNode {
 						<h2 className="text-xl font-semibold">{t("metrics:title")}</h2>
 						<LiveIndicator live={isLive.value} />
 					</div>
-					<div className="flex items-center gap-4">
-						<div className="flex border border-[var(--border)] rounded-md overflow-hidden">
-							<button
-								className={`px-5 py-2.5 text-sm transition-colors ${activeTab === "overview" ? "bg-[var(--surface2)] text-[var(--text)]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"}`}
-								onClick={() => handleTabChange("overview")}
-							>
-								{t("metrics:tabs.overview")}
-							</button>
-							<button
-								className={`px-5 py-2.5 text-sm transition-colors ${activeTab === "charts" ? "bg-[var(--surface2)] text-[var(--text)]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]"}`}
-								onClick={() => handleTabChange("charts")}
-							>
-								{t("metrics:tabs.charts")}
-							</button>
-						</div>
-					</div>
+					<TabBar
+						tabs={[
+							{ id: "overview", label: t("metrics:tabs.overview") },
+							{ id: "charts", label: t("metrics:tabs.charts") },
+						]}
+						active={activeTab}
+						onChange={handleTabChange}
+					/>
 				</div>
 
 				{activeTab === "overview" && (
