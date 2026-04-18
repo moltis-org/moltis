@@ -329,7 +329,7 @@ export function highlightTermInElement(el: HTMLElement, query: string): void {
 			idx = lowerText.indexOf(lowerQ, pos);
 		}
 		if (pos < text.length) frag.appendChild(document.createTextNode(text.substring(pos)));
-		textNode.parentNode!.replaceChild(frag, textNode);
+		textNode.parentNode?.replaceChild(frag, textNode);
 	});
 }
 

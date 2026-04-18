@@ -250,7 +250,7 @@ export function SessionHeader({
 		const currentSession = sessionStore.getByKey(currentKey);
 		const msgCount = currentSession ? currentSession.messageCount || 0 : 0;
 		const nextKey = nextSessionKey(currentKey);
-		const canOptimisticallyDelete = !(currentSession && currentSession.worktree_branch);
+		const canOptimisticallyDelete = !currentSession?.worktree_branch;
 		const applyDeletedState = (): void => {
 			removeSessionFromClientState(currentKey, { nextKey });
 			switchSession(nextKey);

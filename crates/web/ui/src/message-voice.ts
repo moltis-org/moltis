@@ -141,6 +141,6 @@ export async function attachMessageVoiceControl(options: AttachMessageVoiceContr
 		}
 
 		upsertVoiceWarning(messageEl, null);
-		actionBtn!.remove();
+		actionBtn?.remove();
 	};
 }

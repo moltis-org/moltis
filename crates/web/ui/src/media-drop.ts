@@ -132,8 +132,8 @@ function onDrop(e: DragEvent): void {
 	dragEnterCount = 0;
 	if (chatMsgBoxRef) chatMsgBoxRef.classList.remove("drag-over");
 
-	const files = e.dataTransfer!.files;
-	if (files.length > 0) {
+	const files = e.dataTransfer?.files;
+	if (files && files.length > 0) {
 		handleFiles(files);
 	}
 }

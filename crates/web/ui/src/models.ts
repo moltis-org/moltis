@@ -131,12 +131,12 @@ export function renderModelList(query: string): void {
 		if (filtered[i].preferred) { lastPreferredIdx = i; break; }
 	}
 	filtered.forEach((m, idx) => {
-		S.modelDropdownList!.appendChild(buildModelItem(m, currentId));
+		S.modelDropdownList?.appendChild(buildModelItem(m, currentId));
 
 		if (idx === lastPreferredIdx && lastPreferredIdx < filtered.length - 1) {
 			const divider = document.createElement("div");
 			divider.className = "model-dropdown-divider";
-			S.modelDropdownList!.appendChild(divider);
+			S.modelDropdownList?.appendChild(divider);
 		}
 	});
 }
@@ -156,7 +156,7 @@ export function bindModelComboEvents(): void {
 	if (!(S.modelComboBtn && S.modelSearchInput && S.modelDropdownList && S.modelCombo)) return;
 
 	S.modelComboBtn.addEventListener("click", () => {
-		if (S.modelDropdown!.classList.contains("hidden")) {
+		if (S.modelDropdown?.classList.contains("hidden")) {
 			openModelDropdown();
 		} else {
 			closeModelDropdown();
@@ -170,7 +170,8 @@ export function bindModelComboEvents(): void {
 
 	S.modelSearchInput.addEventListener("keydown", (e: Event) => {
 		const ke = e as KeyboardEvent;
-		const items = S.modelDropdownList!.querySelectorAll<HTMLElement>(".model-dropdown-item");
+		const items = S.modelDropdownList?.querySelectorAll<HTMLElement>(".model-dropdown-item");
+		if (!items) return;
 		if (ke.key === "ArrowDown") {
 			ke.preventDefault();
 			S.setModelIdx(Math.min(S.modelIdx + 1, items.length - 1));
@@ -188,7 +189,7 @@ export function bindModelComboEvents(): void {
 			}
 		} else if (ke.key === "Escape") {
 			closeModelDropdown();
-			S.modelComboBtn!.focus();
+			S.modelComboBtn?.focus();
 		}
 	});
 }

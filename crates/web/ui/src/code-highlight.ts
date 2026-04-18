@@ -102,14 +102,14 @@ async function highlightCodeElement(codeEl: HTMLElement): Promise<void> {
 	if (!(await ensureLanguageLoaded(lang))) return;
 	const raw = codeEl.textContent || "";
 	try {
-		const highlightedHtml = highlighter!.codeToHtml(raw, {
+		const highlightedHtml = highlighter?.codeToHtml(raw, {
 			lang: lang,
 			themes: {
 				light: "github-light",
 				dark: "github-dark",
 			},
 		});
-		const shikiPre = parseShikiPre(highlightedHtml);
+		const shikiPre = parseShikiPre(highlightedHtml ?? "");
 		if (!shikiPre) return;
 		applyShikiStylesToPre(codeEl, shikiPre);
 		applyShikiMarkupToCode(codeEl, shikiPre);

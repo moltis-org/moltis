@@ -29,8 +29,8 @@ export let currentPrefix: string | null = null;
 export function sessionPath(key: string): string {
 	return `/chats/${key.replace(/:/g, "/")}`;
 }
-const pageContent = S.$("pageContent") as HTMLElement;
-const sessionsPanel = S.$("sessionsPanel") as HTMLElement;
+const pageContent = S.$("pageContent")!;
+const sessionsPanel = S.$("sessionsPanel")!;
 
 export function registerPage(path: string, init: (container: HTMLElement, param?: string | null) => void, teardown?: () => void): void {
 	pages[path] = {

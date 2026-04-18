@@ -25,9 +25,19 @@ export function get<K extends GonKey>(key: K): GonData[K] | null {
   return (gon[key] as GonData[K]) ?? null;
 }
 
+<<<<<<< HEAD
 export function set<K extends GonKey>(key: K, value: GonData[K]): void {
   (gon as Record<string, unknown>)[key] = value;
   notify(key, value);
+||||||| parent of ed78f424 (feat(web): add ChannelType enum, typed DOM accessor, reduce casts)
+export function set<K extends GonKey>(key: K, value: GonData[K]): void {
+	(gon as Record<string, unknown>)[key] = value;
+	notify(key, value);
+=======
+export function set<K extends GonKey>(key: K, value: GonData[K] | null): void {
+	(gon as Record<string, unknown>)[key] = value;
+	notify(key, value as GonData[K]);
+>>>>>>> ed78f424 (feat(web): add ChannelType enum, typed DOM accessor, reduce casts)
 }
 
 export function onChange<K extends GonKey>(key: K, fn: GonListener<K>): void {

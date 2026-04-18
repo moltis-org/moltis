@@ -150,7 +150,7 @@ function els(): ProviderModalElements {
 		};
 		_els.close.addEventListener("click", closeProviderModal);
 		_els.modal.addEventListener("click", (e: MouseEvent) => {
-			if (e.target === _els!.modal) closeProviderModal();
+			if (e.target === _els?.modal) closeProviderModal();
 		});
 	}
 	return _els;
@@ -909,7 +909,7 @@ function showModelSelector(provider: ProviderInfo, models: ModelEntry[], keyVal:
 
 	if (searchInp) {
 		searchInp.addEventListener("input", () => {
-			renderCards(searchInp!.value.trim());
+			renderCards(searchInp?.value.trim());
 		});
 	}
 
@@ -1483,7 +1483,7 @@ function showMultiModelSelector(providerName: string, providerDisplayName: strin
 
 	if (searchInp) {
 		searchInp.addEventListener("input", () => {
-			renderCards(searchInp!.value.trim());
+			renderCards(searchInp?.value.trim());
 		});
 	}
 

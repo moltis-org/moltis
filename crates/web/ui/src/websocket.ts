@@ -337,7 +337,7 @@ function moveFirstQueuedToChat(): void {
 	const badge = firstQueued.querySelector(".queued-badge");
 	if (badge) badge.remove();
 	clearChatEmptyState();
-	S.chatMsgBox!.appendChild(firstQueued);
+	S.chatMsgBox?.appendChild(firstQueued);
 	if (!tray.querySelector(".msg")) tray.classList.add("hidden");
 }
 
@@ -366,8 +366,8 @@ function handleChatThinking(p: ChatPayload, isActive: boolean, isChatPage: boole
 	thinkEl.id = "thinkingIndicator";
 	thinkEl.appendChild(makeThinkingDots());
 	thinkEl.appendChild(makeThinkingStopBtn(eventSession));
-	S.chatMsgBox!.appendChild(thinkEl);
-	S.chatMsgBox!.scrollTop = S.chatMsgBox!.scrollHeight;
+	S.chatMsgBox?.appendChild(thinkEl);
+	if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
 function handleChatThinkingText(p: ChatPayload, isActive: boolean, isChatPage: boolean, eventSession: string): void {
@@ -383,7 +383,7 @@ function handleChatThinkingText(p: ChatPayload, isActive: boolean, isChatPage: b
 		textEl.textContent = p.text || "";
 		indicator.appendChild(textEl);
 		indicator.appendChild(existingBtn || makeThinkingStopBtn(eventSession));
-		S.chatMsgBox!.scrollTop = S.chatMsgBox!.scrollHeight;
+		if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 	}
 }
 
@@ -458,14 +458,14 @@ function handleChatToolCallStart(p: ChatPayload, isActive: boolean, isChatPage: 
 	// Preserve thinking text as a reasoning disclosure inside the tool card
 	if (thinkingText) appendReasoningDisclosure(card, thinkingText);
 	clearChatEmptyState();
-	S.chatMsgBox!.appendChild(card);
+	S.chatMsgBox?.appendChild(card);
 	const endKey = toolCallEventKey(eventSession, p);
 	const pendingEnd = pendingToolCallEnds.get(endKey);
 	if (pendingEnd) {
 		pendingToolCallEnds.delete(endKey);
 		completeToolCard(card, pendingEnd as ChatPayload, eventSession);
 	}
-	S.chatMsgBox!.scrollTop = S.chatMsgBox!.scrollHeight;
+	if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
 function appendToolResult(toolCard: HTMLElement, result: ToolResult, eventSession: string): void {
@@ -733,11 +733,11 @@ function handleChatDelta(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 		S.setStreamEl(document.createElement("div"));
 		S.streamEl!.className = "msg assistant";
 		clearChatEmptyState();
-		S.chatMsgBox!.appendChild(S.streamEl!);
+		S.chatMsgBox?.appendChild(S.streamEl!);
 	}
 	S.setStreamText(S.streamText + p.text);
 	setSafeMarkdownHtml(S.streamEl!, S.streamText);
-	S.chatMsgBox!.scrollTop = S.chatMsgBox!.scrollHeight;
+	if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
 function normalizeEchoComparable(text: string | null | undefined): string {
@@ -883,7 +883,7 @@ function handleChatFinal(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 		msgEl.textContent = "";
 		if (!msgEl.parentNode) {
 			clearChatEmptyState();
-			S.chatMsgBox!.appendChild(msgEl);
+			S.chatMsgBox?.appendChild(msgEl);
 		}
 
 		if (p.audio) {
@@ -903,7 +903,7 @@ function handleChatFinal(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 			appendReasoningDisclosure(msgEl, p.reasoning);
 		}
 		appendFinalFooter(msgEl, p, eventSession);
-		S.chatMsgBox!.scrollTop = S.chatMsgBox!.scrollHeight;
+		if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 	} else {
 		let resolvedEl = resolveFinalMessageEl(p);
 		const skipReasoning = p.reasoning && isReasoningAlreadyShown(p.reasoning);
@@ -1011,7 +1011,7 @@ function removeCompactingStatus(p: CompactPayload): void {
 	const el = compactingStatusElements.get(key);
 	compactingStatusElements.delete(key);
 	if (el && el.parentNode === S.chatMsgBox) {
-		S.chatMsgBox!.removeChild(el);
+		S.chatMsgBox?.removeChild(el);
 	}
 }
 
@@ -1090,7 +1090,7 @@ function handleChatRetrying(p: ChatPayload, isActive: boolean, isChatPage: boole
 		indicator.id = "thinkingIndicator";
 		indicator.appendChild(makeThinkingDots());
 		clearChatEmptyState();
-		S.chatMsgBox!.appendChild(indicator);
+		S.chatMsgBox?.appendChild(indicator);
 	}
 
 	while (indicator.firstChild) indicator.removeChild(indicator.firstChild);
@@ -1098,7 +1098,7 @@ function handleChatRetrying(p: ChatPayload, isActive: boolean, isChatPage: boole
 	textEl.className = "thinking-text";
 	textEl.textContent = retryStatusText(p);
 	indicator.appendChild(textEl);
-	S.chatMsgBox!.scrollTop = S.chatMsgBox!.scrollHeight;
+	if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
 function handleChatError(p: ChatPayload, isActive: boolean, isChatPage: boolean, eventSession: string): void {
@@ -1121,7 +1121,7 @@ function handleChatError(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 	}
 	// Add continue button for max_iterations_reached errors.
 	if (p.error?.canContinue) {
-		const lastCard = S.chatMsgBox!.querySelector(".error-card:last-child") as HTMLElement | null;
+		const lastCard = S.chatMsgBox?.querySelector(".error-card:last-child") as HTMLElement | null;
 		if (lastCard) {
 			const btn = document.createElement("button") as HTMLButtonElement;
 			btn.className = "provider-btn error-continue-btn";
@@ -1218,7 +1218,7 @@ function renderAbortedPartialInDom(eventSession: string, p: ChatPayload, partial
 		},
 		eventSession,
 	);
-	S.chatMsgBox!.scrollTop = S.chatMsgBox!.scrollHeight;
+	if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
 }
 
 function handleChatAborted(p: ChatPayload, isActive: boolean, isChatPage: boolean, eventSession: string): void {
@@ -1746,7 +1746,7 @@ function setStatus(state: string, text: string): void {
 		sText.textContent = text;
 		sText.classList.toggle("status-text-live", state === "connected");
 	}
-	const sendBtn = S.$("sendBtn") as HTMLButtonElement | null;
+	const sendBtn = S.$<HTMLButtonElement>("sendBtn");
 	if (sendBtn) sendBtn.disabled = state !== "connected";
 }
 

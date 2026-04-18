@@ -66,8 +66,8 @@ async function startRecording(): Promise<void> {
 	stopAllAudio();
 
 	isStarting = true;
-	micBtn!.classList.add("starting");
-	micBtn!.setAttribute("aria-busy", "true");
+	micBtn?.classList.add("starting");
+	micBtn?.setAttribute("aria-busy", "true");
 	micBtn!.title = t("chat:micStarting");
 
 	try {
@@ -144,11 +144,11 @@ function stopRecording(): void {
 
 	isStarting = false;
 	isRecording = false;
-	micBtn!.classList.remove("starting");
-	micBtn!.removeAttribute("aria-busy");
-	micBtn!.classList.remove("recording");
-	micBtn!.setAttribute("aria-pressed", "false");
-	micBtn!.classList.add("transcribing");
+	micBtn?.classList.remove("starting");
+	micBtn?.removeAttribute("aria-busy");
+	micBtn?.classList.remove("recording");
+	micBtn?.setAttribute("aria-pressed", "false");
+	micBtn?.classList.add("transcribing");
 	micBtn!.title = t("chat:voiceTranscribing");
 
 	// Stop the recorder, which triggers onstop -> transcribeAudio
@@ -166,9 +166,9 @@ function cancelRecording(): void {
 
 	isStarting = false;
 	isRecording = false;
-	micBtn!.classList.remove("starting", "recording");
-	micBtn!.removeAttribute("aria-busy");
-	micBtn!.setAttribute("aria-pressed", "false");
+	micBtn?.classList.remove("starting", "recording");
+	micBtn?.removeAttribute("aria-busy");
+	micBtn?.setAttribute("aria-pressed", "false");
 	micBtn!.title = t("chat:micTooltip");
 
 	// Stop the recorder -- onstop will see empty chunks and bail out.
@@ -218,9 +218,9 @@ function showTemporaryMessage(message: string, isError: boolean, delayMs: number
 /** Remove transcribing indicator and reset mic button state. */
 function cleanupTranscribingState(): void {
 	isStarting = false;
-	micBtn!.classList.remove("starting");
-	micBtn!.removeAttribute("aria-busy");
-	micBtn!.classList.remove("transcribing");
+	micBtn?.classList.remove("starting");
+	micBtn?.removeAttribute("aria-busy");
+	micBtn?.classList.remove("transcribing");
 	micBtn!.title = t("chat:micTooltip");
 	if (transcribingEl) {
 		transcribingEl.remove();
@@ -299,7 +299,7 @@ async function transcribeAudio(): Promise<void> {
 		});
 		const res: Record<string, unknown> = await resp.json();
 
-		micBtn!.classList.remove("transcribing");
+		micBtn?.classList.remove("transcribing");
 		micBtn!.title = t("chat:micTooltip");
 
 		if (res.ok && (res.transcription as Record<string, unknown> | undefined)?.text) {
@@ -320,7 +320,7 @@ async function transcribeAudio(): Promise<void> {
 		}
 	} catch (err) {
 		console.error("Transcription error:", err);
-		micBtn!.classList.remove("transcribing");
+		micBtn?.classList.remove("transcribing");
 		micBtn!.title = t("chat:micTooltip");
 		showTemporaryMessage("Transcription error", true, 4000);
 	}

@@ -1064,7 +1064,7 @@ function mapPointHeading(point: MapPoint, index: number): string {
 	if (label) return label;
 	const latOk = typeof point?.latitude === "number" && Number.isFinite(point.latitude);
 	const lonOk = typeof point?.longitude === "number" && Number.isFinite(point.longitude);
-	if (latOk && lonOk) return `${point.latitude!.toFixed(5)}, ${point.longitude!.toFixed(5)}`;
+	if (latOk && lonOk) return `${point.latitude?.toFixed(5)}, ${point.longitude?.toFixed(5)}`;
 	return `Location ${index + 1}`;
 }
 

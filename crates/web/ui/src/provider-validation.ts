@@ -48,7 +48,7 @@ export interface ValidateConnectionResult {
 }
 
 function firstProbeFailure(payload: DetectPayload | undefined): string | null {
-	const results = Array.isArray(payload?.results) ? payload!.results : [];
+	const results = Array.isArray(payload?.results) ? payload?.results : [];
 	const failed = results.find((r) => r?.status === "error" || r?.status === "unsupported");
 	if (!failed) return null;
 	if (typeof failed.error === "string" && failed.error.trim()) {

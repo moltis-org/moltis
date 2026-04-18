@@ -40,7 +40,7 @@ export function renderProjectDropdownList(): void {
 		el.addEventListener("click", () => {
 			selectProject(p.id, p.label || p.id);
 		});
-		S.projectDropdownList!.appendChild(el);
+		S.projectDropdownList?.appendChild(el);
 	});
 }
 
@@ -71,7 +71,7 @@ export function renderSessionProjectSelect(): void {
 export function bindProjectComboEvents(): void {
 	if (!(S.projectComboBtn && S.projectCombo)) return;
 	S.projectComboBtn.addEventListener("click", () => {
-		if (S.projectDropdown!.classList.contains("hidden")) {
+		if (S.projectDropdown?.classList.contains("hidden")) {
 			openProjectDropdown();
 		} else {
 			closeProjectDropdown();

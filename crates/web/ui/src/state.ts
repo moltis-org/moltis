@@ -107,8 +107,8 @@ export let unseenWarns = 0;
 export let projectFilterId: string = localStorage.getItem("moltis-project-filter") || "";
 
 // DOM shorthand
-export function $(id: string): HTMLElement | null {
-	return document.getElementById(id);
+export function $<T extends HTMLElement = HTMLElement>(id: string): T | null {
+	return document.getElementById(id) as T | null;
 }
 
 // ── Setters ──────────────────────────────────────────────────

@@ -52,7 +52,7 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
 
 		// Handle updates
 		swRegistration.addEventListener("updatefound", () => {
-			const newWorker = swRegistration!.installing;
+			const newWorker = swRegistration?.installing;
 			if (newWorker) {
 				newWorker.addEventListener("statechange", () => {
 					if (newWorker.state === "installed" && navigator.serviceWorker.controller) {

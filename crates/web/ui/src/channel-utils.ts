@@ -4,6 +4,7 @@
 
 import { get as getGon } from "./gon";
 import { sendRpc } from "./helpers";
+import { ChannelType } from "./types";
 
 export const MATRIX_DOCS_URL = "https://docs.moltis.org/matrix.html";
 export const MATRIX_DEFAULT_HOMESERVER = "https://matrix.org";
@@ -53,16 +54,16 @@ export function validateChannelFields(
 		return { valid: false, error: "Account ID is required." };
 	}
 	if (!credential.trim()) {
-		if (type === "matrix") {
+		if (type === ChannelType.Matrix) {
 			return { valid: false, error: matrixCredentialError(options.matrixAuthMode) };
 		}
 		return {
 			valid: false,
-			error: type === "msteams" ? "App password is required." : "Bot token is required.",
+			error: type === ChannelType.MsTeams ? "App password is required." : "Bot token is required.",
 		};
 	}
 	if (
-		type === "matrix" &&
+		type === ChannelType.Matrix &&
 		normalizeMatrixAuthMode(options.matrixAuthMode) === "password" &&
 		!String(options.matrixUserId || "").trim()
 	) {

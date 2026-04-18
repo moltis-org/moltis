@@ -78,7 +78,7 @@ export function bindReasoningToggle(): void {
 	if (!(reasoningCombo && reasoningComboBtn && reasoningDropdownList)) return;
 
 	reasoningComboBtn.addEventListener("click", () => {
-		if (reasoningDropdown!.classList.contains("hidden")) {
+		if (reasoningDropdown?.classList.contains("hidden")) {
 			openDropdown();
 		} else {
 			closeDropdown();
@@ -90,7 +90,7 @@ export function bindReasoningToggle(): void {
 	// Reactively show/hide the combo based on model reasoning support
 	disposeVisibility = effect(() => {
 		const show = modelStore.supportsReasoning.value;
-		reasoningCombo!.classList.toggle("hidden", !show);
+		reasoningCombo?.classList.toggle("hidden", !show);
 		// Reset effort when switching to a non-reasoning model
 		if (!show && modelStore.reasoningEffort.value) {
 			modelStore.setReasoningEffort("");

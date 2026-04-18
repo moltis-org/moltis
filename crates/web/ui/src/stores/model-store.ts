@@ -22,7 +22,7 @@ export const selectedModel = computed<ModelInfo | null>(() => {
 /** True when the currently selected model supports extended thinking. */
 export const supportsReasoning = computed<boolean>(() => {
 	const m = selectedModel.value;
-	return !!(m && m.supportsReasoning);
+	return !!m?.supportsReasoning;
 });
 
 /** Model ID with @reasoning-* suffix when effort is active. */

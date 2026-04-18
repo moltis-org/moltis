@@ -327,7 +327,7 @@ function updateAuthChrome(auth: AuthStatus | null): void {
 		logoutBtn.style.display = showLogout ? "" : "none";
 	}
 	if (mobileMenuLogoutBtn) {
-		(mobileMenuLogoutBtn as HTMLElement).style.display = showLogout ? "" : "none";
+		mobileMenuLogoutBtn.style.display = showLogout ? "" : "none";
 	}
 	if (mobileMenuPanel) {
 		mobileMenuPanel.classList.toggle("logout-hidden", !showLogout);
@@ -389,8 +389,8 @@ function clearSensitiveData(): void {
 	S.setProjects([]);
 
 	// Clear identity from gon so sidebar/header no longer shows it
-	gon.set("identity", null as unknown as import("./types/gon").ResolvedIdentity);
-	gon.set("sessions_recent", null as unknown as import("./types").SessionMeta[]);
+	gon.set("identity", null);
+	gon.set("sessions_recent", null);
 	// Signal vault sealed so SessionList shows the correct placeholder
 	gon.set("vault_status", "sealed");
 }
@@ -444,7 +444,7 @@ function showUpdateBanner(update: { available?: boolean; latest_version?: string
 		if (versionEl) {
 			versionEl.textContent = latestVersion ? `v${latestVersion}` : "";
 		}
-		const linkEl = document.getElementById("updateReleaseLink") as HTMLAnchorElement | null;
+		const linkEl = S.$<HTMLAnchorElement>("updateReleaseLink");
 		if (linkEl && update.release_url) {
 			linkEl.href = update.release_url;
 		}
@@ -455,7 +455,7 @@ function showUpdateBanner(update: { available?: boolean; latest_version?: string
 }
 
 function initUpdateBannerDismiss(): void {
-	const dismissBtn = document.getElementById("updateDismissBtn") as HTMLElement | null;
+	const dismissBtn = S.$("updateDismissBtn");
 	if (!dismissBtn || dismissBtn.dataset.bound === "1") return;
 	dismissBtn.dataset.bound = "1";
 	dismissBtn.addEventListener("click", () => {
@@ -601,7 +601,7 @@ function initSessionTabBar(): void {
 }
 
 function initArchivedSessionsToggle(): void {
-	const checkbox = S.$("showArchivedSessions") as HTMLInputElement | null;
+	const checkbox = S.$<HTMLInputElement>("showArchivedSessions");
 	if (!checkbox) return;
 	checkbox.checked = sessionStore.showArchivedSessions.value;
 	checkbox.addEventListener("change", function (this: HTMLInputElement) {

@@ -80,7 +80,7 @@ function renderEntry(entry: LogEntry): HTMLDivElement {
 		msg.textContent +=
 			" " +
 			Object.keys(entry.fields)
-				.map((k) => `${k}=${entry.fields![k]}`)
+				.map((k) => `${k}=${entry.fields?.[k]}`)
 				.join(" ");
 	}
 	row.appendChild(ts);

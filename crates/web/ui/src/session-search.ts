@@ -19,8 +19,8 @@ interface SearchContext {
 	messageIndex: number;
 }
 
-const searchInput = S.$("sessionSearch") as HTMLInputElement;
-const searchResults = S.$("searchResults") as HTMLElement;
+const searchInput = S.$<HTMLInputElement>("sessionSearch")!;
+const searchResults = S.$("searchResults")!;
 searchResults.className = "search-dropdown hidden";
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 let searchHits: SearchHit[] = [];

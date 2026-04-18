@@ -100,7 +100,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 
 	// Load soul: for edits fetch the agent's soul, for new agents fetch main's soul as default
 	useEffect(() => {
-		const agentId = isEdit ? agent!.id : "main";
+		const agentId = isEdit ? agent?.id : "main";
 		let attempts = 0;
 		function load(): void {
 			sendRpc("agents.identity.get", { agent_id: agentId }).then((res) => {
@@ -123,7 +123,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 	// Load preset TOML for edits
 	useEffect(() => {
 		if (!isEdit) return;
-		sendRpc("agents.preset.get", { id: agent!.id }).then((res) => {
+		sendRpc("agents.preset.get", { id: agent?.id }).then((res) => {
 			if (res?.ok && (res.payload as { toml?: string })?.toml) {
 				const toml = (res.payload as { toml: string }).toml;
 				setPresetToml(toml);
@@ -138,7 +138,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 			emoji: emoji.trim() || null,
 			theme: theme.trim() || null,
 		};
-		base.id = isEdit ? agent!.id : id.trim();
+		base.id = isEdit ? agent?.id : id.trim();
 		return base;
 	}
 
@@ -193,14 +193,14 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 				setError(res?.error?.message || "Failed to save");
 				return;
 			}
-			finishSave(isEdit ? agent!.id : id.trim());
+			finishSave(isEdit ? agent?.id : id.trim());
 		});
 	}
 
 	return (
 		<form onSubmit={onSubmit} className="flex flex-col gap-3" style={{ maxWidth: "500px" }}>
 			<h3 className="text-sm font-medium text-[var(--text-strong)]">
-				{isEdit ? `Edit ${agent!.name}` : "Create Agent"}
+				{isEdit ? `Edit ${agent?.name}` : "Create Agent"}
 			</h3>
 
 			{!isEdit && (

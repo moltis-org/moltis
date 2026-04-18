@@ -7,12 +7,12 @@ import * as S from "./state";
 import { projectStore } from "./stores/project-store";
 import type { ProjectInfo } from "./types";
 
-const combo = S.$("projectFilterCombo") as HTMLElement;
-const btn = S.$("projectFilterBtn") as HTMLElement;
-const label = S.$("projectFilterLabel") as HTMLElement;
-const dropdown = S.$("projectFilterDropdown") as HTMLElement;
-const list = S.$("projectFilterList") as HTMLElement;
-const searchInput = S.$("projectFilterSearch") as HTMLInputElement | null;
+const combo = S.$("projectFilterCombo")!;
+const btn = S.$("projectFilterBtn")!;
+const label = S.$("projectFilterLabel")!;
+const dropdown = S.$("projectFilterDropdown")!;
+const list = S.$("projectFilterList")!;
+const searchInput = S.$<HTMLInputElement>("projectFilterSearch");
 let kbIdx = -1;
 
 export function fetchProjects(): void {

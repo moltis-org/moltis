@@ -470,7 +470,7 @@ function MetricsGrid({ categories, latestPoint }: { categories?: MetricsCategori
 					<MetricCard
 						title={t("metrics:cards.completions")}
 						value={formatNumber(llm?.completions_total)}
-						subtitle={(llm?.errors ?? 0) > 0 ? t("metrics:errorsCount", { count: llm!.errors }) : undefined}
+						subtitle={(llm?.errors ?? 0) > 0 ? t("metrics:errorsCount", { count: llm?.errors }) : undefined}
 					/>
 					<MetricCard title={t("metrics:cards.inputTokens")} value={formatNumber(llm?.input_tokens)} />
 					<MetricCard title={t("metrics:cards.outputTokens")} value={formatNumber(llm?.output_tokens)} />
@@ -489,13 +489,13 @@ function MetricsGrid({ categories, latestPoint }: { categories?: MetricsCategori
 					<MetricCard
 						title={t("metrics:cards.toolExecutions")}
 						value={formatNumber(tools?.total)}
-						subtitle={(tools?.errors ?? 0) > 0 ? t("metrics:errorsCount", { count: tools!.errors }) : undefined}
+						subtitle={(tools?.errors ?? 0) > 0 ? t("metrics:errorsCount", { count: tools?.errors }) : undefined}
 					/>
 					<MetricCard title={t("metrics:cards.toolsActive")} value={formatNumber(tools?.active)} />
 					<MetricCard
 						title={t("metrics:cards.mcpToolCalls")}
 						value={formatNumber(mcp?.total)}
-						subtitle={(mcp?.errors ?? 0) > 0 ? t("metrics:errorsCount", { count: mcp!.errors }) : undefined}
+						subtitle={(mcp?.errors ?? 0) > 0 ? t("metrics:errorsCount", { count: mcp?.errors }) : undefined}
 					/>
 					<MetricCard title={t("metrics:cards.mcpServers")} value={formatNumber(mcp?.active)} />
 				</div>
