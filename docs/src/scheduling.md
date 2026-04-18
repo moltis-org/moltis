@@ -102,6 +102,42 @@ Set `deleteAfterRun: true` to automatically remove a job after its first
 execution. Combined with the `at` schedule, this is useful for deferred
 one-time tasks (reminders, follow-ups).
 
+## Sandbox Configuration
+
+Cron jobs run inside a sandbox by default. Sandbox behavior is controlled
+globally via `[cron]` in `moltis.toml` and per-job via the `sandbox` field.
+
+### Global Config
+
+```toml
+[cron]
+# Max jobs per rate-limit window. Default: 10
+rate_limit_max = 10
+# Rate-limit window in seconds. Default: 60
+rate_limit_window_secs = 60
+# Days to retain cron session data. Default: 7 (set to 0 to disable)
+session_retention_days = 7
+# Auto-prune sandbox containers after job completion. Default: true
+auto_prune_cron_containers = true
+```
+
+### Per-Job Override
+
+Each job's `sandbox` object accepts:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Run the job inside a sandbox |
+| `image` | string | — | Override the sandbox image |
+| `autoPruneContainer` | bool | — | Override global `auto_prune_cron_containers` for this job |
+
+### Session Retention
+
+Isolated cron sessions are automatically cleaned up after
+`session_retention_days` (default: 7 days). A periodic background task
+prunes expired sessions and their run records. Set to `0` to disable
+retention pruning.
+
 ## Channel Delivery
 
 Background agent turns can deliver their final output to a configured channel
@@ -151,8 +187,11 @@ Each job specifies where its agent turn runs:
 
 ## Security
 
-See [Cron Job Security](security.md#cron-job-security) for rate limiting,
-sandbox isolation, and job notification details.
+- **Rate limiting**: Max 10 jobs per 60-second window (configurable via `[cron]`).
+- **Sandbox isolation**: Cron jobs run in sandboxes by default.
+- **Session retention**: Orphaned cron sessions are auto-cleaned after 7 days.
+
+See [Security](security.md#cron-job-security) for full details.
 
 ## Metrics
 
