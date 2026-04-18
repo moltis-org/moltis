@@ -52,7 +52,7 @@ Each crate is autonomous and owns its schema:
 | Crate | Database | Tables | Migration File |
 |-------|----------|--------|----------------|
 | `moltis-projects` | `moltis.db` | `projects` | `20240205100000_init.sql` |
-| `moltis-sessions` | `moltis.db` | `sessions`, `channel_sessions`, `session_state` | `20240205100001_init.sql` + 8 migrations |
+| `moltis-sessions` | `moltis.db` | `sessions`, `channel_sessions`, `session_state` | `20240205100001_init.sql` + 9 migrations |
 | `moltis-cron` | `moltis.db` | `cron_jobs`, `cron_runs` | `20240205100002_init.sql` + 1 migration |
 | `moltis-gateway` | `moltis.db` | `auth_*`, `passkeys`, `api_keys`, `env_variables`, `message_log`, `channels`, `agents`, `session_shares`, `device_pairing`, `ssh_keys`, `ssh_targets`, `auth_audit_log` | `20240205100003_init.sql` + 12 migrations |
 | `moltis-webhooks` | `moltis.db` | `webhooks`, `webhook_deliveries`, `webhook_response_actions` | `20260407000000_initial.sql` + 1 migration |
