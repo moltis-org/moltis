@@ -3,7 +3,7 @@
 //! Attempts to split content at structural boundaries using tree-sitter grammars.
 //! Returns `None` if no grammar is available for the given extension.
 
-use crate::{Chunk, CHARS_PER_WORD};
+use crate::{CHARS_PER_WORD, Chunk};
 
 /// Attempt to split with tree-sitter. Returns `None` if no grammar is available.
 pub(crate) fn try_code_split(

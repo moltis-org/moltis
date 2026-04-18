@@ -3,8 +3,7 @@
 //! Uses AST-aware splitting via `moltis-splitter` when a tree-sitter grammar is available
 //! for the file extension, falling back to line-based splitting otherwise.
 
-use crate::store::CodeChunk;
-use moltis_splitter::Chunk;
+use {crate::store::CodeChunk, moltis_splitter::Chunk};
 
 /// Configuration for code chunking.
 #[derive(Debug, Clone)]

@@ -8,7 +8,7 @@
 mod code;
 mod markdown;
 
-pub use markdown::{chunk_markdown, Chunk};
+pub use markdown::{Chunk, chunk_markdown};
 
 /// Average characters per word, used to convert word-count config to character count.
 const CHARS_PER_WORD: usize = 5;
