@@ -1,25 +1,23 @@
-# Native Swift App with Embedded Moltis Rust Core (POC)
+# Native Swift App with Embedded Moltis Rust Core
 
-This guide shows a **proof-of-concept path** to build a native Swift app where Swift is the UI layer and Moltis Rust code is embedded as a local library.
+This guide covers the native Swift/macOS app that embeds Moltis Rust code as a static library via FFI.
 
-Goal:
+Architecture:
 
-- Keep business/runtime logic in Rust.
-- Build native iOS/macOS UI in Swift/SwiftUI.
-- Ship as one app bundle from the Swift side (no separate Rust service process).
+- Business/runtime logic lives in Rust.
+- Native macOS UI built in SwiftUI.
+- Shipped as one app bundle (no separate Rust service process).
 
-## Feasibility
+## Implementation
 
-Yes — this architecture is feasible with an FFI boundary.
+The FFI bridge lives in `crates/swift-bridge` (`crate-type = ["staticlib"]`) with the Swift app in `apps/macos/`.
 
-The most practical POC shape is:
+1. Rust crate compiles as `staticlib` for Apple targets.
+2. Public API exposed via `extern "C"` functions (JSON in/out over `*mut c_char`).
+3. Swift calls the ABI through a bridging header (`Bridging-Header.h`).
+4. Swift owns all presentation and user interaction.
 
-1. Add a small Rust crate that compiles as `staticlib`.
-2. Expose a narrow C ABI (`extern "C"`) surface.
-3. Call that ABI from Swift via a bridging header/module map.
-4. Keep Swift responsible for presentation and user interaction.
-
-## Recommended POC Architecture
+## Architecture Diagram
 
 ```
 SwiftUI / UIKit / AppKit
@@ -37,25 +35,29 @@ Rust core facade (thin FFI-safe layer)
 Existing Moltis crates (chat/providers/config/etc.)
 ```
 
-### Boundary Rules
+### FFI API Surface
 
-For the POC, keep the ABI intentionally small:
+All functions pass JSON strings across the boundary. Returned `*mut c_char` pointers are allocated by Rust and must not be freed by the caller.
 
-- `moltis_version()`
-- `moltis_chat_json(request_json)`
-- `moltis_free_string(ptr)`
-- `moltis_shutdown()`
+The API is organized across six modules:
 
-Pass JSON strings across FFI to avoid unstable struct layouts early on.
+| Module | Functions |
+|--------|-----------|
+| `ffi_core` | `moltis_version`, `moltis_get_identity`, `moltis_chat_json`, `moltis_chat_stream`, `moltis_known_providers`, `moltis_detect_providers`, `moltis_save_provider_config`, `moltis_list_models`, `moltis_refresh_registry`, `moltis_set_log_callback`, `moltis_set_session_event_callback`, `moltis_set_network_audit_callback`, `moltis_start_httpd`, `moltis_stop_httpd`, `moltis_httpd_status`, `moltis_abort_session`, `moltis_peek_session`, `moltis_shutdown` |
+| `ffi_config` | `moltis_get_config`, `moltis_save_config`, `moltis_memory_status`, `moltis_memory_config_get`, `moltis_memory_config_update`, `moltis_memory_qmd_status`, `moltis_get_soul`, `moltis_save_soul`, `moltis_save_identity`, `moltis_save_user_profile`, `moltis_list_env_vars`, `moltis_set_env_var`, `moltis_delete_env_var` |
+| `ffi_sessions` | `moltis_list_sessions`, `moltis_switch_session`, `moltis_create_session`, `moltis_session_chat_stream` |
+| `ffi_auth` | `moltis_auth_status`, `moltis_auth_password_change`, `moltis_auth_reset`, `moltis_auth_list_passkeys`, `moltis_auth_remove_passkey`, `moltis_auth_rename_passkey` |
+| `ffi_sandbox` | `moltis_sandbox_status`, `moltis_sandbox_list_images`, `moltis_sandbox_delete_image`, `moltis_sandbox_prune_images`, `moltis_sandbox_check_packages`, `moltis_sandbox_build_image`, `moltis_sandbox_get_default_image`, `moltis_sandbox_set_default_image`, `moltis_sandbox_get_shared_home`, `moltis_sandbox_set_shared_home`, `moltis_sandbox_list_containers`, `moltis_sandbox_stop_container`, `moltis_sandbox_remove_container`, `moltis_sandbox_clean_containers`, `moltis_sandbox_disk_usage`, `moltis_sandbox_restart_daemon` |
+| `chat` | `moltis_chat_stream` (callback-based streaming) |
 
 ## Rust-side Implementation Notes
 
-Create a dedicated bridge crate (example name: `crates/swift-bridge`):
+The bridge crate is `crates/swift-bridge`:
 
 - `crate-type = ["staticlib"]` for Apple targets.
-- Keep all `extern "C"` functions in one module.
+- `extern "C"` functions organized across modules (`ffi_core`, `ffi_config`, `ffi_sessions`, `ffi_auth`, `ffi_sandbox`, `chat`).
 - Never expose internal Rust structs directly.
-- Return `*mut c_char` and provide explicit free functions.
+- Return `*mut c_char` (caller must not free; Rust manages allocation).
 - Convert internal errors into structured JSON error payloads.
 
 Safety checklist:
@@ -121,32 +123,23 @@ This universal `libmoltis_bridge.a` can then be linked by your Swift macOS app, 
 
 For production, prefer an `XCFramework` (device/simulator/platform-safe packaging) rather than manually juggling multiple `.a` files.
 
-## Async/Streaming Strategy
+## Streaming
 
-Moltis is async-first. For a POC:
+Streaming is fully implemented via callback functions. The bridge provides:
 
-- Start with request/response calls over FFI.
-- Add streaming in phase 2 using callback registration or poll handles.
+- `moltis_chat_stream(request_json, callback, user_data)` — global session streaming.
+- `moltis_session_chat_stream(request_json, callback, user_data)` — per-session streaming.
 
-Simple incremental plan:
+Events are delivered as JSON with `type` field: `delta` (token), `done` (usage stats), `error`. The stream runs on the bridge's tokio runtime and returns immediately; the caller must keep `user_data` alive until a terminal event.
 
-1. Blocking/synchronous POC call (prove bridge correctness).
-2. Background `Task` wrapping on Swift side.
-3. Token streaming callback API when stable.
+## Crate Features
 
-## Single-Binary Expectation Clarification
+The `moltis-swift-bridge` crate has optional features:
 
-On Apple platforms, you typically ship a **single app artifact** that includes Swift executable + statically linked Rust library in one app bundle.
-
-So for your POC requirement (Swift UI app that embeds Rust core without a separate Rust daemon), this is achievable.
-
-## POC Milestones
-
-1. Add `swift-bridge` crate exposing one health function (`moltis_version`).
-2. Add one end-to-end chat method (`moltis_chat_json`).
-3. Build and link from minimal SwiftUI app.
-4. Validate memory lifecycle with repeated calls.
-5. Expand API surface only after the boundary is stable.
+- `metrics` (default) — exposes metrics integration.
+- `qmd` (default) — enables QMD memory surface.
+- `tracing` (default) — tracing integration.
+- `trusted-network` (default) — trusted network support.
 
 ## Risks to Watch Early
 
