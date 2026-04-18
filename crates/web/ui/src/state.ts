@@ -56,11 +56,11 @@ export let projectDropdown: HTMLElement | null = null;
 export let projectDropdownList: HTMLElement | null = null;
 
 // Sandbox toggle
-export let sandboxToggleBtn: HTMLElement | null = null;
+export let sandboxToggleBtn: HTMLButtonElement | null = null;
 export let sandboxLabel: HTMLElement | null = null;
 export let sessionSandboxEnabled = true;
 export let sessionSandboxImage: string | null = null;
-export let sandboxImageBtn: HTMLElement | null = null;
+export let sandboxImageBtn: HTMLButtonElement | null = null;
 export let sandboxImageDropdown: HTMLElement | null = null;
 export let sandboxImageLabel: HTMLElement | null = null;
 
@@ -232,7 +232,7 @@ export function setProjectDropdown(v: HTMLElement | null): void {
 export function setProjectDropdownList(v: HTMLElement | null): void {
 	projectDropdownList = v;
 }
-export function setSandboxToggleBtn(v: HTMLElement | null): void {
+export function setSandboxToggleBtn(v: HTMLButtonElement | null): void {
 	sandboxToggleBtn = v;
 }
 export function setSandboxLabel(v: HTMLElement | null): void {
@@ -244,7 +244,7 @@ export function setSessionSandboxEnabled(v: boolean): void {
 export function setSessionSandboxImage(v: string | null): void {
 	sessionSandboxImage = v;
 }
-export function setSandboxImageBtn(v: HTMLElement | null): void {
+export function setSandboxImageBtn(v: HTMLButtonElement | null): void {
 	sandboxImageBtn = v;
 }
 export function setSandboxImageDropdown(v: HTMLElement | null): void {

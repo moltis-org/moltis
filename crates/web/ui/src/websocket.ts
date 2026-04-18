@@ -304,7 +304,7 @@ function clearPendingToolCallEndsForSession(sessionKey: string): void {
 }
 
 function makeThinkingDots(): Element {
-	const tpl = document.getElementById("tpl-thinking-dots") as HTMLTemplateElement;
+	const tpl = S.$<HTMLTemplateElement>("tpl-thinking-dots")!;
 	return (tpl.content.cloneNode(true) as DocumentFragment).firstElementChild!;
 }
 
@@ -448,7 +448,7 @@ function handleChatToolCallStart(p: ChatPayload, isActive: boolean, isChatPage: 
 	}
 	const cardId = toolCallCardId(p);
 	if (document.getElementById(cardId)) return;
-	const tpl = document.getElementById("tpl-exec-card") as HTMLTemplateElement;
+	const tpl = S.$<HTMLTemplateElement>("tpl-exec-card")!;
 	const frag = tpl.content.cloneNode(true) as DocumentFragment;
 	const card = frag.firstElementChild as HTMLElement;
 	card.id = cardId;
@@ -1123,7 +1123,7 @@ function handleChatError(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 	if (p.error?.canContinue) {
 		const lastCard = S.chatMsgBox?.querySelector(".error-card:last-child") as HTMLElement | null;
 		if (lastCard) {
-			const btn = document.createElement("button") as HTMLButtonElement;
+			const btn = document.createElement("button");
 			btn.className = "provider-btn error-continue-btn";
 			btn.textContent = t("errors:chat.continue", "Continue");
 			btn.onclick = () => {
@@ -1131,7 +1131,7 @@ function handleChatError(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 				btn.textContent = t("errors:chat.continuing", "Continuing...");
 				(S.chatInput as HTMLInputElement).value = t("errors:chat.continueMessage", "Please continue where you left off.");
 				// Trigger send by clicking the chat send button (sendChat is local to ChatPage)
-				(S.chatSendBtn as HTMLButtonElement)?.click();
+				S.chatSendBtn?.click();
 			};
 			const body = lastCard.querySelector(".error-body");
 			if (body) body.appendChild(btn);

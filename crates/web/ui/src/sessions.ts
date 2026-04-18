@@ -901,7 +901,7 @@ function renderHistoryAssistantMessage(msg: AssistantMsg): HTMLElement | null {
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Sequential result field rendering
 function renderHistoryToolResult(msg: ToolResultMsg): HTMLElement {
-	const tpl = document.getElementById("tpl-exec-card") as HTMLTemplateElement;
+	const tpl = S.$<HTMLTemplateElement>("tpl-exec-card")!;
 	const frag = tpl.content.cloneNode(true) as DocumentFragment;
 	const card = frag.firstElementChild as HTMLElement;
 
@@ -998,7 +998,7 @@ export function appendLastMessageTimestamp(epochMs: number): void {
 }
 
 function makeThinkingDots(): HTMLElement {
-	const tpl = document.getElementById("tpl-thinking-dots") as HTMLTemplateElement;
+	const tpl = S.$<HTMLTemplateElement>("tpl-thinking-dots")!;
 	return (tpl.content.cloneNode(true) as DocumentFragment).firstElementChild as HTMLElement;
 }
 
@@ -1263,14 +1263,14 @@ function showWelcomeCard(): void {
 	S.chatMsgBox.classList.add("chat-messages-empty");
 
 	if (modelStore.models.value.length === 0) {
-		const noProvTpl = document.getElementById("tpl-no-providers-card") as HTMLTemplateElement | null;
+		const noProvTpl = S.$<HTMLTemplateElement>("tpl-no-providers-card");
 		if (!noProvTpl) return;
 		const noProvCard = (noProvTpl.content.cloneNode(true) as DocumentFragment).firstElementChild as HTMLElement;
 		S.chatMsgBox.appendChild(noProvCard);
 		return;
 	}
 
-	const tpl = document.getElementById("tpl-welcome-card") as HTMLTemplateElement | null;
+	const tpl = S.$<HTMLTemplateElement>("tpl-welcome-card");
 	if (!tpl) return;
 	const card = (tpl.content.cloneNode(true) as DocumentFragment).firstElementChild as HTMLElement;
 	const identity = gon.get("identity");

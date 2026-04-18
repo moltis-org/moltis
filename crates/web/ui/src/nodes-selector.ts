@@ -49,10 +49,10 @@ function setSessionNode(sessionKey: string, nodeId: string | null): void {
 
 function updateNodeComboLabel(node: Partial<NodeInfo> | null): void {
 	if (S.nodeComboLabel) {
-		(S.nodeComboLabel as HTMLElement).textContent = nodeDisplayLabel(node);
+		S.nodeComboLabel.textContent = nodeDisplayLabel(node);
 	}
 	if (S.nodeComboBtn) {
-		(S.nodeComboBtn as HTMLElement).title = node
+		S.nodeComboBtn.title = node
 			? isSshTargetNode(node)
 				? `Execution target: ${nodeDisplayLabel(node)}`
 				: `Execution target: ${nodeDisplayLabel(node)}`
@@ -67,9 +67,9 @@ export function fetchNodes(): Promise<void> {
 		// Show or hide the node selector depending on whether nodes are connected.
 		if (S.nodeCombo) {
 			if (allNodes.length > 0 || selectedId) {
-				(S.nodeCombo as HTMLElement).classList.remove("hidden");
+				S.nodeCombo.classList.remove("hidden");
 			} else {
-				(S.nodeCombo as HTMLElement).classList.add("hidden");
+				S.nodeCombo.classList.add("hidden");
 			}
 		}
 		const selected = getSelectedNodeForDisplay();
@@ -87,14 +87,14 @@ export function selectNode(nodeId: string | null): void {
 
 export function openNodeDropdown(): void {
 	if (!S.nodeDropdown) return;
-	(S.nodeDropdown as HTMLElement).classList.remove("hidden");
+	S.nodeDropdown.classList.remove("hidden");
 	nodeIdx = -1;
 	renderNodeList();
 }
 
 export function closeNodeDropdown(): void {
 	if (!S.nodeDropdown) return;
-	(S.nodeDropdown as HTMLElement).classList.add("hidden");
+	S.nodeDropdown.classList.add("hidden");
 	nodeIdx = -1;
 }
 
@@ -128,14 +128,13 @@ function buildNodeItem(node: Partial<NodeInfo> | null, currentId: string | null)
 
 export function renderNodeList(): void {
 	if (!S.nodeDropdownList) return;
-	const dropdownList = S.nodeDropdownList as HTMLElement;
-	dropdownList.textContent = "";
+	S.nodeDropdownList.textContent = "";
 	const currentId = nodeStore.selectedNodeId.value;
 	const allNodes = nodeStore.nodes.value;
 	const remoteEntries: Array<Partial<NodeInfo>> = [];
 
 	// "Local" as first item
-	dropdownList.appendChild(buildNodeItem(null, currentId));
+	S.nodeDropdownList.appendChild(buildNodeItem(null, currentId));
 
 	if (currentId && !allNodes.some((node) => node.nodeId === currentId)) {
 		const fallback = getNodeByIdOrFallback(currentId);
@@ -148,38 +147,38 @@ export function renderNodeList(): void {
 	if (remoteEntries.length > 0) {
 		const divider = document.createElement("div");
 		divider.className = "model-dropdown-divider";
-		dropdownList.appendChild(divider);
+		S.nodeDropdownList.appendChild(divider);
 	}
 
 	for (const entry of remoteEntries) {
-		dropdownList.appendChild(buildNodeItem(entry, currentId));
+		S.nodeDropdownList.appendChild(buildNodeItem(entry, currentId));
 	}
 }
 
 function updateNodeActive(): void {
 	if (!S.nodeDropdownList) return;
-	const items = (S.nodeDropdownList as HTMLElement).querySelectorAll(".model-dropdown-item");
+	const items = S.nodeDropdownList.querySelectorAll<HTMLElement>(".model-dropdown-item");
 	items.forEach((el, i) => {
 		el.classList.toggle("kb-active", i === nodeIdx);
 	});
 	if (nodeIdx >= 0 && items[nodeIdx]) {
-		(items[nodeIdx] as HTMLElement).scrollIntoView({ block: "nearest" });
+		items[nodeIdx].scrollIntoView({ block: "nearest" });
 	}
 }
 
 export function bindNodeComboEvents(): void {
 	if (!(S.nodeComboBtn && S.nodeDropdownList && S.nodeCombo)) return;
 
-	(S.nodeComboBtn as HTMLElement).addEventListener("click", () => {
-		if ((S.nodeDropdown as HTMLElement).classList.contains("hidden")) {
+	S.nodeComboBtn.addEventListener("click", () => {
+		if (S.nodeDropdown!.classList.contains("hidden")) {
 			openNodeDropdown();
 		} else {
 			closeNodeDropdown();
 		}
 	});
 
-	(S.nodeDropdown as HTMLElement).addEventListener("keydown", (e: KeyboardEvent) => {
-		const items = (S.nodeDropdownList as HTMLElement).querySelectorAll(".model-dropdown-item");
+	S.nodeDropdown!.addEventListener("keydown", (e: KeyboardEvent) => {
+		const items = S.nodeDropdownList!.querySelectorAll<HTMLElement>(".model-dropdown-item");
 		if (e.key === "ArrowDown") {
 			e.preventDefault();
 			nodeIdx = Math.min(nodeIdx + 1, items.length - 1);
@@ -190,10 +189,10 @@ export function bindNodeComboEvents(): void {
 			updateNodeActive();
 		} else if (e.key === "Enter") {
 			e.preventDefault();
-			if (nodeIdx >= 0 && items[nodeIdx]) (items[nodeIdx] as HTMLElement).click();
+			if (nodeIdx >= 0 && items[nodeIdx]) items[nodeIdx].click();
 		} else if (e.key === "Escape") {
 			closeNodeDropdown();
-			if (S.nodeComboBtn) (S.nodeComboBtn as HTMLElement).focus();
+			if (S.nodeComboBtn) S.nodeComboBtn.focus();
 		}
 	});
 
@@ -208,7 +207,7 @@ export function unbindNodeEvents(): void {
 }
 
 document.addEventListener("click", (e: MouseEvent) => {
-	if (S.nodeCombo && !(S.nodeCombo as HTMLElement).contains(e.target as Node)) {
+	if (S.nodeCombo && !S.nodeCombo.contains(e.target as Node)) {
 		closeNodeDropdown();
 	}
 });

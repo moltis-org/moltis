@@ -498,7 +498,7 @@ function showCustomProviderForm(): void {
 	backBtn.addEventListener("click", openProviderModal);
 	btns.appendChild(backBtn);
 
-	const saveBtn = document.createElement("button") as HTMLButtonElement;
+	const saveBtn = document.createElement("button");
 	saveBtn.className = "provider-btn";
 	saveBtn.textContent = "Add Provider";
 	saveBtn.addEventListener("click", () => {
@@ -699,7 +699,7 @@ export function showApiKeyForm(provider: ProviderInfo): void {
 	backBtn.addEventListener("click", openProviderModal);
 	btns.appendChild(backBtn);
 
-	const saveBtn = document.createElement("button") as HTMLButtonElement;
+	const saveBtn = document.createElement("button");
 	saveBtn.className = "provider-btn";
 	saveBtn.textContent = "Save";
 	saveBtn.addEventListener("click", () => {
@@ -929,7 +929,7 @@ function showModelSelector(provider: ProviderInfo, models: ModelEntry[], keyVal:
 	});
 	btns.appendChild(backBtn);
 
-	const continueBtn = document.createElement("button") as HTMLButtonElement;
+	const continueBtn = document.createElement("button");
 	continueBtn.className = "provider-btn";
 	continueBtn.textContent = "Continue";
 	continueBtn.addEventListener("click", () => {
@@ -1085,7 +1085,7 @@ export function showOAuthFlow(provider: ProviderInfo): void {
 
 	const manualBtns = document.createElement("div");
 	manualBtns.className = "btn-row";
-	const manualSubmitBtn = document.createElement("button") as HTMLButtonElement;
+	const manualSubmitBtn = document.createElement("button");
 	manualSubmitBtn.className = "provider-btn provider-btn-secondary";
 	manualSubmitBtn.textContent = "Submit Callback";
 	manualBtns.appendChild(manualSubmitBtn);
@@ -1104,7 +1104,7 @@ export function showOAuthFlow(provider: ProviderInfo): void {
 	});
 	btns.appendChild(backBtn);
 
-	const connectBtn = document.createElement("button") as HTMLButtonElement;
+	const connectBtn = document.createElement("button");
 	connectBtn.className = "provider-btn";
 	connectBtn.textContent = "Connect";
 	let oauthCompleted = false;
@@ -1502,7 +1502,7 @@ function showMultiModelSelector(providerName: string, providerDisplayName: strin
 	cancelBtn.addEventListener("click", closeProviderModal);
 	btns.appendChild(cancelBtn);
 
-	const saveBtn = document.createElement("button") as HTMLButtonElement;
+	const saveBtn = document.createElement("button");
 	saveBtn.className = "provider-btn";
 	saveBtn.textContent = "Save";
 	saveBtn.addEventListener("click", () => {
@@ -1664,14 +1664,14 @@ function renderLocalModelSelection(provider: ProviderInfo, sysInfo: SystemInfo, 
 			// Show install instructions for unavailable backends
 			if (!b.available && b.id === "MLX") {
 				const cmds = b.installCommands || ["pip install mlx-lm"];
-				const tpl = document.getElementById("tpl-install-hint") as HTMLTemplateElement;
+				const tpl = S.$<HTMLTemplateElement>("tpl-install-hint")!;
 				const hintEl = (tpl.content.cloneNode(true) as DocumentFragment).firstElementChild as HTMLElement;
 				const labelEl = hintEl.querySelector("[data-install-label]") as HTMLElement;
 				const container = hintEl.querySelector("[data-install-commands]") as HTMLElement;
 
 				labelEl.textContent = cmds.length === 1 ? "Install with:" : "Install with any of:";
 
-				const cmdTpl = document.getElementById("tpl-install-cmd") as HTMLTemplateElement;
+				const cmdTpl = S.$<HTMLTemplateElement>("tpl-install-cmd")!;
 				cmds.forEach((c: string) => {
 					const cmdEl = (cmdTpl.content.cloneNode(true) as DocumentFragment).firstElementChild as HTMLElement;
 					cmdEl.textContent = c;
@@ -1769,7 +1769,7 @@ function renderLocalModelSelection(provider: ProviderInfo, sysInfo: SystemInfo, 
 	searchInput.className = "provider-input flex-1";
 	searchRow.appendChild(searchInput);
 
-	const searchBtn = document.createElement("button") as HTMLButtonElement;
+	const searchBtn = document.createElement("button");
 	searchBtn.className = "provider-btn provider-btn-secondary";
 	searchBtn.textContent = "Search";
 	searchRow.appendChild(searchBtn);
@@ -1843,7 +1843,7 @@ function renderLocalModelSelection(provider: ProviderInfo, sysInfo: SystemInfo, 
 	customInput.className = "provider-input flex-1";
 	customRow.appendChild(customInput);
 
-	const customBtn = document.createElement("button") as HTMLButtonElement;
+	const customBtn = document.createElement("button");
 	customBtn.className = "provider-btn";
 	customBtn.textContent = "Use";
 	customRow.appendChild(customBtn);

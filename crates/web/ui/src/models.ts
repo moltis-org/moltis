@@ -183,9 +183,9 @@ export function bindModelComboEvents(): void {
 		} else if (ke.key === "Enter") {
 			ke.preventDefault();
 			if (S.modelIdx >= 0 && items[S.modelIdx]) {
-				(items[S.modelIdx] as HTMLElement).click();
+				items[S.modelIdx].click();
 			} else if (items.length === 1) {
-				(items[0] as HTMLElement).click();
+				items[0].click();
 			}
 		} else if (ke.key === "Escape") {
 			closeModelDropdown();

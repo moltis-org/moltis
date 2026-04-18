@@ -5,10 +5,15 @@ import { sendRpc } from "./helpers";
 import { t } from "./i18n";
 import * as S from "./state";
 
+interface SandboxInfoRecord {
+	backend?: string;
+}
+
 const SANDBOX_DISABLED_HINT = (): string => t("chat:sandboxDisabledHint");
 
 function sandboxRuntimeAvailable(): boolean {
-	return ((S.sandboxInfo as Record<string, unknown> | null)?.backend || "none") !== "none";
+	const info = S.sandboxInfo as SandboxInfoRecord | null;
+	return (info?.backend || "none") !== "none";
 }
 
 /** Truncate long hash suffixes: "repo:abcdef...uvwxyz" */
@@ -26,35 +31,37 @@ function truncateHash(str: string): string {
 	return str;
 }
 
+/** Apply disabled/enabled styling to a button element. */
+function applyButtonAvailability(
+	btn: HTMLButtonElement,
+	available: boolean,
+	enabledTitle: string,
+	disabledTitle: string,
+): void {
+	btn.disabled = !available;
+	btn.style.opacity = available ? "" : "0.55";
+	btn.style.cursor = available ? "pointer" : "not-allowed";
+	btn.title = available ? enabledTitle : disabledTitle;
+}
+
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: UI state management with multiple controls
 function applySandboxControlAvailability(): boolean {
 	const available = sandboxRuntimeAvailable();
-	const title = available ? null : SANDBOX_DISABLED_HINT();
+	const hint = available ? "" : SANDBOX_DISABLED_HINT();
 
-	if (S.sandboxToggleBtn) {
-		(S.sandboxToggleBtn as HTMLButtonElement).disabled = !available;
-		(S.sandboxToggleBtn as HTMLElement).style.opacity = available ? "" : "0.55";
-		(S.sandboxToggleBtn as HTMLElement).style.cursor = available ? "pointer" : "not-allowed";
-		if (title) {
-			(S.sandboxToggleBtn as HTMLElement).title = title;
-		} else {
-			(S.sandboxToggleBtn as HTMLElement).title = t("chat:sandboxToggleTooltip");
-		}
+	const toggleBtn = S.sandboxToggleBtn;
+	if (toggleBtn) {
+		applyButtonAvailability(toggleBtn, available, t("chat:sandboxToggleTooltip"), hint);
 	}
 
-	if (S.sandboxImageBtn) {
-		(S.sandboxImageBtn as HTMLButtonElement).disabled = !available;
-		(S.sandboxImageBtn as HTMLElement).style.opacity = available ? "" : "0.55";
-		(S.sandboxImageBtn as HTMLElement).style.cursor = available ? "pointer" : "not-allowed";
-		if (title) {
-			(S.sandboxImageBtn as HTMLElement).title = title;
-		} else {
-			(S.sandboxImageBtn as HTMLElement).title = t("chat:sandboxImageTooltip");
-		}
+	const imageBtn = S.sandboxImageBtn;
+	if (imageBtn) {
+		applyButtonAvailability(imageBtn, available, t("chat:sandboxImageTooltip"), hint);
 	}
 
-	if (!available && S.sandboxImageDropdown) {
-		(S.sandboxImageDropdown as HTMLElement).classList.add("hidden");
+	const dropdown = S.sandboxImageDropdown;
+	if (!available && dropdown) {
+		dropdown.classList.add("hidden");
 	}
 
 	return available;
@@ -69,27 +76,30 @@ export function updateSandboxUI(enabled: boolean): void {
 	S.setSessionExecPromptSymbol(effectiveSandboxRoute || S.hostExecIsRoot ? "#" : "$");
 	updateCommandInputUI();
 	updateTokenBar();
-	if (!(S.sandboxLabel && S.sandboxToggleBtn)) return;
+	const label = S.sandboxLabel;
+	const toggleBtn = S.sandboxToggleBtn;
+	if (!(label && toggleBtn)) return;
 	if (!applySandboxControlAvailability()) {
-		(S.sandboxLabel as HTMLElement).textContent = t("chat:sandboxDisabled");
-		(S.sandboxToggleBtn as HTMLElement).style.borderColor = "";
-		(S.sandboxToggleBtn as HTMLElement).style.color = "var(--muted)";
+		label.textContent = t("chat:sandboxDisabled");
+		toggleBtn.style.borderColor = "";
+		toggleBtn.style.color = "var(--muted)";
 		return;
 	}
 	if (S.sessionSandboxEnabled) {
-		(S.sandboxLabel as HTMLElement).textContent = t("chat:sandboxed");
-		(S.sandboxToggleBtn as HTMLElement).style.borderColor = "var(--accent, #f59e0b)";
-		(S.sandboxToggleBtn as HTMLElement).style.color = "var(--accent, #f59e0b)";
+		label.textContent = t("chat:sandboxed");
+		toggleBtn.style.borderColor = "var(--accent, #f59e0b)";
+		toggleBtn.style.color = "var(--accent, #f59e0b)";
 	} else {
-		(S.sandboxLabel as HTMLElement).textContent = t("chat:sandboxDirect");
-		(S.sandboxToggleBtn as HTMLElement).style.borderColor = "";
-		(S.sandboxToggleBtn as HTMLElement).style.color = "var(--muted)";
+		label.textContent = t("chat:sandboxDirect");
+		toggleBtn.style.borderColor = "";
+		toggleBtn.style.color = "var(--muted)";
 	}
 }
 
 export function bindSandboxToggleEvents(): void {
-	if (!S.sandboxToggleBtn) return;
-	(S.sandboxToggleBtn as HTMLElement).addEventListener("click", () => {
+	const toggleBtn = S.sandboxToggleBtn;
+	if (!toggleBtn) return;
+	toggleBtn.addEventListener("click", () => {
 		if (!sandboxRuntimeAvailable()) return;
 		const newVal = !S.sessionSandboxEnabled;
 		sendRpc("sessions.patch", {
@@ -108,23 +118,25 @@ export function bindSandboxToggleEvents(): void {
 // ── Sandbox image selector ──────────────────────────────────
 
 const DEFAULT_IMAGE = "ubuntu:25.10";
-let sandboxImageBtnEl: HTMLElement | null = null;
+let sandboxImageBtnEl: HTMLButtonElement | null = null;
 let sandboxImageBtnClickHandler: ((e: MouseEvent) => void) | null = null;
 let sandboxImageDocClickHandler: (() => void) | null = null;
 let sandboxImageRepositionHandler: (() => void) | null = null;
 
 export function updateSandboxImageUI(image: string | null): void {
 	S.setSessionSandboxImage(image || null);
-	if (!S.sandboxImageLabel) return;
+	const imageLabel = S.sandboxImageLabel;
+	if (!imageLabel) return;
 	if (!applySandboxControlAvailability()) {
-		(S.sandboxImageLabel as HTMLElement).textContent = t("chat:sandboxUnavailable");
+		imageLabel.textContent = t("chat:sandboxUnavailable");
 		return;
 	}
-	(S.sandboxImageLabel as HTMLElement).textContent = truncateHash(image || DEFAULT_IMAGE);
+	imageLabel.textContent = truncateHash(image || DEFAULT_IMAGE);
 }
 
 export function bindSandboxImageEvents(): void {
-	if (!S.sandboxImageBtn) return;
+	const imageBtn = S.sandboxImageBtn;
+	if (!imageBtn) return;
 	if (sandboxImageBtnEl && sandboxImageBtnClickHandler) {
 		sandboxImageBtnEl.removeEventListener("click", sandboxImageBtnClickHandler);
 	}
@@ -142,13 +154,14 @@ export function bindSandboxImageEvents(): void {
 		toggleImageDropdown();
 	};
 	sandboxImageDocClickHandler = (): void => {
-		if (S.sandboxImageDropdown) {
-			(S.sandboxImageDropdown as HTMLElement).classList.add("hidden");
+		const dropdown = S.sandboxImageDropdown;
+		if (dropdown) {
+			dropdown.classList.add("hidden");
 		}
 	};
 	sandboxImageRepositionHandler = (): void => positionImageDropdown();
 
-	sandboxImageBtnEl = S.sandboxImageBtn as HTMLElement;
+	sandboxImageBtnEl = imageBtn;
 	sandboxImageBtnEl.addEventListener("click", sandboxImageBtnClickHandler);
 	document.addEventListener("click", sandboxImageDocClickHandler);
 
@@ -157,21 +170,22 @@ export function bindSandboxImageEvents(): void {
 }
 
 function toggleImageDropdown(): void {
-	if (!(S.sandboxImageDropdown && S.sandboxImageBtn)) return;
-	const isHidden = (S.sandboxImageDropdown as HTMLElement).classList.contains("hidden");
+	const dropdown = S.sandboxImageDropdown;
+	if (!(dropdown && S.sandboxImageBtn)) return;
+	const isHidden = dropdown.classList.contains("hidden");
 	if (isHidden) {
 		populateImageDropdown();
-		(S.sandboxImageDropdown as HTMLElement).classList.remove("hidden");
+		dropdown.classList.remove("hidden");
 		requestAnimationFrame(positionImageDropdown);
 	} else {
-		(S.sandboxImageDropdown as HTMLElement).classList.add("hidden");
+		dropdown.classList.add("hidden");
 	}
 }
 
 function positionImageDropdown(): void {
-	if (!(S.sandboxImageDropdown && S.sandboxImageBtn)) return;
-	const dropdown = S.sandboxImageDropdown as HTMLElement;
-	const btn = S.sandboxImageBtn as HTMLElement;
+	const dropdown = S.sandboxImageDropdown;
+	const btn = S.sandboxImageBtn;
+	if (!(dropdown && btn)) return;
 	if (dropdown.classList.contains("hidden")) return;
 
 	const btnRect = btn.getBoundingClientRect();
@@ -207,12 +221,12 @@ function positionImageDropdown(): void {
 }
 
 function populateImageDropdown(): void {
-	if (!S.sandboxImageDropdown) return;
-	const dropdown = S.sandboxImageDropdown as HTMLElement;
+	const dropdown = S.sandboxImageDropdown;
+	if (!dropdown) return;
 	dropdown.textContent = "";
 
 	// Default option
-	addImageOption(DEFAULT_IMAGE, !S.sessionSandboxImage);
+	addImageOption(dropdown, DEFAULT_IMAGE, !S.sessionSandboxImage);
 
 	// Fetch cached images
 	fetch("/api/images/cached")
@@ -221,7 +235,7 @@ function populateImageDropdown(): void {
 			const images = (data.images || []) as Array<Record<string, unknown>>;
 			for (const img of images) {
 				const isCurrent = S.sessionSandboxImage === img.tag;
-				addImageOption(img.tag as string, isCurrent, `${img.skill_name} (${img.size})`);
+				addImageOption(dropdown, img.tag as string, isCurrent, `${img.skill_name} (${img.size})`);
 			}
 			requestAnimationFrame(positionImageDropdown);
 		})
@@ -230,7 +244,7 @@ function populateImageDropdown(): void {
 		});
 }
 
-function addImageOption(tag: string, isActive: boolean, subtitle?: string): void {
+function addImageOption(dropdown: HTMLElement, tag: string, isActive: boolean, subtitle?: string): void {
 	const opt = document.createElement("div");
 	opt.className = "px-3 py-2 text-xs cursor-pointer hover:bg-[var(--surface2)] transition-colors";
 	if (isActive) {
@@ -256,7 +270,7 @@ function addImageOption(tag: string, isActive: boolean, subtitle?: string): void
 		selectImage(tag === DEFAULT_IMAGE ? null : tag);
 	});
 
-	(S.sandboxImageDropdown as HTMLElement).appendChild(opt);
+	dropdown.appendChild(opt);
 }
 
 function selectImage(tag: string | null): void {
@@ -271,7 +285,8 @@ function selectImage(tag: string | null): void {
 			updateSandboxImageUI(tag);
 		}
 	});
-	if (S.sandboxImageDropdown) {
-		(S.sandboxImageDropdown as HTMLElement).classList.add("hidden");
+	const dropdown = S.sandboxImageDropdown;
+	if (dropdown) {
+		dropdown.classList.add("hidden");
 	}
 }

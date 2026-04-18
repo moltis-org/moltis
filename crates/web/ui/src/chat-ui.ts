@@ -215,7 +215,7 @@ export function chatAddErrorMsg(message: string): void {
 export function renderApprovalCard(requestId: string, command: string): void {
 	if (!S.chatMsgBox) return;
 	clearChatEmptyState();
-	const tpl = document.getElementById("tpl-approval-card") as HTMLTemplateElement;
+	const tpl = S.$<HTMLTemplateElement>("tpl-approval-card")!;
 	const frag = tpl.content.cloneNode(true) as DocumentFragment;
 	const card = frag.firstElementChild as HTMLElement;
 	card.id = `approval-${requestId}`;
