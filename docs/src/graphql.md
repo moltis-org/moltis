@@ -66,7 +66,7 @@ Top-level query fields include:
 - `config`, `cron`, `heartbeat`, `logs`
 - `tts`, `stt`, `voice`
 - `skills`, `models`, `providers`, `mcp`
-- `usage`, `exec_approvals`, `projects`, `memory`, `hooks`, `agents`
+- `usage`, `execApprovals`, `projects`, `memory`, `hooks`, `agents`
 - `voicewake`, `device`
 
 Top-level mutation fields follow the same namespace pattern (for example:
@@ -74,22 +74,22 @@ Top-level mutation fields follow the same namespace pattern (for example:
 
 Subscriptions include:
 
-- `chat_event`
-- `session_changed`
-- `cron_notification`
-- `channel_event`
-- `node_event`
+- `chatEvent`
+- `sessionChanged`
+- `cronNotification`
+- `channelEvent`
+- `nodeEvent`
 - `tick`
-- `log_entry`
-- `mcp_status_changed`
-- `approval_event`
-- `config_changed`
-- `presence_changed`
-- `metrics_update`
-- `update_available`
-- `voice_config_changed`
-- `skills_install_progress`
-- `all_events`
+- `logEntry`
+- `mcpStatusChanged`
+- `approvalEvent`
+- `configChanged`
+- `presenceChanged`
+- `metricsUpdate`
+- `updateAvailable`
+- `voiceConfigChanged`
+- `skillsInstallProgress`
+- `allEvents`
 
 ## Typed Data and `Json` Scalar
 
