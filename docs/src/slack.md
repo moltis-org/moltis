@@ -99,6 +99,8 @@ offered = ["slack"]
 | `stream_mode` | no | `"edit_in_place"` | Streaming mode: `"edit_in_place"`, `"native"`, or `"off"` |
 | `edit_throttle_ms` | no | `500` | Minimum milliseconds between streaming edit updates |
 | `thread_replies` | no | `true` | Reply in threads |
+| `channel_overrides` | no | `{}` | Per-channel model/provider overrides (see below) |
+| `user_overrides` | no | `{}` | Per-user model/provider overrides (see below) |
 
 ```admonish important title="Allowlist values are strings"
 All allowlist entries must be **strings**. Use Slack user IDs like
@@ -125,6 +127,15 @@ model_provider = "anthropic"
 stream_mode = "edit_in_place"
 edit_throttle_ms = 500
 thread_replies = true
+
+# Per-channel override: use a different model in a specific Slack channel
+[channels.slack.my-bot.channel_overrides.C0123456789]
+model = "gpt-4o"
+
+# Per-user override: use a specific model/provider for a Slack user
+[channels.slack.my-bot.user_overrides.U0123456789]
+model = "claude-sonnet-4-20250514"
+model_provider = "anthropic"
 ```
 
 ### Events API Mode
