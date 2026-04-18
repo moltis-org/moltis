@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { SectionHeading, StatusMessage } from "../../components/forms";
 import * as gon from "../../gon";
 import { refresh as refreshGon } from "../../gon";
 import { targetValue } from "../../typed-events";
@@ -71,7 +72,7 @@ export function VaultSection(): VNode {
 	if (!vaultStatus || vaultStatus === "disabled") {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">Encryption</h2>
+				<SectionHeading title="Encryption" />
 				<p className="text-xs text-[var(--muted)]">Encryption at rest is not available in this build.</p>
 			</div>
 		);
@@ -79,7 +80,7 @@ export function VaultSection(): VNode {
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">Encryption</h2>
+			<SectionHeading title="Encryption" />
 
 			<div style={{ maxWidth: "600px" }}>
 				<div className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3 mb-4">
@@ -153,16 +154,7 @@ export function VaultSection(): VNode {
 								</button>
 							</div>
 						</form>
-						{msg ? (
-							<div className="text-xs" style={{ color: "var(--accent)" }}>
-								{msg}
-							</div>
-						) : null}
-						{err ? (
-							<div className="text-xs" style={{ color: "var(--error)" }}>
-								{err}
-							</div>
-						) : null}
+						<StatusMessage error={err} success={msg} />
 					</div>
 				) : null}
 

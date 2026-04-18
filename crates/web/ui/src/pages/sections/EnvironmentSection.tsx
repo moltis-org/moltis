@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { SectionHeading, StatusMessage, SubHeading, useSaveState } from "../../components/forms";
 import * as gon from "../../gon";
 import { localizedApiErrorMessage } from "../../helpers";
 import { targetValue } from "../../typed-events";
@@ -19,9 +20,7 @@ export function EnvironmentSection(): VNode {
 	const [envLoading, setEnvLoading] = useState(true);
 	const [newKey, setNewKey] = useState("");
 	const [newValue, setNewValue] = useState("");
-	const [envMsg, setEnvMsg] = useState<string | null>(null);
-	const [envErr, setEnvErr] = useState<string | null>(null);
-	const [saving, setSaving] = useState(false);
+	const save = useSaveState();
 	const [updateId, setUpdateId] = useState<string | null>(null);
 	const [updateValue, setUpdateValue] = useState("");
 
@@ -45,20 +44,19 @@ export function EnvironmentSection(): VNode {
 
 	function onAdd(e: Event): void {
 		e.preventDefault();
-		setEnvErr(null);
-		setEnvMsg(null);
+		save.reset();
 		const key = newKey.trim();
 		if (!key) {
-			setEnvErr("Key is required.");
+			save.setError("Key is required.");
 			rerender();
 			return;
 		}
 		if (!/^[A-Za-z0-9_]+$/.test(key)) {
-			setEnvErr("Key must contain only letters, digits, and underscores.");
+			save.setError("Key must contain only letters, digits, and underscores.");
 			rerender();
 			return;
 		}
-		setSaving(true);
+		save.setSaving(true);
 		rerender();
 		fetch("/api/env", {
 			method: "POST",
@@ -69,27 +67,23 @@ export function EnvironmentSection(): VNode {
 				if (r.ok) {
 					setNewKey("");
 					setNewValue("");
-					setEnvMsg("Variable saved.");
-					setTimeout(() => {
-						setEnvMsg(null);
-						rerender();
-					}, 2000);
+					save.flashSaved();
 					fetchEnvVars();
 				} else {
 					return r
 						.json()
 						.then((d: unknown) =>
-							setEnvErr(
+							save.setError(
 								localizedApiErrorMessage(d as Parameters<typeof localizedApiErrorMessage>[0], "Failed to save"),
 							),
 						);
 				}
-				setSaving(false);
+				save.setSaving(false);
 				rerender();
 			})
 			.catch((err: Error) => {
-				setEnvErr(err.message);
-				setSaving(false);
+				save.setError(err.message);
+				save.setSaving(false);
 				rerender();
 			});
 	}
@@ -128,7 +122,7 @@ export function EnvironmentSection(): VNode {
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">Environment Variables</h2>
+			<SectionHeading title="Environment Variables" />
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
 				Environment variables are injected into sandbox command execution. Values are write-only and never displayed.
 			</p>
@@ -267,9 +261,7 @@ export function EnvironmentSection(): VNode {
 
 					{/* Add variable */}
 					<div style={{ maxWidth: "600px", borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
-						<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-							Add Variable
-						</h3>
+						<SubHeading title="Add Variable" />
 						<form onSubmit={onAdd}>
 							<div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
 								<input
@@ -298,20 +290,11 @@ export function EnvironmentSection(): VNode {
 									placeholder="Value"
 									style={{ flex: 2, minWidth: "200px" }}
 								/>
-								<button type="submit" className="provider-btn" disabled={saving || !newKey.trim()}>
-									{saving ? "Saving\u2026" : "Add"}
+								<button type="submit" className="provider-btn" disabled={save.saving || !newKey.trim()}>
+									{save.saving ? "Saving\u2026" : "Add"}
 								</button>
 							</div>
-							{envMsg ? (
-								<div className="text-xs" style={{ marginTop: "6px", color: "var(--accent)" }}>
-									{envMsg}
-								</div>
-							) : null}
-							{envErr ? (
-								<div className="text-xs" style={{ marginTop: "6px", color: "var(--error)" }}>
-									{envErr}
-								</div>
-							) : null}
+							<StatusMessage error={save.error} success={save.saved ? "Variable saved." : null} />
 						</form>
 					</div>
 				</>

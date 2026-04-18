@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { SectionHeading, StatusMessage, SubHeading } from "../../components/forms";
 import { EmojiPicker } from "../../emoji-picker";
 import * as gon from "../../gon";
 import { refresh as refreshGon } from "../../gon";
@@ -221,7 +222,7 @@ export function IdentitySection(): VNode {
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">Identity</h2>
+			<SectionHeading title="Identity" />
 			{isNew ? (
 				<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
 					Welcome! Set up your agent's identity to get started.
@@ -230,9 +231,7 @@ export function IdentitySection(): VNode {
 			<form onSubmit={onSave} style={{ maxWidth: "600px", display: "flex", flexDirection: "column", gap: "16px" }}>
 				{/* Agent section */}
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Agent
-					</h3>
+					<SubHeading title="Agent" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Saved to <code>IDENTITY.md</code> in your workspace root.
 					</p>
@@ -288,9 +287,7 @@ export function IdentitySection(): VNode {
 
 				{/* User section */}
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						User
-					</h3>
+					<SubHeading title="User" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Saved to your user profile. Depending on memory settings, Moltis may also mirror it to <code>USER.md</code>.
 					</p>
@@ -312,9 +309,7 @@ export function IdentitySection(): VNode {
 
 				{/* Language section */}
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Language
-					</h3>
+					<SubHeading title="Language" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Choose the UI language for this browser.
 					</p>
@@ -348,16 +343,7 @@ export function IdentitySection(): VNode {
 						>
 							{languageSaving ? "Applying..." : "Apply language"}
 						</button>
-						{languageSaved ? (
-							<span className="text-xs" style={{ color: "var(--accent)" }}>
-								Language updated
-							</span>
-						) : null}
-						{languageError ? (
-							<span className="text-xs" style={{ color: "var(--error)" }}>
-								{languageError}
-							</span>
-						) : null}
+						<StatusMessage error={languageError} success={languageSaved ? "Language updated" : null} />
 					</div>
 				</div>
 
@@ -398,16 +384,7 @@ export function IdentitySection(): VNode {
 					>
 						{saving || emojiSaving || nameSaving || userNameSaving ? "Saving\u2026" : "Save"}
 					</button>
-					{saved ? (
-						<span className="text-xs" style={{ color: "var(--accent)" }}>
-							Saved
-						</span>
-					) : null}
-					{error ? (
-						<span className="text-xs" style={{ color: "var(--error)" }}>
-							{error}
-						</span>
-					) : null}
+					<StatusMessage error={error} success={saved ? "Saved" : null} />
 				</div>
 			</form>
 			{gon.get("version") ? (

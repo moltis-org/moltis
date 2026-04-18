@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { SectionHeading, StatusMessage, SubHeading } from "../../components/forms";
 import { onEvent } from "../../events";
 import * as push from "../../push";
 import { isStandalone } from "../../pwa";
@@ -92,7 +93,7 @@ export function NotificationsSection(): VNode {
 	if (isLoading) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">Notifications</h2>
+				<SectionHeading title="Notifications" />
 				<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
 			</div>
 		);
@@ -101,7 +102,7 @@ export function NotificationsSection(): VNode {
 	if (!supported) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">Notifications</h2>
+				<SectionHeading title="Notifications" />
 				<div
 					style={{
 						maxWidth: "600px",
@@ -125,7 +126,7 @@ export function NotificationsSection(): VNode {
 	if (serverStatus === null) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">Notifications</h2>
+				<SectionHeading title="Notifications" />
 				<div
 					style={{
 						maxWidth: "600px",
@@ -152,7 +153,7 @@ export function NotificationsSection(): VNode {
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">Notifications</h2>
+			<SectionHeading title="Notifications" />
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
 				Receive push notifications when the agent completes a task or needs your attention.
 			</p>
@@ -181,11 +182,7 @@ export function NotificationsSection(): VNode {
 						{toggling ? "\u2026" : subscribed ? "Disable" : "Enable"}
 					</button>
 				</div>
-				{error ? (
-					<div className="text-xs" style={{ marginTop: "8px", color: "var(--error)" }}>
-						{error}
-					</div>
-				) : null}
+				<StatusMessage error={error} className="text-xs mt-2" />
 			</div>
 
 			{needsInstall ? (
@@ -230,9 +227,7 @@ export function NotificationsSection(): VNode {
 			) : null}
 
 			<div style={{ maxWidth: "600px", borderTop: "1px solid var(--border)", paddingTop: "16px", marginTop: "8px" }}>
-				<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-					Subscribed Devices ({serverStatus?.subscription_count || 0})
-				</h3>
+				<SubHeading title={`Subscribed Devices (${serverStatus?.subscription_count || 0})`} />
 				{(serverStatus?.subscriptions?.length || 0) > 0 ? (
 					<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
 						{serverStatus?.subscriptions?.map((sub) => (

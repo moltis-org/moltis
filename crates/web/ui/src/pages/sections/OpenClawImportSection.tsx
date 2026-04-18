@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { SectionHeading } from "../../components/forms";
 import { sendRpc } from "../../helpers";
 import { ChannelType } from "../../types";
 import type { RpcResponse } from "./_shared";
@@ -99,7 +100,7 @@ export function OpenClawImportSection(): VNode {
 	if (importLoading) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+				<SectionHeading title="OpenClaw Import" />
 				<div className="text-xs text-[var(--muted)]">Scanning{"\u2026"}</div>
 			</div>
 		);
@@ -108,7 +109,7 @@ export function OpenClawImportSection(): VNode {
 	if (!scan?.detected) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+				<SectionHeading title="OpenClaw Import" />
 				<div className="text-xs text-[var(--muted)]">No OpenClaw installation detected.</div>
 			</div>
 		);
@@ -161,7 +162,7 @@ export function OpenClawImportSection(): VNode {
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">OpenClaw Import</h2>
+			<SectionHeading title="OpenClaw Import" />
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
 				Import data from your OpenClaw installation at <code className="text-[var(--text)]">{scan.home_dir}</code>. This
 				is a read-only copy {"\u2014"} your OpenClaw files will not be modified or removed. You can keep using both side

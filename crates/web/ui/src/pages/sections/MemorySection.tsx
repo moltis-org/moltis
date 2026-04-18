@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { SaveButton, SectionHeading, StatusMessage, SubHeading, useSaveState } from "../../components/forms";
 import { sendRpc } from "../../helpers";
 import { targetChecked, targetValue } from "../../typed-events";
 import type { RpcResponse } from "./_shared";
@@ -39,9 +40,7 @@ export function MemorySection(): VNode {
 	const [memConfig, setMemConfig] = useState<MemoryConfig | null>(null);
 	const [qmdStatus, setQmdStatus] = useState<QmdStatus | null>(null);
 	const [memLoading, setMemLoading] = useState(true);
-	const [saving, setSaving] = useState(false);
-	const [saved, setSaved] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const save = useSaveState();
 
 	const [style, setStyle] = useState("hybrid");
 	const [agentWriteMode, setAgentWriteMode] = useState("hybrid");
@@ -88,9 +87,8 @@ export function MemorySection(): VNode {
 
 	function onSave(e: Event): void {
 		e.preventDefault();
-		setError(null);
-		setSaving(true);
-		setSaved(false);
+		save.setError(null);
+		save.setSaving(true);
 
 		sendRpc("memory.config.update", {
 			style,
@@ -104,16 +102,12 @@ export function MemorySection(): VNode {
 			session_export: sessionExport,
 			prompt_memory_mode: promptMemoryMode,
 		}).then((res: RpcResponse) => {
-			setSaving(false);
+			save.setSaving(false);
 			if (res?.ok) {
 				setMemConfig(res.payload as MemoryConfig);
-				setSaved(true);
-				setTimeout(() => {
-					setSaved(false);
-					rerender();
-				}, 2000);
+				save.flashSaved();
 			} else {
-				setError((res?.error as { message?: string })?.message || "Failed to save");
+				save.setError((res?.error as { message?: string })?.message || "Failed to save");
 			}
 			rerender();
 		});
@@ -122,7 +116,7 @@ export function MemorySection(): VNode {
 	if (memLoading) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">Memory</h2>
+				<SectionHeading title="Memory" />
 				<div className="text-xs text-[var(--muted)]">Loading{"\u2026"}</div>
 			</div>
 		);
@@ -133,7 +127,7 @@ export function MemorySection(): VNode {
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">Memory</h2>
+			<SectionHeading title="Memory" />
 			<p className="text-xs text-[var(--muted)] leading-relaxed max-w-form" style={{ margin: 0 }}>
 				Configure how the agent stores and retrieves long-term memory. Memory enables the agent to recall past
 				conversations, notes, and context across sessions.
@@ -149,9 +143,7 @@ export function MemorySection(): VNode {
 						background: "var(--bg)",
 					}}
 				>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Status
-					</h3>
+					<SubHeading title="Status" />
 					<div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: "8px 16px", fontSize: ".8rem" }}>
 						<div>
 							<span className="text-[var(--muted)]">Files:</span>
@@ -186,9 +178,7 @@ export function MemorySection(): VNode {
 
 			<form onSubmit={onSave} style={{ maxWidth: "600px", display: "flex", flexDirection: "column", gap: "16px" }}>
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Memory Style
-					</h3>
+					<SubHeading title="Memory Style" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Choose the high-level orchestration model. This controls whether prompt-visible <code>MEMORY.md</code> and
 						memory tools are both active, one is active, or both are off.
@@ -210,9 +200,7 @@ export function MemorySection(): VNode {
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Backend
-					</h3>
+					<SubHeading title="Backend" />
 					<div
 						style={{
 							marginBottom: "12px",
@@ -397,9 +385,7 @@ export function MemorySection(): VNode {
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Prompt Memory Mode
-					</h3>
+					<SubHeading title="Prompt Memory Mode" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						When prompt memory is enabled, choose whether <code>MEMORY.md</code> is reread on every turn or frozen when
 						the session starts.
@@ -426,9 +412,7 @@ export function MemorySection(): VNode {
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Agent Memory Writes
-					</h3>
+					<SubHeading title="Agent Memory Writes" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Control where agent-authored memory writes can land. This affects <code>memory_save</code> and silent
 						compaction memory flushes.
@@ -450,9 +434,7 @@ export function MemorySection(): VNode {
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						USER.md Writes
-					</h3>
+					<SubHeading title="USER.md Writes" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Control whether Moltis mirrors your profile into <code>USER.md</code>, and whether browser or channel
 						timezone/location signals can update it silently.
@@ -473,9 +455,7 @@ export function MemorySection(): VNode {
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Embedding Provider
-					</h3>
+					<SubHeading title="Embedding Provider" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Select which embedding provider the built-in memory backend should use for RAG. QMD manages retrieval
 						separately, so this setting is ignored while the QMD backend is active.
@@ -504,9 +484,7 @@ export function MemorySection(): VNode {
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Citations
-					</h3>
+					<SubHeading title="Citations" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Include source file and line number with search results to help track where information comes from.
 					</p>
@@ -526,9 +504,7 @@ export function MemorySection(): VNode {
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Search Merge Strategy
-					</h3>
+					<SubHeading title="Search Merge Strategy" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Choose how Moltis blends vector and keyword memory hits before optional reranking.
 					</p>
@@ -566,9 +542,7 @@ export function MemorySection(): VNode {
 				</div>
 
 				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
-						Session Export
-					</h3>
+					<SubHeading title="Session Export" />
 					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
 						Export session transcripts into searchable memory when a session is rolled over.
 					</p>
@@ -595,19 +569,8 @@ export function MemorySection(): VNode {
 						borderTop: "1px solid var(--border)",
 					}}
 				>
-					<button type="submit" className="provider-btn" disabled={saving}>
-						{saving ? "Saving\u2026" : "Save"}
-					</button>
-					{saved ? (
-						<span className="text-xs" style={{ color: "var(--accent)" }}>
-							Saved
-						</span>
-					) : null}
-					{error ? (
-						<span className="text-xs" style={{ color: "var(--error)" }}>
-							{error}
-						</span>
-					) : null}
+					<SaveButton saving={save.saving} saved={save.saved} type="submit" />
+					<StatusMessage error={save.error} success={save.saved ? "Saved" : null} />
 				</div>
 			</form>
 		</div>
