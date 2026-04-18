@@ -134,273 +134,197 @@ export function ConfirmDialog(): VNode | null {
 	);
 }
 
+// ── Confirm dialog (signal-driven) ──────────────────────────
+
+interface VanillaConfirmState {
+	message: string;
+	resolve: (value: boolean) => void;
+}
+
+const vanillaConfirmState: Signal<VanillaConfirmState | null> = signal(null);
+
 /**
- * Vanilla-JS confirm dialog (no Preact needed).
- * Returns a Promise<boolean> -- true if confirmed, false if cancelled.
- * Safe: all content set via textContent, no user input in markup.
+ * Signal-driven confirm dialog rendered via Preact Modal.
+ * Returns a Promise<boolean> — true if confirmed, false if cancelled.
  */
 export function confirmDialog(message: string): Promise<boolean> {
 	return new Promise((resolve) => {
-		const backdrop = document.createElement("div");
-		backdrop.className = "provider-modal-backdrop";
-
-		const box = document.createElement("div");
-		box.className = "provider-modal";
-		box.style.width = "360px";
-
-		const body = document.createElement("div");
-		body.className = "provider-modal-body";
-		body.style.gap = "16px";
-
-		const msg = document.createElement("p");
-		msg.style.cssText = "font-size:.85rem;color:var(--text);margin:0";
-		msg.textContent = message;
-
-		const btnRow = document.createElement("div");
-		btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end";
-
-		const cancelBtn = document.createElement("button");
-		cancelBtn.className = "provider-btn provider-btn-secondary";
-		cancelBtn.textContent = t("common:actions.cancel");
-
-		const deleteBtn = document.createElement("button");
-		deleteBtn.className = "provider-btn provider-btn-danger";
-		deleteBtn.textContent = t("common:actions.delete");
-
-		function close(val: boolean): void {
-			backdrop.remove();
-			resolve(val);
-		}
-		cancelBtn.addEventListener("click", () => close(false));
-		deleteBtn.addEventListener("click", () => close(true));
-		backdrop.addEventListener("click", (e: Event) => {
-			if (e.target === backdrop) close(false);
-		});
-
-		btnRow.appendChild(cancelBtn);
-		btnRow.appendChild(deleteBtn);
-		body.appendChild(msg);
-		body.appendChild(btnRow);
-		box.appendChild(body);
-		backdrop.appendChild(box);
-		document.body.appendChild(backdrop);
-		deleteBtn.focus();
+		vanillaConfirmState.value = { message, resolve };
 	});
 }
 
+export function VanillaConfirmDialog(): VNode | null {
+	const s = vanillaConfirmState.value;
+	if (!s) return null;
+	function close(v: boolean): void {
+		s!.resolve(v);
+		vanillaConfirmState.value = null;
+	}
+	return (
+		<Modal show={true} onClose={() => close(false)} title={t("common:actions.confirm")}>
+			<p style="font-size:.85rem;color:var(--text);margin:0 0 16px;">{s.message}</p>
+			<div style="display:flex;gap:8px;justify-content:flex-end;">
+				<button onClick={() => close(false)} class="provider-btn provider-btn-secondary">
+					{t("common:actions.cancel")}
+				</button>
+				<button onClick={() => close(true)} class="provider-btn provider-btn-danger">
+					{t("common:actions.delete")}
+				</button>
+			</div>
+		</Modal>
+	);
+}
+
+// ── Share visibility dialog (signal-driven) ─────────────────
+
+interface ShareVisibilityState {
+	resolve: (value: string | null) => void;
+}
+
+const shareVisibilityState: Signal<ShareVisibilityState | null> = signal(null);
+
 /**
- * Vanilla-JS share visibility picker using the standard provider modal style.
+ * Signal-driven share visibility picker rendered via Preact Modal.
  * Returns "public", "private", or null when cancelled.
  */
 export function shareVisibilityDialog(): Promise<string | null> {
 	return new Promise((resolve) => {
-		const backdrop = document.createElement("div");
-		backdrop.className = "provider-modal-backdrop";
-
-		const box = document.createElement("div");
-		box.className = "provider-modal";
-		box.style.width = "460px";
-
-		const header = document.createElement("div");
-		header.className = "provider-modal-header";
-
-		const title = document.createElement("div");
-		title.className = "provider-item-name";
-		title.textContent = t("chat:share.title");
-
-		const cancelTopBtn = document.createElement("button");
-		cancelTopBtn.className = "provider-btn provider-btn-secondary provider-btn-sm";
-		cancelTopBtn.textContent = t("common:actions.cancel");
-
-		const body = document.createElement("div");
-		body.className = "provider-modal-body";
-		body.style.gap = "10px";
-
-		const hint = document.createElement("p");
-		hint.style.cssText = "font-size:.8rem;color:var(--muted);margin:0";
-		hint.textContent = t("chat:share.hint");
-
-		const warning = document.createElement("p");
-		warning.style.cssText =
-			"font-size:.8rem;color:var(--text);margin:0;padding:8px 10px;border:1px solid color-mix(in srgb,var(--warn) 55%,var(--border) 45%);background:color-mix(in srgb,var(--warn) 12%,var(--surface2) 88%);border-radius:var(--radius-sm);line-height:1.45";
-		warning.textContent = t("chat:share.redactionWarning");
-
-		const publicBtn = document.createElement("button");
-		publicBtn.className = "provider-item";
-		publicBtn.type = "button";
-		publicBtn.setAttribute("data-share-visibility", "public");
-		const publicName = document.createElement("div");
-		publicName.className = "provider-item-name";
-		publicName.textContent = t("chat:share.publicLink");
-		const publicBadge = document.createElement("span");
-		publicBadge.className = "provider-item-badge configured";
-		publicBadge.textContent = t("chat:share.publicBadge");
-		publicBtn.appendChild(publicName);
-		publicBtn.appendChild(publicBadge);
-
-		const privateBtn = document.createElement("button");
-		privateBtn.className = "provider-item";
-		privateBtn.type = "button";
-		privateBtn.setAttribute("data-share-visibility", "private");
-		const privateName = document.createElement("div");
-		privateName.className = "provider-item-name";
-		privateName.textContent = t("chat:share.privateLink");
-		const privateBadge = document.createElement("span");
-		privateBadge.className = "provider-item-badge api-key";
-		privateBadge.textContent = t("chat:share.privateBadge");
-		privateBtn.appendChild(privateName);
-		privateBtn.appendChild(privateBadge);
-
-		function close(value: string | null): void {
-			document.removeEventListener("keydown", onKeydown);
-			backdrop.remove();
-			resolve(value);
-		}
-
-		function onKeydown(e: KeyboardEvent): void {
-			if (e.key === "Escape") close(null);
-		}
-
-		publicBtn.addEventListener("click", () => close("public"));
-		privateBtn.addEventListener("click", () => close("private"));
-		cancelTopBtn.addEventListener("click", () => close(null));
-		backdrop.addEventListener("click", (e: Event) => {
-			if (e.target === backdrop) close(null);
-		});
-		document.addEventListener("keydown", onKeydown);
-
-		body.appendChild(hint);
-		body.appendChild(warning);
-		body.appendChild(publicBtn);
-		body.appendChild(privateBtn);
-		header.appendChild(title);
-		header.appendChild(cancelTopBtn);
-		box.appendChild(header);
-		box.appendChild(body);
-		backdrop.appendChild(box);
-		document.body.appendChild(backdrop);
-
-		publicBtn.focus();
+		shareVisibilityState.value = { resolve };
 	});
 }
 
+export function ShareVisibilityDialog(): VNode | null {
+	const s = shareVisibilityState.value;
+	if (!s) return null;
+	function close(value: string | null): void {
+		s!.resolve(value);
+		shareVisibilityState.value = null;
+	}
+	return (
+		<Modal show={true} onClose={() => close(null)} title={t("chat:share.title")}>
+			<div style="display:flex;flex-direction:column;gap:10px;">
+				<p style="font-size:.8rem;color:var(--muted);margin:0">{t("chat:share.hint")}</p>
+				<p style="font-size:.8rem;color:var(--text);margin:0;padding:8px 10px;border:1px solid color-mix(in srgb,var(--warn) 55%,var(--border) 45%);background:color-mix(in srgb,var(--warn) 12%,var(--surface2) 88%);border-radius:var(--radius-sm);line-height:1.45">
+					{t("chat:share.redactionWarning")}
+				</p>
+				<button type="button" class="provider-item" data-share-visibility="public" onClick={() => close("public")}>
+					<div class="provider-item-name">{t("chat:share.publicLink")}</div>
+					<span class="provider-item-badge configured">{t("chat:share.publicBadge")}</span>
+				</button>
+				<button type="button" class="provider-item" data-share-visibility="private" onClick={() => close("private")}>
+					<div class="provider-item-name">{t("chat:share.privateLink")}</div>
+					<span class="provider-item-badge api-key">{t("chat:share.privateBadge")}</span>
+				</button>
+			</div>
+		</Modal>
+	);
+}
+
+// ── Share link dialog (signal-driven) ───────────────────────
+
+interface ShareLinkState {
+	url: string;
+	visibility: string;
+	resolve: (value: string | null) => void;
+}
+
+const shareLinkState: Signal<ShareLinkState | null> = signal(null);
+
 /**
- * Styled share-link dialog used when auto-copy is unavailable.
+ * Signal-driven share-link dialog rendered via Preact Modal.
  * Returns "copied" when copy succeeded, otherwise null on close/dismiss.
  */
 export function shareLinkDialog(url: string, visibility: string): Promise<string | null> {
 	return new Promise((resolve) => {
-		const backdrop = document.createElement("div");
-		backdrop.className = "provider-modal-backdrop";
-		backdrop.setAttribute("data-share-link-modal", "true");
+		shareLinkState.value = { url, visibility, resolve };
+	});
+}
 
-		const box = document.createElement("div");
-		box.className = "provider-modal";
-		box.style.width = "560px";
+export function ShareLinkDialog(): VNode | null {
+	const s = shareLinkState.value;
+	const inputRef = useRef<HTMLInputElement>(null);
+	if (!s) return null;
 
-		const header = document.createElement("div");
-		header.className = "provider-modal-header";
+	function close(value: string | null): void {
+		s!.resolve(value);
+		shareLinkState.value = null;
+	}
 
-		const title = document.createElement("div");
-		title.className = "provider-item-name";
-		title.textContent = t("chat:share.linkReady");
-
-		const closeTopBtn = document.createElement("button");
-		closeTopBtn.className = "provider-btn provider-btn-secondary";
-		closeTopBtn.textContent = t("common:actions.close");
-		closeTopBtn.setAttribute("data-share-link-close", "true");
-
-		const body = document.createElement("div");
-		body.className = "provider-modal-body";
-		body.style.gap = "10px";
-
-		const hint = document.createElement("p");
-		hint.style.cssText = "font-size:.8rem;color:var(--muted);margin:0";
-		hint.textContent = visibility === "private" ? t("chat:share.privateHint") : t("chat:share.publicHint");
-
-		const input = document.createElement("input");
-		input.className = "provider-key-input";
-		input.readOnly = true;
-		input.value = url;
-		input.setAttribute("data-share-link-input", "true");
-		input.addEventListener("focus", () => input.select());
-		input.addEventListener("click", () => input.select());
-
-		const btnRow = document.createElement("div");
-		btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap";
-
-		const openBtn = document.createElement("button");
-		openBtn.className = "provider-btn provider-btn-secondary";
-		openBtn.textContent = t("common:actions.openLink");
-		openBtn.setAttribute("data-share-link-open", "true");
-
-		const copyBtn = document.createElement("button");
-		copyBtn.className = "provider-btn";
-		copyBtn.textContent = t("common:actions.copyLink");
-		copyBtn.setAttribute("data-share-link-copy", "true");
-
-		function close(value: string | null): void {
-			document.removeEventListener("keydown", onKeydown);
-			backdrop.remove();
-			resolve(value);
-		}
-
-		function onKeydown(e: KeyboardEvent): void {
-			if (e.key === "Escape") close(null);
-		}
-
-		async function copyLink(): Promise<void> {
-			try {
-				if (navigator.clipboard?.writeText) {
-					await navigator.clipboard.writeText(url);
-					showToast(t("chat:share.linkCopied"), "success");
-					close("copied");
-					return;
-				}
-			} catch (_err) {
-				// Clipboard permissions can fail. Fall through to manual copy fallback.
-			}
-			input.focus();
-			input.select();
-			let copied = false;
-			try {
-				copied = document.execCommand("copy");
-			} catch (_err) {
-				copied = false;
-			}
-			if (copied) {
+	async function copyLink(): Promise<void> {
+		try {
+			if (navigator.clipboard?.writeText) {
+				await navigator.clipboard.writeText(s!.url);
 				showToast(t("chat:share.linkCopied"), "success");
 				close("copied");
 				return;
 			}
-			showToast(t("errors:copyFailed"), "error");
+		} catch (_err) {
+			// Clipboard permissions can fail. Fall through to manual copy fallback.
 		}
+		const el = inputRef.current;
+		if (el) {
+			el.focus();
+			el.select();
+		}
+		let copied = false;
+		try {
+			copied = document.execCommand("copy");
+		} catch (_err) {
+			copied = false;
+		}
+		if (copied) {
+			showToast(t("chat:share.linkCopied"), "success");
+			close("copied");
+			return;
+		}
+		showToast(t("errors:copyFailed"), "error");
+	}
 
-		copyBtn.addEventListener("click", () => {
-			void copyLink();
-		});
-		openBtn.addEventListener("click", () => {
-			window.open(url, "_blank", "noopener,noreferrer");
-		});
-		closeTopBtn.addEventListener("click", () => close(null));
-		backdrop.addEventListener("click", (e: Event) => {
-			if (e.target === backdrop) close(null);
-		});
-		document.addEventListener("keydown", onKeydown);
+	const hintText = s.visibility === "private" ? t("chat:share.privateHint") : t("chat:share.publicHint");
 
-		btnRow.appendChild(openBtn);
-		btnRow.appendChild(copyBtn);
-		header.appendChild(title);
-		header.appendChild(closeTopBtn);
-		body.appendChild(hint);
-		body.appendChild(input);
-		body.appendChild(btnRow);
-		box.appendChild(header);
-		box.appendChild(body);
-		backdrop.appendChild(box);
-		document.body.appendChild(backdrop);
-		copyBtn.focus();
-	});
+	return (
+		<Modal show={true} onClose={() => close(null)} title={t("chat:share.linkReady")}>
+			<div style="display:flex;flex-direction:column;gap:10px;">
+				<p style="font-size:.8rem;color:var(--muted);margin:0">{hintText}</p>
+				<input
+					ref={inputRef}
+					class="provider-key-input"
+					readOnly
+					value={s.url}
+					data-share-link-input="true"
+					onFocus={() => inputRef.current?.select()}
+					onClick={() => inputRef.current?.select()}
+				/>
+				<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+					<button
+						class="provider-btn provider-btn-secondary"
+						data-share-link-open="true"
+						onClick={() => window.open(s!.url, "_blank", "noopener,noreferrer")}
+					>
+						{t("common:actions.openLink")}
+					</button>
+					<button class="provider-btn" data-share-link-copy="true" onClick={() => void copyLink()}>
+						{t("common:actions.copyLink")}
+					</button>
+				</div>
+			</div>
+		</Modal>
+	);
+}
+
+// ── Global dialogs container ────────────────────────────────
+
+/**
+ * Renders all signal-driven dialogs. Mount once at the app root level.
+ */
+export function GlobalDialogs(): VNode {
+	return (
+		<>
+			<VanillaConfirmDialog />
+			<ShareVisibilityDialog />
+			<ShareLinkDialog />
+		</>
+	);
 }
 
 // ── Model select dropdown (Preact, reuses .model-combo CSS) ──

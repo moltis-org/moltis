@@ -29,6 +29,7 @@ import * as modelStore from "./stores/model-store";
 import * as projectStore from "./stores/project-store";
 import { insertSessionInOrder, sessionStore } from "./stores/session-store";
 import { initTheme, injectMarkdownStyles } from "./theme";
+import { GlobalDialogs } from "./ui";
 import { connect } from "./websocket";
 
 // Expose stores on window for E2E test access.
@@ -602,6 +603,13 @@ function startApp(): void {
 	// Mount the reactive SessionList once — signals drive all re-renders.
 	const sessionListEl = S.$("sessionList");
 	if (sessionListEl) render(<SessionList />, sessionListEl);
+
+	// Mount global signal-driven dialogs (confirm, share visibility, share link).
+	const dialogRoot = document.createElement("div");
+	dialogRoot.id = "preactDialogRoot";
+	document.body.appendChild(dialogRoot);
+	render(<GlobalDialogs />, dialogRoot);
+
 	initSessionTabBar();
 	initArchivedSessionsToggle();
 
