@@ -17,20 +17,32 @@ pub fn chunk_markdown(text: &str, chunk_size: usize, overlap: usize) -> Vec<Chun
     }
 
     let lines: Vec<&str> = text.lines().collect();
+    if lines.is_empty() {
+        return vec![];
+    }
+
+    // Pre-compute token count per line (empty lines count as 1 token).
+    let line_tokens: Vec<usize> = lines
+        .iter()
+        .map(|l| l.split_whitespace().count().max(1))
+        .collect();
+
     let mut chunks = Vec::new();
     let mut start = 0;
 
     while start < lines.len() {
-        let mut token_count = 0usize;
         let mut end = start;
+        let mut tokens = 0;
 
-        while end < lines.len() {
-            let line_tokens = lines[end].split_whitespace().count();
-            if token_count + line_tokens > chunk_size && end > start {
-                break;
-            }
-            token_count += line_tokens;
+        // Accumulate lines until we reach chunk_size tokens.
+        while end < lines.len() && tokens + line_tokens[end] <= chunk_size {
+            tokens += line_tokens[end];
             end += 1;
+        }
+
+        // If we couldn't fit even one line, take it anyway.
+        if end == start {
+            end = start + 1;
         }
 
         let chunk_text = lines[start..end].join("\n");
@@ -44,9 +56,15 @@ pub fn chunk_markdown(text: &str, chunk_size: usize, overlap: usize) -> Vec<Chun
             break;
         }
 
-        // Advance by (chunk_lines - overlap_lines), at least 1.
-        let _chunk_lines = end - start;
-        let mut new_start = end.saturating_sub(overlap);
+        // Walk backward from `end`, accumulating tokens until we reach `overlap`.
+        let mut overlap_tokens = 0;
+        let mut new_start = end;
+        while new_start > start && overlap_tokens < overlap {
+            new_start -= 1;
+            overlap_tokens += line_tokens[new_start];
+        }
+
+        // Ensure progress.
         if new_start <= start {
             new_start = start + 1;
         }
@@ -111,5 +129,27 @@ mod tests {
     #[test]
     fn test_zero_chunk_size() {
         assert!(chunk_markdown("hello", 0, 0).is_empty());
+    }
+
+    #[test]
+    fn test_overlap_stride_is_token_based_not_line_based() {
+        // Regression: overlap is in tokens, not lines. Default config is 200-word
+        // chunks with 40-word overlap. A 1000-line file at ~10 words/line should
+        // produce ~63 chunks, not ~1000 (O(N) line-by-line advance).
+        let lines: Vec<String> = (0..1_000)
+            .map(|i| format!("line {} has several words in it here now ok", i))
+            .collect();
+        let text = lines.join("\n");
+
+        let chunks = chunk_markdown(&text, 200, 40);
+        // Each line is ~10 tokens. 200/10 = 20 lines per chunk.
+        // Expected: ~1000/20 = ~50 chunks (with overlap slightly more).
+        // Upper bound: must not be O(N) — the old bug produced ~1000 chunks.
+        assert!(
+            chunks.len() < 200,
+            "expected ~50 chunks for 1000 lines at 200-token/40-overlap, got {}",
+            chunks.len()
+        );
+        assert!(chunks.len() > 20, "expected at least 20 chunks, got {}", chunks.len());
     }
 }
