@@ -136,21 +136,29 @@ async fn build_webauthn_registry(
 
     // Derive RP ID and origin from server.external_url / MOLTIS_EXTERNAL_URL
     // when available, before falling back to fine-grained env vars.
-    let (external_rp_id, external_origin) =
-        if let Some(ref ext_url) = config.server.effective_external_url() {
-            match url::Url::parse(ext_url) {
-                Ok(parsed) => {
-                    let host = parsed.host_str().unwrap_or_default().to_string();
-                    (Some(host), Some(ext_url.clone()))
-                },
-                Err(e) => {
-                    warn!("invalid server.external_url '{ext_url}': {e}");
+    let (external_rp_id, external_origin) = if let Some(ref ext_url) =
+        config.server.effective_external_url()
+    {
+        match url::Url::parse(ext_url) {
+            Ok(parsed) => {
+                let host = parsed.host_str().unwrap_or_default().to_string();
+                if host.is_empty() {
+                    warn!(
+                        "server.external_url '{ext_url}' parsed successfully but has no hostname; ignoring"
+                    );
                     (None, None)
-                },
-            }
-        } else {
-            (None, None)
-        };
+                } else {
+                    (Some(host), Some(ext_url.clone()))
+                }
+            },
+            Err(e) => {
+                warn!("invalid server.external_url '{ext_url}': {e}");
+                (None, None)
+            },
+        }
+    } else {
+        (None, None)
+    };
 
     let explicit_rp_id = external_rp_id
         .or_else(|| std::env::var("MOLTIS_WEBAUTHN_RP_ID").ok())

@@ -102,10 +102,16 @@ impl ServerConfig {
     /// slashes are stripped so the result can be used directly as a
     /// WebAuthn origin.
     pub fn effective_external_url(&self) -> Option<String> {
-        let raw = std::env::var("MOLTIS_EXTERNAL_URL")
+        let env_val = std::env::var("MOLTIS_EXTERNAL_URL")
             .ok()
-            .filter(|v| !v.is_empty())
-            .or_else(|| self.external_url.clone())?;
+            .filter(|v| !v.is_empty());
+        Self::resolve_external_url(env_val.as_deref(), self.external_url.as_deref())
+    }
+
+    /// Pure helper for [`effective_external_url`] — exposed for testing
+    /// without mutating process env vars.
+    pub fn resolve_external_url(env_val: Option<&str>, config_val: Option<&str>) -> Option<String> {
+        let raw = env_val.or(config_val)?;
         Some(raw.trim_end_matches('/').to_string())
     }
 }
