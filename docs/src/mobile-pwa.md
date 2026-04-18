@@ -133,12 +133,6 @@ Push notifications are controlled by the `push-notifications` feature flag, whic
 cargo build --no-default-features --features lightweight
 ```
 
-Or selectively exclude it while keeping other defaults:
-
-```bash
-cargo build --no-default-features --features web-ui,tls,push-notifications=false
-```
-
 ### Data Storage
 
 Push notification data is stored in `push.json` in the data directory:

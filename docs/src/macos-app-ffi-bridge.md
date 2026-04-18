@@ -135,9 +135,11 @@ The bridge is already functional for core flows (version, chat, streaming, provi
 | Function | Purpose |
 |----------|---------|
 | `moltis_version` | Get gateway version |
+| `moltis_get_identity` | Get gateway identity info |
 | `moltis_shutdown` | Graceful shutdown |
 | `moltis_chat_json` | Send chat message |
 | `moltis_abort_session` | Abort active chat |
+| `moltis_peek_session` | Peek at active session state |
 | `moltis_detect_providers` | Probe for local/cloud providers |
 | `moltis_known_providers` | List configured providers |
 | `moltis_list_models` | List available models |
@@ -145,6 +147,7 @@ The bridge is already functional for core flows (version, chat, streaming, provi
 | `moltis_save_provider_config` | Save provider settings |
 | `moltis_start_httpd` | Start embedded HTTP server |
 | `moltis_stop_httpd` | Stop embedded HTTP server |
+| `moltis_httpd_status` | Get HTTP server status |
 | `moltis_httpd_status` | Query HTTP server state |
 | `moltis_peek_session` | Peek at session context |
 
@@ -184,7 +187,6 @@ The bridge is already functional for core flows (version, chat, streaming, provi
 | `moltis_auth_password_change` | Change password |
 | `moltis_auth_reset` | Reset auth |
 | `moltis_auth_list_passkeys` | List passkeys |
-| `moltis_auth_add_passkey` | Add passkey |
 | `moltis_auth_remove_passkey` | Remove passkey |
 | `moltis_auth_rename_passkey` | Rename passkey |
 
