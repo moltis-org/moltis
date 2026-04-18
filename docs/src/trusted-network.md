@@ -60,11 +60,12 @@ trusted_domains = [
 | *(empty / default)* | Uses legacy `no_network` flag | Backward compatible |
 | `blocked` | No network at all | Maximum isolation |
 | `trusted` | Proxy-filtered by domain allowlist | Development tasks |
-| `open` | Unrestricted network | Fully trusted workloads |
+| `bypass` | Unrestricted network, no audit logging | Fully trusted workloads |
 
-```admonish warning title="open mode"
-`network = "open"` disables all network filtering. Only use this when you
-fully trust the LLM output or are running on a throw-away machine.
+```admonish warning title="bypass mode"
+`network = "bypass"` disables all network filtering and audit logging.
+Only use this when you fully trust the LLM output or are running on a
+throw-away machine.
 ```
 
 ### Domain patterns
@@ -111,11 +112,18 @@ accessible from:
 | Field | Description |
 |-------|-------------|
 | `timestamp` | ISO 8601 timestamp (RFC 3339) |
+| `session` | Peer session identifier (socket address) |
 | `domain` | Target domain name |
 | `port` | Target port number |
-| `protocol` | `https`, `http`, or `connect` |
-| `action` | `allowed` or `denied` |
-| `source` | Why the decision was made (`config_allowlist`, `session`, etc.) |
+| `protocol` | `http_connect` (CONNECT tunnel) or `http_forward` |
+| `action` | `allowed`, `denied`, `approved_by_user`, or `timeout` |
+| `method` | HTTP method (e.g. `GET`, `POST`) — `null` for CONNECT |
+| `url` | Full URL for HTTP forwards — `null` for CONNECT |
+| `status` | HTTP response status — `null` for CONNECT |
+| `bytes_sent` | Bytes from client to upstream |
+| `bytes_received` | Bytes from upstream to client |
+| `duration_ms` | Connection duration in milliseconds |
+| `approval_source` | `config`, `session`, or `user_prompt` |
 
 ### Filtering the audit log
 
@@ -149,8 +157,8 @@ The RPC methods accept the same filter parameters:
   "allowed": 812,
   "denied": 35,
   "by_domain": [
-    { "domain": "registry.npmjs.org", "count": 423 },
-    { "domain": "github.com", "count": 312 }
+    ["registry.npmjs.org", 423],
+    ["github.com", 312]
   ]
 }
 ```
