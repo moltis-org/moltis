@@ -274,7 +274,7 @@ export function ShareLinkDialog(): VNode | null {
 	async function copyLink(): Promise<void> {
 		try {
 			if (navigator.clipboard?.writeText) {
-				await navigator.clipboard.writeText(s?.url);
+				await navigator.clipboard.writeText(s?.url ?? "");
 				showToast(t("chat:share.linkCopied"), "success");
 				close("copied");
 				return;

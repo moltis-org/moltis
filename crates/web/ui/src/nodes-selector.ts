@@ -181,6 +181,7 @@ export function bindNodeComboEvents(): void {
 
 	S.nodeDropdown?.addEventListener("keydown", (e: KeyboardEvent) => {
 		const items = S.nodeDropdownList?.querySelectorAll<HTMLElement>(".model-dropdown-item");
+		if (!items) return;
 		if (e.key === "ArrowDown") {
 			e.preventDefault();
 			nodeIdx = Math.min(nodeIdx + 1, items.length - 1);

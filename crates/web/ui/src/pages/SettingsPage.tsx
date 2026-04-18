@@ -418,10 +418,11 @@ function groupToolsForOverview(tools: ToolEntry[]): ToolGroup[] {
 		.filter((label) => grouped.has(label))
 		.map((label) => ({
 			label,
-			tools: grouped
-				.get(label)
-				?.slice()
-				.sort((left, right) => String(left?.name || "").localeCompare(String(right?.name || ""))),
+			tools:
+				grouped
+					.get(label)
+					?.slice()
+					.sort((left, right) => String(left?.name || "").localeCompare(String(right?.name || ""))) ?? [],
 		}));
 }
 
@@ -1302,8 +1303,8 @@ function SecuritySection(): VNode {
 					if (typeof d?.has_password === "boolean") setHasPassword(d.has_password);
 					if (typeof d?.has_passkeys === "boolean") setHasPasskeys(d.has_passkeys);
 					if (typeof d?.setup_complete === "boolean") setSetupComplete(d.setup_complete);
-					if (Array.isArray(d?.passkey_origins)) setPasskeyOrigins(d?.passkey_origins!);
-					if (Array.isArray(d?.passkey_host_update_hosts)) setPasskeyHostUpdateHosts(d?.passkey_host_update_hosts!);
+					if (Array.isArray(d?.passkey_origins)) setPasskeyOrigins(d!.passkey_origins);
+					if (Array.isArray(d?.passkey_host_update_hosts)) setPasskeyHostUpdateHosts(d!.passkey_host_update_hosts);
 					setAuthLoading(false);
 					rerender();
 				},

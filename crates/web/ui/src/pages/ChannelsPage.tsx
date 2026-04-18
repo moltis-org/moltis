@@ -779,7 +779,7 @@ function renderSenderRow(s: SenderEntry, onAction: (identifier: string, action: 
 			className="provider-item-badge cursor-pointer select-none"
 			style={{ background: "var(--warning-bg, #fef3c7)", color: "var(--warning-text, #92400e)" }}
 			onClick={() => {
-				navigator.clipboard.writeText(s.otp_pending?.code).then(() => showToast("OTP code copied"));
+				navigator.clipboard.writeText(s.otp_pending?.code ?? "").then(() => showToast("OTP code copied"));
 			}}
 		>
 			OTP: <code className="text-xs">{s.otp_pending.code}</code>
