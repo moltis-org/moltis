@@ -1,9 +1,9 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["chunks/index.js","chunks/theme.js","chunks/open-modal.js","chunks/jsxRuntime.module.js","chunks/branding.js","chunks/voice-utils.js","chunks/time-format.js"])))=>i.map(i=>d[i]);
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["chunks/index.js","chunks/theme.js","chunks/open-modal.js","chunks/ws-connect.js","chunks/branding.js","chunks/voice-utils.js","chunks/time-format.js"])))=>i.map(i=>d[i]);
 var _a, _b;
-import { u } from "./chunks/jsxRuntime.module.js";
-import { _ as __vitePreload, s as setUnseenErrors, a as setUnseenWarns, u as unseenErrors, b as unseenWarns, c as connected, d as sendRpc, $, e as sessionTokens, f as formatTokens$1, g as chatMsgBox, h as updateCountdown, p as parseErrorMessage, i as chatInput, j as commandModeEnabled, k as sessionExecPromptSymbol, l as chatBatchLoading, m as sessionContextWindow, n as sessionToolsEnabled, o as sessionExecMode, q as sessionCurrentInputTokens, r as sessionStore, t as sessions, v as activeSessionKey, w as lastHistoryIndex, x as setLastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeComboBtn, U as nodeDropdownList, V as nodeCombo, W as nodeDropdown, X as nodeComboLabel, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as j, a7 as setSessionSandboxEnabled, a8 as hostExecIsRoot, a9 as sandboxLabel, aa as sandboxToggleBtn, ab as sessionSandboxEnabled, ac as setSessionSandboxImage, ad as sandboxImageLabel, ae as sandboxInfo, af as sandboxImageDropdown, ag as sandboxImageBtn, ah as sessionSandboxImage, ai as projectStore, aj as setSessions, ak as insertSessionInOrder, al as Session, am as chatSeq, an as setSelectedModelId, ao as modelComboLabel, ap as setSessionSwitchInProgress, aq as setStreamEl, ar as setStreamText, as as setLastToolOutput, at as setVoicePending, au as setActiveSessionKey, av as y$1, aw as d, ax as A, ay as S, az as projectFilterId, aA as getById$1, aB as q, aC as warmAudioPlayback, aD as selectedModelId, aE as formatBytes$3, aF as setCommandModeEnabled, aG as chatHistory, aH as chatHistoryIdx, aI as setChatHistoryDraft, aJ as setChatHistoryIdx, aK as chatHistoryDraft, aL as setChatHistory, aM as R, aN as setChatMsgBox, aO as setChatInput, aP as setChatSendBtn, aQ as setModelCombo, aR as setModelComboBtn, aS as setModelComboLabel, aT as setModelDropdown, aU as setModelSearchInput, aV as setModelDropdownList, aW as setNodeCombo, aX as setNodeComboBtn, aY as setNodeComboLabel, aZ as setNodeDropdown, a_ as setNodeDropdownList, a$ as setSandboxToggleBtn, b0 as setSandboxLabel, b1 as setSandboxImageBtn, b2 as setSandboxImageLabel, b3 as setSandboxImageDropdown, b4 as models, b5 as chatSendBtn, b6 as setModels, b7 as modelComboBtn, b8 as modelSearchInput, b9 as modelDropdownList, ba as modelCombo, bb as modelDropdown, bc as setModelIdx, bd as modelIdx, be as REASONING_SEP, bf as setProjects, bg as setProjectFilterId, bh as models$1, bi as useSignal, bj as connected$1, bk as setCachedChannels, bl as setRefreshChannelsPage, bm as cachedChannels, bn as setChannelEventUnsub, bo as channelEventUnsub, bp as streamEl, bq as renderMapPointGroups, br as renderMapLinks, bs as lastToolOutput, bt as localizeStructuredError, bu as voicePending, bv as streamText, bw as setSandboxInfo, bx as networkAuditEventHandler, by as refreshProvidersPage, bz as logsEventHandler, bA as setSubscribed, bB as modelVersionScore, bC as projects$1, bD as sandboxInfo$1, bE as localizedApiErrorMessage, bF as setLogsEventHandler, bG as setNetworkAuditEventHandler, bH as setRefreshProvidersPage, bI as setLocale, bJ as esc, bK as projectStore$1, bL as _modelStore, bM as S$1, bN as _sessionStoreModule, bO as _i18n, bP as _helpers, bQ as initTheme, bR as injectMarkdownStyles, bS as init, bT as translateStaticElements, bU as setAll$1, bV as setAll$2, bW as select$1, bX as selectedModelId$1 } from "./chunks/theme.js";
+import { u, f as forceReconnect, c as connectWs, s as subscribeEvents, _ as _wsConnect } from "./chunks/ws-connect.js";
+import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as commandModeEnabled, e as sessionExecPromptSymbol, g as chatBatchLoading, h as sessionContextWindow, i as sessionToolsEnabled, j as sessionExecMode, k as sessionCurrentInputTokens, _ as __vitePreload, l as setUnseenErrors, m as setUnseenWarns, n as unseenErrors, o as unseenWarns, q as connected, r as sessionStore, t as sessions, v as activeSessionKey, w as lastHistoryIndex, x as setLastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeComboBtn, U as nodeDropdownList, V as nodeCombo, W as nodeDropdown, X as nodeComboLabel, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as j, a7 as setSessionSandboxEnabled, a8 as hostExecIsRoot, a9 as sandboxLabel, aa as sandboxToggleBtn, ab as sessionSandboxEnabled, ac as setSessionSandboxImage, ad as sandboxImageLabel, ae as sandboxInfo, af as sandboxImageDropdown, ag as sandboxImageBtn, ah as sessionSandboxImage, ai as projectStore, aj as setSessions, ak as insertSessionInOrder, al as Session, am as chatSeq, an as setSelectedModelId, ao as modelComboLabel, ap as setSessionSwitchInProgress, aq as setStreamEl, ar as setStreamText, as as setLastToolOutput, at as setVoicePending, au as setActiveSessionKey, av as y$1, aw as d, ax as A, ay as S, az as projectFilterId, aA as getById$1, aB as q, aC as warmAudioPlayback, aD as selectedModelId, aE as formatBytes$3, aF as setCommandModeEnabled, aG as chatHistory, aH as chatHistoryIdx, aI as setChatHistoryDraft, aJ as setChatHistoryIdx, aK as chatHistoryDraft, aL as setChatHistory, aM as R, aN as setChatMsgBox, aO as setChatInput, aP as setChatSendBtn, aQ as setModelCombo, aR as setModelComboBtn, aS as setModelComboLabel, aT as setModelDropdown, aU as setModelSearchInput, aV as setModelDropdownList, aW as setNodeCombo, aX as setNodeComboBtn, aY as setNodeComboLabel, aZ as setNodeDropdown, a_ as setNodeDropdownList, a$ as setSandboxToggleBtn, b0 as setSandboxLabel, b1 as setSandboxImageBtn, b2 as setSandboxImageLabel, b3 as setSandboxImageDropdown, b4 as models, b5 as chatSendBtn, b6 as setModels, b7 as modelComboBtn, b8 as modelSearchInput, b9 as modelDropdownList, ba as modelCombo, bb as modelDropdown, bc as setModelIdx, bd as modelIdx, be as REASONING_SEP, bf as models$1, bg as useSignal, bh as connected$1, bi as setCachedChannels, bj as setRefreshChannelsPage, bk as cachedChannels, bl as setChannelEventUnsub, bm as channelEventUnsub, bn as setProjects, bo as setProjectFilterId, bp as refreshProvidersPage, bq as modelVersionScore, br as streamEl, bs as renderMapPointGroups, bt as renderMapLinks, bu as lastToolOutput, bv as localizeStructuredError, bw as voicePending, bx as streamText, by as setSandboxInfo, bz as networkAuditEventHandler, bA as logsEventHandler, bB as setSubscribed, bC as projects$1, bD as sandboxInfo$1, bE as localizedApiErrorMessage, bF as setLogsEventHandler, bG as setNetworkAuditEventHandler, bH as setRefreshProvidersPage, bI as setLocale, bJ as esc, bK as projectStore$1, bL as _modelStore, bM as S$1, bN as _sessionStoreModule, bO as _i18n, bP as _helpers, bQ as initTheme, bR as injectMarkdownStyles, bS as init, bT as translateStaticElements, bU as setAll$1, bV as setAll$2, bW as select$1, bX as selectedModelId$1 } from "./chunks/theme.js";
 import { f as formatPageTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
-import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as buildTeamsEndpoint, r as generateWebhookSecretHex, s as defaultTeamsBaseUrl, u as fetchChannelStatus, w as channelStorageNote, x as forceReconnect, y as connectWs, z as subscribeEvents, A as eventListeners, B as providerApiKeyHelp, D as validateProviderKey, E as completeProviderOAuth, F as startProviderOAuth, G as saveProviderKey, H as testModel, I as isModelServiceNotConfigured, J as isTimeoutError, K as humanizeProbeError, L as refresh, N as EmojiPicker, O as validateIdentityFields, P as updateIdentity, Q as set, R as prepareCreationOptions, S as detectPasskeyName, T as fetchVoiceProviders, U as fetchPhrase, V as testTts, W as decodeBase64Safe, X as transcribeAudio$1, Y as toggleVoiceProvider, Z as saveVoiceKey, _ as saveVoiceSettings, $ as _wsConnect, a0 as gon, a1 as _events } from "./chunks/voice-utils.js";
+import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as buildTeamsEndpoint, s as generateWebhookSecretHex, u as defaultTeamsBaseUrl, w as channelStorageNote, x as providerApiKeyHelp, y as validateProviderKey, z as completeProviderOAuth, A as startProviderOAuth, B as saveProviderKey, D as testModel, E as isModelServiceNotConfigured, F as isTimeoutError, G as humanizeProbeError, H as eventListeners, I as refresh, J as EmojiPicker, K as validateIdentityFields, L as updateIdentity, N as set, O as prepareCreationOptions, P as detectPasskeyName, Q as fetchVoiceProviders, R as fetchPhrase, S as testTts, T as decodeBase64Safe, U as transcribeAudio$1, V as toggleVoiceProvider, W as saveVoiceKey, X as saveVoiceSettings, Y as gon, _ as _events } from "./chunks/voice-utils.js";
 import "./chunks/time-format.js";
 const BYTE_UNITS = [
   "B",
@@ -97,284 +97,6 @@ function prettyBytes(number, options) {
   const numberString = toLocaleString(Number(number), options.locale, localeOptions);
   const unit = UNITS[exponent];
   return prefix + numberString + separator + unit;
-}
-let highlighter = null;
-let highlighterInitPromise = null;
-const languageLoadPromises = /* @__PURE__ */ new Map();
-async function initHighlighter() {
-  if (highlighter) return highlighter;
-  if (highlighterInitPromise) {
-    await highlighterInitPromise;
-    return highlighter;
-  }
-  highlighterInitPromise = (async () => {
-    try {
-      const shiki = await __vitePreload(() => import("./chunks/index.js"), true ? __vite__mapDeps([0,1]) : void 0);
-      highlighter = await shiki.createHighlighter({
-        themes: ["github-dark", "github-light"],
-        langs: []
-      });
-    } catch (err) {
-      console.warn("[shiki] failed to initialize highlighter:", err);
-    }
-  })();
-  await highlighterInitPromise;
-  return highlighter;
-}
-function isReady() {
-  return highlighter !== null;
-}
-async function ensureLanguageLoaded(lang) {
-  if (!(highlighter && lang)) return false;
-  const loadedLangs = highlighter.getLoadedLanguages();
-  if (loadedLangs.includes(lang)) return true;
-  let inFlight = languageLoadPromises.get(lang);
-  if (!inFlight) {
-    inFlight = highlighter.loadLanguage(lang).catch(() => {
-    }).finally(() => {
-      languageLoadPromises.delete(lang);
-    });
-    languageLoadPromises.set(lang, inFlight);
-  }
-  await inFlight;
-  return highlighter.getLoadedLanguages().includes(lang);
-}
-function applyShikiStylesToPre(codeEl, shikiPre) {
-  const parentPre = codeEl.parentElement;
-  if (!(parentPre && parentPre.tagName === "PRE")) return;
-  parentPre.style.cssText = shikiPre.style.cssText;
-}
-function applyShikiMarkupToCode(codeEl, shikiPre) {
-  const shikiCode = shikiPre.querySelector("code");
-  if (!shikiCode) return;
-  codeEl.textContent = "";
-  while (shikiCode.firstChild) {
-    codeEl.appendChild(shikiCode.firstChild);
-  }
-  codeEl.classList.add("shiki");
-  for (const cls of shikiPre.classList) {
-    if (cls !== "shiki") codeEl.classList.add(cls);
-  }
-}
-function parseShikiPre(highlightedHtml) {
-  const temp = document.createElement("div");
-  const range = document.createRange();
-  const fragment = range.createContextualFragment(highlightedHtml);
-  temp.appendChild(fragment);
-  return temp.querySelector("pre.shiki");
-}
-async function highlightCodeElement(codeEl) {
-  if (codeEl.querySelector(".shiki") || codeEl.classList.contains("shiki")) return;
-  const lang = codeEl.getAttribute("data-lang") || "";
-  if (!await ensureLanguageLoaded(lang)) return;
-  const raw = codeEl.textContent || "";
-  try {
-    const highlightedHtml = highlighter == null ? void 0 : highlighter.codeToHtml(raw, {
-      lang,
-      themes: {
-        light: "github-light",
-        dark: "github-dark"
-      }
-    });
-    const shikiPre = parseShikiPre(highlightedHtml ?? "");
-    if (!shikiPre) return;
-    applyShikiStylesToPre(codeEl, shikiPre);
-    applyShikiMarkupToCode(codeEl, shikiPre);
-  } catch (_err) {
-  }
-}
-async function highlightCodeBlocks(containerEl) {
-  if (!containerEl) return;
-  await initHighlighter();
-  if (!highlighter) return;
-  const codeEls = containerEl.querySelectorAll("pre code[data-lang]");
-  for (const codeEl of codeEls) {
-    await highlightCodeElement(codeEl);
-  }
-}
-const _codeHighlight = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
-  __proto__: null,
-  highlightCodeBlocks,
-  initHighlighter,
-  isReady
-}, Symbol.toStringTag, { value: "Module" }));
-function makeTelegramIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-telegram";
-  return el;
-}
-function makeTeamsIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-msteams";
-  return el;
-}
-function makeDiscordIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-discord";
-  return el;
-}
-function makeSlackIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-slack";
-  return el;
-}
-function makeMatrixIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-matrix";
-  return el;
-}
-function makeCronIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-cron";
-  return el;
-}
-function makeBranchIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-branch";
-  return el;
-}
-function makeProjectIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-xs icon-folder";
-  return el;
-}
-function makeChatIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-chat";
-  return el;
-}
-const logsAlertDot = document.getElementById("logsAlertDot");
-function updateLogsAlert() {
-  if (!logsAlertDot) return;
-  if (unseenErrors > 0) {
-    logsAlertDot.style.display = "";
-    logsAlertDot.style.background = "var(--error)";
-  } else if (unseenWarns > 0) {
-    logsAlertDot.style.display = "";
-    logsAlertDot.style.background = "var(--warn)";
-  } else {
-    logsAlertDot.style.display = "none";
-  }
-}
-function clearLogsAlert() {
-  setUnseenErrors(0);
-  setUnseenWarns(0);
-  updateLogsAlert();
-  if (connected) sendRpc("logs.ack", {});
-}
-const r = get("routes") || {};
-const routes = r;
-function settingsPath(id) {
-  return `${r.settings}/${id}`;
-}
-const pages = {};
-const prefixRoutes = [];
-let currentPage = null;
-let currentPrefix = null;
-function sessionPath(key) {
-  return `/chats/${key.replace(/:/g, "/")}`;
-}
-const pageContent = $("pageContent");
-const sessionsPanel$1 = $("sessionsPanel");
-function registerPage(path, init2, teardown) {
-  pages[path] = {
-    init: init2,
-    teardown: teardown || (() => {
-    })
-  };
-}
-function registerPrefix(prefix, init2, teardown) {
-  prefixRoutes.push({
-    prefix,
-    init: init2,
-    teardown: teardown || (() => {
-    })
-  });
-}
-function navigate(path) {
-  if (path === currentPage) return;
-  history.pushState(null, "", path);
-  mount(path);
-}
-function teardownCurrentPage() {
-  if (!currentPage) return;
-  if (pages[currentPage]) {
-    pages[currentPage].teardown();
-  } else if (currentPrefix) {
-    const prevPR = prefixRoutes.find((r2) => r2.prefix === currentPrefix);
-    if (prevPR) prevPR.teardown();
-  }
-}
-function findPageRoute(path) {
-  const page = pages[path];
-  if (page) return { page, matchedPrefix: null, param: null };
-  for (const pr of prefixRoutes) {
-    if (path === pr.prefix || path.indexOf(`${pr.prefix}/`) === 0) {
-      const suffix = path.substring(pr.prefix.length + 1);
-      const param = suffix ? decodeURIComponent(suffix.replace(/\//g, ":")) : null;
-      return { page: pr, matchedPrefix: pr.prefix, param };
-    }
-  }
-  return { page: pages["/"] || null, matchedPrefix: null, param: null };
-}
-function updateNavActiveState(path) {
-  const links = document.querySelectorAll(".nav-link");
-  links.forEach((a) => {
-    const href = a.getAttribute("href");
-    const active = href === path || href !== "/" && href != null && path.indexOf(href) === 0;
-    a.classList.toggle("active", active);
-  });
-  const settingsBtn2 = document.getElementById("settingsBtn");
-  if (settingsBtn2) {
-    const settingsActive = path === routes.settings || routes.settings != null && path.indexOf(`${routes.settings}/`) === 0;
-    settingsBtn2.classList.toggle("active", settingsActive);
-  }
-}
-function mount(path) {
-  const route = findPageRoute(path);
-  const page = route.page;
-  const samePrefixNav = route.matchedPrefix && route.matchedPrefix === currentPrefix;
-  if (!samePrefixNav) {
-    teardownCurrentPage();
-    pageContent.textContent = "";
-    pageContent.style.cssText = "";
-  }
-  currentPage = path;
-  currentPrefix = route.matchedPrefix;
-  updateNavActiveState(path);
-  if (route.matchedPrefix === routes.chats || path === routes.chats) {
-    sessionsPanel$1.classList.remove("hidden");
-  } else {
-    sessionsPanel$1.classList.add("hidden");
-  }
-  if (path === "/logs" || path === routes.logs) clearLogsAlert();
-  if (page) page.init(pageContent, route.param);
-}
-window.addEventListener("popstate", () => {
-  mount(location.pathname);
-});
-const burgerBtn$1 = $("burgerBtn");
-const navPanel$1 = $("navPanel");
-if (burgerBtn$1 && navPanel$1) {
-  burgerBtn$1.addEventListener("click", () => {
-    navPanel$1.classList.toggle("hidden");
-  });
-}
-if (navPanel$1) {
-  navPanel$1.addEventListener("click", (e) => {
-    const link = e.target.closest("[data-nav]");
-    if (!link) return;
-    e.preventDefault();
-    const href = link.getAttribute("href");
-    if (href) navigate(href);
-  });
-}
-const titleLink = document.getElementById("titleLink");
-if (titleLink) {
-  titleLink.addEventListener("click", (e) => {
-    e.preventDefault();
-    navigate(routes.chats || "/chats");
-  });
 }
 function clearChatEmptyState$1() {
   if (!chatMsgBox) return;
@@ -700,6 +422,284 @@ const _chatUi = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.definePrope
   updateCommandInputUI,
   updateTokenBar
 }, Symbol.toStringTag, { value: "Module" }));
+let highlighter = null;
+let highlighterInitPromise = null;
+const languageLoadPromises = /* @__PURE__ */ new Map();
+async function initHighlighter() {
+  if (highlighter) return highlighter;
+  if (highlighterInitPromise) {
+    await highlighterInitPromise;
+    return highlighter;
+  }
+  highlighterInitPromise = (async () => {
+    try {
+      const shiki = await __vitePreload(() => import("./chunks/index.js"), true ? __vite__mapDeps([0,1]) : void 0);
+      highlighter = await shiki.createHighlighter({
+        themes: ["github-dark", "github-light"],
+        langs: []
+      });
+    } catch (err) {
+      console.warn("[shiki] failed to initialize highlighter:", err);
+    }
+  })();
+  await highlighterInitPromise;
+  return highlighter;
+}
+function isReady() {
+  return highlighter !== null;
+}
+async function ensureLanguageLoaded(lang) {
+  if (!(highlighter && lang)) return false;
+  const loadedLangs = highlighter.getLoadedLanguages();
+  if (loadedLangs.includes(lang)) return true;
+  let inFlight = languageLoadPromises.get(lang);
+  if (!inFlight) {
+    inFlight = highlighter.loadLanguage(lang).catch(() => {
+    }).finally(() => {
+      languageLoadPromises.delete(lang);
+    });
+    languageLoadPromises.set(lang, inFlight);
+  }
+  await inFlight;
+  return highlighter.getLoadedLanguages().includes(lang);
+}
+function applyShikiStylesToPre(codeEl, shikiPre) {
+  const parentPre = codeEl.parentElement;
+  if (!(parentPre && parentPre.tagName === "PRE")) return;
+  parentPre.style.cssText = shikiPre.style.cssText;
+}
+function applyShikiMarkupToCode(codeEl, shikiPre) {
+  const shikiCode = shikiPre.querySelector("code");
+  if (!shikiCode) return;
+  codeEl.textContent = "";
+  while (shikiCode.firstChild) {
+    codeEl.appendChild(shikiCode.firstChild);
+  }
+  codeEl.classList.add("shiki");
+  for (const cls of shikiPre.classList) {
+    if (cls !== "shiki") codeEl.classList.add(cls);
+  }
+}
+function parseShikiPre(highlightedHtml) {
+  const temp = document.createElement("div");
+  const range = document.createRange();
+  const fragment = range.createContextualFragment(highlightedHtml);
+  temp.appendChild(fragment);
+  return temp.querySelector("pre.shiki");
+}
+async function highlightCodeElement(codeEl) {
+  if (codeEl.querySelector(".shiki") || codeEl.classList.contains("shiki")) return;
+  const lang = codeEl.getAttribute("data-lang") || "";
+  if (!await ensureLanguageLoaded(lang)) return;
+  const raw = codeEl.textContent || "";
+  try {
+    const highlightedHtml = highlighter == null ? void 0 : highlighter.codeToHtml(raw, {
+      lang,
+      themes: {
+        light: "github-light",
+        dark: "github-dark"
+      }
+    });
+    const shikiPre = parseShikiPre(highlightedHtml ?? "");
+    if (!shikiPre) return;
+    applyShikiStylesToPre(codeEl, shikiPre);
+    applyShikiMarkupToCode(codeEl, shikiPre);
+  } catch (_err) {
+  }
+}
+async function highlightCodeBlocks(containerEl) {
+  if (!containerEl) return;
+  await initHighlighter();
+  if (!highlighter) return;
+  const codeEls = containerEl.querySelectorAll("pre code[data-lang]");
+  for (const codeEl of codeEls) {
+    await highlightCodeElement(codeEl);
+  }
+}
+const _codeHighlight = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  highlightCodeBlocks,
+  initHighlighter,
+  isReady
+}, Symbol.toStringTag, { value: "Module" }));
+function makeTelegramIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-telegram";
+  return el;
+}
+function makeTeamsIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-msteams";
+  return el;
+}
+function makeDiscordIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-discord";
+  return el;
+}
+function makeSlackIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-slack";
+  return el;
+}
+function makeMatrixIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-matrix";
+  return el;
+}
+function makeCronIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-cron";
+  return el;
+}
+function makeBranchIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-branch";
+  return el;
+}
+function makeProjectIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-xs icon-folder";
+  return el;
+}
+function makeChatIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-chat";
+  return el;
+}
+const logsAlertDot = document.getElementById("logsAlertDot");
+function updateLogsAlert() {
+  if (!logsAlertDot) return;
+  if (unseenErrors > 0) {
+    logsAlertDot.style.display = "";
+    logsAlertDot.style.background = "var(--error)";
+  } else if (unseenWarns > 0) {
+    logsAlertDot.style.display = "";
+    logsAlertDot.style.background = "var(--warn)";
+  } else {
+    logsAlertDot.style.display = "none";
+  }
+}
+function clearLogsAlert() {
+  setUnseenErrors(0);
+  setUnseenWarns(0);
+  updateLogsAlert();
+  if (connected) sendRpc("logs.ack", {});
+}
+const r = get("routes") || {};
+const routes = r;
+function settingsPath(id) {
+  return `${r.settings}/${id}`;
+}
+const pages = {};
+const prefixRoutes = [];
+let currentPage = null;
+let currentPrefix = null;
+function sessionPath(key) {
+  return `/chats/${key.replace(/:/g, "/")}`;
+}
+const pageContent = $("pageContent");
+const sessionsPanel$1 = $("sessionsPanel");
+function registerPage(path, init2, teardown) {
+  pages[path] = {
+    init: init2,
+    teardown: teardown || (() => {
+    })
+  };
+}
+function registerPrefix(prefix, init2, teardown) {
+  prefixRoutes.push({
+    prefix,
+    init: init2,
+    teardown: teardown || (() => {
+    })
+  });
+}
+function navigate(path) {
+  if (path === currentPage) return;
+  history.pushState(null, "", path);
+  mount(path);
+}
+function teardownCurrentPage() {
+  if (!currentPage) return;
+  if (pages[currentPage]) {
+    pages[currentPage].teardown();
+  } else if (currentPrefix) {
+    const prevPR = prefixRoutes.find((r2) => r2.prefix === currentPrefix);
+    if (prevPR) prevPR.teardown();
+  }
+}
+function findPageRoute(path) {
+  const page = pages[path];
+  if (page) return { page, matchedPrefix: null, param: null };
+  for (const pr of prefixRoutes) {
+    if (path === pr.prefix || path.indexOf(`${pr.prefix}/`) === 0) {
+      const suffix = path.substring(pr.prefix.length + 1);
+      const param = suffix ? decodeURIComponent(suffix.replace(/\//g, ":")) : null;
+      return { page: pr, matchedPrefix: pr.prefix, param };
+    }
+  }
+  return { page: pages["/"] || null, matchedPrefix: null, param: null };
+}
+function updateNavActiveState(path) {
+  const links = document.querySelectorAll(".nav-link");
+  links.forEach((a) => {
+    const href = a.getAttribute("href");
+    const active = href === path || href !== "/" && href != null && path.indexOf(href) === 0;
+    a.classList.toggle("active", active);
+  });
+  const settingsBtn2 = document.getElementById("settingsBtn");
+  if (settingsBtn2) {
+    const settingsActive = path === routes.settings || routes.settings != null && path.indexOf(`${routes.settings}/`) === 0;
+    settingsBtn2.classList.toggle("active", settingsActive);
+  }
+}
+function mount(path) {
+  const route = findPageRoute(path);
+  const page = route.page;
+  const samePrefixNav = route.matchedPrefix && route.matchedPrefix === currentPrefix;
+  if (!samePrefixNav) {
+    teardownCurrentPage();
+    pageContent.textContent = "";
+    pageContent.style.cssText = "";
+  }
+  currentPage = path;
+  currentPrefix = route.matchedPrefix;
+  updateNavActiveState(path);
+  if (route.matchedPrefix === routes.chats || path === routes.chats) {
+    sessionsPanel$1.classList.remove("hidden");
+  } else {
+    sessionsPanel$1.classList.add("hidden");
+  }
+  if (path === "/logs" || path === routes.logs) clearLogsAlert();
+  if (page) page.init(pageContent, route.param);
+}
+window.addEventListener("popstate", () => {
+  mount(location.pathname);
+});
+const burgerBtn$1 = $("burgerBtn");
+const navPanel$1 = $("navPanel");
+if (burgerBtn$1 && navPanel$1) {
+  burgerBtn$1.addEventListener("click", () => {
+    navPanel$1.classList.toggle("hidden");
+  });
+}
+if (navPanel$1) {
+  navPanel$1.addEventListener("click", (e) => {
+    const link = e.target.closest("[data-nav]");
+    if (!link) return;
+    e.preventDefault();
+    const href = link.getAttribute("href");
+    if (href) navigate(href);
+  });
+}
+const titleLink = document.getElementById("titleLink");
+if (titleLink) {
+  titleLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    navigate(routes.chats || "/chats");
+  });
+}
 const historyByKey = /* @__PURE__ */ new Map();
 const revisionByKey = /* @__PURE__ */ new Map();
 const bytesByKey = /* @__PURE__ */ new Map();
@@ -6335,390 +6335,6 @@ function updateNavCounts(counts) {
 }
 updateNavCounts(get("counts"));
 onChange("counts", updateNavCounts);
-const combo = $("projectFilterCombo");
-const btn = $("projectFilterBtn");
-const label = $("projectFilterLabel");
-const dropdown = $("projectFilterDropdown");
-const list = $("projectFilterList");
-const searchInput$1 = $("projectFilterSearch");
-let kbIdx = -1;
-function fetchProjects() {
-  projectStore.fetch().then(() => {
-    const projects2 = projectStore.projects.value;
-    setProjects(projects2);
-    renderProjectSelect();
-    renderSessionProjectSelect();
-    updateNavCount("projects", projects2.length);
-  });
-}
-function selectFilter(id) {
-  projectStore.setFilterId(id);
-  setProjectFilterId(id);
-  const p = projectStore.getById(id);
-  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
-  closeDropdown();
-  document.dispatchEvent(new CustomEvent("moltis:render-session-list"));
-}
-function closeDropdown() {
-  dropdown.classList.add("hidden");
-  if (searchInput$1) searchInput$1.value = "";
-  kbIdx = -1;
-}
-function openDropdown() {
-  dropdown.classList.remove("hidden");
-  kbIdx = -1;
-  renderList("");
-  requestAnimationFrame(() => {
-    if (searchInput$1) searchInput$1.focus();
-  });
-}
-function renderList(query2) {
-  list.textContent = "";
-  const q2 = (query2 || "").toLowerCase();
-  const filterId = projectStore.projectFilterId.value;
-  const allProjects = projectStore.projects.value;
-  const allSessionsLabel = t("common:sessions.allSessions");
-  if (!q2 || allSessionsLabel.toLowerCase().indexOf(q2) !== -1) {
-    const allEl = document.createElement("div");
-    allEl.className = "model-dropdown-item";
-    if (!filterId) allEl.classList.add("selected");
-    const allLabel = document.createElement("span");
-    allLabel.className = "model-item-label";
-    allLabel.textContent = allSessionsLabel;
-    allEl.appendChild(allLabel);
-    allEl.addEventListener("click", () => selectFilter(""));
-    list.appendChild(allEl);
-  }
-  const filtered = allProjects.filter((p) => {
-    if (!q2) return true;
-    const name = (p.label || p.id).toLowerCase();
-    return name.indexOf(q2) !== -1 || p.id.toLowerCase().indexOf(q2) !== -1;
-  });
-  filtered.forEach((p) => {
-    const el = document.createElement("div");
-    el.className = "model-dropdown-item";
-    if (p.id === filterId) el.classList.add("selected");
-    const itemLabel = document.createElement("span");
-    itemLabel.className = "model-item-label";
-    itemLabel.textContent = p.label || p.id;
-    el.appendChild(itemLabel);
-    el.addEventListener("click", () => selectFilter(p.id));
-    list.appendChild(el);
-  });
-  if (list.children.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "model-dropdown-empty";
-    empty.textContent = t("common:sessions.noMatchingProjects");
-    list.appendChild(empty);
-  }
-}
-function updateKbActive() {
-  const items = list.querySelectorAll(".model-dropdown-item");
-  items.forEach((el, i) => {
-    el.classList.toggle("kb-active", i === kbIdx);
-  });
-  if (kbIdx >= 0 && items[kbIdx]) {
-    items[kbIdx].scrollIntoView({ block: "nearest" });
-  }
-}
-function renderProjectSelect() {
-  const wrapper = $("projectSelectWrapper");
-  const allProjects = projectStore.projects.value;
-  const filterId = projectStore.projectFilterId.value;
-  if (allProjects.length === 0) {
-    if (wrapper) wrapper.classList.add("hidden");
-    if (filterId) {
-      projectStore.setFilterId("");
-      setProjectFilterId("");
-    }
-    label.textContent = t("common:sessions.allSessions");
-    return;
-  }
-  if (wrapper) wrapper.classList.remove("hidden");
-  const p = projectStore.getById(filterId);
-  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
-}
-btn.addEventListener("click", () => {
-  if (dropdown.classList.contains("hidden")) {
-    openDropdown();
-  } else {
-    closeDropdown();
-  }
-});
-if (searchInput$1) {
-  searchInput$1.addEventListener("input", () => {
-    kbIdx = -1;
-    renderList(searchInput$1.value.trim());
-  });
-  searchInput$1.addEventListener("keydown", (e) => {
-    const items = list.querySelectorAll(".model-dropdown-item");
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      kbIdx = Math.min(kbIdx + 1, items.length - 1);
-      updateKbActive();
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      kbIdx = Math.max(kbIdx - 1, 0);
-      updateKbActive();
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (kbIdx >= 0 && items[kbIdx]) {
-        items[kbIdx].click();
-      } else if (items.length === 1) {
-        items[0].click();
-      }
-    } else if (e.key === "Escape") {
-      closeDropdown();
-      btn.focus();
-    }
-  });
-}
-document.addEventListener("click", (e) => {
-  if (combo && !combo.contains(e.target)) {
-    closeDropdown();
-  }
-});
-window.addEventListener("moltis:locale-changed", () => {
-  renderProjectSelect();
-  if (!dropdown.classList.contains("hidden")) {
-    const query2 = searchInput$1 ? searchInput$1.value.trim() : "";
-    renderList(query2);
-  }
-});
-let deferredInstallPrompt = null;
-let swRegistration = null;
-function isStandalone() {
-  return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true || document.referrer.includes("android-app://");
-}
-function isIOS() {
-  return /iPhone|iPad|iPod/.test(navigator.userAgent);
-}
-function isAndroid() {
-  return /Android/.test(navigator.userAgent);
-}
-function syncStandaloneClass() {
-  document.documentElement.classList.toggle("pwa-standalone", isStandalone());
-}
-async function registerServiceWorker() {
-  if (!("serviceWorker" in navigator)) {
-    console.log("Service workers not supported");
-    return null;
-  }
-  try {
-    swRegistration = await navigator.serviceWorker.register("/sw.js", {
-      scope: "/"
-    });
-    console.log("Service worker registered:", swRegistration.scope);
-    swRegistration.addEventListener("updatefound", () => {
-      const newWorker = swRegistration == null ? void 0 : swRegistration.installing;
-      if (newWorker) {
-        newWorker.addEventListener("statechange", () => {
-          if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-            dispatchUpdateAvailable();
-          }
-        });
-      }
-    });
-    return swRegistration;
-  } catch (error2) {
-    console.error("Service worker registration failed:", error2);
-    return null;
-  }
-}
-function dispatchUpdateAvailable() {
-  window.dispatchEvent(new CustomEvent("sw-update-available"));
-}
-function setupInstallPrompt(callback) {
-  window.addEventListener("beforeinstallprompt", ((e) => {
-    e.preventDefault();
-    deferredInstallPrompt = e;
-    if (callback) callback(e);
-  }));
-  window.addEventListener("appinstalled", () => {
-    deferredInstallPrompt = null;
-    console.log("PWA installed");
-  });
-}
-async function promptInstall() {
-  if (!deferredInstallPrompt) {
-    return { outcome: "not-available" };
-  }
-  deferredInstallPrompt.prompt();
-  const result = await deferredInstallPrompt.userChoice;
-  deferredInstallPrompt = null;
-  return result;
-}
-function canPromptInstall() {
-  return deferredInstallPrompt !== null;
-}
-function setupNotificationHandler(callback) {
-  var _a2;
-  (_a2 = navigator.serviceWorker) == null ? void 0 : _a2.addEventListener("message", (event) => {
-    if (event.data && event.data.type === "notification-click" && callback) callback(event.data.url);
-  });
-}
-function initPWA() {
-  var _a2, _b2;
-  syncStandaloneClass();
-  const hadControllerBeforeInit = Boolean((_a2 = navigator.serviceWorker) == null ? void 0 : _a2.controller);
-  registerServiceWorker();
-  setupNotificationHandler((url) => {
-    if (url && url !== window.location.pathname) {
-      window.location.href = url;
-    }
-  });
-  (_b2 = navigator.serviceWorker) == null ? void 0 : _b2.addEventListener("controllerchange", () => {
-    if (!hadControllerBeforeInit) {
-      return;
-    }
-    if (window.location.pathname === "/onboarding") {
-      return;
-    }
-    window.location.reload();
-  });
-}
-const DISMISS_KEY = "pwa-install-dismissed";
-const DISMISS_DAYS = 7;
-function isDismissed() {
-  const dismissed = localStorage.getItem(DISMISS_KEY);
-  if (!dismissed) return false;
-  const ts = parseInt(dismissed, 10);
-  const days2 = (Date.now() - ts) / (1e3 * 60 * 60 * 24);
-  return days2 < DISMISS_DAYS;
-}
-function dismiss() {
-  localStorage.setItem(DISMISS_KEY, Date.now().toString());
-  hideBanner();
-}
-function getBanner() {
-  return document.getElementById("installBanner");
-}
-function showBanner() {
-  const banner = getBanner();
-  if (banner) {
-    banner.classList.remove("hidden");
-    banner.classList.add("flex");
-  }
-}
-function hideBanner() {
-  const banner = getBanner();
-  if (banner) {
-    banner.classList.add("hidden");
-    banner.classList.remove("flex");
-  }
-}
-function isIOSSafari() {
-  const ua = navigator.userAgent;
-  return isIOS() && /Safari/.test(ua) && !/CriOS|FxiOS|OPiOS|EdgiOS/.test(ua);
-}
-function createShareIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-share inline-block text-[var(--accent)]";
-  return el;
-}
-function createMenuIcon() {
-  const el = document.createElement("span");
-  el.className = "icon icon-menu-dots inline-block text-[var(--accent)]";
-  return el;
-}
-function renderIOSInstructions(container) {
-  while (container.firstChild) container.removeChild(container.firstChild);
-  const title = document.createElement("p");
-  title.className = "text-sm font-medium text-[var(--text-strong)] mb-2";
-  title.textContent = t("pwa:install.title");
-  container.appendChild(title);
-  const steps = document.createElement("ol");
-  steps.className = "text-xs text-[var(--text)] space-y-1.5 list-decimal list-inside";
-  const step1 = document.createElement("li");
-  step1.className = "flex items-center gap-1.5";
-  step1.appendChild(document.createTextNode(t("pwa:ios.step1")));
-  const strong1 = document.createElement("strong");
-  strong1.textContent = t("pwa:ios.step1Button");
-  step1.appendChild(strong1);
-  step1.appendChild(document.createTextNode(t("pwa:ios.step1After")));
-  step1.appendChild(createShareIcon());
-  steps.appendChild(step1);
-  const step2 = document.createElement("li");
-  step2.textContent = t("pwa:ios.step2");
-  steps.appendChild(step2);
-  container.appendChild(steps);
-  if (!isIOSSafari()) {
-    const note = document.createElement("p");
-    note.className = "text-xs text-[var(--muted)] mt-2";
-    note.textContent = t("pwa:ios.safariTip");
-    container.appendChild(note);
-  }
-}
-function renderAndroidInstructions(container) {
-  while (container.firstChild) container.removeChild(container.firstChild);
-  const title = document.createElement("p");
-  title.className = "text-sm font-medium text-[var(--text-strong)] mb-2";
-  title.textContent = t("pwa:install.title");
-  container.appendChild(title);
-  const steps = document.createElement("ol");
-  steps.className = "text-xs text-[var(--text)] space-y-1.5 list-decimal list-inside";
-  const step1 = document.createElement("li");
-  step1.className = "flex items-center gap-1.5";
-  step1.appendChild(document.createTextNode(t("pwa:android.step1")));
-  step1.appendChild(createMenuIcon());
-  steps.appendChild(step1);
-  const step2 = document.createElement("li");
-  step2.textContent = t("pwa:android.step2");
-  steps.appendChild(step2);
-  container.appendChild(steps);
-}
-function renderNativePrompt(container) {
-  while (container.firstChild) container.removeChild(container.firstChild);
-  const title = document.createElement("p");
-  title.className = "text-sm font-medium text-[var(--text-strong)]";
-  title.textContent = t("pwa:install.quickAccessTitle");
-  container.appendChild(title);
-  const desc = document.createElement("p");
-  desc.className = "text-xs text-[var(--muted)] mt-1";
-  desc.textContent = t("pwa:install.quickAccessDesc");
-  container.appendChild(desc);
-}
-async function handleInstall() {
-  const result = await promptInstall();
-  if (result.outcome === "accepted") {
-    hideBanner();
-  }
-}
-function initInstallBanner() {
-  if (isStandalone() || isDismissed()) {
-    return;
-  }
-  const banner = getBanner();
-  if (!banner) return;
-  const instructions = banner.querySelector("[data-instructions]");
-  const installBtn = banner.querySelector("[data-install-btn]");
-  const dismissBtn = banner.querySelector("[data-dismiss-btn]");
-  if (!instructions) return;
-  if (dismissBtn) {
-    dismissBtn.addEventListener("click", dismiss);
-  }
-  if (isIOS()) {
-    renderIOSInstructions(instructions);
-    if (installBtn) installBtn.style.display = "none";
-    showBanner();
-  } else if (isAndroid()) {
-    setupInstallPrompt(() => {
-      renderNativePrompt(instructions);
-      if (installBtn) {
-        installBtn.style.display = "";
-        installBtn.addEventListener("click", handleInstall);
-      }
-      showBanner();
-    });
-    setTimeout(() => {
-      if (!(canPromptInstall() || isStandalone())) {
-        renderAndroidInstructions(instructions);
-        if (installBtn) installBtn.style.display = "none";
-        showBanner();
-      }
-    }, 3e3);
-  }
-}
 function AdvancedConfigPatchField({
   value,
   onInput,
@@ -7038,14 +6654,35 @@ function AddMatrixModal() {
   const userAllowlistItems = useSignal([]);
   const roomAllowlistItems = useSignal([]);
   const homeserverDraft = useSignal(MATRIX_DEFAULT_HOMESERVER);
-  const authModeDraft = useSignal("password");
+  const authModeDraft = useSignal("oidc");
   const userIdDraft = useSignal("");
   const credentialDraft = useSignal("");
   const deviceDisplayNameDraft = useSignal("");
   const ownershipModeDraft = useSignal("moltis_owned");
+  const oidcWaiting = useSignal(false);
+  const oidcPollRef = A(null);
   const otpSelfApprovalDraft = useSignal(true);
   const otpCooldownDraft = useSignal("300");
   const advancedConfigPatch = useSignal("");
+  function resetForm() {
+    if (oidcPollRef.current) {
+      clearInterval(oidcPollRef.current);
+      oidcPollRef.current = null;
+    }
+    addModel.value = "";
+    userAllowlistItems.value = [];
+    roomAllowlistItems.value = [];
+    homeserverDraft.value = MATRIX_DEFAULT_HOMESERVER;
+    authModeDraft.value = "oidc";
+    userIdDraft.value = "";
+    credentialDraft.value = "";
+    deviceDisplayNameDraft.value = "";
+    ownershipModeDraft.value = "moltis_owned";
+    otpSelfApprovalDraft.value = true;
+    otpCooldownDraft.value = "300";
+    advancedConfigPatch.value = "";
+    oidcWaiting.value = false;
+  }
   function onSubmit(e) {
     e.preventDefault();
     const form = e.target.closest(".channel-form");
@@ -7073,6 +6710,71 @@ function AddMatrixModal() {
     }
     error2.value = "";
     saving.value = true;
+    if (authMode === "oidc") {
+      const redirectUri = `${window.location.origin}/auth/callback`;
+      const oidcConfig = {
+        homeserver,
+        ownership_mode: normalizeMatrixOwnershipMode(ownershipModeDraft.value),
+        dm_policy: form.querySelector("[data-field=dmPolicy]").value,
+        room_policy: form.querySelector("[data-field=roomPolicy]").value,
+        mention_mode: form.querySelector("[data-field=mentionMode]").value,
+        auto_join: form.querySelector("[data-field=autoJoin]").value,
+        user_allowlist: userAllowlistItems.value,
+        room_allowlist: roomAllowlistItems.value,
+        otp_self_approval: otpSelfApprovalDraft.value,
+        otp_cooldown_secs: normalizeMatrixOtpCooldown(otpCooldownDraft.value)
+      };
+      if (deviceDisplayNameDraft.value.trim()) oidcConfig.device_display_name = deviceDisplayNameDraft.value.trim();
+      if (addModel.value) {
+        oidcConfig.model = addModel.value;
+        const oidcModel = models$1.value.find((x) => x.id === addModel.value);
+        if (oidcModel == null ? void 0 : oidcModel.provider) oidcConfig.model_provider = oidcModel.provider;
+      }
+      Object.assign(oidcConfig, advancedPatch.value);
+      sendRpc("channels.oauth_start", {
+        account_id: accountId,
+        homeserver,
+        redirect_uri: redirectUri,
+        config: oidcConfig
+      }).then((res) => {
+        var _a2, _b2, _c;
+        const r2 = res;
+        if ((r2 == null ? void 0 : r2.ok) && ((_a2 = r2.payload) == null ? void 0 : _a2.auth_url)) {
+          oidcWaiting.value = true;
+          saving.value = false;
+          window.open(r2.payload.auth_url, "_blank", "noopener");
+          let pollCount = 0;
+          oidcPollRef.current = setInterval(() => {
+            pollCount++;
+            if (pollCount > 120) {
+              clearInterval(oidcPollRef.current);
+              oidcPollRef.current = null;
+              oidcWaiting.value = false;
+              error2.value = "OIDC authentication timed out. Please try again.";
+              return;
+            }
+            fetchChannelStatus().then((statusRes) => {
+              var _a3;
+              const sr = statusRes;
+              if (!(sr == null ? void 0 : sr.ok)) return;
+              const channels2 = ((_a3 = sr.payload) == null ? void 0 : _a3.channels) || [];
+              if (channels2.some((ch) => ch.account_id === accountId && ch.status === "connected")) {
+                clearInterval(oidcPollRef.current);
+                oidcPollRef.current = null;
+                oidcWaiting.value = false;
+                showAddMatrix.value = false;
+                resetForm();
+                loadChannels();
+              }
+            });
+          }, 1e3);
+        } else {
+          saving.value = false;
+          error2.value = ((_b2 = r2 == null ? void 0 : r2.error) == null ? void 0 : _b2.message) || ((_c = r2 == null ? void 0 : r2.error) == null ? void 0 : _c.detail) || "Failed to start OIDC login.";
+        }
+      });
+      return;
+    }
     const addConfig = {
       homeserver,
       ownership_mode: authMode === "password" ? normalizeMatrixOwnershipMode(ownershipModeDraft.value) : "user_managed",
@@ -7104,18 +6806,7 @@ function AddMatrixModal() {
       const r2 = res;
       if (r2 == null ? void 0 : r2.ok) {
         showAddMatrix.value = false;
-        addModel.value = "";
-        userAllowlistItems.value = [];
-        roomAllowlistItems.value = [];
-        homeserverDraft.value = MATRIX_DEFAULT_HOMESERVER;
-        authModeDraft.value = "password";
-        userIdDraft.value = "";
-        credentialDraft.value = "";
-        deviceDisplayNameDraft.value = "";
-        ownershipModeDraft.value = "moltis_owned";
-        otpSelfApprovalDraft.value = true;
-        otpCooldownDraft.value = "300";
-        advancedConfigPatch.value = "";
+        resetForm();
         loadChannels();
       } else {
         error2.value = ((_a2 = r2 == null ? void 0 : r2.error) == null ? void 0 : _a2.message) || ((_b2 = r2 == null ? void 0 : r2.error) == null ? void 0 : _b2.detail) || "Failed to connect Matrix.";
@@ -7139,11 +6830,11 @@ function AddMatrixModal() {
             /* @__PURE__ */ u("span", { className: "font-mono", children: MATRIX_DEFAULT_HOMESERVER }),
             " for matrix.org accounts"
           ] }),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "2. Password is the default because it supports encrypted Matrix chats. Access token auth is only for plain Matrix traffic" }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "2. OIDC is the default because it is the simplest and supports encrypted Matrix chats. Password also supports encryption. Access token auth is only for plain Matrix traffic" }),
           /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "3. Moltis generates the local account ID automatically from the Matrix user or homeserver" })
         ] }) }),
-        /* @__PURE__ */ u("div", { className: "rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100", children: [
-          /* @__PURE__ */ u("div", { className: "font-medium text-emerald-50", children: "Encrypted chats require password auth" }),
+        /* @__PURE__ */ u("div", { className: "rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-xs text-emerald-900", children: [
+          /* @__PURE__ */ u("div", { className: "font-medium text-emerald-800", children: "Encrypted chats require OIDC or Password auth" }),
           /* @__PURE__ */ u("div", { children: MATRIX_ENCRYPTION_GUIDANCE })
         ] }),
         /* @__PURE__ */ u(ConnectionModeHint, { type: ChannelType.Matrix }),
@@ -7176,13 +6867,14 @@ function AddMatrixModal() {
               authModeDraft.value = normalizeMatrixAuthMode(targetValue(e));
             },
             children: [
+              /* @__PURE__ */ u("option", { value: "oidc", children: "OIDC (recommended)" }),
               /* @__PURE__ */ u("option", { value: "password", children: "Password" }),
               /* @__PURE__ */ u("option", { value: "access_token", children: "Access token" })
             ]
           }
         ),
         /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: matrixAuthModeGuidance(authModeDraft.value) }),
-        authModeDraft.value === "password" ? /* @__PURE__ */ u("label", { className: "flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] px-3 py-2", children: [
+        authModeDraft.value === "password" || authModeDraft.value === "oidc" ? /* @__PURE__ */ u("label", { className: "flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] px-3 py-2", children: [
           /* @__PURE__ */ u(
             "input",
             {
@@ -7199,52 +6891,54 @@ function AddMatrixModal() {
             /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: matrixOwnershipModeGuidance(authModeDraft.value, ownershipModeDraft.value) })
           ] })
         ] }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: matrixOwnershipModeGuidance(authModeDraft.value, "user_managed") }),
-        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: [
-          "Matrix User ID",
-          authModeDraft.value === "password" ? " (required)" : " (optional)"
-        ] }),
-        /* @__PURE__ */ u(
-          "input",
-          {
-            "data-field": "userId",
-            type: "text",
-            placeholder: "@bot:example.com",
-            value: userIdDraft.value,
-            onInput: (e) => {
-              userIdDraft.value = targetValue(e);
-            },
-            className: "channel-input"
-          }
-        ),
-        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: matrixCredentialLabel(authModeDraft.value) }),
-        /* @__PURE__ */ u(
-          "input",
-          {
-            "data-field": "credential",
-            type: "password",
-            placeholder: matrixCredentialPlaceholder(authModeDraft.value),
-            value: credentialDraft.value,
-            onInput: (e) => {
-              credentialDraft.value = targetValue(e);
-            },
-            className: "channel-input",
-            autoComplete: "new-password",
-            autoCapitalize: "none",
-            autoCorrect: "off",
-            spellcheck: false
-          }
-        ),
-        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
-          authModeDraft.value === "password" ? "Use the password for the dedicated Matrix bot account. This is the required mode for encrypted Matrix chats because Moltis needs to create and persist its own Matrix device keys." : /* @__PURE__ */ u(S, { children: [
-            "Get the access token in Element:",
-            " ",
-            /* @__PURE__ */ u("span", { className: "font-mono", children: "Settings -> Help & About -> Advanced -> Access Token" }),
-            ". Access token mode does ",
-            /* @__PURE__ */ u("span", { className: "font-medium", children: "not" }),
-            " support encrypted Matrix chats because Moltis cannot import that existing device's private encryption keys."
+        authModeDraft.value !== "oidc" && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: [
+            "Matrix User ID",
+            authModeDraft.value === "password" ? " (required)" : " (optional)"
           ] }),
-          " ",
-          /* @__PURE__ */ u("a", { href: MATRIX_DOCS_URL, target: "_blank", rel: "noreferrer", className: "text-[var(--accent)] underline", children: "Matrix setup docs" })
+          /* @__PURE__ */ u(
+            "input",
+            {
+              "data-field": "userId",
+              type: "text",
+              placeholder: "@bot:example.com",
+              value: userIdDraft.value,
+              onInput: (e) => {
+                userIdDraft.value = targetValue(e);
+              },
+              className: "channel-input"
+            }
+          ),
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: matrixCredentialLabel(authModeDraft.value) }),
+          /* @__PURE__ */ u(
+            "input",
+            {
+              "data-field": "credential",
+              type: "password",
+              placeholder: matrixCredentialPlaceholder(authModeDraft.value),
+              value: credentialDraft.value,
+              onInput: (e) => {
+                credentialDraft.value = targetValue(e);
+              },
+              className: "channel-input",
+              autoComplete: "new-password",
+              autoCapitalize: "none",
+              autoCorrect: "off",
+              spellcheck: false
+            }
+          ),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
+            authModeDraft.value === "password" ? "Use the password for the dedicated Matrix bot account. This is the required mode for encrypted Matrix chats because Moltis needs to create and persist its own Matrix device keys." : /* @__PURE__ */ u(S, { children: [
+              "Get the access token in Element:",
+              " ",
+              /* @__PURE__ */ u("span", { className: "font-mono", children: "Settings -> Help & About -> Advanced -> Access Token" }),
+              ". Access token mode does ",
+              /* @__PURE__ */ u("span", { className: "font-medium", children: "not" }),
+              " support encrypted Matrix chats because Moltis cannot import that existing device's private encryption keys."
+            ] }),
+            " ",
+            /* @__PURE__ */ u("a", { href: MATRIX_DOCS_URL, target: "_blank", rel: "noreferrer", className: "text-[var(--accent)] underline", children: "Matrix setup docs" })
+          ] })
         ] }),
         /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Device Display Name (optional)" }),
         /* @__PURE__ */ u(
@@ -7360,7 +7054,7 @@ function AddMatrixModal() {
           }
         ),
         error2.value && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)] py-1", children: error2.value }),
-        /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onSubmit, disabled: saving.value, children: saving.value ? "Connecting…" : "Connect Matrix" })
+        /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onSubmit, disabled: saving.value || oidcWaiting.value, children: saving.value ? "Connecting…" : oidcWaiting.value ? "Waiting for OIDC…" : authModeDraft.value === "oidc" ? "Authenticate with OIDC" : "Connect Matrix" })
       ] })
     }
   );
@@ -9760,1272 +9454,154 @@ const _channelsPage = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defin
   waQrData,
   waQrSvg
 }, Symbol.toStringTag, { value: "Module" }));
-function clearChatEmptyState() {
-  if (!chatMsgBox) return;
-  const welcome = chatMsgBox.querySelector("#welcomeCard");
-  if (welcome) welcome.remove();
-  const noProviders = chatMsgBox.querySelector("#noProvidersCard");
-  if (noProviders) noProviders.remove();
-  chatMsgBox.classList.remove("chat-messages-empty");
-}
-function makeThinkingDots() {
-  const tpl = $("tpl-thinking-dots");
-  return tpl.content.cloneNode(true).firstElementChild;
-}
-function makeThinkingStopBtn(sessionKey) {
-  const btn2 = document.createElement("button");
-  btn2.className = "thinking-stop-btn";
-  btn2.type = "button";
-  btn2.title = "Stop generation";
-  btn2.textContent = "Stop";
-  btn2.addEventListener("click", () => {
-    btn2.disabled = true;
-    btn2.textContent = "Stopping…";
-    sendRpc("chat.abort", { sessionKey }).catch(() => void 0);
+const combo = $("projectFilterCombo");
+const btn = $("projectFilterBtn");
+const label = $("projectFilterLabel");
+const dropdown = $("projectFilterDropdown");
+const list = $("projectFilterList");
+const searchInput$1 = $("projectFilterSearch");
+let kbIdx = -1;
+function fetchProjects() {
+  projectStore.fetch().then(() => {
+    const projects2 = projectStore.projects.value;
+    setProjects(projects2);
+    renderProjectSelect();
+    renderSessionProjectSelect();
+    updateNavCount("projects", projects2.length);
   });
-  return btn2;
 }
-function updateSessionRunId(sessionKey, runId) {
-  if (!runId) return;
-  setSessionActiveRunId(sessionKey, runId);
+function selectFilter(id) {
+  projectStore.setFilterId(id);
+  setProjectFilterId(id);
+  const p = projectStore.getById(id);
+  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
+  closeDropdown();
+  document.dispatchEvent(new CustomEvent("moltis:render-session-list"));
 }
-function updateSessionHistoryIndex(sessionKey, messageIndex) {
-  const idx = Number(messageIndex);
-  if (!Number.isInteger(idx) || idx < 0) return;
-  const session = sessionStore.getByKey(sessionKey);
-  if (session && idx > session.lastHistoryIndex.value) {
-    session.lastHistoryIndex.value = idx;
-  }
-  if (sessionKey === sessionStore.activeSessionKey.value && idx > lastHistoryIndex) {
-    setLastHistoryIndex(idx);
-  }
+function closeDropdown() {
+  dropdown.classList.add("hidden");
+  if (searchInput$1) searchInput$1.value = "";
+  kbIdx = -1;
 }
-function moveFirstQueuedToChat() {
-  var _a2;
-  const tray = document.getElementById("queuedMessages");
-  if (!tray) return;
-  const firstQueued = tray.querySelector(".msg.user.queued");
-  if (!firstQueued) return;
-  console.debug("[queued] moving queued message from tray to chat", {
-    remaining: tray.querySelectorAll(".msg").length - 1
+function openDropdown() {
+  dropdown.classList.remove("hidden");
+  kbIdx = -1;
+  renderList("");
+  requestAnimationFrame(() => {
+    if (searchInput$1) searchInput$1.focus();
   });
-  firstQueued.classList.remove("queued");
-  const badge = firstQueued.querySelector(".queued-badge");
-  if (badge) badge.remove();
-  clearChatEmptyState();
-  (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(firstQueued);
-  if (!tray.querySelector(".msg")) tray.classList.add("hidden");
 }
-function setSafeMarkdownHtml(el, text) {
-  const rendered = renderMarkdown(text);
-  el.textContent = "";
-  const wrapper = document.createElement("span");
-  wrapper.insertAdjacentHTML("afterbegin", rendered);
-  while (wrapper.firstChild) el.appendChild(wrapper.firstChild);
-}
-function hasNonWhitespaceContent(text) {
-  return String(text || "").trim().length > 0;
-}
-function isReasoningAlreadyShown(text) {
-  var _a2;
-  if (!(chatMsgBox && text)) return false;
-  const normalized = text.trim();
-  for (const el of chatMsgBox.querySelectorAll(".msg-reasoning-body")) {
-    if (((_a2 = el.textContent) == null ? void 0 : _a2.trim()) === normalized) return true;
+function renderList(query2) {
+  list.textContent = "";
+  const q2 = (query2 || "").toLowerCase();
+  const filterId = projectStore.projectFilterId.value;
+  const allProjects = projectStore.projects.value;
+  const allSessionsLabel = t("common:sessions.allSessions");
+  if (!q2 || allSessionsLabel.toLowerCase().indexOf(q2) !== -1) {
+    const allEl = document.createElement("div");
+    allEl.className = "model-dropdown-item";
+    if (!filterId) allEl.classList.add("selected");
+    const allLabel = document.createElement("span");
+    allLabel.className = "model-item-label";
+    allLabel.textContent = allSessionsLabel;
+    allEl.appendChild(allLabel);
+    allEl.addEventListener("click", () => selectFilter(""));
+    list.appendChild(allEl);
   }
-  return false;
-}
-const pendingToolCallEnds = /* @__PURE__ */ new Map();
-function toolCallLogicalId(payload) {
-  if (!payload) return "";
-  if (payload.runId) return `${payload.runId}:${payload.toolCallId}`;
-  return String(payload.toolCallId || "");
-}
-function toolCallCardId(payload) {
-  if (payload == null ? void 0 : payload.runId) {
-    return `tool-${payload.runId}-${payload.toolCallId}`;
+  const filtered = allProjects.filter((p) => {
+    if (!q2) return true;
+    const name = (p.label || p.id).toLowerCase();
+    return name.indexOf(q2) !== -1 || p.id.toLowerCase().indexOf(q2) !== -1;
+  });
+  filtered.forEach((p) => {
+    const el = document.createElement("div");
+    el.className = "model-dropdown-item";
+    if (p.id === filterId) el.classList.add("selected");
+    const itemLabel = document.createElement("span");
+    itemLabel.className = "model-item-label";
+    itemLabel.textContent = p.label || p.id;
+    el.appendChild(itemLabel);
+    el.addEventListener("click", () => selectFilter(p.id));
+    list.appendChild(el);
+  });
+  if (list.children.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "model-dropdown-empty";
+    empty.textContent = t("common:sessions.noMatchingProjects");
+    list.appendChild(empty);
   }
-  return `tool-${payload == null ? void 0 : payload.toolCallId}`;
 }
-function toolCallEventKey(eventSession, payload) {
-  return `${eventSession}:${toolCallLogicalId(payload)}`;
+function updateKbActive() {
+  const items = list.querySelectorAll(".model-dropdown-item");
+  items.forEach((el, i) => {
+    el.classList.toggle("kb-active", i === kbIdx);
+  });
+  if (kbIdx >= 0 && items[kbIdx]) {
+    items[kbIdx].scrollIntoView({ block: "nearest" });
+  }
 }
-function clearPendingToolCallEndsForSession(sessionKey) {
-  const prefix = `${sessionKey}:`;
-  for (const key of pendingToolCallEnds.keys()) {
-    if (key.startsWith(prefix)) {
-      pendingToolCallEnds.delete(key);
+function renderProjectSelect() {
+  const wrapper = $("projectSelectWrapper");
+  const allProjects = projectStore.projects.value;
+  const filterId = projectStore.projectFilterId.value;
+  if (allProjects.length === 0) {
+    if (wrapper) wrapper.classList.add("hidden");
+    if (filterId) {
+      projectStore.setFilterId("");
+      setProjectFilterId("");
     }
-  }
-}
-function appendToolResult(toolCard, result, eventSession) {
-  const out = (result.stdout || "").replace(/\n+$/, "");
-  const toolSession = sessionStore.getByKey(eventSession);
-  if (toolSession) toolSession.lastToolOutput.value = out;
-  setLastToolOutput(out);
-  if (out) {
-    const outEl = document.createElement("pre");
-    outEl.className = "exec-output";
-    outEl.textContent = out;
-    toolCard.appendChild(outEl);
-  }
-  const stderrText = (result.stderr || "").replace(/\n+$/, "");
-  if (stderrText) {
-    const errEl = document.createElement("pre");
-    errEl.className = "exec-output exec-stderr";
-    errEl.textContent = stderrText;
-    toolCard.appendChild(errEl);
-  }
-  if (result.exit_code !== void 0 && result.exit_code !== 0) {
-    const codeEl = document.createElement("div");
-    codeEl.className = "exec-exit";
-    codeEl.textContent = `exit ${result.exit_code}`;
-    toolCard.appendChild(codeEl);
-  }
-  if (result.screenshot) {
-    const imgSrc = result.screenshot.startsWith("data:") ? result.screenshot : `data:image/png;base64,${result.screenshot}`;
-    renderScreenshot(toolCard, imgSrc, result.screenshot_scale || 1);
-  }
-  if (result.document_ref) {
-    const docStoredName = result.document_ref.split("/").pop() || "";
-    const docDisplayName = result.filename || docStoredName;
-    const docSessionKey = eventSession || activeSessionKey || "main";
-    const docMediaSrc = `/api/sessions/${encodeURIComponent(docSessionKey)}/media/${encodeURIComponent(docStoredName)}`;
-    renderDocument(toolCard, docMediaSrc, docDisplayName, result.mime_type, result.size_bytes);
-  }
-  const renderedPointGroups = renderMapPointGroups(toolCard, result.points, result.label);
-  if (!renderedPointGroups && result.map_links) {
-    renderMapLinks(toolCard, result.map_links, result.label);
-  }
-}
-function isToolValidationErrorPayload(p) {
-  if (!(p && !p.success && p.error && p.error.detail)) return false;
-  const errDetail = p.error.detail.toLowerCase();
-  return errDetail.includes("missing field") || errDetail.includes("missing required") || errDetail.includes("missing 'action'") || errDetail.includes("missing 'url'");
-}
-function completeToolCard(toolCard, p, eventSession) {
-  if (isToolValidationErrorPayload(p)) {
-    toolCard.className = "msg exec-card exec-retry";
-  } else {
-    toolCard.className = `msg exec-card ${p.success ? "exec-ok" : "exec-err"}`;
-  }
-  const toolSpin = toolCard.querySelector(".exec-status");
-  if (toolSpin) toolSpin.remove();
-  if (p.success && p.result) {
-    appendToolResult(toolCard, p.result, eventSession);
+    label.textContent = t("common:sessions.allSessions");
     return;
   }
-  if (!p.success && p.error && p.error.detail) {
-    const errMsg = document.createElement("div");
-    errMsg.className = isToolValidationErrorPayload(p) ? "exec-retry-detail" : "exec-error-detail";
-    errMsg.textContent = p.error.detail;
-    toolCard.appendChild(errMsg);
+  if (wrapper) wrapper.classList.remove("hidden");
+  const p = projectStore.getById(filterId);
+  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
+}
+btn.addEventListener("click", () => {
+  if (dropdown.classList.contains("hidden")) {
+    openDropdown();
+  } else {
+    closeDropdown();
   }
-  if (p.success && (p.toolName === "create_skill" || p.toolName === "update_skill")) {
-    const hint = document.createElement("div");
-    hint.className = "skill-hint";
-    const verb = p.toolName === "create_skill" ? "created" : "updated";
-    const link = document.createElement("a");
-    link.href = "/skills";
-    link.textContent = "personal skills";
-    link.addEventListener("click", (e) => {
+});
+if (searchInput$1) {
+  searchInput$1.addEventListener("input", () => {
+    kbIdx = -1;
+    renderList(searchInput$1.value.trim());
+  });
+  searchInput$1.addEventListener("keydown", (e) => {
+    const items = list.querySelectorAll(".model-dropdown-item");
+    if (e.key === "ArrowDown") {
       e.preventDefault();
-      navigate("/skills");
-    });
-    hint.append(`Skill ${verb} — available in your `, link);
-    toolCard.appendChild(hint);
-  }
-}
-function clearStaleRunningToolCards() {
-  if (!chatMsgBox) return;
-  const statusEls = chatMsgBox.querySelectorAll(".msg.exec-card .exec-status");
-  for (const statusEl2 of statusEls) {
-    const card = statusEl2.closest(".msg.exec-card");
-    statusEl2.remove();
-    if (!card) continue;
-    if (!(card.classList.contains("exec-ok") || card.classList.contains("exec-err"))) {
-      card.className = "msg exec-card exec-ok";
-    }
-  }
-}
-function extractThinkingText() {
-  var _a2;
-  const indicator = document.getElementById("thinkingIndicator");
-  if (!indicator) return null;
-  const textEl = indicator.querySelector(".thinking-text");
-  const text = (_a2 = textEl == null ? void 0 : textEl.textContent) == null ? void 0 : _a2.trim();
-  return text || null;
-}
-function handleToolCallStartDom(p, eventSession) {
-  var _a2, _b2;
-  const thinkingText = extractThinkingText();
-  removeThinking();
-  if (streamEl) {
-    if (!((_a2 = streamEl.textContent) == null ? void 0 : _a2.trim())) {
-      streamEl.remove();
-    }
-    setStreamEl(null);
-    setStreamText("");
-  }
-  const cardId = toolCallCardId(p);
-  if (document.getElementById(cardId)) return;
-  const tpl = $("tpl-exec-card");
-  const frag = tpl.content.cloneNode(true);
-  const card = frag.firstElementChild;
-  card.id = cardId;
-  const cmd = toolCallSummary(p.toolName, p.arguments, p.executionMode);
-  const cmdEl = card.querySelector("[data-cmd]");
-  if (cmdEl) cmdEl.textContent = ` ${cmd}`;
-  if (thinkingText) appendReasoningDisclosure(card, thinkingText);
-  clearChatEmptyState();
-  (_b2 = chatMsgBox) == null ? void 0 : _b2.appendChild(card);
-  const endKey = toolCallEventKey(eventSession, p);
-  const pendingEnd = pendingToolCallEnds.get(endKey);
-  if (pendingEnd) {
-    pendingToolCallEnds.delete(endKey);
-    completeToolCard(card, pendingEnd, eventSession);
-  }
-  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
-}
-function renderChannelUserMessage(p, _eventSession) {
-  var _a2;
-  const chanSession = sessionStore.getByKey(p.sessionKey || activeSessionKey);
-  const chanLastIdx = chanSession ? chanSession.lastHistoryIndex.value : lastHistoryIndex;
-  if (p.messageIndex !== void 0 && p.messageIndex <= chanLastIdx) return;
-  const cleanText = stripChannelPrefix(p.text || "");
-  const sessionKey = p.sessionKey || activeSessionKey;
-  const audioFilename = (_a2 = p.channel) == null ? void 0 : _a2.audio_filename;
-  let el;
-  if (audioFilename) {
-    el = chatAddMsg("user", "", true);
-    if (el) {
-      const audioSrc = `/api/sessions/${encodeURIComponent(sessionKey)}/media/${encodeURIComponent(audioFilename)}`;
-      renderAudioPlayer(el, audioSrc);
-      if (cleanText) {
-        const textWrap = document.createElement("div");
-        textWrap.className = "mt-2";
-        setSafeMarkdownHtml(textWrap, cleanText);
-        el.appendChild(textWrap);
+      kbIdx = Math.min(kbIdx + 1, items.length - 1);
+      updateKbActive();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      kbIdx = Math.max(kbIdx - 1, 0);
+      updateKbActive();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (kbIdx >= 0 && items[kbIdx]) {
+        items[kbIdx].click();
+      } else if (items.length === 1) {
+        items[0].click();
       }
+    } else if (e.key === "Escape") {
+      closeDropdown();
+      btn.focus();
     }
-  } else {
-    el = chatAddMsg("user", renderMarkdown(cleanText), true);
-  }
-  if (el && p.channel) {
-    appendChannelFooter(el, p.channel);
-  }
-}
-function normalizeEchoComparable(text) {
-  if (!text) return "";
-  return text.replace(/```[a-zA-Z0-9_-]*\n?/g, "").replace(/```/g, "").replace(/[`\s]/g, "");
-}
-function isPureToolOutputEcho(finalText, toolOutput) {
-  const finalComparable = normalizeEchoComparable(finalText);
-  const toolComparable = normalizeEchoComparable(toolOutput);
-  if (!(finalComparable && toolComparable)) return false;
-  return finalComparable === toolComparable;
-}
-function resolveFinalMessageEl(p) {
-  const finalText = String(p.text || "");
-  const hasFinalText = hasNonWhitespaceContent(finalText);
-  const isEcho = hasFinalText && isPureToolOutputEcho(finalText, lastToolOutput);
-  if (!isEcho) {
-    if (hasFinalText && streamEl) {
-      setSafeMarkdownHtml(streamEl, finalText);
-      return streamEl;
-    }
-    if (hasFinalText) return chatAddMsg("assistant", renderMarkdown(finalText), true);
-    if (streamEl) streamEl.remove();
-    return null;
-  }
-  if (streamEl) streamEl.remove();
-  return null;
-}
-function appendFinalFooter(msgEl, p, eventSession) {
-  if (!(msgEl && p.model)) return;
-  const footer = document.createElement("div");
-  footer.className = "msg-model-footer";
-  let footerText = p.provider ? `${p.provider} / ${p.model}` : p.model;
-  if (p.inputTokens || p.outputTokens) {
-    footerText += ` · ${formatAssistantTokenUsage(p.inputTokens, p.outputTokens, p.cacheReadTokens)}`;
-  }
-  const textSpan = document.createElement("span");
-  textSpan.textContent = footerText;
-  footer.appendChild(textSpan);
-  const speedLabel = formatTokenSpeed(p.outputTokens || 0, p.durationMs || 0);
-  if (speedLabel) {
-    const speed = document.createElement("span");
-    speed.className = "msg-token-speed";
-    const tone = tokenSpeedTone(p.outputTokens || 0, p.durationMs || 0);
-    if (tone) speed.classList.add(`msg-token-speed-${tone}`);
-    speed.textContent = ` · ${speedLabel}`;
-    footer.appendChild(speed);
-  }
-  if (p.replyMedium === "voice" || p.replyMedium === "text") {
-    const badge = document.createElement("span");
-    badge.className = "reply-medium-badge";
-    badge.textContent = p.replyMedium;
-    footer.appendChild(badge);
-  }
-  msgEl.appendChild(footer);
-  void attachMessageVoiceControl({
-    messageEl: msgEl,
-    footerEl: footer,
-    sessionKey: p.sessionKey || eventSession || activeSessionKey,
-    text: p.text || "",
-    runId: p.runId,
-    messageIndex: p.messageIndex,
-    audioPath: p.audio || void 0,
-    audioWarning: p.audioWarning || void 0,
-    forceAction: p.replyMedium === "voice" && !p.audio,
-    autoplayOnGenerate: true
   });
 }
-function renderAbortedPartialInDom(eventSession, p, partialState) {
-  if (!partialState.hasVisiblePartial) return;
-  const partial = partialState.partial;
-  let partialEl = null;
-  if (hasNonWhitespaceContent(partialState.partialText) && streamEl) {
-    setSafeMarkdownHtml(streamEl, partialState.partialText);
-    partialEl = streamEl;
-  } else if (hasNonWhitespaceContent(partialState.partialText)) {
-    partialEl = chatAddMsg("assistant", renderMarkdown(partialState.partialText), true);
-  } else if (hasNonWhitespaceContent(partialState.partialReasoning)) {
-    partialEl = chatAddMsg("assistant", "", false);
+document.addEventListener("click", (e) => {
+  if (combo && !combo.contains(e.target)) {
+    closeDropdown();
   }
-  if (partialEl && partialState.partialReasoning && !isReasoningAlreadyShown(partialState.partialReasoning)) {
-    appendReasoningDisclosure(partialEl, partialState.partialReasoning);
-  }
-  if (!partialEl) return;
-  appendFinalFooter(
-    partialEl,
-    {
-      model: (partial == null ? void 0 : partial.model) || "",
-      provider: (partial == null ? void 0 : partial.provider) || "",
-      inputTokens: (partial == null ? void 0 : partial.inputTokens) || 0,
-      outputTokens: (partial == null ? void 0 : partial.outputTokens) || 0,
-      durationMs: (partial == null ? void 0 : partial.durationMs) || 0,
-      replyMedium: p.replyMedium || "text",
-      text: partialState.partialText,
-      audio: (partial == null ? void 0 : partial.audio) || void 0,
-      audioWarning: void 0,
-      runId: p.runId,
-      messageIndex: p.messageIndex,
-      sessionKey: eventSession
-    },
-    eventSession
-  );
-  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
-}
-function handleChatThinking(p, isActive, isChatPage, eventSession) {
-  var _a2;
-  updateSessionRunId(eventSession, p.runId);
-  setSessionReplying(eventSession, true);
-  if (!(isActive && isChatPage)) return;
-  removeThinking();
-  clearChatEmptyState();
-  const thinkEl = document.createElement("div");
-  thinkEl.className = "msg assistant thinking";
-  thinkEl.id = "thinkingIndicator";
-  thinkEl.appendChild(makeThinkingDots());
-  thinkEl.appendChild(makeThinkingStopBtn(eventSession));
-  (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(thinkEl);
-  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
-}
-function handleChatThinkingText(p, isActive, isChatPage, eventSession) {
-  updateSessionRunId(eventSession, p.runId);
-  setSessionReplying(eventSession, true);
-  if (!(isActive && isChatPage)) return;
-  const indicator = document.getElementById("thinkingIndicator");
-  if (indicator) {
-    const existingBtn = indicator.querySelector(".thinking-stop-btn");
-    while (indicator.firstChild) indicator.removeChild(indicator.firstChild);
-    const textEl = document.createElement("span");
-    textEl.className = "thinking-text";
-    textEl.textContent = p.text || "";
-    indicator.appendChild(textEl);
-    indicator.appendChild(existingBtn || makeThinkingStopBtn(eventSession));
-    if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
-  }
-}
-function handleChatThinkingDone(_p, isActive, isChatPage) {
-}
-function handleChatVoicePending(_p, isActive, isChatPage, eventSession) {
-  const session = sessionStore.getByKey(eventSession);
-  if (session) session.voicePending.value = true;
-  if (!(isActive && isChatPage)) return;
-  setVoicePending(true);
-}
-function handleChatToolCallStart(p, isActive, isChatPage, eventSession) {
-  updateSessionRunId(eventSession, p.runId);
-  const session = sessionStore.getByKey(eventSession);
-  if (session) session.streamText.value = "";
-  if (!(isActive && isChatPage)) return;
-  handleToolCallStartDom(p, eventSession);
-}
-function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
-  var _a2, _b2;
-  updateSessionRunId(eventSession, p.runId);
-  bumpSessionCount(eventSession, 2);
-  let toolHistoryIndex = p.messageIndex;
-  if (toolHistoryIndex === void 0 || toolHistoryIndex === null) {
-    const toolSession = sessionStore.getByKey(eventSession);
-    if (toolSession && typeof toolSession.messageCount === "number" && toolSession.messageCount > 0) {
-      toolHistoryIndex = toolSession.messageCount - 1;
-    }
-  }
-  cacheSessionHistoryMessage(
-    eventSession,
-    {
-      role: "tool_result",
-      tool_call_id: p.toolCallId || "",
-      tool_name: p.toolName || "",
-      success: p.success === true,
-      result: p.result || null,
-      error: ((_a2 = p.error) == null ? void 0 : _a2.detail) || ((_b2 = p.error) == null ? void 0 : _b2.message) || (typeof p.error === "string" ? String(p.error) : null),
-      created_at: Date.now()
-    },
-    toolHistoryIndex
-  );
-  updateSessionHistoryIndex(eventSession, toolHistoryIndex);
-  if (!(isActive && isChatPage)) return;
-  const toolCard = document.getElementById(toolCallCardId(p));
-  if (!toolCard) {
-    pendingToolCallEnds.set(toolCallEventKey(eventSession, p), p);
-    return;
-  }
-  completeToolCard(toolCard, p, eventSession);
-}
-function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
-  var _a2;
-  bumpSessionCount(eventSession, 1);
-  const cachedAudio = ((_a2 = p.channel) == null ? void 0 : _a2.audio_filename) ? `media/${eventSession.replaceAll(":", "_")}/${p.channel.audio_filename}` : void 0;
-  cacheSessionHistoryMessage(
-    eventSession,
-    {
-      role: "user",
-      content: p.text || "",
-      channel: p.channel || null,
-      audio: cachedAudio,
-      created_at: Date.now()
-    },
-    p.messageIndex
-  );
-  if (!isActive) {
-    setSessionUnread(eventSession, true);
-  }
-  if (!(isChatPage && isActive)) {
-    updateSessionHistoryIndex(eventSession, p.messageIndex);
-    return;
-  }
-  renderChannelUserMessage(p);
-  updateSessionHistoryIndex(eventSession, p.messageIndex);
-}
-function handleChatUserMessage(p, isActive, isChatPage, eventSession) {
-  if (p.seq !== void 0 && p.seq !== null && p.seq <= chatSeq) return;
-  bumpSessionCount(eventSession, 1);
-  cacheSessionHistoryMessage(
-    eventSession,
-    {
-      role: "user",
-      content: p.text || "",
-      created_at: Date.now()
-    },
-    p.messageIndex
-  );
-  if (!isActive) {
-    setSessionUnread(eventSession, true);
-  }
-  if (!(isChatPage && isActive)) return;
-  chatAddMsg("user", renderMarkdown(p.text || ""), true);
-}
-function handleChatDelta(p, isActive, isChatPage, eventSession) {
-  var _a2;
-  updateSessionRunId(eventSession, p.runId);
-  if (!p.text) return;
-  const session = sessionStore.getByKey(eventSession);
-  if (session) session.streamText.value += p.text;
-  if (!(isActive && isChatPage)) return;
-  if (voicePending) {
-    setStreamText(streamText + p.text);
-    return;
-  }
-  if (!(streamEl || p.text.trim())) return;
-  removeThinking();
-  if (!streamEl) {
-    setStreamText("");
-    setStreamEl(document.createElement("div"));
-    streamEl.className = "msg assistant";
-    clearChatEmptyState();
-    (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(streamEl);
-  }
-  setStreamText(streamText + p.text);
-  setSafeMarkdownHtml(streamEl, streamText);
-  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
-}
-function handleChatFinal(p, isActive, isChatPage, eventSession) {
-  var _a2, _b2, _c;
-  clearPendingToolCallEndsForSession(eventSession);
-  updateSessionRunId(eventSession, p.runId);
-  bumpSessionCount(eventSession, 1);
-  const finalText = String(p.text || "");
-  const hasVisibleFinal = hasNonWhitespaceContent(finalText) || hasNonWhitespaceContent(p.reasoning || "") || hasNonWhitespaceContent(p.audio || "");
-  if (hasVisibleFinal) {
-    cacheSessionHistoryMessage(
-      eventSession,
-      {
-        role: "assistant",
-        content: finalText,
-        model: p.model || "",
-        provider: p.provider || "",
-        inputTokens: p.inputTokens || 0,
-        outputTokens: p.outputTokens || 0,
-        cacheReadTokens: p.cacheReadTokens || 0,
-        cacheWriteTokens: p.cacheWriteTokens || 0,
-        durationMs: p.durationMs || 0,
-        requestInputTokens: p.requestInputTokens,
-        requestOutputTokens: p.requestOutputTokens,
-        requestCacheReadTokens: p.requestCacheReadTokens,
-        requestCacheWriteTokens: p.requestCacheWriteTokens,
-        reasoning: p.reasoning || void 0,
-        audio: p.audio || void 0,
-        run_id: p.runId || void 0,
-        created_at: Date.now()
-      },
-      p.messageIndex
-    );
-  }
-  const evtSession = sessionStore.getByKey(eventSession);
-  const lastIdx = evtSession ? evtSession.lastHistoryIndex.value : lastHistoryIndex;
-  if (p.messageIndex !== void 0 && p.messageIndex <= lastIdx) {
-    setSessionReplying(eventSession, false);
-    setSessionActiveRunId(eventSession, null);
-    return;
-  }
-  updateSessionHistoryIndex(eventSession, p.messageIndex);
-  setSessionReplying(eventSession, false);
-  setSessionActiveRunId(eventSession, null);
-  if (!isActive) {
-    setSessionUnread(eventSession, true);
-  }
-  if (!(isActive && isChatPage)) {
-    setVoicePending(false);
-    return;
-  }
-  removeThinking();
-  clearStaleRunningToolCards();
-  if (voicePending && p.text && p.replyMedium === "voice") {
-    console.debug("[audio] voice-pending path, audio:", !!p.audio, "text:", p.text.substring(0, 40));
-    const msgEl = streamEl || document.createElement("div");
-    msgEl.className = "msg assistant";
-    msgEl.textContent = "";
-    if (!msgEl.parentNode) {
-      clearChatEmptyState();
-      (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(msgEl);
-    }
-    if (p.audio) {
-      const filename = p.audio.split("/").pop() || "";
-      const audioSrc = `/api/sessions/${encodeURIComponent(p.sessionKey || activeSessionKey)}/media/${encodeURIComponent(filename)}`;
-      console.debug("[audio] rendering persisted audio:", filename);
-      renderAudioPlayer(msgEl, audioSrc, true);
-    }
-    if (hasNonWhitespaceContent(p.text)) {
-      const textWrap = document.createElement("div");
-      textWrap.className = "mt-2";
-      setSafeMarkdownHtml(textWrap, p.text);
-      msgEl.appendChild(textWrap);
-    }
-    if (p.reasoning && !isReasoningAlreadyShown(p.reasoning)) {
-      appendReasoningDisclosure(msgEl, p.reasoning);
-    }
-    appendFinalFooter(msgEl, p, eventSession);
-    if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
-  } else {
-    let resolvedEl = resolveFinalMessageEl(p);
-    const skipReasoning = p.reasoning && isReasoningAlreadyShown(p.reasoning);
-    if (!resolvedEl && p.reasoning && !skipReasoning) {
-      resolvedEl = chatAddMsg("assistant", "", false);
-    }
-    if (resolvedEl && p.reasoning && !skipReasoning) {
-      appendReasoningDisclosure(resolvedEl, p.reasoning);
-    }
-    if (resolvedEl && p.text && p.replyMedium === "voice") {
-      console.debug(
-        "[audio] streamed path, audio:",
-        !!p.audio,
-        "voicePending:",
-        voicePending,
-        "text:",
-        p.text.substring(0, 40)
-      );
-      if (p.audio) {
-        const fn2 = p.audio.split("/").pop() || "";
-        const src2 = `/api/sessions/${encodeURIComponent(p.sessionKey || activeSessionKey)}/media/${encodeURIComponent(fn2)}`;
-        console.debug("[audio] rendering persisted audio (streamed):", fn2);
-        resolvedEl.textContent = "";
-        renderAudioPlayer(resolvedEl, src2, true);
-        appendFinalFooter(resolvedEl, p, eventSession);
-      } else {
-        console.debug("[audio] no persisted audio, showing voice fallback action");
-        appendFinalFooter(resolvedEl, p, eventSession);
-      }
-    } else {
-      let target = resolvedEl;
-      if (!target) {
-        const last = (_b2 = chatMsgBox) == null ? void 0 : _b2.lastElementChild;
-        if (last && !last.classList.contains("user")) target = last;
-      }
-      appendFinalFooter(target, p, eventSession);
-    }
-  }
-  if (p.inputTokens || p.outputTokens) {
-    sessionTokens.input += p.inputTokens || 0;
-    sessionTokens.output += p.outputTokens || 0;
-  }
-  if (p.requestInputTokens !== void 0 && p.requestInputTokens !== null) {
-    setSessionCurrentInputTokens(p.requestInputTokens || 0);
-  } else if (p.inputTokens || p.outputTokens) {
-    setSessionCurrentInputTokens(p.inputTokens || 0);
-  }
-  updateTokenBar();
-  appendLastMessageTimestamp(Date.now());
-  const finalSession = sessionStore.getByKey(eventSession);
-  if (finalSession) finalSession.resetStreamState();
-  setStreamEl(null);
-  setStreamText("");
-  setLastToolOutput("");
-  setVoicePending(false);
-  maybeRefreshFullContext();
-  if ((_c = chatMsgBox) == null ? void 0 : _c.lastElementChild) {
-    highlightCodeBlocks(chatMsgBox.lastElementChild);
-  }
-  moveFirstQueuedToChat();
-}
-const COMPACT_CARD_DEBOUNCE_MS = 500;
-const lastCompactCardAt = /* @__PURE__ */ new Map();
-const compactingStatusElements = /* @__PURE__ */ new Map();
-function shouldRenderCompactCard(p) {
-  const key = p.sessionKey || "__active__";
-  const now = Date.now();
-  const previous = lastCompactCardAt.get(key) || 0;
-  if (now - previous < COMPACT_CARD_DEBOUNCE_MS) {
-    return false;
-  }
-  lastCompactCardAt.set(key, now);
-  return true;
-}
-function removeCompactingStatus(p) {
-  var _a2;
-  const key = p.sessionKey || "__active__";
-  const el = compactingStatusElements.get(key);
-  compactingStatusElements.delete(key);
-  if (el && el.parentNode === chatMsgBox) {
-    (_a2 = chatMsgBox) == null ? void 0 : _a2.removeChild(el);
-  }
-}
-function resetTokensAfterCompaction() {
-  setSessionTokens({ input: 0, output: 0 });
-  setSessionCurrentInputTokens(0);
-  updateTokenBar();
-}
-function handleChatAutoCompact(p, isActive, isChatPage) {
-  var _a2, _b2;
-  if (!(isActive && isChatPage)) return;
-  if (p.phase === "start") {
-    const statusEl2 = chatAddMsg("system", "Compacting conversation (context limit reached)…");
-    const key = p.sessionKey || "__active__";
-    if (statusEl2) {
-      compactingStatusElements.set(key, statusEl2);
-    }
-  } else if (p.phase === "done") {
-    removeCompactingStatus(p);
-    if (shouldRenderCompactCard(p)) {
-      renderCompactCard(p);
-    }
-    resetTokensAfterCompaction();
-  } else if (p.phase === "error") {
-    removeCompactingStatus(p);
-    chatAddMsg("error", `Auto-compact failed: ${((_a2 = p.error) == null ? void 0 : _a2.message) || ((_b2 = p.error) == null ? void 0 : _b2.detail) || "unknown error"}`);
-  }
-}
-function handleChatCompact(p, isActive, isChatPage) {
-  if (!(isActive && isChatPage)) return;
-  if (p.phase !== "done") return;
-  removeCompactingStatus(p);
-  if (!shouldRenderCompactCard(p)) return;
-  renderCompactCard(p);
-  resetTokensAfterCompaction();
-}
-function retryDelayMsFromPayload(p) {
-  var _a2, _b2;
-  if (p.retryAfterMs !== void 0 && p.retryAfterMs !== null) return Number(p.retryAfterMs) || 0;
-  if (((_a2 = p.error) == null ? void 0 : _a2.retryAfterMs) !== void 0 && ((_b2 = p.error) == null ? void 0 : _b2.retryAfterMs) !== null) return Number(p.error.retryAfterMs) || 0;
-  return 0;
-}
-function retryStatusText(p) {
-  var _a2;
-  const retryMs = retryDelayMsFromPayload(p);
-  const retrySecs = Math.max(1, Math.ceil(retryMs / 1e3));
-  const rateLimited = ((_a2 = p.error) == null ? void 0 : _a2.type) === "rate_limit_exceeded";
-  return rateLimited ? `Rate limited by provider, retrying in ${retrySecs}s…` : `Temporary provider issue, retrying in ${retrySecs}s…`;
-}
-function handleChatRetrying(p, isActive, isChatPage, eventSession) {
-  var _a2;
-  updateSessionRunId(eventSession, p.runId);
-  setSessionReplying(eventSession, true);
-  if (!(isActive && isChatPage)) return;
-  let indicator = document.getElementById("thinkingIndicator");
-  if (!indicator) {
-    removeThinking();
-    indicator = document.createElement("div");
-    indicator.className = "msg assistant thinking";
-    indicator.id = "thinkingIndicator";
-    indicator.appendChild(makeThinkingDots());
-    clearChatEmptyState();
-    (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(indicator);
-  }
-  while (indicator.firstChild) indicator.removeChild(indicator.firstChild);
-  const textEl = document.createElement("span");
-  textEl.className = "thinking-text";
-  textEl.textContent = retryStatusText(p);
-  indicator.appendChild(textEl);
-  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
-}
-function handleChatError(p, isActive, isChatPage, eventSession) {
-  var _a2, _b2, _c;
-  clearPendingToolCallEndsForSession(eventSession);
-  setSessionReplying(eventSession, false);
-  setSessionActiveRunId(eventSession, null);
-  const errSession = sessionStore.getByKey(eventSession);
-  if (errSession) errSession.resetStreamState();
-  if (!(isActive && isChatPage)) {
-    setVoicePending(false);
-    return;
-  }
-  removeThinking();
-  clearStaleRunningToolCards();
-  if ((_a2 = p.error) == null ? void 0 : _a2.title) {
-    chatAddErrorCard(localizeStructuredError(p.error));
-  } else {
-    chatAddErrorMsg(p.message || "unknown");
-  }
-  if ((_b2 = p.error) == null ? void 0 : _b2.canContinue) {
-    const lastCard = (_c = chatMsgBox) == null ? void 0 : _c.querySelector(".error-card:last-child");
-    if (lastCard) {
-      const btn2 = document.createElement("button");
-      btn2.className = "provider-btn error-continue-btn";
-      btn2.textContent = t("errors:chat.continue", "Continue");
-      btn2.onclick = () => {
-        var _a3;
-        btn2.disabled = true;
-        btn2.textContent = t("errors:chat.continuing", "Continuing...");
-        chatInput.value = t(
-          "errors:chat.continueMessage",
-          "Please continue where you left off."
-        );
-        (_a3 = chatSendBtn) == null ? void 0 : _a3.click();
-      };
-      const body = lastCard.querySelector(".error-body");
-      if (body) body.appendChild(btn2);
-    }
-  }
-  setStreamEl(null);
-  setStreamText("");
-  setVoicePending(false);
-  moveFirstQueuedToChat();
-}
-function getAbortedPartialState(p) {
-  const partial = p.partialMessage && typeof p.partialMessage === "object" ? p.partialMessage : null;
-  const partialText = String((partial == null ? void 0 : partial.content) || "");
-  const partialReasoning = String((partial == null ? void 0 : partial.reasoning) || "");
-  return {
-    partial,
-    partialText,
-    partialReasoning,
-    hasVisiblePartial: hasNonWhitespaceContent(partialText) || hasNonWhitespaceContent(partialReasoning)
-  };
-}
-function cacheAbortedPartial(eventSession, p, abortSession, partialState) {
-  if (!partialState.hasVisiblePartial) return;
-  const partial = partialState.partial;
-  const lastIdx = abortSession ? abortSession.lastHistoryIndex.value : lastHistoryIndex;
-  if (p.messageIndex === void 0 || p.messageIndex === null || p.messageIndex > lastIdx) {
-    bumpSessionCount(eventSession, 1);
-  }
-  cacheSessionHistoryMessage(
-    eventSession,
-    {
-      role: "assistant",
-      content: partialState.partialText,
-      model: (partial == null ? void 0 : partial.model) || "",
-      provider: (partial == null ? void 0 : partial.provider) || "",
-      inputTokens: (partial == null ? void 0 : partial.inputTokens) || 0,
-      outputTokens: (partial == null ? void 0 : partial.outputTokens) || 0,
-      durationMs: (partial == null ? void 0 : partial.durationMs) || 0,
-      requestInputTokens: partial == null ? void 0 : partial.requestInputTokens,
-      requestOutputTokens: partial == null ? void 0 : partial.requestOutputTokens,
-      reasoning: (partial == null ? void 0 : partial.reasoning) || void 0,
-      audio: (partial == null ? void 0 : partial.audio) || void 0,
-      run_id: (partial == null ? void 0 : partial.run_id) || p.runId || void 0,
-      created_at: (partial == null ? void 0 : partial.created_at) || Date.now()
-    },
-    p.messageIndex
-  );
-  updateSessionHistoryIndex(eventSession, p.messageIndex);
-}
-function handleChatAborted(p, isActive, isChatPage, eventSession) {
-  clearPendingToolCallEndsForSession(eventSession);
-  setSessionReplying(eventSession, false);
-  setSessionActiveRunId(eventSession, null);
-  const partialState = getAbortedPartialState(p);
-  const abortSession = sessionStore.getByKey(eventSession);
-  cacheAbortedPartial(eventSession, p, abortSession, partialState);
-  if (abortSession) abortSession.resetStreamState();
-  if (partialState.hasVisiblePartial && !isActive) {
-    setSessionUnread(eventSession, true);
-  }
-  if (!(isActive && isChatPage)) {
-    setVoicePending(false);
-    return;
-  }
-  removeThinking();
-  clearStaleRunningToolCards();
-  renderAbortedPartialInDom(eventSession, p, partialState);
-  setStreamEl(null);
-  setStreamText("");
-  setVoicePending(false);
-  moveFirstQueuedToChat();
-}
-function handleChatNotice(p, isActive, isChatPage) {
-  if (!(isActive && isChatPage)) return;
-  const msg = p.title ? `**${p.title}:** ${p.message}` : p.message || "";
-  const noticeEl = p.title ? chatAddMsg("system", renderMarkdown(msg), true) : chatAddMsg("system", msg);
-  if (!(noticeEl && p.title)) return;
-  noticeEl.classList.add("system-notice");
-  if (String(p.title).toLowerCase() !== "sandbox") return;
-  noticeEl.classList.add("system-notice-sandbox");
-  const normalizedMessage = String(p.message || "").toLowerCase();
-  if (normalizedMessage.indexOf("enabled") !== -1) {
-    noticeEl.classList.add("is-enabled");
-  } else if (normalizedMessage.indexOf("disabled") !== -1) {
-    noticeEl.classList.add("is-disabled");
-  }
-}
-function handleChatQueueCleared(_p, isActive, isChatPage) {
-  if (!(isActive && isChatPage)) return;
-  const tray = document.getElementById("queuedMessages");
-  if (tray) {
-    const count = tray.querySelectorAll(".msg").length;
-    console.debug("[queued] queue_cleared: removing all from tray", { count });
-    while (tray.firstChild) tray.removeChild(tray.firstChild);
-    tray.classList.add("hidden");
-  }
-}
-function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
-  clearPendingToolCallEndsForSession(eventSession);
-  setSessionActiveRunId(eventSession, null);
-  clearSessionHistoryCache(eventSession);
-  markSessionLocallyCleared(eventSession);
-  if (isActive) {
-    setLastHistoryIndex(-1);
-    setChatSeq(0);
-  }
-  if (!(isActive && isChatPage)) return;
-  if (chatMsgBox) chatMsgBox.textContent = "";
-  setSessionTokens({ input: 0, output: 0 });
-  setSessionCurrentInputTokens(0);
-  updateTokenBar();
-}
-const chatHandlers = {
-  thinking: handleChatThinking,
-  thinking_text: handleChatThinkingText,
-  thinking_done: handleChatThinkingDone,
-  voice_pending: handleChatVoicePending,
-  tool_call_start: handleChatToolCallStart,
-  tool_call_end: handleChatToolCallEnd,
-  channel_user: handleChatChannelUser,
-  user_message: handleChatUserMessage,
-  delta: handleChatDelta,
-  final: handleChatFinal,
-  auto_compact: handleChatAutoCompact,
-  compact: handleChatCompact,
-  retrying: handleChatRetrying,
-  error: handleChatError,
-  aborted: handleChatAborted,
-  notice: handleChatNotice,
-  queue_cleared: handleChatQueueCleared,
-  session_cleared: handleChatSessionCleared
-};
-function handleChatEvent(p) {
-  const eventSession = p.sessionKey || sessionStore.activeSessionKey.value;
-  const isActive = eventSession === sessionStore.activeSessionKey.value;
-  const isChatPage = currentPrefix === "/chats";
-  if (isActive && sessionStore.switchInProgress.value) {
-    const allowDuringSwitch = p.state === "final" || p.state === "error" || p.state === "aborted" || p.state === "notice" || p.state === "session_cleared" || p.state === "queue_cleared";
-    if (!allowDuringSwitch) {
-      return;
-    }
-    if (p.state === "final" || p.state === "error" || p.state === "aborted") {
-      sessionStore.switchInProgress.value = false;
-      setSessionSwitchInProgress(false);
-    }
-  }
-  if (p.sessionKey && !sessionStore.getByKey(p.sessionKey)) {
-    fetchSessions();
-  }
-  const handler = chatHandlers[p.state || ""];
-  if (handler) handler(p, isActive, isChatPage, eventSession);
-}
-function updateSandboxBuildingFlag(building2) {
-  const info = sandboxInfo;
-  if (info) setSandboxInfo({ ...info, image_building: building2 });
-}
-let sandboxPrepareIndicatorEl = null;
-function handleSandboxPrepare(payload) {
-  const isChatPage = currentPrefix === "/chats";
-  if (!isChatPage) return;
-  if (payload.phase === "start") {
-    if (sandboxPrepareIndicatorEl) {
-      sandboxPrepareIndicatorEl.remove();
-      sandboxPrepareIndicatorEl = null;
-    }
-    sandboxPrepareIndicatorEl = chatAddMsg(
-      "system",
-      "Preparing sandbox environment (first run may take a minute)…"
-    );
-    return;
-  }
-  if (sandboxPrepareIndicatorEl) {
-    sandboxPrepareIndicatorEl.remove();
-    sandboxPrepareIndicatorEl = null;
-  }
-  if (payload.phase === "error") {
-    chatAddMsg("error", `Sandbox setup failed: ${payload.error || "unknown"}`);
-  }
-}
-function handleSandboxImageBuild(payload) {
-  var _a2, _b2;
-  const phase = payload.phase;
-  updateSandboxBuildingFlag(phase === "start");
-  const isChatPage = currentPrefix === "/chats";
-  if (!isChatPage) return;
-  if (phase === "start") {
-    chatAddMsg("system", "Building sandbox image (installing packages)…");
-  } else if (phase === "done") {
-    if ((_a2 = chatMsgBox) == null ? void 0 : _a2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
-    const msg = payload.built ? `Sandbox image ready: ${payload.tag}` : `Sandbox image already cached: ${payload.tag}`;
-    chatAddMsg("system", msg);
-  } else if (phase === "error") {
-    if ((_b2 = chatMsgBox) == null ? void 0 : _b2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
-    chatAddMsg("error", `Sandbox image build failed: ${payload.error || "unknown"}`);
-  }
-}
-function handleSandboxImageProvision(payload) {
-  var _a2, _b2;
-  const isChatPage = currentPrefix === "/chats";
-  if (!isChatPage) return;
-  if (payload.phase === "start") {
-    chatAddMsg("system", "Provisioning sandbox packages…");
-  } else if (payload.phase === "done") {
-    if ((_a2 = chatMsgBox) == null ? void 0 : _a2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
-    chatAddMsg("system", "Sandbox packages provisioned");
-  } else if (payload.phase === "error") {
-    if ((_b2 = chatMsgBox) == null ? void 0 : _b2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
-    chatAddMsg("error", `Sandbox provisioning failed: ${payload.error || "unknown"}`);
-  }
-}
-function handleSandboxHostProvision(payload) {
-  var _a2, _b2;
-  const isChatPage = currentPrefix === "/chats";
-  if (!isChatPage) return;
-  if (payload.phase === "start") {
-    const msg = `Installing ${payload.count || ""} package${payload.count === 1 ? "" : "s"} on host…`;
-    chatAddMsg("system", msg);
-  } else if (payload.phase === "done") {
-    if ((_a2 = chatMsgBox) == null ? void 0 : _a2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
-    const parts = [];
-    if ((payload.installed || 0) > 0) parts.push(`${payload.installed} installed`);
-    if ((payload.skipped || 0) > 0) parts.push(`${payload.skipped} already present`);
-    chatAddMsg("system", `Host packages ready (${parts.join(", ") || "done"})`);
-  } else if (payload.phase === "error") {
-    if ((_b2 = chatMsgBox) == null ? void 0 : _b2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
-    chatAddMsg("error", `Host package install failed: ${payload.error || "unknown"}`);
-  }
-}
-function handleBrowserImagePull(payload) {
-  var _a2, _b2;
-  const isChatPage = currentPrefix === "/chats";
-  if (!isChatPage) return;
-  const image = payload.image || "browser container";
-  if (payload.phase === "start") {
-    chatAddMsg("system", `Pulling browser container image (${image})… This may take a few minutes on first run.`);
-  } else if (payload.phase === "done") {
-    if ((_a2 = chatMsgBox) == null ? void 0 : _a2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
-    chatAddMsg("system", `Browser container image ready: ${image}`);
-  } else if (payload.phase === "error") {
-    if ((_b2 = chatMsgBox) == null ? void 0 : _b2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
-    chatAddMsg("error", `Browser container image pull failed: ${payload.error || "unknown"}`);
-  }
-}
-let downloadIndicatorEl = null;
-function handleLocalLlmDownload(payload) {
-  const isChatPage = currentPrefix === "/chats";
-  if (!isChatPage) return;
-  const modelName = payload.displayName || payload.modelId || "model";
-  if (payload.error) {
-    if (downloadIndicatorEl) {
-      downloadIndicatorEl.remove();
-      downloadIndicatorEl = null;
-    }
-    chatAddMsg("error", `Failed to download ${modelName}: ${payload.error}`);
-    return;
-  }
-  if (payload.complete) {
-    if (downloadIndicatorEl) {
-      downloadIndicatorEl.remove();
-      downloadIndicatorEl = null;
-    }
-    chatAddMsg("system", `${modelName} ready`);
-    return;
-  }
-  if (!downloadIndicatorEl) {
-    downloadIndicatorEl = document.createElement("div");
-    downloadIndicatorEl.className = "msg system download-indicator";
-    const status = document.createElement("div");
-    status.className = "download-status";
-    status.textContent = `Downloading ${modelName}…`;
-    downloadIndicatorEl.appendChild(status);
-    const progressContainer = document.createElement("div");
-    progressContainer.className = "download-progress";
-    const progressBar = document.createElement("div");
-    progressBar.className = "download-progress-bar";
-    progressContainer.appendChild(progressBar);
-    downloadIndicatorEl.appendChild(progressContainer);
-    const progressText = document.createElement("div");
-    progressText.className = "download-progress-text";
-    downloadIndicatorEl.appendChild(progressText);
-    if (chatMsgBox) {
-      clearChatEmptyState();
-      chatMsgBox.appendChild(downloadIndicatorEl);
-      chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
-    }
-  }
-  const barEl = downloadIndicatorEl.querySelector(".download-progress-bar");
-  const textEl = downloadIndicatorEl.querySelector(".download-progress-text");
-  const containerEl = downloadIndicatorEl.querySelector(".download-progress");
-  if (barEl && containerEl) {
-    if (payload.progress != null) {
-      containerEl.classList.remove("indeterminate");
-      barEl.style.width = `${payload.progress.toFixed(1)}%`;
-    } else if (payload.total == null && payload.downloaded != null) {
-      containerEl.classList.add("indeterminate");
-      barEl.style.width = "";
-    }
-  }
-  if (payload.downloaded != null && textEl) {
-    const downloadedMb = (payload.downloaded / (1024 * 1024)).toFixed(1);
-    if (payload.total != null) {
-      const totalMb = (payload.total / (1024 * 1024)).toFixed(1);
-      textEl.textContent = `${downloadedMb} / ${totalMb} MB`;
-    } else {
-      textEl.textContent = `${downloadedMb} MB`;
-    }
-  }
-}
-function handleApprovalEvent(payload) {
-  renderApprovalCard(payload.requestId, payload.command);
-}
-function handleLogEntry(payload) {
-  if (logsEventHandler) logsEventHandler(payload);
-  if (currentPage !== "/logs") {
-    const ll = (payload.level || "").toUpperCase();
-    if (ll === "ERROR") {
-      setUnseenErrors(unseenErrors + 1);
-      updateLogsAlert();
-    } else if (ll === "WARN") {
-      setUnseenWarns(unseenWarns + 1);
-      updateLogsAlert();
-    }
-  }
-}
-function handleWsError(payload) {
-  const isChatPage = currentPrefix === "/chats";
-  if (!isChatPage) return;
-  chatAddErrorMsg(payload.message || "Unknown error");
-}
-function handleLocationRequest(payload) {
-  const requestId = payload.requestId;
-  if (!requestId) return;
-  if (!navigator.geolocation) {
-    sendRpc("location.result", {
-      requestId,
-      error: { code: 0, message: "Geolocation not supported" }
-    });
-    return;
-  }
-  const coarse = payload.precision === "coarse";
-  const geoOpts = coarse ? { enableHighAccuracy: false, timeout: 1e4, maximumAge: 18e5 } : { enableHighAccuracy: true, timeout: 15e3, maximumAge: 6e4 };
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      sendRpc("location.result", {
-        requestId,
-        location: {
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-          accuracy: pos.coords.accuracy
-        }
-      });
-    },
-    (err) => {
-      sendRpc("location.result", {
-        requestId,
-        error: { code: err.code, message: err.message }
-      });
-    },
-    geoOpts
-  );
-}
-function handleNetworkAuditEntry(payload) {
-  if (networkAuditEventHandler) networkAuditEventHandler(payload);
-}
-function handleAuthCredentialsChanged(payload) {
-  if ((payload == null ? void 0 : payload.reason) === "password_changed" && window.__moltisSuppressNextPasswordChangedRedirect === true) {
-    window.__moltisSuppressNextPasswordChangedRedirect = false;
-    console.info("Deferring redirect for password_changed to show recovery key first");
-    return;
-  }
-  console.warn("Auth credentials changed:", payload.reason);
-  window.location.href = "/login";
-}
-let modelsUpdatedTimer = null;
-function handleModelsUpdated(payload) {
-  if ((payload == null ? void 0 : payload.phase) === "start" || (payload == null ? void 0 : payload.phase) === "progress") return;
-  if (modelsUpdatedTimer) return;
-  modelsUpdatedTimer = setTimeout(() => {
-    modelsUpdatedTimer = null;
-    fetchModels();
-    if (refreshProvidersPage) refreshProvidersPage();
-  }, 150);
-}
-let hasConnectedOnce = false;
-const eventHandlers = {
-  chat: handleChatEvent,
-  error: handleWsError,
-  "auth.credentials_changed": handleAuthCredentialsChanged,
-  "exec.approval.requested": handleApprovalEvent,
-  "logs.entry": handleLogEntry,
-  "sandbox.prepare": handleSandboxPrepare,
-  "sandbox.image.build": handleSandboxImageBuild,
-  "sandbox.image.provision": handleSandboxImageProvision,
-  "sandbox.host.provision": handleSandboxHostProvision,
-  "browser.image.pull": handleBrowserImagePull,
-  "local-llm.download": handleLocalLlmDownload,
-  "models.updated": handleModelsUpdated,
-  "location.request": handleLocationRequest,
-  "network.audit.entry": handleNetworkAuditEntry
-};
-function dispatchFrame(frame) {
-  if (frame.type !== "event") return;
-  const streamMeta = frame.stream != null || frame.done != null ? { stream: frame.stream, done: frame.done, channel: frame.channel } : null;
-  const listeners = eventListeners[frame.event || ""] || [];
-  listeners.forEach((h) => {
-    h(frame.payload || {});
-  });
-  const handler = eventHandlers[frame.event || ""];
-  if (handler) handler(frame.payload || {}, streamMeta);
-}
-const connectOpts = {
-  onFrame: dispatchFrame,
-  onConnected: async (hello) => {
-    var _a2;
-    const isReconnect = hasConnectedOnce;
-    hasConnectedOnce = true;
-    setStatus$1("connected", "");
-    const now = /* @__PURE__ */ new Date();
-    const ts = now.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit"
-    });
-    chatAddMsg("system", `Connected to moltis gateway v${hello.server.version} at ${ts}`);
-    if ((_a2 = sandboxInfo) == null ? void 0 : _a2.image_building) {
-      chatAddMsg("system", "Building sandbox image (installing packages)…");
-    }
-    setSubscribed(false);
-    await subscribeEvents(
-      Object.keys(eventHandlers).concat([
-        "tick",
-        "shutdown",
-        "auth.credentials_changed",
-        "exec.approval.requested",
-        "exec.approval.resolved",
-        "device.pair.requested",
-        "device.pair.resolved",
-        "node.pair.requested",
-        "node.pair.resolved",
-        "node.invoke.request",
-        "session",
-        "update.available",
-        "hooks.status",
-        "push.subscriptions",
-        "channel",
-        "metrics.update",
-        "skills.install.progress",
-        "mcp.status"
-      ])
-    );
-    setSubscribed(true);
-    if (isReconnect) {
-      fetchModels();
-      fetchSessions();
-      fetchProjects();
-      prefetchChannels();
-    }
-    sendRpc("logs.status", {}).then((res) => {
-      if (res == null ? void 0 : res.ok) {
-        const p = res.payload || {};
-        setUnseenErrors(p.unseen_errors || 0);
-        setUnseenWarns(p.unseen_warns || 0);
-        if (currentPage === "/logs") clearLogsAlert();
-        else updateLogsAlert();
-      }
-    });
-    if (currentPage === "/chats" || currentPrefix === "/chats") mount(currentPage || "");
-  },
-  onHandshakeFailed: (frame) => {
-    var _a2;
-    setStatus$1("", "handshake failed");
-    const reason = ((_a2 = frame.error) == null ? void 0 : _a2.message) || "unknown error";
-    chatAddMsg("error", `Handshake failed: ${reason}`);
-  },
-  onDisconnected: (wasConnected) => {
-    if (wasConnected) {
-      setStatus$1("", "disconnected — reconnecting…");
-    }
-    const activeS = sessionStore.activeSession.value;
-    if (activeS) activeS.resetStreamState();
-    setStreamEl(null);
-    setStreamText("");
-  }
-};
-function connect() {
-  setStatus$1("connecting", "connecting...");
-  connectWs(connectOpts);
-}
-function setStatus$1(state, text) {
-  const dot = $("statusDot");
-  const sText = $("statusText");
-  if (dot) dot.className = `status-dot ${state}`;
-  if (sText) {
-    sText.textContent = text;
-    sText.classList.toggle("status-text-live", state === "connected");
-  }
-  const sendBtn = $("sendBtn");
-  if (sendBtn) sendBtn.disabled = state !== "connected";
-}
-document.addEventListener("visibilitychange", () => {
-  if (!(document.hidden || connected)) {
-    forceReconnect(connectOpts);
+});
+window.addEventListener("moltis:locale-changed", () => {
+  renderProjectSelect();
+  if (!dropdown.classList.contains("hidden")) {
+    const query2 = searchInput$1 ? searchInput$1.value.trim() : "";
+    renderList(query2);
   }
 });
 const root = document.getElementById("modalRoot");
@@ -12796,6 +11372,1508 @@ const _providers = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.definePr
   showModelDownloadProgress,
   showOAuthFlow
 }, Symbol.toStringTag, { value: "Module" }));
+let deferredInstallPrompt = null;
+let swRegistration = null;
+function isStandalone() {
+  return window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true || document.referrer.includes("android-app://");
+}
+function isIOS() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent);
+}
+function isAndroid() {
+  return /Android/.test(navigator.userAgent);
+}
+function syncStandaloneClass() {
+  document.documentElement.classList.toggle("pwa-standalone", isStandalone());
+}
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) {
+    console.log("Service workers not supported");
+    return null;
+  }
+  try {
+    swRegistration = await navigator.serviceWorker.register("/sw.js", {
+      scope: "/"
+    });
+    console.log("Service worker registered:", swRegistration.scope);
+    swRegistration.addEventListener("updatefound", () => {
+      const newWorker = swRegistration == null ? void 0 : swRegistration.installing;
+      if (newWorker) {
+        newWorker.addEventListener("statechange", () => {
+          if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+            dispatchUpdateAvailable();
+          }
+        });
+      }
+    });
+    return swRegistration;
+  } catch (error2) {
+    console.error("Service worker registration failed:", error2);
+    return null;
+  }
+}
+function dispatchUpdateAvailable() {
+  window.dispatchEvent(new CustomEvent("sw-update-available"));
+}
+function setupInstallPrompt(callback) {
+  window.addEventListener("beforeinstallprompt", ((e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    if (callback) callback(e);
+  }));
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    console.log("PWA installed");
+  });
+}
+async function promptInstall() {
+  if (!deferredInstallPrompt) {
+    return { outcome: "not-available" };
+  }
+  deferredInstallPrompt.prompt();
+  const result = await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  return result;
+}
+function canPromptInstall() {
+  return deferredInstallPrompt !== null;
+}
+function setupNotificationHandler(callback) {
+  var _a2;
+  (_a2 = navigator.serviceWorker) == null ? void 0 : _a2.addEventListener("message", (event) => {
+    if (event.data && event.data.type === "notification-click" && callback) callback(event.data.url);
+  });
+}
+function initPWA() {
+  var _a2, _b2;
+  syncStandaloneClass();
+  const hadControllerBeforeInit = Boolean((_a2 = navigator.serviceWorker) == null ? void 0 : _a2.controller);
+  registerServiceWorker();
+  setupNotificationHandler((url) => {
+    if (url && url !== window.location.pathname) {
+      window.location.href = url;
+    }
+  });
+  (_b2 = navigator.serviceWorker) == null ? void 0 : _b2.addEventListener("controllerchange", () => {
+    if (!hadControllerBeforeInit) {
+      return;
+    }
+    if (window.location.pathname === "/onboarding") {
+      return;
+    }
+    window.location.reload();
+  });
+}
+const DISMISS_KEY = "pwa-install-dismissed";
+const DISMISS_DAYS = 7;
+function isDismissed() {
+  const dismissed = localStorage.getItem(DISMISS_KEY);
+  if (!dismissed) return false;
+  const ts = parseInt(dismissed, 10);
+  const days2 = (Date.now() - ts) / (1e3 * 60 * 60 * 24);
+  return days2 < DISMISS_DAYS;
+}
+function dismiss() {
+  localStorage.setItem(DISMISS_KEY, Date.now().toString());
+  hideBanner();
+}
+function getBanner() {
+  return document.getElementById("installBanner");
+}
+function showBanner() {
+  const banner = getBanner();
+  if (banner) {
+    banner.classList.remove("hidden");
+    banner.classList.add("flex");
+  }
+}
+function hideBanner() {
+  const banner = getBanner();
+  if (banner) {
+    banner.classList.add("hidden");
+    banner.classList.remove("flex");
+  }
+}
+function isIOSSafari() {
+  const ua = navigator.userAgent;
+  return isIOS() && /Safari/.test(ua) && !/CriOS|FxiOS|OPiOS|EdgiOS/.test(ua);
+}
+function createShareIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-share inline-block text-[var(--accent)]";
+  return el;
+}
+function createMenuIcon() {
+  const el = document.createElement("span");
+  el.className = "icon icon-menu-dots inline-block text-[var(--accent)]";
+  return el;
+}
+function renderIOSInstructions(container) {
+  while (container.firstChild) container.removeChild(container.firstChild);
+  const title = document.createElement("p");
+  title.className = "text-sm font-medium text-[var(--text-strong)] mb-2";
+  title.textContent = t("pwa:install.title");
+  container.appendChild(title);
+  const steps = document.createElement("ol");
+  steps.className = "text-xs text-[var(--text)] space-y-1.5 list-decimal list-inside";
+  const step1 = document.createElement("li");
+  step1.className = "flex items-center gap-1.5";
+  step1.appendChild(document.createTextNode(t("pwa:ios.step1")));
+  const strong1 = document.createElement("strong");
+  strong1.textContent = t("pwa:ios.step1Button");
+  step1.appendChild(strong1);
+  step1.appendChild(document.createTextNode(t("pwa:ios.step1After")));
+  step1.appendChild(createShareIcon());
+  steps.appendChild(step1);
+  const step2 = document.createElement("li");
+  step2.textContent = t("pwa:ios.step2");
+  steps.appendChild(step2);
+  container.appendChild(steps);
+  if (!isIOSSafari()) {
+    const note = document.createElement("p");
+    note.className = "text-xs text-[var(--muted)] mt-2";
+    note.textContent = t("pwa:ios.safariTip");
+    container.appendChild(note);
+  }
+}
+function renderAndroidInstructions(container) {
+  while (container.firstChild) container.removeChild(container.firstChild);
+  const title = document.createElement("p");
+  title.className = "text-sm font-medium text-[var(--text-strong)] mb-2";
+  title.textContent = t("pwa:install.title");
+  container.appendChild(title);
+  const steps = document.createElement("ol");
+  steps.className = "text-xs text-[var(--text)] space-y-1.5 list-decimal list-inside";
+  const step1 = document.createElement("li");
+  step1.className = "flex items-center gap-1.5";
+  step1.appendChild(document.createTextNode(t("pwa:android.step1")));
+  step1.appendChild(createMenuIcon());
+  steps.appendChild(step1);
+  const step2 = document.createElement("li");
+  step2.textContent = t("pwa:android.step2");
+  steps.appendChild(step2);
+  container.appendChild(steps);
+}
+function renderNativePrompt(container) {
+  while (container.firstChild) container.removeChild(container.firstChild);
+  const title = document.createElement("p");
+  title.className = "text-sm font-medium text-[var(--text-strong)]";
+  title.textContent = t("pwa:install.quickAccessTitle");
+  container.appendChild(title);
+  const desc = document.createElement("p");
+  desc.className = "text-xs text-[var(--muted)] mt-1";
+  desc.textContent = t("pwa:install.quickAccessDesc");
+  container.appendChild(desc);
+}
+async function handleInstall() {
+  const result = await promptInstall();
+  if (result.outcome === "accepted") {
+    hideBanner();
+  }
+}
+function initInstallBanner() {
+  if (isStandalone() || isDismissed()) {
+    return;
+  }
+  const banner = getBanner();
+  if (!banner) return;
+  const instructions = banner.querySelector("[data-instructions]");
+  const installBtn = banner.querySelector("[data-install-btn]");
+  const dismissBtn = banner.querySelector("[data-dismiss-btn]");
+  if (!instructions) return;
+  if (dismissBtn) {
+    dismissBtn.addEventListener("click", dismiss);
+  }
+  if (isIOS()) {
+    renderIOSInstructions(instructions);
+    if (installBtn) installBtn.style.display = "none";
+    showBanner();
+  } else if (isAndroid()) {
+    setupInstallPrompt(() => {
+      renderNativePrompt(instructions);
+      if (installBtn) {
+        installBtn.style.display = "";
+        installBtn.addEventListener("click", handleInstall);
+      }
+      showBanner();
+    });
+    setTimeout(() => {
+      if (!(canPromptInstall() || isStandalone())) {
+        renderAndroidInstructions(instructions);
+        if (installBtn) installBtn.style.display = "none";
+        showBanner();
+      }
+    }, 3e3);
+  }
+}
+function clearChatEmptyState() {
+  if (!chatMsgBox) return;
+  const welcome = chatMsgBox.querySelector("#welcomeCard");
+  if (welcome) welcome.remove();
+  const noProviders = chatMsgBox.querySelector("#noProvidersCard");
+  if (noProviders) noProviders.remove();
+  chatMsgBox.classList.remove("chat-messages-empty");
+}
+function makeThinkingDots() {
+  const tpl = $("tpl-thinking-dots");
+  return tpl.content.cloneNode(true).firstElementChild;
+}
+function makeThinkingStopBtn(sessionKey) {
+  const btn2 = document.createElement("button");
+  btn2.className = "thinking-stop-btn";
+  btn2.type = "button";
+  btn2.title = "Stop generation";
+  btn2.textContent = "Stop";
+  btn2.addEventListener("click", () => {
+    btn2.disabled = true;
+    btn2.textContent = "Stopping…";
+    sendRpc("chat.abort", { sessionKey }).catch(() => void 0);
+  });
+  return btn2;
+}
+function updateSessionRunId(sessionKey, runId) {
+  if (!runId) return;
+  setSessionActiveRunId(sessionKey, runId);
+}
+function updateSessionHistoryIndex(sessionKey, messageIndex) {
+  const idx = Number(messageIndex);
+  if (!Number.isInteger(idx) || idx < 0) return;
+  const session = sessionStore.getByKey(sessionKey);
+  if (session && idx > session.lastHistoryIndex.value) {
+    session.lastHistoryIndex.value = idx;
+  }
+  if (sessionKey === sessionStore.activeSessionKey.value && idx > lastHistoryIndex) {
+    setLastHistoryIndex(idx);
+  }
+}
+function moveFirstQueuedToChat() {
+  var _a2;
+  const tray = document.getElementById("queuedMessages");
+  if (!tray) return;
+  const firstQueued = tray.querySelector(".msg.user.queued");
+  if (!firstQueued) return;
+  console.debug("[queued] moving queued message from tray to chat", {
+    remaining: tray.querySelectorAll(".msg").length - 1
+  });
+  firstQueued.classList.remove("queued");
+  const badge = firstQueued.querySelector(".queued-badge");
+  if (badge) badge.remove();
+  clearChatEmptyState();
+  (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(firstQueued);
+  if (!tray.querySelector(".msg")) tray.classList.add("hidden");
+}
+function setSafeMarkdownHtml(el, text) {
+  const rendered = renderMarkdown(text);
+  el.textContent = "";
+  const wrapper = document.createElement("span");
+  wrapper.insertAdjacentHTML("afterbegin", rendered);
+  while (wrapper.firstChild) el.appendChild(wrapper.firstChild);
+}
+function hasNonWhitespaceContent(text) {
+  return String(text || "").trim().length > 0;
+}
+function isReasoningAlreadyShown(text) {
+  var _a2;
+  if (!(chatMsgBox && text)) return false;
+  const normalized = text.trim();
+  for (const el of chatMsgBox.querySelectorAll(".msg-reasoning-body")) {
+    if (((_a2 = el.textContent) == null ? void 0 : _a2.trim()) === normalized) return true;
+  }
+  return false;
+}
+const pendingToolCallEnds = /* @__PURE__ */ new Map();
+function toolCallLogicalId(payload) {
+  if (!payload) return "";
+  if (payload.runId) return `${payload.runId}:${payload.toolCallId}`;
+  return String(payload.toolCallId || "");
+}
+function toolCallCardId(payload) {
+  if (payload == null ? void 0 : payload.runId) {
+    return `tool-${payload.runId}-${payload.toolCallId}`;
+  }
+  return `tool-${payload == null ? void 0 : payload.toolCallId}`;
+}
+function toolCallEventKey(eventSession, payload) {
+  return `${eventSession}:${toolCallLogicalId(payload)}`;
+}
+function clearPendingToolCallEndsForSession(sessionKey) {
+  const prefix = `${sessionKey}:`;
+  for (const key of pendingToolCallEnds.keys()) {
+    if (key.startsWith(prefix)) {
+      pendingToolCallEnds.delete(key);
+    }
+  }
+}
+function appendToolResult(toolCard, result, eventSession) {
+  const out = (result.stdout || "").replace(/\n+$/, "");
+  const toolSession = sessionStore.getByKey(eventSession);
+  if (toolSession) toolSession.lastToolOutput.value = out;
+  setLastToolOutput(out);
+  if (out) {
+    const outEl = document.createElement("pre");
+    outEl.className = "exec-output";
+    outEl.textContent = out;
+    toolCard.appendChild(outEl);
+  }
+  const stderrText = (result.stderr || "").replace(/\n+$/, "");
+  if (stderrText) {
+    const errEl = document.createElement("pre");
+    errEl.className = "exec-output exec-stderr";
+    errEl.textContent = stderrText;
+    toolCard.appendChild(errEl);
+  }
+  if (result.exit_code !== void 0 && result.exit_code !== 0) {
+    const codeEl = document.createElement("div");
+    codeEl.className = "exec-exit";
+    codeEl.textContent = `exit ${result.exit_code}`;
+    toolCard.appendChild(codeEl);
+  }
+  if (result.screenshot) {
+    const imgSrc = result.screenshot.startsWith("data:") ? result.screenshot : `data:image/png;base64,${result.screenshot}`;
+    renderScreenshot(toolCard, imgSrc, result.screenshot_scale || 1);
+  }
+  if (result.document_ref) {
+    const docStoredName = result.document_ref.split("/").pop() || "";
+    const docDisplayName = result.filename || docStoredName;
+    const docSessionKey = eventSession || activeSessionKey || "main";
+    const docMediaSrc = `/api/sessions/${encodeURIComponent(docSessionKey)}/media/${encodeURIComponent(docStoredName)}`;
+    renderDocument(toolCard, docMediaSrc, docDisplayName, result.mime_type, result.size_bytes);
+  }
+  const renderedPointGroups = renderMapPointGroups(toolCard, result.points, result.label);
+  if (!renderedPointGroups && result.map_links) {
+    renderMapLinks(toolCard, result.map_links, result.label);
+  }
+}
+function isToolValidationErrorPayload(p) {
+  if (!(p && !p.success && p.error && p.error.detail)) return false;
+  const errDetail = p.error.detail.toLowerCase();
+  return errDetail.includes("missing field") || errDetail.includes("missing required") || errDetail.includes("missing 'action'") || errDetail.includes("missing 'url'");
+}
+function completeToolCard(toolCard, p, eventSession) {
+  if (isToolValidationErrorPayload(p)) {
+    toolCard.className = "msg exec-card exec-retry";
+  } else {
+    toolCard.className = `msg exec-card ${p.success ? "exec-ok" : "exec-err"}`;
+  }
+  const toolSpin = toolCard.querySelector(".exec-status");
+  if (toolSpin) toolSpin.remove();
+  if (p.success && p.result) {
+    appendToolResult(toolCard, p.result, eventSession);
+    return;
+  }
+  if (!p.success && p.error && p.error.detail) {
+    const errMsg = document.createElement("div");
+    errMsg.className = isToolValidationErrorPayload(p) ? "exec-retry-detail" : "exec-error-detail";
+    errMsg.textContent = p.error.detail;
+    toolCard.appendChild(errMsg);
+  }
+  if (p.success && (p.toolName === "create_skill" || p.toolName === "update_skill")) {
+    const hint = document.createElement("div");
+    hint.className = "skill-hint";
+    const verb = p.toolName === "create_skill" ? "created" : "updated";
+    const link = document.createElement("a");
+    link.href = "/skills";
+    link.textContent = "personal skills";
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      navigate("/skills");
+    });
+    hint.append(`Skill ${verb} — available in your `, link);
+    toolCard.appendChild(hint);
+  }
+}
+function clearStaleRunningToolCards() {
+  if (!chatMsgBox) return;
+  const statusEls = chatMsgBox.querySelectorAll(".msg.exec-card .exec-status");
+  for (const statusEl2 of statusEls) {
+    const card = statusEl2.closest(".msg.exec-card");
+    statusEl2.remove();
+    if (!card) continue;
+    if (!(card.classList.contains("exec-ok") || card.classList.contains("exec-err"))) {
+      card.className = "msg exec-card exec-ok";
+    }
+  }
+}
+function extractThinkingText() {
+  var _a2;
+  const indicator = document.getElementById("thinkingIndicator");
+  if (!indicator) return null;
+  const textEl = indicator.querySelector(".thinking-text");
+  const text = (_a2 = textEl == null ? void 0 : textEl.textContent) == null ? void 0 : _a2.trim();
+  return text || null;
+}
+function handleToolCallStartDom(p, eventSession) {
+  var _a2, _b2;
+  const thinkingText = extractThinkingText();
+  removeThinking();
+  if (streamEl) {
+    if (!((_a2 = streamEl.textContent) == null ? void 0 : _a2.trim())) {
+      streamEl.remove();
+    }
+    setStreamEl(null);
+    setStreamText("");
+  }
+  const cardId = toolCallCardId(p);
+  if (document.getElementById(cardId)) return;
+  const tpl = $("tpl-exec-card");
+  const frag = tpl.content.cloneNode(true);
+  const card = frag.firstElementChild;
+  card.id = cardId;
+  const cmd = toolCallSummary(p.toolName, p.arguments, p.executionMode);
+  const cmdEl = card.querySelector("[data-cmd]");
+  if (cmdEl) cmdEl.textContent = ` ${cmd}`;
+  if (thinkingText) appendReasoningDisclosure(card, thinkingText);
+  clearChatEmptyState();
+  (_b2 = chatMsgBox) == null ? void 0 : _b2.appendChild(card);
+  const endKey = toolCallEventKey(eventSession, p);
+  const pendingEnd = pendingToolCallEnds.get(endKey);
+  if (pendingEnd) {
+    pendingToolCallEnds.delete(endKey);
+    completeToolCard(card, pendingEnd, eventSession);
+  }
+  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+}
+function renderChannelUserMessage(p, _eventSession) {
+  var _a2;
+  const chanSession = sessionStore.getByKey(p.sessionKey || activeSessionKey);
+  const chanLastIdx = chanSession ? chanSession.lastHistoryIndex.value : lastHistoryIndex;
+  if (p.messageIndex !== void 0 && p.messageIndex <= chanLastIdx) return;
+  const cleanText = stripChannelPrefix(p.text || "");
+  const sessionKey = p.sessionKey || activeSessionKey;
+  const audioFilename = (_a2 = p.channel) == null ? void 0 : _a2.audio_filename;
+  let el;
+  if (audioFilename) {
+    el = chatAddMsg("user", "", true);
+    if (el) {
+      const audioSrc = `/api/sessions/${encodeURIComponent(sessionKey)}/media/${encodeURIComponent(audioFilename)}`;
+      renderAudioPlayer(el, audioSrc);
+      if (cleanText) {
+        const textWrap = document.createElement("div");
+        textWrap.className = "mt-2";
+        setSafeMarkdownHtml(textWrap, cleanText);
+        el.appendChild(textWrap);
+      }
+    }
+  } else {
+    el = chatAddMsg("user", renderMarkdown(cleanText), true);
+  }
+  if (el && p.channel) {
+    appendChannelFooter(el, p.channel);
+  }
+}
+function normalizeEchoComparable(text) {
+  if (!text) return "";
+  return text.replace(/```[a-zA-Z0-9_-]*\n?/g, "").replace(/```/g, "").replace(/[`\s]/g, "");
+}
+function isPureToolOutputEcho(finalText, toolOutput) {
+  const finalComparable = normalizeEchoComparable(finalText);
+  const toolComparable = normalizeEchoComparable(toolOutput);
+  if (!(finalComparable && toolComparable)) return false;
+  return finalComparable === toolComparable;
+}
+function resolveFinalMessageEl(p) {
+  const finalText = String(p.text || "");
+  const hasFinalText = hasNonWhitespaceContent(finalText);
+  const isEcho = hasFinalText && isPureToolOutputEcho(finalText, lastToolOutput);
+  if (!isEcho) {
+    if (hasFinalText && streamEl) {
+      setSafeMarkdownHtml(streamEl, finalText);
+      return streamEl;
+    }
+    if (hasFinalText) return chatAddMsg("assistant", renderMarkdown(finalText), true);
+    if (streamEl) streamEl.remove();
+    return null;
+  }
+  if (streamEl) streamEl.remove();
+  return null;
+}
+function appendFinalFooter(msgEl, p, eventSession) {
+  if (!(msgEl && p.model)) return;
+  const footer = document.createElement("div");
+  footer.className = "msg-model-footer";
+  let footerText = p.provider ? `${p.provider} / ${p.model}` : p.model;
+  if (p.inputTokens || p.outputTokens) {
+    footerText += ` · ${formatAssistantTokenUsage(p.inputTokens, p.outputTokens, p.cacheReadTokens)}`;
+  }
+  const textSpan = document.createElement("span");
+  textSpan.textContent = footerText;
+  footer.appendChild(textSpan);
+  const speedLabel = formatTokenSpeed(p.outputTokens || 0, p.durationMs || 0);
+  if (speedLabel) {
+    const speed = document.createElement("span");
+    speed.className = "msg-token-speed";
+    const tone = tokenSpeedTone(p.outputTokens || 0, p.durationMs || 0);
+    if (tone) speed.classList.add(`msg-token-speed-${tone}`);
+    speed.textContent = ` · ${speedLabel}`;
+    footer.appendChild(speed);
+  }
+  if (p.replyMedium === "voice" || p.replyMedium === "text") {
+    const badge = document.createElement("span");
+    badge.className = "reply-medium-badge";
+    badge.textContent = p.replyMedium;
+    footer.appendChild(badge);
+  }
+  msgEl.appendChild(footer);
+  void attachMessageVoiceControl({
+    messageEl: msgEl,
+    footerEl: footer,
+    sessionKey: p.sessionKey || eventSession || activeSessionKey,
+    text: p.text || "",
+    runId: p.runId,
+    messageIndex: p.messageIndex,
+    audioPath: p.audio || void 0,
+    audioWarning: p.audioWarning || void 0,
+    forceAction: p.replyMedium === "voice" && !p.audio,
+    autoplayOnGenerate: true
+  });
+}
+function renderAbortedPartialInDom(eventSession, p, partialState) {
+  if (!partialState.hasVisiblePartial) return;
+  const partial = partialState.partial;
+  let partialEl = null;
+  if (hasNonWhitespaceContent(partialState.partialText) && streamEl) {
+    setSafeMarkdownHtml(streamEl, partialState.partialText);
+    partialEl = streamEl;
+  } else if (hasNonWhitespaceContent(partialState.partialText)) {
+    partialEl = chatAddMsg("assistant", renderMarkdown(partialState.partialText), true);
+  } else if (hasNonWhitespaceContent(partialState.partialReasoning)) {
+    partialEl = chatAddMsg("assistant", "", false);
+  }
+  if (partialEl && partialState.partialReasoning && !isReasoningAlreadyShown(partialState.partialReasoning)) {
+    appendReasoningDisclosure(partialEl, partialState.partialReasoning);
+  }
+  if (!partialEl) return;
+  appendFinalFooter(
+    partialEl,
+    {
+      model: (partial == null ? void 0 : partial.model) || "",
+      provider: (partial == null ? void 0 : partial.provider) || "",
+      inputTokens: (partial == null ? void 0 : partial.inputTokens) || 0,
+      outputTokens: (partial == null ? void 0 : partial.outputTokens) || 0,
+      durationMs: (partial == null ? void 0 : partial.durationMs) || 0,
+      replyMedium: p.replyMedium || "text",
+      text: partialState.partialText,
+      audio: (partial == null ? void 0 : partial.audio) || void 0,
+      audioWarning: void 0,
+      runId: p.runId,
+      messageIndex: p.messageIndex,
+      sessionKey: eventSession
+    },
+    eventSession
+  );
+  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+}
+function handleChatThinking(p, isActive, isChatPage, eventSession) {
+  var _a2;
+  updateSessionRunId(eventSession, p.runId);
+  setSessionReplying(eventSession, true);
+  if (!(isActive && isChatPage)) return;
+  removeThinking();
+  clearChatEmptyState();
+  const thinkEl = document.createElement("div");
+  thinkEl.className = "msg assistant thinking";
+  thinkEl.id = "thinkingIndicator";
+  thinkEl.appendChild(makeThinkingDots());
+  thinkEl.appendChild(makeThinkingStopBtn(eventSession));
+  (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(thinkEl);
+  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+}
+function handleChatThinkingText(p, isActive, isChatPage, eventSession) {
+  updateSessionRunId(eventSession, p.runId);
+  setSessionReplying(eventSession, true);
+  if (!(isActive && isChatPage)) return;
+  const indicator = document.getElementById("thinkingIndicator");
+  if (indicator) {
+    const existingBtn = indicator.querySelector(".thinking-stop-btn");
+    while (indicator.firstChild) indicator.removeChild(indicator.firstChild);
+    const textEl = document.createElement("span");
+    textEl.className = "thinking-text";
+    textEl.textContent = p.text || "";
+    indicator.appendChild(textEl);
+    indicator.appendChild(existingBtn || makeThinkingStopBtn(eventSession));
+    if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  }
+}
+function handleChatThinkingDone(_p, isActive, isChatPage) {
+}
+function handleChatVoicePending(_p, isActive, isChatPage, eventSession) {
+  const session = sessionStore.getByKey(eventSession);
+  if (session) session.voicePending.value = true;
+  if (!(isActive && isChatPage)) return;
+  setVoicePending(true);
+}
+function handleChatToolCallStart(p, isActive, isChatPage, eventSession) {
+  updateSessionRunId(eventSession, p.runId);
+  const session = sessionStore.getByKey(eventSession);
+  if (session) session.streamText.value = "";
+  if (!(isActive && isChatPage)) return;
+  handleToolCallStartDom(p, eventSession);
+}
+function handleChatToolCallEnd(p, isActive, isChatPage, eventSession) {
+  var _a2, _b2;
+  updateSessionRunId(eventSession, p.runId);
+  bumpSessionCount(eventSession, 2);
+  let toolHistoryIndex = p.messageIndex;
+  if (toolHistoryIndex === void 0 || toolHistoryIndex === null) {
+    const toolSession = sessionStore.getByKey(eventSession);
+    if (toolSession && typeof toolSession.messageCount === "number" && toolSession.messageCount > 0) {
+      toolHistoryIndex = toolSession.messageCount - 1;
+    }
+  }
+  cacheSessionHistoryMessage(
+    eventSession,
+    {
+      role: "tool_result",
+      tool_call_id: p.toolCallId || "",
+      tool_name: p.toolName || "",
+      success: p.success === true,
+      result: p.result || null,
+      error: ((_a2 = p.error) == null ? void 0 : _a2.detail) || ((_b2 = p.error) == null ? void 0 : _b2.message) || (typeof p.error === "string" ? String(p.error) : null),
+      created_at: Date.now()
+    },
+    toolHistoryIndex
+  );
+  updateSessionHistoryIndex(eventSession, toolHistoryIndex);
+  if (!(isActive && isChatPage)) return;
+  const toolCard = document.getElementById(toolCallCardId(p));
+  if (!toolCard) {
+    pendingToolCallEnds.set(toolCallEventKey(eventSession, p), p);
+    return;
+  }
+  completeToolCard(toolCard, p, eventSession);
+}
+function handleChatChannelUser(p, isActive, isChatPage, eventSession) {
+  var _a2;
+  bumpSessionCount(eventSession, 1);
+  const cachedAudio = ((_a2 = p.channel) == null ? void 0 : _a2.audio_filename) ? `media/${eventSession.replaceAll(":", "_")}/${p.channel.audio_filename}` : void 0;
+  cacheSessionHistoryMessage(
+    eventSession,
+    {
+      role: "user",
+      content: p.text || "",
+      channel: p.channel || null,
+      audio: cachedAudio,
+      created_at: Date.now()
+    },
+    p.messageIndex
+  );
+  if (!isActive) {
+    setSessionUnread(eventSession, true);
+  }
+  if (!(isChatPage && isActive)) {
+    updateSessionHistoryIndex(eventSession, p.messageIndex);
+    return;
+  }
+  renderChannelUserMessage(p);
+  updateSessionHistoryIndex(eventSession, p.messageIndex);
+}
+function handleChatUserMessage(p, isActive, isChatPage, eventSession) {
+  if (p.seq !== void 0 && p.seq !== null && p.seq <= chatSeq) return;
+  bumpSessionCount(eventSession, 1);
+  cacheSessionHistoryMessage(
+    eventSession,
+    {
+      role: "user",
+      content: p.text || "",
+      created_at: Date.now()
+    },
+    p.messageIndex
+  );
+  if (!isActive) {
+    setSessionUnread(eventSession, true);
+  }
+  if (!(isChatPage && isActive)) return;
+  chatAddMsg("user", renderMarkdown(p.text || ""), true);
+}
+function handleChatDelta(p, isActive, isChatPage, eventSession) {
+  var _a2;
+  updateSessionRunId(eventSession, p.runId);
+  if (!p.text) return;
+  const session = sessionStore.getByKey(eventSession);
+  if (session) session.streamText.value += p.text;
+  if (!(isActive && isChatPage)) return;
+  if (voicePending) {
+    setStreamText(streamText + p.text);
+    return;
+  }
+  if (!(streamEl || p.text.trim())) return;
+  removeThinking();
+  if (!streamEl) {
+    setStreamText("");
+    setStreamEl(document.createElement("div"));
+    streamEl.className = "msg assistant";
+    clearChatEmptyState();
+    (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(streamEl);
+  }
+  setStreamText(streamText + p.text);
+  setSafeMarkdownHtml(streamEl, streamText);
+  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+}
+function handleChatFinal(p, isActive, isChatPage, eventSession) {
+  var _a2, _b2, _c;
+  clearPendingToolCallEndsForSession(eventSession);
+  updateSessionRunId(eventSession, p.runId);
+  bumpSessionCount(eventSession, 1);
+  const finalText = String(p.text || "");
+  const hasVisibleFinal = hasNonWhitespaceContent(finalText) || hasNonWhitespaceContent(p.reasoning || "") || hasNonWhitespaceContent(p.audio || "");
+  if (hasVisibleFinal) {
+    cacheSessionHistoryMessage(
+      eventSession,
+      {
+        role: "assistant",
+        content: finalText,
+        model: p.model || "",
+        provider: p.provider || "",
+        inputTokens: p.inputTokens || 0,
+        outputTokens: p.outputTokens || 0,
+        cacheReadTokens: p.cacheReadTokens || 0,
+        cacheWriteTokens: p.cacheWriteTokens || 0,
+        durationMs: p.durationMs || 0,
+        requestInputTokens: p.requestInputTokens,
+        requestOutputTokens: p.requestOutputTokens,
+        requestCacheReadTokens: p.requestCacheReadTokens,
+        requestCacheWriteTokens: p.requestCacheWriteTokens,
+        reasoning: p.reasoning || void 0,
+        audio: p.audio || void 0,
+        run_id: p.runId || void 0,
+        created_at: Date.now()
+      },
+      p.messageIndex
+    );
+  }
+  const evtSession = sessionStore.getByKey(eventSession);
+  const lastIdx = evtSession ? evtSession.lastHistoryIndex.value : lastHistoryIndex;
+  if (p.messageIndex !== void 0 && p.messageIndex <= lastIdx) {
+    setSessionReplying(eventSession, false);
+    setSessionActiveRunId(eventSession, null);
+    return;
+  }
+  updateSessionHistoryIndex(eventSession, p.messageIndex);
+  setSessionReplying(eventSession, false);
+  setSessionActiveRunId(eventSession, null);
+  if (!isActive) {
+    setSessionUnread(eventSession, true);
+  }
+  if (!(isActive && isChatPage)) {
+    setVoicePending(false);
+    return;
+  }
+  removeThinking();
+  clearStaleRunningToolCards();
+  if (voicePending && p.text && p.replyMedium === "voice") {
+    console.debug("[audio] voice-pending path, audio:", !!p.audio, "text:", p.text.substring(0, 40));
+    const msgEl = streamEl || document.createElement("div");
+    msgEl.className = "msg assistant";
+    msgEl.textContent = "";
+    if (!msgEl.parentNode) {
+      clearChatEmptyState();
+      (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(msgEl);
+    }
+    if (p.audio) {
+      const filename = p.audio.split("/").pop() || "";
+      const audioSrc = `/api/sessions/${encodeURIComponent(p.sessionKey || activeSessionKey)}/media/${encodeURIComponent(filename)}`;
+      console.debug("[audio] rendering persisted audio:", filename);
+      renderAudioPlayer(msgEl, audioSrc, true);
+    }
+    if (hasNonWhitespaceContent(p.text)) {
+      const textWrap = document.createElement("div");
+      textWrap.className = "mt-2";
+      setSafeMarkdownHtml(textWrap, p.text);
+      msgEl.appendChild(textWrap);
+    }
+    if (p.reasoning && !isReasoningAlreadyShown(p.reasoning)) {
+      appendReasoningDisclosure(msgEl, p.reasoning);
+    }
+    appendFinalFooter(msgEl, p, eventSession);
+    if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  } else {
+    let resolvedEl = resolveFinalMessageEl(p);
+    const skipReasoning = p.reasoning && isReasoningAlreadyShown(p.reasoning);
+    if (!resolvedEl && p.reasoning && !skipReasoning) {
+      resolvedEl = chatAddMsg("assistant", "", false);
+    }
+    if (resolvedEl && p.reasoning && !skipReasoning) {
+      appendReasoningDisclosure(resolvedEl, p.reasoning);
+    }
+    if (resolvedEl && p.text && p.replyMedium === "voice") {
+      console.debug(
+        "[audio] streamed path, audio:",
+        !!p.audio,
+        "voicePending:",
+        voicePending,
+        "text:",
+        p.text.substring(0, 40)
+      );
+      if (p.audio) {
+        const fn2 = p.audio.split("/").pop() || "";
+        const src2 = `/api/sessions/${encodeURIComponent(p.sessionKey || activeSessionKey)}/media/${encodeURIComponent(fn2)}`;
+        console.debug("[audio] rendering persisted audio (streamed):", fn2);
+        resolvedEl.textContent = "";
+        renderAudioPlayer(resolvedEl, src2, true);
+        appendFinalFooter(resolvedEl, p, eventSession);
+      } else {
+        console.debug("[audio] no persisted audio, showing voice fallback action");
+        appendFinalFooter(resolvedEl, p, eventSession);
+      }
+    } else {
+      let target = resolvedEl;
+      if (!target) {
+        const last = (_b2 = chatMsgBox) == null ? void 0 : _b2.lastElementChild;
+        if (last && !last.classList.contains("user")) target = last;
+      }
+      appendFinalFooter(target, p, eventSession);
+    }
+  }
+  if (p.inputTokens || p.outputTokens) {
+    sessionTokens.input += p.inputTokens || 0;
+    sessionTokens.output += p.outputTokens || 0;
+  }
+  if (p.requestInputTokens !== void 0 && p.requestInputTokens !== null) {
+    setSessionCurrentInputTokens(p.requestInputTokens || 0);
+  } else if (p.inputTokens || p.outputTokens) {
+    setSessionCurrentInputTokens(p.inputTokens || 0);
+  }
+  updateTokenBar();
+  appendLastMessageTimestamp(Date.now());
+  const finalSession = sessionStore.getByKey(eventSession);
+  if (finalSession) finalSession.resetStreamState();
+  setStreamEl(null);
+  setStreamText("");
+  setLastToolOutput("");
+  setVoicePending(false);
+  maybeRefreshFullContext();
+  if ((_c = chatMsgBox) == null ? void 0 : _c.lastElementChild) {
+    highlightCodeBlocks(chatMsgBox.lastElementChild);
+  }
+  moveFirstQueuedToChat();
+}
+const COMPACT_CARD_DEBOUNCE_MS = 500;
+const lastCompactCardAt = /* @__PURE__ */ new Map();
+const compactingStatusElements = /* @__PURE__ */ new Map();
+function shouldRenderCompactCard(p) {
+  const key = p.sessionKey || "__active__";
+  const now = Date.now();
+  const previous = lastCompactCardAt.get(key) || 0;
+  if (now - previous < COMPACT_CARD_DEBOUNCE_MS) {
+    return false;
+  }
+  lastCompactCardAt.set(key, now);
+  return true;
+}
+function removeCompactingStatus(p) {
+  var _a2;
+  const key = p.sessionKey || "__active__";
+  const el = compactingStatusElements.get(key);
+  compactingStatusElements.delete(key);
+  if (el && el.parentNode === chatMsgBox) {
+    (_a2 = chatMsgBox) == null ? void 0 : _a2.removeChild(el);
+  }
+}
+function resetTokensAfterCompaction() {
+  setSessionTokens({ input: 0, output: 0 });
+  setSessionCurrentInputTokens(0);
+  updateTokenBar();
+}
+function handleChatAutoCompact(p, isActive, isChatPage) {
+  var _a2, _b2;
+  if (!(isActive && isChatPage)) return;
+  if (p.phase === "start") {
+    const statusEl2 = chatAddMsg("system", "Compacting conversation (context limit reached)…");
+    const key = p.sessionKey || "__active__";
+    if (statusEl2) {
+      compactingStatusElements.set(key, statusEl2);
+    }
+  } else if (p.phase === "done") {
+    removeCompactingStatus(p);
+    if (shouldRenderCompactCard(p)) {
+      renderCompactCard(p);
+    }
+    resetTokensAfterCompaction();
+  } else if (p.phase === "error") {
+    removeCompactingStatus(p);
+    chatAddMsg("error", `Auto-compact failed: ${((_a2 = p.error) == null ? void 0 : _a2.message) || ((_b2 = p.error) == null ? void 0 : _b2.detail) || "unknown error"}`);
+  }
+}
+function handleChatCompact(p, isActive, isChatPage) {
+  if (!(isActive && isChatPage)) return;
+  if (p.phase !== "done") return;
+  removeCompactingStatus(p);
+  if (!shouldRenderCompactCard(p)) return;
+  renderCompactCard(p);
+  resetTokensAfterCompaction();
+}
+function retryDelayMsFromPayload(p) {
+  var _a2, _b2;
+  if (p.retryAfterMs !== void 0 && p.retryAfterMs !== null) return Number(p.retryAfterMs) || 0;
+  if (((_a2 = p.error) == null ? void 0 : _a2.retryAfterMs) !== void 0 && ((_b2 = p.error) == null ? void 0 : _b2.retryAfterMs) !== null) return Number(p.error.retryAfterMs) || 0;
+  return 0;
+}
+function retryStatusText(p) {
+  var _a2;
+  const retryMs = retryDelayMsFromPayload(p);
+  const retrySecs = Math.max(1, Math.ceil(retryMs / 1e3));
+  const rateLimited = ((_a2 = p.error) == null ? void 0 : _a2.type) === "rate_limit_exceeded";
+  return rateLimited ? `Rate limited by provider, retrying in ${retrySecs}s…` : `Temporary provider issue, retrying in ${retrySecs}s…`;
+}
+function handleChatRetrying(p, isActive, isChatPage, eventSession) {
+  var _a2;
+  updateSessionRunId(eventSession, p.runId);
+  setSessionReplying(eventSession, true);
+  if (!(isActive && isChatPage)) return;
+  let indicator = document.getElementById("thinkingIndicator");
+  if (!indicator) {
+    removeThinking();
+    indicator = document.createElement("div");
+    indicator.className = "msg assistant thinking";
+    indicator.id = "thinkingIndicator";
+    indicator.appendChild(makeThinkingDots());
+    clearChatEmptyState();
+    (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(indicator);
+  }
+  while (indicator.firstChild) indicator.removeChild(indicator.firstChild);
+  const textEl = document.createElement("span");
+  textEl.className = "thinking-text";
+  textEl.textContent = retryStatusText(p);
+  indicator.appendChild(textEl);
+  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+}
+function handleChatError(p, isActive, isChatPage, eventSession) {
+  var _a2, _b2, _c;
+  clearPendingToolCallEndsForSession(eventSession);
+  setSessionReplying(eventSession, false);
+  setSessionActiveRunId(eventSession, null);
+  const errSession = sessionStore.getByKey(eventSession);
+  if (errSession) errSession.resetStreamState();
+  if (!(isActive && isChatPage)) {
+    setVoicePending(false);
+    return;
+  }
+  removeThinking();
+  clearStaleRunningToolCards();
+  if ((_a2 = p.error) == null ? void 0 : _a2.title) {
+    chatAddErrorCard(localizeStructuredError(p.error));
+  } else {
+    chatAddErrorMsg(p.message || "unknown");
+  }
+  if ((_b2 = p.error) == null ? void 0 : _b2.canContinue) {
+    const lastCard = (_c = chatMsgBox) == null ? void 0 : _c.querySelector(".error-card:last-child");
+    if (lastCard) {
+      const btn2 = document.createElement("button");
+      btn2.className = "provider-btn error-continue-btn";
+      btn2.textContent = t("errors:chat.continue", "Continue");
+      btn2.onclick = () => {
+        var _a3;
+        btn2.disabled = true;
+        btn2.textContent = t("errors:chat.continuing", "Continuing...");
+        chatInput.value = t(
+          "errors:chat.continueMessage",
+          "Please continue where you left off."
+        );
+        (_a3 = chatSendBtn) == null ? void 0 : _a3.click();
+      };
+      const body = lastCard.querySelector(".error-body");
+      if (body) body.appendChild(btn2);
+    }
+  }
+  setStreamEl(null);
+  setStreamText("");
+  setVoicePending(false);
+  moveFirstQueuedToChat();
+}
+function getAbortedPartialState(p) {
+  const partial = p.partialMessage && typeof p.partialMessage === "object" ? p.partialMessage : null;
+  const partialText = String((partial == null ? void 0 : partial.content) || "");
+  const partialReasoning = String((partial == null ? void 0 : partial.reasoning) || "");
+  return {
+    partial,
+    partialText,
+    partialReasoning,
+    hasVisiblePartial: hasNonWhitespaceContent(partialText) || hasNonWhitespaceContent(partialReasoning)
+  };
+}
+function cacheAbortedPartial(eventSession, p, abortSession, partialState) {
+  if (!partialState.hasVisiblePartial) return;
+  const partial = partialState.partial;
+  const lastIdx = abortSession ? abortSession.lastHistoryIndex.value : lastHistoryIndex;
+  if (p.messageIndex === void 0 || p.messageIndex === null || p.messageIndex > lastIdx) {
+    bumpSessionCount(eventSession, 1);
+  }
+  cacheSessionHistoryMessage(
+    eventSession,
+    {
+      role: "assistant",
+      content: partialState.partialText,
+      model: (partial == null ? void 0 : partial.model) || "",
+      provider: (partial == null ? void 0 : partial.provider) || "",
+      inputTokens: (partial == null ? void 0 : partial.inputTokens) || 0,
+      outputTokens: (partial == null ? void 0 : partial.outputTokens) || 0,
+      durationMs: (partial == null ? void 0 : partial.durationMs) || 0,
+      requestInputTokens: partial == null ? void 0 : partial.requestInputTokens,
+      requestOutputTokens: partial == null ? void 0 : partial.requestOutputTokens,
+      reasoning: (partial == null ? void 0 : partial.reasoning) || void 0,
+      audio: (partial == null ? void 0 : partial.audio) || void 0,
+      run_id: (partial == null ? void 0 : partial.run_id) || p.runId || void 0,
+      created_at: (partial == null ? void 0 : partial.created_at) || Date.now()
+    },
+    p.messageIndex
+  );
+  updateSessionHistoryIndex(eventSession, p.messageIndex);
+}
+function handleChatAborted(p, isActive, isChatPage, eventSession) {
+  clearPendingToolCallEndsForSession(eventSession);
+  setSessionReplying(eventSession, false);
+  setSessionActiveRunId(eventSession, null);
+  const partialState = getAbortedPartialState(p);
+  const abortSession = sessionStore.getByKey(eventSession);
+  cacheAbortedPartial(eventSession, p, abortSession, partialState);
+  if (abortSession) abortSession.resetStreamState();
+  if (partialState.hasVisiblePartial && !isActive) {
+    setSessionUnread(eventSession, true);
+  }
+  if (!(isActive && isChatPage)) {
+    setVoicePending(false);
+    return;
+  }
+  removeThinking();
+  clearStaleRunningToolCards();
+  renderAbortedPartialInDom(eventSession, p, partialState);
+  setStreamEl(null);
+  setStreamText("");
+  setVoicePending(false);
+  moveFirstQueuedToChat();
+}
+function handleChatNotice(p, isActive, isChatPage) {
+  if (!(isActive && isChatPage)) return;
+  const msg = p.title ? `**${p.title}:** ${p.message}` : p.message || "";
+  const noticeEl = p.title ? chatAddMsg("system", renderMarkdown(msg), true) : chatAddMsg("system", msg);
+  if (!(noticeEl && p.title)) return;
+  noticeEl.classList.add("system-notice");
+  if (String(p.title).toLowerCase() !== "sandbox") return;
+  noticeEl.classList.add("system-notice-sandbox");
+  const normalizedMessage = String(p.message || "").toLowerCase();
+  if (normalizedMessage.indexOf("enabled") !== -1) {
+    noticeEl.classList.add("is-enabled");
+  } else if (normalizedMessage.indexOf("disabled") !== -1) {
+    noticeEl.classList.add("is-disabled");
+  }
+}
+function handleChatQueueCleared(_p, isActive, isChatPage) {
+  if (!(isActive && isChatPage)) return;
+  const tray = document.getElementById("queuedMessages");
+  if (tray) {
+    const count = tray.querySelectorAll(".msg").length;
+    console.debug("[queued] queue_cleared: removing all from tray", { count });
+    while (tray.firstChild) tray.removeChild(tray.firstChild);
+    tray.classList.add("hidden");
+  }
+}
+function handleChatSessionCleared(_p, isActive, isChatPage, eventSession) {
+  clearPendingToolCallEndsForSession(eventSession);
+  setSessionActiveRunId(eventSession, null);
+  clearSessionHistoryCache(eventSession);
+  markSessionLocallyCleared(eventSession);
+  if (isActive) {
+    setLastHistoryIndex(-1);
+    setChatSeq(0);
+  }
+  if (!(isActive && isChatPage)) return;
+  if (chatMsgBox) chatMsgBox.textContent = "";
+  setSessionTokens({ input: 0, output: 0 });
+  setSessionCurrentInputTokens(0);
+  updateTokenBar();
+}
+const chatHandlers = {
+  thinking: handleChatThinking,
+  thinking_text: handleChatThinkingText,
+  thinking_done: handleChatThinkingDone,
+  voice_pending: handleChatVoicePending,
+  tool_call_start: handleChatToolCallStart,
+  tool_call_end: handleChatToolCallEnd,
+  channel_user: handleChatChannelUser,
+  user_message: handleChatUserMessage,
+  delta: handleChatDelta,
+  final: handleChatFinal,
+  auto_compact: handleChatAutoCompact,
+  compact: handleChatCompact,
+  retrying: handleChatRetrying,
+  error: handleChatError,
+  aborted: handleChatAborted,
+  notice: handleChatNotice,
+  queue_cleared: handleChatQueueCleared,
+  session_cleared: handleChatSessionCleared
+};
+function handleChatEvent(p) {
+  const eventSession = p.sessionKey || sessionStore.activeSessionKey.value;
+  const isActive = eventSession === sessionStore.activeSessionKey.value;
+  const isChatPage = currentPrefix === "/chats";
+  if (isActive && sessionStore.switchInProgress.value) {
+    const allowDuringSwitch = p.state === "final" || p.state === "error" || p.state === "aborted" || p.state === "notice" || p.state === "session_cleared" || p.state === "queue_cleared";
+    if (!allowDuringSwitch) {
+      return;
+    }
+    if (p.state === "final" || p.state === "error" || p.state === "aborted") {
+      sessionStore.switchInProgress.value = false;
+      setSessionSwitchInProgress(false);
+    }
+  }
+  if (p.sessionKey && !sessionStore.getByKey(p.sessionKey)) {
+    fetchSessions();
+  }
+  const handler = chatHandlers[p.state || ""];
+  if (handler) handler(p, isActive, isChatPage, eventSession);
+}
+function updateSandboxBuildingFlag(building2) {
+  const info = sandboxInfo;
+  if (info) setSandboxInfo({ ...info, image_building: building2 });
+}
+let sandboxPrepareIndicatorEl = null;
+function handleSandboxPrepare(payload) {
+  const isChatPage = currentPrefix === "/chats";
+  if (!isChatPage) return;
+  if (payload.phase === "start") {
+    if (sandboxPrepareIndicatorEl) {
+      sandboxPrepareIndicatorEl.remove();
+      sandboxPrepareIndicatorEl = null;
+    }
+    sandboxPrepareIndicatorEl = chatAddMsg(
+      "system",
+      "Preparing sandbox environment (first run may take a minute)…"
+    );
+    return;
+  }
+  if (sandboxPrepareIndicatorEl) {
+    sandboxPrepareIndicatorEl.remove();
+    sandboxPrepareIndicatorEl = null;
+  }
+  if (payload.phase === "error") {
+    chatAddMsg("error", `Sandbox setup failed: ${payload.error || "unknown"}`);
+  }
+}
+function handleSandboxImageBuild(payload) {
+  var _a2, _b2;
+  const phase = payload.phase;
+  updateSandboxBuildingFlag(phase === "start");
+  const isChatPage = currentPrefix === "/chats";
+  if (!isChatPage) return;
+  if (phase === "start") {
+    chatAddMsg("system", "Building sandbox image (installing packages)…");
+  } else if (phase === "done") {
+    if ((_a2 = chatMsgBox) == null ? void 0 : _a2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
+    const msg = payload.built ? `Sandbox image ready: ${payload.tag}` : `Sandbox image already cached: ${payload.tag}`;
+    chatAddMsg("system", msg);
+  } else if (phase === "error") {
+    if ((_b2 = chatMsgBox) == null ? void 0 : _b2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
+    chatAddMsg("error", `Sandbox image build failed: ${payload.error || "unknown"}`);
+  }
+}
+function handleSandboxImageProvision(payload) {
+  var _a2, _b2;
+  const isChatPage = currentPrefix === "/chats";
+  if (!isChatPage) return;
+  if (payload.phase === "start") {
+    chatAddMsg("system", "Provisioning sandbox packages…");
+  } else if (payload.phase === "done") {
+    if ((_a2 = chatMsgBox) == null ? void 0 : _a2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
+    chatAddMsg("system", "Sandbox packages provisioned");
+  } else if (payload.phase === "error") {
+    if ((_b2 = chatMsgBox) == null ? void 0 : _b2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
+    chatAddMsg("error", `Sandbox provisioning failed: ${payload.error || "unknown"}`);
+  }
+}
+function handleSandboxHostProvision(payload) {
+  var _a2, _b2;
+  const isChatPage = currentPrefix === "/chats";
+  if (!isChatPage) return;
+  if (payload.phase === "start") {
+    const msg = `Installing ${payload.count || ""} package${payload.count === 1 ? "" : "s"} on host…`;
+    chatAddMsg("system", msg);
+  } else if (payload.phase === "done") {
+    if ((_a2 = chatMsgBox) == null ? void 0 : _a2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
+    const parts = [];
+    if ((payload.installed || 0) > 0) parts.push(`${payload.installed} installed`);
+    if ((payload.skipped || 0) > 0) parts.push(`${payload.skipped} already present`);
+    chatAddMsg("system", `Host packages ready (${parts.join(", ") || "done"})`);
+  } else if (payload.phase === "error") {
+    if ((_b2 = chatMsgBox) == null ? void 0 : _b2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
+    chatAddMsg("error", `Host package install failed: ${payload.error || "unknown"}`);
+  }
+}
+function handleBrowserImagePull(payload) {
+  var _a2, _b2;
+  const isChatPage = currentPrefix === "/chats";
+  if (!isChatPage) return;
+  const image = payload.image || "browser container";
+  if (payload.phase === "start") {
+    chatAddMsg("system", `Pulling browser container image (${image})… This may take a few minutes on first run.`);
+  } else if (payload.phase === "done") {
+    if ((_a2 = chatMsgBox) == null ? void 0 : _a2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
+    chatAddMsg("system", `Browser container image ready: ${image}`);
+  } else if (payload.phase === "error") {
+    if ((_b2 = chatMsgBox) == null ? void 0 : _b2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
+    chatAddMsg("error", `Browser container image pull failed: ${payload.error || "unknown"}`);
+  }
+}
+let downloadIndicatorEl = null;
+function handleLocalLlmDownload(payload) {
+  const isChatPage = currentPrefix === "/chats";
+  if (!isChatPage) return;
+  const modelName = payload.displayName || payload.modelId || "model";
+  if (payload.error) {
+    if (downloadIndicatorEl) {
+      downloadIndicatorEl.remove();
+      downloadIndicatorEl = null;
+    }
+    chatAddMsg("error", `Failed to download ${modelName}: ${payload.error}`);
+    return;
+  }
+  if (payload.complete) {
+    if (downloadIndicatorEl) {
+      downloadIndicatorEl.remove();
+      downloadIndicatorEl = null;
+    }
+    chatAddMsg("system", `${modelName} ready`);
+    return;
+  }
+  if (!downloadIndicatorEl) {
+    downloadIndicatorEl = document.createElement("div");
+    downloadIndicatorEl.className = "msg system download-indicator";
+    const status = document.createElement("div");
+    status.className = "download-status";
+    status.textContent = `Downloading ${modelName}…`;
+    downloadIndicatorEl.appendChild(status);
+    const progressContainer = document.createElement("div");
+    progressContainer.className = "download-progress";
+    const progressBar = document.createElement("div");
+    progressBar.className = "download-progress-bar";
+    progressContainer.appendChild(progressBar);
+    downloadIndicatorEl.appendChild(progressContainer);
+    const progressText = document.createElement("div");
+    progressText.className = "download-progress-text";
+    downloadIndicatorEl.appendChild(progressText);
+    if (chatMsgBox) {
+      clearChatEmptyState();
+      chatMsgBox.appendChild(downloadIndicatorEl);
+      chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+    }
+  }
+  const barEl = downloadIndicatorEl.querySelector(".download-progress-bar");
+  const textEl = downloadIndicatorEl.querySelector(".download-progress-text");
+  const containerEl = downloadIndicatorEl.querySelector(".download-progress");
+  if (barEl && containerEl) {
+    if (payload.progress != null) {
+      containerEl.classList.remove("indeterminate");
+      barEl.style.width = `${payload.progress.toFixed(1)}%`;
+    } else if (payload.total == null && payload.downloaded != null) {
+      containerEl.classList.add("indeterminate");
+      barEl.style.width = "";
+    }
+  }
+  if (payload.downloaded != null && textEl) {
+    const downloadedMb = (payload.downloaded / (1024 * 1024)).toFixed(1);
+    if (payload.total != null) {
+      const totalMb = (payload.total / (1024 * 1024)).toFixed(1);
+      textEl.textContent = `${downloadedMb} / ${totalMb} MB`;
+    } else {
+      textEl.textContent = `${downloadedMb} MB`;
+    }
+  }
+}
+function handleApprovalEvent(payload) {
+  renderApprovalCard(payload.requestId, payload.command);
+}
+function handleLogEntry(payload) {
+  if (logsEventHandler) logsEventHandler(payload);
+  if (currentPage !== "/logs") {
+    const ll = (payload.level || "").toUpperCase();
+    if (ll === "ERROR") {
+      setUnseenErrors(unseenErrors + 1);
+      updateLogsAlert();
+    } else if (ll === "WARN") {
+      setUnseenWarns(unseenWarns + 1);
+      updateLogsAlert();
+    }
+  }
+}
+function handleWsError(payload) {
+  const isChatPage = currentPrefix === "/chats";
+  if (!isChatPage) return;
+  chatAddErrorMsg(payload.message || "Unknown error");
+}
+function handleLocationRequest(payload) {
+  const requestId = payload.requestId;
+  if (!requestId) return;
+  if (!navigator.geolocation) {
+    sendRpc("location.result", {
+      requestId,
+      error: { code: 0, message: "Geolocation not supported" }
+    });
+    return;
+  }
+  const coarse = payload.precision === "coarse";
+  const geoOpts = coarse ? { enableHighAccuracy: false, timeout: 1e4, maximumAge: 18e5 } : { enableHighAccuracy: true, timeout: 15e3, maximumAge: 6e4 };
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      sendRpc("location.result", {
+        requestId,
+        location: {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+          accuracy: pos.coords.accuracy
+        }
+      });
+    },
+    (err) => {
+      sendRpc("location.result", {
+        requestId,
+        error: { code: err.code, message: err.message }
+      });
+    },
+    geoOpts
+  );
+}
+function handleNetworkAuditEntry(payload) {
+  if (networkAuditEventHandler) networkAuditEventHandler(payload);
+}
+function handleAuthCredentialsChanged(payload) {
+  if ((payload == null ? void 0 : payload.reason) === "password_changed" && window.__moltisSuppressNextPasswordChangedRedirect === true) {
+    window.__moltisSuppressNextPasswordChangedRedirect = false;
+    console.info("Deferring redirect for password_changed to show recovery key first");
+    return;
+  }
+  console.warn("Auth credentials changed:", payload.reason);
+  window.location.href = "/login";
+}
+let modelsUpdatedTimer = null;
+function handleModelsUpdated(payload) {
+  if ((payload == null ? void 0 : payload.phase) === "start" || (payload == null ? void 0 : payload.phase) === "progress") return;
+  if (modelsUpdatedTimer) return;
+  modelsUpdatedTimer = setTimeout(() => {
+    modelsUpdatedTimer = null;
+    fetchModels();
+    if (refreshProvidersPage) refreshProvidersPage();
+  }, 150);
+}
+let hasConnectedOnce = false;
+const eventHandlers = {
+  chat: handleChatEvent,
+  error: handleWsError,
+  "auth.credentials_changed": handleAuthCredentialsChanged,
+  "exec.approval.requested": handleApprovalEvent,
+  "logs.entry": handleLogEntry,
+  "sandbox.prepare": handleSandboxPrepare,
+  "sandbox.image.build": handleSandboxImageBuild,
+  "sandbox.image.provision": handleSandboxImageProvision,
+  "sandbox.host.provision": handleSandboxHostProvision,
+  "browser.image.pull": handleBrowserImagePull,
+  "local-llm.download": handleLocalLlmDownload,
+  "models.updated": handleModelsUpdated,
+  "location.request": handleLocationRequest,
+  "network.audit.entry": handleNetworkAuditEntry
+};
+function dispatchFrame(frame) {
+  if (frame.type !== "event") return;
+  const streamMeta = frame.stream != null || frame.done != null ? { stream: frame.stream, done: frame.done, channel: frame.channel } : null;
+  const listeners = eventListeners[frame.event || ""] || [];
+  listeners.forEach((h) => {
+    h(frame.payload || {});
+  });
+  const handler = eventHandlers[frame.event || ""];
+  if (handler) handler(frame.payload || {}, streamMeta);
+}
+const connectOpts = {
+  onFrame: dispatchFrame,
+  onConnected: async (hello) => {
+    var _a2;
+    const isReconnect = hasConnectedOnce;
+    hasConnectedOnce = true;
+    setStatus$1("connected", "");
+    const now = /* @__PURE__ */ new Date();
+    const ts = now.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+    chatAddMsg("system", `Connected to moltis gateway v${hello.server.version} at ${ts}`);
+    if ((_a2 = sandboxInfo) == null ? void 0 : _a2.image_building) {
+      chatAddMsg("system", "Building sandbox image (installing packages)…");
+    }
+    setSubscribed(false);
+    await subscribeEvents(
+      Object.keys(eventHandlers).concat([
+        "tick",
+        "shutdown",
+        "auth.credentials_changed",
+        "exec.approval.requested",
+        "exec.approval.resolved",
+        "device.pair.requested",
+        "device.pair.resolved",
+        "node.pair.requested",
+        "node.pair.resolved",
+        "node.invoke.request",
+        "session",
+        "update.available",
+        "hooks.status",
+        "push.subscriptions",
+        "channel",
+        "metrics.update",
+        "skills.install.progress",
+        "mcp.status"
+      ])
+    );
+    setSubscribed(true);
+    if (isReconnect) {
+      fetchModels();
+      fetchSessions();
+      fetchProjects();
+      prefetchChannels();
+    }
+    sendRpc("logs.status", {}).then((res) => {
+      if (res == null ? void 0 : res.ok) {
+        const p = res.payload || {};
+        setUnseenErrors(p.unseen_errors || 0);
+        setUnseenWarns(p.unseen_warns || 0);
+        if (currentPage === "/logs") clearLogsAlert();
+        else updateLogsAlert();
+      }
+    });
+    if (currentPage === "/chats" || currentPrefix === "/chats") mount(currentPage || "");
+  },
+  onHandshakeFailed: (frame) => {
+    var _a2;
+    setStatus$1("", "handshake failed");
+    const reason = ((_a2 = frame.error) == null ? void 0 : _a2.message) || "unknown error";
+    chatAddMsg("error", `Handshake failed: ${reason}`);
+  },
+  onDisconnected: (wasConnected) => {
+    if (wasConnected) {
+      setStatus$1("", "disconnected — reconnecting…");
+    }
+    const activeS = sessionStore.activeSession.value;
+    if (activeS) activeS.resetStreamState();
+    setStreamEl(null);
+    setStreamText("");
+  }
+};
+function connect() {
+  setStatus$1("connecting", "connecting...");
+  connectWs(connectOpts);
+}
+function setStatus$1(state, text) {
+  const dot = $("statusDot");
+  const sText = $("statusText");
+  if (dot) dot.className = `status-dot ${state}`;
+  if (sText) {
+    sText.textContent = text;
+    sText.classList.toggle("status-text-live", state === "connected");
+  }
+  const sendBtn = $("sendBtn");
+  if (sendBtn) sendBtn.disabled = state !== "connected";
+}
+document.addEventListener("visibilitychange", () => {
+  if (!(document.hidden || connected)) {
+    forceReconnect(connectOpts);
+  }
+});
 const initialCrons = get("crons") || [];
 const cronJobs = y(initialCrons);
 const cronStatus = y(get("cron_status"));
@@ -13571,6 +13649,7 @@ function CronModal() {
         /* @__PURE__ */ u(
           "select",
           {
+            "data-field": "payloadKind",
             className: "provider-key-input",
             value: payloadKind.value,
             onChange: (e) => {
@@ -13583,10 +13662,12 @@ function CronModal() {
             ]
           }
         ),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] mt-1", children: payloadKind.value === "agentTurn" ? "Starts an isolated agent turn with this prompt. Enable channel delivery below to send the result to a chat." : "Adds this text to the main session as a system event when the job runs." }),
         /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Message" }),
         /* @__PURE__ */ u(
           "textarea",
           {
+            "data-field": "message",
             className: `provider-key-input textarea-sm ${errorField.value === "message" ? "field-error" : ""}`,
             placeholder: payloadKind.value === "agentTurn" ? "Prompt sent to the agent" : "Message sent to the main session",
             value: messageText.value,
@@ -13607,6 +13688,7 @@ function CronModal() {
             placeholder: defaultModelPlaceholder()
           }
         ),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] mt-1", children: "Only used for Agent Turn jobs." }),
         payloadKind.value === "agentTurn" && /* @__PURE__ */ u("div", { style: { marginTop: "12px", borderTop: "1px solid var(--border)", paddingTop: "12px" }, children: [
           /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] flex items-center gap-2", children: [
             /* @__PURE__ */ u(
@@ -13658,6 +13740,7 @@ function CronModal() {
         /* @__PURE__ */ u(
           "select",
           {
+            "data-field": "target",
             className: "provider-key-input",
             value: sessionTarget.value,
             onChange: (e) => {
@@ -13674,6 +13757,7 @@ function CronModal() {
         /* @__PURE__ */ u(
           "select",
           {
+            "data-field": "executionTarget",
             className: "provider-key-input",
             value: executionTarget.value,
             onChange: (e) => {
@@ -13698,12 +13782,14 @@ function CronModal() {
               placeholder: "Default image",
               searchPlaceholder: "Search images\\u2026"
             }
-          )
+          ),
+          /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] mt-1", children: "Used only when execution target is Sandbox." })
         ] }),
         /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] flex items-center gap-2", children: [
           /* @__PURE__ */ u(
             "input",
             {
+              "data-field": "deleteAfter",
               type: "checkbox",
               checked: deleteAfterRun.value,
               onChange: (e) => {
@@ -13718,6 +13804,7 @@ function CronModal() {
           /* @__PURE__ */ u(
             "input",
             {
+              "data-field": "enabled",
               type: "checkbox",
               checked: jobEnabled.value,
               onChange: (e) => {
@@ -14311,6 +14398,15 @@ function doExportBundle(source, path) {
     else showToast$3(`Failed: ${(res == null ? void 0 : res.error) || "unknown"}`, "error");
   });
 }
+function doUnquarantine(source) {
+  if (!(source && connected)) return Promise.resolve();
+  return sendRpc("skills.repos.unquarantine", { source }).then((res) => {
+    if (res == null ? void 0 : res.ok) {
+      showToast$3(`Cleared quarantine for ${source}`, "success");
+      fetchAll();
+    } else showToast$3(`Failed: ${(res == null ? void 0 : res.error) || "unknown"}`, "error");
+  });
+}
 function searchSkills(source, query2) {
   return fetch(`/api/skills/search?source=${encodeURIComponent(source)}&q=${encodeURIComponent(query2)}`).then((r2) => r2.json()).then((d2) => d2.skills || []);
 }
@@ -14420,7 +14516,7 @@ function InstallBox$1() {
       {
         ref,
         type: "text",
-        placeholder: "owner/repo or full URL",
+        placeholder: "owner/repo or full URL (e.g. anthropics/skills)",
         className: "skills-install-input",
         onKeyDown: (e) => {
           if (e.key === "Enter") go();
@@ -14704,6 +14800,7 @@ function SkillDetailPanel({
   ] });
 }
 function RepoCard({ repo }) {
+  var _a2, _b2, _c;
   const expanded = useSignal(false);
   const searchQuery = useSignal("");
   const searchResults2 = useSignal([]);
@@ -14714,6 +14811,7 @@ function RepoCard({ repo }) {
   const searchTimer2 = A(null);
   const removingRepo = useSignal(false);
   const exportingRepo = useSignal(false);
+  const unquarantiningRepo = useSignal(false);
   const isOrphan = repo.orphaned === true;
   const sourceLabel = isOrphan ? repo.repo_name : repo.source;
   const href = isOrphan ? null : /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
@@ -14810,6 +14908,27 @@ function RepoCard({ repo }) {
             children: exportingRepo.value ? "Exporting..." : "Export"
           }
         ),
+        repo.quarantined && /* @__PURE__ */ u(
+          "button",
+          {
+            className: "provider-btn provider-btn-sm provider-btn-secondary",
+            disabled: unquarantiningRepo.value,
+            onClick: (e) => {
+              e.stopPropagation();
+              if (!connected || unquarantiningRepo.value) return;
+              requestConfirm(`Clear quarantine for ${repo.source}?`, {
+                confirmLabel: "Clear Quarantine"
+              }).then((confirmed) => {
+                if (!confirmed) return;
+                unquarantiningRepo.value = true;
+                doUnquarantine(repo.source).finally(() => {
+                  unquarantiningRepo.value = false;
+                });
+              });
+            },
+            children: unquarantiningRepo.value ? "Clearing..." : "Clear Quarantine"
+          }
+        ),
         /* @__PURE__ */ u(
           "button",
           {
@@ -14827,6 +14946,27 @@ function RepoCard({ repo }) {
             children: removingRepo.value ? "Removing..." : "Remove"
           }
         )
+      ] })
+    ] }),
+    (repo.quarantined || repo.provenance) && expanded.value && /* @__PURE__ */ u("div", { style: { padding: "8px 12px", fontSize: ".78rem", color: "var(--muted)" }, children: [
+      repo.quarantined && /* @__PURE__ */ u("div", { style: { marginBottom: "6px", color: "var(--warning, #c77d00)", fontWeight: 600 }, children: [
+        "Quarantined",
+        repo.quarantine_reason ? `: ${repo.quarantine_reason}` : ""
+      ] }),
+      ((_a2 = repo.provenance) == null ? void 0 : _a2.original_source) && /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("strong", { children: "Original source:" }),
+        " ",
+        repo.provenance.original_source
+      ] }),
+      ((_b2 = repo.provenance) == null ? void 0 : _b2.original_commit_sha) && /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("strong", { children: "Original commit:" }),
+        " ",
+        /* @__PURE__ */ u("code", { children: shortSha(repo.provenance.original_commit_sha) })
+      ] }),
+      ((_c = repo.provenance) == null ? void 0 : _c.imported_from) && /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("strong", { children: "Imported from:" }),
+        " ",
+        /* @__PURE__ */ u("code", { children: repo.provenance.imported_from })
       ] })
     ] }),
     expanded.value && /* @__PURE__ */ u("div", { className: "skills-repo-detail", style: { display: "block" }, children: [
@@ -14865,8 +15005,8 @@ function RepoCard({ repo }) {
             activeDetail.value = null;
           },
           onReload: () => {
-            var _a2;
-            return loadDetail({ name: (_a2 = activeDetail.value) == null ? void 0 : _a2.name });
+            var _a3;
+            return loadDetail({ name: (_a3 = activeDetail.value) == null ? void 0 : _a3.name });
           }
         }
       )
@@ -22457,21 +22597,36 @@ function InstallBox() {
             if (e.key === "Enter") onAdd();
           }
         }
-      )
+      ),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: [
+        "If the server requires OAuth, your browser opens for sign-in when you enable or restart it. URL query values may use ",
+        /* @__PURE__ */ u("code", { children: "$NAME" }),
+        " or ",
+        /* @__PURE__ */ u("code", { children: "${NAME}" }),
+        " placeholders from Settings → Environment Variables."
+      ] })
     ] }),
     isSse && /* @__PURE__ */ u("div", { className: "project-edit-group mb-2", children: [
-      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mb-1", children: "Headers (KEY=VALUE per line)" }),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mb-1", children: "Request headers (optional, KEY=VALUE per line)" }),
       /* @__PURE__ */ u(
         "textarea",
         {
           className: "provider-key-input w-full min-h-[72px] resize-y font-mono text-sm",
           rows: 3,
+          placeholder: "Authorization=Bearer ...",
           value: sseHeaders.value,
           onInput: (e) => {
             sseHeaders.value = e.target.value;
           }
         }
-      )
+      ),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: [
+        "Optional request headers are sent to the remote MCP host. Stored header values stay hidden after save, and values may use ",
+        /* @__PURE__ */ u("code", { children: "$NAME" }),
+        " or ",
+        /* @__PURE__ */ u("code", { children: "${NAME}" }),
+        " placeholders."
+      ] })
     ] }),
     showEnv.value && /* @__PURE__ */ u("div", { className: "project-edit-group mb-2", children: [
       /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mb-1", children: "Env vars (KEY=VALUE per line)" }),
@@ -22734,34 +22889,68 @@ function ServerCard({ server }) {
           ] }),
           editTransport.value === "sse" || editTransport.value === "streamable-http" ? /* @__PURE__ */ u(S, { children: [
             /* @__PURE__ */ u("div", { className: "project-edit-group mb-2", children: [
-              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mb-1", children: "Replace URL" }),
+              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mb-1", children: "Current URL" }),
+              /* @__PURE__ */ u("div", { className: "rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)]", children: currentSafeUrl || "(stored URL hidden until the API returns sanitized text)" }),
+              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-2 mb-1", children: "Replace URL (leave blank to keep the current URL)" }),
               /* @__PURE__ */ u(
                 "input",
                 {
                   type: "text",
                   className: "provider-key-input w-full font-mono",
                   value: editUrl.value,
-                  placeholder: currentSafeUrl || "https://...",
+                  placeholder: currentSafeUrl || "https://mcp.example.com/mcp",
                   onInput: (e) => {
                     editUrl.value = e.target.value;
                   }
                 }
-              )
+              ),
+              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: [
+                "Leave this blank to preserve the stored URL. Query values may use ",
+                /* @__PURE__ */ u("code", { children: "$NAME" }),
+                " or",
+                " ",
+                /* @__PURE__ */ u("code", { children: "${NAME}" }),
+                " placeholders. OAuth, if required, runs in your browser when the server is enabled."
+              ] })
             ] }),
             /* @__PURE__ */ u("div", { className: "project-edit-group mb-2", children: [
-              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mb-1", children: "Replace headers (KEY=VALUE per line)" }),
+              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mb-1", children: "Current headers" }),
+              /* @__PURE__ */ u("div", { className: "rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)]", children: currentHeaderSummary }),
+              /* @__PURE__ */ u("div", { className: "mt-2", children: /* @__PURE__ */ u(
+                "button",
+                {
+                  onClick: () => {
+                    clearHeaders.value = !clearHeaders.value;
+                  },
+                  className: "provider-btn provider-btn-secondary provider-btn-sm",
+                  children: clearHeaders.value ? "Keep stored headers" : "Clear stored headers"
+                }
+              ) }),
+              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-2 mb-1", children: "Replace headers (optional, KEY=VALUE per line)" }),
               /* @__PURE__ */ u(
                 "textarea",
                 {
                   className: "provider-key-input w-full min-h-[72px] resize-y font-mono text-sm",
                   rows: 3,
+                  placeholder: "Authorization=Bearer ...",
                   value: editHeaders.value,
                   disabled: clearHeaders.value,
                   onInput: (e) => {
                     editHeaders.value = e.target.value;
                   }
                 }
-              )
+              ),
+              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: clearHeaders.value ? "Saving now removes every stored header for this remote server." : /* @__PURE__ */ u(S, { children: [
+                "Leave blank to preserve stored headers. Enter new lines to replace them, or click",
+                " ",
+                /* @__PURE__ */ u("strong", { children: "Clear stored headers" }),
+                " to remove them entirely. Use ",
+                /* @__PURE__ */ u("code", { children: "$NAME" }),
+                " or",
+                " ",
+                /* @__PURE__ */ u("code", { children: "${NAME}" }),
+                " for env-backed values."
+              ] }) })
             ] })
           ] }) : /* @__PURE__ */ u(S, { children: [
             /* @__PURE__ */ u("div", { className: "project-edit-group mb-2", children: [

@@ -311,6 +311,22 @@ const __vitePreload = function preload(baseModule, deps, importerUrl) {
     return baseModule().catch(handlePreloadError);
   });
 };
+const __variableDynamicImportRuntimeHelper = (glob, path, segs) => {
+  const v2 = glob[path];
+  if (v2) {
+    return typeof v2 === "function" ? v2() : Promise.resolve(v2);
+  }
+  return new Promise((_2, reject) => {
+    (typeof queueMicrotask === "function" ? queueMicrotask : setTimeout)(
+      reject.bind(
+        null,
+        new Error(
+          "Unknown variable dynamic import: " + path + (path.split("/").length !== segs ? ". Note that variables only represent file names one level deep." : "")
+        )
+      )
+    );
+  });
+};
 var t$2, r$1, u$1, i$1, o$1 = 0, f = [], c$1 = l$3, e$1 = c$1.__b, a$1 = c$1.__r, v$1 = c$1.diffed, l$2 = c$1.__c, m$1 = c$1.unmount, s$1 = c$1.__;
 function p$2(n2, t2) {
   c$1.__h && c$1.__h(r$1, n2, o$1 || t2), o$1 = 0;
@@ -444,22 +460,6 @@ function C(n2, t2) {
 function D(n2, t2) {
   return "function" == typeof t2 ? t2(n2) : t2;
 }
-const __variableDynamicImportRuntimeHelper = (glob, path, segs) => {
-  const v2 = glob[path];
-  if (v2) {
-    return typeof v2 === "function" ? v2() : Promise.resolve(v2);
-  }
-  return new Promise((_2, reject) => {
-    (typeof queueMicrotask === "function" ? queueMicrotask : setTimeout)(
-      reject.bind(
-        null,
-        new Error(
-          "Unknown variable dynamic import: " + path + (path.split("/").length !== segs ? ". Note that variables only represent file names one level deep." : "")
-        )
-      )
-    );
-  });
-};
 var i = Symbol.for("preact-signals");
 function t$1() {
   if (!(s > 1)) {
@@ -5419,7 +5419,7 @@ export {
   projectComboLabel as Y,
   t as Z,
   __vitePreload as _,
-  setUnseenWarns as a,
+  chatInput as a,
   setSandboxToggleBtn as a$,
   projects as a0,
   activeProjectId as a1,
@@ -5484,7 +5484,7 @@ export {
   A as ax,
   S$2 as ay,
   projectFilterId$1 as az,
-  unseenWarns as b,
+  sendRpc as b,
   setConnected as b$,
   setSandboxLabel as b0,
   setSandboxImageBtn as b1,
@@ -5496,8 +5496,8 @@ export {
   modelComboBtn as b7,
   modelSearchInput as b8,
   modelDropdownList as b9,
-  setSubscribed as bA,
-  modelVersionScore as bB,
+  logsEventHandler as bA,
+  setSubscribed as bB,
   projects$1 as bC,
   sandboxInfo$1 as bD,
   localizedApiErrorMessage as bE,
@@ -5528,51 +5528,51 @@ export {
   setModelIdx as bc,
   modelIdx as bd,
   REASONING_SEP as be,
-  setProjects as bf,
-  setProjectFilterId as bg,
-  models$1 as bh,
-  useSignal as bi,
-  connected$1 as bj,
-  setCachedChannels as bk,
-  setRefreshChannelsPage as bl,
-  cachedChannels as bm,
-  setChannelEventUnsub as bn,
-  channelEventUnsub as bo,
-  streamEl as bp,
-  renderMapPointGroups as bq,
-  renderMapLinks as br,
-  lastToolOutput as bs,
-  localizeStructuredError as bt,
-  voicePending as bu,
-  streamText as bv,
-  setSandboxInfo as bw,
-  networkAuditEventHandler as bx,
-  refreshProvidersPage as by,
-  logsEventHandler as bz,
-  connected as c,
+  models$1 as bf,
+  useSignal as bg,
+  connected$1 as bh,
+  setCachedChannels as bi,
+  setRefreshChannelsPage as bj,
+  cachedChannels as bk,
+  setChannelEventUnsub as bl,
+  channelEventUnsub as bm,
+  setProjects as bn,
+  setProjectFilterId as bo,
+  refreshProvidersPage as bp,
+  modelVersionScore as bq,
+  streamEl as br,
+  renderMapPointGroups as bs,
+  renderMapLinks as bt,
+  lastToolOutput as bu,
+  localizeStructuredError as bv,
+  voicePending as bw,
+  streamText as bx,
+  setSandboxInfo as by,
+  networkAuditEventHandler as bz,
+  chatMsgBox as c,
   nextId as c0,
   getPreferredLocale as c1,
   setReconnectDelay as c2,
   reconnectDelay as c3,
   setWs as c4,
-  sendRpc as d,
-  sessionTokens as e,
+  commandModeEnabled as d,
+  sessionExecPromptSymbol as e,
   formatTokens as f,
-  chatMsgBox as g,
-  updateCountdown as h,
-  chatInput as i,
-  commandModeEnabled as j,
-  sessionExecPromptSymbol as k,
-  chatBatchLoading as l,
-  sessionContextWindow as m,
-  sessionToolsEnabled as n,
-  sessionExecMode as o,
+  chatBatchLoading as g,
+  sessionContextWindow as h,
+  sessionToolsEnabled as i,
+  sessionExecMode as j,
+  sessionCurrentInputTokens as k,
+  setUnseenErrors as l,
+  setUnseenWarns as m,
+  unseenErrors as n,
+  unseenWarns as o,
   parseErrorMessage as p,
-  sessionCurrentInputTokens as q,
+  connected as q,
   sessionStore as r,
-  setUnseenErrors as s,
+  sessionTokens as s,
   sessions as t,
-  unseenErrors as u,
+  updateCountdown as u,
   activeSessionKey as v,
   lastHistoryIndex as w,
   setLastHistoryIndex as x,

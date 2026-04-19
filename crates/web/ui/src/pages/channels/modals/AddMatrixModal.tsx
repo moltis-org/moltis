@@ -2,10 +2,12 @@
 
 import { useSignal } from "@preact/signals";
 import type { VNode } from "preact";
+import { useRef } from "preact/hooks";
 
 import {
 	addChannel,
 	deriveMatrixAccountId,
+	fetchChannelStatus,
 	MATRIX_DEFAULT_HOMESERVER,
 	MATRIX_DOCS_URL,
 	MATRIX_ENCRYPTION_GUIDANCE,
@@ -19,6 +21,7 @@ import {
 	parseChannelConfigPatch,
 	validateChannelFields,
 } from "../../../channel-utils";
+import { sendRpc } from "../../../helpers";
 import { models as modelsSig } from "../../../stores/model-store";
 import { targetChecked, targetValue } from "../../../typed-events";
 import { ChannelType } from "../../../types";
@@ -33,14 +36,36 @@ export function AddMatrixModal(): VNode {
 	const userAllowlistItems = useSignal<string[]>([]);
 	const roomAllowlistItems = useSignal<string[]>([]);
 	const homeserverDraft = useSignal(MATRIX_DEFAULT_HOMESERVER);
-	const authModeDraft = useSignal("password");
+	const authModeDraft = useSignal("oidc");
 	const userIdDraft = useSignal("");
 	const credentialDraft = useSignal("");
 	const deviceDisplayNameDraft = useSignal("");
 	const ownershipModeDraft = useSignal("moltis_owned");
+	const oidcWaiting = useSignal(false);
+	const oidcPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const otpSelfApprovalDraft = useSignal(true);
 	const otpCooldownDraft = useSignal("300");
 	const advancedConfigPatch = useSignal("");
+
+	function resetForm(): void {
+		if (oidcPollRef.current) {
+			clearInterval(oidcPollRef.current);
+			oidcPollRef.current = null;
+		}
+		addModel.value = "";
+		userAllowlistItems.value = [];
+		roomAllowlistItems.value = [];
+		homeserverDraft.value = MATRIX_DEFAULT_HOMESERVER;
+		authModeDraft.value = "oidc";
+		userIdDraft.value = "";
+		credentialDraft.value = "";
+		deviceDisplayNameDraft.value = "";
+		ownershipModeDraft.value = "moltis_owned";
+		otpSelfApprovalDraft.value = true;
+		otpCooldownDraft.value = "300";
+		advancedConfigPatch.value = "";
+		oidcWaiting.value = false;
+	}
 
 	function onSubmit(e: Event): void {
 		e.preventDefault();
@@ -69,6 +94,78 @@ export function AddMatrixModal(): VNode {
 		}
 		error.value = "";
 		saving.value = true;
+
+		if (authMode === "oidc") {
+			const redirectUri = `${window.location.origin}/auth/callback`;
+			const oidcConfig: ChannelConfig = {
+				homeserver,
+				ownership_mode: normalizeMatrixOwnershipMode(ownershipModeDraft.value),
+				dm_policy: (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement).value,
+				room_policy: (form.querySelector("[data-field=roomPolicy]") as HTMLSelectElement).value,
+				mention_mode: (form.querySelector("[data-field=mentionMode]") as HTMLSelectElement).value,
+				auto_join: (form.querySelector("[data-field=autoJoin]") as HTMLSelectElement).value,
+				user_allowlist: userAllowlistItems.value,
+				room_allowlist: roomAllowlistItems.value,
+				otp_self_approval: otpSelfApprovalDraft.value,
+				otp_cooldown_secs: normalizeMatrixOtpCooldown(otpCooldownDraft.value),
+			};
+			if (deviceDisplayNameDraft.value.trim()) oidcConfig.device_display_name = deviceDisplayNameDraft.value.trim();
+			if (addModel.value) {
+				oidcConfig.model = addModel.value;
+				const oidcModel = modelsSig.value.find((x) => x.id === addModel.value);
+				if (oidcModel?.provider) oidcConfig.model_provider = oidcModel.provider;
+			}
+			Object.assign(oidcConfig, advancedPatch.value);
+			sendRpc("channels.oauth_start", {
+				account_id: accountId,
+				homeserver,
+				redirect_uri: redirectUri,
+				config: oidcConfig,
+			}).then((res) => {
+				const r = res as {
+					ok?: boolean;
+					payload?: { auth_url?: string };
+					error?: { message?: string; detail?: string };
+				};
+				if (r?.ok && r.payload?.auth_url) {
+					oidcWaiting.value = true;
+					saving.value = false;
+					window.open(r.payload.auth_url, "_blank", "noopener");
+					let pollCount = 0;
+					oidcPollRef.current = setInterval(() => {
+						pollCount++;
+						if (pollCount > 120) {
+							clearInterval(oidcPollRef.current!);
+							oidcPollRef.current = null;
+							oidcWaiting.value = false;
+							error.value = "OIDC authentication timed out. Please try again.";
+							return;
+						}
+						fetchChannelStatus().then((statusRes: unknown) => {
+							const sr = statusRes as {
+								ok?: boolean;
+								payload?: { channels?: Array<{ account_id?: string; status?: string }> };
+							};
+							if (!sr?.ok) return;
+							const channels = sr.payload?.channels || [];
+							if (channels.some((ch) => ch.account_id === accountId && ch.status === "connected")) {
+								clearInterval(oidcPollRef.current!);
+								oidcPollRef.current = null;
+								oidcWaiting.value = false;
+								showAddMatrix.value = false;
+								resetForm();
+								loadChannels();
+							}
+						});
+					}, 1000);
+				} else {
+					saving.value = false;
+					error.value = r?.error?.message || r?.error?.detail || "Failed to start OIDC login.";
+				}
+			});
+			return;
+		}
+
 		const addConfig: ChannelConfig = {
 			homeserver,
 			ownership_mode: authMode === "password" ? normalizeMatrixOwnershipMode(ownershipModeDraft.value) : "user_managed",
@@ -99,18 +196,7 @@ export function AddMatrixModal(): VNode {
 			const r = res as { ok?: boolean; error?: { message?: string; detail?: string } } | undefined;
 			if (r?.ok) {
 				showAddMatrix.value = false;
-				addModel.value = "";
-				userAllowlistItems.value = [];
-				roomAllowlistItems.value = [];
-				homeserverDraft.value = MATRIX_DEFAULT_HOMESERVER;
-				authModeDraft.value = "password";
-				userIdDraft.value = "";
-				credentialDraft.value = "";
-				deviceDisplayNameDraft.value = "";
-				ownershipModeDraft.value = "moltis_owned";
-				otpSelfApprovalDraft.value = true;
-				otpCooldownDraft.value = "300";
-				advancedConfigPatch.value = "";
+				resetForm();
 				loadChannels();
 			} else {
 				error.value = r?.error?.message || r?.error?.detail || "Failed to connect Matrix.";
@@ -140,16 +226,16 @@ export function AddMatrixModal(): VNode {
 							accounts
 						</div>
 						<div className="text-xs text-[var(--muted)]">
-							2. Password is the default because it supports encrypted Matrix chats. Access token auth is only for plain
-							Matrix traffic
+							2. OIDC is the default because it is the simplest and supports encrypted Matrix chats. Password also
+							supports encryption. Access token auth is only for plain Matrix traffic
 						</div>
 						<div className="text-xs text-[var(--muted)]">
 							3. Moltis generates the local account ID automatically from the Matrix user or homeserver
 						</div>
 					</div>
 				</div>
-				<div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
-					<div className="font-medium text-emerald-50">Encrypted chats require password auth</div>
+				<div className="rounded-md border border-emerald-600/30 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+					<div className="font-medium text-emerald-800">Encrypted chats require OIDC or Password auth</div>
 					<div>{MATRIX_ENCRYPTION_GUIDANCE}</div>
 				</div>
 				<ConnectionModeHint type={ChannelType.Matrix} />
@@ -177,11 +263,12 @@ export function AddMatrixModal(): VNode {
 						authModeDraft.value = normalizeMatrixAuthMode(targetValue(e));
 					}}
 				>
+					<option value="oidc">OIDC (recommended)</option>
 					<option value="password">Password</option>
 					<option value="access_token">Access token</option>
 				</select>
 				<div className="text-xs text-[var(--muted)]">{matrixAuthModeGuidance(authModeDraft.value)}</div>
-				{authModeDraft.value === "password" ? (
+				{authModeDraft.value === "password" || authModeDraft.value === "oidc" ? (
 					<label className="flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] px-3 py-2">
 						<input
 							type="checkbox"
@@ -203,49 +290,53 @@ export function AddMatrixModal(): VNode {
 						{matrixOwnershipModeGuidance(authModeDraft.value, "user_managed")}
 					</div>
 				)}
-				<label className="text-xs text-[var(--muted)]">
-					Matrix User ID{authModeDraft.value === "password" ? " (required)" : " (optional)"}
-				</label>
-				<input
-					data-field="userId"
-					type="text"
-					placeholder="@bot:example.com"
-					value={userIdDraft.value}
-					onInput={(e) => {
-						userIdDraft.value = targetValue(e);
-					}}
-					className="channel-input"
-				/>
-				<label className="text-xs text-[var(--muted)]">{matrixCredentialLabel(authModeDraft.value)}</label>
-				<input
-					data-field="credential"
-					type="password"
-					placeholder={matrixCredentialPlaceholder(authModeDraft.value)}
-					value={credentialDraft.value}
-					onInput={(e) => {
-						credentialDraft.value = targetValue(e);
-					}}
-					className="channel-input"
-					autoComplete="new-password"
-					autoCapitalize="none"
-					autoCorrect="off"
-					spellcheck={false}
-				/>
-				<div className="text-xs text-[var(--muted)]">
-					{authModeDraft.value === "password" ? (
-						"Use the password for the dedicated Matrix bot account. This is the required mode for encrypted Matrix chats because Moltis needs to create and persist its own Matrix device keys."
-					) : (
-						<>
-							Get the access token in Element:{" "}
-							<span className="font-mono">Settings -&gt; Help & About -&gt; Advanced -&gt; Access Token</span>. Access
-							token mode does <span className="font-medium">not</span> support encrypted Matrix chats because Moltis
-							cannot import that existing device's private encryption keys.
-						</>
-					)}{" "}
-					<a href={MATRIX_DOCS_URL} target="_blank" rel="noreferrer" className="text-[var(--accent)] underline">
-						Matrix setup docs
-					</a>
-				</div>
+				{authModeDraft.value !== "oidc" && (
+					<>
+						<label className="text-xs text-[var(--muted)]">
+							Matrix User ID{authModeDraft.value === "password" ? " (required)" : " (optional)"}
+						</label>
+						<input
+							data-field="userId"
+							type="text"
+							placeholder="@bot:example.com"
+							value={userIdDraft.value}
+							onInput={(e) => {
+								userIdDraft.value = targetValue(e);
+							}}
+							className="channel-input"
+						/>
+						<label className="text-xs text-[var(--muted)]">{matrixCredentialLabel(authModeDraft.value)}</label>
+						<input
+							data-field="credential"
+							type="password"
+							placeholder={matrixCredentialPlaceholder(authModeDraft.value)}
+							value={credentialDraft.value}
+							onInput={(e) => {
+								credentialDraft.value = targetValue(e);
+							}}
+							className="channel-input"
+							autoComplete="new-password"
+							autoCapitalize="none"
+							autoCorrect="off"
+							spellcheck={false}
+						/>
+						<div className="text-xs text-[var(--muted)]">
+							{authModeDraft.value === "password" ? (
+								"Use the password for the dedicated Matrix bot account. This is the required mode for encrypted Matrix chats because Moltis needs to create and persist its own Matrix device keys."
+							) : (
+								<>
+									Get the access token in Element:{" "}
+									<span className="font-mono">Settings -&gt; Help & About -&gt; Advanced -&gt; Access Token</span>.
+									Access token mode does <span className="font-medium">not</span> support encrypted Matrix chats because
+									Moltis cannot import that existing device's private encryption keys.
+								</>
+							)}{" "}
+							<a href={MATRIX_DOCS_URL} target="_blank" rel="noreferrer" className="text-[var(--accent)] underline">
+								Matrix setup docs
+							</a>
+						</div>
+					</>
+				)}
 				<label className="text-xs text-[var(--muted)]">Device Display Name (optional)</label>
 				<input
 					data-field="deviceDisplayName"
@@ -340,8 +431,14 @@ export function AddMatrixModal(): VNode {
 					}}
 				/>
 				{error.value && <div className="text-xs text-[var(--error)] py-1">{error.value}</div>}
-				<button className="provider-btn" onClick={onSubmit} disabled={saving.value}>
-					{saving.value ? "Connecting\u2026" : "Connect Matrix"}
+				<button className="provider-btn" onClick={onSubmit} disabled={saving.value || oidcWaiting.value}>
+					{saving.value
+						? "Connecting\u2026"
+						: oidcWaiting.value
+							? "Waiting for OIDC\u2026"
+							: authModeDraft.value === "oidc"
+								? "Authenticate with OIDC"
+								: "Connect Matrix"}
 				</button>
 			</div>
 		</Modal>

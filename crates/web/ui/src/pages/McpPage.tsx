@@ -576,19 +576,29 @@ function InstallBox(): VNode {
 							if ((e as KeyboardEvent).key === "Enter") onAdd();
 						}}
 					/>
+					<div className="text-xs text-[var(--muted)] mt-1">
+						If the server requires OAuth, your browser opens for sign-in when you enable or restart it. URL query values
+						may use <code>$NAME</code> or <code>{"${NAME}"}</code> placeholders from Settings &rarr; Environment
+						Variables.
+					</div>
 				</div>
 			)}
 			{isSse && (
 				<div className="project-edit-group mb-2">
-					<div className="text-xs text-[var(--muted)] mb-1">Headers (KEY=VALUE per line)</div>
+					<div className="text-xs text-[var(--muted)] mb-1">Request headers (optional, KEY=VALUE per line)</div>
 					<textarea
 						className="provider-key-input w-full min-h-[72px] resize-y font-mono text-sm"
 						rows={3}
+						placeholder="Authorization=Bearer ..."
 						value={sseHeaders.value}
 						onInput={(e) => {
 							sseHeaders.value = (e.target as HTMLTextAreaElement).value;
 						}}
 					/>
+					<div className="text-xs text-[var(--muted)] mt-1">
+						Optional request headers are sent to the remote MCP host. Stored header values stay hidden after save, and
+						values may use <code>$NAME</code> or <code>{"${NAME}"}</code> placeholders.
+					</div>
 				</div>
 			)}
 			{showEnv.value && (
@@ -854,28 +864,67 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 					{editTransport.value === "sse" || editTransport.value === "streamable-http" ? (
 						<>
 							<div className="project-edit-group mb-2">
-								<div className="text-xs text-[var(--muted)] mb-1">Replace URL</div>
+								<div className="text-xs text-[var(--muted)] mb-1">Current URL</div>
+								<div className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)]">
+									{currentSafeUrl || "(stored URL hidden until the API returns sanitized text)"}
+								</div>
+								<div className="text-xs text-[var(--muted)] mt-2 mb-1">
+									Replace URL (leave blank to keep the current URL)
+								</div>
 								<input
 									type="text"
 									className="provider-key-input w-full font-mono"
 									value={editUrl.value}
-									placeholder={currentSafeUrl || "https://..."}
+									placeholder={currentSafeUrl || "https://mcp.example.com/mcp"}
 									onInput={(e) => {
 										editUrl.value = (e.target as HTMLInputElement).value;
 									}}
 								/>
+								<div className="text-xs text-[var(--muted)] mt-1">
+									Leave this blank to preserve the stored URL. Query values may use <code>$NAME</code> or{" "}
+									<code>{"${NAME}"}</code> placeholders. OAuth, if required, runs in your browser when the server is
+									enabled.
+								</div>
 							</div>
 							<div className="project-edit-group mb-2">
-								<div className="text-xs text-[var(--muted)] mb-1">Replace headers (KEY=VALUE per line)</div>
+								<div className="text-xs text-[var(--muted)] mb-1">Current headers</div>
+								<div className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)]">
+									{currentHeaderSummary}
+								</div>
+								<div className="mt-2">
+									<button
+										onClick={() => {
+											clearHeaders.value = !clearHeaders.value;
+										}}
+										className="provider-btn provider-btn-secondary provider-btn-sm"
+									>
+										{clearHeaders.value ? "Keep stored headers" : "Clear stored headers"}
+									</button>
+								</div>
+								<div className="text-xs text-[var(--muted)] mt-2 mb-1">
+									Replace headers (optional, KEY=VALUE per line)
+								</div>
 								<textarea
 									className="provider-key-input w-full min-h-[72px] resize-y font-mono text-sm"
 									rows={3}
+									placeholder="Authorization=Bearer ..."
 									value={editHeaders.value}
 									disabled={clearHeaders.value}
 									onInput={(e) => {
 										editHeaders.value = (e.target as HTMLTextAreaElement).value;
 									}}
 								/>
+								<div className="text-xs text-[var(--muted)] mt-1">
+									{clearHeaders.value ? (
+										"Saving now removes every stored header for this remote server."
+									) : (
+										<>
+											Leave blank to preserve stored headers. Enter new lines to replace them, or click{" "}
+											<strong>Clear stored headers</strong> to remove them entirely. Use <code>$NAME</code> or{" "}
+											<code>{"${NAME}"}</code> for env-backed values.
+										</>
+									)}
+								</div>
 							</div>
 						</>
 					) : (

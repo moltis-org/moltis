@@ -966,6 +966,7 @@ function CronModal(): VNode {
 				{schedParams()}
 				<label className="text-xs text-[var(--muted)]">Payload Type</label>
 				<select
+					data-field="payloadKind"
 					className="provider-key-input"
 					value={payloadKind.value}
 					onChange={(e) => {
@@ -976,8 +977,14 @@ function CronModal(): VNode {
 					<option value="systemEvent">System Event</option>
 					<option value="agentTurn">Agent Turn</option>
 				</select>
+				<p className="text-xs text-[var(--muted)] mt-1">
+					{payloadKind.value === "agentTurn"
+						? "Starts an isolated agent turn with this prompt. Enable channel delivery below to send the result to a chat."
+						: "Adds this text to the main session as a system event when the job runs."}
+				</p>
 				<label className="text-xs text-[var(--muted)]">Message</label>
 				<textarea
+					data-field="message"
 					className={`provider-key-input textarea-sm ${errorField.value === "message" ? "field-error" : ""}`}
 					placeholder={
 						payloadKind.value === "agentTurn" ? "Prompt sent to the agent" : "Message sent to the main session"
@@ -996,6 +1003,7 @@ function CronModal(): VNode {
 					}}
 					placeholder={defaultModelPlaceholder()}
 				/>
+				<p className="text-xs text-[var(--muted)] mt-1">Only used for Agent Turn jobs.</p>
 
 				{payloadKind.value === "agentTurn" && (
 					<div style={{ marginTop: "12px", borderTop: "1px solid var(--border)", paddingTop: "12px" }}>
@@ -1041,6 +1049,7 @@ function CronModal(): VNode {
 
 				<label className="text-xs text-[var(--muted)]">Session Target</label>
 				<select
+					data-field="target"
 					className="provider-key-input"
 					value={sessionTarget.value}
 					onChange={(e) => {
@@ -1053,6 +1062,7 @@ function CronModal(): VNode {
 				</select>
 				<label className="text-xs text-[var(--muted)]">Execution Target</label>
 				<select
+					data-field="executionTarget"
 					className="provider-key-input"
 					value={executionTarget.value}
 					onChange={(e) => {
@@ -1073,9 +1083,11 @@ function CronModal(): VNode {
 						placeholder="Default image"
 						searchPlaceholder="Search images\u2026"
 					/>
+					<p className="text-xs text-[var(--muted)] mt-1">Used only when execution target is Sandbox.</p>
 				</div>
 				<label className="text-xs text-[var(--muted)] flex items-center gap-2">
 					<input
+						data-field="deleteAfter"
 						type="checkbox"
 						checked={deleteAfterRun.value}
 						onChange={(e) => {
@@ -1086,6 +1098,7 @@ function CronModal(): VNode {
 				</label>
 				<label className="text-xs text-[var(--muted)] flex items-center gap-2">
 					<input
+						data-field="enabled"
 						type="checkbox"
 						checked={jobEnabled.value}
 						onChange={(e) => {

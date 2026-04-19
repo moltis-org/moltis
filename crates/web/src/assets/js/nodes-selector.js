@@ -12,3 +12,9 @@ export default M;
 
 export const fetchNodes = (...args) => M.fetchNodes?.(...args);
 export const bindNodeComboEvents = (...args) => M.bindNodeComboEvents?.(...args);
+export const restoreNodeSelection = (...args) => M.restoreNodeSelection?.(...args);
+export const renderNodeList = (...args) => M.renderNodeList?.(...args);
+export const selectNode = (...args) => M.selectNode?.(...args);
+export const openNodeDropdown = (...args) => M.openNodeDropdown?.(...args);
+export const closeNodeDropdown = (...args) => M.closeNodeDropdown?.(...args);
+export const unbindNodeEvents = (...args) => M.unbindNodeEvents?.(...args);

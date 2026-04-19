@@ -41,6 +41,29 @@ export const sandboxInfo = S.sandboxInfo;
 export const cachedChannels = S.cachedChannels;
 export const selectedModelId = S.selectedModelId;
 
+// ── DOM element state (live via polling) ─────────────────────
+// DOM elements like nodeCombo are set after page mount.  We use
+// `export let` for live ESM bindings and sync from the real state
+// namespace (which has getters for these mutable exports).
+export let nodeCombo = S.nodeCombo;
+export let nodeComboBtn = S.nodeComboBtn;
+export let nodeComboLabel = S.nodeComboLabel;
+export let nodeDropdown = S.nodeDropdown;
+export let nodeDropdownList = S.nodeDropdownList;
+
+// Keep DOM element exports in sync with the real state.
+// The bundled namespace S uses getter properties, so reading S.nodeCombo
+// always returns the current value.  We sync on each animation frame.
+function _syncDomState() {
+	nodeCombo = S.nodeCombo;
+	nodeComboBtn = S.nodeComboBtn;
+	nodeComboLabel = S.nodeComboLabel;
+	nodeDropdown = S.nodeDropdown;
+	nodeDropdownList = S.nodeDropdownList;
+	requestAnimationFrame(_syncDomState);
+}
+requestAnimationFrame(_syncDomState);
+
 // ── Setters (proxy to real state module) ────────────────────
 export function setConnected(v) { S.setConnected?.(v); }
 export function setWs(v) { S.setWs?.(v); }
@@ -75,6 +98,11 @@ export function setNetworkAuditEventHandler(v) { S.setNetworkAuditEventHandler?.
 export function setUnseenErrors(v) { S.setUnseenErrors?.(v); }
 export function setUnseenWarns(v) { S.setUnseenWarns?.(v); }
 export function setReconnectDelay(v) { S.setReconnectDelay?.(v); }
+export function setNodeCombo(v) { S.setNodeCombo?.(v); nodeCombo = v; }
+export function setNodeComboBtn(v) { S.setNodeComboBtn?.(v); nodeComboBtn = v; }
+export function setNodeComboLabel(v) { S.setNodeComboLabel?.(v); nodeComboLabel = v; }
+export function setNodeDropdown(v) { S.setNodeDropdown?.(v); nodeDropdown = v; }
+export function setNodeDropdownList(v) { S.setNodeDropdownList?.(v); nodeDropdownList = v; }
 
 // DOM shorthand
 export function $(id) { return S.$?.(id) ?? document.getElementById(id); }

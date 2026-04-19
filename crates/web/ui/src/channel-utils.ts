@@ -9,7 +9,7 @@ import { ChannelType } from "./types";
 export const MATRIX_DOCS_URL = "https://docs.moltis.org/matrix.html";
 export const MATRIX_DEFAULT_HOMESERVER = "https://matrix.org";
 export const MATRIX_ENCRYPTION_GUIDANCE =
-	"Encrypted Matrix chats require OIDC or Password auth. Access token auth can connect for plain Matrix traffic, but it reuses an existing Matrix session without that device's private encryption keys, so Moltis cannot reliably decrypt encrypted chats. Use OIDC or Password so Moltis creates and persists its own Matrix device keys, then finish Element verification in the same Matrix DM or room by sending `verify yes`, `verify no`, `verify show`, or `verify cancel` as normal chat messages.";
+	"Encrypted Matrix chats require OIDC or Password auth. Access token auth can connect for plain Matrix traffic, but it reuses an existing Matrix session without that device's private encryption keys, so Moltis cannot reliably decrypt encrypted chats. Use OIDC (recommended) or Password so Moltis creates and persists its own Matrix device keys, then finish Element verification in the same Matrix DM or room by sending `verify yes`, `verify no`, `verify show`, or `verify cancel` as normal chat messages.";
 
 export function matrixAuthModeGuidance(authMode: string | undefined): string {
 	const mode = normalizeMatrixAuthMode(authMode);

@@ -313,7 +313,7 @@ function InstallBox(): VNode {
 			<input
 				ref={ref}
 				type="text"
-				placeholder="owner/repo or full URL"
+				placeholder="owner/repo or full URL (e.g. anthropics/skills)"
 				className="skills-install-input"
 				onKeyDown={(e) => {
 					if ((e as KeyboardEvent).key === "Enter") go();
@@ -607,6 +607,7 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 	const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const removingRepo = useSignal(false);
 	const exportingRepo = useSignal(false);
+	const unquarantiningRepo = useSignal(false);
 	const isOrphan = repo.orphaned === true;
 	const sourceLabel = isOrphan ? repo.repo_name : repo.source;
 	const href = isOrphan ? null : /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
@@ -703,6 +704,27 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 							{exportingRepo.value ? "Exporting..." : "Export"}
 						</button>
 					)}
+					{repo.quarantined && (
+						<button
+							className="provider-btn provider-btn-sm provider-btn-secondary"
+							disabled={unquarantiningRepo.value}
+							onClick={(e) => {
+								e.stopPropagation();
+								if (!S.connected || unquarantiningRepo.value) return;
+								requestConfirm(`Clear quarantine for ${repo.source}?`, {
+									confirmLabel: "Clear Quarantine",
+								}).then((confirmed) => {
+									if (!confirmed) return;
+									unquarantiningRepo.value = true;
+									doUnquarantine(repo.source).finally(() => {
+										unquarantiningRepo.value = false;
+									});
+								});
+							}}
+						>
+							{unquarantiningRepo.value ? "Clearing..." : "Clear Quarantine"}
+						</button>
+					)}
 					<button
 						className="provider-btn provider-btn-sm provider-btn-danger"
 						disabled={removingRepo.value}
@@ -720,6 +742,30 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 					</button>
 				</div>
 			</div>
+			{(repo.quarantined || repo.provenance) && expanded.value && (
+				<div style={{ padding: "8px 12px", fontSize: ".78rem", color: "var(--muted)" }}>
+					{repo.quarantined && (
+						<div style={{ marginBottom: "6px", color: "var(--warning, #c77d00)", fontWeight: 600 }}>
+							Quarantined{repo.quarantine_reason ? `: ${repo.quarantine_reason}` : ""}
+						</div>
+					)}
+					{repo.provenance?.original_source && (
+						<div>
+							<strong>Original source:</strong> {repo.provenance.original_source}
+						</div>
+					)}
+					{repo.provenance?.original_commit_sha && (
+						<div>
+							<strong>Original commit:</strong> <code>{shortSha(repo.provenance.original_commit_sha)}</code>
+						</div>
+					)}
+					{repo.provenance?.imported_from && (
+						<div>
+							<strong>Imported from:</strong> <code>{repo.provenance.imported_from}</code>
+						</div>
+					)}
+				</div>
+			)}
 			{expanded.value && (
 				<div className="skills-repo-detail" style={{ display: "block" }}>
 					<div style={{ marginBottom: "8px" }}>

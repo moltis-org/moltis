@@ -18,3 +18,4 @@ export const sendRpc = (...args) => M.sendRpc?.(...args);
 export const renderMarkdown = (...args) => M.renderMarkdown?.(...args);
 export const esc = (...args) => M.esc?.(...args);
 export const toolCallSummary = (...args) => M.toolCallSummary?.(...args);
+export const formatAudioDuration = (...args) => M.formatAudioDuration?.(...args);

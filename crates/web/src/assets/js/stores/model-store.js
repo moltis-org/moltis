@@ -8,3 +8,5 @@ export const setAll = (...args) => M.setAll?.(...args);
 export const select = (...args) => M.select?.(...args);
 export const fetch = (...args) => M.fetch?.(...args);
 export const getById = (...args) => M.getById?.(...args);
+export const setReasoningEffort = (...args) => M.setReasoningEffort?.(...args);
+export const reasoningEffort = M.reasoningEffort;

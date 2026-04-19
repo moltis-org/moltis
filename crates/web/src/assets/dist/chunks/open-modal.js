@@ -1,6 +1,6 @@
-import { d as sendRpc } from "./theme.js";
+import { b as sendRpc } from "./theme.js";
 import { e as els, s as showApiKeyForm, a as showOAuthFlow, b as showLocalModelFlow, c as showCustomProviderForm } from "../main.js";
-import "./jsxRuntime.module.js";
+import "./ws-connect.js";
 import "./branding.js";
 import "./voice-utils.js";
 import "./time-format.js";

@@ -3,48 +3,47 @@
 import { render } from "preact";
 import prettyBytes from "pretty-bytes";
 import { applyIdentityFavicon, formatPageTitle } from "./branding";
+import * as _chatUi from "./chat-ui";
+import * as _codeHighlight from "./code-highlight";
 import { initHighlighter } from "./code-highlight";
 import { SessionList } from "./components/SessionList";
+import * as _events from "./events";
 import { onEvent } from "./events";
 import * as gon from "./gon";
-import { init as initI18n, translateStaticElements } from "./i18n";
-import { initMobile, toggleSessions } from "./mobile";
-import { fetchModels } from "./models";
-import { updateNavCounts } from "./nav-counts";
-import { renderSessionProjectSelect } from "./project-combo";
-import { fetchProjects, renderProjectSelect } from "./projects";
-import { initPWA } from "./pwa";
-import { initInstallBanner } from "./pwa-install";
-import { mount, navigate, registerPage, sessionPath } from "./router";
-import { routes } from "./routes";
-import { updateSandboxImageUI, updateSandboxUI } from "./sandbox";
-import { fetchSessions, refreshWelcomeCardIfNeeded, removeSessionFromClientState, renderSessionList } from "./sessions";
-import * as S from "./state";
-import * as modelStore from "./stores/model-store";
-import * as projectStore from "./stores/project-store";
-import { insertSessionInOrder, sessionStore } from "./stores/session-store";
-import { initTheme, injectMarkdownStyles } from "./theme";
-import { GlobalDialogs } from "./ui";
-import { connect } from "./websocket";
-
 // E2E test module imports — tests dynamically import individual JS
 // modules (js/helpers.js, js/chat-ui.js, etc.) that no longer exist
 // as standalone files. We expose the bundled modules on window so
 // the shim files in assets/js/ can proxy to them.
 import * as _helpers from "./helpers";
-import * as _events from "./events";
-import * as _chatUi from "./chat-ui";
-import * as _sessions from "./sessions";
-import * as _codeHighlight from "./code-highlight";
-import * as _wsConnect from "./ws-connect";
-import * as _nodeSelector from "./nodes-selector";
-import * as _providers from "./providers";
-import * as _channelsPage from "./pages/ChannelsPage";
 import * as _i18n from "./i18n";
+import { init as initI18n, translateStaticElements } from "./i18n";
+import { initMobile, toggleSessions } from "./mobile";
+import { fetchModels } from "./models";
+import { updateNavCounts } from "./nav-counts";
+import * as _nodeSelector from "./nodes-selector";
+import * as _channelsPage from "./pages/ChannelsPage";
+import { renderSessionProjectSelect } from "./project-combo";
+import { fetchProjects, renderProjectSelect } from "./projects";
+import * as _providers from "./providers";
+import { initPWA } from "./pwa";
+import { initInstallBanner } from "./pwa-install";
+import { mount, navigate, registerPage, sessionPath } from "./router";
+import { routes } from "./routes";
+import { updateSandboxImageUI, updateSandboxUI } from "./sandbox";
+import * as _sessions from "./sessions";
+import { fetchSessions, refreshWelcomeCardIfNeeded, removeSessionFromClientState, renderSessionList } from "./sessions";
+import * as S from "./state";
+import * as modelStore from "./stores/model-store";
 import * as _modelStore from "./stores/model-store";
-import * as _sessionStoreModule from "./stores/session-store";
 import * as _nodeStore from "./stores/node-store";
+import * as projectStore from "./stores/project-store";
 import * as _sessionHistoryCache from "./stores/session-history-cache";
+import * as _sessionStoreModule from "./stores/session-store";
+import { insertSessionInOrder, sessionStore } from "./stores/session-store";
+import { initTheme, injectMarkdownStyles } from "./theme";
+import { GlobalDialogs } from "./ui";
+import { connect } from "./websocket";
+import * as _wsConnect from "./ws-connect";
 
 // Expose stores and modules for E2E test access.
 window.__moltis_stores = { sessionStore, modelStore, projectStore };

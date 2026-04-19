@@ -5,9 +5,15 @@ import { applyIdentityFavicon, formatLoginTitle } from "./branding";
 import { init as initI18n, t } from "./i18n";
 import * as S from "./state";
 import { initTheme } from "./theme";
+import * as _wsConnect from "./ws-connect";
 
 // Expose state module for E2E test WS mocking.
 window.__moltis_state = S;
+// Expose ws-connect for E2E tests that import the shim from the login page.
+window.__moltis_modules = {
+	...(window.__moltis_modules || {}),
+	"ws-connect": _wsConnect,
+};
 
 // ── Types ────────────────────────────────────────────────────
 
