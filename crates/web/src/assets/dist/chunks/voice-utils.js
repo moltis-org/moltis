@@ -1,5 +1,5 @@
-import { b as sendRpc, q as connected, bZ as localizeRpcError, b_ as pending, b$ as setConnected, c0 as nextId, c1 as getPreferredLocale, c2 as setReconnectDelay, c3 as reconnectDelay, c4 as setWs, aw as d, ax as A, av as y } from "./theme.js";
-import { u } from "./jsxRuntime.module.js";
+import { b as sendRpc, aw as d, ax as A, av as y } from "./theme.js";
+import { u } from "./ws-connect.js";
 const gon = window.__MOLTIS__ || {};
 const listeners = {};
 function get(key) {
@@ -451,185 +451,6 @@ function saveProviderKey(providerName, apiKey, baseUrl, model) {
   const payload = buildSaveKeyPayload(providerName, apiKey, baseUrl, model);
   return sendRpc("providers.save_key", payload);
 }
-let reconnectTimer = null;
-let lastOpts = null;
-let authRedirectPending = false;
-const serverRequestHandlers = {};
-function resolveLocale() {
-  return getPreferredLocale();
-}
-function resetAuthRedirectGuard() {
-  authRedirectPending = false;
-}
-window.addEventListener("moltis:auth-status-sync-complete", resetAuthRedirectGuard);
-function onServerRequest(method, handler) {
-  serverRequestHandlers[method] = handler;
-  return function off() {
-    delete serverRequestHandlers[method];
-  };
-}
-function connectWs(opts) {
-  lastOpts = opts;
-  const backoff = Object.assign({ factor: 1.5, max: 5e3 }, opts.backoff);
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${proto}//${location.host}/ws/chat`);
-  setWs(ws);
-  ws.onopen = () => {
-    const id = nextId();
-    pending[id] = (res) => {
-      if (res.ok && res.payload) {
-        const hello = res.payload;
-        if (hello.type === "hello-ok") {
-          setConnected(true);
-          setReconnectDelay(1e3);
-          if (opts.onConnected) opts.onConnected(hello);
-          return;
-        }
-      }
-      setConnected(false);
-      if (opts.onHandshakeFailed) {
-        opts.onHandshakeFailed({
-          type: "res",
-          ok: res.ok,
-          payload: res.payload,
-          error: res.error
-        });
-      } else {
-        ws.close();
-      }
-    };
-    ws.send(
-      JSON.stringify({
-        type: "req",
-        id,
-        method: "connect",
-        params: {
-          protocol: { min: 3, max: 4 },
-          client: {
-            id: "web-chat-ui",
-            version: "0.1.0",
-            platform: "browser",
-            mode: "operator"
-          },
-          locale: resolveLocale(),
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-        }
-      })
-    );
-  };
-  ws.onmessage = (evt) => {
-    var _a;
-    let frame;
-    try {
-      frame = JSON.parse(evt.data);
-    } catch {
-      return;
-    }
-    if ((frame == null ? void 0 : frame.type) === "res" && frame.error) {
-      frame.error = localizeRpcError(frame.error);
-      if (((_a = frame.error) == null ? void 0 : _a.code) === "UNAUTHORIZED" && !authRedirectPending) {
-        authRedirectPending = true;
-        window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
-      }
-    }
-    if (frame.type === "res" && frame.id && Object.hasOwn(pending, frame.id)) {
-      pending[frame.id]({
-        ok: frame.ok ?? false,
-        payload: frame.payload,
-        error: frame.error
-      });
-      delete pending[frame.id];
-      return;
-    }
-    if (frame.type === "req" && frame.id && frame.method) {
-      handleServerRequest(ws, frame);
-      return;
-    }
-    if (opts.onFrame) opts.onFrame(frame);
-  };
-  ws.onclose = () => {
-    const wasConnected = connected;
-    setConnected(false);
-    for (const id in pending) {
-      pending[id]({ ok: false, error: { code: "DISCONNECTED", message: "WebSocket disconnected" } });
-      delete pending[id];
-    }
-    if (opts.onDisconnected) opts.onDisconnected(wasConnected);
-    if (wasConnected) {
-      scheduleReconnect(() => connectWs(opts), backoff);
-    } else {
-      checkAuthOrReconnect(opts, backoff);
-    }
-  };
-  ws.onerror = () => {
-  };
-}
-function handleServerRequest(ws, frame) {
-  const method = frame.method ?? "";
-  if (!Object.hasOwn(serverRequestHandlers, method)) {
-    ws.send(
-      JSON.stringify({
-        type: "res",
-        id: frame.id,
-        ok: false,
-        error: { code: "UNKNOWN_METHOD", message: `no handler for ${method}` }
-      })
-    );
-    return;
-  }
-  const handler = serverRequestHandlers[method];
-  Promise.resolve().then(() => handler(frame.params || {})).then((result) => {
-    ws.send(JSON.stringify({ type: "res", id: frame.id, ok: true, payload: result || {} }));
-  }).catch((err) => {
-    ws.send(
-      JSON.stringify({
-        type: "res",
-        id: frame.id,
-        ok: false,
-        error: { code: "INTERNAL", message: String((err == null ? void 0 : err.message) || err) }
-      })
-    );
-  });
-}
-function subscribeEvents(events) {
-  return sendRpc("subscribe", { events });
-}
-function checkAuthOrReconnect(opts, backoff) {
-  fetch("/api/auth/status").then((r) => r.ok ? r.json() : null).then((auth) => {
-    if (auth == null ? void 0 : auth.setup_required) {
-      window.location.assign("/onboarding");
-    } else if (auth && !auth.authenticated) {
-      window.location.assign("/login");
-    } else {
-      scheduleReconnect(() => connectWs(opts), backoff);
-    }
-  }).catch(() => {
-    scheduleReconnect(() => connectWs(opts), backoff);
-  });
-}
-function scheduleReconnect(reconnect, backoff) {
-  if (reconnectTimer) return;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    setReconnectDelay(Math.min(reconnectDelay * backoff.factor, backoff.max));
-    reconnect();
-  }, reconnectDelay);
-}
-function forceReconnect(opts) {
-  const resolved = opts || lastOpts;
-  if (!resolved || connected) return;
-  if (reconnectTimer) clearTimeout(reconnectTimer);
-  reconnectTimer = null;
-  setReconnectDelay(1e3);
-  connectWs(resolved);
-}
-const _wsConnect = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
-  __proto__: null,
-  connectWs,
-  forceReconnect,
-  onServerRequest,
-  subscribeEvents
-}, Symbol.toStringTag, { value: "Module" }));
 const EMOJI_LIST = [
   "🐶",
   "🐱",
@@ -920,7 +741,6 @@ function decodeBase64Safe(input) {
   return bytes;
 }
 export {
-  _wsConnect as $,
   startProviderOAuth as A,
   saveProviderKey as B,
   ChannelType as C,
@@ -928,30 +748,27 @@ export {
   isModelServiceNotConfigured as E,
   isTimeoutError as F,
   humanizeProbeError as G,
-  forceReconnect as H,
-  connectWs as I,
-  subscribeEvents as J,
-  eventListeners as K,
-  refresh as L,
+  eventListeners as H,
+  refresh as I,
+  EmojiPicker as J,
+  validateIdentityFields as K,
+  updateIdentity as L,
   MATRIX_DEFAULT_HOMESERVER as M,
-  EmojiPicker as N,
-  validateIdentityFields as O,
-  updateIdentity as P,
-  set as Q,
-  prepareCreationOptions as R,
-  detectPasskeyName as S,
-  fetchVoiceProviders as T,
-  fetchPhrase as U,
-  testTts as V,
-  decodeBase64Safe as W,
-  transcribeAudio as X,
-  toggleVoiceProvider as Y,
-  saveVoiceKey as Z,
-  saveVoiceSettings as _,
+  set as N,
+  prepareCreationOptions as O,
+  detectPasskeyName as P,
+  fetchVoiceProviders as Q,
+  fetchPhrase as R,
+  testTts as S,
+  decodeBase64Safe as T,
+  transcribeAudio as U,
+  toggleVoiceProvider as V,
+  saveVoiceKey as W,
+  saveVoiceSettings as X,
+  gon$1 as Y,
+  VOICE_COUNTERPART_IDS as Z,
+  _events as _,
   onChange as a,
-  gon$1 as a0,
-  _events as a1,
-  VOICE_COUNTERPART_IDS as a2,
   addChannel as b,
   MATRIX_ENCRYPTION_GUIDANCE as c,
   targetChecked as d,
