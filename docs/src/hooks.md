@@ -124,7 +124,7 @@ Fires after the LLM response is received but before tool calls execute. For stre
 | `account_id` | string/null | Channel account identifier |
 | `chat_id` | string/null | Channel chat, room, or peer identifier |
 | `chat_type` | string/null | Best-effort chat classification, currently most useful for Telegram |
-| `sender_id` | string/null | Reserved for future sender provenance, currently omitted |
+| `sender_id` | string/null | Channel sender identifier when available (populated by channel dispatch) |
 
 Example `BeforeToolCall` payload excerpt:
 
@@ -215,12 +215,15 @@ name = "my-hook"
 description = "Logs all tool calls to a file"
 events = ["BeforeToolCall", "AfterToolCall"]
 command = "./handler.sh"
-timeout = 5
+timeout = 10
+priority = 0
+emoji = "🔔"
 
 [requires]
 os = ["darwin", "linux"]
 bins = ["jq"]
 env = ["LOG_FILE"]
+config = ["chat.model"]
 +++
 
 # My Hook
@@ -257,33 +260,30 @@ chmod +x ~/.moltis/hooks/my-hook/handler.sh
 
 Hooks communicate via stdin/stdout and exit codes:
 
+### HOOK.md Frontmatter
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | — | Hook identifier |
+| `description` | string | `""` | Human-readable description |
+| `events` | array of `HookEvent` | — | Events to subscribe to |
+| `command` | string | — | Shell command to execute |
+| `timeout` | number | `10` | Maximum execution time in seconds |
+| `priority` | number | `0` | Execution order (lower = earlier) |
+| `emoji` | string | — | Display emoji in hook listings |
+| `env` | object | `{}` | Environment variables passed to the handler |
+| `requires.os` | array | — | Required OS names |
+| `requires.bins` | array | — | Required binaries in PATH |
+| `requires.env` | array | — | Required environment variables |
+| `requires.config` | array | — | Required config keys in `moltis.toml` |
+
 ### Input
 
-The event payload is passed as JSON on stdin:
-
-```json
-{
-  "event": "BeforeToolCall",
-  "session_key": "abc123",
-  "tool_name": "exec",
-  "arguments": {
-    "command": "ls -la"
-  },
-  "channel": {
-    "surface": "telegram",
-    "session_kind": "channel",
-    "channel_type": "telegram",
-    "account_id": "bot-main",
-    "chat_id": "-100123",
-    "chat_type": "channel_or_supergroup"
-  }
-}
-```
-
-For modifying events, stdin is the full tagged `HookPayload`. If your hook returns
-`{"action":"modify","data":...}`, the `data` value replaces the event-specific
-mutable portion of the payload. For `BeforeToolCall`, that means the replacement
-value becomes the new `arguments` object.
+The event payload is passed as JSON on stdin. For modifying events,
+if your hook returns `{"action":"modify","data":...}`, the `data` value
+replaces the event-specific mutable portion of the payload. For
+`BeforeToolCall`, that means the replacement value becomes the new
+`arguments` object.
 
 ### Output
 
@@ -372,15 +372,8 @@ env = ["SLACK_WEBHOOK_URL"]    # Required environment variables
 
 If requirements aren't met, the hook is skipped (not an error).
 
-## Circuit Breaker
-
-Hooks that fail repeatedly are automatically disabled:
-
-- **Threshold**: 3 consecutive failures
-- **Cooldown**: 60 seconds
-- **Recovery**: Auto-re-enabled after cooldown
-
-This prevents a broken hook from blocking all operations.
+The `config` requirement checks that the specified config keys exist in
+`moltis.toml`.
 
 ## CLI Commands
 
@@ -400,46 +393,18 @@ moltis hooks info my-hook
 
 ## Bundled Hooks
 
-Moltis includes several built-in hooks:
-
-## Workspace Context Files
-
-Moltis supports several workspace markdown files in `data_dir`.
-
-### BOOT.md
-
-`BOOT.md` is loaded per session and injected into the system prompt as startup context.
-
-Best use is for short, explicit startup tasks (health checks, reminders,
-"send one startup message", etc.). If the file is missing or empty, nothing is injected.
-
-Agent-specific overrides are supported: place `BOOT.md` in `agents/<id>/BOOT.md`.
-
-### TOOLS.md
-
-`TOOLS.md` is loaded as a workspace context file in the system prompt.
-
-Best use is to combine:
-
-- **Local notes**: environment-specific facts (hosts, device names, channel aliases)
-- **Policy constraints**: "prefer read-only tools first", "never run X on startup", etc.
-
-If `TOOLS.md` is empty or missing, it is not injected.
-
-### AGENTS.md (workspace)
-
-Moltis also supports a workspace-level `AGENTS.md` in `data_dir`.
-
-This is separate from project `AGENTS.md`/`CLAUDE.md` discovery. Use workspace
-`AGENTS.md` for global instructions that should apply across projects in this workspace.
+Moltis includes two native hook handlers compiled into the binary:
 
 ### session-memory
 
-Saves session context when you use the `/new` command, preserving important information for future sessions.
+Subscribes to `SessionEnd`. Saves a summary of the session context when
+you use the `/new` command, preserving important information for future
+sessions.
 
 ### command-logger
 
-Logs all `Command` events to a JSONL file for auditing.
+Subscribes to `Command`. Logs all slash-command events to a JSONL file
+for auditing.
 
 ## Example Hooks
 
@@ -548,7 +513,7 @@ exit 0
 
 ## Best Practices
 
-1. **Keep hooks fast** — Set appropriate timeouts (default: 5s)
+1. **Keep hooks fast** — Set appropriate timeouts (default: 10s)
 2. **Handle errors gracefully** — Use `exit 0` unless you want to block
 3. **Log for debugging** — Write to a log file, not stdout
 4. **Test locally first** — Pipe sample JSON through your script
