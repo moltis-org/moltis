@@ -6,22 +6,26 @@ prompt compact while adapting to the current session context.
 
 ## Assembly Order
 
-The prompt is built in `crates/agents/src/prompt.rs` by
+The prompt is built in `crates/agents/src/prompt/builder.rs` by
 `build_system_prompt_full()`. Components are appended in this order:
 
 1. **Base introduction** — one-liner announcing tool access (or not)
-2. **Agent identity** — name, emoji, creature, vibe from `IDENTITY.md`
-3. **Soul** — personality directives from `SOUL.md` (or built-in default)
-4. **User profile** — user's name from `USER.md`
-5. **Project context** — `CLAUDE.md` / `CLAUDE.local.md` / `AGENTS.md` / `.cursorrules` / `.claude/rules/*.md` / `.cursor/rules/*.{md,mdc}`
+2. **Agent identity, user profile, and soul** — combined section: name,
+   emoji, creature, vibe from `IDENTITY.md`, user's name from `USER.md`,
+   personality directives from `SOUL.md` (or built-in default)
+3. **Startup context** — `BOOT.md` content (when present) injected under a
+   `## Startup Context (BOOT.md)` heading
+4. **Project context** — `CLAUDE.md` / `CLAUDE.local.md` / `AGENTS.md` / `.cursorrules` / `.claude/rules/*.md` / `.cursor/rules/*.{md,mdc}`
    walked up the directory tree
-6. **Runtime context** — host info, sandbox config, execution routing hints
-7. **Skills listing** — available skills as XML block
-8. **Workspace files** — `AGENTS.md` and `TOOLS.md` from the data directory
-9. **Long-term memory hint** — added when memory tools are registered
-10. **Tool schemas** — compact list (native) or full JSON (fallback)
-11. **Tool-calling format** — JSON block instructions (fallback providers only)
-12. **Guidelines** — tool usage guidance, silent reply protocol
+5. **Runtime context** — host info, sandbox config, execution routing hints
+6. **Skills listing** — available skills as XML block
+7. **Workspace files** — `AGENTS.md` and `TOOLS.md` from the data directory
+8. **Long-term memory** — `MEMORY.md` content (when memory style allows
+   prompt injection), plus tool usage instructions for memory tools
+9. **Tool schemas** — compact list (native) or full JSON (fallback)
+10. **Tool-calling format** — JSON block instructions (fallback providers only)
+11. **Guidelines** — tool usage guidance, silent reply protocol (hardcoded
+   defaults, or overridden by `GUIDELINES.md`)
 
 ## Components in Detail
 
@@ -217,13 +221,27 @@ The final section contains:
 - **Silent reply protocol**: when tool output speaks for itself, the LLM should
   return an empty response rather than acknowledging it
 
+#### GUIDELINES.md Override
+
+The hardcoded guidelines can be overridden with a `GUIDELINES.md` file.
+The loader checks two locations, in order:
+
+1. `~/.moltis/agents/<agent_id>/GUIDELINES.md` — per-agent override
+2. `~/.moltis/docs/moltis/GUIDELINES.md` — global override
+
+When a non-empty file is found, its contents replace the built-in
+guidelines entirely. This follows the same pattern as `AGENTS.md`,
+`TOOLS.md`, and `BOOT.md`.
+
 ## Entry Points
 
 | Function | Use case |
 |----------|----------|
 | `build_system_prompt()` | Simple: tools + optional project context |
 | `build_system_prompt_with_session_runtime()` | Full: identity, soul, user, skills, runtime, tools |
+| `build_system_prompt_with_session_runtime_details()` | Same, returns `PromptBuildOutput` with metadata |
 | `build_system_prompt_minimal_runtime()` | No tools (e.g. title generation, summaries) |
+| `build_system_prompt_minimal_runtime_details()` | Same, returns `PromptBuildOutput` with metadata |
 
 ## Size Estimates
 
@@ -251,8 +269,14 @@ concern.
 ├── IDENTITY.md          # Agent identity (name, emoji, creature, vibe)
 ├── SOUL.md              # Personality directives
 ├── USER.md              # User profile (name, timezone, location)
+├── BOOT.md              # Startup context (injected into every prompt)
 ├── AGENTS.md            # Workspace agent instructions
-└── TOOLS.md             # Tool preferences
+├── TOOLS.md             # Tool preferences
+├── docs/moltis/
+│   └── GUIDELINES.md    # Guidelines override (optional)
+├── agents/<agent_id>/
+│   ├── GUIDELINES.md    # Per-agent guidelines override (optional)
+│   └── ...
 
 <project>/
 ├── CLAUDE.md            # Project instructions
@@ -265,10 +289,15 @@ concern.
 
 ## Key Source Files
 
-- `crates/agents/src/prompt.rs` — prompt assembly logic and `DEFAULT_SOUL`
-- `crates/gateway/src/chat.rs` — `load_prompt_persona()`, runtime context
+- `crates/agents/src/prompt/builder.rs` — prompt assembly logic and `DEFAULT_SOUL`
+- `crates/agents/src/prompt/formatting.rs` — runtime context rendering
+- `crates/agents/src/prompt/types.rs` — `PromptRuntimeContext`,
+  `PromptBuildOutput`, and related types
+- `crates/chat/src/prompt.rs` — `load_prompt_persona()`, runtime context
   detection, project context resolution
 - `crates/config/src/loader.rs` — file loading (`load_soul()`,
   `load_agents_md()`, `load_identity()`, etc.)
+- `crates/config/src/loader/workspace.rs` — `load_guidelines_md()`,
+  `load_boot_md()`, and other workspace file loaders
 - `crates/projects/src/context.rs` — `CLAUDE.md` hierarchy walker
 - `crates/skills/src/prompt_gen.rs` — skills XML generation
