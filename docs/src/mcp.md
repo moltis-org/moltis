@@ -92,6 +92,9 @@ env = { API_KEY = "secret", DEBUG = "true" }
 # Optional: per-server timeout override
 request_timeout_secs = 90
 
+# Optional: custom display name (shown in UI instead of the server ID)
+display_name = "My Custom Server"
+
 # Optional: remote transport
 transport = "sse"               # "stdio" (default), "sse", or "streamable-http"
 url = "https://mcp.example.com/mcp"  # Required when transport = "sse" or "streamable-http"
@@ -140,30 +143,24 @@ headers = {
 
 ## Server Lifecycle
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   MCP Server                         │
-│                                                      │
-│  Start → Initialize → Ready → [Tool Calls] → Stop   │
-│            │                       │                 │
-│            ▼                       ▼                 │
-│     Health Check ◄─────────── Heartbeat             │
-│            │                       │                 │
-│            ▼                       ▼                 │
-│    Crash Detected ───────────► Restart              │
-│                                    │                 │
-│                              Backoff Wait            │
-└─────────────────────────────────────────────────────┘
-```
+Moltis manages MCP server connections through the `McpManager`:
+
+- **Start** — Launches enabled servers from the registry on gateway startup
+- **Initialize** — Sends MCP `initialize` handshake, discovers capabilities
+- **Ready** — Server is connected and tools are available to the agent
+- **Stop** — Graceful shutdown when the server is removed or disabled
+- **Restart** — Triggered on configuration changes; manual restart via RPC
 
 ### Health Monitoring
 
-Moltis monitors MCP servers and automatically:
+Moltis monitors MCP servers and tracks:
 
-- Detects crashes via process exit
-- Restarts with exponential backoff
-- Disables after max restart attempts
-- Re-enables after cooldown period
+- Connection state (connected/disconnected/error)
+- OAuth authentication state (when applicable)
+- Tool count and availability
+
+Servers that disconnect or crash are not automatically restarted. Use the web
+UI (Settings → MCP Servers) or the `mcp.reauth` RPC method to reconnect.
 
 ## Using MCP Tools
 
@@ -375,5 +372,5 @@ MCP servers run with the same permissions as Moltis. Only use servers from trust
 ### Server keeps restarting
 
 - Check stderr for crash messages
-- Increase `max_restart_attempts` for debugging
 - Verify environment variables are set correctly
+- The server will not be auto-disabled — disable it manually if needed
