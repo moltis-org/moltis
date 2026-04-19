@@ -165,7 +165,7 @@ pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
 }
 ```
 
-4. Call it from `server.rs` in the appropriate order:
+4. Call it from `prepare_core.rs` in the appropriate order:
 
 ```rust
 moltis_new_feature::run_migrations(&db_pool).await?;
@@ -250,7 +250,7 @@ In production, migrations handle schema creation.
 
 ### Migration Order Issues
 
-If you see foreign key errors, verify the migration order in `server.rs`. Parent
+If you see foreign key errors, verify the migration order in `prepare_core.rs`. Parent
 tables must be created before child tables with FK references.
 
 ### Checking Migration Status
@@ -282,4 +282,4 @@ cargo run  # Creates fresh database with all migrations
 - Modify existing migration files after deployment
 - Reuse timestamps across crates
 - Put multiple crates' tables in one migration file
-- Skip the dependency order in `server.rs`
+- Skip the dependency order in `prepare_core.rs`
