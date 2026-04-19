@@ -15,8 +15,9 @@ On first run, a complete configuration file is generated with sensible defaults.
 
 ```toml
 [server]
-port = 13131                    # HTTP/WebSocket port
-bind = "0.0.0.0"               # Listen address
+port = 13131                    # HTTP/WebSocket port (0 = random)
+bind = "127.0.0.1"              # Listen address (change to "0.0.0.0" for network access)
+# external_url = "https://moltis.example.com"  # Public URL behind reverse proxy
 
 [identity]
 name = "Moltis"                 # Agent display name
@@ -56,7 +57,43 @@ models = ["qwen2.5-coder-7b-q4_k_m"]
 priority_models = ["gpt-5.2"]
 ```
 
+### Model Context Window Overrides
+
+Override the context window size for specific models:
+
+```toml
+# Global override
+[models.claude-3-5-sonnet-20241022]
+context_window = 200_000
+
+# Provider-scoped override (takes precedence over global)
+[providers.anthropic.model_overrides.claude-3-5-sonnet-20241022]
+context_window = 200_000
+```
+
 See [Providers](providers.md) for the full list of supported providers and configuration options.
+
+## Per-Iteration Tool Result Compaction
+
+Within a single agent run, tool results can grow large enough to exceed
+the context window. Moltis supports per-iteration compaction that evicts
+the oldest tool results first:
+
+```toml
+[tools]
+tool_result_compaction_ratio = 75    # % of context_window before oldest results are compacted (0 = disable)
+preemptive_overflow_ratio = 90       # % of context_window before hard ContextWindowExceeded error
+compaction_min_iterations = 3       # Minimum iterations before compaction fires
+```
+
+- `tool_result_compaction_ratio`: percentage at which oldest tool results
+  are evicted. Set to `0` to disable.
+- `preemptive_overflow_ratio`: hard limit — fires `ContextWindowExceeded`
+  even after compaction. Must be greater than `tool_result_compaction_ratio`.
+- `compaction_min_iterations`: prevents premature compaction in short loops.
+
+This is separate from [session-level compaction](compaction.md) which
+replaces the full message history when the session fills up.
 
 ## Remote Execution
 
@@ -247,7 +284,8 @@ Configure lifecycle hooks:
 name = "my-hook"
 command = "./hooks/my-hook.sh"
 events = ["BeforeToolCall", "AfterToolCall"]
-timeout = 5                     # Timeout in seconds
+timeout = 10                    # Timeout in seconds (default: 10)
+priority = 0                    # Execution order (lower = earlier)
 
 [hooks.hooks.env]
 MY_VAR = "value"               # Environment variables for the hook
@@ -327,6 +365,18 @@ allowlist = ["U123456789"]
 ```
 
 See [Slack](slack.md) for full configuration reference and setup instructions.
+
+## WhatsApp Integration
+
+```toml
+[channels]
+offered = ["telegram", "discord", "slack", "whatsapp"]
+
+[channels.whatsapp.my-account]
+dm_policy = "open"
+```
+
+See [WhatsApp](whatsapp.md) for full configuration reference and setup instructions.
 
 ## TLS / HTTPS
 
