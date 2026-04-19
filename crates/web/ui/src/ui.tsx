@@ -182,17 +182,26 @@ export function VanillaConfirmDialog(): VNode | null {
 		vanillaConfirmState.value = null;
 	}
 	return (
-		<Modal show={true} onClose={() => close(false)} title={t("common:actions.confirm")}>
-			<p style="font-size:.85rem;color:var(--text);margin:0 0 16px;">{s.message}</p>
-			<div style="display:flex;gap:8px;justify-content:flex-end;">
-				<button onClick={() => close(false)} class="provider-btn provider-btn-secondary">
-					{t("common:actions.cancel")}
-				</button>
-				<button onClick={() => close(true)} class="provider-btn provider-btn-danger">
-					{t("common:actions.delete")}
-				</button>
+		<div
+			class="provider-modal-backdrop"
+			onClick={(e: Event) => {
+				if (e.target === e.currentTarget) close(false);
+			}}
+		>
+			<div class="provider-modal" style="width:360px">
+				<div class="provider-modal-body" style="gap:16px">
+					<p style="font-size:.85rem;color:var(--text);margin:0">{s.message}</p>
+					<div style="display:flex;gap:8px;justify-content:flex-end">
+						<button type="button" onClick={() => close(false)} class="provider-btn provider-btn-secondary">
+							Cancel
+						</button>
+						<button type="button" onClick={() => close(true)} class="provider-btn provider-btn-danger">
+							Delete
+						</button>
+					</div>
+				</div>
 			</div>
-		</Modal>
+		</div>
 	);
 }
 
@@ -222,22 +231,35 @@ export function ShareVisibilityDialog(): VNode | null {
 		shareVisibilityState.value = null;
 	}
 	return (
-		<Modal show={true} onClose={() => close(null)} title={t("chat:share.title")}>
-			<div style="display:flex;flex-direction:column;gap:10px;">
-				<p style="font-size:.8rem;color:var(--muted);margin:0">{t("chat:share.hint")}</p>
-				<p style="font-size:.8rem;color:var(--text);margin:0;padding:8px 10px;border:1px solid color-mix(in srgb,var(--warn) 55%,var(--border) 45%);background:color-mix(in srgb,var(--warn) 12%,var(--surface2) 88%);border-radius:var(--radius-sm);line-height:1.45">
-					{t("chat:share.redactionWarning")}
-				</p>
-				<button type="button" class="provider-item" data-share-visibility="public" onClick={() => close("public")}>
-					<div class="provider-item-name">{t("chat:share.publicLink")}</div>
-					<span class="provider-item-badge configured">{t("chat:share.publicBadge")}</span>
-				</button>
-				<button type="button" class="provider-item" data-share-visibility="private" onClick={() => close("private")}>
-					<div class="provider-item-name">{t("chat:share.privateLink")}</div>
-					<span class="provider-item-badge api-key">{t("chat:share.privateBadge")}</span>
-				</button>
+		<div
+			class="provider-modal-backdrop"
+			onClick={(e: Event) => {
+				if (e.target === e.currentTarget) close(null);
+			}}
+		>
+			<div class="provider-modal" style="width:460px">
+				<div class="provider-modal-header">
+					<div class="provider-item-name">{t("chat:share.title")}</div>
+					<button type="button" class="provider-btn provider-btn-secondary provider-btn-sm" onClick={() => close(null)}>
+						{t("common:actions.cancel")}
+					</button>
+				</div>
+				<div class="provider-modal-body" style="gap:10px">
+					<p style="font-size:.8rem;color:var(--muted);margin:0">{t("chat:share.hint")}</p>
+					<p style="font-size:.8rem;color:var(--text);margin:0;padding:8px 10px;border:1px solid color-mix(in srgb,var(--warn) 55%,var(--border) 45%);background:color-mix(in srgb,var(--warn) 12%,var(--surface2) 88%);border-radius:var(--radius-sm);line-height:1.45">
+						{t("chat:share.redactionWarning")}
+					</p>
+					<button type="button" class="provider-item" data-share-visibility="public" onClick={() => close("public")}>
+						<div class="provider-item-name">{t("chat:share.publicLink")}</div>
+						<span class="provider-item-badge configured">{t("chat:share.publicBadge")}</span>
+					</button>
+					<button type="button" class="provider-item" data-share-visibility="private" onClick={() => close("private")}>
+						<div class="provider-item-name">{t("chat:share.privateLink")}</div>
+						<span class="provider-item-badge api-key">{t("chat:share.privateBadge")}</span>
+					</button>
+				</div>
 			</div>
-		</Modal>
+		</div>
 	);
 }
 
@@ -304,32 +326,52 @@ export function ShareLinkDialog(): VNode | null {
 	const hintText = s.visibility === "private" ? t("chat:share.privateHint") : t("chat:share.publicHint");
 
 	return (
-		<Modal show={true} onClose={() => close(null)} title={t("chat:share.linkReady")}>
-			<div style="display:flex;flex-direction:column;gap:10px;">
-				<p style="font-size:.8rem;color:var(--muted);margin:0">{hintText}</p>
-				<input
-					ref={inputRef}
-					class="provider-key-input"
-					readOnly
-					value={s.url}
-					data-share-link-input="true"
-					onFocus={() => inputRef.current?.select()}
-					onClick={() => inputRef.current?.select()}
-				/>
-				<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+		<div
+			class="provider-modal-backdrop"
+			data-share-link-modal="true"
+			onClick={(e: Event) => {
+				if (e.target === e.currentTarget) close(null);
+			}}
+		>
+			<div class="provider-modal" style="width:560px">
+				<div class="provider-modal-header">
+					<div class="provider-item-name">{t("chat:share.linkReady")}</div>
 					<button
+						type="button"
 						class="provider-btn provider-btn-secondary"
-						data-share-link-open="true"
-						onClick={() => window.open(s?.url, "_blank", "noopener,noreferrer")}
+						data-share-link-close="true"
+						onClick={() => close(null)}
 					>
-						{t("common:actions.openLink")}
-					</button>
-					<button class="provider-btn" data-share-link-copy="true" onClick={() => void copyLink()}>
-						{t("common:actions.copyLink")}
+						{t("common:actions.close")}
 					</button>
 				</div>
+				<div class="provider-modal-body" style="gap:10px">
+					<p style="font-size:.8rem;color:var(--muted);margin:0">{hintText}</p>
+					<input
+						ref={inputRef}
+						class="provider-key-input"
+						readOnly
+						value={s.url}
+						data-share-link-input="true"
+						onFocus={() => inputRef.current?.select()}
+						onClick={() => inputRef.current?.select()}
+					/>
+					<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+						<button
+							type="button"
+							class="provider-btn provider-btn-secondary"
+							data-share-link-open="true"
+							onClick={() => window.open(s?.url, "_blank", "noopener,noreferrer")}
+						>
+							{t("common:actions.openLink")}
+						</button>
+						<button type="button" class="provider-btn" data-share-link-copy="true" onClick={() => void copyLink()}>
+							{t("common:actions.copyLink")}
+						</button>
+					</div>
+				</div>
 			</div>
-		</Modal>
+		</div>
 	);
 }
 

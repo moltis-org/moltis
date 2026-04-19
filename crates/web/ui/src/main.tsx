@@ -27,8 +27,10 @@ import { initTheme, injectMarkdownStyles } from "./theme";
 import { GlobalDialogs } from "./ui";
 import { connect } from "./websocket";
 
-// Expose stores on window for E2E test access.
+// Expose stores and connection state on window for E2E test access.
+// The e2e helpers import state.connected / state.ws to verify WS status.
 window.__moltis_stores = { sessionStore, modelStore, projectStore };
+window.__moltis_state = S;
 
 // Import page modules to register their routes
 import "./pages/ChatPage";

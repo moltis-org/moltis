@@ -18,4 +18,6 @@ interface Window {
 	__moltisSuppressNextPasswordChangedRedirect?: boolean;
 	/** Exposed stores for E2E test access. */
 	__moltis_stores?: MoltisStores;
+	/** Exposed state module for E2E test WS connection checks. */
+	__moltis_state?: Record<string, unknown>;
 }
