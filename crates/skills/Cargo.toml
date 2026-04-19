@@ -4,7 +4,6 @@ name              = "moltis-skills"
 version.workspace = true
 
 [dependencies]
-anyhow                = { workspace = true }
 async-trait           = { workspace = true }
 flate2                = { workspace = true }
 moltis-config         = { workspace = true }
@@ -15,6 +14,7 @@ serde                 = { workspace = true }
 serde_json            = { workspace = true }
 serde_yaml            = { workspace = true }
 tar                   = { workspace = true }
+thiserror             = { workspace = true }
 tokio                 = { workspace = true }
 tracing               = { workspace = true }
 walkdir               = { workspace = true }

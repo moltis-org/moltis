@@ -15,12 +15,12 @@ pub fn is_loopback(ip: &str) -> bool {
     ip == "127.0.0.1" || ip.starts_with("127.") || ip == "::1" || ip.starts_with("::ffff:127.")
 }
 
-pub(crate) fn hash_password(password: &str) -> anyhow::Result<String> {
+pub(crate) fn hash_password(password: &str) -> crate::Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     let hash = argon2
         .hash_password(password.as_bytes(), &salt)
-        .map_err(|e| anyhow::anyhow!("failed to hash password: {e}"))?;
+        .map_err(|e| crate::Error::Crypto(format!("failed to hash password: {e}")))?;
     Ok(hash.to_string())
 }
 

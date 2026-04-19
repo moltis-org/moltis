@@ -11,7 +11,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{SkillMetadata, SkillSource};
+use crate::{
+    error::Result,
+    types::{SkillMetadata, SkillSource},
+};
 
 // ── Plugin format enum ──────────────────────────────────────────────────────
 
@@ -65,7 +68,7 @@ pub trait FormatAdapter: Send + Sync {
     fn detect(&self, repo_dir: &Path) -> bool;
 
     /// Scan the repo and return enriched entries for each skill found.
-    fn scan_skills(&self, repo_dir: &Path) -> anyhow::Result<Vec<PluginSkillEntry>>;
+    fn scan_skills(&self, repo_dir: &Path) -> Result<Vec<PluginSkillEntry>>;
 }
 
 // ── Claude Code adapter ─────────────────────────────────────────────────────
@@ -161,7 +164,7 @@ impl ClaudeCodeAdapter {
         &self,
         repo_dir: &Path,
         seen_names: &mut HashSet<String>,
-    ) -> anyhow::Result<Vec<PluginSkillEntry>> {
+    ) -> Result<Vec<PluginSkillEntry>> {
         let marketplace_json_path = repo_dir.join(".claude-plugin/marketplace.json");
         let marketplace: ClaudeMarketplaceJson =
             serde_json::from_str(&std::fs::read_to_string(&marketplace_json_path)?)?;
@@ -270,7 +273,7 @@ impl ClaudeCodeAdapter {
         &self,
         plugin_dir: &Path,
         repo_root: &Path,
-    ) -> anyhow::Result<Vec<PluginSkillEntry>> {
+    ) -> Result<Vec<PluginSkillEntry>> {
         let plugin_json_path = plugin_dir.join(".claude-plugin/plugin.json");
         let plugin_json: ClaudePluginJson =
             serde_json::from_str(&std::fs::read_to_string(&plugin_json_path)?)?;
@@ -370,7 +373,7 @@ impl FormatAdapter for ClaudeCodeAdapter {
             || repo_dir.join(".claude-plugin/marketplace.json").is_file()
     }
 
-    fn scan_skills(&self, repo_dir: &Path) -> anyhow::Result<Vec<PluginSkillEntry>> {
+    fn scan_skills(&self, repo_dir: &Path) -> Result<Vec<PluginSkillEntry>> {
         // Single plugin case
         if repo_dir.join(".claude-plugin/plugin.json").is_file() {
             return self.scan_single_plugin(repo_dir, repo_dir);
@@ -449,7 +452,7 @@ pub fn detect_format(repo_dir: &Path) -> PluginFormat {
 pub fn scan_with_adapter(
     repo_dir: &Path,
     format: PluginFormat,
-) -> Option<anyhow::Result<Vec<PluginSkillEntry>>> {
+) -> Option<Result<Vec<PluginSkillEntry>>> {
     match format {
         PluginFormat::Skill => None, // handled by existing scan_repo_skills
         PluginFormat::ClaudeCode => Some(ClaudeCodeAdapter.scan_skills(repo_dir)),

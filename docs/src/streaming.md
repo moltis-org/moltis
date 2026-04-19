@@ -19,10 +19,16 @@ LLM response:
 
 ```rust
 pub enum StreamEvent {
-    /// Text content delta - a chunk of text from the LLM.
+    /// Text content delta.
     Delta(String),
 
-    /// A tool call has started (for providers with native tool support).
+    /// Raw provider event payload (for debugging API responses).
+    ProviderRaw(serde_json::Value),
+
+    /// Reasoning/planning text delta (not user-visible final answer text).
+    ReasoningDelta(String),
+
+    /// A tool call has started (content_block_start with tool_use).
     ToolCallStart { id: String, name: String, index: usize },
 
     /// Streaming delta for tool call arguments (JSON fragment).
@@ -31,7 +37,7 @@ pub enum StreamEvent {
     /// A tool call's arguments are complete.
     ToolCallComplete { index: usize },
 
-    /// Stream completed successfully with token usage.
+    /// Stream completed successfully.
     Done(Usage),
 
     /// An error occurred.
@@ -43,12 +49,15 @@ pub enum StreamEvent {
 
 The `LlmProvider` trait defines two streaming methods:
 
-- `stream()` - Basic streaming without tool support
-- `stream_with_tools()` - Streaming with tool schemas passed to the API
+- `stream()` — Basic streaming without tool support
+- `stream_with_tools()` — Streaming with tool schemas passed to the API
 
-Providers that support streaming with tools (like Anthropic) override
-`stream_with_tools()`. Others fall back to `stream()` which ignores the tools
-parameter.
+Both accept `Vec<ChatMessage>` (not raw JSON). Providers that support
+streaming with tools override `stream_with_tools()`. Others fall back to
+`stream()` via the default implementation, which ignores the tools parameter.
+
+The trait also exposes `supports_tools()`, `reasoning_effort()`, and
+`with_reasoning_effort()` for provider capability discovery.
 
 ### 3. Anthropic Provider (`crates/agents/src/providers/anthropic.rs`)
 
@@ -69,7 +78,7 @@ The Anthropic provider implements streaming by:
 | `message_stop` | `Done` |
 | `error` | `Error` |
 
-### 4. Agent Runner (`crates/agents/src/runner.rs`)
+### 4. Agent Runner (`crates/agents/src/runner/streaming.rs`)
 
 The `run_agent_loop_streaming()` function orchestrates the streaming agent
 loop:
@@ -101,12 +110,12 @@ loop:
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 5. Gateway (`crates/gateway/src/chat.rs`)
+### 5. Chat Service (`crates/chat/src/run_with_tools.rs`)
 
-The gateway's `run_with_tools()` function:
+The chat service's `run_with_tools()` function:
 
 1. Sets up an event callback that broadcasts `RunnerEvent`s via WebSocket
-2. Calls `run_agent_loop_streaming()`
+2. Calls `run_agent_loop_streaming()` from `crates/agents/src/runner/streaming.rs`
 3. Broadcasts events to connected clients as JSON frames
 
 Event types broadcast to the UI:
@@ -115,10 +124,17 @@ Event types broadcast to the UI:
 |-------------|-----------------|
 | `Thinking` | `thinking` |
 | `ThinkingDone` | `thinking_done` |
+| `ThinkingText(text)` | `thinking_text` |
 | `TextDelta(text)` | `delta` with `text` field |
 | `ToolCallStart` | `tool_call_start` |
 | `ToolCallEnd` | `tool_call_end` |
+| `ToolCallRejected` | `tool_call_end` with `rejected: true` |
 | `Iteration(n)` | `iteration` |
+| `SubAgentStart` | `sub_agent_start` |
+| `SubAgentEnd` | `sub_agent_end` |
+| `AutoContinue` | `notice` ("Auto-continue") |
+| `RetryingAfterError` | `retrying` |
+| `LoopInterventionFired` | `notice` ("Loop detected") |
 
 ### 6. Web Crate (`crates/web/`)
 
@@ -165,7 +181,7 @@ function handleChatDelta(p, isActive, isChatPage) {
                                                                       │
                                                                       ▼
 ┌──────────────┐   WebSocket  ┌──────────────┐   Routes/WS   ┌──────────────┐    Callback     ┌──────────────┐
-│   Browser    │◀─────────────│  Web Crate   │◀──────────────│   Gateway    │◀────────────────│   Callback   │
+│   Browser    │◀─────────────│  Web Crate   │◀──────────────│ Chat Service │◀────────────────│   Callback   │
 │              │              │  (moltis-web)│               │              │                 │   (on_event) │
 └──────────────┘              └──────────────┘               └──────────────┘                 └──────────────┘
 ```
@@ -187,8 +203,8 @@ Example skeleton:
 ```rust
 fn stream_with_tools(
     &self,
-    messages: Vec<serde_json::Value>,
-    tools: Vec<serde_json::Value>,
+    messages: Vec<ChatMessage>,
+    _tools: Vec<serde_json::Value>,
 ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
     Box::pin(async_stream::stream! {
         // Make streaming request to provider API

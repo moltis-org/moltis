@@ -18,7 +18,7 @@ crates/
 │   └── src/lib.rs                     # run_migrations()
 ├── sessions/
 │   ├── migrations/
-│   │   └── 20240205100001_init.sql   # sessions, channel_sessions
+│   │   └── 20240205100001_init.sql   # sessions, channel_sessions, session_state
 │   └── src/lib.rs                     # run_migrations()
 ├── cron/
 │   ├── migrations/
@@ -26,8 +26,17 @@ crates/
 │   └── src/lib.rs                     # run_migrations()
 ├── gateway/
 │   ├── migrations/
-│   │   └── 20240205100003_init.sql   # auth, message_log, channels
-│   └── src/server.rs                  # orchestrates moltis.db migrations
+│   │   └── 20240205100003_init.sql   # auth, message_log, channels, agents, ...
+│   └── src/server/
+│       └── prepare_core.rs            # orchestrates moltis.db migrations
+├── webhooks/
+│   ├── migrations/
+│   │   └── 20260407000000_initial.sql # webhooks, webhook_deliveries, ...
+│   └── src/lib.rs                     # run_migrations()
+├── vault/
+│   ├── migrations/
+│   │   └── 20260214000001_vault_metadata.sql  # vault_metadata
+│   └── src/lib.rs                     # run_migrations() (feature-gated)
 └── memory/
     ├── migrations/
     │   └── 20240205100004_init.sql   # files, chunks, embedding_cache, FTS
@@ -43,25 +52,31 @@ Each crate is autonomous and owns its schema:
 | Crate | Database | Tables | Migration File |
 |-------|----------|--------|----------------|
 | `moltis-projects` | `moltis.db` | `projects` | `20240205100000_init.sql` |
-| `moltis-sessions` | `moltis.db` | `sessions`, `channel_sessions` | `20240205100001_init.sql` |
-| `moltis-cron` | `moltis.db` | `cron_jobs`, `cron_runs` | `20240205100002_init.sql` |
-| `moltis-gateway` | `moltis.db` | `auth_*`, `passkeys`, `api_keys`, `env_variables`, `message_log`, `channels` | `20240205100003_init.sql` |
+| `moltis-sessions` | `moltis.db` | `sessions`, `channel_sessions`, `session_state` | `20240205100001_init.sql` + 9 migrations |
+| `moltis-cron` | `moltis.db` | `cron_jobs`, `cron_runs` | `20240205100002_init.sql` + 1 migration |
+| `moltis-gateway` | `moltis.db` | `auth_*`, `passkeys`, `api_keys`, `env_variables`, `message_log`, `channels`, `agents`, `session_shares`, `device_pairing`, `ssh_keys`, `ssh_targets`, `auth_audit_log` | `20240205100003_init.sql` + 12 migrations |
+| `moltis-webhooks` | `moltis.db` | `webhooks`, `webhook_deliveries`, `webhook_response_actions` | `20260407000000_initial.sql` + 1 migration |
+| `moltis-vault` | `moltis.db` | `vault_metadata` | `20260214000001_vault_metadata.sql` (feature-gated) |
 | `moltis-memory` | `memory.db` | `files`, `chunks`, `embedding_cache`, `chunks_fts` | `20240205100004_init.sql` |
 
 ### Startup Sequence
 
-The gateway runs migrations in dependency order:
+The gateway runs migrations in dependency order via
+`crates/gateway/src/server/prepare_core.rs`:
 
 ```rust
-// server.rs
-moltis_projects::run_migrations(&db_pool).await?;   // 1. projects first
-moltis_sessions::run_migrations(&db_pool).await?;   // 2. sessions (FK → projects)
-moltis_cron::run_migrations(&db_pool).await?;       // 3. cron (independent)
-sqlx::migrate!("./migrations").run(&db_pool).await?; // 4. gateway tables
+moltis_projects::run_migrations(&db_pool).await?;    // 1. projects first
+moltis_sessions::run_migrations(&db_pool).await?;    // 2. sessions (FK → projects)
+moltis_cron::run_migrations(&db_pool).await?;        // 3. cron (independent)
+moltis_webhooks::run_migrations(&db_pool).await?;    // 4. webhooks (independent)
+crate::run_migrations(&db_pool).await?;              // 5. gateway tables
+#[cfg(feature = "vault")]
+moltis_vault::run_migrations(&db_pool).await?;      // 6. vault (feature-gated)
 ```
 
 Sessions depends on projects due to a foreign key (`sessions.project_id` references
-`projects.id`), so projects must migrate first.
+`projects.id`), so projects must migrate first. Memory runs separately against
+its own `memory.db` pool.
 
 ### Version Tracking
 
@@ -78,7 +93,7 @@ must be globally unique across all crates.
 
 | Database | Location | Crates |
 |----------|----------|--------|
-| `moltis.db` | `~/.moltis/moltis.db` | projects, sessions, cron, gateway |
+| `moltis.db` | `~/.moltis/moltis.db` | projects, sessions, cron, gateway, webhooks, vault |
 | `memory.db` | `~/.moltis/memory.db` | memory (separate, managed internally) |
 
 ## Adding New Migrations
@@ -150,7 +165,7 @@ pub async fn run_migrations(pool: &sqlx::SqlitePool) -> anyhow::Result<()> {
 }
 ```
 
-4. Call it from `server.rs` in the appropriate order:
+4. Call it from `prepare_core.rs` in the appropriate order:
 
 ```rust
 moltis_new_feature::run_migrations(&db_pool).await?;
@@ -235,7 +250,7 @@ In production, migrations handle schema creation.
 
 ### Migration Order Issues
 
-If you see foreign key errors, verify the migration order in `server.rs`. Parent
+If you see foreign key errors, verify the migration order in `prepare_core.rs`. Parent
 tables must be created before child tables with FK references.
 
 ### Checking Migration Status
@@ -267,4 +282,4 @@ cargo run  # Creates fresh database with all migrations
 - Modify existing migration files after deployment
 - Reuse timestamps across crates
 - Put multiple crates' tables in one migration file
-- Skip the dependency order in `server.rs`
+- Skip the dependency order in `prepare_core.rs`

@@ -101,14 +101,14 @@ struct EmbeddingData {
 
 #[async_trait]
 impl EmbeddingProvider for OpenAiEmbeddingProvider {
-    async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+    async fn embed(&self, text: &str) -> crate::error::Result<Vec<f32>> {
         self.embed_batch(&[text.to_string()])
             .await?
             .pop()
-            .ok_or_else(|| anyhow::anyhow!("empty embedding response"))
+            .ok_or_else(|| crate::error::Error::Embedding("empty embedding response".into()))
     }
 
-    async fn embed_batch(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
+    async fn embed_batch(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
         #[cfg(feature = "metrics")]
         let start = std::time::Instant::now();
 

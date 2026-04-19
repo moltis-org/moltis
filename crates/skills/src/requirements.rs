@@ -2,50 +2,53 @@
 
 use std::path::Path;
 
-use anyhow::{Context, bail};
-
-use crate::types::{InstallKind, InstallSpec, SkillEligibility, SkillMetadata};
+use crate::{
+    error::{Error, Result},
+    types::{InstallKind, InstallSpec, SkillEligibility, SkillMetadata},
+};
 
 /// Resolve install command program + args from an install spec.
-pub fn install_program_and_args(spec: &InstallSpec) -> anyhow::Result<(&'static str, Vec<&str>)> {
+pub fn install_program_and_args(spec: &InstallSpec) -> Result<(&'static str, Vec<&str>)> {
     let (program, args) = match &spec.kind {
         InstallKind::Brew => {
             let formula = spec
                 .formula
                 .as_deref()
-                .context("brew install requires 'formula'")?;
+                .ok_or_else(|| Error::Install("brew install requires 'formula'".into()))?;
             ("brew", vec!["install", formula])
         },
         InstallKind::Npm => {
             let package = spec
                 .package
                 .as_deref()
-                .context("npm install requires 'package'")?;
+                .ok_or_else(|| Error::Install("npm install requires 'package'".into()))?;
             ("npm", vec!["install", "-g", "--ignore-scripts", package])
         },
         InstallKind::Go => {
             let module = spec
                 .module
                 .as_deref()
-                .context("go install requires 'module'")?;
+                .ok_or_else(|| Error::Install("go install requires 'module'".into()))?;
             ("go", vec!["install", module])
         },
         InstallKind::Cargo => {
             let package = spec
                 .package
                 .as_deref()
-                .context("cargo install requires 'package'")?;
+                .ok_or_else(|| Error::Install("cargo install requires 'package'".into()))?;
             ("cargo", vec!["install", package])
         },
         InstallKind::Uv => {
             let package = spec
                 .package
                 .as_deref()
-                .context("uv install requires 'package'")?;
+                .ok_or_else(|| Error::Install("uv install requires 'package'".into()))?;
             ("uv", vec!["tool", "install", package])
         },
         InstallKind::Download => {
-            bail!("download install kind is not yet supported for automatic installation");
+            return Err(Error::Install(
+                "download install kind is not yet supported for automatic installation".into(),
+            ));
         },
     };
 
@@ -53,7 +56,7 @@ pub fn install_program_and_args(spec: &InstallSpec) -> anyhow::Result<(&'static 
 }
 
 /// Render an install spec to a user-visible command preview.
-pub fn install_command_preview(spec: &InstallSpec) -> anyhow::Result<String> {
+pub fn install_command_preview(spec: &InstallSpec) -> Result<String> {
     let (program, args) = install_program_and_args(spec)?;
     Ok(std::iter::once(program)
         .chain(args)
@@ -154,7 +157,7 @@ pub struct InstallResult {
 }
 
 /// Run an install spec command (e.g. `brew install <formula>`).
-pub async fn run_install(spec: &InstallSpec) -> anyhow::Result<InstallResult> {
+pub async fn run_install(spec: &InstallSpec) -> Result<InstallResult> {
     let (program, args) = install_program_and_args(spec)?;
 
     let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
@@ -162,7 +165,7 @@ pub async fn run_install(spec: &InstallSpec) -> anyhow::Result<InstallResult> {
         .args(&args_owned)
         .output()
         .await
-        .with_context(|| format!("failed to run {program}"))?;
+        .map_err(|e| Error::Install(format!("failed to run {program}: {e}")))?;
 
     Ok(InstallResult {
         success: output.status.success(),

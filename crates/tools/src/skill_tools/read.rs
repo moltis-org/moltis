@@ -1159,7 +1159,9 @@ impl StaticDiscoverer {
 
 #[async_trait]
 impl SkillDiscoverer for StaticDiscoverer {
-    async fn discover(&self) -> anyhow::Result<Vec<moltis_skills::types::SkillMetadata>> {
+    async fn discover(
+        &self,
+    ) -> moltis_skills::error::Result<Vec<moltis_skills::types::SkillMetadata>> {
         Ok(self.skills.clone())
     }
 }

@@ -9,6 +9,8 @@ use {
     tracing::{debug, error, info, warn},
 };
 
+use crate::error::{Error, Result};
+
 use moltis_protocol::{
     ClientInfo, ConnectAuth, ConnectParamsV4, GatewayFrame, PROTOCOL_VERSION, ProtocolRange,
     RequestFrame, ResponseFrame, roles,
@@ -128,7 +130,7 @@ impl NodeHost {
     /// Connect to the gateway and run the message loop until disconnected.
     ///
     /// Returns `Ok(())` on clean shutdown, `Err` on connection/protocol errors.
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(&self) -> Result<()> {
         // Install a rustls CryptoProvider before any TLS connection.
         // Without this, `connect_async` on a `wss://` URL panics because
         // tokio-tungstenite uses rustls under the hood and no provider is
@@ -201,24 +203,32 @@ impl NodeHost {
             Ok(Some(Ok(Message::Text(text)))) => {
                 let resp: ResponseFrame = serde_json::from_str(&text)?;
                 if resp.id != connect_id {
-                    anyhow::bail!(
+                    return Err(Error::Protocol(format!(
                         "unexpected response id: expected {connect_id}, got {}",
                         resp.id
-                    );
+                    )));
                 }
                 if !resp.ok {
                     let err_msg = resp
                         .error
                         .map(|e| format!("{}: {}", e.code, e.message))
                         .unwrap_or_else(|| "unknown error".into());
-                    anyhow::bail!("handshake failed: {err_msg}");
+                    return Err(Error::Protocol(format!("handshake failed: {err_msg}")));
                 }
                 resp
             },
-            Ok(Some(Ok(_))) => anyhow::bail!("unexpected non-text message during handshake"),
-            Ok(Some(Err(e))) => anyhow::bail!("websocket error during handshake: {e}"),
-            Ok(None) => anyhow::bail!("connection closed during handshake"),
-            Err(_) => anyhow::bail!("handshake timeout"),
+            Ok(Some(Ok(_))) => {
+                return Err(Error::Protocol(
+                    "unexpected non-text message during handshake".into(),
+                ));
+            },
+            Ok(Some(Err(e))) => {
+                return Err(Error::Protocol(format!(
+                    "websocket error during handshake: {e}"
+                )));
+            },
+            Ok(None) => return Err(Error::Protocol("connection closed during handshake".into())),
+            Err(_) => return Err(Error::Protocol("handshake timeout".into())),
         };
 
         info!(
@@ -344,7 +354,7 @@ impl NodeHost {
             "system.providers" => self.handle_system_providers().await,
             other => {
                 warn!(command = %other, "unsupported invoke command");
-                Err(anyhow::anyhow!("unsupported command: {other}"))
+                Err(Error::Command(format!("unsupported command: {other}")))
             },
         };
 
@@ -359,14 +369,11 @@ impl NodeHost {
         }
     }
 
-    async fn handle_system_run(
-        &self,
-        args: &serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
+    async fn handle_system_run(&self, args: &serde_json::Value) -> Result<serde_json::Value> {
         let command = args
             .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'command' in args"))?;
+            .ok_or_else(|| Error::Command("missing 'command' in args".into()))?;
 
         let timeout_ms = args
             .get("timeout")
@@ -416,19 +423,18 @@ impl NodeHost {
                     "exitCode": exit_code,
                 }))
             },
-            Ok(Err(e)) => Err(anyhow::anyhow!("failed to execute command: {e}")),
-            Err(_) => Err(anyhow::anyhow!("command timed out after {timeout_ms}ms")),
+            Ok(Err(e)) => Err(Error::Command(format!("failed to execute command: {e}"))),
+            Err(_) => Err(Error::Command(format!(
+                "command timed out after {timeout_ms}ms"
+            ))),
         }
     }
 
-    async fn handle_system_which(
-        &self,
-        args: &serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
+    async fn handle_system_which(&self, args: &serde_json::Value) -> Result<serde_json::Value> {
         let binary = args
             .get("binary")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'binary' in args"))?;
+            .ok_or_else(|| Error::Command("missing 'binary' in args".into()))?;
 
         let output = Command::new("which").arg(binary).output().await?;
 
@@ -441,7 +447,7 @@ impl NodeHost {
         }))
     }
 
-    async fn handle_system_providers(&self) -> anyhow::Result<serde_json::Value> {
+    async fn handle_system_providers(&self) -> Result<serde_json::Value> {
         let mut providers = Vec::new();
 
         // Check Ollama at localhost:11434.

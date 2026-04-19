@@ -450,6 +450,7 @@ async fn main() -> anyhow::Result<()> {
                 extra_routes,
             )
             .await
+            .map_err(Into::into)
         },
         Some(Commands::Agent { message, .. }) => {
             let result = moltis_agents::runner::run_agent("default", "main", &message).await?;

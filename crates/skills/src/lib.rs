@@ -4,6 +4,7 @@
 //! and markdown instructions, following the Agent Skills open standard.
 
 pub mod discover;
+pub mod error;
 pub mod formats;
 pub mod install;
 pub mod manifest;
@@ -15,6 +16,8 @@ pub mod registry;
 pub mod requirements;
 pub mod safety;
 pub mod types;
+
+pub use error::Error;
 
 /// Canonical list of sidecar subdirectories a skill directory may contain,
 /// matching the agentskills.io standard. Both the prompt generator

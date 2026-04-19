@@ -79,7 +79,7 @@ pub(super) fn instance_slug(config: &moltis_config::MoltisConfig) -> String {
 
 pub(super) async fn finalize_prepared_gateway(
     args: FinalizeGatewayArgs<'_>,
-) -> anyhow::Result<PreparedGateway> {
+) -> crate::error::Result<PreparedGateway> {
     let FinalizeGatewayArgs {
         bind,
         port,
@@ -134,14 +134,17 @@ pub(super) async fn finalize_prepared_gateway(
             (ca, cert, key)
         } else if tls_config.auto_generate {
             // Auto-generate certificates.
-            let mgr = moltis_tls::FsCertManager::new()?;
+            let mgr =
+                moltis_tls::FsCertManager::new().map_err(|e| crate::Error::Tls(e.to_string()))?;
             let runtime_sans = tls_runtime_sans(bind);
-            let (ca, cert, key) = mgr.ensure_certs(&runtime_sans)?;
+            let (ca, cert, key) = mgr
+                .ensure_certs(&runtime_sans)
+                .map_err(|e| crate::Error::Tls(e.to_string()))?;
             (Some(ca), cert, key)
         } else {
-            anyhow::bail!(
-                "TLS is enabled but no certificates configured and auto_generate is false"
-            );
+            return Err(crate::Error::Tls(
+                "TLS is enabled but no certificates configured and auto_generate is false".into(),
+            ));
         };
 
         // Add /certs/ca.pem route to the main HTTPS app if we have a CA cert.
@@ -866,7 +869,7 @@ pub async fn prepare_gateway_embedded(
     data_dir: Option<PathBuf>,
     extra_routes: Option<RouteEnhancer>,
     session_event_bus: Option<SessionEventBus>,
-) -> anyhow::Result<PreparedGateway> {
+) -> crate::error::Result<PreparedGateway> {
     let prepared = prepare_gateway(
         bind,
         port,
@@ -913,7 +916,7 @@ pub(super) async fn start_ngrok_tunnel(
     gateway: Arc<GatewayState>,
     webauthn_registry: Option<SharedWebAuthnRegistry>,
     ngrok_config: &moltis_config::NgrokConfig,
-) -> anyhow::Result<NgrokActiveTunnel> {
+) -> crate::error::Result<NgrokActiveTunnel> {
     use ::ngrok::prelude::{EndpointInfo, ForwarderBuilder};
 
     let internal_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -939,7 +942,7 @@ pub(super) async fn start_ngrok_tunnel(
 
     let forward_to = format!("http://{internal_addr}")
         .parse()
-        .map_err(|error| anyhow::anyhow!("invalid ngrok forward target: {error}"))?;
+        .map_err(|error| crate::Error::Ngrok(format!("invalid ngrok forward target: {error}")))?;
 
     let mut session_builder = ::ngrok::Session::builder();
     if let Some(authtoken) = ngrok_config.authtoken.as_ref() {
@@ -954,7 +957,7 @@ pub(super) async fn start_ngrok_tunnel(
             if let Err(join_error) = loopback_task.await {
                 warn!(%join_error, "ngrok loopback server task join failed during startup");
             }
-            return Err(error.into());
+            return Err(crate::Error::Ngrok(error.to_string()));
         },
     };
 
@@ -973,7 +976,7 @@ pub(super) async fn start_ngrok_tunnel(
             if let Err(join_error) = loopback_task.await {
                 warn!(%join_error, "ngrok loopback server task join failed during startup");
             }
-            return Err(error.into());
+            return Err(crate::Error::Ngrok(error.to_string()));
         },
     };
     let public_url = forwarder.url().to_string();
@@ -1017,7 +1020,7 @@ pub async fn start_gateway(
     data_dir: Option<PathBuf>,
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
-) -> anyhow::Result<()> {
+) -> crate::error::Result<()> {
     let prepared = prepare_gateway(
         bind,
         port,
@@ -1039,7 +1042,7 @@ pub async fn start_gateway(
 
     let ip: std::net::IpAddr = bind
         .parse()
-        .map_err(|e| anyhow::anyhow!("invalid bind address '{bind}': {e}"))?;
+        .map_err(|e| crate::Error::Config(format!("invalid bind address '{bind}': {e}")))?;
     let addr = SocketAddr::new(ip, port);
 
     #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
@@ -1106,20 +1109,26 @@ pub async fn start_gateway(
             (ca, cert, key)
         } else if tls_config.auto_generate {
             // Auto-generate certificates.
-            let mgr = moltis_tls::FsCertManager::new()?;
+            let mgr =
+                moltis_tls::FsCertManager::new().map_err(|e| crate::Error::Tls(e.to_string()))?;
             let runtime_sans = tls_runtime_sans(bind);
-            let (ca, cert, key) = mgr.ensure_certs(&runtime_sans)?;
+            let (ca, cert, key) = mgr
+                .ensure_certs(&runtime_sans)
+                .map_err(|e| crate::Error::Tls(e.to_string()))?;
             (Some(ca), cert, key)
         } else {
-            anyhow::bail!(
-                "TLS is enabled but no certificates configured and auto_generate is false"
-            );
+            return Err(crate::Error::Tls(
+                "TLS is enabled but no certificates configured and auto_generate is false".into(),
+            ));
         };
 
         ca_cert_path = ca_path.clone();
 
-        let mgr = moltis_tls::FsCertManager::new()?;
-        rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
+        let mgr = moltis_tls::FsCertManager::new().map_err(|e| crate::Error::Tls(e.to_string()))?;
+        rustls_config = Some(
+            mgr.build_rustls_config(&cert_path, &key_path)
+                .map_err(|e| crate::Error::Tls(e.to_string()))?,
+        );
         // Note: /certs/ca.pem route is already registered by prepare_gateway.
     }
 
@@ -1390,7 +1399,8 @@ pub async fn start_gateway(
             browser_tool_for_warmup.clone(),
         );
         moltis_tls::serve_tls_with_http_redirect(tcp_listener, Arc::new(tls_cfg), app, port, bind)
-            .await?;
+            .await
+            .map_err(|e| crate::Error::Tls(e.to_string()))?;
         return Ok(());
     }
 

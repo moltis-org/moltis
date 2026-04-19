@@ -201,7 +201,7 @@ impl SessionExporter {
     }
 
     /// Export a session transcript to a markdown file.
-    pub async fn export(&self, transcript: &SessionTranscript) -> anyhow::Result<PathBuf> {
+    pub async fn export(&self, transcript: &SessionTranscript) -> crate::error::Result<PathBuf> {
         // Ensure export directory exists
         fs::create_dir_all(&self.config.export_dir).await?;
 
@@ -233,7 +233,7 @@ impl SessionExporter {
     }
 
     /// Clean up old exports based on configuration limits.
-    async fn cleanup(&self) -> anyhow::Result<()> {
+    async fn cleanup(&self) -> crate::error::Result<()> {
         let mut entries = Vec::new();
         let mut dir = fs::read_dir(&self.config.export_dir).await?;
 

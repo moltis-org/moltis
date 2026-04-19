@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use crate::manifest::ManifestStore;
+use crate::{error::Result, manifest::ManifestStore};
 
 /// Migrate plugins data into the unified skills system.
 ///
@@ -23,7 +23,7 @@ pub async fn migrate_plugins_to_skills(data_dir: &Path) {
     }
 }
 
-async fn try_migrate(data_dir: &Path) -> anyhow::Result<()> {
+async fn try_migrate(data_dir: &Path) -> Result<()> {
     let plugins_manifest_path = data_dir.join("plugins-manifest.json");
     if !plugins_manifest_path.exists() {
         return Ok(());
@@ -95,7 +95,7 @@ async fn cleanup_old_files(plugins_manifest_path: &Path, data_dir: &Path) {
     }
 }
 
-async fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
+async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     tokio::fs::create_dir_all(dst).await?;
     let mut entries = tokio::fs::read_dir(src).await?;
     while let Some(entry) = entries.next_entry().await? {

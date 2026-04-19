@@ -4,6 +4,7 @@ use std::path::{Component, Path, PathBuf};
 use moltis_metrics::{counter, histogram, skills as skills_metrics};
 
 use crate::{
+    error::{Error, Result},
     formats::{PluginFormat, detect_format, scan_with_adapter},
     manifest::ManifestStore,
     parse,
@@ -15,7 +16,7 @@ use crate::{
 /// Downloads the repo to `install_dir/<owner>-<repo>/`, auto-detects its format
 /// (SKILL.md, Claude Code `.claude-plugin/`, etc.), scans for skills using the
 /// appropriate adapter, and records the repo + skills in the manifest.
-pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<Vec<SkillMetadata>> {
+pub async fn install_skill(source: &str, install_dir: &Path) -> Result<Vec<SkillMetadata>> {
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
@@ -33,10 +34,10 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<V
         if manifest.find_repo(source).is_none() {
             tokio::fs::remove_dir_all(&target).await?;
         } else {
-            anyhow::bail!(
+            return Err(Error::Install(format!(
                 "repo directory already exists: {}. Remove it first with `skills remove`.",
                 target.display()
-            );
+            )));
         }
     }
 
@@ -72,17 +73,19 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<V
             },
             None => {
                 let _ = tokio::fs::remove_dir_all(&target).await;
-                anyhow::bail!("no adapter available for format '{format}' in repo '{source}'");
+                return Err(Error::Install(format!(
+                    "no adapter available for format '{format}' in repo '{source}'"
+                )));
             },
         },
     };
 
     if skills_meta.is_empty() {
         let _ = tokio::fs::remove_dir_all(&target).await;
-        anyhow::bail!(
+        return Err(Error::Install(format!(
             "repository contains no skills (checked {})",
             target.display()
-        );
+        )));
     }
 
     // Write manifest.
@@ -116,14 +119,14 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> anyhow::Result<V
 }
 
 /// Remove a repo: delete directory and manifest entry.
-pub async fn remove_repo(source: &str, install_dir: &Path) -> anyhow::Result<()> {
+pub async fn remove_repo(source: &str, install_dir: &Path) -> Result<()> {
     let manifest_path = ManifestStore::default_path()?;
     let store = ManifestStore::new(manifest_path);
     let mut manifest = store.load()?;
 
     let repo = manifest
         .find_repo(source)
-        .ok_or_else(|| anyhow::anyhow!("repo '{}' not found in manifest", source))?;
+        .ok_or_else(|| Error::NotFound(format!("repo '{}' not found in manifest", source)))?;
     let dir = install_dir.join(&repo.repo_name);
 
     if dir.exists() {
@@ -136,11 +139,7 @@ pub async fn remove_repo(source: &str, install_dir: &Path) -> anyhow::Result<()>
 }
 
 /// Install by fetching a tarball from GitHub's API.
-async fn install_via_http(
-    owner: &str,
-    repo: &str,
-    target: &Path,
-) -> anyhow::Result<Option<String>> {
+async fn install_via_http(owner: &str, repo: &str, target: &Path) -> Result<Option<String>> {
     let url = format!("https://api.github.com/repos/{owner}/{repo}/tarball");
     let client = reqwest::Client::new();
     let commit_sha = fetch_latest_commit_sha(&client, owner, repo).await;
@@ -151,7 +150,12 @@ async fn install_via_http(
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("failed to fetch {}/{}: HTTP {}", owner, repo, resp.status());
+        return Err(Error::Install(format!(
+            "failed to fetch {}/{}: HTTP {}",
+            owner,
+            repo,
+            resp.status()
+        )));
     }
 
     let bytes = resp.bytes().await?;
@@ -183,14 +187,18 @@ async fn install_via_http(
                 std::fs::create_dir_all(parent)?;
                 let canonical_parent = std::fs::canonicalize(parent)?;
                 if !canonical_parent.starts_with(&canonical_target) {
-                    anyhow::bail!("archive entry escaped install directory");
+                    return Err(Error::Install(
+                        "archive entry escaped install directory".into(),
+                    ));
                 }
             }
 
             if dest.exists() {
                 let meta = std::fs::symlink_metadata(&dest)?;
                 if meta.file_type().is_symlink() {
-                    anyhow::bail!("archive entry resolves to symlink destination");
+                    return Err(Error::Install(
+                        "archive entry resolves to symlink destination".into(),
+                    ));
                 }
             }
 
@@ -201,7 +209,7 @@ async fn install_via_http(
 
             entry.unpack(&dest)?;
         }
-        Ok::<(), anyhow::Error>(())
+        Ok::<(), Error>(())
     })
     .await??;
 
@@ -234,7 +242,7 @@ async fn fetch_latest_commit_sha(
         .map(ToOwned::to_owned)
 }
 
-fn sanitize_archive_path(path: &Path) -> anyhow::Result<Option<PathBuf>> {
+fn sanitize_archive_path(path: &Path) -> Result<Option<PathBuf>> {
     let stripped: PathBuf = path.components().skip(1).collect();
     if stripped.as_os_str().is_empty() {
         return Ok(None);
@@ -245,7 +253,10 @@ fn sanitize_archive_path(path: &Path) -> anyhow::Result<Option<PathBuf>> {
             Component::Normal(_) => {},
             Component::CurDir => {},
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                anyhow::bail!("archive contains unsafe path component: {}", path.display());
+                return Err(Error::Install(format!(
+                    "archive contains unsafe path component: {}",
+                    path.display()
+                )));
             },
         }
     }
@@ -259,7 +270,7 @@ fn sanitize_archive_path(path: &Path) -> anyhow::Result<Option<PathBuf>> {
 pub async fn scan_repo_skills(
     repo_dir: &Path,
     install_dir: &Path,
-) -> anyhow::Result<(Vec<SkillMetadata>, Vec<SkillState>)> {
+) -> Result<(Vec<SkillMetadata>, Vec<SkillState>)> {
     // Check root SKILL.md (single-skill repo).
     let root_skill_md = repo_dir.join("SKILL.md");
     if root_skill_md.is_file() {
@@ -337,7 +348,7 @@ pub async fn scan_repo_skills(
 
 /// Parse `owner/repo` from a source string.
 /// Accepts `owner/repo`, `https://github.com/owner/repo`, or with trailing slash/`.git`.
-fn parse_source(source: &str) -> anyhow::Result<(String, String)> {
+fn parse_source(source: &str) -> Result<(String, String)> {
     let s = source.trim().trim_end_matches('/').trim_end_matches(".git");
     let s = s
         .strip_prefix("https://github.com/")
@@ -346,16 +357,16 @@ fn parse_source(source: &str) -> anyhow::Result<(String, String)> {
         .unwrap_or(s);
     let parts: Vec<&str> = s.split('/').collect();
     if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
-        anyhow::bail!(
+        return Err(Error::Parse(format!(
             "invalid skill source '{}': expected 'owner/repo' or GitHub URL",
             source
-        );
+        )));
     }
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
 /// Get the default installation directory.
-pub fn default_install_dir() -> anyhow::Result<PathBuf> {
+pub fn default_install_dir() -> Result<PathBuf> {
     Ok(moltis_config::data_dir().join("installed-skills"))
 }
 

@@ -16,6 +16,8 @@ use {
     tracing::{debug, info},
 };
 
+use crate::error::{Error, Result};
+
 // ── Persisted connection config ────────────────────────────────────────────
 
 /// Connection parameters saved to `~/.moltis/node.json` so the service can
@@ -40,16 +42,16 @@ fn default_timeout() -> u64 {
 
 impl ServiceConfig {
     /// Load from `<data_dir>/node.json`.
-    pub fn load(data_dir: &Path) -> anyhow::Result<Self> {
+    pub fn load(data_dir: &Path) -> Result<Self> {
         let path = data_dir.join("node.json");
         let contents = fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
+            .map_err(|e| Error::Config(format!("cannot read {}: {e}", path.display())))?;
         let config: Self = serde_json::from_str(&contents)?;
         Ok(config)
     }
 
     /// Save to `<data_dir>/node.json`.
-    pub fn save(&self, data_dir: &Path) -> anyhow::Result<()> {
+    pub fn save(&self, data_dir: &Path) -> Result<()> {
         fs::create_dir_all(data_dir)?;
         let path = data_dir.join("node.json");
         let json = serde_json::to_string_pretty(self)?;
@@ -72,7 +74,7 @@ const SYSTEMD_UNIT: &str = "moltis-node.service";
 /// Install the node as an OS service.
 ///
 /// Saves the connection config, generates the service file, and enables it.
-pub fn install(data_dir: &Path, config: &ServiceConfig) -> anyhow::Result<()> {
+pub fn install(data_dir: &Path, config: &ServiceConfig) -> Result<()> {
     config.save(data_dir)?;
 
     let moltis_bin = resolve_binary()?;
@@ -83,21 +85,18 @@ pub fn install(data_dir: &Path, config: &ServiceConfig) -> anyhow::Result<()> {
     } else if cfg!(target_os = "linux") {
         install_systemd(&moltis_bin, config, &log_path)
     } else {
-        anyhow::bail!("service install not supported on {}", std::env::consts::OS)
+        Err(Error::UnsupportedPlatform)
     }
 }
 
 /// Uninstall the service and remove generated files.
-pub fn uninstall(data_dir: &Path) -> anyhow::Result<()> {
+pub fn uninstall(data_dir: &Path) -> Result<()> {
     if cfg!(target_os = "macos") {
         uninstall_launchd()
     } else if cfg!(target_os = "linux") {
         uninstall_systemd()
     } else {
-        anyhow::bail!(
-            "service uninstall not supported on {}",
-            std::env::consts::OS
-        )
+        Err(Error::UnsupportedPlatform)
     }?;
 
     // Remove persisted config.
@@ -111,35 +110,35 @@ pub fn uninstall(data_dir: &Path) -> anyhow::Result<()> {
 }
 
 /// Print the service status.
-pub fn status() -> anyhow::Result<ServiceStatus> {
+pub fn status() -> Result<ServiceStatus> {
     if cfg!(target_os = "macos") {
         status_launchd()
     } else if cfg!(target_os = "linux") {
         status_systemd()
     } else {
-        anyhow::bail!("service status not supported on {}", std::env::consts::OS)
+        Err(Error::UnsupportedPlatform)
     }
 }
 
 /// Stop the service.
-pub fn stop() -> anyhow::Result<()> {
+pub fn stop() -> Result<()> {
     if cfg!(target_os = "macos") {
         stop_launchd()
     } else if cfg!(target_os = "linux") {
         stop_systemd()
     } else {
-        anyhow::bail!("service stop not supported on {}", std::env::consts::OS)
+        Err(Error::UnsupportedPlatform)
     }
 }
 
 /// Restart the service.
-pub fn restart() -> anyhow::Result<()> {
+pub fn restart() -> Result<()> {
     if cfg!(target_os = "macos") {
         restart_launchd()
     } else if cfg!(target_os = "linux") {
         restart_systemd()
     } else {
-        anyhow::bail!("service restart not supported on {}", std::env::consts::OS)
+        Err(Error::UnsupportedPlatform)
     }
 }
 
@@ -172,7 +171,7 @@ impl std::fmt::Display for ServiceStatus {
 
 // ── Binary resolution ──────────────────────────────────────────────────────
 
-fn resolve_binary() -> anyhow::Result<PathBuf> {
+fn resolve_binary() -> Result<PathBuf> {
     // Prefer the running binary if it looks right.
     if let Ok(exe) = std::env::current_exe() {
         let name = exe.file_name().unwrap_or_default().to_string_lossy();
@@ -183,13 +182,13 @@ fn resolve_binary() -> anyhow::Result<PathBuf> {
 
     // Fall back to PATH lookup.
     which::which("moltis").map_err(|_| {
-        anyhow::anyhow!("cannot find 'moltis' binary; ensure it is installed and in PATH")
+        Error::Config("cannot find 'moltis' binary; ensure it is installed and in PATH".into())
     })
 }
 
 // ── macOS launchd ──────────────────────────────────────────────────────────
 
-fn launchd_plist_path() -> anyhow::Result<PathBuf> {
+fn launchd_plist_path() -> Result<PathBuf> {
     let home = home_dir()?;
     Ok(home
         .join("Library")
@@ -273,11 +272,7 @@ pub fn generate_launchd_plist(
     )
 }
 
-fn install_launchd(
-    moltis_bin: &Path,
-    config: &ServiceConfig,
-    log_path: &Path,
-) -> anyhow::Result<()> {
+fn install_launchd(moltis_bin: &Path, config: &ServiceConfig, log_path: &Path) -> Result<()> {
     let plist_path = launchd_plist_path()?;
 
     // Unload first if already loaded (ignore errors).
@@ -307,18 +302,22 @@ fn install_launchd(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("launchctl bootstrap failed: {stderr}");
+        return Err(Error::Service(format!(
+            "launchctl bootstrap failed: {stderr}"
+        )));
     }
 
     info!("node service installed and started");
     Ok(())
 }
 
-fn uninstall_launchd() -> anyhow::Result<()> {
+fn uninstall_launchd() -> Result<()> {
     let plist_path = launchd_plist_path()?;
 
     if !plist_path.exists() {
-        anyhow::bail!("service not installed (plist not found)");
+        return Err(Error::Service(
+            "service not installed (plist not found)".into(),
+        ));
     }
 
     let _ = Command::new("launchctl")
@@ -335,7 +334,7 @@ fn uninstall_launchd() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn status_launchd() -> anyhow::Result<ServiceStatus> {
+fn status_launchd() -> Result<ServiceStatus> {
     let plist_path = launchd_plist_path()?;
     if !plist_path.exists() {
         return Ok(ServiceStatus::NotInstalled);
@@ -364,10 +363,10 @@ fn status_launchd() -> anyhow::Result<ServiceStatus> {
     Ok(ServiceStatus::Running { pid })
 }
 
-fn stop_launchd() -> anyhow::Result<()> {
+fn stop_launchd() -> Result<()> {
     let plist_path = launchd_plist_path()?;
     if !plist_path.exists() {
-        anyhow::bail!("service not installed");
+        return Err(Error::Service("service not installed".into()));
     }
 
     let output = Command::new("launchctl")
@@ -378,7 +377,7 @@ fn stop_launchd() -> anyhow::Result<()> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // "No such process" is fine — already stopped.
         if !stderr.contains("No such process") && !stderr.contains("3: No such process") {
-            anyhow::bail!("launchctl kill failed: {stderr}");
+            return Err(Error::Service(format!("launchctl kill failed: {stderr}")));
         }
     }
 
@@ -386,10 +385,10 @@ fn stop_launchd() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn restart_launchd() -> anyhow::Result<()> {
+fn restart_launchd() -> Result<()> {
     let plist_path = launchd_plist_path()?;
     if !plist_path.exists() {
-        anyhow::bail!("service not installed");
+        return Err(Error::Service("service not installed".into()));
     }
 
     // kickstart -k kills and restarts the service.
@@ -399,7 +398,9 @@ fn restart_launchd() -> anyhow::Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("launchctl kickstart failed: {stderr}");
+        return Err(Error::Service(format!(
+            "launchctl kickstart failed: {stderr}"
+        )));
     }
 
     info!("node service restarted");
@@ -408,7 +409,7 @@ fn restart_launchd() -> anyhow::Result<()> {
 
 // ── Linux systemd ──────────────────────────────────────────────────────────
 
-fn systemd_unit_path() -> anyhow::Result<PathBuf> {
+fn systemd_unit_path() -> Result<PathBuf> {
     let home = home_dir()?;
     Ok(home
         .join(".config")
@@ -460,11 +461,7 @@ WantedBy=default.target
     )
 }
 
-fn install_systemd(
-    moltis_bin: &Path,
-    config: &ServiceConfig,
-    log_path: &Path,
-) -> anyhow::Result<()> {
+fn install_systemd(moltis_bin: &Path, config: &ServiceConfig, log_path: &Path) -> Result<()> {
     let unit_path = systemd_unit_path()?;
 
     // Stop if already running (ignore errors).
@@ -489,11 +486,13 @@ fn install_systemd(
     Ok(())
 }
 
-fn uninstall_systemd() -> anyhow::Result<()> {
+fn uninstall_systemd() -> Result<()> {
     let unit_path = systemd_unit_path()?;
 
     if !unit_path.exists() {
-        anyhow::bail!("service not installed (unit file not found)");
+        return Err(Error::Service(
+            "service not installed (unit file not found)".into(),
+        ));
     }
 
     let _ = run_systemctl(&["stop", SYSTEMD_UNIT]);
@@ -507,7 +506,7 @@ fn uninstall_systemd() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn status_systemd() -> anyhow::Result<ServiceStatus> {
+fn status_systemd() -> Result<ServiceStatus> {
     let unit_path = systemd_unit_path()?;
     if !unit_path.exists() {
         return Ok(ServiceStatus::NotInstalled);
@@ -544,27 +543,27 @@ fn status_systemd() -> anyhow::Result<ServiceStatus> {
     }
 }
 
-fn stop_systemd() -> anyhow::Result<()> {
+fn stop_systemd() -> Result<()> {
     let unit_path = systemd_unit_path()?;
     if !unit_path.exists() {
-        anyhow::bail!("service not installed");
+        return Err(Error::Service("service not installed".into()));
     }
     run_systemctl(&["stop", SYSTEMD_UNIT])?;
     info!("node service stopped");
     Ok(())
 }
 
-fn restart_systemd() -> anyhow::Result<()> {
+fn restart_systemd() -> Result<()> {
     let unit_path = systemd_unit_path()?;
     if !unit_path.exists() {
-        anyhow::bail!("service not installed");
+        return Err(Error::Service("service not installed".into()));
     }
     run_systemctl(&["restart", SYSTEMD_UNIT])?;
     info!("node service restarted");
     Ok(())
 }
 
-fn run_systemctl(args: &[&str]) -> anyhow::Result<()> {
+fn run_systemctl(args: &[&str]) -> Result<()> {
     let mut full_args = vec!["--user"];
     full_args.extend_from_slice(args);
 
@@ -573,17 +572,20 @@ fn run_systemctl(args: &[&str]) -> anyhow::Result<()> {
     let output = Command::new("systemctl").args(&full_args).output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("systemctl {} failed: {stderr}", args.join(" "));
+        return Err(Error::Service(format!(
+            "systemctl {} failed: {stderr}",
+            args.join(" ")
+        )));
     }
     Ok(())
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-fn home_dir() -> anyhow::Result<PathBuf> {
+fn home_dir() -> Result<PathBuf> {
     std::env::var_os("HOME")
         .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory (HOME not set)"))
+        .ok_or_else(|| Error::Config("cannot determine home directory (HOME not set)".into()))
 }
 
 fn uid() -> u32 {

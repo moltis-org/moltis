@@ -18,6 +18,7 @@ moltis-config = { workspace = true }
 secrecy       = { workspace = true }
 serde         = { workspace = true }
 serde_json    = { workspace = true }
+thiserror     = { workspace = true }
 tokio         = { workspace = true }
 tower-http    = { features = ["auth"], workspace = true }
 tower-service = { workspace = true }

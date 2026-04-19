@@ -661,19 +661,27 @@ async fn graceful_writer_shutdown(
 /// Wait for the first `connect` request frame. Tries v4 format first, falls back to v3.
 async fn wait_for_connect(
     rx: &mut futures::stream::SplitStream<WebSocket>,
-) -> anyhow::Result<ConnectResult> {
+) -> crate::error::Result<ConnectResult> {
     while let Some(msg) = rx.next().await {
-        let text = match msg? {
+        let text = match msg.map_err(|e| crate::Error::Protocol(e.to_string()))? {
             Message::Text(t) => t.to_string(),
-            Message::Close(_) => anyhow::bail!("connection closed before handshake"),
+            Message::Close(_) => {
+                return Err(crate::Error::Protocol(
+                    "connection closed before handshake".into(),
+                ));
+            },
             _ => continue,
         };
 
-        let frame: GatewayFrame = serde_json::from_str(&text)?;
+        let frame: GatewayFrame =
+            serde_json::from_str(&text).map_err(|e| crate::Error::Protocol(e.to_string()))?;
         match frame {
             GatewayFrame::Request(req) => {
                 if req.method != "connect" {
-                    anyhow::bail!("first message must be 'connect', got '{}'", req.method);
+                    return Err(crate::Error::Protocol(format!(
+                        "first message must be 'connect', got '{}'",
+                        req.method
+                    )));
                 }
                 let raw = req.params.unwrap_or(serde_json::Value::Null);
 
@@ -687,15 +695,22 @@ async fn wait_for_connect(
                 }
 
                 // Fall back to v3 flat format.
-                let params: ConnectParams = serde_json::from_value(raw)?;
+                let params: ConnectParams = serde_json::from_value(raw)
+                    .map_err(|e| crate::Error::Protocol(e.to_string()))?;
                 return Ok(ConnectResult {
                     request_id: req.id,
                     params,
                     is_v4: false,
                 });
             },
-            _ => anyhow::bail!("first message must be a request frame"),
+            _ => {
+                return Err(crate::Error::Protocol(
+                    "first message must be a request frame".into(),
+                ));
+            },
         }
     }
-    anyhow::bail!("connection closed before handshake")
+    Err(crate::Error::Protocol(
+        "connection closed before handshake".into(),
+    ))
 }

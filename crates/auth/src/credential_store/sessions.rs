@@ -8,9 +8,12 @@ use sqlx::SqlitePool;
 #[cfg(feature = "vault")]
 use moltis_vault::Vault;
 
-use crate::credential_store::{
-    CredentialStore,
-    util::{DUMMY_ARGON2_HASH, generate_token, hash_password, verify_password},
+use crate::{
+    Error, Result,
+    credential_store::{
+        CredentialStore,
+        util::{DUMMY_ARGON2_HASH, generate_token, hash_password, verify_password},
+    },
 };
 
 impl CredentialStore {
@@ -18,7 +21,7 @@ impl CredentialStore {
     const MAX_SESSIONS: i64 = 10;
 
     /// Open a database at the given path, reset all auth, and close it.
-    pub async fn reset_from_db_path(db_path: &std::path::Path) -> anyhow::Result<()> {
+    pub async fn reset_from_db_path(db_path: &std::path::Path) -> Result<()> {
         let db_url = format!("sqlite:{}", db_path.display());
         let pool = SqlitePool::connect(&db_url).await?;
         let store = Self::new(pool).await?;
@@ -27,7 +30,7 @@ impl CredentialStore {
 
     /// Create a new store and initialize tables.
     /// Reads `auth.disabled` from the discovered config file.
-    pub async fn new(pool: SqlitePool) -> anyhow::Result<Self> {
+    pub async fn new(pool: SqlitePool) -> Result<Self> {
         let config = moltis_config::discover_and_load();
         Self::with_config(pool, &config.auth).await
     }
@@ -36,7 +39,7 @@ impl CredentialStore {
     pub async fn with_config(
         pool: SqlitePool,
         auth_config: &moltis_config::AuthConfig,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let store = Self {
             pool,
             setup_complete: std::sync::atomic::AtomicBool::new(false),
@@ -68,7 +71,7 @@ impl CredentialStore {
         pool: SqlitePool,
         auth_config: &moltis_config::AuthConfig,
         vault: Option<Arc<Vault>>,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let store = Self {
             pool,
             setup_complete: std::sync::atomic::AtomicBool::new(false),
@@ -98,7 +101,7 @@ impl CredentialStore {
     /// **Note**: Schema is now managed by sqlx migrations. This method is a no-op
     /// when running with the gateway (migrations have already run). It's retained
     /// for standalone tests that use in-memory databases.
-    async fn init(&self) -> anyhow::Result<()> {
+    async fn init(&self) -> Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS auth_password (
                 id            INTEGER PRIMARY KEY CHECK (id = 1),
@@ -229,12 +232,12 @@ impl CredentialStore {
     }
 
     /// Clear the auth-disabled flag (e.g. after completing localhost setup without a password).
-    pub async fn clear_auth_disabled(&self) -> anyhow::Result<()> {
+    pub async fn clear_auth_disabled(&self) -> Result<()> {
         self.auth_disabled.store(false, Ordering::Relaxed);
         self.persist_auth_disabled(false).await
     }
 
-    async fn persist_auth_disabled(&self, disabled: bool) -> anyhow::Result<()> {
+    async fn persist_auth_disabled(&self, disabled: bool) -> Result<()> {
         sqlx::query(
             "INSERT INTO auth_state (id, auth_disabled, updated_at)
              VALUES (1, ?, datetime('now'))
@@ -253,7 +256,7 @@ impl CredentialStore {
     }
 
     /// Whether a password has been set.
-    pub async fn has_password(&self) -> anyhow::Result<bool> {
+    pub async fn has_password(&self) -> Result<bool> {
         let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM auth_password WHERE id = 1")
             .fetch_optional(&self.pool)
             .await?;
@@ -261,9 +264,9 @@ impl CredentialStore {
     }
 
     /// Set the initial password (first-run setup). Fails if already set.
-    pub async fn set_initial_password(&self, password: &str) -> anyhow::Result<()> {
+    pub async fn set_initial_password(&self, password: &str) -> Result<()> {
         if self.is_setup_complete() {
-            anyhow::bail!("password already set");
+            return Err(Error::Validation("password already set".into()));
         }
         let hash = hash_password(password)?;
         sqlx::query("INSERT INTO auth_password (id, password_hash) VALUES (1, ?)")
@@ -279,9 +282,9 @@ impl CredentialStore {
     /// Add a password when none exists yet (e.g. after passkey-only setup).
     ///
     /// This marks setup complete so auth is enforced immediately.
-    pub async fn add_password(&self, password: &str) -> anyhow::Result<()> {
+    pub async fn add_password(&self, password: &str) -> Result<()> {
         if self.has_password().await? {
-            anyhow::bail!("password already set");
+            return Err(Error::Validation("password already set".into()));
         }
         let hash = hash_password(password)?;
         sqlx::query("INSERT INTO auth_password (id, password_hash) VALUES (1, ?)")
@@ -295,11 +298,13 @@ impl CredentialStore {
     /// Mark initial setup as complete without setting a password (e.g. passkey-only setup).
     ///
     /// Requires at least one credential (password or passkey) to already exist.
-    pub async fn mark_setup_complete(&self) -> anyhow::Result<()> {
+    pub async fn mark_setup_complete(&self) -> Result<()> {
         let has_password = self.has_password().await?;
         let has_passkeys = self.has_passkeys().await?;
         if !has_password && !has_passkeys {
-            anyhow::bail!("cannot mark setup complete without any credentials");
+            return Err(Error::Validation(
+                "cannot mark setup complete without any credentials".into(),
+            ));
         }
         self.setup_complete.store(true, Ordering::Relaxed);
         self.auth_disabled.store(false, Ordering::Relaxed);
@@ -308,7 +313,7 @@ impl CredentialStore {
     }
 
     /// Recompute `setup_complete` from the current credentials in the database.
-    pub(crate) async fn recompute_setup_complete(&self) -> anyhow::Result<()> {
+    pub(crate) async fn recompute_setup_complete(&self) -> Result<()> {
         let has = self.has_password().await? || self.has_passkeys().await?;
         self.setup_complete.store(has, Ordering::Relaxed);
         Ok(())
@@ -318,7 +323,7 @@ impl CredentialStore {
     ///
     /// When no password is set, a dummy Argon2 verification is performed
     /// to prevent timing side channels that would reveal whether a password exists.
-    pub async fn verify_password(&self, password: &str) -> anyhow::Result<bool> {
+    pub async fn verify_password(&self, password: &str) -> Result<bool> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT password_hash FROM auth_password WHERE id = 1")
                 .fetch_optional(&self.pool)
@@ -336,9 +341,9 @@ impl CredentialStore {
     /// Change the password (requires correct current password).
     ///
     /// Invalidates all existing sessions for defense-in-depth.
-    pub async fn change_password(&self, current: &str, new_password: &str) -> anyhow::Result<()> {
+    pub async fn change_password(&self, current: &str, new_password: &str) -> Result<()> {
         if !self.verify_password(current).await? {
-            anyhow::bail!("current password is incorrect");
+            return Err(Error::Validation("current password is incorrect".into()));
         }
         let hash = hash_password(new_password)?;
         sqlx::query(
@@ -359,7 +364,7 @@ impl CredentialStore {
     ///
     /// Enforces a cap of [`MAX_SESSIONS`] active (non-expired) sessions.
     /// When the cap is reached, the oldest sessions are deleted to make room.
-    pub async fn create_session(&self) -> anyhow::Result<String> {
+    pub async fn create_session(&self) -> Result<String> {
         sqlx::query("DELETE FROM auth_sessions WHERE expires_at <= datetime('now')")
             .execute(&self.pool)
             .await?;
@@ -388,7 +393,7 @@ impl CredentialStore {
     }
 
     /// Validate a session token. Returns true if valid and not expired.
-    pub async fn validate_session(&self, token: &str) -> anyhow::Result<bool> {
+    pub async fn validate_session(&self, token: &str) -> Result<bool> {
         let row: Option<(String,)> = sqlx::query_as(
             "SELECT token FROM auth_sessions WHERE token = ? AND expires_at > datetime('now')",
         )
@@ -399,7 +404,7 @@ impl CredentialStore {
     }
 
     /// Delete a session (logout).
-    pub async fn delete_session(&self, token: &str) -> anyhow::Result<()> {
+    pub async fn delete_session(&self, token: &str) -> Result<()> {
         sqlx::query("DELETE FROM auth_sessions WHERE token = ?")
             .bind(token)
             .execute(&self.pool)
@@ -408,7 +413,7 @@ impl CredentialStore {
     }
 
     /// Clean up expired sessions.
-    pub async fn cleanup_expired_sessions(&self) -> anyhow::Result<u64> {
+    pub async fn cleanup_expired_sessions(&self) -> Result<u64> {
         let result = sqlx::query("DELETE FROM auth_sessions WHERE expires_at <= datetime('now')")
             .execute(&self.pool)
             .await?;
@@ -417,7 +422,7 @@ impl CredentialStore {
 
     /// Remove all authentication data: password, sessions, passkeys, API keys.
     /// After this, `is_setup_complete()` returns false and the middleware passes all requests through.
-    pub async fn reset_all(&self) -> anyhow::Result<()> {
+    pub async fn reset_all(&self) -> Result<()> {
         sqlx::query("DELETE FROM auth_password")
             .execute(&self.pool)
             .await?;

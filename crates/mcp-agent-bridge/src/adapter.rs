@@ -35,9 +35,7 @@ impl AgentTool for McpToolAdapter {
     }
 
     async fn execute(&self, params: serde_json::Value) -> anyhow::Result<serde_json::Value> {
-        McpAgentTool::execute(&self.0, params)
-            .await
-            .map_err(anyhow::Error::from)
+        Ok(McpAgentTool::execute(&self.0, params).await?)
     }
 }
 

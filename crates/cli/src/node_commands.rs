@@ -123,7 +123,8 @@ pub async fn handle_node(action: NodeAction) -> Result<()> {
                 };
 
                 let node = moltis_node_host::NodeHost::new(config);
-                node.run().await
+                node.run().await?;
+                Ok(())
             } else {
                 let data_dir = moltis_config::data_dir();
                 let svc_config = moltis_node_host::ServiceConfig {
@@ -177,7 +178,8 @@ pub async fn handle_node(action: NodeAction) -> Result<()> {
             };
 
             let node = moltis_node_host::NodeHost::new(node_config);
-            node.run().await
+            node.run().await?;
+            Ok(())
         },
 
         NodeAction::Remove => {

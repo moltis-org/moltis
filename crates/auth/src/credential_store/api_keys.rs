@@ -1,6 +1,9 @@
-use crate::credential_store::{
-    ApiKeyEntry, ApiKeyVerification, CredentialStore,
-    util::{generate_token, hmac_sha256_hex, sha256_hex},
+use crate::{
+    Result,
+    credential_store::{
+        ApiKeyEntry, ApiKeyVerification, CredentialStore,
+        util::{generate_token, hmac_sha256_hex, sha256_hex},
+    },
 };
 
 impl CredentialStore {
@@ -10,7 +13,7 @@ impl CredentialStore {
         &self,
         label: &str,
         scopes: Option<&[String]>,
-    ) -> anyhow::Result<(i64, String)> {
+    ) -> Result<(i64, String)> {
         let raw_key = format!("mk_{}", generate_token());
         let prefix = &raw_key[..raw_key.len().min(11)];
         let salt = generate_token();
@@ -34,7 +37,7 @@ impl CredentialStore {
     }
 
     /// List all API keys (active only, not revoked).
-    pub async fn list_api_keys(&self) -> anyhow::Result<Vec<ApiKeyEntry>> {
+    pub async fn list_api_keys(&self) -> Result<Vec<ApiKeyEntry>> {
         let rows: Vec<(i64, String, String, String, Option<String>)> = sqlx::query_as(
             "SELECT id, label, key_prefix, strftime('%Y-%m-%dT%H:%M:%SZ', created_at), scopes FROM api_keys WHERE revoked_at IS NULL ORDER BY created_at DESC",
         )
@@ -58,7 +61,7 @@ impl CredentialStore {
     }
 
     /// Revoke an API key by id.
-    pub async fn revoke_api_key(&self, key_id: i64) -> anyhow::Result<()> {
+    pub async fn revoke_api_key(&self, key_id: i64) -> Result<()> {
         sqlx::query(
             "UPDATE api_keys SET revoked_at = datetime('now') WHERE id = ? AND revoked_at IS NULL",
         )
@@ -72,10 +75,7 @@ impl CredentialStore {
     /// `None` if invalid or revoked.
     ///
     /// Supports both salted (HMAC-SHA256) and legacy unsalted (SHA-256) keys.
-    pub async fn verify_api_key(
-        &self,
-        raw_key: &str,
-    ) -> anyhow::Result<Option<ApiKeyVerification>> {
+    pub async fn verify_api_key(&self, raw_key: &str) -> Result<Option<ApiKeyVerification>> {
         let rows: Vec<(i64, String, Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT id, key_hash, scopes, key_salt FROM api_keys WHERE revoked_at IS NULL",
         )

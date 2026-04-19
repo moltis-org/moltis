@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use {dashmap::DashMap, webauthn_rs::prelude::*};
 
-use crate::credential_store::CredentialStore;
+use crate::{Error, Result, credential_store::CredentialStore};
 
 /// Challenge TTL: 5 minutes.
 const CHALLENGE_TTL_SECS: u64 = 300;
@@ -80,16 +80,16 @@ impl WebAuthnState {
     /// `rp_origin` is the full origin URL (e.g. "https://localhost:18080").
     /// `extra_origins` are additional origins accepted during verification (e.g.
     /// `http://m4max.local:18080` when accessing via mDNS hostname).
-    pub fn new(rp_id: &str, rp_origin: &Url, extra_origins: &[Url]) -> anyhow::Result<Self> {
+    pub fn new(rp_id: &str, rp_origin: &Url, extra_origins: &[Url]) -> Result<Self> {
         let mut builder = WebauthnBuilder::new(rp_id, rp_origin)
-            .map_err(|e| anyhow::anyhow!("webauthn builder error: {e}"))?;
+            .map_err(|e| Error::WebAuthn(format!("webauthn builder error: {e}")))?;
         for origin in extra_origins {
             builder = builder.append_allowed_origin(origin);
         }
         let webauthn = builder
             .rp_name("moltis")
             .build()
-            .map_err(|e| anyhow::anyhow!("webauthn build error: {e}"))?;
+            .map_err(|e| Error::WebAuthn(format!("webauthn build error: {e}")))?;
 
         Ok(Self {
             webauthn,
@@ -102,7 +102,7 @@ impl WebAuthnState {
     pub fn start_registration(
         &self,
         existing_passkeys: &[Passkey],
-    ) -> anyhow::Result<(String, CreationChallengeResponse)> {
+    ) -> Result<(String, CreationChallengeResponse)> {
         self.cleanup_expired();
 
         // Single-user model: fixed user ID.
@@ -122,7 +122,7 @@ impl WebAuthnState {
         let (ccr, reg_state) = self
             .webauthn
             .start_passkey_registration(user_id, "owner", "Owner", exclude_opt)
-            .map_err(|e| anyhow::anyhow!("start_passkey_registration: {e}"))?;
+            .map_err(|e| Error::WebAuthn(format!("start_passkey_registration: {e}")))?;
 
         let challenge_id = Uuid::new_v4().to_string();
         self.pending_registrations
@@ -139,20 +139,20 @@ impl WebAuthnState {
         &self,
         challenge_id: &str,
         response: &RegisterPublicKeyCredential,
-    ) -> anyhow::Result<Passkey> {
+    ) -> Result<Passkey> {
         let (_, pending) = self
             .pending_registrations
             .remove(challenge_id)
-            .ok_or_else(|| anyhow::anyhow!("no pending registration for this challenge"))?;
+            .ok_or_else(|| Error::WebAuthn("no pending registration for this challenge".into()))?;
 
         if pending.created_at.elapsed().as_secs() > CHALLENGE_TTL_SECS {
-            anyhow::bail!("registration challenge expired");
+            return Err(Error::WebAuthn("registration challenge expired".into()));
         }
 
         let passkey = self
             .webauthn
             .finish_passkey_registration(response, &pending.state)
-            .map_err(|e| anyhow::anyhow!("finish_passkey_registration: {e}"))?;
+            .map_err(|e| Error::WebAuthn(format!("finish_passkey_registration: {e}")))?;
 
         Ok(passkey)
     }
@@ -161,17 +161,17 @@ impl WebAuthnState {
     pub fn start_authentication(
         &self,
         credentials: &[Passkey],
-    ) -> anyhow::Result<(String, RequestChallengeResponse)> {
+    ) -> Result<(String, RequestChallengeResponse)> {
         self.cleanup_expired();
 
         if credentials.is_empty() {
-            anyhow::bail!("no passkeys registered");
+            return Err(Error::WebAuthn("no passkeys registered".into()));
         }
 
         let (rcr, auth_state) = self
             .webauthn
             .start_passkey_authentication(credentials)
-            .map_err(|e| anyhow::anyhow!("start_passkey_authentication: {e}"))?;
+            .map_err(|e| Error::WebAuthn(format!("start_passkey_authentication: {e}")))?;
 
         let challenge_id = Uuid::new_v4().to_string();
         self.pending_authentications
@@ -188,20 +188,22 @@ impl WebAuthnState {
         &self,
         challenge_id: &str,
         response: &PublicKeyCredential,
-    ) -> anyhow::Result<AuthenticationResult> {
+    ) -> Result<AuthenticationResult> {
         let (_, pending) = self
             .pending_authentications
             .remove(challenge_id)
-            .ok_or_else(|| anyhow::anyhow!("no pending authentication for this challenge"))?;
+            .ok_or_else(|| {
+                Error::WebAuthn("no pending authentication for this challenge".into())
+            })?;
 
         if pending.created_at.elapsed().as_secs() > CHALLENGE_TTL_SECS {
-            anyhow::bail!("authentication challenge expired");
+            return Err(Error::WebAuthn("authentication challenge expired".into()));
         }
 
         let result = self
             .webauthn
             .finish_passkey_authentication(response, &pending.state)
-            .map_err(|e| anyhow::anyhow!("finish_passkey_authentication: {e}"))?;
+            .map_err(|e| Error::WebAuthn(format!("finish_passkey_authentication: {e}")))?;
 
         Ok(result)
     }
@@ -309,7 +311,7 @@ impl WebAuthnRegistry {
 }
 
 /// Load all stored passkeys from the credential store as `webauthn_rs::Passkey` objects.
-pub async fn load_passkeys(store: &CredentialStore) -> anyhow::Result<Vec<Passkey>> {
+pub async fn load_passkeys(store: &CredentialStore) -> Result<Vec<Passkey>> {
     let rows = store.load_all_passkey_data().await?;
     let mut passkeys = Vec::with_capacity(rows.len());
     for (_id, data) in rows {

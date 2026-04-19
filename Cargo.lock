@@ -7184,7 +7184,6 @@ dependencies = [
 name = "moltis-auth"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "argon2",
  "async-trait",
  "axum",
@@ -7203,6 +7202,7 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "webauthn-rs",
@@ -7265,6 +7265,7 @@ dependencies = [
  "secrecy 0.8.0",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
  "tower-http",
  "tower-service",
@@ -7625,6 +7626,7 @@ dependencies = [
  "sqlx",
  "sysinfo",
  "tempfile",
+ "thiserror 2.0.18",
  "time",
  "tokio",
  "tokio-tungstenite 0.26.2",
@@ -7740,6 +7742,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "text-splitter",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tree-sitter-bash",
@@ -7823,7 +7826,6 @@ dependencies = [
 name = "moltis-node-host"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "futures",
  "moltis-config",
  "moltis-metrics",
@@ -7833,6 +7835,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tracing",
@@ -8041,6 +8044,7 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
 ]
@@ -8114,7 +8118,6 @@ dependencies = [
 name = "moltis-skills"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "flate2",
  "moltis-config",
@@ -8127,6 +8130,7 @@ dependencies = [
  "serde_yaml",
  "tar",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "walkdir",

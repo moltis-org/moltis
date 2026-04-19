@@ -4,6 +4,7 @@ use {
     async_trait::async_trait,
     moltis_agents::memory_writer::{MemoryWriteResult, MemoryWriter},
     moltis_memory::{
+        Result as MemoryResult,
         manager::{MemoryManager, MemoryStatus, SyncReport},
         runtime::MemoryRuntime,
         schema::ChunkRow,
@@ -43,7 +44,7 @@ impl QmdMemoryRuntime {
     }
 
     async fn refresh_qmd_index(&self) -> anyhow::Result<()> {
-        self.manager.refresh_index(!self.disable_rag).await
+        Ok(self.manager.refresh_index(!self.disable_rag).await?)
     }
 
     async fn resolve_result_path(&self, result: &QmdSearchResult) -> anyhow::Result<String> {
@@ -162,41 +163,61 @@ impl MemoryRuntime for QmdMemoryRuntime {
         self.fallback.llm_reranking_enabled()
     }
 
-    async fn sync(&self) -> anyhow::Result<SyncReport> {
+    async fn sync(&self) -> MemoryResult<SyncReport> {
         let report = self.fallback.sync().await?;
-        self.refresh_qmd_index().await?;
+        self.refresh_qmd_index()
+            .await
+            .map_err(|e| moltis_memory::Error::Validation(e.to_string()))?;
         Ok(report)
     }
 
-    async fn sync_path(&self, path: &Path) -> anyhow::Result<bool> {
+    async fn sync_path(&self, path: &Path) -> MemoryResult<bool> {
         let changed = self.fallback.sync_path(path).await?;
-        self.refresh_qmd_index().await?;
+        self.refresh_qmd_index()
+            .await
+            .map_err(|e| moltis_memory::Error::Validation(e.to_string()))?;
         Ok(changed)
     }
 
-    async fn remove_path(&self, path: &Path) -> anyhow::Result<bool> {
+    async fn remove_path(&self, path: &Path) -> MemoryResult<bool> {
         let removed = self.fallback.remove_path(path).await?;
-        self.refresh_qmd_index().await?;
+        self.refresh_qmd_index()
+            .await
+            .map_err(|e| moltis_memory::Error::Validation(e.to_string()))?;
         Ok(removed)
     }
 
-    async fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchResult>> {
+    async fn search(&self, query: &str, limit: usize) -> MemoryResult<Vec<SearchResult>> {
         let qmd_results = match self.search_mode() {
-            SearchMode::Keyword => self.manager.keyword_search(query, limit).await?,
-            SearchMode::Vector => self.manager.vector_search(query, limit).await?,
-            SearchMode::Hybrid { rerank } => {
-                self.manager.hybrid_search(query, limit, rerank).await?
-            },
+            SearchMode::Keyword => self
+                .manager
+                .keyword_search(query, limit)
+                .await
+                .map_err(|e| moltis_memory::Error::Validation(e.to_string()))?,
+            SearchMode::Vector => self
+                .manager
+                .vector_search(query, limit)
+                .await
+                .map_err(|e| moltis_memory::Error::Validation(e.to_string()))?,
+            SearchMode::Hybrid { rerank } => self
+                .manager
+                .hybrid_search(query, limit, rerank)
+                .await
+                .map_err(|e| moltis_memory::Error::Validation(e.to_string()))?,
         };
 
         let mut results = Vec::with_capacity(qmd_results.len());
         for result in qmd_results {
-            results.push(self.convert_result(result).await?);
+            results.push(
+                self.convert_result(result)
+                    .await
+                    .map_err(|e| moltis_memory::Error::Validation(e.to_string()))?,
+            );
         }
         Ok(results)
     }
 
-    async fn get_chunk(&self, id: &str) -> anyhow::Result<Option<ChunkRow>> {
+    async fn get_chunk(&self, id: &str) -> MemoryResult<Option<ChunkRow>> {
         let Some((docid, start_line)) = Self::parse_chunk_id(id) else {
             return self.fallback.get_chunk(id).await;
         };
@@ -210,7 +231,8 @@ impl MemoryRuntime for QmdMemoryRuntime {
         let body = self
             .manager
             .get_document(&docid, Some(start_line), Some(DEFAULT_QMD_GET_LINES))
-            .await?;
+            .await
+            .map_err(|e| moltis_memory::Error::Validation(e.to_string()))?;
         let text = strip_qmd_context_header(&body).trim().to_string();
         let line_count = text.lines().count().max(1) as i64;
 
@@ -232,7 +254,7 @@ impl MemoryRuntime for QmdMemoryRuntime {
         }))
     }
 
-    async fn status(&self) -> anyhow::Result<MemoryStatus> {
+    async fn status(&self) -> MemoryResult<MemoryStatus> {
         let mut status = self.fallback.status().await?;
         status.embedding_model = if self.disable_rag {
             "qmd (keyword)".into()
