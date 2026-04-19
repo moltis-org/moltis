@@ -3,7 +3,7 @@ import * as S from "./state";
 import { initTheme, injectMarkdownStyles } from "./theme";
 import "./time-format";
 
-// Expose state module for E2E test WS mocking.
+// Expose state module for E2E test WS mocking via shims.
 window.__moltis_state = S;
 
 initTheme();

@@ -10,10 +10,6 @@ import { SessionList } from "./components/SessionList";
 import * as _events from "./events";
 import { onEvent } from "./events";
 import * as gon from "./gon";
-// E2E test module imports — tests dynamically import individual JS
-// modules (js/helpers.js, js/chat-ui.js, etc.) that no longer exist
-// as standalone files. We expose the bundled modules on window so
-// the shim files in assets/js/ can proxy to them.
 import * as _helpers from "./helpers";
 import * as _i18n from "./i18n";
 import { init as initI18n, translateStaticElements } from "./i18n";
@@ -45,7 +41,8 @@ import { GlobalDialogs } from "./ui";
 import { connect } from "./websocket";
 import * as _wsConnect from "./ws-connect";
 
-// Expose stores and modules for E2E test access.
+// Expose stores and modules on window for E2E test shims.
+// The shim files in assets/js/ proxy to these bundled modules.
 window.__moltis_stores = { sessionStore, modelStore, projectStore };
 window.__moltis_state = S;
 window.__moltis_modules = {
@@ -54,7 +51,7 @@ window.__moltis_modules = {
 	events: _events,
 	"chat-ui": _chatUi,
 	sessions: _sessions,
-	gon: gon,
+	gon,
 	"code-highlight": _codeHighlight,
 	"ws-connect": _wsConnect,
 	"nodes-selector": _nodeSelector,

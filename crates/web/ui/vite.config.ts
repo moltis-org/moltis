@@ -17,7 +17,7 @@ export default defineConfig({
     minify: false,
     rollupOptions: {
       input: {
-        main: resolve(__dirname, "src/main.tsx"),
+        main: resolve(__dirname, "src/app.tsx"),
         login: resolve(__dirname, "src/login-app.tsx"),
         onboarding: resolve(__dirname, "src/onboarding-app.tsx"),
       },
