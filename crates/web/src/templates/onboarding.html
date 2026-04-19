@@ -16,6 +16,8 @@
 </head>
 <body>
 <div id="onboardingRoot"></div>
+<!-- E2E compat: tests locate the app via this script tag -->
+<script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}js/onboarding-app.js"></script>
 <script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}dist/onboarding.js"></script>
 </body>
 </html>

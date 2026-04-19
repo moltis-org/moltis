@@ -1,6 +1,7 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["chunks/onboarding-view.js","chunks/jsxRuntime.module.js","chunks/theme.js","chunks/webauthn-helpers.js"])))=>i.map(i=>d[i]);
-import { bN as initTheme, bO as injectMarkdownStyles, bP as init, _ as __vitePreload } from "./chunks/theme.js";
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["chunks/onboarding-view.js","chunks/jsxRuntime.module.js","chunks/theme.js","chunks/voice-utils.js"])))=>i.map(i=>d[i]);
+import { bM as S, bN as initTheme, bO as injectMarkdownStyles, bP as init, _ as __vitePreload } from "./chunks/theme.js";
 import "./chunks/time-format.js";
+window.__moltis_state = S;
 initTheme();
 injectMarkdownStyles();
 const i18nReady = init().catch((err) => {

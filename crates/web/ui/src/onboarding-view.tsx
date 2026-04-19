@@ -8,15 +8,21 @@
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { get as getGon } from "./gon";
+import { fetchChannelStatus } from "./channel-utils";
+import { get as getGon, refresh as refreshGon } from "./gon";
+import { sendRpc } from "./helpers";
 import { t } from "./i18n";
-
 // ── Sub-module imports ──────────────────────────────────────
 import { ensureWsConnected, preferredChatPath } from "./onboarding/shared";
 import { AuthStep } from "./onboarding/steps/AuthStep";
+import { ChannelStep } from "./onboarding/steps/ChannelStep";
 import { IdentityStep } from "./onboarding/steps/IdentityStep";
+import { OpenClawImportStep } from "./onboarding/steps/OpenClawImportStep";
 import { ProviderStep } from "./onboarding/steps/ProviderStep";
+import { RemoteAccessStep } from "./onboarding/steps/RemoteAccessStep";
+import { VoiceStep } from "./onboarding/steps/VoiceStep";
 import type { IdentityInfo } from "./onboarding/types";
+import { fetchVoiceProviders } from "./voice-utils";
 
 // ── Step indicator ──────────────────────────────────────────
 
@@ -59,99 +65,388 @@ function StepDot({ index, label, state }: { index: number; label: string; state:
 	);
 }
 
-// ── Placeholder steps ───────────────────────────────────────
+// ── Summary step helpers ─────────────────────────────────────
 
-function VoiceStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }): VNode {
+const LOW_MEMORY_THRESHOLD = 2 * 1024 * 1024 * 1024;
+
+function formatMemBytes(bytes: number | null | undefined): string {
+	if (bytes == null) return "?";
+	const gb = bytes / (1024 * 1024 * 1024);
+	return `${gb.toFixed(1)} GB`;
+}
+
+function CheckIcon(): VNode {
+	return <span className="icon icon-check-circle shrink-0" style="color:var(--ok)" />;
+}
+
+function WarnIcon(): VNode {
+	return <span className="icon icon-warn-triangle shrink-0" style="color:var(--warn)" />;
+}
+
+function ErrorIcon(): VNode {
+	return <span className="icon icon-x-circle shrink-0" style="color:var(--error)" />;
+}
+
+function InfoIcon(): VNode {
+	return <span className="icon icon-info-circle shrink-0" style="color:var(--muted)" />;
+}
+
+function SummaryRow({
+	icon,
+	label,
+	children,
+}: {
+	icon: VNode;
+	label: string;
+	children: preact.ComponentChildren;
+}): VNode {
 	return (
-		<div className="flex flex-col gap-4">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">Voice (optional)</h2>
-			<p className="text-xs text-[var(--muted)]">Voice configuration step — full TSX conversion pending.</p>
-			<div className="flex flex-wrap items-center gap-3 mt-1">
-				<button className="provider-btn provider-btn-secondary" onClick={onBack}>
-					{t("common:actions.back")}
-				</button>
-				<button className="provider-btn" onClick={onNext}>
-					{t("common:actions.continue")}
-				</button>
+		<div className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-3 flex gap-3 items-start">
+			<div className="mt-0.5">{icon}</div>
+			<div className="flex-1 min-w-0">
+				<div className="text-sm font-medium text-[var(--text-strong)]">{label}</div>
+				<div className="text-xs text-[var(--muted)] mt-1">{children}</div>
 			</div>
 		</div>
 	);
 }
 
-function RemoteAccessStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }): VNode {
-	return (
-		<div className="flex flex-col gap-4">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">Remote Access</h2>
-			<p className="text-xs text-[var(--muted)]">Remote access configuration step — full TSX conversion pending.</p>
-			<div className="flex flex-wrap items-center gap-3 mt-1">
-				<button className="provider-btn provider-btn-secondary" onClick={onBack}>
-					{t("common:actions.back")}
-				</button>
-				<button className="provider-btn" onClick={onNext}>
-					{t("common:actions.continue")}
-				</button>
-			</div>
-		</div>
-	);
+// ── Summary step types ──────────────────────────────────────
+
+interface SummaryProvider {
+	name: string;
+	displayName: string;
+	configured: boolean;
 }
 
-function ChannelStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }): VNode {
-	return (
-		<div className="flex flex-col gap-4">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">Connect a Channel</h2>
-			<p className="text-xs text-[var(--muted)]">Channel configuration step — full TSX conversion pending.</p>
-			<div className="flex flex-wrap items-center gap-3 mt-1">
-				<button className="provider-btn provider-btn-secondary" onClick={onBack}>
-					{t("common:actions.back")}
-				</button>
-				<button className="provider-btn" onClick={onNext}>
-					{t("common:actions.continue")}
-				</button>
-				<button
-					className="text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline"
-					onClick={onNext}
-				>
-					{t("common:actions.skip")}
-				</button>
-			</div>
-		</div>
-	);
+interface SummaryChannel {
+	type: string;
+	account_id: string;
+	name?: string;
+	status: string;
 }
 
-function OpenClawImportStep({ onNext, onBack }: { onNext: () => void; onBack?: (() => void) | null }): VNode {
-	return (
-		<div className="flex flex-col gap-4">
-			<h2 className="text-lg font-medium text-[var(--text-strong)]">Import from OpenClaw</h2>
-			<p className="text-xs text-[var(--muted)]">Import step — full TSX conversion pending.</p>
-			<div className="flex flex-wrap items-center gap-3 mt-1">
-				{onBack ? (
-					<button className="provider-btn provider-btn-secondary" onClick={onBack}>
-						Back
-					</button>
-				) : null}
-				<button className="provider-btn" onClick={onNext}>
-					Skip
-				</button>
-			</div>
-		</div>
-	);
+interface SummaryVoiceProvider {
+	name: string;
+	enabled: boolean;
 }
 
+interface SummaryVoice {
+	tts: SummaryVoiceProvider[];
+	stt: SummaryVoiceProvider[];
+}
+
+interface SummaryData {
+	identity: IdentityInfo | null;
+	mem: { total?: number; available?: number } | null;
+	update: { available?: boolean; latest_version?: string; release_url?: string } | null;
+	voiceEnabled: boolean;
+	providers: SummaryProvider[];
+	channels: SummaryChannel[];
+	tailscale: { tailscale_up?: boolean; installed?: boolean } | null;
+	voice: SummaryVoice | null;
+	sandbox: { backend?: string } | null;
+}
+
+// ── SummaryStep ─────────────────────────────────────────────
+
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: summary step fetches multiple data sources and renders conditional sections
 function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () => void }): VNode {
-	const identity = (getGon("identity") as IdentityInfo) || {};
+	const [loading, setLoading] = useState(true);
+	const [data, setData] = useState<SummaryData | null>(null);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: parallel data fetches and conditional gon reads
+		async function load(): Promise<void> {
+			await refreshGon();
+
+			const identity = getGon("identity") as IdentityInfo | null;
+			const mem = getGon("mem") as { total?: number; available?: number } | null;
+			const update = getGon("update") as {
+				available?: boolean;
+				latest_version?: string;
+				release_url?: string;
+			} | null;
+			const voiceEnabled = getGon("voice_enabled") === true;
+
+			const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes] = await Promise.all([
+				(
+					sendRpc("providers.available", {}) as Promise<{
+						ok?: boolean;
+						payload?: SummaryProvider[];
+					}>
+				).catch(() => null),
+				(
+					fetchChannelStatus() as Promise<{
+						ok?: boolean;
+						payload?: { channels?: SummaryChannel[] };
+					}>
+				).catch(() => null),
+				fetch("/api/tailscale/status")
+					.then((r) =>
+						r.ok
+							? (r.json() as Promise<{
+									tailscale_up?: boolean;
+									installed?: boolean;
+								}>)
+							: null,
+					)
+					.catch(() => null),
+				voiceEnabled
+					? (
+							fetchVoiceProviders() as Promise<{
+								ok?: boolean;
+								payload?: SummaryVoice;
+							}>
+						).catch(() => null)
+					: Promise.resolve(null),
+				fetch(
+					"/api/bootstrap?include_channels=false&include_sessions=false&include_models=false&include_projects=false&include_counts=false&include_identity=false",
+				)
+					.then((r) =>
+						r.ok
+							? (r.json() as Promise<{
+									sandbox?: { backend?: string };
+								}>)
+							: null,
+					)
+					.catch(() => null),
+			]);
+
+			if (cancelled) return;
+
+			setData({
+				identity,
+				mem,
+				update,
+				voiceEnabled,
+				providers: providersRes?.ok ? providersRes.payload || [] : [],
+				channels: channelsRes?.ok ? channelsRes.payload?.channels || [] : [],
+				tailscale: tailscaleRes,
+				voice: voiceRes?.ok ? voiceRes.payload || { tts: [], stt: [] } : null,
+				sandbox: bootstrapRes?.sandbox || null,
+			});
+			setLoading(false);
+		}
+
+		load();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	if (loading || !data) {
+		return (
+			<div className="flex flex-col items-center justify-center gap-3 min-h-[200px]">
+				<div className="inline-block w-8 h-8 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin" />
+				<div className="text-sm text-[var(--muted)]">{t("onboarding:summary.loadingSummary")}</div>
+			</div>
+		);
+	}
+
+	const activeModel = localStorage.getItem("moltis-model");
+	const configuredProviders = data.providers.filter((p) => p.configured);
+
 	return (
 		<div className="flex flex-col gap-4">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">{t("onboarding:summary.title")}</h2>
-			<p className="text-xs text-[var(--muted)]">
+			<p className="text-xs text-[var(--muted)] leading-relaxed">
 				Overview of your configuration. You can change any of these later in Settings.
 			</p>
+
+			<div className="flex flex-col gap-2">
+				{/* Identity */}
+				<SummaryRow
+					icon={data.identity?.user_name && data.identity?.name ? <CheckIcon /> : <WarnIcon />}
+					label="Identity"
+				>
+					{data.identity?.user_name && data.identity?.name ? (
+						<>
+							You: <span className="font-medium text-[var(--text)]">{data.identity.user_name}</span> Agent:{" "}
+							<span className="font-medium text-[var(--text)]">
+								{data.identity.emoji || ""} {data.identity.name}
+							</span>
+						</>
+					) : (
+						<span className="text-[var(--warn)]">Identity not fully configured</span>
+					)}
+				</SummaryRow>
+
+				{/* LLMs */}
+				<SummaryRow icon={configuredProviders.length > 0 ? <CheckIcon /> : <ErrorIcon />} label="LLMs">
+					{configuredProviders.length > 0 ? (
+						<div className="flex flex-col gap-1">
+							<div className="flex flex-wrap gap-1">
+								{configuredProviders.map((p) => (
+									<span key={p.name} className="provider-item-badge configured">
+										{p.displayName}
+									</span>
+								))}
+							</div>
+							{activeModel ? (
+								<div>
+									Active model: <span className="font-mono font-medium text-[var(--text)]">{activeModel}</span>
+								</div>
+							) : null}
+						</div>
+					) : (
+						<span className="text-[var(--error)]">No LLM providers configured</span>
+					)}
+				</SummaryRow>
+
+				{/* Channels */}
+				<SummaryRow
+					icon={
+						data.channels.length > 0 ? (
+							data.channels.some((c) => c.status === "error") ? (
+								<ErrorIcon />
+							) : data.channels.some((c) => c.status === "disconnected") ? (
+								<WarnIcon />
+							) : (
+								<CheckIcon />
+							)
+						) : (
+							<InfoIcon />
+						)
+					}
+					label="Channels"
+				>
+					{data.channels.length > 0 ? (
+						<div className="flex flex-col gap-1">
+							{data.channels.map((ch) => {
+								const statusColor =
+									ch.status === "connected" ? "var(--ok)" : ch.status === "error" ? "var(--error)" : "var(--warn)";
+								return (
+									<div key={ch.account_id} className="flex items-center gap-1">
+										<span style={`color:${statusColor}`}>{"\u25CF"}</span>
+										<span className="font-medium text-[var(--text)]">{ch.type}</span>: {ch.name || ch.account_id}
+										<span>({ch.status})</span>
+									</div>
+								);
+							})}
+						</div>
+					) : (
+						<>No channels configured</>
+					)}
+				</SummaryRow>
+
+				{/* System Memory */}
+				<SummaryRow
+					icon={data.mem?.total && data.mem.total < LOW_MEMORY_THRESHOLD ? <WarnIcon /> : <CheckIcon />}
+					label="System Memory"
+				>
+					{data.mem ? (
+						<>
+							Total: <span className="font-medium text-[var(--text)]">{formatMemBytes(data.mem.total)}</span> Available:{" "}
+							<span className="font-medium text-[var(--text)]">{formatMemBytes(data.mem.available)}</span>
+							{data.mem.total && data.mem.total < LOW_MEMORY_THRESHOLD ? (
+								<div className="text-[var(--warn)] mt-1">
+									Low memory detected. Consider upgrading to an instance with more RAM.
+								</div>
+							) : null}
+						</>
+					) : (
+						<>Memory info unavailable</>
+					)}
+				</SummaryRow>
+
+				{/* Sandbox */}
+				<SummaryRow
+					icon={data.sandbox?.backend && data.sandbox.backend !== "none" ? <CheckIcon /> : <InfoIcon />}
+					label="Sandbox"
+				>
+					{data.sandbox?.backend && data.sandbox.backend !== "none" ? (
+						<>
+							Backend: <span className="font-medium text-[var(--text)]">{data.sandbox.backend}</span>
+						</>
+					) : (
+						<>No container runtime detected</>
+					)}
+				</SummaryRow>
+
+				{/* Version */}
+				<SummaryRow icon={data.update?.available ? <WarnIcon /> : <CheckIcon />} label="Version">
+					{data.update?.available ? (
+						<>
+							Update available:{" "}
+							<a
+								href={data.update.release_url || "#"}
+								target="_blank"
+								rel="noopener"
+								className="text-[var(--accent)] underline font-medium"
+							>
+								{data.update.latest_version}
+							</a>
+						</>
+					) : (
+						<>You are running the latest version.</>
+					)}
+				</SummaryRow>
+
+				{/* Tailscale (hidden if feature not compiled) */}
+				{data.tailscale !== null ? (
+					<SummaryRow
+						icon={
+							data.tailscale?.tailscale_up ? <CheckIcon /> : data.tailscale?.installed ? <WarnIcon /> : <InfoIcon />
+						}
+						label="Tailscale"
+					>
+						{data.tailscale?.tailscale_up ? (
+							<>Connected</>
+						) : data.tailscale?.installed ? (
+							<>
+								Installed but not connected &mdash;{" "}
+								<a href="/settings/remote-access" className="text-[var(--accent)] underline">
+									Configure in Settings
+								</a>
+							</>
+						) : (
+							<>Not installed. Install Tailscale for secure remote access.</>
+						)}
+					</SummaryRow>
+				) : null}
+
+				{/* Voice (hidden if not enabled) */}
+				{data.voiceEnabled ? (
+					<SummaryRow
+						icon={
+							data.voice && [...data.voice.tts, ...data.voice.stt].some((p) => p.enabled) ? <CheckIcon /> : <InfoIcon />
+						}
+						label="Voice"
+					>
+						{(() => {
+							if (!data.voice) return <>Voice providers unavailable</>;
+							const enabledStt = data.voice.stt.filter((p) => p.enabled).map((p) => p.name);
+							const enabledTts = data.voice.tts.filter((p) => p.enabled).map((p) => p.name);
+							if (enabledStt.length === 0 && enabledTts.length === 0) return <>No voice providers enabled</>;
+							return (
+								<div className="flex flex-col gap-0.5">
+									{enabledStt.length > 0 ? (
+										<div>
+											STT: <span className="font-medium text-[var(--text)]">{enabledStt.join(", ")}</span>
+										</div>
+									) : null}
+									{enabledTts.length > 0 ? (
+										<div>
+											TTS: <span className="font-medium text-[var(--text)]">{enabledTts.join(", ")}</span>
+										</div>
+									) : null}
+								</div>
+							);
+						})()}
+					</SummaryRow>
+				) : null}
+			</div>
+
 			<div className="flex flex-wrap items-center gap-3 mt-1">
-				<button className="provider-btn provider-btn-secondary" onClick={onBack}>
+				<button type="button" className="provider-btn provider-btn-secondary" onClick={onBack}>
 					{t("common:actions.back")}
 				</button>
 				<div className="flex-1" />
-				<button className="provider-btn" onClick={onFinish}>
-					{identity.emoji || ""} {identity.name || "Your agent"}, reporting for duty
+				<button type="button" className="provider-btn" onClick={onFinish}>
+					{data.identity?.emoji || ""} {data.identity?.name || "Your agent"}, reporting for duty
 				</button>
 			</div>
 		</div>

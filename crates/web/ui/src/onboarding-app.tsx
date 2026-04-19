@@ -1,6 +1,10 @@
 import { init as initI18n } from "./i18n";
+import * as S from "./state";
 import { initTheme, injectMarkdownStyles } from "./theme";
 import "./time-format";
+
+// Expose state module for E2E test WS mocking.
+window.__moltis_state = S;
 
 initTheme();
 injectMarkdownStyles();

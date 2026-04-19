@@ -1,6 +1,37 @@
 import { u } from "./jsxRuntime.module.js";
-import { Z as t, aw as d, av as y, ax as A, d as sendRpc, bG as modelVersionScore, ay as S, aM as R } from "./theme.js";
-import { c as connectWs, e as eventListeners, s as subscribeEvents, t as targetValue, w as prepareCreationOptions, x as detectPasskeyName, g as get, r as refresh, E as EmojiPicker, n as validateIdentityFields, u as updateIdentity, d as completeProviderOAuth, i as saveProviderKey, v as validateProviderKey, p as providerApiKeyHelp, j as testModel, k as isModelServiceNotConfigured, m as humanizeProbeError, h as startProviderOAuth } from "./webauthn-helpers.js";
+import { Z as t, aw as d, av as y, ax as A, d as sendRpc, ay as S, bG as modelVersionScore, w as activeSessionKey, aM as R } from "./theme.js";
+import { y as connectWs, A as eventListeners, z as subscribeEvents, t as targetValue, R as prepareCreationOptions, S as detectPasskeyName, w as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, g as get, s as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, r as generateWebhookSecretHex, q as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, B as refresh, E as EmojiPicker, O as validateIdentityFields, P as updateIdentity, G as completeProviderOAuth, I as saveProviderKey, F as validateProviderKey, D as providerApiKeyHelp, J as testModel, K as isModelServiceNotConfigured, N as humanizeProbeError, H as startProviderOAuth, T as fetchVoiceProviders, Y as toggleVoiceProvider, Z as saveVoiceKey, _ as saveVoiceSettings, $ as VOICE_COUNTERPART_IDS, U as fetchPhrase, V as testTts, W as decodeBase64Safe, X as transcribeAudio, u as fetchChannelStatus } from "./voice-utils.js";
+var WsEventName = /* @__PURE__ */ ((WsEventName2) => {
+  WsEventName2["Chat"] = "chat";
+  WsEventName2["Error"] = "error";
+  WsEventName2["AuthCredentialsChanged"] = "auth.credentials_changed";
+  WsEventName2["ExecApprovalRequested"] = "exec.approval.requested";
+  WsEventName2["LogsEntry"] = "logs.entry";
+  WsEventName2["SandboxPrepare"] = "sandbox.prepare";
+  WsEventName2["SandboxImageBuild"] = "sandbox.image.build";
+  WsEventName2["SandboxImageProvision"] = "sandbox.image.provision";
+  WsEventName2["SandboxHostProvision"] = "sandbox.host.provision";
+  WsEventName2["BrowserImagePull"] = "browser.image.pull";
+  WsEventName2["LocalLlmDownload"] = "local-llm.download";
+  WsEventName2["ModelsUpdated"] = "models.updated";
+  WsEventName2["LocationRequest"] = "location.request";
+  WsEventName2["NetworkAuditEntry"] = "network.audit.entry";
+  WsEventName2["Tick"] = "tick";
+  WsEventName2["Session"] = "session";
+  WsEventName2["Channel"] = "channel";
+  WsEventName2["Presence"] = "presence";
+  WsEventName2["UpdateAvailable"] = "update.available";
+  WsEventName2["McpStatus"] = "mcp.status";
+  WsEventName2["HooksStatus"] = "hooks.status";
+  WsEventName2["MetricsUpdate"] = "metrics.update";
+  WsEventName2["SkillsInstallProgress"] = "skills.install.progress";
+  WsEventName2["PushSubscriptions"] = "push.subscriptions";
+  WsEventName2["NodePairRequested"] = "node.pair.requested";
+  WsEventName2["NodePairResolved"] = "node.pair.resolved";
+  WsEventName2["DevicePairResolved"] = "device.pair.resolved";
+  WsEventName2["NodeTelemetry"] = "node.telemetry";
+  return WsEventName2;
+})(WsEventName || {});
 let wsStarted = false;
 function ensureWsConnected() {
   if (wsStarted) return;
@@ -525,6 +556,1906 @@ function AuthStep({ onNext, skippable }) {
     ) : null })
   ] });
 }
+function ChannelStorageNotice() {
+  return /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)]", children: [
+    /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Storage note." }),
+    " ",
+    channelStorageNote()
+  ] });
+}
+function AdvancedConfigPatchField({ value, onInput }) {
+  return /* @__PURE__ */ u("details", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
+    /* @__PURE__ */ u("summary", { className: "cursor-pointer text-xs font-medium text-[var(--text-strong)]", children: "Advanced Config JSON" }),
+    /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-2", children: [
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Optional JSON object merged on top of the form before save. Use this for channel-specific settings that do not have dedicated fields yet." }),
+      /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Advanced config JSON patch (optional)" }),
+        /* @__PURE__ */ u(
+          "textarea",
+          {
+            name: "channel_advanced_config",
+            className: "provider-key-input w-full min-h-[140px] font-mono text-xs",
+            value,
+            onInput: (e) => onInput(targetValue(e)),
+            placeholder: '{"reply_to_message": true}'
+          }
+        )
+      ] })
+    ] })
+  ] });
+}
+function ChannelTypeSelector({ onSelect, offered }) {
+  const channelOptions = [
+    ["telegram", "icon-telegram", "Telegram"],
+    ["whatsapp", "icon-whatsapp", "WhatsApp"],
+    ["msteams", "icon-msteams", "Microsoft Teams"],
+    ["discord", "icon-discord", "Discord"],
+    ["slack", "icon-slack", "Slack"],
+    ["matrix", "icon-matrix", "Matrix"],
+    ["nostr", "icon-nostr", "Nostr"]
+  ].filter(([type]) => offered.has(type));
+  return /* @__PURE__ */ u("div", { className: "grid grid-cols-2 gap-3 md:grid-cols-3", "data-testid": "channel-type-selector", children: channelOptions.map(([type, iconClass, label]) => /* @__PURE__ */ u(
+    "button",
+    {
+      type: "button",
+      className: "backend-card w-full min-h-[120px] items-center justify-center gap-4 px-4 py-8 text-center",
+      onClick: () => onSelect(type),
+      children: [
+        /* @__PURE__ */ u("span", { className: `icon icon-xl ${iconClass}` }),
+        /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: label })
+      ]
+    },
+    type
+  )) });
+}
+function channelDisplayLabel(type) {
+  if (type === "msteams") return "Microsoft Teams";
+  if (type === "discord") return "Discord";
+  if (type === "slack") return "Slack";
+  if (type === "whatsapp") return "WhatsApp";
+  if (type === "matrix") return "Matrix";
+  if (type === "nostr") return "Nostr";
+  return "Telegram";
+}
+function ChannelSuccess({
+  channelName,
+  channelType: type,
+  onAnother
+}) {
+  const label = channelDisplayLabel(type);
+  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--ok)] bg-[var(--surface)] p-4 flex gap-3 items-center", children: [
+      /* @__PURE__ */ u("span", { className: "icon icon-lg icon-check-circle shrink-0", style: "color:var(--ok)" }),
+      /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("div", { className: "text-sm font-medium text-[var(--text-strong)]", children: "Channel connected" }),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: [
+          channelName,
+          " (",
+          label,
+          ") is now linked to your agent."
+        ] })
+      ] })
+    ] }),
+    type === "discord" && /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1.5", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Next steps" }),
+      /* @__PURE__ */ u("span", { children: [
+        "• ",
+        /* @__PURE__ */ u("strong", { children: "Invite to a server:" }),
+        " the invite link was shown on the previous screen. You can also generate one in the",
+        " ",
+        /* @__PURE__ */ u(
+          "a",
+          {
+            href: "https://discord.com/developers/applications",
+            target: "_blank",
+            rel: "noopener",
+            className: "text-[var(--accent)] underline",
+            children: "Developer Portal"
+          }
+        ),
+        " ",
+        "→ OAuth2 → URL Generator (scope: bot, permissions: Send Messages, Attach Files, Read Message History)."
+      ] }),
+      /* @__PURE__ */ u("span", { children: [
+        "• ",
+        /* @__PURE__ */ u("strong", { children: "DM the bot:" }),
+        " search for the bot’s username in Discord and click Message. Make sure your username is in the DM allowlist."
+      ] }),
+      /* @__PURE__ */ u("span", { children: [
+        "• ",
+        /* @__PURE__ */ u("strong", { children: "In a server:" }),
+        " @mention the bot to get a response."
+      ] })
+    ] }),
+    /* @__PURE__ */ u(
+      "button",
+      {
+        type: "button",
+        className: "text-xs text-[var(--accent)] cursor-pointer bg-transparent border-none underline self-start",
+        onClick: onAnother,
+        children: "Connect another channel"
+      }
+    )
+  ] });
+}
+function TelegramForm({ onConnected, error, setError }) {
+  const [accountId, setAccountId] = d("");
+  const [token, setToken] = d("");
+  const [dmPolicy, setDmPolicy] = d("allowlist");
+  const [allowlist, setAllowlist] = d("");
+  const [advancedConfig, setAdvancedConfig] = d("");
+  const [saving, setSaving] = d(false);
+  function onSubmit(e) {
+    e.preventDefault();
+    const v = validateChannelFields("telegram", accountId, token);
+    if (!v.valid) {
+      setError(v.error);
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfig);
+    if (!advancedPatch.ok) {
+      setError(advancedPatch.error);
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    const allowlistEntries = allowlist.trim().split(/\n/).map((s) => s.trim()).filter(Boolean);
+    const config = {
+      token: token.trim(),
+      dm_policy: dmPolicy,
+      mention_mode: "mention",
+      allowlist: allowlistEntries
+    };
+    Object.assign(config, advancedPatch.value);
+    addChannel("telegram", accountId.trim(), config).then((res) => {
+      setSaving(false);
+      if (res == null ? void 0 : res.ok) {
+        onConnected(accountId.trim(), "telegram");
+      } else {
+        setError((res == null ? void 0 : res.error) && (res.error.message || res.error.detail) || "Failed to connect bot.");
+      }
+    });
+  }
+  return /* @__PURE__ */ u("form", { onSubmit, className: "flex flex-col gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "How to create a Telegram bot" }),
+      /* @__PURE__ */ u("span", { children: [
+        "1. Open",
+        " ",
+        /* @__PURE__ */ u("a", { href: "https://t.me/BotFather", target: "_blank", rel: "noopener", className: "text-[var(--accent)] underline", children: "@BotFather" }),
+        " ",
+        "in Telegram"
+      ] }),
+      /* @__PURE__ */ u("span", { children: "2. Send /newbot and follow the prompts" }),
+      /* @__PURE__ */ u("span", { children: "3. Copy the bot token and paste it below" })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Bot username" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: accountId,
+          onInput: (e) => setAccountId(targetValue(e)),
+          placeholder: "e.g. my_assistant_bot",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "telegram_bot_username",
+          autoFocus: true
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Bot token (from @BotFather)" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "password",
+          className: "provider-key-input w-full",
+          value: token,
+          onInput: (e) => setToken(targetValue(e)),
+          placeholder: "123456:ABC-DEF...",
+          autoComplete: "new-password",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "telegram_bot_token"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Policy" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: dmPolicy,
+          onChange: (e) => setDmPolicy(targetValue(e)),
+          children: [
+            /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only (recommended)" }),
+            /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+            /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Your Telegram username(s)" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: allowlist,
+          onInput: (e) => setAllowlist(targetValue(e)),
+          placeholder: "your_username",
+          style: "resize:vertical;font-family:var(--font-body);"
+        }
+      ),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: "One username per line, without the @ sign. These users can DM your bot." })
+    ] }),
+    /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
+    error && /* @__PURE__ */ u(ErrorPanel, { message: error }),
+    /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: saving, children: saving ? "Connecting…" : "Connect Bot" })
+  ] });
+}
+function discordInviteUrl(token) {
+  if (!token) return "";
+  const parts = token.split(".");
+  if (parts.length < 3) return "";
+  try {
+    const id = atob(parts[0]);
+    if (!/^\d+$/.test(id)) return "";
+    return `https://discord.com/oauth2/authorize?client_id=${id}&scope=bot&permissions=100352`;
+  } catch {
+    return "";
+  }
+}
+function DiscordForm({ onConnected, error, setError }) {
+  const [accountId, setAccountId] = d("");
+  const [token, setToken] = d("");
+  const [dmPolicy, setDmPolicy] = d("allowlist");
+  const [allowlist, setAllowlist] = d("");
+  const [advancedConfig, setAdvancedConfig] = d("");
+  const [saving, setSaving] = d(false);
+  function onSubmit(e) {
+    e.preventDefault();
+    const v = validateChannelFields("discord", accountId, token);
+    if (!v.valid) {
+      setError(v.error);
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfig);
+    if (!advancedPatch.ok) {
+      setError(advancedPatch.error);
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    const allowlistEntries = allowlist.trim().split(/\n/).map((s) => s.trim()).filter(Boolean);
+    const config = {
+      token: token.trim(),
+      dm_policy: dmPolicy,
+      mention_mode: "mention",
+      allowlist: allowlistEntries
+    };
+    Object.assign(config, advancedPatch.value);
+    addChannel("discord", accountId.trim(), config).then((res) => {
+      setSaving(false);
+      if (res == null ? void 0 : res.ok) {
+        onConnected(accountId.trim(), "discord");
+      } else {
+        setError((res == null ? void 0 : res.error) && (res.error.message || res.error.detail) || "Failed to connect bot.");
+      }
+    });
+  }
+  const inviteUrl = discordInviteUrl(token);
+  return /* @__PURE__ */ u("form", { onSubmit, className: "flex flex-col gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "How to set up a Discord bot" }),
+      /* @__PURE__ */ u("span", { children: [
+        "1. Go to the",
+        " ",
+        /* @__PURE__ */ u(
+          "a",
+          {
+            href: "https://discord.com/developers/applications",
+            target: "_blank",
+            rel: "noopener",
+            className: "text-[var(--accent)] underline",
+            children: "Discord Developer Portal"
+          }
+        )
+      ] }),
+      /* @__PURE__ */ u("span", { children: "2. Create a new Application → Bot tab → copy the bot token" }),
+      /* @__PURE__ */ u("span", { children: [
+        "3. Enable ",
+        /* @__PURE__ */ u("strong", { children: "Message Content Intent" }),
+        " under Privileged Gateway Intents"
+      ] }),
+      /* @__PURE__ */ u("span", { children: "4. Paste the token below — an invite link will be generated automatically" }),
+      /* @__PURE__ */ u("span", { children: "5. You can also DM the bot directly without adding it to a server" })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Account ID" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: accountId,
+          onInput: (e) => setAccountId(targetValue(e)),
+          placeholder: "e.g. my_discord_bot",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "discord_account_id",
+          autoFocus: true
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Bot token" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "password",
+          className: "provider-key-input w-full",
+          value: token,
+          onInput: (e) => setToken(targetValue(e)),
+          placeholder: "Bot token from Developer Portal",
+          autoComplete: "new-password",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "discord_bot_token"
+        }
+      )
+    ] }),
+    inviteUrl && /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2.5 text-xs flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Invite bot to a server" }),
+      /* @__PURE__ */ u("span", { className: "text-[var(--muted)]", children: "Open this link to add the bot (Send Messages, Attach Files, Read Message History):" }),
+      /* @__PURE__ */ u("a", { href: inviteUrl, target: "_blank", rel: "noopener", className: "text-[var(--accent)] underline break-all", children: inviteUrl })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Policy" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: dmPolicy,
+          onChange: (e) => setDmPolicy(targetValue(e)),
+          children: [
+            /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only (recommended)" }),
+            /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+            /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Allowed Discord username(s)" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: allowlist,
+          onInput: (e) => setAllowlist(targetValue(e)),
+          placeholder: "your_username",
+          style: "resize:vertical;font-family:var(--font-body);"
+        }
+      ),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: "One username per line. These users can DM your bot." })
+    ] }),
+    /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
+    error && /* @__PURE__ */ u(ErrorPanel, { message: error }),
+    /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: saving, children: saving ? "Connecting…" : "Connect Bot" })
+  ] });
+}
+function NostrForm({ onConnected, error, setError }) {
+  const [accountId, setAccountId] = d("");
+  const [secretKey, setSecretKey] = d("");
+  const [relays, setRelays] = d("wss://relay.damus.io, wss://relay.nostr.band, wss://nos.lol");
+  const [dmPolicy, setDmPolicy] = d("allowlist");
+  const [allowlist, setAllowlist] = d("");
+  const [advancedConfig, setAdvancedConfig] = d("");
+  const [saving, setSaving] = d(false);
+  function onSubmit(e) {
+    e.preventDefault();
+    if (!accountId.trim()) {
+      setError("Account ID is required.");
+      return;
+    }
+    if (!secretKey.trim()) {
+      setError("Secret key is required.");
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfig);
+    if (!advancedPatch.ok) {
+      setError(advancedPatch.error);
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    const relayList = relays.split(",").map((r) => r.trim()).filter(Boolean);
+    const allowlistEntries = allowlist.trim().split(/\n/).map((s) => s.trim()).filter(Boolean);
+    const config = {
+      secret_key: secretKey.trim(),
+      relays: relayList,
+      dm_policy: dmPolicy,
+      allowed_pubkeys: allowlistEntries
+    };
+    Object.assign(config, advancedPatch.value);
+    addChannel("nostr", accountId.trim(), config).then((res) => {
+      setSaving(false);
+      if (res == null ? void 0 : res.ok) {
+        onConnected(accountId.trim(), "nostr");
+      } else {
+        setError((res == null ? void 0 : res.error) && (res.error.message || res.error.detail) || "Failed to connect channel.");
+      }
+    });
+  }
+  return /* @__PURE__ */ u("form", { onSubmit, className: "flex flex-col gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "How to set up Nostr DMs" }),
+      /* @__PURE__ */ u("span", { children: "1. Generate or use an existing Nostr secret key (nsec1... or hex)" }),
+      /* @__PURE__ */ u("span", { children: "2. Configure relay URLs (defaults are provided)" }),
+      /* @__PURE__ */ u("span", { children: "3. Add allowed public keys (npub1... or hex) to the allowlist" }),
+      /* @__PURE__ */ u("span", { children: "4. Send a DM to the bot's public key from any Nostr client" })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Account ID" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: accountId,
+          onInput: (e) => setAccountId(targetValue(e)),
+          placeholder: "e.g. my-nostr-bot",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "nostr_account_id",
+          autoFocus: true
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Secret Key" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "password",
+          className: "provider-key-input w-full",
+          value: secretKey,
+          onInput: (e) => setSecretKey(targetValue(e)),
+          placeholder: "nsec1... or 64-char hex",
+          autoComplete: "new-password",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "nostr_secret_key"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Relays (comma-separated)" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: relays,
+          onInput: (e) => setRelays(targetValue(e)),
+          placeholder: "wss://relay.damus.io, wss://nos.lol",
+          name: "nostr_relays"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Policy" }),
+      /* @__PURE__ */ u("select", { className: "channel-select w-full", value: dmPolicy, onChange: (e) => setDmPolicy(targetValue(e)), children: [
+        /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+        /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+        /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+      ] })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Allowed Public Keys (one per line, npub1 or hex)" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 3,
+          value: allowlist,
+          onInput: (e) => setAllowlist(targetValue(e)),
+          placeholder: "npub1abc123...\nnpub1def456...",
+          name: "nostr_allowed_pubkeys"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
+    error && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)]", children: error }),
+    /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: saving, children: saving ? "Connecting…" : "Connect Nostr" })
+  ] });
+}
+function fetchRemoteAccessStatus(path, featureDisabledMessage) {
+  return fetch(path).then((response) => {
+    const contentType = response.headers.get("content-type") || "";
+    if (response.status === 404 || !contentType.includes("application/json")) {
+      return {
+        error: featureDisabledMessage,
+        feature_disabled: true
+      };
+    }
+    return response.json();
+  }).catch((err) => ({
+    error: err.message
+  }));
+}
+function preferredPublicBaseUrl({
+  ngrokStatus,
+  tailscaleStatus
+}) {
+  const ngrokUrl = typeof (ngrokStatus == null ? void 0 : ngrokStatus.public_url) === "string" ? ngrokStatus.public_url.trim() : "";
+  if (ngrokUrl) return ngrokUrl;
+  const tailscaleUrl = typeof (tailscaleStatus == null ? void 0 : tailscaleStatus.url) === "string" ? tailscaleStatus.url.trim() : "";
+  if ((tailscaleStatus == null ? void 0 : tailscaleStatus.mode) === "funnel" && tailscaleUrl) return tailscaleUrl;
+  return "";
+}
+function RemoteAccessStep({ onNext, onBack }) {
+  const [authReady, setAuthReady] = d(false);
+  const [tsStatus, setTsStatus] = d(null);
+  const [tsError, setTsError] = d(null);
+  const [tsWarning, setTsWarning] = d(null);
+  const [tsLoading, setTsLoading] = d(true);
+  const [configuringTailscale, setConfiguringTailscale] = d(false);
+  const [ngStatus, setNgStatus] = d(null);
+  const [ngError, setNgError] = d(null);
+  const [ngLoading, setNgLoading] = d(true);
+  const [ngSaving, setNgSaving] = d(false);
+  const [ngMsg, setNgMsg] = d(null);
+  const [ngForm, setNgForm] = d({
+    enabled: false,
+    authtoken: "",
+    domain: ""
+  });
+  function loadAuthStatus() {
+    return fetch("/api/auth/status").then((response) => response.ok ? response.json() : null).then((data) => {
+      const ready = (data == null ? void 0 : data.auth_disabled) ? false : (data == null ? void 0 : data.has_password) === true;
+      setAuthReady(ready);
+    }).catch(() => {
+      setAuthReady(false);
+    });
+  }
+  function loadTailscaleStatus() {
+    setTsLoading(true);
+    return fetchRemoteAccessStatus("/api/tailscale/status", "Tailscale feature is not enabled in this build.").then((data) => {
+      setTsStatus((data == null ? void 0 : data.feature_disabled) ? null : data);
+      setTsError((data == null ? void 0 : data.error) || null);
+      setTsWarning((data == null ? void 0 : data.passkey_warning) || null);
+      setTsLoading(false);
+    }).catch((err) => {
+      setTsError(err.message);
+      setTsLoading(false);
+    });
+  }
+  function loadNgrokStatus() {
+    setNgLoading(true);
+    return fetchRemoteAccessStatus("/api/ngrok/status", "ngrok feature is not enabled in this build.").then((data) => {
+      setNgStatus((data == null ? void 0 : data.feature_disabled) ? null : data);
+      setNgError((data == null ? void 0 : data.error) || null);
+      setNgLoading(false);
+      setNgForm((current) => ({
+        enabled: Boolean(data == null ? void 0 : data.enabled),
+        authtoken: current.authtoken,
+        domain: current.domain || (data == null ? void 0 : data.domain) || ""
+      }));
+    }).catch((err) => {
+      setNgError(err.message);
+      setNgLoading(false);
+    });
+  }
+  y(() => {
+    loadAuthStatus();
+    loadTailscaleStatus();
+    loadNgrokStatus();
+  }, []);
+  function setTailscaleMode(mode) {
+    setConfiguringTailscale(true);
+    setTsError(null);
+    setTsWarning(null);
+    fetch("/api/tailscale/configure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode })
+    }).then(
+      (response) => response.json().catch(() => ({})).then((data) => ({ ok: response.ok, data }))
+    ).then(({ ok, data }) => {
+      if (!ok || data.error) {
+        setTsError(data.error || "Failed to configure Tailscale.");
+      } else {
+        setTsWarning(data.passkey_warning || null);
+        loadTailscaleStatus();
+      }
+      setConfiguringTailscale(false);
+    }).catch((err) => {
+      setTsError(err.message);
+      setConfiguringTailscale(false);
+    });
+  }
+  function toggleTailscaleFunnel() {
+    const nextMode = (tsStatus == null ? void 0 : tsStatus.mode) === "funnel" ? "off" : "funnel";
+    setTailscaleMode(nextMode);
+  }
+  function applyNgrokConfig(nextForm, successMessage) {
+    setNgSaving(true);
+    setNgError(null);
+    setNgMsg(null);
+    fetch("/api/ngrok/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled: nextForm.enabled,
+        authtoken: nextForm.authtoken,
+        clear_authtoken: false,
+        domain: nextForm.domain
+      })
+    }).then(
+      (response) => response.json().catch(() => ({})).then((data) => ({ ok: response.ok, data }))
+    ).then(({ ok, data }) => {
+      setNgSaving(false);
+      if (!ok || data.error) {
+        setNgError(data.error || "Failed to apply ngrok settings.");
+        return;
+      }
+      const status = data.status || null;
+      setNgMsg(successMessage);
+      setNgStatus(status);
+      setNgForm({
+        enabled: Boolean(status == null ? void 0 : status.enabled),
+        authtoken: "",
+        domain: (status == null ? void 0 : status.domain) || nextForm.domain || ""
+      });
+    }).catch((err) => {
+      setNgSaving(false);
+      setNgError(err.message);
+    });
+  }
+  function toggleNgrokEnabled() {
+    const nextForm = {
+      ...ngForm,
+      enabled: !ngForm.enabled
+    };
+    setNgForm(nextForm);
+    applyNgrokConfig(nextForm, `ngrok ${nextForm.enabled ? "enabled" : "disabled"}.`);
+  }
+  const tailscaleAvailable = tsStatus !== null;
+  const tailscaleFunnelEnabled = (tsStatus == null ? void 0 : tsStatus.mode) === "funnel";
+  const tailscaleInstalled = (tsStatus == null ? void 0 : tsStatus.installed) !== false;
+  const tailscaleBlocked = !(tailscaleAvailable && tailscaleInstalled) || (tsStatus == null ? void 0 : tsStatus.tailscale_up) === false;
+  const ngrokAvailable = ngStatus !== null;
+  const activePublicUrl = preferredPublicBaseUrl({
+    ngrokStatus: ngStatus,
+    tailscaleStatus: tsStatus
+  });
+  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+    /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Remote Access" }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public endpoints are optional for most channels, but Microsoft Teams needs one. Enable Tailscale Funnel, ngrok, or both before connecting team channels." }),
+    activePublicUrl ? /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Active public URL" }),
+      /* @__PURE__ */ u("a", { href: activePublicUrl, target: "_blank", rel: "noopener", className: "text-[var(--accent)] underline break-all", children: activePublicUrl }),
+      /* @__PURE__ */ u("span", { children: "The Teams webhook step will prefill this URL." })
+    ] }) : /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)]", children: "Teams webhooks need a public URL. If you skip this step, you can still configure remote access later in Settings." }),
+    /* @__PURE__ */ u("section", { className: "rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-col gap-4", children: [
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("h3", { className: "text-base font-medium text-[var(--text-strong)]", children: "Tailscale Funnel" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public HTTPS through Tailscale. Tailscale Serve is tailnet-only, so Teams webhooks need Funnel instead." })
+      ] }),
+      tsLoading ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Loading Tailscale status…" }) : /* @__PURE__ */ u("div", { className: "text-sm text-[var(--text-strong)]", children: [
+        "Tailscale Funnel is ",
+        tailscaleFunnelEnabled ? "enabled" : "disabled",
+        "."
+      ] }),
+      (tsStatus == null ? void 0 : tsStatus.url) && tailscaleFunnelEnabled ? /* @__PURE__ */ u(
+        "a",
+        {
+          href: tsStatus.url,
+          target: "_blank",
+          rel: "noopener",
+          className: "text-sm text-[var(--accent)] underline break-all",
+          children: tsStatus.url
+        }
+      ) : null,
+      tsError ? /* @__PURE__ */ u(ErrorPanel, { message: tsError }) : null,
+      tsWarning ? /* @__PURE__ */ u("div", { className: "alert-warning-text max-w-form", children: tsWarning }) : null,
+      (tsStatus == null ? void 0 : tsStatus.installed) === false ? /* @__PURE__ */ u(
+        "a",
+        {
+          href: "https://tailscale.com/download",
+          target: "_blank",
+          rel: "noopener",
+          className: "provider-btn self-start no-underline",
+          children: "Install Tailscale"
+        }
+      ) : null,
+      (tsStatus == null ? void 0 : tsStatus.tailscale_up) === false ? /* @__PURE__ */ u("div", { className: "alert-warning-text max-w-form", children: [
+        /* @__PURE__ */ u("span", { className: "alert-label-warn", children: "Warning:" }),
+        " Start Tailscale before enabling Funnel."
+      ] }) : null,
+      authReady ? null : /* @__PURE__ */ u("div", { className: "alert-warning-text max-w-form", children: [
+        /* @__PURE__ */ u("span", { className: "alert-label-warn", children: "Warning:" }),
+        " Funnel can be enabled now, but remote visitors will see the setup-required page until authentication is configured."
+      ] }),
+      /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "provider-btn self-start",
+          disabled: tsLoading || configuringTailscale || tailscaleBlocked,
+          onClick: toggleTailscaleFunnel,
+          children: configuringTailscale ? "Applying…" : tailscaleFunnelEnabled ? "Disable Funnel" : "Enable Funnel"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("section", { className: "rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-col gap-4", children: [
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("h3", { className: "text-base font-medium text-[var(--text-strong)]", children: "ngrok" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public HTTPS without installing an external binary. This is useful for demos, shared testing, and Teams." })
+      ] }),
+      ngLoading ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Loading ngrok status…" }) : /* @__PURE__ */ u("div", { className: "text-sm text-[var(--text-strong)]", children: [
+        "ngrok is ",
+        ngForm.enabled ? "enabled" : "disabled",
+        "."
+      ] }),
+      (ngStatus == null ? void 0 : ngStatus.public_url) ? /* @__PURE__ */ u(
+        "a",
+        {
+          href: ngStatus.public_url,
+          target: "_blank",
+          rel: "noopener",
+          className: "text-sm text-[var(--accent)] underline break-all",
+          children: ngStatus.public_url
+        }
+      ) : null,
+      ngError ? /* @__PURE__ */ u(ErrorPanel, { message: ngError }) : null,
+      (ngStatus == null ? void 0 : ngStatus.passkey_warning) ? /* @__PURE__ */ u("div", { className: "alert-warning-text max-w-form", children: ngStatus.passkey_warning }) : null,
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", htmlFor: "onboarding-ngrok-authtoken", children: "Authtoken" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            id: "onboarding-ngrok-authtoken",
+            type: "password",
+            className: "provider-key-input w-full",
+            placeholder: (ngStatus == null ? void 0 : ngStatus.authtoken_source) ? "Leave blank to keep the current token" : "Paste your ngrok authtoken",
+            value: ngForm.authtoken,
+            onInput: (e) => setNgForm({ ...ngForm, authtoken: targetValue(e) })
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
+          "Create or copy an authtoken from",
+          " ",
+          /* @__PURE__ */ u(
+            "a",
+            {
+              href: "https://dashboard.ngrok.com/get-started/your-authtoken",
+              target: "_blank",
+              rel: "noopener",
+              className: "text-[var(--accent)] underline",
+              children: "ngrok dashboard"
+            }
+          ),
+          "."
+        ] })
+      ] }),
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", htmlFor: "onboarding-ngrok-domain", children: "Reserved domain (optional)" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            id: "onboarding-ngrok-domain",
+            type: "text",
+            className: "provider-key-input w-full",
+            placeholder: "team-gateway.ngrok.app",
+            value: ngForm.domain,
+            onInput: (e) => setNgForm({ ...ngForm, domain: targetValue(e) })
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Use a reserved domain if you want a stable public hostname." })
+      ] }),
+      ngMsg ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--ok)]", children: ngMsg }) : null,
+      /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "provider-btn self-start",
+          disabled: !ngrokAvailable || ngLoading || ngSaving,
+          onClick: toggleNgrokEnabled,
+          children: ngSaving ? "Applying…" : ngForm.enabled ? "Disable ngrok" : "Enable ngrok"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
+      /* @__PURE__ */ u("button", { type: "button", className: "provider-btn provider-btn-secondary", onClick: onBack, children: t("common:actions.back") }),
+      /* @__PURE__ */ u("button", { type: "button", className: "provider-btn", onClick: onNext, children: t("common:actions.continue") }),
+      /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline",
+          onClick: onNext,
+          children: "Skip for now"
+        }
+      )
+    ] })
+  ] });
+}
+function MatrixForm({ onConnected, error, setError }) {
+  const [homeserver, setHomeserver] = d(MATRIX_DEFAULT_HOMESERVER);
+  const [authMode, setAuthMode] = d("password");
+  const [userId, setUserId] = d("");
+  const [credential, setCredential] = d("");
+  const [deviceDisplayName, setDeviceDisplayName] = d("");
+  const [ownershipMode, setOwnershipMode] = d("moltis_owned");
+  const [dmPolicy, setDmPolicy] = d("allowlist");
+  const [roomPolicy, setRoomPolicy] = d("allowlist");
+  const [mentionMode, setMentionMode] = d("mention");
+  const [autoJoin, setAutoJoin] = d("always");
+  const [otpSelfApproval, setOtpSelfApproval] = d(true);
+  const [otpCooldown, setOtpCooldown] = d("300");
+  const [userAllowlist, setUserAllowlist] = d("");
+  const [roomAllowlist, setRoomAllowlist] = d("");
+  const [advancedConfig, setAdvancedConfig] = d("");
+  const [saving, setSaving] = d(false);
+  function splitLines(value) {
+    return value.trim().split(/\n/).map((s) => s.trim()).filter(Boolean);
+  }
+  function onSubmit(e) {
+    e.preventDefault();
+    const accountId = deriveMatrixAccountId({ userId, homeserver });
+    const v = validateChannelFields("matrix", accountId, credential, {
+      matrixAuthMode: authMode,
+      matrixUserId: userId
+    });
+    if (!v.valid) {
+      setError(v.error);
+      return;
+    }
+    if (!homeserver.trim()) {
+      setError("Homeserver URL is required.");
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfig);
+    if (!advancedPatch.ok) {
+      setError(advancedPatch.error);
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    const config = {
+      homeserver: homeserver.trim(),
+      ownership_mode: normalizeMatrixAuthMode(authMode) === "password" ? normalizeMatrixOwnershipMode(ownershipMode) : "user_managed",
+      dm_policy: dmPolicy,
+      room_policy: roomPolicy,
+      mention_mode: mentionMode,
+      auto_join: autoJoin,
+      otp_self_approval: otpSelfApproval,
+      otp_cooldown_secs: normalizeMatrixOtpCooldown(otpCooldown),
+      user_allowlist: splitLines(userAllowlist),
+      room_allowlist: splitLines(roomAllowlist)
+    };
+    if (normalizeMatrixAuthMode(authMode) === "password") {
+      config.password = credential.trim();
+    } else {
+      config.access_token = credential.trim();
+    }
+    if (userId.trim()) config.user_id = userId.trim();
+    if (deviceDisplayName.trim()) config.device_display_name = deviceDisplayName.trim();
+    Object.assign(config, advancedPatch.value);
+    addChannel("matrix", accountId.trim(), config).then((res) => {
+      setSaving(false);
+      if (res == null ? void 0 : res.ok) {
+        onConnected(accountId.trim(), "matrix");
+      } else {
+        setError((res == null ? void 0 : res.error) && (res.error.message || res.error.detail) || "Failed to connect Matrix.");
+      }
+    });
+  }
+  return /* @__PURE__ */ u("form", { onSubmit, className: "flex flex-col gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Connect a Matrix bot user" }),
+      /* @__PURE__ */ u("span", { children: [
+        "1. Leave the homeserver as ",
+        /* @__PURE__ */ u("span", { className: "font-mono", children: MATRIX_DEFAULT_HOMESERVER }),
+        " for matrix.org accounts"
+      ] }),
+      /* @__PURE__ */ u("span", { children: "2. Password is the default because it supports encrypted Matrix chats. Access token auth is only for plain Matrix traffic" }),
+      /* @__PURE__ */ u("span", { children: "3. Moltis generates the local account ID automatically from the Matrix user or homeserver" })
+    ] }),
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-100 flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-emerald-50", children: "Encrypted chats require password auth" }),
+      /* @__PURE__ */ u("span", { children: MATRIX_ENCRYPTION_GUIDANCE })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Homeserver URL" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: homeserver,
+          onInput: (e) => setHomeserver(targetValue(e)),
+          placeholder: MATRIX_DEFAULT_HOMESERVER,
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "matrix_homeserver",
+          autoFocus: true
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Authentication" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: authMode,
+          onChange: (e) => setAuthMode(normalizeMatrixAuthMode(targetValue(e))),
+          children: [
+            /* @__PURE__ */ u("option", { value: "password", children: "Password" }),
+            /* @__PURE__ */ u("option", { value: "access_token", children: "Access token" })
+          ]
+        }
+      ),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: matrixAuthModeGuidance(authMode) })
+    ] }),
+    authMode === "password" ? /* @__PURE__ */ u("label", { className: "flex items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "checkbox",
+          "aria-label": "Let Moltis own this Matrix account",
+          checked: normalizeMatrixOwnershipMode(ownershipMode) === "moltis_owned",
+          onChange: (e) => setOwnershipMode(targetChecked(e) ? "moltis_owned" : "user_managed")
+        }
+      ),
+      /* @__PURE__ */ u("span", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: "Let Moltis own this Matrix account" }),
+        /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: matrixOwnershipModeGuidance(authMode, ownershipMode) })
+      ] })
+    ] }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: matrixOwnershipModeGuidance(authMode, "user_managed") }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: [
+        "Matrix User ID",
+        authMode === "password" ? " (required)" : " (optional)"
+      ] }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: userId,
+          onInput: (e) => setUserId(targetValue(e)),
+          placeholder: "@bot:example.com",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "matrix_user_id"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: matrixCredentialLabel(authMode) }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "password",
+          className: "provider-key-input w-full",
+          value: credential,
+          onInput: (e) => setCredential(targetValue(e)),
+          placeholder: matrixCredentialPlaceholder(authMode),
+          autoComplete: "new-password",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "matrix_credential"
+        }
+      ),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: [
+        authMode === "password" ? /* @__PURE__ */ u(S, { children: "Use the password for the dedicated Matrix bot account. This is the required mode for encrypted Matrix chats because Moltis needs to create and persist its own Matrix device keys." }) : /* @__PURE__ */ u(S, { children: [
+          "Get the access token in Element:",
+          " ",
+          /* @__PURE__ */ u("span", { className: "font-mono", children: "Settings -> Help & About -> Advanced -> Access Token" }),
+          ". Access token mode does ",
+          /* @__PURE__ */ u("span", { className: "font-medium", children: "not" }),
+          " support encrypted Matrix chats because Moltis cannot import that existing device's private encryption keys."
+        ] }),
+        " ",
+        /* @__PURE__ */ u("a", { href: MATRIX_DOCS_URL, target: "_blank", rel: "noreferrer", className: "text-[var(--accent)] underline", children: "Matrix setup docs" })
+      ] })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Device Display Name (optional)" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: deviceDisplayName,
+          onInput: (e) => setDeviceDisplayName(targetValue(e)),
+          placeholder: "Moltis Matrix Bot",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "matrix_device_display_name"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Policy" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: dmPolicy,
+          onChange: (e) => setDmPolicy(targetValue(e)),
+          children: [
+            /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only (recommended)" }),
+            /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+            /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Room Policy" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: roomPolicy,
+          onChange: (e) => setRoomPolicy(targetValue(e)),
+          children: [
+            /* @__PURE__ */ u("option", { value: "allowlist", children: "Room allowlist only (recommended)" }),
+            /* @__PURE__ */ u("option", { value: "open", children: "Open (any joined room)" }),
+            /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Room Mention Mode" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: mentionMode,
+          onChange: (e) => setMentionMode(targetValue(e)),
+          children: [
+            /* @__PURE__ */ u("option", { value: "mention", children: "Must mention bot" }),
+            /* @__PURE__ */ u("option", { value: "always", children: "Always respond" }),
+            /* @__PURE__ */ u("option", { value: "none", children: "Never respond in rooms" })
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Invite Auto-Join" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: autoJoin,
+          onChange: (e) => setAutoJoin(targetValue(e)),
+          children: [
+            /* @__PURE__ */ u("option", { value: "always", children: "Always join invites" }),
+            /* @__PURE__ */ u("option", { value: "allowlist", children: "Only when inviter or room is allowlisted" }),
+            /* @__PURE__ */ u("option", { value: "off", children: "Do not auto-join" })
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Unknown DM Approval" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: otpSelfApproval ? "on" : "off",
+          onChange: (e) => setOtpSelfApproval(targetValue(e) !== "off"),
+          children: [
+            /* @__PURE__ */ u("option", { value: "on", children: "PIN challenge enabled (recommended)" }),
+            /* @__PURE__ */ u("option", { value: "off", children: "Reject unknown DMs without a PIN" })
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "PIN Cooldown Seconds" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "number",
+          min: "1",
+          step: "1",
+          className: "provider-key-input w-full",
+          value: otpCooldown,
+          onInput: (e) => setOtpCooldown(targetValue(e)),
+          name: "matrix_otp_cooldown_secs"
+        }
+      ),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: "With DM policy on allowlist, unknown users get a 6-digit PIN challenge by default." })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Allowlist (Matrix user IDs)" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: userAllowlist,
+          onInput: (e) => setUserAllowlist(targetValue(e)),
+          placeholder: "@alice:example.com",
+          style: "resize:vertical;font-family:var(--font-body);"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Room Allowlist (room IDs or aliases)" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: roomAllowlist,
+          onInput: (e) => setRoomAllowlist(targetValue(e)),
+          placeholder: "!room:example.com",
+          style: "resize:vertical;font-family:var(--font-body);"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
+    error && /* @__PURE__ */ u(ErrorPanel, { message: error }),
+    /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: saving, children: saving ? "Connecting…" : "Connect Matrix" })
+  ] });
+}
+function WhatsAppForm({ onConnected, error, setError }) {
+  const [accountId, setAccountId] = d("");
+  const [dmPolicy, setDmPolicy] = d("allowlist");
+  const [allowlist, setAllowlist] = d("");
+  const [advancedConfig, setAdvancedConfig] = d("");
+  const [saving, setSaving] = d(false);
+  const [pairingStarted, setPairingStarted] = d(false);
+  const [qrData, setQrData] = d(null);
+  const [qrSvg, setQrSvg] = d(null);
+  const [qrSvgUrl, setQrSvgUrl] = d(null);
+  const [pairingError, setPairingError] = d(null);
+  const unsubRef = A(null);
+  const hadQrRef = A(false);
+  y(() => {
+    return () => {
+      if (unsubRef.current) unsubRef.current();
+    };
+  }, []);
+  y(() => {
+    if (!pairingStarted) return void 0;
+    const id = accountId.trim() || "main";
+    const timer = setInterval(async () => {
+      var _a, _b, _c;
+      try {
+        const res = await sendRpc("channels.status", {});
+        if (!(res == null ? void 0 : res.ok)) return;
+        const ch = (((_a = res.payload) == null ? void 0 : _a.channels) || []).find((c) => c.type === "whatsapp" && c.account_id === id);
+        if (!ch) return;
+        if (ch.status === "connected") {
+          onConnected(id, "whatsapp");
+          return;
+        }
+        if (hadQrRef.current && !((_b = ch.extra) == null ? void 0 : _b.qr_data)) {
+          onConnected(id, "whatsapp");
+          return;
+        }
+        if ((_c = ch.extra) == null ? void 0 : _c.qr_data) {
+          hadQrRef.current = true;
+          setQrData(ch.extra.qr_data);
+          if (ch.extra.qr_svg) setQrSvg(ch.extra.qr_svg);
+        }
+      } catch (_e) {
+      }
+    }, 2e3);
+    return () => clearInterval(timer);
+  }, [pairingStarted]);
+  y(() => {
+    if (!qrSvg) {
+      setQrSvgUrl(null);
+      return void 0;
+    }
+    let nextUrl = null;
+    try {
+      nextUrl = URL.createObjectURL(new Blob([qrSvg], { type: "image/svg+xml" }));
+      setQrSvgUrl(nextUrl);
+    } catch (_err) {
+      setQrSvgUrl(null);
+    }
+    return () => {
+      if (nextUrl) URL.revokeObjectURL(nextUrl);
+    };
+  }, [qrSvg]);
+  function onStartPairing(e) {
+    e.preventDefault();
+    const id = accountId.trim() || "main";
+    const advancedPatch = parseChannelConfigPatch(advancedConfig);
+    if (!advancedPatch.ok) {
+      setError(advancedPatch.error);
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    setQrData(null);
+    setQrSvg(null);
+    setPairingError(null);
+    if (unsubRef.current) unsubRef.current();
+    unsubRef.current = onEvent(WsEventName.Channel, (p) => {
+      if (p.account_id !== id) return;
+      if (p.kind === "pairing_qr_code") {
+        setQrData(p.qr_data);
+        setQrSvg(p.qr_svg || null);
+      }
+      if (p.kind === "pairing_complete") onConnected(id, "whatsapp");
+      if (p.kind === "pairing_failed") setPairingError(p.reason || "Pairing failed");
+    });
+    const allowlistEntries = allowlist.trim().split(/\n/).map((s) => s.trim()).filter(Boolean);
+    const config = { dm_policy: dmPolicy, allowlist: allowlistEntries };
+    Object.assign(config, advancedPatch.value);
+    addChannel("whatsapp", id, config).then((res) => {
+      setSaving(false);
+      if (res == null ? void 0 : res.ok) {
+        setPairingStarted(true);
+      } else {
+        if (unsubRef.current) {
+          unsubRef.current();
+          unsubRef.current = null;
+        }
+        setError((res == null ? void 0 : res.error) && (res.error.message || res.error.detail) || "Failed to start pairing.");
+      }
+    });
+  }
+  if (pairingStarted) {
+    return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4 items-center", children: [
+      pairingError ? /* @__PURE__ */ u(ErrorPanel, { message: pairingError }) : qrData ? /* @__PURE__ */ u(
+        "div",
+        {
+          className: "rounded-lg bg-white p-3",
+          style: "width:200px;height:200px;display:flex;align-items:center;justify-content:center;",
+          children: qrSvgUrl ? /* @__PURE__ */ u("img", { src: qrSvgUrl, alt: "WhatsApp pairing QR code", style: "width:100%;height:100%;display:block;" }) : /* @__PURE__ */ u("div", { className: "text-center text-xs text-gray-600", children: /* @__PURE__ */ u("div", { style: "font-family:monospace;font-size:9px;word-break:break-all;max-height:180px;overflow:hidden;", children: qrData.substring(0, 200) }) })
+        }
+      ) : /* @__PURE__ */ u("div", { className: "text-sm text-[var(--muted)]", children: "Waiting for QR code..." }),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] text-center", children: "Scan the QR code from your terminal, or open WhatsApp > Settings > Linked Devices > Link a Device." }),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] text-center italic", children: "Only new messages will be processed. Past conversations are not synced." })
+    ] });
+  }
+  return /* @__PURE__ */ u("form", { onSubmit: onStartPairing, className: "flex flex-col gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Link your WhatsApp" }),
+      /* @__PURE__ */ u("span", { children: '1. Click "Start Pairing" to generate a QR code' }),
+      /* @__PURE__ */ u("span", { children: "2. Open WhatsApp > Settings > Linked Devices > Link a Device" }),
+      /* @__PURE__ */ u("span", { children: "3. Scan the QR code to connect" }),
+      /* @__PURE__ */ u("span", { className: "mt-1 italic", children: "Only new messages will be processed — past conversations are not synced." })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Account ID (optional)" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: accountId,
+          onInput: (e) => setAccountId(targetValue(e)),
+          placeholder: "main",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "whatsapp_account_id"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Policy" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: dmPolicy,
+          onChange: (e) => setDmPolicy(targetValue(e)),
+          children: [
+            /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+            /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+            /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Allowlist (optional)" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: allowlist,
+          onInput: (e) => setAllowlist(targetValue(e)),
+          placeholder: "phone number or identifier",
+          style: "resize:vertical;font-family:var(--font-body);"
+        }
+      ),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: 'One per line. Only needed if DM policy is "Allowlist only".' })
+    ] }),
+    /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
+    error && /* @__PURE__ */ u(ErrorPanel, { message: error }),
+    /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: saving, children: saving ? "Starting…" : "Start Pairing" })
+  ] });
+}
+function SlackForm({ onConnected, error, setError }) {
+  const [accountId, setAccountId] = d("");
+  const [botToken, setBotToken] = d("");
+  const [connectionMode, setConnectionMode] = d("socket_mode");
+  const [appToken, setAppToken] = d("");
+  const [signingSecret, setSigningSecret] = d("");
+  const [dmPolicy, setDmPolicy] = d("allowlist");
+  const [allowlist, setAllowlist] = d("");
+  const [advancedConfig, setAdvancedConfig] = d("");
+  const [saving, setSaving] = d(false);
+  function onSubmit(e) {
+    e.preventDefault();
+    if (!accountId.trim()) {
+      setError("Account ID is required.");
+      return;
+    }
+    if (!botToken.trim()) {
+      setError("Bot Token is required.");
+      return;
+    }
+    if (connectionMode === "socket_mode" && !appToken.trim()) {
+      setError("App Token is required for Socket Mode.");
+      return;
+    }
+    if (connectionMode === "events_api" && !signingSecret.trim()) {
+      setError("Signing Secret is required for Events API mode.");
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfig);
+    if (!advancedPatch.ok) {
+      setError(advancedPatch.error);
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    const allowlistEntries = allowlist.trim().split(/\n/).map((s) => s.trim()).filter(Boolean);
+    const config = {
+      bot_token: botToken.trim(),
+      connection_mode: connectionMode,
+      dm_policy: dmPolicy,
+      mention_mode: "mention",
+      allowlist: allowlistEntries
+    };
+    if (connectionMode === "socket_mode") config.app_token = appToken.trim();
+    if (connectionMode === "events_api") config.signing_secret = signingSecret.trim();
+    Object.assign(config, advancedPatch.value);
+    addChannel("slack", accountId.trim(), config).then((res) => {
+      setSaving(false);
+      if (res == null ? void 0 : res.ok) {
+        onConnected(accountId.trim(), "slack");
+      } else {
+        setError((res == null ? void 0 : res.error) && (res.error.message || res.error.detail) || "Failed to connect Slack.");
+      }
+    });
+  }
+  return /* @__PURE__ */ u("form", { onSubmit, className: "flex flex-col gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "How to set up a Slack bot" }),
+      /* @__PURE__ */ u("span", { children: [
+        "1. Go to",
+        " ",
+        /* @__PURE__ */ u(
+          "a",
+          {
+            href: "https://api.slack.com/apps",
+            target: "_blank",
+            rel: "noopener",
+            className: "text-[var(--accent)] underline",
+            children: "api.slack.com/apps"
+          }
+        ),
+        " ",
+        "and create a new app"
+      ] }),
+      /* @__PURE__ */ u("span", { children: [
+        "2. Under OAuth & Permissions, add bot scopes: ",
+        /* @__PURE__ */ u("code", { className: "text-[var(--accent)]", children: "chat:write" }),
+        ",",
+        " ",
+        /* @__PURE__ */ u("code", { className: "text-[var(--accent)]", children: "channels:history" }),
+        ",",
+        " ",
+        /* @__PURE__ */ u("code", { className: "text-[var(--accent)]", children: "im:history" }),
+        ",",
+        " ",
+        /* @__PURE__ */ u("code", { className: "text-[var(--accent)]", children: "app_mentions:read" })
+      ] }),
+      /* @__PURE__ */ u("span", { children: "3. Install the app to your workspace and copy the Bot User OAuth Token" }),
+      /* @__PURE__ */ u("span", { children: [
+        "4. For Socket Mode: enable it and generate an App-Level Token with",
+        " ",
+        /* @__PURE__ */ u("code", { className: "text-[var(--accent)]", children: "connections:write" }),
+        " scope"
+      ] }),
+      /* @__PURE__ */ u("span", { children: "5. For Events API: set the Request URL to your server’s webhook endpoint" })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Account ID" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: accountId,
+          onInput: (e) => setAccountId(targetValue(e)),
+          placeholder: "e.g. my-slack-bot",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "slack_account_id",
+          autoFocus: true
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Bot Token (xoxb-...)" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "password",
+          className: "provider-key-input w-full",
+          value: botToken,
+          onInput: (e) => setBotToken(targetValue(e)),
+          placeholder: "xoxb-...",
+          autoComplete: "new-password",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "slack_bot_token"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Connection Mode" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: connectionMode,
+          onChange: (e) => setConnectionMode(targetValue(e)),
+          children: [
+            /* @__PURE__ */ u("option", { value: "socket_mode", children: "Socket Mode (recommended)" }),
+            /* @__PURE__ */ u("option", { value: "events_api", children: "Events API (HTTP webhook)" })
+          ]
+        }
+      )
+    ] }),
+    connectionMode === "socket_mode" && /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "App Token (xapp-...)" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "password",
+          className: "provider-key-input w-full",
+          value: appToken,
+          onInput: (e) => setAppToken(targetValue(e)),
+          placeholder: "xapp-...",
+          autoComplete: "new-password",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "slack_app_token"
+        }
+      )
+    ] }),
+    connectionMode === "events_api" && /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Signing Secret" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "password",
+          className: "provider-key-input w-full",
+          value: signingSecret,
+          onInput: (e) => setSigningSecret(targetValue(e)),
+          placeholder: "Signing secret from Basic Information",
+          autoComplete: "new-password",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "slack_signing_secret"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Policy" }),
+      /* @__PURE__ */ u(
+        "select",
+        {
+          className: "provider-key-input w-full cursor-pointer",
+          value: dmPolicy,
+          onChange: (e) => setDmPolicy(targetValue(e)),
+          children: [
+            /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only (recommended)" }),
+            /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+            /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+          ]
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Allowed Slack user(s)" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: allowlist,
+          onInput: (e) => setAllowlist(targetValue(e)),
+          placeholder: "slack_username",
+          style: "resize:vertical;font-family:var(--font-body);"
+        }
+      ),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: "One per line. These users can DM your bot." })
+    ] }),
+    /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
+    error && /* @__PURE__ */ u(ErrorPanel, { message: error }),
+    /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: saving, children: saving ? "Connecting…" : "Connect Slack" })
+  ] });
+}
+function TeamsForm({ onConnected, error, setError }) {
+  const [appId, setAppId] = d("");
+  const [appPassword, setAppPassword] = d("");
+  const [webhookSecret, setWebhookSecret] = d("");
+  const [baseUrl, setBaseUrl] = d(defaultTeamsBaseUrl());
+  const [bootstrapEndpoint, setBootstrapEndpoint] = d("");
+  const [advancedConfig, setAdvancedConfig] = d("");
+  const [saving, setSaving] = d(false);
+  y(() => {
+    let cancelled = false;
+    const currentDefault = defaultTeamsBaseUrl();
+    if (baseUrl !== currentDefault) return void 0;
+    Promise.all([
+      fetchRemoteAccessStatus("/api/ngrok/status", "ngrok feature is not enabled in this build."),
+      fetchRemoteAccessStatus("/api/tailscale/status", "Tailscale feature is not enabled in this build.")
+    ]).then(([nextNgrokStatus, nextTailscaleStatus]) => {
+      if (cancelled) return;
+      const nextPublicBaseUrl = preferredPublicBaseUrl({
+        ngrokStatus: nextNgrokStatus,
+        tailscaleStatus: nextTailscaleStatus
+      });
+      if (nextPublicBaseUrl) setBaseUrl(nextPublicBaseUrl);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [baseUrl]);
+  function onBootstrap() {
+    const id = appId.trim();
+    if (!id) {
+      setError("Enter App ID first.");
+      return;
+    }
+    let secret = webhookSecret.trim();
+    if (!secret) {
+      secret = generateWebhookSecretHex();
+      setWebhookSecret(secret);
+    }
+    const endpoint = buildTeamsEndpoint(baseUrl, id, secret);
+    if (!endpoint) {
+      setError("Enter a valid public base URL (e.g. https://bot.example.com).");
+      return;
+    }
+    setBootstrapEndpoint(endpoint);
+    setError(null);
+  }
+  function onCopyEndpoint() {
+    var _a;
+    if (!bootstrapEndpoint) return;
+    if (typeof navigator !== "undefined" && ((_a = navigator.clipboard) == null ? void 0 : _a.writeText))
+      navigator.clipboard.writeText(bootstrapEndpoint);
+  }
+  function onSubmit(e) {
+    e.preventDefault();
+    const v = validateChannelFields("msteams", appId, appPassword);
+    if (!v.valid) {
+      setError(v.error);
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfig);
+    if (!advancedPatch.ok) {
+      setError(advancedPatch.error);
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    const config = {
+      app_id: appId.trim(),
+      app_password: appPassword.trim(),
+      dm_policy: "allowlist",
+      mention_mode: "mention",
+      allowlist: []
+    };
+    if (webhookSecret.trim()) config.webhook_secret = webhookSecret.trim();
+    Object.assign(config, advancedPatch.value);
+    addChannel("msteams", appId.trim(), config).then((res) => {
+      setSaving(false);
+      if (res == null ? void 0 : res.ok) {
+        onConnected(appId.trim(), "msteams");
+      } else {
+        setError((res == null ? void 0 : res.error) && (res.error.message || res.error.detail) || "Failed to connect channel.");
+      }
+    });
+  }
+  const isLocalUrl = !baseUrl || /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1?\])/i.test(baseUrl) || baseUrl === defaultTeamsBaseUrl();
+  return /* @__PURE__ */ u("form", { onSubmit, className: "flex flex-col gap-3", children: [
+    isLocalUrl && /* @__PURE__ */ u("div", { className: "rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Public URL required" }),
+      /* @__PURE__ */ u("span", { className: "text-[var(--muted)]", children: [
+        "Teams sends messages via webhook — your server must be reachable over HTTPS. Set up a tunnel in the previous ",
+        /* @__PURE__ */ u("strong", { children: "Remote Access" }),
+        " step, or enter a public URL below."
+      ] })
+    ] }),
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-2", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "How to create a Teams bot" }),
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)] text-[10px] opacity-70", children: "Option A: Teams Developer Portal (easiest)" }),
+      /* @__PURE__ */ u("span", { children: [
+        "1. Open",
+        " ",
+        /* @__PURE__ */ u(
+          "a",
+          {
+            href: "https://dev.teams.microsoft.com/bots",
+            target: "_blank",
+            rel: "noopener",
+            className: "text-[var(--accent)] underline",
+            children: "Teams Developer Portal → Bot Management"
+          }
+        )
+      ] }),
+      /* @__PURE__ */ u("span", { children: [
+        "2. Click ",
+        /* @__PURE__ */ u("strong", { children: "+ New Bot" }),
+        ", give it a name, and click ",
+        /* @__PURE__ */ u("strong", { children: "Add" })
+      ] }),
+      /* @__PURE__ */ u("span", { children: [
+        "3. Go to ",
+        /* @__PURE__ */ u("strong", { children: "Configure" }),
+        " — copy the ",
+        /* @__PURE__ */ u("strong", { children: "Bot ID" }),
+        " (this is your App ID)"
+      ] }),
+      /* @__PURE__ */ u("span", { children: [
+        "4. Under ",
+        /* @__PURE__ */ u("strong", { children: "Client secrets" }),
+        ", click ",
+        /* @__PURE__ */ u("strong", { children: "Add a client secret" }),
+        " and copy the value"
+      ] }),
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)] text-[10px] opacity-70 mt-1", children: "Option B: Azure Portal" }),
+      /* @__PURE__ */ u("span", { children: [
+        "1. Go to",
+        " ",
+        /* @__PURE__ */ u(
+          "a",
+          {
+            href: "https://portal.azure.com/#create/Microsoft.AzureBot",
+            target: "_blank",
+            rel: "noopener",
+            className: "text-[var(--accent)] underline",
+            children: "Azure Portal → Create Azure Bot"
+          }
+        )
+      ] }),
+      /* @__PURE__ */ u("span", { children: [
+        "2. Create the bot, then go to ",
+        /* @__PURE__ */ u("strong", { children: "Configuration" }),
+        " to find the App ID"
+      ] }),
+      /* @__PURE__ */ u("span", { children: [
+        "3. Click ",
+        /* @__PURE__ */ u("strong", { children: "Manage Password" }),
+        " → ",
+        /* @__PURE__ */ u("strong", { children: "New client secret" }),
+        " to get the App Password"
+      ] }),
+      /* @__PURE__ */ u("span", { className: "mt-1", children: [
+        "After creating the bot, generate the endpoint below and paste it as the ",
+        /* @__PURE__ */ u("strong", { children: "Messaging endpoint" }),
+        " in your bot settings."
+      ] })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "App ID (Bot ID from Azure)" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: appId,
+          onInput: (e) => setAppId(targetValue(e)),
+          placeholder: "e.g. 12345678-abcd-efgh-ijkl-000000000000",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "teams_app_id",
+          autoFocus: true
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "App Password (client secret from Azure)" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "password",
+          className: "provider-key-input w-full",
+          value: appPassword,
+          onInput: (e) => setAppPassword(targetValue(e)),
+          placeholder: "Client secret value",
+          autoComplete: "new-password",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "teams_app_password"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: [
+        "Webhook Secret ",
+        /* @__PURE__ */ u("span", { className: "opacity-60", children: "(optional — auto-generated if blank)" })
+      ] }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: webhookSecret,
+          onInput: (e) => setWebhookSecret(targetValue(e)),
+          placeholder: "Leave blank to auto-generate"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: [
+        "Public Base URL ",
+        /* @__PURE__ */ u("span", { className: "opacity-60", children: "(your server’s HTTPS address)" })
+      ] }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: baseUrl,
+          onInput: (e) => setBaseUrl(targetValue(e)),
+          placeholder: "https://bot.example.com"
+        }
+      ),
+      isLocalUrl && /* @__PURE__ */ u("div", { className: "text-[10px] text-amber-600 mt-1", children: "This looks like a local address. Teams webhooks need a publicly reachable HTTPS URL." })
+    ] }),
+    /* @__PURE__ */ u("div", { className: "flex gap-2", children: [
+      /* @__PURE__ */ u("button", { type: "button", className: "provider-btn provider-btn-sm provider-btn-secondary", onClick: onBootstrap, children: "Generate Endpoint" }),
+      bootstrapEndpoint && /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "provider-btn provider-btn-sm provider-btn-secondary",
+          onClick: onCopyEndpoint,
+          children: "Copy"
+        }
+      )
+    ] }),
+    bootstrapEndpoint && /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-2", children: [
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mb-1", children: "Messaging endpoint — paste this into your bot’s configuration:" }),
+      /* @__PURE__ */ u("code", { className: "text-xs block break-all select-all", children: bootstrapEndpoint })
+    ] }),
+    /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
+    error && /* @__PURE__ */ u(ErrorPanel, { message: error }),
+    /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: saving, children: saving ? "Connecting…" : "Connect Teams" })
+  ] });
+}
+function ChannelStep({ onNext, onBack }) {
+  const offeredList = get("channels_offered") || [
+    "telegram",
+    "whatsapp",
+    "discord",
+    "slack",
+    "matrix"
+  ];
+  const offered = new Set(offeredList);
+  const singleType = offeredList.length === 1 ? offeredList[0] : null;
+  const [phase, setPhase] = d(singleType ? "form" : "select");
+  const [selectedType, setSelectedType] = d(singleType);
+  const [connectedName, setConnectedName] = d("");
+  const [connectedType, setConnectedType] = d(null);
+  const [channelError, setChannelError] = d(null);
+  function onSelectType(type) {
+    setSelectedType(type);
+    setPhase("form");
+    setChannelError(null);
+  }
+  function onConnected(name, type) {
+    setConnectedName(name);
+    setConnectedType(type);
+    setPhase("success");
+    setChannelError(null);
+  }
+  function onAnother() {
+    if (singleType) {
+      setPhase("form");
+      setChannelError(null);
+    } else {
+      setPhase("select");
+      setSelectedType(null);
+      setChannelError(null);
+    }
+  }
+  const showBackSelector = phase === "form" && !singleType;
+  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+    /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Connect a Channel" }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Connect a messaging channel so you can chat from your phone or team workspace. You can set this up later in Channels." }),
+    /* @__PURE__ */ u(ChannelStorageNotice, {}),
+    phase === "select" && /* @__PURE__ */ u(ChannelTypeSelector, { onSelect: onSelectType, offered }),
+    phase === "form" && selectedType === "telegram" && /* @__PURE__ */ u(TelegramForm, { onConnected, error: channelError, setError: setChannelError }),
+    phase === "form" && selectedType === "whatsapp" && /* @__PURE__ */ u(WhatsAppForm, { onConnected, error: channelError, setError: setChannelError }),
+    phase === "form" && selectedType === "msteams" && /* @__PURE__ */ u(TeamsForm, { onConnected, error: channelError, setError: setChannelError }),
+    phase === "form" && selectedType === "discord" && /* @__PURE__ */ u(DiscordForm, { onConnected, error: channelError, setError: setChannelError }),
+    phase === "form" && selectedType === "slack" && /* @__PURE__ */ u(SlackForm, { onConnected, error: channelError, setError: setChannelError }),
+    phase === "form" && selectedType === "matrix" && /* @__PURE__ */ u(MatrixForm, { onConnected, error: channelError, setError: setChannelError }),
+    phase === "form" && selectedType === "nostr" && /* @__PURE__ */ u(NostrForm, { onConnected, error: channelError, setError: setChannelError }),
+    phase === "success" && connectedType && /* @__PURE__ */ u(ChannelSuccess, { channelName: connectedName, channelType: connectedType, onAnother }),
+    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
+      /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "provider-btn provider-btn-secondary",
+          onClick: showBackSelector ? () => setPhase("select") : onBack,
+          children: t("common:actions.back")
+        }
+      ),
+      phase === "success" && /* @__PURE__ */ u("button", { type: "button", className: "provider-btn", onClick: onNext, children: t("common:actions.continue") }),
+      /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline",
+          onClick: onNext,
+          children: t("common:actions.skip")
+        }
+      )
+    ] })
+  ] });
+}
 function IdentityStep({ onNext, onBack }) {
   const identityData = get("identity") || {};
   const [userName, setUserName] = d(identityData.user_name || "");
@@ -634,6 +2565,275 @@ function IdentityStep({ onNext, onBack }) {
     ] })
   ] });
 }
+const WS_RETRY_LIMIT$2 = 75;
+const WS_RETRY_DELAY_MS$2 = 200;
+function OpenClawImportStep({ onNext, onBack }) {
+  var _a, _b, _c, _d, _e;
+  const [loading, setLoading] = d(true);
+  const [scan, setScan] = d(null);
+  const [importing, setImporting] = d(false);
+  const [done, setDone] = d(false);
+  const [result, setResult] = d(null);
+  const [error, setError] = d(null);
+  const [selection, setSelection] = d({
+    identity: true,
+    providers: true,
+    skills: true,
+    memory: true,
+    channels: true,
+    sessions: true,
+    workspace_files: true
+  });
+  y(() => {
+    let cancelled = false;
+    let attempts = 0;
+    let retryTimer = null;
+    function loadScan() {
+      if (cancelled) return;
+      sendRpc("openclaw.scan", {}).then((res) => {
+        var _a2, _b2, _c2;
+        if (cancelled) return;
+        if (res == null ? void 0 : res.ok) {
+          setScan(res.payload || null);
+          setLoading(false);
+          return;
+        }
+        if ((((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.code) === "UNAVAILABLE" || ((_b2 = res == null ? void 0 : res.error) == null ? void 0 : _b2.message) === "WebSocket not connected") && attempts < WS_RETRY_LIMIT$2) {
+          attempts += 1;
+          ensureWsConnected();
+          retryTimer = setTimeout(loadScan, WS_RETRY_DELAY_MS$2);
+          return;
+        }
+        setError(((_c2 = res == null ? void 0 : res.error) == null ? void 0 : _c2.message) || "Failed to scan OpenClaw installation");
+        setLoading(false);
+      });
+    }
+    ensureWsConnected();
+    loadScan();
+    return () => {
+      cancelled = true;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+    };
+  }, []);
+  function toggleCategory(key) {
+    setSelection((prev) => {
+      const next = { ...prev };
+      next[key] = !prev[key];
+      return next;
+    });
+  }
+  async function doImport() {
+    var _a2;
+    setImporting(true);
+    setError(null);
+    const res = await sendRpc("openclaw.import", selection);
+    setImporting(false);
+    if (res == null ? void 0 : res.ok) {
+      setResult(res.payload || null);
+      await refresh();
+      setDone(true);
+    } else {
+      setError(((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Import failed");
+    }
+  }
+  if (loading) {
+    return /* @__PURE__ */ u("div", { className: "flex flex-col items-center justify-center gap-3 min-h-[200px]", children: [
+      /* @__PURE__ */ u("div", { className: "inline-block w-8 h-8 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin" }),
+      /* @__PURE__ */ u("div", { className: "text-sm text-[var(--muted)]", children: "Scanning OpenClaw installation…" })
+    ] });
+  }
+  if (done && result) {
+    const total = (result.categories || []).reduce((sum, cat) => sum + (Number(cat.items_imported) || 0), 0);
+    return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+      /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Import Complete" }),
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: [
+        total,
+        " item(s) imported from OpenClaw."
+      ] }),
+      result.categories ? /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: result.categories.map((cat) => /* @__PURE__ */ u("div", { className: "text-xs text-[var(--text)]", children: [
+        /* @__PURE__ */ u("span", { className: "font-mono", children: [
+          "[",
+          cat.status === "success" ? "✓" : cat.status === "partial" ? "~" : cat.status === "skipped" ? "-" : "!",
+          "]"
+        ] }),
+        " ",
+        cat.category,
+        ": ",
+        cat.items_imported,
+        " imported, ",
+        cat.items_skipped,
+        " skipped",
+        (cat.warnings || []).map((w) => /* @__PURE__ */ u("div", { className: "text-[var(--warn)] ml-6", children: w }, w))
+      ] }, cat.category)) }) : null,
+      (((_a = result.todos) == null ? void 0 : _a.length) ?? 0) > 0 ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
+        /* @__PURE__ */ u("div", { className: "font-medium", children: "Not yet supported in Moltis:" }),
+        (result.todos || []).map((td) => /* @__PURE__ */ u("div", { children: [
+          "• ",
+          td.feature,
+          ": ",
+          td.description
+        ] }, td.feature))
+      ] }) : null,
+      /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: /* @__PURE__ */ u("button", { type: "button", className: "provider-btn", onClick: onNext, children: "Continue" }) })
+    ] });
+  }
+  if (!(scan == null ? void 0 : scan.detected)) {
+    return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+      /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Import from OpenClaw" }),
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", children: "Could not scan OpenClaw installation." }),
+      /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
+        onBack ? /* @__PURE__ */ u("button", { type: "button", className: "provider-btn provider-btn-secondary", onClick: onBack, children: "Back" }) : null,
+        /* @__PURE__ */ u("button", { type: "button", className: "provider-btn", onClick: onNext, children: "Skip" })
+      ] })
+    ] });
+  }
+  const telegramAccounts = Number(scan.telegram_accounts) || 0;
+  const discordAccounts = Number(scan.discord_accounts) || 0;
+  const channelParts = [];
+  if (telegramAccounts > 0) channelParts.push(`${telegramAccounts} Telegram account(s)`);
+  if (discordAccounts > 0) channelParts.push(`${discordAccounts} Discord account(s)`);
+  const channelDetail = channelParts.length > 0 ? channelParts.join(", ") : null;
+  const unsupportedChannels = (scan.unsupported_channels || []).filter(
+    (channel) => String(channel).toLowerCase() !== "discord"
+  );
+  const categories = [
+    {
+      key: "identity",
+      label: "Identity",
+      available: !!scan.identity_available,
+      detail: [scan.identity_agent_name, scan.identity_theme].filter(Boolean).join(", ") || null
+    },
+    {
+      key: "providers",
+      label: "Providers",
+      available: !!scan.providers_available,
+      detail: null
+    },
+    {
+      key: "skills",
+      label: "Skills",
+      available: (scan.skills_count ?? 0) > 0,
+      detail: `${scan.skills_count} skill(s)`
+    },
+    {
+      key: "memory",
+      label: "Memory",
+      available: !!scan.memory_available,
+      detail: `${scan.memory_files_count} memory file(s)`
+    },
+    {
+      key: "channels",
+      label: "Channels",
+      available: !!scan.channels_available,
+      detail: channelDetail
+    },
+    {
+      key: "sessions",
+      label: "Sessions",
+      available: (scan.sessions_count ?? 0) > 0,
+      detail: `${scan.sessions_count} session(s)`
+    },
+    {
+      key: "workspace_files",
+      label: "Workspace Files",
+      available: !!scan.workspace_files_available,
+      detail: (((_b = scan.workspace_files_found) == null ? void 0 : _b.length) ?? 0) > 0 ? ((_c = scan.workspace_files_found) == null ? void 0 : _c.join(", ")) || null : null
+    }
+  ];
+  const anySelected = categories.some((c) => c.available && selection[c.key]);
+  const workspaceMissing = !scan.memory_available && (scan.skills_count ?? 0) === 0 && !scan.identity_theme;
+  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+    /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Import from OpenClaw" }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: [
+      "We detected an OpenClaw installation at ",
+      /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: scan.home_dir }),
+      ". Select the data you'd like to bring into Moltis."
+    ] }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "This is a read-only copy — your OpenClaw installation will not be modified or removed. You can keep using OpenClaw alongside Moltis, and re-import at any time from Settings." }),
+    workspaceMissing ? /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: [
+      "If OpenClaw ran on another machine, copy its workspace directory (e.g. ",
+      /* @__PURE__ */ u("code", { children: "clawd/" }),
+      ") into",
+      " ",
+      /* @__PURE__ */ u("code", { children: [
+        scan.home_dir,
+        "/"
+      ] }),
+      " or ",
+      /* @__PURE__ */ u("code", { children: "~/" }),
+      " for a full import including identity, memory, and skills."
+    ] }) : null,
+    error ? /* @__PURE__ */ u(ErrorPanel, { message: error }) : null,
+    /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", style: "max-width:400px;", children: categories.map((cat) => /* @__PURE__ */ u(
+      "label",
+      {
+        className: `flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}`,
+        children: [
+          /* @__PURE__ */ u(
+            "input",
+            {
+              type: "checkbox",
+              checked: selection[cat.key] && cat.available,
+              disabled: !cat.available || importing,
+              onChange: () => toggleCategory(cat.key)
+            }
+          ),
+          /* @__PURE__ */ u("span", { children: cat.label }),
+          cat.detail && cat.available ? /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: [
+            "(",
+            cat.detail,
+            ")"
+          ] }) : null,
+          cat.available ? null : /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: "(not found)" })
+        ]
+      },
+      cat.key
+    )) }),
+    (((_d = scan.agents) == null ? void 0 : _d.length) ?? 0) > 1 ? /* @__PURE__ */ u(
+      "div",
+      {
+        className: "text-xs text-[var(--muted)] leading-relaxed border border-[var(--border)] rounded p-2",
+        style: "max-width:400px;",
+        children: [
+          /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: [
+            (_e = scan.agents) == null ? void 0 : _e.length,
+            " agents detected"
+          ] }),
+          /* @__PURE__ */ u("span", { className: "ml-1", children: "— non-default agents will be created as separate personas:" }),
+          /* @__PURE__ */ u("ul", { className: "mt-1 ml-4 list-disc", children: (scan.agents || []).map((a) => /* @__PURE__ */ u("li", { children: [
+            /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: a.name || a.openclaw_id }),
+            a.is_default ? /* @__PURE__ */ u("span", { className: "ml-1 text-[var(--muted)]", children: "(default)" }) : null,
+            a.theme ? /* @__PURE__ */ u("span", { className: "ml-1 text-[var(--muted)]", children: [
+              "— ",
+              a.theme
+            ] }) : null
+          ] }, a.openclaw_id)) })
+        ]
+      }
+    ) : null,
+    unsupportedChannels.length > 0 ? /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", children: [
+      "Unsupported channels (coming soon): ",
+      unsupportedChannels.join(", ")
+    ] }) : null,
+    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
+      onBack ? /* @__PURE__ */ u("button", { type: "button", className: "provider-btn provider-btn-secondary", onClick: onBack, disabled: importing, children: "Back" }) : null,
+      /* @__PURE__ */ u("button", { type: "button", className: "provider-btn", onClick: doImport, disabled: !anySelected || importing, children: importing ? "Importing…" : "Import Selected" }),
+      /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline",
+          onClick: onNext,
+          disabled: importing,
+          children: "Skip for now"
+        }
+      )
+    ] })
+  ] });
+}
 const OPENAI_COMPATIBLE = ["openai", "mistral", "openrouter", "cerebras", "minimax", "moonshot", "venice", "ollama"];
 const BYOM_PROVIDERS = ["venice"];
 const RECOMMENDED_PROVIDERS = /* @__PURE__ */ new Set([
@@ -647,8 +2847,8 @@ const RECOMMENDED_PROVIDERS = /* @__PURE__ */ new Set([
   "local-llm",
   "lmstudio"
 ]);
-const WS_RETRY_LIMIT = 75;
-const WS_RETRY_DELAY_MS = 200;
+const WS_RETRY_LIMIT$1 = 75;
+const WS_RETRY_DELAY_MS$1 = 200;
 function sortProviders(list) {
   list.sort((a, b) => {
     const aOrder = Number.isFinite(a.uiOrder) ? a.uiOrder : Number.MAX_SAFE_INTEGER;
@@ -1139,9 +3339,9 @@ function ProviderStep({ onNext, onBack }) {
           setLoading(false);
           return;
         }
-        if ((((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.code) === "UNAVAILABLE" || ((_b = res == null ? void 0 : res.error) == null ? void 0 : _b.message) === "WebSocket not connected") && attempts < WS_RETRY_LIMIT) {
+        if ((((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.code) === "UNAVAILABLE" || ((_b = res == null ? void 0 : res.error) == null ? void 0 : _b.message) === "WebSocket not connected") && attempts < WS_RETRY_LIMIT$1) {
           attempts += 1;
-          window.setTimeout(loadProviders, WS_RETRY_DELAY_MS);
+          window.setTimeout(loadProviders, WS_RETRY_DELAY_MS$1);
           return;
         }
         setLoading(false);
@@ -1618,6 +3818,553 @@ function ProviderStep({ onNext, onBack }) {
     ] })
   ] });
 }
+const WS_RETRY_LIMIT = 75;
+const WS_RETRY_DELAY_MS = 200;
+function OnboardingVoiceRow({
+  provider,
+  type,
+  configuring,
+  apiKey,
+  setApiKey,
+  baseUrl,
+  setBaseUrl,
+  saving,
+  error,
+  onSaveKey,
+  onStartConfigure,
+  onCancelConfigure,
+  onTest,
+  voiceTesting,
+  voiceTestResult
+}) {
+  var _a;
+  const isConfiguring = configuring === provider.id;
+  const keyInputRef = A(null);
+  y(() => {
+    if (isConfiguring && keyInputRef.current) {
+      keyInputRef.current.focus();
+    }
+  }, [isConfiguring]);
+  const supportsBaseUrl = ((_a = provider.capabilities) == null ? void 0 : _a.baseUrl) === true;
+  const keySourceLabel = provider.keySource === "env" ? "(from env)" : provider.keySource === "llm_provider" ? "(from LLM provider)" : "";
+  const testState = (voiceTesting == null ? void 0 : voiceTesting.id) === provider.id && (voiceTesting == null ? void 0 : voiceTesting.type) === type ? voiceTesting : null;
+  const showTestBtn = provider.available;
+  let testBtnText = "Test";
+  let testBtnDisabled = false;
+  if (testState) {
+    if (testState.phase === "recording") {
+      testBtnText = "Stop";
+    } else {
+      testBtnText = "Testing…";
+      testBtnDisabled = true;
+    }
+  }
+  return /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface)] p-3", children: [
+    /* @__PURE__ */ u("div", { className: "flex items-center gap-3", children: [
+      /* @__PURE__ */ u("div", { className: "flex-1 min-w-0 flex flex-col gap-0.5", children: [
+        /* @__PURE__ */ u("div", { className: "flex items-center gap-2 flex-wrap", children: [
+          /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: provider.name }),
+          provider.available ? /* @__PURE__ */ u("span", { className: "provider-item-badge configured", children: "configured" }) : /* @__PURE__ */ u("span", { className: "provider-item-badge needs-key", children: "needs key" }),
+          keySourceLabel ? /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: keySourceLabel }) : null
+        ] }),
+        provider.description ? /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: [
+          provider.description,
+          !isConfiguring && provider.keyUrl ? /* @__PURE__ */ u(S, { children: [
+            " — ",
+            "get your key at",
+            " ",
+            /* @__PURE__ */ u("a", { href: provider.keyUrl, target: "_blank", rel: "noopener", className: "text-[var(--accent)] underline", children: provider.keyUrlLabel || provider.keyUrl })
+          ] }) : null
+        ] }) : null
+      ] }),
+      /* @__PURE__ */ u("div", { className: "shrink-0 flex items-center gap-2", children: [
+        isConfiguring ? null : /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-secondary provider-btn-sm",
+            onClick: () => onStartConfigure(provider.id),
+            children: "Configure"
+          }
+        ),
+        showTestBtn ? /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-secondary provider-btn-sm",
+            onClick: onTest,
+            disabled: testBtnDisabled,
+            title: type === "tts" ? "Test voice output" : "Test voice input",
+            children: testBtnText
+          }
+        ) : null
+      ] })
+    ] }),
+    (testState == null ? void 0 : testState.phase) === "recording" ? /* @__PURE__ */ u("div", { className: "voice-recording-hint mt-2", children: [
+      /* @__PURE__ */ u("span", { className: "voice-recording-dot" }),
+      /* @__PURE__ */ u("span", { children: "Speak now, then click Stop when finished" })
+    ] }) : null,
+    (testState == null ? void 0 : testState.phase) === "transcribing" ? /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)] mt-1 block", children: "Transcribing…" }) : null,
+    (testState == null ? void 0 : testState.phase) === "testing" && type === "tts" ? /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)] mt-1 block", children: "Playing audio…" }) : null,
+    (voiceTestResult == null ? void 0 : voiceTestResult.text) ? /* @__PURE__ */ u("div", { className: "voice-transcription-result mt-2", children: [
+      /* @__PURE__ */ u("span", { className: "voice-transcription-label", children: "Transcribed:" }),
+      /* @__PURE__ */ u("span", { className: "voice-transcription-text", children: [
+        '"',
+        voiceTestResult.text,
+        '"'
+      ] })
+    ] }) : null,
+    (voiceTestResult == null ? void 0 : voiceTestResult.success) === true ? /* @__PURE__ */ u("div", { className: "voice-success-result mt-2", children: [
+      /* @__PURE__ */ u("span", { className: "icon icon-md icon-check-circle" }),
+      /* @__PURE__ */ u("span", { children: "Audio played successfully" })
+    ] }) : null,
+    (voiceTestResult == null ? void 0 : voiceTestResult.error) ? /* @__PURE__ */ u("div", { className: "voice-error-result", children: [
+      /* @__PURE__ */ u("span", { className: "icon icon-md icon-x-circle" }),
+      /* @__PURE__ */ u("span", { children: voiceTestResult.error })
+    ] }) : null,
+    isConfiguring ? /* @__PURE__ */ u("form", { onSubmit: onSaveKey, className: "flex flex-col gap-2 mt-3 border-t border-[var(--border)] pt-3", children: [
+      /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "API Key" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            type: "password",
+            className: "provider-key-input w-full",
+            ref: keyInputRef,
+            value: apiKey,
+            onInput: (e) => setApiKey(targetValue(e)),
+            placeholder: provider.keyPlaceholder || "API key"
+          }
+        )
+      ] }),
+      supportsBaseUrl ? /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Base URL" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            type: "text",
+            className: "provider-key-input w-full",
+            "data-field": "baseUrl",
+            value: baseUrl,
+            onInput: (e) => setBaseUrl(targetValue(e)),
+            placeholder: "http://localhost:8000/v1"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: "Use this for a local or OpenAI-compatible server. Leave the API key blank if the endpoint does not require one." })
+      ] }) : null,
+      provider.keyUrl ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
+        "Get your key at",
+        " ",
+        /* @__PURE__ */ u("a", { href: provider.keyUrl, target: "_blank", rel: "noopener", className: "text-[var(--accent)] underline", children: provider.keyUrlLabel || provider.keyUrl })
+      ] }) : null,
+      provider.hint ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--accent)]", children: provider.hint }) : null,
+      error ? /* @__PURE__ */ u(ErrorPanel, { message: error }) : null,
+      /* @__PURE__ */ u("div", { className: "flex items-center gap-2 mt-1", children: [
+        /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn provider-btn-sm", disabled: saving, children: saving ? "Saving…" : "Save" }),
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-secondary provider-btn-sm",
+            onClick: onCancelConfigure,
+            children: "Cancel"
+          }
+        )
+      ] })
+    ] }) : null
+  ] });
+}
+function VoiceStep({ onNext, onBack }) {
+  const [loading, setLoading] = d(true);
+  const [allProviders, setAllProviders] = d({ tts: [], stt: [] });
+  const [configuring, setConfiguring] = d(null);
+  const [apiKey, setApiKey] = d("");
+  const [baseUrl, setBaseUrl] = d("");
+  const [saving, setSaving] = d(false);
+  const [error, setError] = d(null);
+  const [voiceTesting, setVoiceTesting] = d(null);
+  const [voiceTestResults, setVoiceTestResults] = d({});
+  const [activeRecorder, setActiveRecorder] = d(null);
+  const [enableSaving, setEnableSaving] = d(false);
+  function fetchProviders() {
+    return fetchVoiceProviders().then((res) => {
+      if (res == null ? void 0 : res.ok) {
+        setAllProviders(res.payload || { tts: [], stt: [] });
+      }
+      return res;
+    });
+  }
+  y(() => {
+    let cancelled = false;
+    let attempts = 0;
+    function load() {
+      if (cancelled) return;
+      fetchVoiceProviders().then((res) => {
+        var _a, _b;
+        if (cancelled) return;
+        if (res == null ? void 0 : res.ok) {
+          setAllProviders(res.payload || { tts: [], stt: [] });
+          setLoading(false);
+          return;
+        }
+        if ((((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.code) === "UNAVAILABLE" || ((_b = res == null ? void 0 : res.error) == null ? void 0 : _b.message) === "WebSocket not connected") && attempts < WS_RETRY_LIMIT) {
+          attempts += 1;
+          ensureWsConnected();
+          window.setTimeout(load, WS_RETRY_DELAY_MS);
+          return;
+        }
+        onNext();
+      });
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const cloudStt = allProviders.stt.filter((p) => p.category === "cloud");
+  const cloudTts = allProviders.tts.filter((p) => p.category === "cloud");
+  const autoDetected = [...allProviders.stt, ...allProviders.tts].filter(
+    (p) => p.available && p.keySource === "llm_provider" && !p.enabled && p.category === "cloud"
+  );
+  const hasAutoDetected = autoDetected.length > 0;
+  function enableAutoDetected() {
+    setEnableSaving(true);
+    setError(null);
+    const firstStt = allProviders.stt.find((p) => p.available && p.keySource === "llm_provider" && !p.enabled);
+    const firstTts = allProviders.tts.find((p) => p.available && p.keySource === "llm_provider" && !p.enabled);
+    const toggles = [];
+    if (firstStt) toggles.push(toggleVoiceProvider(firstStt.id, true, "stt"));
+    if (firstTts) toggles.push(toggleVoiceProvider(firstTts.id, true, "tts"));
+    if (toggles.length === 0) {
+      setEnableSaving(false);
+      return;
+    }
+    Promise.all(toggles).then((results) => {
+      var _a;
+      setEnableSaving(false);
+      const failed = results.find((r) => !(r == null ? void 0 : r.ok));
+      if (failed) {
+        setError(((_a = failed == null ? void 0 : failed.error) == null ? void 0 : _a.message) || "Failed to enable voice provider");
+        return;
+      }
+      fetchProviders();
+    });
+  }
+  function onStartConfigure(providerId) {
+    var _a;
+    const provider = [...allProviders.stt, ...allProviders.tts].find((candidate) => candidate.id === providerId);
+    setConfiguring(providerId);
+    setApiKey("");
+    setBaseUrl(((_a = provider == null ? void 0 : provider.settings) == null ? void 0 : _a.baseUrl) || "");
+    setError(null);
+  }
+  function onCancelConfigure() {
+    setConfiguring(null);
+    setApiKey("");
+    setBaseUrl("");
+    setError(null);
+  }
+  function onSaveKey(e) {
+    var _a, _b;
+    e.preventDefault();
+    const provider = [...allProviders.stt, ...allProviders.tts].find((candidate) => candidate.id === configuring);
+    const trimmedApiKey = apiKey.trim();
+    const trimmedBaseUrl = baseUrl.trim();
+    const hadBaseUrl = typeof ((_a = provider == null ? void 0 : provider.settings) == null ? void 0 : _a.baseUrl) === "string" && provider.settings.baseUrl.trim().length > 0;
+    const shouldSaveBaseUrl = ((_b = provider == null ? void 0 : provider.capabilities) == null ? void 0 : _b.baseUrl) === true && (trimmedBaseUrl.length > 0 || hadBaseUrl);
+    if (!(trimmedApiKey || shouldSaveBaseUrl)) {
+      setError("API key or base URL is required.");
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    const providerId = configuring;
+    const req = trimmedApiKey ? saveVoiceKey(providerId, trimmedApiKey, {
+      baseUrl: shouldSaveBaseUrl ? trimmedBaseUrl : void 0
+    }) : saveVoiceSettings(providerId, shouldSaveBaseUrl ? { baseUrl: trimmedBaseUrl } : void 0);
+    req.then(async (res) => {
+      var _a2;
+      if (res == null ? void 0 : res.ok) {
+        const counterId = VOICE_COUNTERPART_IDS[providerId];
+        const toggles = [];
+        const sttMatch = allProviders.stt.find((p) => p.id === providerId) || counterId && allProviders.stt.find((p) => p.id === counterId);
+        const ttsMatch = allProviders.tts.find((p) => p.id === providerId) || counterId && allProviders.tts.find((p) => p.id === counterId);
+        if (sttMatch) {
+          toggles.push(toggleVoiceProvider(sttMatch.id, true, "stt"));
+        }
+        if (ttsMatch) {
+          toggles.push(toggleVoiceProvider(ttsMatch.id, true, "tts"));
+        }
+        await Promise.all(toggles);
+        setSaving(false);
+        setConfiguring(null);
+        setApiKey("");
+        setBaseUrl("");
+        fetchProviders();
+      } else {
+        setSaving(false);
+        setError(((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to save");
+      }
+    });
+  }
+  function stopSttRecording() {
+    if (activeRecorder) {
+      activeRecorder.stop();
+    }
+  }
+  async function testVoiceProvider(providerId, type) {
+    var _a;
+    if ((voiceTesting == null ? void 0 : voiceTesting.id) === providerId && (voiceTesting == null ? void 0 : voiceTesting.type) === "stt" && (voiceTesting == null ? void 0 : voiceTesting.phase) === "recording") {
+      stopSttRecording();
+      return;
+    }
+    setError(null);
+    setVoiceTesting({ id: providerId, type, phase: "testing" });
+    const prov = (type === "stt" ? allProviders.stt : allProviders.tts).find((p) => p.id === providerId);
+    if ((prov == null ? void 0 : prov.available) && !(prov == null ? void 0 : prov.enabled)) {
+      const toggleRes = await toggleVoiceProvider(providerId, true, type);
+      if (!(toggleRes == null ? void 0 : toggleRes.ok)) {
+        setVoiceTestResults((prev) => {
+          var _a2;
+          return {
+            ...prev,
+            [providerId]: {
+              success: false,
+              error: ((_a2 = toggleRes == null ? void 0 : toggleRes.error) == null ? void 0 : _a2.message) || "Failed to enable provider"
+            }
+          };
+        });
+        setVoiceTesting(null);
+        return;
+      }
+      const counterType = type === "stt" ? "tts" : "stt";
+      const counterList = type === "stt" ? allProviders.tts : allProviders.stt;
+      const counterId = VOICE_COUNTERPART_IDS[providerId] || providerId;
+      const counterProv = counterList.find((p) => p.id === counterId);
+      if ((counterProv == null ? void 0 : counterProv.available) && !(counterProv == null ? void 0 : counterProv.enabled)) {
+        await toggleVoiceProvider(counterId, true, counterType);
+      }
+      fetchProviders();
+    }
+    if (type === "tts") {
+      try {
+        const identity = get("identity");
+        const user = (identity == null ? void 0 : identity.user_name) || "friend";
+        const bot = (identity == null ? void 0 : identity.name) || "Moltis";
+        const ttsText = await fetchPhrase("onboarding", user, bot);
+        const res = await testTts(ttsText, providerId);
+        if ((res == null ? void 0 : res.ok) && ((_a = res.payload) == null ? void 0 : _a.audio)) {
+          const bytes = decodeBase64Safe(res.payload.audio);
+          const audioMime = res.payload.mimeType || res.payload.content_type || "audio/mpeg";
+          console.log(
+            "[TTS] audio received: %d bytes, mime=%s, format=%s",
+            bytes.length,
+            audioMime,
+            res.payload.format
+          );
+          const blob = new Blob([bytes.buffer], { type: audioMime });
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onerror = (e) => {
+            var _a2;
+            console.error("[TTS] audio element error:", ((_a2 = audio.error) == null ? void 0 : _a2.message) || e);
+            URL.revokeObjectURL(url);
+          };
+          audio.onended = () => URL.revokeObjectURL(url);
+          audio.play().catch((e) => console.error("[TTS] play() failed:", e));
+          setVoiceTestResults((prev) => ({
+            ...prev,
+            [providerId]: { success: true, error: null }
+          }));
+        } else {
+          setVoiceTestResults((prev) => {
+            var _a2;
+            return {
+              ...prev,
+              [providerId]: {
+                success: false,
+                error: ((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "TTS test failed"
+              }
+            };
+          });
+        }
+      } catch (err) {
+        setVoiceTestResults((prev) => ({
+          ...prev,
+          [providerId]: {
+            success: false,
+            error: err.message || "TTS test failed"
+          }
+        }));
+      }
+      setVoiceTesting(null);
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+        const mediaRecorder = new MediaRecorder(stream, { mimeType });
+        const audioChunks = [];
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunks.push(e.data);
+        };
+        mediaRecorder.start();
+        setActiveRecorder(mediaRecorder);
+        setVoiceTesting({ id: providerId, type, phase: "recording" });
+        mediaRecorder.onstop = async () => {
+          var _a2, _b;
+          setActiveRecorder(null);
+          for (const track of stream.getTracks()) track.stop();
+          setVoiceTesting({ id: providerId, type, phase: "transcribing" });
+          const audioBlob = new Blob(audioChunks, {
+            type: mediaRecorder.mimeType || mimeType
+          });
+          try {
+            const resp = await transcribeAudio(activeSessionKey, providerId, audioBlob);
+            console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
+            if (resp.ok) {
+              const sttRes = await resp.json();
+              if (sttRes.ok && typeof ((_a2 = sttRes.transcription) == null ? void 0 : _a2.text) === "string") {
+                const transcriptText = sttRes.transcription.text.trim();
+                setVoiceTestResults((prev) => ({
+                  ...prev,
+                  [providerId]: {
+                    text: transcriptText || null,
+                    error: transcriptText ? null : "No speech detected"
+                  }
+                }));
+              } else {
+                setVoiceTestResults((prev) => ({
+                  ...prev,
+                  [providerId]: {
+                    text: null,
+                    error: sttRes.transcriptionError || sttRes.error || "STT test failed"
+                  }
+                }));
+              }
+            } else {
+              const errBody = await resp.text();
+              console.error("[STT] upload failed: status=%d body=%s", resp.status, errBody);
+              let errMsg = "STT test failed";
+              try {
+                errMsg = ((_b = JSON.parse(errBody)) == null ? void 0 : _b.error) || errMsg;
+              } catch (_e) {
+              }
+              setVoiceTestResults((prev) => ({
+                ...prev,
+                [providerId]: {
+                  text: null,
+                  error: `${errMsg} (HTTP ${resp.status})`
+                }
+              }));
+            }
+          } catch (fetchErr) {
+            setVoiceTestResults((prev) => ({
+              ...prev,
+              [providerId]: {
+                text: null,
+                error: fetchErr.message || "STT test failed"
+              }
+            }));
+          }
+          setVoiceTesting(null);
+        };
+      } catch (err) {
+        const domErr = err;
+        if (domErr.name === "NotAllowedError") {
+          setError("Microphone permission denied");
+        } else if (domErr.name === "NotFoundError") {
+          setError("No microphone found");
+        } else {
+          setError(domErr.message || "STT test failed");
+        }
+        setVoiceTesting(null);
+      }
+    }
+  }
+  if (loading) {
+    return /* @__PURE__ */ u("div", { className: "text-sm text-[var(--muted)]", children: "Checking voice providers…" });
+  }
+  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+    /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Voice (optional)" }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Enable voice input (speech-to-text) and output (text-to-speech) for your agent. You can configure this later in Settings." }),
+    hasAutoDetected ? /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 flex flex-col gap-2", children: [
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Auto-detected from your LLM provider" }),
+      /* @__PURE__ */ u("div", { className: "flex flex-wrap gap-2", children: autoDetected.map((p) => /* @__PURE__ */ u("span", { className: "provider-item-badge configured", children: p.name }, p.id)) }),
+      /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "provider-btn self-start",
+          disabled: enableSaving,
+          onClick: enableAutoDetected,
+          children: enableSaving ? "Enabling…" : "Enable voice"
+        }
+      )
+    ] }) : null,
+    cloudStt.length > 0 ? /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] mb-2", children: "Speech-to-Text" }),
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: cloudStt.map((prov) => /* @__PURE__ */ u(
+        OnboardingVoiceRow,
+        {
+          provider: prov,
+          type: "stt",
+          configuring,
+          apiKey,
+          setApiKey,
+          baseUrl,
+          setBaseUrl,
+          saving,
+          error: configuring === prov.id ? error : null,
+          onSaveKey,
+          onStartConfigure,
+          onCancelConfigure,
+          onTest: () => testVoiceProvider(prov.id, "stt"),
+          voiceTesting,
+          voiceTestResult: voiceTestResults[prov.id] || null
+        },
+        prov.id
+      )) })
+    ] }) : null,
+    cloudTts.length > 0 ? /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] mb-2", children: "Text-to-Speech" }),
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: cloudTts.map((prov) => /* @__PURE__ */ u(
+        OnboardingVoiceRow,
+        {
+          provider: prov,
+          type: "tts",
+          configuring,
+          apiKey,
+          setApiKey,
+          baseUrl,
+          setBaseUrl,
+          saving,
+          error: configuring === prov.id ? error : null,
+          onSaveKey,
+          onStartConfigure,
+          onCancelConfigure,
+          onTest: () => testVoiceProvider(prov.id, "tts"),
+          voiceTesting,
+          voiceTestResult: voiceTestResults[prov.id] || null
+        },
+        prov.id
+      )) })
+    ] }) : null,
+    error && !configuring ? /* @__PURE__ */ u(ErrorPanel, { message: error }) : null,
+    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
+      /* @__PURE__ */ u("button", { type: "button", className: "provider-btn provider-btn-secondary", onClick: onBack, children: t("common:actions.back") }),
+      /* @__PURE__ */ u("button", { type: "button", className: "provider-btn", onClick: onNext, children: t("common:actions.continue") }),
+      /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline",
+          onClick: onNext,
+          children: t("common:actions.skip")
+        }
+      )
+    ] })
+  ] });
+}
 function StepIndicator({ steps, current }) {
   const ref = A(null);
   y(() => {
@@ -1640,66 +4387,223 @@ function StepDot({ index, label, state }) {
     /* @__PURE__ */ u("div", { className: "onboarding-step-label", children: label })
   ] });
 }
-function VoiceStep({ onNext, onBack }) {
-  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
-    /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Voice (optional)" }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", children: "Voice configuration step — full TSX conversion pending." }),
-    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
-      /* @__PURE__ */ u("button", { className: "provider-btn provider-btn-secondary", onClick: onBack, children: t("common:actions.back") }),
-      /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onNext, children: t("common:actions.continue") })
-    ] })
-  ] });
+const LOW_MEMORY_THRESHOLD = 2 * 1024 * 1024 * 1024;
+function formatMemBytes(bytes) {
+  if (bytes == null) return "?";
+  const gb = bytes / (1024 * 1024 * 1024);
+  return `${gb.toFixed(1)} GB`;
 }
-function RemoteAccessStep({ onNext, onBack }) {
-  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
-    /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Remote Access" }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", children: "Remote access configuration step — full TSX conversion pending." }),
-    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
-      /* @__PURE__ */ u("button", { className: "provider-btn provider-btn-secondary", onClick: onBack, children: t("common:actions.back") }),
-      /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onNext, children: t("common:actions.continue") })
-    ] })
-  ] });
+function CheckIcon() {
+  return /* @__PURE__ */ u("span", { className: "icon icon-check-circle shrink-0", style: "color:var(--ok)" });
 }
-function ChannelStep({ onNext, onBack }) {
-  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
-    /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Connect a Channel" }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", children: "Channel configuration step — full TSX conversion pending." }),
-    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
-      /* @__PURE__ */ u("button", { className: "provider-btn provider-btn-secondary", onClick: onBack, children: t("common:actions.back") }),
-      /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onNext, children: t("common:actions.continue") }),
-      /* @__PURE__ */ u(
-        "button",
-        {
-          className: "text-xs text-[var(--muted)] cursor-pointer bg-transparent border-none underline",
-          onClick: onNext,
-          children: t("common:actions.skip")
-        }
-      )
-    ] })
-  ] });
+function WarnIcon() {
+  return /* @__PURE__ */ u("span", { className: "icon icon-warn-triangle shrink-0", style: "color:var(--warn)" });
 }
-function OpenClawImportStep({ onNext, onBack }) {
-  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
-    /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Import from OpenClaw" }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", children: "Import step — full TSX conversion pending." }),
-    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
-      onBack ? /* @__PURE__ */ u("button", { className: "provider-btn provider-btn-secondary", onClick: onBack, children: "Back" }) : null,
-      /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onNext, children: "Skip" })
+function ErrorIcon() {
+  return /* @__PURE__ */ u("span", { className: "icon icon-x-circle shrink-0", style: "color:var(--error)" });
+}
+function InfoIcon() {
+  return /* @__PURE__ */ u("span", { className: "icon icon-info-circle shrink-0", style: "color:var(--muted)" });
+}
+function SummaryRow({
+  icon,
+  label,
+  children
+}) {
+  return /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface)] p-3 flex gap-3 items-start", children: [
+    /* @__PURE__ */ u("div", { className: "mt-0.5", children: icon }),
+    /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+      /* @__PURE__ */ u("div", { className: "text-sm font-medium text-[var(--text-strong)]", children: label }),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children })
     ] })
   ] });
 }
 function SummaryStep({ onBack, onFinish }) {
-  const identity = get("identity") || {};
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+  const [loading, setLoading] = d(true);
+  const [data, setData] = d(null);
+  y(() => {
+    let cancelled = false;
+    async function load() {
+      var _a2;
+      await refresh();
+      const identity = get("identity");
+      const mem = get("mem");
+      const update = get("update");
+      const voiceEnabled = get("voice_enabled") === true;
+      const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes] = await Promise.all([
+        sendRpc("providers.available", {}).catch(() => null),
+        fetchChannelStatus().catch(() => null),
+        fetch("/api/tailscale/status").then(
+          (r) => r.ok ? r.json() : null
+        ).catch(() => null),
+        voiceEnabled ? fetchVoiceProviders().catch(() => null) : Promise.resolve(null),
+        fetch(
+          "/api/bootstrap?include_channels=false&include_sessions=false&include_models=false&include_projects=false&include_counts=false&include_identity=false"
+        ).then(
+          (r) => r.ok ? r.json() : null
+        ).catch(() => null)
+      ]);
+      if (cancelled) return;
+      setData({
+        identity,
+        mem,
+        update,
+        voiceEnabled,
+        providers: (providersRes == null ? void 0 : providersRes.ok) ? providersRes.payload || [] : [],
+        channels: (channelsRes == null ? void 0 : channelsRes.ok) ? ((_a2 = channelsRes.payload) == null ? void 0 : _a2.channels) || [] : [],
+        tailscale: tailscaleRes,
+        voice: (voiceRes == null ? void 0 : voiceRes.ok) ? voiceRes.payload || { tts: [], stt: [] } : null,
+        sandbox: (bootstrapRes == null ? void 0 : bootstrapRes.sandbox) || null
+      });
+      setLoading(false);
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (loading || !data) {
+    return /* @__PURE__ */ u("div", { className: "flex flex-col items-center justify-center gap-3 min-h-[200px]", children: [
+      /* @__PURE__ */ u("div", { className: "inline-block w-8 h-8 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin" }),
+      /* @__PURE__ */ u("div", { className: "text-sm text-[var(--muted)]", children: t("onboarding:summary.loadingSummary") })
+    ] });
+  }
+  const activeModel = localStorage.getItem("moltis-model");
+  const configuredProviders = data.providers.filter((p) => p.configured);
   return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
     /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: t("onboarding:summary.title") }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", children: "Overview of your configuration. You can change any of these later in Settings." }),
-    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
-      /* @__PURE__ */ u("button", { className: "provider-btn provider-btn-secondary", onClick: onBack, children: t("common:actions.back") }),
-      /* @__PURE__ */ u("div", { className: "flex-1" }),
-      /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onFinish, children: [
-        identity.emoji || "",
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Overview of your configuration. You can change any of these later in Settings." }),
+    /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: [
+      /* @__PURE__ */ u(
+        SummaryRow,
+        {
+          icon: ((_a = data.identity) == null ? void 0 : _a.user_name) && ((_b = data.identity) == null ? void 0 : _b.name) ? /* @__PURE__ */ u(CheckIcon, {}) : /* @__PURE__ */ u(WarnIcon, {}),
+          label: "Identity",
+          children: ((_c = data.identity) == null ? void 0 : _c.user_name) && ((_d = data.identity) == null ? void 0 : _d.name) ? /* @__PURE__ */ u(S, { children: [
+            "You: ",
+            /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: data.identity.user_name }),
+            " Agent:",
+            " ",
+            /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: [
+              data.identity.emoji || "",
+              " ",
+              data.identity.name
+            ] })
+          ] }) : /* @__PURE__ */ u("span", { className: "text-[var(--warn)]", children: "Identity not fully configured" })
+        }
+      ),
+      /* @__PURE__ */ u(SummaryRow, { icon: configuredProviders.length > 0 ? /* @__PURE__ */ u(CheckIcon, {}) : /* @__PURE__ */ u(ErrorIcon, {}), label: "LLMs", children: configuredProviders.length > 0 ? /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("div", { className: "flex flex-wrap gap-1", children: configuredProviders.map((p) => /* @__PURE__ */ u("span", { className: "provider-item-badge configured", children: p.displayName }, p.name)) }),
+        activeModel ? /* @__PURE__ */ u("div", { children: [
+          "Active model: ",
+          /* @__PURE__ */ u("span", { className: "font-mono font-medium text-[var(--text)]", children: activeModel })
+        ] }) : null
+      ] }) : /* @__PURE__ */ u("span", { className: "text-[var(--error)]", children: "No LLM providers configured" }) }),
+      /* @__PURE__ */ u(
+        SummaryRow,
+        {
+          icon: data.channels.length > 0 ? data.channels.some((c) => c.status === "error") ? /* @__PURE__ */ u(ErrorIcon, {}) : data.channels.some((c) => c.status === "disconnected") ? /* @__PURE__ */ u(WarnIcon, {}) : /* @__PURE__ */ u(CheckIcon, {}) : /* @__PURE__ */ u(InfoIcon, {}),
+          label: "Channels",
+          children: data.channels.length > 0 ? /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: data.channels.map((ch) => {
+            const statusColor = ch.status === "connected" ? "var(--ok)" : ch.status === "error" ? "var(--error)" : "var(--warn)";
+            return /* @__PURE__ */ u("div", { className: "flex items-center gap-1", children: [
+              /* @__PURE__ */ u("span", { style: `color:${statusColor}`, children: "●" }),
+              /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: ch.type }),
+              ": ",
+              ch.name || ch.account_id,
+              /* @__PURE__ */ u("span", { children: [
+                "(",
+                ch.status,
+                ")"
+              ] })
+            ] }, ch.account_id);
+          }) }) : /* @__PURE__ */ u(S, { children: "No channels configured" })
+        }
+      ),
+      /* @__PURE__ */ u(
+        SummaryRow,
+        {
+          icon: ((_e = data.mem) == null ? void 0 : _e.total) && data.mem.total < LOW_MEMORY_THRESHOLD ? /* @__PURE__ */ u(WarnIcon, {}) : /* @__PURE__ */ u(CheckIcon, {}),
+          label: "System Memory",
+          children: data.mem ? /* @__PURE__ */ u(S, { children: [
+            "Total: ",
+            /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: formatMemBytes(data.mem.total) }),
+            " Available:",
+            " ",
+            /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: formatMemBytes(data.mem.available) }),
+            data.mem.total && data.mem.total < LOW_MEMORY_THRESHOLD ? /* @__PURE__ */ u("div", { className: "text-[var(--warn)] mt-1", children: "Low memory detected. Consider upgrading to an instance with more RAM." }) : null
+          ] }) : /* @__PURE__ */ u(S, { children: "Memory info unavailable" })
+        }
+      ),
+      /* @__PURE__ */ u(
+        SummaryRow,
+        {
+          icon: ((_f = data.sandbox) == null ? void 0 : _f.backend) && data.sandbox.backend !== "none" ? /* @__PURE__ */ u(CheckIcon, {}) : /* @__PURE__ */ u(InfoIcon, {}),
+          label: "Sandbox",
+          children: ((_g = data.sandbox) == null ? void 0 : _g.backend) && data.sandbox.backend !== "none" ? /* @__PURE__ */ u(S, { children: [
+            "Backend: ",
+            /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: data.sandbox.backend })
+          ] }) : /* @__PURE__ */ u(S, { children: "No container runtime detected" })
+        }
+      ),
+      /* @__PURE__ */ u(SummaryRow, { icon: ((_h = data.update) == null ? void 0 : _h.available) ? /* @__PURE__ */ u(WarnIcon, {}) : /* @__PURE__ */ u(CheckIcon, {}), label: "Version", children: ((_i = data.update) == null ? void 0 : _i.available) ? /* @__PURE__ */ u(S, { children: [
+        "Update available:",
         " ",
-        identity.name || "Your agent",
+        /* @__PURE__ */ u(
+          "a",
+          {
+            href: data.update.release_url || "#",
+            target: "_blank",
+            rel: "noopener",
+            className: "text-[var(--accent)] underline font-medium",
+            children: data.update.latest_version
+          }
+        )
+      ] }) : /* @__PURE__ */ u(S, { children: "You are running the latest version." }) }),
+      data.tailscale !== null ? /* @__PURE__ */ u(
+        SummaryRow,
+        {
+          icon: ((_j = data.tailscale) == null ? void 0 : _j.tailscale_up) ? /* @__PURE__ */ u(CheckIcon, {}) : ((_k = data.tailscale) == null ? void 0 : _k.installed) ? /* @__PURE__ */ u(WarnIcon, {}) : /* @__PURE__ */ u(InfoIcon, {}),
+          label: "Tailscale",
+          children: ((_l = data.tailscale) == null ? void 0 : _l.tailscale_up) ? /* @__PURE__ */ u(S, { children: "Connected" }) : ((_m = data.tailscale) == null ? void 0 : _m.installed) ? /* @__PURE__ */ u(S, { children: [
+            "Installed but not connected —",
+            " ",
+            /* @__PURE__ */ u("a", { href: "/settings/remote-access", className: "text-[var(--accent)] underline", children: "Configure in Settings" })
+          ] }) : /* @__PURE__ */ u(S, { children: "Not installed. Install Tailscale for secure remote access." })
+        }
+      ) : null,
+      data.voiceEnabled ? /* @__PURE__ */ u(
+        SummaryRow,
+        {
+          icon: data.voice && [...data.voice.tts, ...data.voice.stt].some((p) => p.enabled) ? /* @__PURE__ */ u(CheckIcon, {}) : /* @__PURE__ */ u(InfoIcon, {}),
+          label: "Voice",
+          children: (() => {
+            if (!data.voice) return /* @__PURE__ */ u(S, { children: "Voice providers unavailable" });
+            const enabledStt = data.voice.stt.filter((p) => p.enabled).map((p) => p.name);
+            const enabledTts = data.voice.tts.filter((p) => p.enabled).map((p) => p.name);
+            if (enabledStt.length === 0 && enabledTts.length === 0) return /* @__PURE__ */ u(S, { children: "No voice providers enabled" });
+            return /* @__PURE__ */ u("div", { className: "flex flex-col gap-0.5", children: [
+              enabledStt.length > 0 ? /* @__PURE__ */ u("div", { children: [
+                "STT: ",
+                /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: enabledStt.join(", ") })
+              ] }) : null,
+              enabledTts.length > 0 ? /* @__PURE__ */ u("div", { children: [
+                "TTS: ",
+                /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: enabledTts.join(", ") })
+              ] }) : null
+            ] });
+          })()
+        }
+      ) : null
+    ] }),
+    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
+      /* @__PURE__ */ u("button", { type: "button", className: "provider-btn provider-btn-secondary", onClick: onBack, children: t("common:actions.back") }),
+      /* @__PURE__ */ u("div", { className: "flex-1" }),
+      /* @__PURE__ */ u("button", { type: "button", className: "provider-btn", onClick: onFinish, children: [
+        ((_n = data.identity) == null ? void 0 : _n.emoji) || "",
+        " ",
+        ((_o = data.identity) == null ? void 0 : _o.name) || "Your agent",
         ", reporting for duty"
       ] })
     ] })

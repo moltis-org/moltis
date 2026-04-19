@@ -3,7 +3,11 @@ import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { applyIdentityFavicon, formatLoginTitle } from "./branding";
 import { init as initI18n, t } from "./i18n";
+import * as S from "./state";
 import { initTheme } from "./theme";
+
+// Expose state module for E2E test WS mocking.
+window.__moltis_state = S;
 
 // ── Types ────────────────────────────────────────────────────
 

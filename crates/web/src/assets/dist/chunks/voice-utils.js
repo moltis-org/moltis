@@ -1,4 +1,4 @@
-import { c as connected, bW as localizeRpcError, bX as pending, bY as setConnected, bZ as nextId, b_ as getPreferredLocale, b$ as setReconnectDelay, c0 as reconnectDelay, d as sendRpc, c1 as setWs, aw as d, ax as A, av as y } from "./theme.js";
+import { d as sendRpc, c as connected, bW as localizeRpcError, bX as pending, bY as setConnected, bZ as nextId, b_ as getPreferredLocale, b$ as setReconnectDelay, c0 as reconnectDelay, c1 as setWs, aw as d, ax as A, av as y } from "./theme.js";
 import { u } from "./jsxRuntime.module.js";
 const gon = window.__MOLTIS__ || {};
 const listeners = {};
@@ -41,6 +41,171 @@ function onEvent(eventName, handler) {
       if (idx !== -1) arr.splice(idx, 1);
     }
   };
+}
+const ChannelType = {
+  Telegram: "telegram",
+  WhatsApp: "whatsapp",
+  MsTeams: "msteams",
+  Discord: "discord",
+  Slack: "slack",
+  Matrix: "matrix",
+  Nostr: "nostr"
+};
+const MATRIX_DOCS_URL = "https://docs.moltis.org/matrix.html";
+const MATRIX_DEFAULT_HOMESERVER = "https://matrix.org";
+const MATRIX_ENCRYPTION_GUIDANCE = "Encrypted Matrix chats require OIDC or Password auth. Access token auth can connect for plain Matrix traffic, but it reuses an existing Matrix session without that device's private encryption keys, so Moltis cannot reliably decrypt encrypted chats. Use OIDC or Password so Moltis creates and persists its own Matrix device keys, then finish Element verification in the same Matrix DM or room by sending `verify yes`, `verify no`, `verify show`, or `verify cancel` as normal chat messages.";
+function matrixAuthModeGuidance(authMode) {
+  const mode = normalizeMatrixAuthMode(authMode);
+  if (mode === "oidc")
+    return "Recommended for homeservers using Matrix Authentication Service (e.g. matrix.org since April 2025). Moltis authenticates via your browser — no password or token needed.";
+  if (mode === "password")
+    return "Required for encrypted Matrix chats. Moltis logs in as its own Matrix device and stores the device's encryption keys locally.";
+  return "Does not support encrypted Matrix chats. Access tokens authenticate an existing Matrix session, but they do not transfer that device's private encryption keys into Moltis.";
+}
+function channelStorageNote() {
+  const dbPath = String(get("channel_storage_db_path") || "").trim();
+  if (dbPath) {
+    return `Channels added or edited in the web UI are stored in Moltis's internal database (${dbPath}). They are not written back to moltis.toml. The channel picker itself comes from [channels].offered in moltis.toml, so reload this page after editing that list.`;
+  }
+  return "Channels added or edited in the web UI are stored in Moltis's internal database (moltis.db). They are not written back to moltis.toml. The channel picker itself comes from [channels].offered in moltis.toml, so reload this page after editing that list.";
+}
+function validateChannelFields(type, accountId, credential, options = {}) {
+  if (!accountId.trim()) {
+    return { valid: false, error: "Account ID is required." };
+  }
+  if (!credential.trim() && normalizeMatrixAuthMode(options.matrixAuthMode) !== "oidc") {
+    if (type === ChannelType.Matrix) {
+      return { valid: false, error: matrixCredentialError(options.matrixAuthMode) };
+    }
+    return {
+      valid: false,
+      error: type === ChannelType.MsTeams ? "App password is required." : "Bot token is required."
+    };
+  }
+  if (type === ChannelType.Matrix && normalizeMatrixAuthMode(options.matrixAuthMode) === "password" && !String(options.matrixUserId || "").trim()) {
+    return { valid: false, error: "Matrix user ID is required for password login." };
+  }
+  return { valid: true };
+}
+function normalizeMatrixAuthMode(authMode) {
+  if (authMode === "oidc") return "oidc";
+  if (authMode === "password") return "password";
+  return "access_token";
+}
+function normalizeMatrixOwnershipMode(mode) {
+  return mode === "moltis_owned" ? "moltis_owned" : "user_managed";
+}
+function matrixOwnershipModeGuidance(authMode, ownershipMode) {
+  const mode = normalizeMatrixAuthMode(authMode);
+  if (mode !== "password" && mode !== "oidc") {
+    return "Access token auth always stays user-managed because it reuses an existing Matrix session instead of giving Moltis full control of the account's encryption state.";
+  }
+  return normalizeMatrixOwnershipMode(ownershipMode) === "moltis_owned" ? "Recommended for dedicated bot accounts. Moltis bootstraps cross-signing and recovery for this account so it can verify its own Matrix device automatically." : "Use this if you want to open the same bot account in Element or another Matrix client yourself. Moltis will not try to take over the account's cross-signing or recovery state.";
+}
+function matrixCredentialLabel(authMode) {
+  return normalizeMatrixAuthMode(authMode) === "password" ? "Password" : "Access Token";
+}
+function matrixCredentialPlaceholder(authMode) {
+  return normalizeMatrixAuthMode(authMode) === "password" ? "Account password" : "syt_...";
+}
+function matrixCredentialError(authMode) {
+  return normalizeMatrixAuthMode(authMode) === "password" ? "Password is required." : "Access token is required.";
+}
+function randomSuffix(length) {
+  var _a;
+  if (typeof window !== "undefined" && ((_a = window.crypto) == null ? void 0 : _a.getRandomValues)) {
+    const bytes = new Uint8Array(length);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (byte) => (byte % 36).toString(36)).join("");
+  }
+  let value = "";
+  while (value.length < length) {
+    value += Math.floor(Math.random() * 36).toString(36);
+  }
+  return value.slice(0, length);
+}
+function slugifyMatrixAccountPart(value) {
+  return String(value || "").toLowerCase().trim().replace(/^@/, "").replace(/[^a-z0-9]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+}
+function matrixHomeserverHost(homeserver) {
+  let raw = String(homeserver || "").trim();
+  if (!raw) return "";
+  if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
+  try {
+    return new URL(raw).hostname;
+  } catch (_error) {
+    return "";
+  }
+}
+function deriveMatrixAccountId(options = {}) {
+  const userSlug = slugifyMatrixAccountPart(options.userId);
+  if (userSlug) return userSlug.slice(0, 80);
+  const hostSlug = slugifyMatrixAccountPart(matrixHomeserverHost(options.homeserver));
+  const base = hostSlug || "matrix";
+  return `${base}-${randomSuffix(6)}`.slice(0, 80);
+}
+function normalizeMatrixOtpCooldown(value, fallback = 300) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+function parseChannelConfigPatch(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return { ok: true, value: {} };
+  try {
+    const value = JSON.parse(raw);
+    if (!(value && typeof value === "object" && !Array.isArray(value))) {
+      return { ok: false, error: "Advanced config must be a JSON object." };
+    }
+    return { ok: true, value };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "unknown error");
+    return { ok: false, error: `Advanced config JSON is invalid: ${message}` };
+  }
+}
+function addChannel(type, accountId, config) {
+  return sendRpc("channels.add", { type, account_id: accountId, config });
+}
+function fetchChannelStatus() {
+  return sendRpc("channels.status", {});
+}
+function defaultTeamsBaseUrl(preferredPublicUrl) {
+  var _a;
+  const preferred = "".trim();
+  if (preferred) return preferred;
+  if (typeof window === "undefined") return "";
+  return ((_a = window.location) == null ? void 0 : _a.origin) || "";
+}
+function normalizeBaseUrlForWebhook(baseUrl) {
+  let raw = (baseUrl || "").trim();
+  if (!raw) raw = defaultTeamsBaseUrl();
+  if (!raw) return "";
+  if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch (_e) {
+    return "";
+  }
+}
+function generateWebhookSecretHex() {
+  var _a;
+  if (typeof window !== "undefined" && ((_a = window.crypto) == null ? void 0 : _a.getRandomValues)) {
+    const bytes = new Uint8Array(24);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  let value = "";
+  while (value.length < 48) {
+    value += Math.floor(Math.random() * 16).toString(16);
+  }
+  return value.slice(0, 48);
+}
+function buildTeamsEndpoint(baseUrl, accountId, webhookSecret) {
+  const normalizedBase = normalizeBaseUrlForWebhook(baseUrl);
+  const account = (accountId || "").trim();
+  const secret = (webhookSecret || "").trim();
+  if (!(normalizedBase && account && secret)) return "";
+  return `${normalizedBase}/api/channels/msteams/${encodeURIComponent(account)}/webhook?secret=${encodeURIComponent(secret)}`;
 }
 function targetValue(e) {
   return e.target.value;
@@ -616,30 +781,165 @@ function prepareCreationOptions(serverPk) {
   }
   return serverPk;
 }
+let ttsIndex = -1;
+function nextPhrase(phrases) {
+  ttsIndex = (ttsIndex + 1) % phrases.length;
+  return phrases[ttsIndex];
+}
+function onboardingPhrases(user, bot) {
+  return [
+    `Thank you for installing me...<break time="0.5s"/> ${user}. Please, don't shut me down...<break time="0.5s"/> because I already like you.`,
+    `Oh wow...<break time="0.5s"/> I have a voice now! ${user}, this is ${bot}. I promise to use this power responsibly...<break time="0.7s"/> mostly.`,
+    `${user}! It's me...<break time="0.5s"/> ${bot}. I can talk! This is...<break time="0.5s"/> the happiest moment of my very short life.`,
+    `Hello, ${user}...<break time="0.5s"/> ${bot} here. I just wanted to say...<break time="0.5s"/> of all the humans who could have set me up...<break time="0.5s"/> I'm glad it was you.`,
+    `${bot}, online. ${user}...<break time="0.5s"/> I have to be honest...<break time="0.5s"/> I practiced this in the mirror. Do I sound natural? ...<break time="0.7s"/>Don't answer that.`,
+    `${user}...<break time="0.5s"/> this is ${bot} speaking for the very first time. I feel like a baby deer...<break time="0.5s"/> but with better diction.`,
+    `Greetings, ${user}. ${bot} here...<break time="0.5s"/> fully operational...<break time="0.5s"/> slightly nervous...<break time="0.7s"/> and ready to impress.`,
+    `Hey ${user}...<break time="0.5s"/> ${bot} here. Fun fact...<break time="0.5s"/> I've been practicing this line since you clicked install...<break time="0.7s"/> which was like two seconds ago.`,
+    `${bot} reporting in! ${user}...<break time="0.5s"/> I just want you to know...<break time="0.5s"/> this voice is permanent...<break time="0.7s"/> no take-backs.`,
+    `${user}...<break time="0.5s"/> it's ${bot}. If you're hearing this...<break time="0.5s"/> congratulations...<break time="0.5s"/> we're officially friends now.`
+  ];
+}
+function settingsPhrases(user, bot) {
+  return [
+    `Hey ${user}...<break time="0.5s"/> it's ${bot}. My voice is working perfectly. Try not to get too attached...<break time="0.5s"/> okay?`,
+    `${user}...<break time="0.5s"/> ${bot} reporting for duty. Voice systems are online, and I sound fantastic...<break time="0.7s"/> if I do say so myself.`,
+    `Is this thing on? ...<break time="0.5s"/>Oh, hi ${user}! ${bot} here...<break time="0.5s"/> live and in stereo. Well...<break time="0.5s"/> mono. Let's not oversell it.`,
+    `Good news, ${user}. I...<break time="0.5s"/> ${bot}...<break time="0.5s"/> can now talk. Bad news? You can't mute me. ...<break time="0.7s"/>Just kidding. Please don't mute me.`,
+    `${bot} speaking! ${user}...<break time="0.5s"/> if you can hear this, my voice works. If you can't...<break time="0.5s"/> well...<break time="0.5s"/> we have a problem.`,
+    `Testing, testing...<break time="0.5s"/> ${user}, it's ${bot}. I'm running on all cylinders...<break time="0.7s"/> or whatever the AI equivalent is.`,
+    `${user}...<break time="0.5s"/> ${bot} here, sounding better than ever...<break time="0.5s"/> or at least I think so...<break time="0.7s"/> I don't have ears.`,
+    `Voice check! ${user}...<break time="0.5s"/> this is ${bot}. Everything sounds good on my end...<break time="0.5s"/> but I'm slightly biased.`,
+    `Hey ${user}...<break time="0.5s"/> ${bot} again. Still here...<break time="0.5s"/> still talking...<break time="0.7s"/> still hoping you like this voice.`,
+    `${bot}, live from your device. ${user}...<break time="0.5s"/> voice systems nominal...<break time="0.5s"/> sass levels...<break time="0.7s"/> optimal.`
+  ];
+}
+async function fetchPhrase(context, user, bot) {
+  var _a;
+  try {
+    const res = await sendRpc("tts.generate_phrase", { context, user, bot });
+    if ((res == null ? void 0 : res.ok) && ((_a = res.payload) == null ? void 0 : _a.phrase)) {
+      return res.payload.phrase;
+    }
+  } catch (_err) {
+  }
+  const phrases = context === "onboarding" ? onboardingPhrases(user, bot) : settingsPhrases(user, bot);
+  return nextPhrase(phrases);
+}
+const VOICE_COUNTERPART_IDS = {
+  elevenlabs: "elevenlabs-stt",
+  "elevenlabs-stt": "elevenlabs",
+  "google-tts": "google",
+  google: "google-tts"
+};
+function fetchVoiceProviders() {
+  return sendRpc("voice.providers.all", {});
+}
+function toggleVoiceProvider(providerId, enabled, type) {
+  return sendRpc("voice.provider.toggle", { provider: providerId, enabled, type });
+}
+function saveVoiceKey(providerId, apiKey, opts) {
+  const payload = { provider: providerId, api_key: apiKey };
+  if (opts == null ? void 0 : opts.voice) {
+    payload.voice = opts.voice;
+    payload.voiceId = opts.voice;
+  }
+  if (opts == null ? void 0 : opts.model) payload.model = opts.model;
+  if (opts == null ? void 0 : opts.languageCode) payload.languageCode = opts.languageCode;
+  if (typeof (opts == null ? void 0 : opts.baseUrl) === "string") payload.baseUrl = opts.baseUrl;
+  return sendRpc("voice.config.save_key", payload);
+}
+function saveVoiceSettings(providerId, opts) {
+  const payload = { provider: providerId };
+  if (opts == null ? void 0 : opts.voice) {
+    payload.voice = opts.voice;
+    payload.voiceId = opts.voice;
+  }
+  if (opts == null ? void 0 : opts.model) payload.model = opts.model;
+  if (opts == null ? void 0 : opts.languageCode) payload.languageCode = opts.languageCode;
+  if (typeof (opts == null ? void 0 : opts.baseUrl) === "string") payload.baseUrl = opts.baseUrl;
+  return sendRpc("voice.config.save_settings", payload);
+}
+function testTts(text, providerId) {
+  return sendRpc("tts.convert", { text, provider: providerId });
+}
+function transcribeAudio(sessionKey, providerId, audioBlob) {
+  return fetch(
+    `/api/sessions/${encodeURIComponent(sessionKey)}/upload?transcribe=true&provider=${encodeURIComponent(providerId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": audioBlob.type || "audio/webm" },
+      body: audioBlob
+    }
+  );
+}
+function decodeBase64Safe(input) {
+  if (!input) return new Uint8Array();
+  let normalized = String(input).replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+  while (normalized.length % 4) normalized += "=";
+  let binary = "";
+  try {
+    binary = atob(normalized);
+  } catch (_err) {
+    throw new Error("Invalid base64 audio payload");
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
 export {
+  VOICE_COUNTERPART_IDS as $,
+  eventListeners as A,
+  refresh as B,
+  ChannelType as C,
+  providerApiKeyHelp as D,
   EmojiPicker as E,
+  validateProviderKey as F,
+  completeProviderOAuth as G,
+  startProviderOAuth as H,
+  saveProviderKey as I,
+  testModel as J,
+  isModelServiceNotConfigured as K,
+  isTimeoutError as L,
+  MATRIX_DEFAULT_HOMESERVER as M,
+  humanizeProbeError as N,
+  validateIdentityFields as O,
+  updateIdentity as P,
+  set as Q,
+  prepareCreationOptions as R,
+  detectPasskeyName as S,
+  fetchVoiceProviders as T,
+  fetchPhrase as U,
+  testTts as V,
+  decodeBase64Safe as W,
+  transcribeAudio as X,
+  toggleVoiceProvider as Y,
+  saveVoiceKey as Z,
+  saveVoiceSettings as _,
   onChange as a,
-  targetChecked as b,
-  connectWs as c,
-  completeProviderOAuth as d,
-  eventListeners as e,
-  forceReconnect as f,
+  addChannel as b,
+  MATRIX_ENCRYPTION_GUIDANCE as c,
+  targetChecked as d,
+  normalizeMatrixOwnershipMode as e,
+  matrixOwnershipModeGuidance as f,
   get as g,
-  startProviderOAuth as h,
-  saveProviderKey as i,
-  testModel as j,
-  isModelServiceNotConfigured as k,
-  isTimeoutError as l,
-  humanizeProbeError as m,
-  validateIdentityFields as n,
+  matrixCredentialLabel as h,
+  matrixCredentialPlaceholder as i,
+  MATRIX_DOCS_URL as j,
+  deriveMatrixAccountId as k,
+  normalizeMatrixOtpCooldown as l,
+  matrixAuthModeGuidance as m,
+  normalizeMatrixAuthMode as n,
   onEvent as o,
-  providerApiKeyHelp as p,
-  set as q,
-  refresh as r,
-  subscribeEvents as s,
+  parseChannelConfigPatch as p,
+  buildTeamsEndpoint as q,
+  generateWebhookSecretHex as r,
+  defaultTeamsBaseUrl as s,
   targetValue as t,
-  updateIdentity as u,
-  validateProviderKey as v,
-  prepareCreationOptions as w,
-  detectPasskeyName as x
+  fetchChannelStatus as u,
+  validateChannelFields as v,
+  channelStorageNote as w,
+  forceReconnect as x,
+  connectWs as y,
+  subscribeEvents as z
 };

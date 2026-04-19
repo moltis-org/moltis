@@ -19,6 +19,8 @@
   <span>Your encryption vault is locked. Sign in to unlock it.</span>
 </div>
 <div id="loginRoot" class="auth-page"></div>
+<!-- E2E compat: tests locate the app via this script tag -->
+<script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}js/login-app.js"></script>
 <script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}dist/login.js"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 import { d as sendRpc, by as refreshProvidersPage, $ } from "./theme.js";
 import { e as els, c as createValidationProgress, o as openProviderModal, s as setFormError, a as setValidationProgress, r as resetValidationProgress, b as createValidationRequestId, d as bindValidationProgressEvents, f as completeValidationProgress, g as showModelSelector, h as fetchModels, i as closeProviderModal, j as showApiKeyForm, k as showOAuthFlow } from "../main.js";
-import { v as validateProviderKey, o as onEvent } from "./webauthn-helpers.js";
+import { F as validateProviderKey, o as onEvent } from "./voice-utils.js";
 import "./jsxRuntime.module.js";
 import "./branding.js";
 import "./time-format.js";
