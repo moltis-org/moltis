@@ -137,17 +137,35 @@ Currently encrypted:
 |------|---------|-----|
 | Environment variables (`env_variables` table) | SQLite | `env:{key}` |
 | Managed SSH private keys (`ssh_keys` table) | SQLite | `ssh-key:{name}` |
+| Channel secrets (tokens, passwords, API keys) | SQLite | `channel:{type}:{account_id}` |
+| Webhook secrets (auth tokens, signing secrets) | SQLite | `webhook:config` |
 
-The `encrypted` column in `env_variables` and `ssh_keys` tracks whether each
-row is encrypted (1) or plaintext (0). When the vault is unsealed, new env vars
-and managed SSH private keys are written encrypted. Imported passphrase-protected
+The `encrypted` column in `env_variables`, `ssh_keys`, and channel/webhook
+configurations tracks whether each row is encrypted (1) or plaintext (0).
+When the vault is unsealed, new env vars, managed SSH private keys, and
+channel/webhook secrets are written encrypted. Imported passphrase-protected
 SSH keys are decrypted during import and then stored under the vault-managed
-key hierarchy. When sealed or
-uninitialized, they are written as plaintext.
+key hierarchy. When sealed or uninitialized, they are written as plaintext.
 
 On the first successful vault unseal after enabling the feature, Moltis also
-migrates any previously stored plaintext env vars and managed SSH private keys
-to encrypted storage in-place.
+migrates any previously stored plaintext env vars, managed SSH private keys,
+and channel/webhook secrets to encrypted storage in-place.
+
+### Channel secrets
+
+Each channel type declares which config fields are secrets via
+`ChannelType::secret_fields()`. When the vault is unsealed, these fields
+are encrypted before storage and decrypted on read. Declared secret fields:
+
+| Channel | Secret fields |
+|---------|--------------|
+| Telegram | `token` |
+| Discord | `token` |
+| Slack | `bot_token`, `app_token`, `signing_secret` |
+| MS Teams | `app_password`, `webhook_secret` |
+| Matrix | `access_token`, `password` |
+| Nostr | `secret_key` |
+| WhatsApp | *(none — uses QR pairing)* |
 
 ```admonish info title="Planned"
 KeyStore (provider API keys in `provider_keys.json`) and TokenStore
@@ -155,6 +173,12 @@ KeyStore (provider API keys in `provider_keys.json`) and TokenStore
 cannot easily call async vault methods. Encryption for these stores is
 planned after an async refactor.
 ```
+
+### Webhook secrets
+
+Webhook configurations also declare secret fields based on `AuthMode` and
+`source_profile`. These are encrypted with the AAD scope `webhook:config`
+and follow the same encrypt-on-unseal, plaintext-when-sealed pattern.
 
 ## Vault Guard Middleware
 
