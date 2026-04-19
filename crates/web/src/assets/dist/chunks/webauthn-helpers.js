@@ -1,1 +1,645 @@
-import{c as S,bU as x,bV as l,bW as m,bX as P,bY as I,bZ as w,b_ as O,d as s,b$ as T,av as D,aw as L,au as N}from"./theme.js";import{u}from"./jsxRuntime.module.js";const v=window.__MOLTIS__||{},f={};function B(e){return v[e]??null}function Z(e,t){v[e]=t,R(e,t)}function X(e,t){f[e]||(f[e]=[]),f[e].push(t)}function Q(){return fetch(`/api/gon?_=${Date.now()}`,{cache:"no-store",headers:{"Cache-Control":"no-cache",Pragma:"no-cache"}}).then(e=>e.ok?e.json():null).then(e=>{if(e)for(const t of Object.keys(e))v[t]=e[t],R(t,e[t])})}function R(e,t){for(const o of f[e]||[])o(t)}const b={};function ee(e,t){return(b[e]=b[e]||[]).push(t),function(){const n=b[e];if(n){const a=n.indexOf(t);a!==-1&&n.splice(a,1)}}}function te(e){return e.target.value}function ne(e){return e.target.checked}let d=null,_=null,g=!1;const E={};function U(){return I()}function q(){g=!1}window.addEventListener("moltis:auth-status-sync-complete",q);function p(e){_=e;const t=Object.assign({factor:1.5,max:5e3},e.backoff),o=location.protocol==="https:"?"wss:":"ws:",n=new WebSocket(`${o}//${location.host}/ws/chat`);T(n),n.onopen=()=>{const a=P();l[a]=i=>{if(i.ok&&i.payload){const r=i.payload;if(r.type==="hello-ok"){m(!0),w(1e3),e.onConnected&&e.onConnected(r);return}}m(!1),e.onHandshakeFailed?e.onHandshakeFailed({type:"res",ok:i.ok,payload:i.payload,error:i.error}):n.close()},n.send(JSON.stringify({type:"req",id:a,method:"connect",params:{protocol:{min:3,max:4},client:{id:"web-chat-ui",version:"0.1.0",platform:"browser",mode:"operator"},locale:U(),timezone:Intl.DateTimeFormat().resolvedOptions().timeZone}}))},n.onmessage=a=>{var r;let i;try{i=JSON.parse(a.data)}catch{return}if((i==null?void 0:i.type)==="res"&&i.error&&(i.error=x(i.error),((r=i.error)==null?void 0:r.code)==="UNAUTHORIZED"&&!g&&(g=!0,window.dispatchEvent(new CustomEvent("moltis:auth-status-changed")))),i.type==="res"&&i.id&&Object.hasOwn(l,i.id)){l[i.id]({ok:i.ok??!1,payload:i.payload,error:i.error}),delete l[i.id];return}if(i.type==="req"&&i.id&&i.method){j(n,i);return}e.onFrame&&e.onFrame(i)},n.onclose=()=>{const a=S;m(!1);for(const i in l)l[i]({ok:!1,error:{code:"DISCONNECTED",message:"WebSocket disconnected"}}),delete l[i];e.onDisconnected&&e.onDisconnected(a),a?k(()=>p(e),t):F(e,t)},n.onerror=()=>{}}function j(e,t){const o=t.method??"";if(!Object.hasOwn(E,o)){e.send(JSON.stringify({type:"res",id:t.id,ok:!1,error:{code:"UNKNOWN_METHOD",message:`no handler for ${o}`}}));return}const n=E[o];Promise.resolve().then(()=>n(t.params||{})).then(a=>{e.send(JSON.stringify({type:"res",id:t.id,ok:!0,payload:a||{}}))}).catch(a=>{e.send(JSON.stringify({type:"res",id:t.id,ok:!1,error:{code:"INTERNAL",message:String((a==null?void 0:a.message)||a)}}))})}function oe(e){return s("subscribe",{events:e})}function F(e,t){fetch("/api/auth/status").then(o=>o.ok?o.json():null).then(o=>{o!=null&&o.setup_required?window.location.assign("/onboarding"):o&&!o.authenticated?window.location.assign("/login"):k(()=>p(e),t)}).catch(()=>{k(()=>p(e),t)})}function k(e,t){d||(d=setTimeout(()=>{d=null,w(Math.min(O*t.factor,t.max)),e()},O))}function ie(e){const t=e||_;!t||S||(d&&clearTimeout(d),d=null,w(1e3),p(t))}const W=["🐶","🐱","🐰","🐹","🐻","🐺","🦁","🦅","🦉","🐧","🐢","🐍","🐉","🦄","🐙","🦀","🦞","🐝","🦊","🐿️","🦔","🦇","🐊","🐳","🐬","🦝","🦭","🦜","🦩","🐦","🐎","🦌","🐘","🦛","🐼","🐨","🤖","👾","👻","🎃","⭐","🔥","⚡","🌈","🌟","💡","🧠","🧭","🔮","🚀","🌍","🌵","🌻","🍀","🍄","❄️"];function ae({value:e,onChange:t,onSelect:o}){const[n,a]=D(!1),i=L(null);return N(()=>{if(!n)return;function r(c){i.current&&!i.current.contains(c.target)&&a(!1)}return document.addEventListener("mousedown",r),()=>document.removeEventListener("mousedown",r)},[n]),u("div",{class:"settings-emoji-field",ref:i,children:[u("input",{type:"text",class:"provider-key-input w-12 px-1 py-1 text-center text-xl",value:e||"",onInput:r=>t(r.target.value),placeholder:"🐾"}),u("button",{type:"button",class:"provider-btn provider-btn-sm",onClick:()=>a(!n),children:n?"Close":"Pick"}),n?u("div",{class:"settings-emoji-picker",children:W.map(r=>u("button",{type:"button",class:`settings-emoji-btn ${e===r?"active":""}`,onClick:()=>{t(r),o&&o(r),a(!1)},children:r}))}):null]})}const M="model service not configured",A=40,H=250;function h(e){if(!e||typeof e!="string")return e;const t=e.toLowerCase();return t.includes("401")||t.includes("unauthorized")||t.includes("invalid api key")||t.includes("invalid x-api-key")?"Invalid API key. Please double-check and try again.":t.includes("403")||t.includes("forbidden")?"Your API key doesn't have access. Check your account permissions.":t.includes("permission")?e:t.includes("429")||t.includes("rate limit")||t.includes("too many requests")?"Rate limited by the provider. Wait a moment and try again.":t.includes("timeout")||t.includes("timed out")?"Connection timed out. Check your endpoint URL and try again.":t.includes("connection refused")||t.includes("econnrefused")?"Connection refused. Make sure the provider endpoint is running and reachable.":t.includes("dns")||t.includes("getaddrinfo")||t.includes("name or service not known")?"Could not resolve the endpoint address. Check the URL and try again.":t.includes("ollama pull")?e:t.includes("404")||t.includes("not found")?"Model not found at this endpoint. Make sure it is installed and try again.":e}function re(e){return!e||typeof e!="string"?!1:e.toLowerCase().includes(M)}function se(e){if(!e||typeof e!="string")return!1;const t=e.toLowerCase();return t.includes("timeout")||t.includes("timed out")}async function ce(e,t,o,n,a){var C;const i={provider:e,apiKey:t};o&&(i.baseUrl=o),n&&(i.model=n),a&&(i.requestId=a);const r=await s("providers.validate_key",i);if(!(r!=null&&r.ok))return{valid:!1,error:h(((C=r==null?void 0:r.error)==null?void 0:C.message)||"Failed to validate credentials.")};const c=r.payload||{};return c.valid?{valid:!0,models:c.models||[]}:{valid:!1,error:h(c.error||"Validation failed.")}}async function le(e){var t;for(let o=0;o<A;o++){const n=await s("models.test",{modelId:e});if(n!=null&&n.ok)return{ok:!0};const a=((t=n==null?void 0:n.error)==null?void 0:t.message)||"Model test failed.";if(!(String(a).toLowerCase().includes(M)&&o<A-1))return{ok:!1,error:h(a)};await new Promise(c=>{window.setTimeout(c,H)})}return{ok:!1,error:h("Model test failed.")}}function K(e,t,o,n){const a={provider:e,apiKey:t};return o&&(a.baseUrl=o),n&&(a.model=n),a}function de(e,t,o,n){const a=K(e,t,o,n);return s("providers.save_key",a)}const $={anthropic:{url:"https://console.anthropic.com/settings/keys",label:"Anthropic Console"},openai:{url:"https://platform.openai.com/api-keys",label:"OpenAI Platform"},gemini:{url:"https://aistudio.google.com/app/apikey",label:"Google AI Studio"},groq:{url:"https://console.groq.com/keys",label:"Groq Console"},xai:{url:"https://console.x.ai/",label:"xAI Console"},deepseek:{url:"https://platform.deepseek.com/api_keys",label:"DeepSeek Platform"},mistral:{url:"https://console.mistral.ai/api-keys/",label:"Mistral Console"},openrouter:{url:"https://openrouter.ai/settings/keys",label:"OpenRouter Settings"},cerebras:{url:"https://cloud.cerebras.ai/",label:"Cerebras Cloud"},minimax:{url:"https://www.minimax.io/platform",label:"MiniMax Platform"},moonshot:{url:"https://platform.moonshot.ai/console/api-keys",label:"Moonshot Platform"},"kimi-code":{url:"https://www.kimi.com/code/console",label:"Kimi Code Console"},venice:{url:"https://venice.ai/settings/api-keys",label:"Venice Settings"}};function ue(e){if(!e||e.authType!=="api-key")return null;if(e.keyOptional)return{text:`API key is optional for ${e.displayName}. Leave blank unless your gateway requires one.`};const t=$[e.name];return t?{text:"Get your key at",url:t.url,label:t.label}:{text:`Get your API key from the ${e.displayName} dashboard.`}}function G(e){var o;const t=e==null?void 0:e.payload;if(e!=null&&e.ok&&(t!=null&&t.alreadyAuthenticated))return{status:"already"};if(e!=null&&e.ok&&(t!=null&&t.authUrl))return{status:"browser",authUrl:t.authUrl};if(e!=null&&e.ok&&(t!=null&&t.deviceFlow)){const n=t.verificationUriComplete||t.verificationUri;return n&&t.userCode?{status:"device",verificationUrl:n,userCode:t.userCode}:{status:"error",error:"OAuth device flow response is missing verification data."}}return{status:"error",error:((o=e==null?void 0:e.error)==null?void 0:o.message)||"Failed to start OAuth"}}function fe(e){return s("providers.oauth.start",{provider:e,redirectUri:`${window.location.origin}/auth/callback`}).then(t=>G(t))}function pe(e,t){return s("providers.oauth.complete",{provider:e,callback:t})}function he(e,t){return e.trim()||t.trim()?e.trim()?t.trim()?{valid:!0}:{valid:!1,error:"Your name is required."}:{valid:!1,error:"Agent name is required."}:{valid:!1,error:"Agent name and your name are required."}}function Y(e){var n;const t=(n=e==null?void 0:e.error)==null?void 0:n.message;if(typeof t!="string")return!1;const o=t.toLowerCase();return o.includes("method")&&(o.includes("not found")||o.includes("unknown"))}function me(e,t={}){const o=t.agentId;if(!o)return s("agent.identity.update",e);const n={...e,agent_id:o};return s("agents.identity.update",n).then(a=>a!=null&&a.ok||!Y(a)?a:s("agent.identity.update",e))}const J={"fbfc3007-154e-4ecc-8c0b-6e020557d7bd":"Apple Passwords","dd4ec289-e01d-41c9-bb89-70fa845d4bf2":"iCloud Keychain (Managed)","adce0002-35bc-c60a-648b-0b25f1f05503":"Chrome on Mac","ea9b8d66-4d01-1d21-3ce4-b6b48cb575d4":"Google Password Manager","08987058-cadc-4b81-b6e1-30de50dcbe96":"Windows Hello","9ddd1817-af5a-4672-a2b9-3e3dd95000a9":"Windows Hello","6028b017-b1d4-4c02-b4b3-afcdafc96bb2":"Windows Hello","bada5566-a7aa-401f-bd96-45619a55120d":"1Password","d548826e-79b4-db40-a3d8-11116f7e8349":"Bitwarden","531126d6-e717-415c-9320-3d9aa6981239":"Dashlane","b84e4048-15dc-4dd0-8640-f4f60813c8af":"NordPass","0ea242b4-43c4-4a1b-8b17-dd6d0b6baec6":"Keeper","f3809540-7f14-49c1-a8b3-8f813b225541":"Enpass","53414d53-554e-4700-0000-000000000000":"Samsung Pass","b5397666-4885-aa6b-cebf-e52262a439a2":"Chromium Browser","771b48fd-d3d4-4f74-9232-fc157ab0507a":"Edge on Mac","891494da-2c90-4d31-a9cd-4eab0aed1309":"Sesame"};function be(e){try{const t=e.response,o=new Uint8Array(t.getAuthenticatorData());if(o.length>=53){let n="";for(let i=37;i<53;i++)n+=o[i].toString(16).padStart(2,"0");const a=n.slice(0,8)+"-"+n.slice(8,12)+"-"+n.slice(12,16)+"-"+n.slice(16,20)+"-"+n.slice(20);if(a!=="00000000-0000-0000-0000-000000000000"){const i=J[a];if(i)return i}}}catch{}return e.authenticatorAttachment==="platform"?"This device":e.authenticatorAttachment==="cross-platform"?"Security key":"Passkey"}function y(e){let t=e.replace(/-/g,"+").replace(/_/g,"/");for(;t.length%4;)t+="=";const o=atob(t),n=new Uint8Array(o.length);for(let a=0;a<o.length;a++)n[a]=o.charCodeAt(a);return n.buffer}function ye(e){e.challenge=y(e.challenge);const t=e.user;if(t.id=y(t.id),e.excludeCredentials)for(const o of e.excludeCredentials)o.id=y(o.id);return e}export{ae as E,X as a,ne as b,p as c,pe as d,b as e,ie as f,B as g,fe as h,de as i,le as j,re as k,se as l,h as m,he as n,ee as o,ue as p,Z as q,Q as r,oe as s,te as t,me as u,ce as v,ye as w,be as x};
+import { c as connected, bW as localizeRpcError, bX as pending, bY as setConnected, bZ as nextId, b_ as getPreferredLocale, b$ as setReconnectDelay, c0 as reconnectDelay, d as sendRpc, c1 as setWs, aw as d, ax as A, av as y } from "./theme.js";
+import { u } from "./jsxRuntime.module.js";
+const gon = window.__MOLTIS__ || {};
+const listeners = {};
+function get(key) {
+  return gon[key] ?? null;
+}
+function set(key, value) {
+  gon[key] = value;
+  notify(key, value);
+}
+function onChange(key, fn) {
+  if (!listeners[key]) listeners[key] = [];
+  listeners[key].push(fn);
+}
+function refresh() {
+  return fetch(`/api/gon?_=${Date.now()}`, {
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache"
+    }
+  }).then((r) => r.ok ? r.json() : null).then((data) => {
+    if (!data) return;
+    for (const key of Object.keys(data)) {
+      gon[key] = data[key];
+      notify(key, data[key]);
+    }
+  });
+}
+function notify(key, value) {
+  for (const fn of listeners[key] || []) fn(value);
+}
+const eventListeners = {};
+function onEvent(eventName, handler) {
+  (eventListeners[eventName] = eventListeners[eventName] || []).push(handler);
+  return function off() {
+    const arr = eventListeners[eventName];
+    if (arr) {
+      const idx = arr.indexOf(handler);
+      if (idx !== -1) arr.splice(idx, 1);
+    }
+  };
+}
+function targetValue(e) {
+  return e.target.value;
+}
+function targetChecked(e) {
+  return e.target.checked;
+}
+let reconnectTimer = null;
+let lastOpts = null;
+let authRedirectPending = false;
+const serverRequestHandlers = {};
+function resolveLocale() {
+  return getPreferredLocale();
+}
+function resetAuthRedirectGuard() {
+  authRedirectPending = false;
+}
+window.addEventListener("moltis:auth-status-sync-complete", resetAuthRedirectGuard);
+function connectWs(opts) {
+  lastOpts = opts;
+  const backoff = Object.assign({ factor: 1.5, max: 5e3 }, opts.backoff);
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${location.host}/ws/chat`);
+  setWs(ws);
+  ws.onopen = () => {
+    const id = nextId();
+    pending[id] = (res) => {
+      if (res.ok && res.payload) {
+        const hello = res.payload;
+        if (hello.type === "hello-ok") {
+          setConnected(true);
+          setReconnectDelay(1e3);
+          if (opts.onConnected) opts.onConnected(hello);
+          return;
+        }
+      }
+      setConnected(false);
+      if (opts.onHandshakeFailed) {
+        opts.onHandshakeFailed({
+          type: "res",
+          ok: res.ok,
+          payload: res.payload,
+          error: res.error
+        });
+      } else {
+        ws.close();
+      }
+    };
+    ws.send(
+      JSON.stringify({
+        type: "req",
+        id,
+        method: "connect",
+        params: {
+          protocol: { min: 3, max: 4 },
+          client: {
+            id: "web-chat-ui",
+            version: "0.1.0",
+            platform: "browser",
+            mode: "operator"
+          },
+          locale: resolveLocale(),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        }
+      })
+    );
+  };
+  ws.onmessage = (evt) => {
+    var _a;
+    let frame;
+    try {
+      frame = JSON.parse(evt.data);
+    } catch {
+      return;
+    }
+    if ((frame == null ? void 0 : frame.type) === "res" && frame.error) {
+      frame.error = localizeRpcError(frame.error);
+      if (((_a = frame.error) == null ? void 0 : _a.code) === "UNAUTHORIZED" && !authRedirectPending) {
+        authRedirectPending = true;
+        window.dispatchEvent(new CustomEvent("moltis:auth-status-changed"));
+      }
+    }
+    if (frame.type === "res" && frame.id && Object.hasOwn(pending, frame.id)) {
+      pending[frame.id]({
+        ok: frame.ok ?? false,
+        payload: frame.payload,
+        error: frame.error
+      });
+      delete pending[frame.id];
+      return;
+    }
+    if (frame.type === "req" && frame.id && frame.method) {
+      handleServerRequest(ws, frame);
+      return;
+    }
+    if (opts.onFrame) opts.onFrame(frame);
+  };
+  ws.onclose = () => {
+    const wasConnected = connected;
+    setConnected(false);
+    for (const id in pending) {
+      pending[id]({ ok: false, error: { code: "DISCONNECTED", message: "WebSocket disconnected" } });
+      delete pending[id];
+    }
+    if (opts.onDisconnected) opts.onDisconnected(wasConnected);
+    if (wasConnected) {
+      scheduleReconnect(() => connectWs(opts), backoff);
+    } else {
+      checkAuthOrReconnect(opts, backoff);
+    }
+  };
+  ws.onerror = () => {
+  };
+}
+function handleServerRequest(ws, frame) {
+  const method = frame.method ?? "";
+  if (!Object.hasOwn(serverRequestHandlers, method)) {
+    ws.send(
+      JSON.stringify({
+        type: "res",
+        id: frame.id,
+        ok: false,
+        error: { code: "UNKNOWN_METHOD", message: `no handler for ${method}` }
+      })
+    );
+    return;
+  }
+  const handler = serverRequestHandlers[method];
+  Promise.resolve().then(() => handler(frame.params || {})).then((result) => {
+    ws.send(JSON.stringify({ type: "res", id: frame.id, ok: true, payload: result || {} }));
+  }).catch((err) => {
+    ws.send(
+      JSON.stringify({
+        type: "res",
+        id: frame.id,
+        ok: false,
+        error: { code: "INTERNAL", message: String((err == null ? void 0 : err.message) || err) }
+      })
+    );
+  });
+}
+function subscribeEvents(events) {
+  return sendRpc("subscribe", { events });
+}
+function checkAuthOrReconnect(opts, backoff) {
+  fetch("/api/auth/status").then((r) => r.ok ? r.json() : null).then((auth) => {
+    if (auth == null ? void 0 : auth.setup_required) {
+      window.location.assign("/onboarding");
+    } else if (auth && !auth.authenticated) {
+      window.location.assign("/login");
+    } else {
+      scheduleReconnect(() => connectWs(opts), backoff);
+    }
+  }).catch(() => {
+    scheduleReconnect(() => connectWs(opts), backoff);
+  });
+}
+function scheduleReconnect(reconnect, backoff) {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    setReconnectDelay(Math.min(reconnectDelay * backoff.factor, backoff.max));
+    reconnect();
+  }, reconnectDelay);
+}
+function forceReconnect(opts) {
+  const resolved = opts || lastOpts;
+  if (!resolved || connected) return;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  setReconnectDelay(1e3);
+  connectWs(resolved);
+}
+const EMOJI_LIST = [
+  "🐶",
+  "🐱",
+  "🐰",
+  "🐹",
+  "🐻",
+  "🐺",
+  "🦁",
+  "🦅",
+  "🦉",
+  "🐧",
+  "🐢",
+  "🐍",
+  "🐉",
+  "🦄",
+  "🐙",
+  "🦀",
+  "🦞",
+  "🐝",
+  "🦊",
+  "🐿️",
+  "🦔",
+  "🦇",
+  "🐊",
+  "🐳",
+  "🐬",
+  "🦝",
+  "🦭",
+  "🦜",
+  "🦩",
+  "🐦",
+  "🐎",
+  "🦌",
+  "🐘",
+  "🦛",
+  "🐼",
+  "🐨",
+  "🤖",
+  "👾",
+  "👻",
+  "🎃",
+  "⭐",
+  "🔥",
+  "⚡",
+  "🌈",
+  "🌟",
+  "💡",
+  "🧠",
+  "🧭",
+  "🔮",
+  "🚀",
+  "🌍",
+  "🌵",
+  "🌻",
+  "🍀",
+  "🍄",
+  "❄️"
+];
+function EmojiPicker({ value, onChange: onChange2, onSelect }) {
+  const [open, setOpen] = d(false);
+  const wrapRef = A(null);
+  y(() => {
+    if (!open) return;
+    function onClick(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+  return /* @__PURE__ */ u("div", { class: "settings-emoji-field", ref: wrapRef, children: [
+    /* @__PURE__ */ u(
+      "input",
+      {
+        type: "text",
+        class: "provider-key-input w-12 px-1 py-1 text-center text-xl",
+        value: value || "",
+        onInput: (e) => onChange2(e.target.value),
+        placeholder: "🐾"
+      }
+    ),
+    /* @__PURE__ */ u("button", { type: "button", class: "provider-btn provider-btn-sm", onClick: () => setOpen(!open), children: open ? "Close" : "Pick" }),
+    open ? /* @__PURE__ */ u("div", { class: "settings-emoji-picker", children: EMOJI_LIST.map((em) => /* @__PURE__ */ u(
+      "button",
+      {
+        type: "button",
+        class: `settings-emoji-btn ${value === em ? "active" : ""}`,
+        onClick: () => {
+          onChange2(em);
+          if (onSelect) onSelect(em);
+          setOpen(false);
+        },
+        children: em
+      }
+    )) }) : null
+  ] });
+}
+const MODEL_SERVICE_NOT_CONFIGURED = "model service not configured";
+const MODEL_TEST_RETRY_ATTEMPTS = 40;
+const MODEL_TEST_RETRY_DELAY_MS = 250;
+function humanizeProbeError(error) {
+  if (!error || typeof error !== "string") return error;
+  const lower = error.toLowerCase();
+  if (lower.includes("401") || lower.includes("unauthorized") || lower.includes("invalid api key") || lower.includes("invalid x-api-key")) {
+    return "Invalid API key. Please double-check and try again.";
+  }
+  if (lower.includes("403") || lower.includes("forbidden")) {
+    return "Your API key doesn't have access. Check your account permissions.";
+  }
+  if (lower.includes("permission")) {
+    return error;
+  }
+  if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
+    return "Rate limited by the provider. Wait a moment and try again.";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out")) {
+    return "Connection timed out. Check your endpoint URL and try again.";
+  }
+  if (lower.includes("connection refused") || lower.includes("econnrefused")) {
+    return "Connection refused. Make sure the provider endpoint is running and reachable.";
+  }
+  if (lower.includes("dns") || lower.includes("getaddrinfo") || lower.includes("name or service not known")) {
+    return "Could not resolve the endpoint address. Check the URL and try again.";
+  }
+  if (lower.includes("ollama pull")) {
+    return error;
+  }
+  if (lower.includes("404") || lower.includes("not found")) {
+    return "Model not found at this endpoint. Make sure it is installed and try again.";
+  }
+  return error;
+}
+function isModelServiceNotConfigured(error) {
+  if (!error || typeof error !== "string") return false;
+  return error.toLowerCase().includes(MODEL_SERVICE_NOT_CONFIGURED);
+}
+function isTimeoutError(error) {
+  if (!error || typeof error !== "string") return false;
+  const lower = error.toLowerCase();
+  return lower.includes("timeout") || lower.includes("timed out");
+}
+async function validateProviderKey(provider, apiKey, baseUrl, model, requestId) {
+  var _a;
+  const payload = { provider, apiKey };
+  if (baseUrl) payload.baseUrl = baseUrl;
+  if (model) payload.model = model;
+  if (requestId) payload.requestId = requestId;
+  const res = await sendRpc("providers.validate_key", payload);
+  if (!(res == null ? void 0 : res.ok)) {
+    return {
+      valid: false,
+      error: humanizeProbeError(((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Failed to validate credentials.")
+    };
+  }
+  const data = res.payload || {};
+  if (data.valid) {
+    return { valid: true, models: data.models || [] };
+  }
+  return {
+    valid: false,
+    error: humanizeProbeError(data.error || "Validation failed.")
+  };
+}
+async function testModel(modelId) {
+  var _a;
+  for (let attempt = 0; attempt < MODEL_TEST_RETRY_ATTEMPTS; attempt++) {
+    const res = await sendRpc("models.test", { modelId });
+    if (res == null ? void 0 : res.ok) {
+      return { ok: true };
+    }
+    const message = ((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Model test failed.";
+    const lower = String(message).toLowerCase();
+    const shouldRetry = lower.includes(MODEL_SERVICE_NOT_CONFIGURED) && attempt < MODEL_TEST_RETRY_ATTEMPTS - 1;
+    if (!shouldRetry) {
+      return {
+        ok: false,
+        error: humanizeProbeError(message)
+      };
+    }
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, MODEL_TEST_RETRY_DELAY_MS);
+    });
+  }
+  return {
+    ok: false,
+    error: humanizeProbeError("Model test failed.")
+  };
+}
+function buildSaveKeyPayload(providerName, apiKey, baseUrl, model) {
+  const payload = { provider: providerName, apiKey };
+  if (baseUrl) payload.baseUrl = baseUrl;
+  if (model) payload.model = model;
+  return payload;
+}
+function saveProviderKey(providerName, apiKey, baseUrl, model) {
+  const payload = buildSaveKeyPayload(providerName, apiKey, baseUrl, model);
+  return sendRpc("providers.save_key", payload);
+}
+const KEY_SOURCE_BY_PROVIDER = {
+  anthropic: {
+    url: "https://console.anthropic.com/settings/keys",
+    label: "Anthropic Console"
+  },
+  openai: {
+    url: "https://platform.openai.com/api-keys",
+    label: "OpenAI Platform"
+  },
+  gemini: {
+    url: "https://aistudio.google.com/app/apikey",
+    label: "Google AI Studio"
+  },
+  groq: {
+    url: "https://console.groq.com/keys",
+    label: "Groq Console"
+  },
+  xai: {
+    url: "https://console.x.ai/",
+    label: "xAI Console"
+  },
+  deepseek: {
+    url: "https://platform.deepseek.com/api_keys",
+    label: "DeepSeek Platform"
+  },
+  mistral: {
+    url: "https://console.mistral.ai/api-keys/",
+    label: "Mistral Console"
+  },
+  openrouter: {
+    url: "https://openrouter.ai/settings/keys",
+    label: "OpenRouter Settings"
+  },
+  cerebras: {
+    url: "https://cloud.cerebras.ai/",
+    label: "Cerebras Cloud"
+  },
+  minimax: {
+    url: "https://www.minimax.io/platform",
+    label: "MiniMax Platform"
+  },
+  moonshot: {
+    url: "https://platform.moonshot.ai/console/api-keys",
+    label: "Moonshot Platform"
+  },
+  "kimi-code": {
+    url: "https://www.kimi.com/code/console",
+    label: "Kimi Code Console"
+  },
+  venice: {
+    url: "https://venice.ai/settings/api-keys",
+    label: "Venice Settings"
+  }
+};
+function providerApiKeyHelp(provider) {
+  if (!provider || provider.authType !== "api-key") return null;
+  if (provider.keyOptional) {
+    return {
+      text: `API key is optional for ${provider.displayName}. Leave blank unless your gateway requires one.`
+    };
+  }
+  const source = KEY_SOURCE_BY_PROVIDER[provider.name];
+  if (source) {
+    return {
+      text: "Get your key at",
+      url: source.url,
+      label: source.label
+    };
+  }
+  return {
+    text: `Get your API key from the ${provider.displayName} dashboard.`
+  };
+}
+function normalizeOAuthStartResponse(res) {
+  var _a;
+  const payload = res == null ? void 0 : res.payload;
+  if ((res == null ? void 0 : res.ok) && (payload == null ? void 0 : payload.alreadyAuthenticated)) {
+    return {
+      status: "already"
+    };
+  }
+  if ((res == null ? void 0 : res.ok) && (payload == null ? void 0 : payload.authUrl)) {
+    return {
+      status: "browser",
+      authUrl: payload.authUrl
+    };
+  }
+  if ((res == null ? void 0 : res.ok) && (payload == null ? void 0 : payload.deviceFlow)) {
+    const verificationUrl = payload.verificationUriComplete || payload.verificationUri;
+    if (!(verificationUrl && payload.userCode)) {
+      return {
+        status: "error",
+        error: "OAuth device flow response is missing verification data."
+      };
+    }
+    return {
+      status: "device",
+      verificationUrl,
+      userCode: payload.userCode
+    };
+  }
+  return {
+    status: "error",
+    error: ((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Failed to start OAuth"
+  };
+}
+function startProviderOAuth(providerName) {
+  return sendRpc("providers.oauth.start", {
+    provider: providerName,
+    redirectUri: `${window.location.origin}/auth/callback`
+  }).then((res) => normalizeOAuthStartResponse(res));
+}
+function completeProviderOAuth(providerName, callback) {
+  return sendRpc("providers.oauth.complete", {
+    provider: providerName,
+    callback
+  });
+}
+function validateIdentityFields(name, userName) {
+  if (!(name.trim() || userName.trim())) {
+    return { valid: false, error: "Agent name and your name are required." };
+  }
+  if (!name.trim()) {
+    return { valid: false, error: "Agent name is required." };
+  }
+  if (!userName.trim()) {
+    return { valid: false, error: "Your name is required." };
+  }
+  return { valid: true };
+}
+function isMissingMethodError(res) {
+  var _a;
+  const message = (_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message;
+  if (typeof message !== "string") return false;
+  const lower = message.toLowerCase();
+  return lower.includes("method") && (lower.includes("not found") || lower.includes("unknown"));
+}
+function updateIdentity(fields, options = {}) {
+  const agentId = options.agentId;
+  if (!agentId) {
+    return sendRpc("agent.identity.update", fields);
+  }
+  const params = { ...fields, agent_id: agentId };
+  return sendRpc("agents.identity.update", params).then((res) => {
+    if ((res == null ? void 0 : res.ok) || !isMissingMethodError(res)) return res;
+    return sendRpc("agent.identity.update", fields);
+  });
+}
+const AAGUID_NAMES = {
+  "fbfc3007-154e-4ecc-8c0b-6e020557d7bd": "Apple Passwords",
+  "dd4ec289-e01d-41c9-bb89-70fa845d4bf2": "iCloud Keychain (Managed)",
+  "adce0002-35bc-c60a-648b-0b25f1f05503": "Chrome on Mac",
+  "ea9b8d66-4d01-1d21-3ce4-b6b48cb575d4": "Google Password Manager",
+  "08987058-cadc-4b81-b6e1-30de50dcbe96": "Windows Hello",
+  "9ddd1817-af5a-4672-a2b9-3e3dd95000a9": "Windows Hello",
+  "6028b017-b1d4-4c02-b4b3-afcdafc96bb2": "Windows Hello",
+  "bada5566-a7aa-401f-bd96-45619a55120d": "1Password",
+  "d548826e-79b4-db40-a3d8-11116f7e8349": "Bitwarden",
+  "531126d6-e717-415c-9320-3d9aa6981239": "Dashlane",
+  "b84e4048-15dc-4dd0-8640-f4f60813c8af": "NordPass",
+  "0ea242b4-43c4-4a1b-8b17-dd6d0b6baec6": "Keeper",
+  "f3809540-7f14-49c1-a8b3-8f813b225541": "Enpass",
+  "53414d53-554e-4700-0000-000000000000": "Samsung Pass",
+  "b5397666-4885-aa6b-cebf-e52262a439a2": "Chromium Browser",
+  "771b48fd-d3d4-4f74-9232-fc157ab0507a": "Edge on Mac",
+  "891494da-2c90-4d31-a9cd-4eab0aed1309": "Sesame"
+};
+function detectPasskeyName(cred) {
+  try {
+    const response = cred.response;
+    const authData = new Uint8Array(response.getAuthenticatorData());
+    if (authData.length >= 53) {
+      let hex = "";
+      for (let i = 37; i < 53; i++) hex += authData[i].toString(16).padStart(2, "0");
+      const uuid = hex.slice(0, 8) + "-" + hex.slice(8, 12) + "-" + hex.slice(12, 16) + "-" + hex.slice(16, 20) + "-" + hex.slice(20);
+      if (uuid !== "00000000-0000-0000-0000-000000000000") {
+        const name = AAGUID_NAMES[uuid];
+        if (name) return name;
+      }
+    }
+  } catch (_e) {
+  }
+  if (cred.authenticatorAttachment === "platform") return "This device";
+  if (cred.authenticatorAttachment === "cross-platform") return "Security key";
+  return "Passkey";
+}
+function base64ToArrayBuffer(b64) {
+  let str = b64.replace(/-/g, "+").replace(/_/g, "/");
+  while (str.length % 4) str += "=";
+  const bin = atob(str);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+}
+function prepareCreationOptions(serverPk) {
+  serverPk.challenge = base64ToArrayBuffer(serverPk.challenge);
+  const user = serverPk.user;
+  user.id = base64ToArrayBuffer(user.id);
+  if (serverPk.excludeCredentials) {
+    for (const c of serverPk.excludeCredentials) {
+      c.id = base64ToArrayBuffer(c.id);
+    }
+  }
+  return serverPk;
+}
+export {
+  EmojiPicker as E,
+  onChange as a,
+  targetChecked as b,
+  connectWs as c,
+  completeProviderOAuth as d,
+  eventListeners as e,
+  forceReconnect as f,
+  get as g,
+  startProviderOAuth as h,
+  saveProviderKey as i,
+  testModel as j,
+  isModelServiceNotConfigured as k,
+  isTimeoutError as l,
+  humanizeProbeError as m,
+  validateIdentityFields as n,
+  onEvent as o,
+  providerApiKeyHelp as p,
+  set as q,
+  refresh as r,
+  subscribeEvents as s,
+  targetValue as t,
+  updateIdentity as u,
+  validateProviderKey as v,
+  prepareCreationOptions as w,
+  detectPasskeyName as x
+};

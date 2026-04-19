@@ -14,6 +14,7 @@ export default defineConfig({
     outDir: resolve(__dirname, "../src/assets/dist"),
     emptyOutDir: true,
     sourcemap: false,
+    minify: false,
     rollupOptions: {
       input: {
         main: resolve(__dirname, "src/main.tsx"),

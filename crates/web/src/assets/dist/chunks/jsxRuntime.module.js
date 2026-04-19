@@ -1,1 +1,13 @@
-import{c0 as l}from"./theme.js";var p=0;function s(f,o,u,v,i,c){o||(o={});var n,_,r=o;if("ref"in r)for(_ in r={},o)_=="ref"?n=o[_]:r[_]=o[_];var e={type:f,props:r,key:u,ref:n,__k:null,__:null,__b:0,__e:null,__c:null,constructor:void 0,__v:--p,__i:-1,__u:0,__source:i,__self:c};if(typeof f=="function"&&(n=f.defaultProps))for(_ in n)r[_]===void 0&&(r[_]=n[_]);return l.vnode&&l.vnode(e),e}export{s as u};
+import { bV as l } from "./theme.js";
+var f = 0;
+function u(e, t, n, o, i, u2) {
+  t || (t = {});
+  var a, c, p = t;
+  if ("ref" in p) for (c in p = {}, t) "ref" == c ? a = t[c] : p[c] = t[c];
+  var l$1 = { type: e, props: p, key: n, ref: a, __k: null, __: null, __b: 0, __e: null, __c: null, constructor: void 0, __v: --f, __i: -1, __u: 0, __source: i, __self: u2 };
+  if ("function" == typeof e && (a = e.defaultProps)) for (c in a) void 0 === p[c] && (p[c] = a[c]);
+  return l.vnode && l.vnode(l$1), l$1;
+}
+export {
+  u
+};

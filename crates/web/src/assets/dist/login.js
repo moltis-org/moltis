@@ -1,1 +1,243 @@
-import{u as i}from"./chunks/jsxRuntime.module.js";import{bM as O,bO as L,aL as R,av as u,au as _,Z as o}from"./chunks/theme.js";import{b as x,a as F}from"./chunks/branding.js";O();const B=L().catch(n=>{console.warn("[i18n] login init failed",n)}),T=window.__MOLTIS__||{},w=T.identity||null;document.title=x(w);F(w);H(T.vault_status||null);function H(n){const s=document.getElementById("vaultBanner");s&&(s.style.display=n==="sealed"?"":"none")}async function K(n){if(n.status===429){let t=0;try{const e=await n.json();e&&Number.isFinite(e.retry_after_seconds)&&(t=Math.max(1,Math.ceil(e.retry_after_seconds)))}catch{}if(t<=0){const e=Number.parseInt(n.headers.get("Retry-After")||"0",10);Number.isFinite(e)&&e>0&&(t=e)}return{type:"retry",retryAfter:Math.max(1,t)}}return n.status===401?{type:"invalid_password"}:{type:"error",message:await n.text()||o("login:loginFailed")}}function j(n,s){if(n(null),/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname)||location.hostname.startsWith("[")){n(o("login:passkeyRequiresDomain",{hostname:location.hostname}));return}s(!0),fetch("/api/auth/passkey/auth/begin",{method:"POST"}).then(t=>t.json()).then(t=>{const e=t.options;if(e.publicKey.challenge=I(e.publicKey.challenge),e.publicKey.allowCredentials)for(const a of e.publicKey.allowCredentials)a.id=I(a.id);return navigator.credentials.get({publicKey:e.publicKey}).then(a=>({cred:a,challengeId:t.challenge_id}))}).then(({cred:t,challengeId:e})=>{const a=t.response,l={challenge_id:e,credential:{id:t.id,rawId:y(t.rawId),type:t.type,response:{authenticatorData:y(a.authenticatorData),clientDataJSON:y(a.clientDataJSON),signature:y(a.signature),userHandle:a.userHandle?y(a.userHandle):null}}};return fetch("/api/auth/passkey/auth/finish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(l)})}).then(t=>{if(t.ok)location.href="/";else return t.text().then(e=>{n(e||o("login:passkeyAuthFailed")),s(!1)})}).catch(t=>{n(t.message||o("login:passkeyAuthFailed")),s(!1)})}function M({title:n,showPassword:s,showPasskeys:t,showDivider:e,password:a,setPassword:l,onPasswordLogin:d,onPasskeyLogin:p,loading:h,retrySecondsLeft:f,error:g}){return i("div",{className:"auth-card",children:[i("h1",{className:"auth-title",children:n}),i("p",{className:"auth-subtitle",children:o("login:signInToContinue")}),s?i("form",{onSubmit:d,className:"flex flex-col gap-3",children:[i("div",{children:[i("label",{className:"text-xs text-[var(--muted)] mb-1 block",children:o("login:password")}),i("input",{type:"password",className:"provider-key-input w-full",value:a,onInput:b=>l(b.target.value),placeholder:o("login:enterPassword"),autofocus:!0})]}),i("button",{type:"submit",className:"provider-btn w-full mt-1",disabled:h||f>0,children:h?o("login:signingIn"):f>0?o("login:retryIn",{seconds:f}):o("login:signIn")})]}):null,e?i("div",{className:"auth-divider",children:i("span",{children:o("login:or")})}):null,t?i("button",{type:"button",className:`provider-btn ${s?"provider-btn-secondary":""} w-full`,onClick:p,disabled:h,children:o("login:signInWithPasskey")}):null,g?i("p",{className:"auth-error mt-2",children:g}):null]})}function J(){const[n,s]=u(""),[t,e]=u(null),[a,l]=u(!1),[d,p]=u(0),[h,f]=u(!1),[g,b]=u(!1),[A,v]=u(!1);_(()=>{fetch("/api/auth/status").then(r=>r.ok?r.json():null).then(r=>{if(r){if(r.authenticated){location.href="/";return}f(!!r.has_passkeys),b(!!r.has_password),v(!0)}}).catch(()=>v(!0))},[]),_(()=>{if(d<=0)return;const r=setInterval(()=>{p(c=>c>1?c-1:0)},1e3);return()=>clearInterval(r)},[d]);function C(r){r.preventDefault(),!(d>0)&&(e(null),l(!0),fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:n})}).then(async c=>{if(c.ok){location.href="/";return}const m=await K(c);m.type==="retry"?(p(m.retryAfter||1),e(o("login:wrongPassword"))):m.type==="invalid_password"?e(o("login:invalidPassword")):e(m.message||null),l(!1)}).catch(c=>{e(c.message),l(!1)}))}function S(){j(e,l)}if(!A)return i("div",{className:"auth-card",children:i("div",{className:"text-sm text-[var(--muted)]",children:o("common:status.loading")})});const D=x(w),N=g||!h,k=h;return M({title:D,showPassword:N,showPasskeys:k,showDivider:N&&k,password:n,setPassword:s,onPasswordLogin:C,onPasskeyLogin:S,loading:a,retrySecondsLeft:d,error:t})}function I(n){let s=n.replace(/-/g,"+").replace(/_/g,"/");for(;s.length%4;)s+="=";const t=atob(s),e=new Uint8Array(t.length);for(let a=0;a<t.length;a++)e[a]=t.charCodeAt(a);return e.buffer}function y(n){const s=new Uint8Array(n);let t="";for(const e of s)t+=String.fromCharCode(e);return btoa(t).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}const P=document.getElementById("loginRoot");P&&B.finally(()=>{R(i(J,{}),P)});
+import { u } from "./chunks/jsxRuntime.module.js";
+import { bN as initTheme, bP as init, aM as R, aw as d, av as y, Z as t } from "./chunks/theme.js";
+import { b as formatLoginTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
+initTheme();
+const i18nReady = init().catch((err) => {
+  console.warn("[i18n] login init failed", err);
+});
+const gonData = window.__MOLTIS__ || {};
+const identity = gonData.identity || null;
+document.title = formatLoginTitle(identity);
+applyIdentityFavicon(identity);
+showVaultBanner(gonData.vault_status || null);
+function showVaultBanner(status) {
+  const el = document.getElementById("vaultBanner");
+  if (!el) return;
+  el.style.display = status === "sealed" ? "" : "none";
+}
+async function parseLoginFailure(response) {
+  if (response.status === 429) {
+    let retryAfter = 0;
+    try {
+      const data = await response.json();
+      if (data && Number.isFinite(data.retry_after_seconds)) {
+        retryAfter = Math.max(1, Math.ceil(data.retry_after_seconds));
+      }
+    } catch {
+    }
+    if (retryAfter <= 0) {
+      const retryAfterHeader = Number.parseInt(response.headers.get("Retry-After") || "0", 10);
+      if (Number.isFinite(retryAfterHeader) && retryAfterHeader > 0) {
+        retryAfter = retryAfterHeader;
+      }
+    }
+    return { type: "retry", retryAfter: Math.max(1, retryAfter) };
+  }
+  if (response.status === 401) {
+    return { type: "invalid_password" };
+  }
+  const bodyText = await response.text();
+  return { type: "error", message: bodyText || t("login:loginFailed") };
+}
+function startPasskeyLogin(setError, setLoading) {
+  setError(null);
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(location.hostname) || location.hostname.startsWith("[")) {
+    setError(t("login:passkeyRequiresDomain", { hostname: location.hostname }));
+    return;
+  }
+  setLoading(true);
+  fetch("/api/auth/passkey/auth/begin", { method: "POST" }).then((r) => r.json()).then(
+    (data) => {
+      const options = data.options;
+      options.publicKey.challenge = base64ToBuffer(
+        options.publicKey.challenge
+      );
+      if (options.publicKey.allowCredentials) {
+        for (const c of options.publicKey.allowCredentials) {
+          c.id = base64ToBuffer(c.id);
+        }
+      }
+      return navigator.credentials.get({ publicKey: options.publicKey }).then((cred) => ({ cred, challengeId: data.challenge_id }));
+    }
+  ).then(({ cred, challengeId }) => {
+    const assertionResponse = cred.response;
+    const body = {
+      challenge_id: challengeId,
+      credential: {
+        id: cred.id,
+        rawId: bufferToBase64(cred.rawId),
+        type: cred.type,
+        response: {
+          authenticatorData: bufferToBase64(assertionResponse.authenticatorData),
+          clientDataJSON: bufferToBase64(assertionResponse.clientDataJSON),
+          signature: bufferToBase64(assertionResponse.signature),
+          userHandle: assertionResponse.userHandle ? bufferToBase64(assertionResponse.userHandle) : null
+        }
+      }
+    };
+    return fetch("/api/auth/passkey/auth/finish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  }).then((r) => {
+    if (r.ok) {
+      location.href = "/";
+    } else {
+      return r.text().then((msg) => {
+        setError(msg || t("login:passkeyAuthFailed"));
+        setLoading(false);
+      });
+    }
+  }).catch((err) => {
+    setError(err.message || t("login:passkeyAuthFailed"));
+    setLoading(false);
+  });
+}
+function renderLoginCard({
+  title,
+  showPassword,
+  showPasskeys,
+  showDivider,
+  password,
+  setPassword,
+  onPasswordLogin,
+  onPasskeyLogin,
+  loading,
+  retrySecondsLeft,
+  error
+}) {
+  return /* @__PURE__ */ u("div", { className: "auth-card", children: [
+    /* @__PURE__ */ u("h1", { className: "auth-title", children: title }),
+    /* @__PURE__ */ u("p", { className: "auth-subtitle", children: t("login:signInToContinue") }),
+    showPassword ? /* @__PURE__ */ u("form", { onSubmit: onPasswordLogin, className: "flex flex-col gap-3", children: [
+      /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: t("login:password") }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            type: "password",
+            className: "provider-key-input w-full",
+            value: password,
+            onInput: (e) => setPassword(e.target.value),
+            placeholder: t("login:enterPassword"),
+            autofocus: true
+          }
+        )
+      ] }),
+      /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn w-full mt-1", disabled: loading || retrySecondsLeft > 0, children: loading ? t("login:signingIn") : retrySecondsLeft > 0 ? t("login:retryIn", { seconds: retrySecondsLeft }) : t("login:signIn") })
+    ] }) : null,
+    showDivider ? /* @__PURE__ */ u("div", { className: "auth-divider", children: /* @__PURE__ */ u("span", { children: t("login:or") }) }) : null,
+    showPasskeys ? /* @__PURE__ */ u(
+      "button",
+      {
+        type: "button",
+        className: `provider-btn ${showPassword ? "provider-btn-secondary" : ""} w-full`,
+        onClick: onPasskeyLogin,
+        disabled: loading,
+        children: t("login:signInWithPasskey")
+      }
+    ) : null,
+    error ? /* @__PURE__ */ u("p", { className: "auth-error mt-2", children: error }) : null
+  ] });
+}
+function LoginApp() {
+  const [password, setPassword] = d("");
+  const [error, setError] = d(null);
+  const [loading, setLoading] = d(false);
+  const [retrySecondsLeft, setRetrySecondsLeft] = d(0);
+  const [hasPasskeys, setHasPasskeys] = d(false);
+  const [hasPassword, setHasPassword] = d(false);
+  const [ready, setReady] = d(false);
+  y(() => {
+    fetch("/api/auth/status").then((r) => r.ok ? r.json() : null).then((data) => {
+      if (!data) return;
+      if (data.authenticated) {
+        location.href = "/";
+        return;
+      }
+      setHasPasskeys(!!data.has_passkeys);
+      setHasPassword(!!data.has_password);
+      setReady(true);
+    }).catch(() => setReady(true));
+  }, []);
+  y(() => {
+    if (retrySecondsLeft <= 0) return void 0;
+    const timer = setInterval(() => {
+      setRetrySecondsLeft((value) => value > 1 ? value - 1 : 0);
+    }, 1e3);
+    return () => clearInterval(timer);
+  }, [retrySecondsLeft]);
+  function onPasswordLogin(e) {
+    e.preventDefault();
+    if (retrySecondsLeft > 0) return;
+    setError(null);
+    setLoading(true);
+    fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    }).then(async (r) => {
+      if (r.ok) {
+        location.href = "/";
+        return;
+      }
+      const failure = await parseLoginFailure(r);
+      if (failure.type === "retry") {
+        setRetrySecondsLeft(failure.retryAfter || 1);
+        setError(t("login:wrongPassword"));
+      } else if (failure.type === "invalid_password") {
+        setError(t("login:invalidPassword"));
+      } else {
+        setError(failure.message || null);
+      }
+      setLoading(false);
+    }).catch((err) => {
+      setError(err.message);
+      setLoading(false);
+    });
+  }
+  function onPasskeyLogin() {
+    startPasskeyLogin(setError, setLoading);
+  }
+  if (!ready) {
+    return /* @__PURE__ */ u("div", { className: "auth-card", children: /* @__PURE__ */ u("div", { className: "text-sm text-[var(--muted)]", children: t("common:status.loading") }) });
+  }
+  const title = formatLoginTitle(identity);
+  const showPassword = hasPassword || !hasPasskeys;
+  const showPasskeys = hasPasskeys;
+  const showDivider = showPassword && showPasskeys;
+  return renderLoginCard({
+    title,
+    showPassword,
+    showPasskeys,
+    showDivider,
+    password,
+    setPassword,
+    onPasswordLogin,
+    onPasskeyLogin,
+    loading,
+    retrySecondsLeft,
+    error
+  });
+}
+function base64ToBuffer(b64) {
+  let str = b64.replace(/-/g, "+").replace(/_/g, "/");
+  while (str.length % 4) str += "=";
+  const bin = atob(str);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+}
+function bufferToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let str = "";
+  for (const b of bytes) str += String.fromCharCode(b);
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+const root = document.getElementById("loginRoot");
+if (root) {
+  i18nReady.finally(() => {
+    R(/* @__PURE__ */ u(LoginApp, {}), root);
+  });
+}

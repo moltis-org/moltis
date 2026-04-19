@@ -1,1 +1,803 @@
-import{d as G,bx as E,$ as J}from"./theme.js";import{e as S,c as ce,o as ee,s as A,a as Q,r as V,b as re,d as ie,f as Z,g as me,h as q,i as j,j as pe,k as ue}from"../main.js";import{v as xe,o as te}from"./webauthn-helpers.js";import"./jsxRuntime.module.js";import"./branding.js";import"./time-format.js";function fe(){const t=S();t.title.textContent="OpenAI Compatible",t.body.textContent="";const i=document.createElement("div");i.className="provider-key-form";const s=document.createElement("label");s.className="text-xs text-[var(--muted)]",s.textContent="Endpoint URL",i.appendChild(s);const m=document.createElement("input");m.className="provider-key-input",m.type="text",m.placeholder="https://api.example.com/v1",i.appendChild(m);const e=document.createElement("label");e.className="text-xs text-[var(--muted)] mt-2",e.textContent="API Key",i.appendChild(e);const l=document.createElement("input");l.className="provider-key-input",l.type="password",l.placeholder="sk-...",i.appendChild(l);const p=document.createElement("label");p.className="text-xs text-[var(--muted)] mt-2",p.textContent="Model ID (optional)",i.appendChild(p);const o=document.createElement("input");o.className="provider-key-input",o.type="text",o.placeholder="Leave blank for auto-discovery",i.appendChild(o);const a=document.createElement("div");a.className="alert-error-text text-[var(--error)] whitespace-pre-line",a.style.display="none",i.appendChild(a);const d=ce(i,"mt-1"),n=document.createElement("div");n.className="btn-row",n.style.marginTop="12px";const r=document.createElement("button");r.className="provider-btn provider-btn-secondary",r.textContent="Back",r.addEventListener("click",ee),n.appendChild(r);const c=document.createElement("button");c.className="provider-btn",c.textContent="Add Provider",c.addEventListener("click",()=>{const N=m.value.trim(),F=l.value.trim(),L=o.value.trim()||null;if(!N){A(a,"Endpoint URL is required.");return}if(!F){A(a,"API key is required.");return}c.disabled=!0,c.textContent="Adding...",Q(d,8,"Saving provider settings..."),A(a,null),G("providers.add_custom",{baseUrl:N,apiKey:F,model:L}).then(v=>{var $;if(!(v!=null&&v.ok)){c.disabled=!1,c.textContent="Add Provider",V(d),A(a,(($=v==null?void 0:v.error)==null?void 0:$.message)||"Failed to add provider.");return}const k=v.payload,y=k.providerName,w=k.displayName,T=re();Q(d,12,"Discovering models...");const D=ie(d,T);xe(y,F,N,L,T).then(h=>{if(!(h.valid||L)){c.disabled=!1,c.textContent="Add Provider",V(d),A(a,h.error||"No models discovered. Please specify a model ID.");return}h.models&&h.models.length>0?(Z(d,"Done."),me({name:y,displayName:w,authType:"api-key",keyOptional:!1},h.models,F,N,L,!0)):L?G("providers.save_model",{provider:y,model:L}).then(()=>{Z(d,"Done."),q(),E&&E(),t.body.textContent="";const P=document.createElement("div");P.className="provider-status",P.textContent=`${w} configured successfully!`,t.body.appendChild(P),setTimeout(j,1500)}):(c.disabled=!1,c.textContent="Add Provider",V(d),A(a,"No models discovered. Please specify a model ID."))}).catch(h=>{c.disabled=!1,c.textContent="Add Provider",V(d),A(a,(h==null?void 0:h.message)||"Validation failed.")}).finally(()=>{D()})}).catch(v=>{c.disabled=!1,c.textContent="Add Provider",V(d),A(a,(v==null?void 0:v.message)||"Failed to add provider.")})}),n.appendChild(c),i.appendChild(n),t.body.appendChild(i),m.focus()}let B=null;function Ce(t){const i=S();i.title.textContent=t.displayName,i.body.textContent="Loading system info...",G("providers.local.system_info",{}).then(s=>{var e;if(!(s!=null&&s.ok)){i.body.textContent=((e=s==null?void 0:s.error)==null?void 0:e.message)||"Failed to get system info";return}const m=s.payload;G("providers.local.models",{}).then(l=>{var o;if(!(l!=null&&l.ok)){i.body.textContent=((o=l==null?void 0:l.error)==null?void 0:o.message)||"Failed to get models";return}const p=l.payload;ve(t,m,p)})})}function ve(t,i,s){const m=S();m.body.textContent="",B=i.recommendedBackend||"GGUF";const e=document.createElement("div");e.className="provider-key-form";const l=document.createElement("div");l.className="flex flex-col gap-2 mb-4";const p=document.createElement("div");p.className="text-xs font-medium text-[var(--text-strong)]",p.textContent="System Info",l.appendChild(p);const o=document.createElement("div");o.className="flex gap-3 text-xs text-[var(--muted)]";const a=document.createElement("span");a.textContent=`RAM: ${i.totalRamGb}GB`,o.appendChild(a);const d=document.createElement("span");if(d.textContent=`Tier: ${i.memoryTier}`,o.appendChild(d),i.hasGpu){const u=document.createElement("span");u.className="text-[var(--ok)]",u.textContent="GPU available",o.appendChild(u)}l.appendChild(o),e.appendChild(l);const n=i.availableBackends||[];if(i.isAppleSilicon&&n.length>0){const u=document.createElement("div");u.className="flex flex-col gap-2 mb-4";const g=document.createElement("div");g.className="text-xs font-medium text-[var(--text-strong)]",g.textContent="Inference Backend",u.appendChild(g);const C=document.createElement("div");C.className="flex flex-col gap-2",n.forEach(x=>{const f=document.createElement("div");f.className="backend-card",x.available||(f.className+=" disabled"),x.id===B&&(f.className+=" selected"),f.dataset.backendId=x.id;const M=document.createElement("div");M.className="flex items-center justify-between";const R=document.createElement("span");R.className="backend-name text-sm font-medium text-[var(--text)]",R.textContent=x.name,M.appendChild(R);const X=document.createElement("div");if(X.className="flex gap-2",x.id===i.recommendedBackend&&x.available){const b=document.createElement("span");b.className="recommended-badge",b.textContent="Recommended",X.appendChild(b)}if(!x.available){const b=document.createElement("span");b.className="tier-badge",b.textContent="Not installed",X.appendChild(b)}M.appendChild(X),f.appendChild(M);const W=document.createElement("div");if(W.className="text-xs text-[var(--muted)] mt-1",W.textContent=x.description,f.appendChild(W),!x.available&&x.id==="MLX"){const b=x.installCommands||["pip install mlx-lm"],Y=J("tpl-install-hint").content.cloneNode(!0).firstElementChild,oe=Y.querySelector("[data-install-label]"),de=Y.querySelector("[data-install-commands]");oe.textContent=b.length===1?"Install with:":"Install with any of:";const le=J("tpl-install-cmd");b.forEach(se=>{const z=le.content.cloneNode(!0).firstElementChild;z.textContent=se,de.appendChild(z)}),f.appendChild(Y)}x.available&&f.addEventListener("click",()=>{C.querySelectorAll(".backend-card").forEach(b=>{b.classList.remove("selected")}),f.classList.add("selected"),B=x.id,e._renderModelsForBackend&&e._renderModelsForBackend(x.id),e._updateFilenameVisibility&&e._updateFilenameVisibility(x.id)}),C.appendChild(f)}),u.appendChild(C),e.appendChild(u)}else if(i.backendNote){const u=document.createElement("div");u.className="text-xs text-[var(--muted)] mb-4",u.textContent=`Backend: ${i.backendNote}`,e.appendChild(u)}const r=document.createElement("div");r.className="text-xs font-medium text-[var(--text-strong)] mb-2",r.textContent="Select a Model",e.appendChild(r);const c=document.createElement("div");c.className="flex flex-col gap-2",c.id="local-model-list";function N(u){c.textContent="";const C=(s.recommended||[]).filter(x=>x.backend===u);if(C.length===0){const x=document.createElement("div");x.className="text-xs text-[var(--muted)] py-4 text-center",x.textContent=`No models available for ${u}`,c.appendChild(x);return}C.forEach(x=>{const f=Ne(x,t,i.totalRamGb);c.appendChild(f)})}N(B),e._renderModelsForBackend=N,e.appendChild(c);const F=document.createElement("div");F.className="flex flex-col gap-2 mt-4 pt-4 border-t border-[var(--border)]";const L=document.createElement("div");L.className="text-xs font-medium text-[var(--text-strong)]",L.textContent="Search HuggingFace",F.appendChild(L);const v=document.createElement("div");v.className="flex gap-2";const k=document.createElement("input");k.type="text",k.placeholder="Search models...",k.className="provider-input flex-1",v.appendChild(k);const y=document.createElement("button");y.className="provider-btn provider-btn-secondary",y.textContent="Search",v.appendChild(y),F.appendChild(v);const w=document.createElement("div");w.className="flex flex-col gap-2 max-h-48 overflow-y-auto",w.id="hf-search-results",F.appendChild(w);const T=async()=>{var C,x;const u=k.value.trim();if(!u)return;y.disabled=!0,y.textContent="Searching...",w.textContent="";const g=await G("providers.local.search_hf",{query:u,backend:B,limit:15});if(y.disabled=!1,y.textContent="Search",!(g!=null&&g.ok&&((x=(C=g.payload)==null?void 0:C.results)!=null&&x.length))){const f=document.createElement("div");f.className="text-xs text-[var(--muted)] py-2",f.textContent="No results found",w.appendChild(f);return}g.payload.results.forEach(f=>{const M=he(f,t);w.appendChild(M)})};y.addEventListener("click",T),k.addEventListener("keydown",u=>{u.key==="Enter"&&!u.isComposing&&T()});let D=null;k.addEventListener("input",()=>{D&&clearTimeout(D),k.value.trim().length>=2&&(D=setTimeout(T,500))}),e.appendChild(F);const $=document.createElement("div");$.className="flex flex-col gap-2 mt-4 pt-4 border-t border-[var(--border)]";const h=document.createElement("div");h.className="text-xs font-medium text-[var(--text-strong)]",h.textContent="Or enter HuggingFace repo URL",$.appendChild(h);const P=document.createElement("div");P.className="flex gap-2";const _=document.createElement("input");_.type="text",_.placeholder=B==="MLX"?"mlx-community/Model-Name":"TheBloke/Model-GGUF",_.className="provider-input flex-1",P.appendChild(_);const I=document.createElement("button");I.className="provider-btn",I.textContent="Use",P.appendChild(I),$.appendChild(P);const O=document.createElement("div");O.className="flex gap-2",O.style.display=B==="GGUF"?"flex":"none";const U=document.createElement("input");U.type="text",U.placeholder="model-file.gguf (required for GGUF)",U.className="provider-input flex-1",O.appendChild(U),$.appendChild(O),e._updateFilenameVisibility=u=>{O.style.display=u==="GGUF"?"flex":"none",_.placeholder=u==="MLX"?"mlx-community/Model-Name":"TheBloke/Model-GGUF"},I.addEventListener("click",async()=>{var x;const u=_.value.trim();if(!u)return;const g={hfRepo:u,backend:B};if(B==="GGUF"){const f=U.value.trim();if(!f){U.focus();return}g.hfFilename=f}I.disabled=!0,I.textContent="Configuring...";const C=await G("providers.local.configure_custom",g);if(I.disabled=!1,I.textContent="Use",C!=null&&C.ok)q(),E&&E(),ne({id:C.payload.modelId,displayName:u},t);else{const f=((x=C==null?void 0:C.error)==null?void 0:x.message)||"Failed to configure model",M=document.createElement("div");M.className="text-xs text-[var(--error)] py-2",M.textContent=f,w.textContent="",w.appendChild(M)}}),e.appendChild($);const H=document.createElement("div");H.className="btn-row mt-4";const K=document.createElement("button");K.className="provider-btn provider-btn-secondary",K.textContent="Back",K.addEventListener("click",ee),H.appendChild(K),e.appendChild(H),m.body.appendChild(e)}function he(t,i){const s=document.createElement("div");s.className="model-card";const m=document.createElement("div");m.className="flex items-center justify-between";const e=document.createElement("span");e.className="text-sm font-medium text-[var(--text)]",e.textContent=t.displayName,m.appendChild(e);const l=document.createElement("div");if(l.className="flex gap-2 text-xs text-[var(--muted)]",t.downloads){const o=document.createElement("span");o.textContent=`↓${ge(t.downloads)}`,l.appendChild(o)}if(t.likes){const o=document.createElement("span");o.textContent=`♥${t.likes}`,l.appendChild(o)}m.appendChild(l),s.appendChild(m);const p=document.createElement("div");return p.className="text-xs text-[var(--muted)] mt-1",p.textContent=t.id,s.appendChild(p),s.addEventListener("click",async()=>{var c;if(s.dataset.configuring)return;s.dataset.configuring="true";const o={hfRepo:t.id,backend:t.backend};if(t.backend==="GGUF"){const N=prompt("Enter the GGUF filename (e.g., model-q4_k_m.gguf):");if(!N){delete s.dataset.configuring;return}o.hfFilename=N}s.style.opacity="0.5",s.style.pointerEvents="none";const a=S();a.body.textContent="";const d=document.createElement("div");d.className="provider-key-form";const n=document.createElement("div");n.className="text-sm text-[var(--text)]",n.textContent=`Configuring ${t.displayName}...`,d.appendChild(n),a.body.appendChild(d);const r=await G("providers.local.configure_custom",o);if(r!=null&&r.ok)q(),E&&E(),ne({id:r.payload.modelId,displayName:t.displayName},i);else{const N=((c=r==null?void 0:r.error)==null?void 0:c.message)||"Failed to configure model";n.className="text-sm text-[var(--error)]",n.textContent=N}}),s}function ge(t){return t>=1e6?`${(t/1e6).toFixed(1)}M`:t>=1e3?`${(t/1e3).toFixed(1)}K`:t.toString()}function Ne(t,i,s){const m=document.createElement("div");m.className="model-card";const e=Number.isFinite(s)?s:0,l=e>=t.minRamGb,p=document.createElement("div");p.className="flex items-center justify-between";const o=document.createElement("span");o.className="text-sm font-medium text-[var(--text)]",o.textContent=t.displayName,p.appendChild(o);const a=document.createElement("div");a.className="flex gap-2";const d=document.createElement("span");if(d.className="tier-badge",d.textContent=`${t.minRamGb}GB`,a.appendChild(d),t.suggested&&l){const r=document.createElement("span");r.className="recommended-badge",r.textContent="Recommended",a.appendChild(r)}if(!l){const r=document.createElement("span");r.className="tier-badge",r.textContent="Insufficient RAM",a.appendChild(r)}p.appendChild(a),m.appendChild(p);const n=document.createElement("div");if(n.className="text-xs text-[var(--muted)] mt-1",n.textContent=`Context: ${(t.contextWindow/1e3).toFixed(0)}k tokens`,m.appendChild(n),!l){m.classList.add("disabled");const r=document.createElement("div");return r.className="text-xs text-[var(--error)] mt-1",r.textContent=`You do not have enough RAM for this model (${e}GB detected, ${t.minRamGb}GB required).`,m.appendChild(r),m}return m.addEventListener("click",()=>ye(t,i)),m}function ne(t,i){const s=S();s.modal.classList.remove("hidden"),s.body.textContent="";const m=document.createElement("div");m.className="provider-key-form";const e=document.createElement("div");e.className="text-sm text-[var(--text)]",e.textContent=`Configuring ${t.displayName}...`,m.appendChild(e);const l=document.createElement("div");l.className="download-progress mt-4";const p=document.createElement("div");p.className="download-progress-bar",p.style.width="0%",l.appendChild(p);const o=document.createElement("div");o.className="text-xs text-[var(--muted)] mt-2",l.appendChild(o),m.appendChild(l),s.body.appendChild(m);const a=te("local-llm.download",d=>{const n=d;if(n.modelId===t.id){if(n.error){e.textContent=n.error,e.className="text-sm text-[var(--error)]",a();return}if(n.complete){e.textContent=`${t.displayName} downloaded successfully!`,e.className="provider-status",p.style.width="100%",o.textContent="",a(),q(),E&&E(),setTimeout(j,1500);return}if(n.progress!=null&&(p.style.width=`${n.progress.toFixed(1)}%`,e.textContent=`Downloading ${t.displayName}...`),n.downloaded!=null){const r=(n.downloaded/1048576).toFixed(1);if(n.total!=null){const c=(n.total/1048576).toFixed(1);o.textContent=`${r} MB / ${c} MB`}else o.textContent=`${r} MB downloaded`}}});ae(t,i,e,l,a)}function ye(t,i){const s=S();s.body.textContent="";const m=document.createElement("div");m.className="provider-key-form";const e=document.createElement("div");e.className="text-sm text-[var(--text)]",e.textContent=`Configuring ${t.displayName}...`,m.appendChild(e);const l=document.createElement("div");l.className="download-progress mt-4";const p=document.createElement("div");p.className="download-progress-bar",p.style.width="0%",l.appendChild(p);const o=document.createElement("div");o.className="text-xs text-[var(--muted)] mt-2",l.appendChild(o),m.appendChild(l),s.body.appendChild(m);const a=te("local-llm.download",d=>{const n=d;if(n.modelId===t.id){if(n.error){e.textContent=n.error,e.className="text-sm text-[var(--error)]",a();return}if(n.complete){e.textContent=`${t.displayName} downloaded successfully!`,e.className="provider-status",p.style.width="100%",o.textContent="",a(),q(),E&&E(),setTimeout(j,1500);return}if(n.progress!=null&&(p.style.width=`${n.progress.toFixed(1)}%`,e.textContent=`Downloading ${t.displayName}...`),n.downloaded!=null){const r=(n.downloaded/1048576).toFixed(1);if(n.total!=null){const c=(n.total/1048576).toFixed(1);o.textContent=`${r} MB / ${c} MB`}else o.textContent=`${r} MB downloaded`}}});G("providers.local.configure",{modelId:t.id,backend:B}).then(d=>{var n;if(!(d!=null&&d.ok)){e.textContent=((n=d==null?void 0:d.error)==null?void 0:n.message)||"Failed to configure model",e.className="text-sm text-[var(--error)]",a();return}ae(t,i,e,l,a)})}function ae(t,i,s,m,e){let l=0;const p=300;let o=!1;const a=setInterval(()=>{if(o){clearInterval(a);return}if(l++,l>p){clearInterval(a),e&&e(),s.textContent="Configuration timed out. Please try again.",s.className="text-sm text-[var(--error)]";return}G("providers.local.status",{}).then(d=>{if(!(d!=null&&d.ok))return;const n=d.payload;n.status==="ready"||n.status==="loaded"?(o=!0,clearInterval(a),e&&e(),s.textContent=`${t.displayName} configured successfully!`,s.className="provider-status",m.style.display="none",q(),E&&E(),setTimeout(j,1500)):n.status==="error"&&(o=!0,clearInterval(a),e&&e(),s.textContent=n.error||"Configuration failed",s.className="text-sm text-[var(--error)]")})},2e3)}function Be(){const t=S();t.modal.classList.remove("hidden"),t.title.textContent="Add LLM",t.body.textContent="Loading...",G("providers.available",{}).then(i=>{if(!(i!=null&&i.ok)){t.body.textContent="Failed to load LLM providers.";return}const s=i.payload||[];s.sort((a,d)=>{const n=Number.isFinite(a.uiOrder)?a.uiOrder:Number.MAX_SAFE_INTEGER,r=Number.isFinite(d.uiOrder)?d.uiOrder:Number.MAX_SAFE_INTEGER;return n!==r?n-r:a.displayName.localeCompare(d.displayName)}),t.body.textContent="",s.forEach(a=>{const d=document.createElement("div");d.className="provider-item";const n=document.createElement("span");n.className="provider-item-name",n.textContent=a.displayName,d.appendChild(n);const r=document.createElement("div");if(r.className="badge-row",a.configured){const c=document.createElement("span");c.className="provider-item-badge configured",c.textContent="configured",r.appendChild(c)}if(a.isCustom){const c=document.createElement("span");c.className="provider-item-badge api-key",c.textContent="Custom",r.appendChild(c)}else{const c=document.createElement("span");c.className=`provider-item-badge ${a.authType}`,a.authType==="oauth"?c.textContent="OAuth":a.authType==="local"?c.textContent="Local":c.textContent="API Key",r.appendChild(c)}d.appendChild(r),d.addEventListener("click",()=>{a.authType==="api-key"?pe(a):a.authType==="oauth"?ue(a):a.authType==="local"&&Ce(a)}),t.body.appendChild(d)});const m=document.createElement("div");m.className="border-t border-[var(--border)] my-2",t.body.appendChild(m);const e=document.createElement("div");e.className="provider-item";const l=document.createElement("span");l.className="provider-item-name",l.textContent="OpenAI Compatible",e.appendChild(l);const p=document.createElement("div");p.className="badge-row";const o=document.createElement("span");o.className="provider-item-badge api-key",o.textContent="Any Endpoint",p.appendChild(o),e.appendChild(p),e.addEventListener("click",fe),t.body.appendChild(e)})}export{Be as openProviderModalImpl};
+import { d as sendRpc, by as refreshProvidersPage, $ } from "./theme.js";
+import { e as els, c as createValidationProgress, o as openProviderModal, s as setFormError, a as setValidationProgress, r as resetValidationProgress, b as createValidationRequestId, d as bindValidationProgressEvents, f as completeValidationProgress, g as showModelSelector, h as fetchModels, i as closeProviderModal, j as showApiKeyForm, k as showOAuthFlow } from "../main.js";
+import { v as validateProviderKey, o as onEvent } from "./webauthn-helpers.js";
+import "./jsxRuntime.module.js";
+import "./branding.js";
+import "./time-format.js";
+function showCustomProviderForm() {
+  const m = els();
+  m.title.textContent = "OpenAI Compatible";
+  m.body.textContent = "";
+  const form = document.createElement("div");
+  form.className = "provider-key-form";
+  const urlLabel = document.createElement("label");
+  urlLabel.className = "text-xs text-[var(--muted)]";
+  urlLabel.textContent = "Endpoint URL";
+  form.appendChild(urlLabel);
+  const urlInp = document.createElement("input");
+  urlInp.className = "provider-key-input";
+  urlInp.type = "text";
+  urlInp.placeholder = "https://api.example.com/v1";
+  form.appendChild(urlInp);
+  const keyLabel = document.createElement("label");
+  keyLabel.className = "text-xs text-[var(--muted)] mt-2";
+  keyLabel.textContent = "API Key";
+  form.appendChild(keyLabel);
+  const keyInp = document.createElement("input");
+  keyInp.className = "provider-key-input";
+  keyInp.type = "password";
+  keyInp.placeholder = "sk-...";
+  form.appendChild(keyInp);
+  const modelLabel = document.createElement("label");
+  modelLabel.className = "text-xs text-[var(--muted)] mt-2";
+  modelLabel.textContent = "Model ID (optional)";
+  form.appendChild(modelLabel);
+  const modelInp = document.createElement("input");
+  modelInp.className = "provider-key-input";
+  modelInp.type = "text";
+  modelInp.placeholder = "Leave blank for auto-discovery";
+  form.appendChild(modelInp);
+  const errorPanel = document.createElement("div");
+  errorPanel.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
+  errorPanel.style.display = "none";
+  form.appendChild(errorPanel);
+  const validationProgress = createValidationProgress(form, "mt-1");
+  const btns = document.createElement("div");
+  btns.className = "btn-row";
+  btns.style.marginTop = "12px";
+  const backBtn = document.createElement("button");
+  backBtn.className = "provider-btn provider-btn-secondary";
+  backBtn.textContent = "Back";
+  backBtn.addEventListener("click", openProviderModal);
+  btns.appendChild(backBtn);
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "provider-btn";
+  saveBtn.textContent = "Add Provider";
+  saveBtn.addEventListener("click", () => {
+    const url = urlInp.value.trim();
+    const key = keyInp.value.trim();
+    const model = modelInp.value.trim() || null;
+    if (!url) {
+      setFormError(errorPanel, "Endpoint URL is required.");
+      return;
+    }
+    if (!key) {
+      setFormError(errorPanel, "API key is required.");
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Adding...";
+    setValidationProgress(validationProgress, 8, "Saving provider settings...");
+    setFormError(errorPanel, null);
+    sendRpc("providers.add_custom", { baseUrl: url, apiKey: key, model }).then((res) => {
+      var _a;
+      if (!(res == null ? void 0 : res.ok)) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Add Provider";
+        resetValidationProgress(validationProgress);
+        setFormError(errorPanel, ((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Failed to add provider.");
+        return;
+      }
+      const result = res.payload;
+      const providerName = result.providerName;
+      const displayName = result.displayName;
+      const requestId = createValidationRequestId();
+      setValidationProgress(validationProgress, 12, "Discovering models...");
+      const stopProgressEvents = bindValidationProgressEvents(validationProgress, requestId);
+      validateProviderKey(providerName, key, url, model, requestId).then((valResult) => {
+        if (!(valResult.valid || model)) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Add Provider";
+          resetValidationProgress(validationProgress);
+          setFormError(errorPanel, valResult.error || "No models discovered. Please specify a model ID.");
+          return;
+        }
+        if (valResult.models && valResult.models.length > 0) {
+          completeValidationProgress(validationProgress, "Done.");
+          const customProvider = {
+            name: providerName,
+            displayName,
+            authType: "api-key",
+            keyOptional: false
+          };
+          showModelSelector(customProvider, valResult.models, key, url, model, true);
+        } else if (model) {
+          sendRpc("providers.save_model", { provider: providerName, model }).then(() => {
+            completeValidationProgress(validationProgress, "Done.");
+            fetchModels();
+            if (refreshProvidersPage) refreshProvidersPage();
+            m.body.textContent = "";
+            const status = document.createElement("div");
+            status.className = "provider-status";
+            status.textContent = `${displayName} configured successfully!`;
+            m.body.appendChild(status);
+            setTimeout(closeProviderModal, 1500);
+          });
+        } else {
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Add Provider";
+          resetValidationProgress(validationProgress);
+          setFormError(errorPanel, "No models discovered. Please specify a model ID.");
+        }
+      }).catch((err) => {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Add Provider";
+        resetValidationProgress(validationProgress);
+        setFormError(errorPanel, (err == null ? void 0 : err.message) || "Validation failed.");
+      }).finally(() => {
+        stopProgressEvents();
+      });
+    }).catch((err) => {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Add Provider";
+      resetValidationProgress(validationProgress);
+      setFormError(errorPanel, (err == null ? void 0 : err.message) || "Failed to add provider.");
+    });
+  });
+  btns.appendChild(saveBtn);
+  form.appendChild(btns);
+  m.body.appendChild(form);
+  urlInp.focus();
+}
+let selectedBackend = null;
+function showLocalModelFlow(provider) {
+  const m = els();
+  m.title.textContent = provider.displayName;
+  m.body.textContent = "Loading system info...";
+  sendRpc("providers.local.system_info", {}).then((sysRes) => {
+    var _a;
+    if (!(sysRes == null ? void 0 : sysRes.ok)) {
+      m.body.textContent = ((_a = sysRes == null ? void 0 : sysRes.error) == null ? void 0 : _a.message) || "Failed to get system info";
+      return;
+    }
+    const sysInfo = sysRes.payload;
+    sendRpc("providers.local.models", {}).then((modelsRes) => {
+      var _a2;
+      if (!(modelsRes == null ? void 0 : modelsRes.ok)) {
+        m.body.textContent = ((_a2 = modelsRes == null ? void 0 : modelsRes.error) == null ? void 0 : _a2.message) || "Failed to get models";
+        return;
+      }
+      const modelsData = modelsRes.payload;
+      renderLocalModelSelection(provider, sysInfo, modelsData);
+    });
+  });
+}
+function renderLocalModelSelection(provider, sysInfo, modelsData) {
+  const m = els();
+  m.body.textContent = "";
+  selectedBackend = sysInfo.recommendedBackend || "GGUF";
+  const wrapper = document.createElement("div");
+  wrapper.className = "provider-key-form";
+  const sysSection = document.createElement("div");
+  sysSection.className = "flex flex-col gap-2 mb-4";
+  const sysTitle = document.createElement("div");
+  sysTitle.className = "text-xs font-medium text-[var(--text-strong)]";
+  sysTitle.textContent = "System Info";
+  sysSection.appendChild(sysTitle);
+  const sysDetails = document.createElement("div");
+  sysDetails.className = "flex gap-3 text-xs text-[var(--muted)]";
+  const ramSpan = document.createElement("span");
+  ramSpan.textContent = `RAM: ${sysInfo.totalRamGb}GB`;
+  sysDetails.appendChild(ramSpan);
+  const tierSpan = document.createElement("span");
+  tierSpan.textContent = `Tier: ${sysInfo.memoryTier}`;
+  sysDetails.appendChild(tierSpan);
+  if (sysInfo.hasGpu) {
+    const gpuSpan = document.createElement("span");
+    gpuSpan.className = "text-[var(--ok)]";
+    gpuSpan.textContent = "GPU available";
+    sysDetails.appendChild(gpuSpan);
+  }
+  sysSection.appendChild(sysDetails);
+  wrapper.appendChild(sysSection);
+  const backends = sysInfo.availableBackends || [];
+  if (sysInfo.isAppleSilicon && backends.length > 0) {
+    const backendSection = document.createElement("div");
+    backendSection.className = "flex flex-col gap-2 mb-4";
+    const backendLabel = document.createElement("div");
+    backendLabel.className = "text-xs font-medium text-[var(--text-strong)]";
+    backendLabel.textContent = "Inference Backend";
+    backendSection.appendChild(backendLabel);
+    const backendCards = document.createElement("div");
+    backendCards.className = "flex flex-col gap-2";
+    backends.forEach((b) => {
+      const card = document.createElement("div");
+      card.className = "backend-card";
+      if (!b.available) card.className += " disabled";
+      if (b.id === selectedBackend) card.className += " selected";
+      card.dataset.backendId = b.id;
+      const header = document.createElement("div");
+      header.className = "flex items-center justify-between";
+      const name = document.createElement("span");
+      name.className = "backend-name text-sm font-medium text-[var(--text)]";
+      name.textContent = b.name;
+      header.appendChild(name);
+      const badges = document.createElement("div");
+      badges.className = "flex gap-2";
+      if (b.id === sysInfo.recommendedBackend && b.available) {
+        const recBadge = document.createElement("span");
+        recBadge.className = "recommended-badge";
+        recBadge.textContent = "Recommended";
+        badges.appendChild(recBadge);
+      }
+      if (!b.available) {
+        const unavailBadge = document.createElement("span");
+        unavailBadge.className = "tier-badge";
+        unavailBadge.textContent = "Not installed";
+        badges.appendChild(unavailBadge);
+      }
+      header.appendChild(badges);
+      card.appendChild(header);
+      const desc = document.createElement("div");
+      desc.className = "text-xs text-[var(--muted)] mt-1";
+      desc.textContent = b.description;
+      card.appendChild(desc);
+      if (!b.available && b.id === "MLX") {
+        const cmds = b.installCommands || ["pip install mlx-lm"];
+        const tpl = $("tpl-install-hint");
+        const hintEl = tpl.content.cloneNode(true).firstElementChild;
+        const labelEl = hintEl.querySelector("[data-install-label]");
+        const container = hintEl.querySelector("[data-install-commands]");
+        labelEl.textContent = cmds.length === 1 ? "Install with:" : "Install with any of:";
+        const cmdTpl = $("tpl-install-cmd");
+        cmds.forEach((c) => {
+          const cmdEl = cmdTpl.content.cloneNode(true).firstElementChild;
+          cmdEl.textContent = c;
+          container.appendChild(cmdEl);
+        });
+        card.appendChild(hintEl);
+      }
+      if (b.available) {
+        card.addEventListener("click", () => {
+          backendCards.querySelectorAll(".backend-card").forEach((c) => {
+            c.classList.remove("selected");
+          });
+          card.classList.add("selected");
+          selectedBackend = b.id;
+          if (wrapper._renderModelsForBackend) {
+            wrapper._renderModelsForBackend(b.id);
+          }
+          if (wrapper._updateFilenameVisibility) {
+            wrapper._updateFilenameVisibility(b.id);
+          }
+        });
+      }
+      backendCards.appendChild(card);
+    });
+    backendSection.appendChild(backendCards);
+    wrapper.appendChild(backendSection);
+  } else if (sysInfo.backendNote) {
+    const backendDiv = document.createElement("div");
+    backendDiv.className = "text-xs text-[var(--muted)] mb-4";
+    backendDiv.textContent = `Backend: ${sysInfo.backendNote}`;
+    wrapper.appendChild(backendDiv);
+  }
+  const modelsTitle = document.createElement("div");
+  modelsTitle.className = "text-xs font-medium text-[var(--text-strong)] mb-2";
+  modelsTitle.textContent = "Select a Model";
+  wrapper.appendChild(modelsTitle);
+  const modelsList = document.createElement("div");
+  modelsList.className = "flex flex-col gap-2";
+  modelsList.id = "local-model-list";
+  function renderModelsForBackend(backend) {
+    modelsList.textContent = "";
+    const recommended = modelsData.recommended || [];
+    const filtered = recommended.filter((mdl) => mdl.backend === backend);
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-xs text-[var(--muted)] py-4 text-center";
+      empty.textContent = `No models available for ${backend}`;
+      modelsList.appendChild(empty);
+      return;
+    }
+    filtered.forEach((model) => {
+      const card = createModelCard(model, provider, sysInfo.totalRamGb);
+      modelsList.appendChild(card);
+    });
+  }
+  renderModelsForBackend(selectedBackend);
+  wrapper._renderModelsForBackend = renderModelsForBackend;
+  wrapper.appendChild(modelsList);
+  const searchSection = document.createElement("div");
+  searchSection.className = "flex flex-col gap-2 mt-4 pt-4 border-t border-[var(--border)]";
+  const searchLabel = document.createElement("div");
+  searchLabel.className = "text-xs font-medium text-[var(--text-strong)]";
+  searchLabel.textContent = "Search HuggingFace";
+  searchSection.appendChild(searchLabel);
+  const searchRow = document.createElement("div");
+  searchRow.className = "flex gap-2";
+  const searchInput = document.createElement("input");
+  searchInput.type = "text";
+  searchInput.placeholder = "Search models...";
+  searchInput.className = "provider-input flex-1";
+  searchRow.appendChild(searchInput);
+  const searchBtn = document.createElement("button");
+  searchBtn.className = "provider-btn provider-btn-secondary";
+  searchBtn.textContent = "Search";
+  searchRow.appendChild(searchBtn);
+  searchSection.appendChild(searchRow);
+  const searchResults = document.createElement("div");
+  searchResults.className = "flex flex-col gap-2 max-h-48 overflow-y-auto";
+  searchResults.id = "hf-search-results";
+  searchSection.appendChild(searchResults);
+  const doSearch = async () => {
+    var _a, _b;
+    const query = searchInput.value.trim();
+    if (!query) return;
+    searchBtn.disabled = true;
+    searchBtn.textContent = "Searching...";
+    searchResults.textContent = "";
+    const res = await sendRpc("providers.local.search_hf", {
+      query,
+      backend: selectedBackend,
+      limit: 15
+    });
+    searchBtn.disabled = false;
+    searchBtn.textContent = "Search";
+    if (!((res == null ? void 0 : res.ok) && ((_b = (_a = res.payload) == null ? void 0 : _a.results) == null ? void 0 : _b.length))) {
+      const noResults = document.createElement("div");
+      noResults.className = "text-xs text-[var(--muted)] py-2";
+      noResults.textContent = "No results found";
+      searchResults.appendChild(noResults);
+      return;
+    }
+    res.payload.results.forEach((result) => {
+      const card = createHfSearchResultCard(result, provider);
+      searchResults.appendChild(card);
+    });
+  };
+  searchBtn.addEventListener("click", doSearch);
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) doSearch();
+  });
+  let searchTimeout = null;
+  searchInput.addEventListener("input", () => {
+    if (searchTimeout) clearTimeout(searchTimeout);
+    const query = searchInput.value.trim();
+    if (query.length >= 2) {
+      searchTimeout = setTimeout(doSearch, 500);
+    }
+  });
+  wrapper.appendChild(searchSection);
+  const customSection = document.createElement("div");
+  customSection.className = "flex flex-col gap-2 mt-4 pt-4 border-t border-[var(--border)]";
+  const customLabel = document.createElement("div");
+  customLabel.className = "text-xs font-medium text-[var(--text-strong)]";
+  customLabel.textContent = "Or enter HuggingFace repo URL";
+  customSection.appendChild(customLabel);
+  const customRow = document.createElement("div");
+  customRow.className = "flex gap-2";
+  const customInput = document.createElement("input");
+  customInput.type = "text";
+  customInput.placeholder = selectedBackend === "MLX" ? "mlx-community/Model-Name" : "TheBloke/Model-GGUF";
+  customInput.className = "provider-input flex-1";
+  customRow.appendChild(customInput);
+  const customBtn = document.createElement("button");
+  customBtn.className = "provider-btn";
+  customBtn.textContent = "Use";
+  customRow.appendChild(customBtn);
+  customSection.appendChild(customRow);
+  const filenameRow = document.createElement("div");
+  filenameRow.className = "flex gap-2";
+  filenameRow.style.display = selectedBackend === "GGUF" ? "flex" : "none";
+  const filenameInput = document.createElement("input");
+  filenameInput.type = "text";
+  filenameInput.placeholder = "model-file.gguf (required for GGUF)";
+  filenameInput.className = "provider-input flex-1";
+  filenameRow.appendChild(filenameInput);
+  customSection.appendChild(filenameRow);
+  wrapper._updateFilenameVisibility = (backend) => {
+    filenameRow.style.display = backend === "GGUF" ? "flex" : "none";
+    customInput.placeholder = backend === "MLX" ? "mlx-community/Model-Name" : "TheBloke/Model-GGUF";
+  };
+  customBtn.addEventListener("click", async () => {
+    var _a;
+    const repo = customInput.value.trim();
+    if (!repo) return;
+    const params = {
+      hfRepo: repo,
+      backend: selectedBackend
+    };
+    if (selectedBackend === "GGUF") {
+      const filename = filenameInput.value.trim();
+      if (!filename) {
+        filenameInput.focus();
+        return;
+      }
+      params.hfFilename = filename;
+    }
+    customBtn.disabled = true;
+    customBtn.textContent = "Configuring...";
+    const res = await sendRpc("providers.local.configure_custom", params);
+    customBtn.disabled = false;
+    customBtn.textContent = "Use";
+    if (res == null ? void 0 : res.ok) {
+      fetchModels();
+      if (refreshProvidersPage) refreshProvidersPage();
+      showModelDownloadProgress({ id: res.payload.modelId, displayName: repo }, provider);
+    } else {
+      const err = ((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Failed to configure model";
+      const errEl = document.createElement("div");
+      errEl.className = "text-xs text-[var(--error)] py-2";
+      errEl.textContent = err;
+      searchResults.textContent = "";
+      searchResults.appendChild(errEl);
+    }
+  });
+  wrapper.appendChild(customSection);
+  const btns = document.createElement("div");
+  btns.className = "btn-row mt-4";
+  const backBtn = document.createElement("button");
+  backBtn.className = "provider-btn provider-btn-secondary";
+  backBtn.textContent = "Back";
+  backBtn.addEventListener("click", openProviderModal);
+  btns.appendChild(backBtn);
+  wrapper.appendChild(btns);
+  m.body.appendChild(wrapper);
+}
+function createHfSearchResultCard(model, provider) {
+  const card = document.createElement("div");
+  card.className = "model-card";
+  const header = document.createElement("div");
+  header.className = "flex items-center justify-between";
+  const name = document.createElement("span");
+  name.className = "text-sm font-medium text-[var(--text)]";
+  name.textContent = model.displayName;
+  header.appendChild(name);
+  const stats = document.createElement("div");
+  stats.className = "flex gap-2 text-xs text-[var(--muted)]";
+  if (model.downloads) {
+    const dl = document.createElement("span");
+    dl.textContent = `↓${formatDownloads(model.downloads)}`;
+    stats.appendChild(dl);
+  }
+  if (model.likes) {
+    const likes = document.createElement("span");
+    likes.textContent = `♥${model.likes}`;
+    stats.appendChild(likes);
+  }
+  header.appendChild(stats);
+  card.appendChild(header);
+  const repo = document.createElement("div");
+  repo.className = "text-xs text-[var(--muted)] mt-1";
+  repo.textContent = model.id;
+  card.appendChild(repo);
+  card.addEventListener("click", async () => {
+    var _a;
+    if (card.dataset.configuring) return;
+    card.dataset.configuring = "true";
+    const params = {
+      hfRepo: model.id,
+      backend: model.backend
+    };
+    if (model.backend === "GGUF") {
+      const filename = prompt("Enter the GGUF filename (e.g., model-q4_k_m.gguf):");
+      if (!filename) {
+        delete card.dataset.configuring;
+        return;
+      }
+      params.hfFilename = filename;
+    }
+    card.style.opacity = "0.5";
+    card.style.pointerEvents = "none";
+    const modalEls = els();
+    modalEls.body.textContent = "";
+    const statusWrapper = document.createElement("div");
+    statusWrapper.className = "provider-key-form";
+    const statusText = document.createElement("div");
+    statusText.className = "text-sm text-[var(--text)]";
+    statusText.textContent = `Configuring ${model.displayName}...`;
+    statusWrapper.appendChild(statusText);
+    modalEls.body.appendChild(statusWrapper);
+    const res = await sendRpc("providers.local.configure_custom", params);
+    if (res == null ? void 0 : res.ok) {
+      fetchModels();
+      if (refreshProvidersPage) refreshProvidersPage();
+      showModelDownloadProgress(
+        { id: res.payload.modelId, displayName: model.displayName },
+        provider
+      );
+    } else {
+      const err = ((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Failed to configure model";
+      statusText.className = "text-sm text-[var(--error)]";
+      statusText.textContent = err;
+    }
+  });
+  return card;
+}
+function formatDownloads(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return n.toString();
+}
+function createModelCard(model, provider, totalRamGb) {
+  const card = document.createElement("div");
+  card.className = "model-card";
+  const detectedRamGb = Number.isFinite(totalRamGb) ? totalRamGb : 0;
+  const hasEnoughRam = detectedRamGb >= model.minRamGb;
+  const header = document.createElement("div");
+  header.className = "flex items-center justify-between";
+  const name = document.createElement("span");
+  name.className = "text-sm font-medium text-[var(--text)]";
+  name.textContent = model.displayName;
+  header.appendChild(name);
+  const badges = document.createElement("div");
+  badges.className = "flex gap-2";
+  const ramBadge = document.createElement("span");
+  ramBadge.className = "tier-badge";
+  ramBadge.textContent = `${model.minRamGb}GB`;
+  badges.appendChild(ramBadge);
+  if (model.suggested && hasEnoughRam) {
+    const suggestedBadge = document.createElement("span");
+    suggestedBadge.className = "recommended-badge";
+    suggestedBadge.textContent = "Recommended";
+    badges.appendChild(suggestedBadge);
+  }
+  if (!hasEnoughRam) {
+    const insufficientBadge = document.createElement("span");
+    insufficientBadge.className = "tier-badge";
+    insufficientBadge.textContent = "Insufficient RAM";
+    badges.appendChild(insufficientBadge);
+  }
+  header.appendChild(badges);
+  card.appendChild(header);
+  const meta = document.createElement("div");
+  meta.className = "text-xs text-[var(--muted)] mt-1";
+  meta.textContent = `Context: ${(model.contextWindow / 1e3).toFixed(0)}k tokens`;
+  card.appendChild(meta);
+  if (!hasEnoughRam) {
+    card.classList.add("disabled");
+    const warning = document.createElement("div");
+    warning.className = "text-xs text-[var(--error)] mt-1";
+    warning.textContent = `You do not have enough RAM for this model (${detectedRamGb}GB detected, ${model.minRamGb}GB required).`;
+    card.appendChild(warning);
+    return card;
+  }
+  card.addEventListener("click", () => selectLocalModel(model, provider));
+  return card;
+}
+function showModelDownloadProgress(model, provider) {
+  const m = els();
+  m.modal.classList.remove("hidden");
+  m.body.textContent = "";
+  const wrapper = document.createElement("div");
+  wrapper.className = "provider-key-form";
+  const status = document.createElement("div");
+  status.className = "text-sm text-[var(--text)]";
+  status.textContent = `Configuring ${model.displayName}...`;
+  wrapper.appendChild(status);
+  const progress = document.createElement("div");
+  progress.className = "download-progress mt-4";
+  const progressBar = document.createElement("div");
+  progressBar.className = "download-progress-bar";
+  progressBar.style.width = "0%";
+  progress.appendChild(progressBar);
+  const progressText = document.createElement("div");
+  progressText.className = "text-xs text-[var(--muted)] mt-2";
+  progress.appendChild(progressText);
+  wrapper.appendChild(progress);
+  m.body.appendChild(wrapper);
+  const off = onEvent("local-llm.download", (payload) => {
+    const p = payload;
+    if (p.modelId !== model.id) return;
+    if (p.error) {
+      status.textContent = p.error;
+      status.className = "text-sm text-[var(--error)]";
+      off();
+      return;
+    }
+    if (p.complete) {
+      status.textContent = `${model.displayName} downloaded successfully!`;
+      status.className = "provider-status";
+      progressBar.style.width = "100%";
+      progressText.textContent = "";
+      off();
+      fetchModels();
+      if (refreshProvidersPage) refreshProvidersPage();
+      setTimeout(closeProviderModal, 1500);
+      return;
+    }
+    if (p.progress != null) {
+      progressBar.style.width = `${p.progress.toFixed(1)}%`;
+      status.textContent = `Downloading ${model.displayName}...`;
+    }
+    if (p.downloaded != null) {
+      const downloadedMb = (p.downloaded / (1024 * 1024)).toFixed(1);
+      if (p.total != null) {
+        const totalMb = (p.total / (1024 * 1024)).toFixed(1);
+        progressText.textContent = `${downloadedMb} MB / ${totalMb} MB`;
+      } else {
+        progressText.textContent = `${downloadedMb} MB downloaded`;
+      }
+    }
+  });
+  pollLocalStatus(model, provider, status, progress, off);
+}
+function selectLocalModel(model, provider) {
+  const m = els();
+  m.body.textContent = "";
+  const wrapper = document.createElement("div");
+  wrapper.className = "provider-key-form";
+  const status = document.createElement("div");
+  status.className = "text-sm text-[var(--text)]";
+  status.textContent = `Configuring ${model.displayName}...`;
+  wrapper.appendChild(status);
+  const progress = document.createElement("div");
+  progress.className = "download-progress mt-4";
+  const progressBar = document.createElement("div");
+  progressBar.className = "download-progress-bar";
+  progressBar.style.width = "0%";
+  progress.appendChild(progressBar);
+  const progressText = document.createElement("div");
+  progressText.className = "text-xs text-[var(--muted)] mt-2";
+  progress.appendChild(progressText);
+  wrapper.appendChild(progress);
+  m.body.appendChild(wrapper);
+  const off = onEvent("local-llm.download", (payload) => {
+    const p = payload;
+    if (p.modelId !== model.id) return;
+    if (p.error) {
+      status.textContent = p.error;
+      status.className = "text-sm text-[var(--error)]";
+      off();
+      return;
+    }
+    if (p.complete) {
+      status.textContent = `${model.displayName} downloaded successfully!`;
+      status.className = "provider-status";
+      progressBar.style.width = "100%";
+      progressText.textContent = "";
+      off();
+      fetchModels();
+      if (refreshProvidersPage) refreshProvidersPage();
+      setTimeout(closeProviderModal, 1500);
+      return;
+    }
+    if (p.progress != null) {
+      progressBar.style.width = `${p.progress.toFixed(1)}%`;
+      status.textContent = `Downloading ${model.displayName}...`;
+    }
+    if (p.downloaded != null) {
+      const downloadedMb = (p.downloaded / (1024 * 1024)).toFixed(1);
+      if (p.total != null) {
+        const totalMb = (p.total / (1024 * 1024)).toFixed(1);
+        progressText.textContent = `${downloadedMb} MB / ${totalMb} MB`;
+      } else {
+        progressText.textContent = `${downloadedMb} MB downloaded`;
+      }
+    }
+  });
+  sendRpc("providers.local.configure", { modelId: model.id, backend: selectedBackend }).then((res) => {
+    var _a;
+    if (!(res == null ? void 0 : res.ok)) {
+      status.textContent = ((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Failed to configure model";
+      status.className = "text-sm text-[var(--error)]";
+      off();
+      return;
+    }
+    pollLocalStatus(model, provider, status, progress, off);
+  });
+}
+function pollLocalStatus(model, _provider, statusEl, progressEl, offEvent) {
+  let attempts = 0;
+  const maxAttempts = 300;
+  let completed = false;
+  const timer = setInterval(() => {
+    if (completed) {
+      clearInterval(timer);
+      return;
+    }
+    attempts++;
+    if (attempts > maxAttempts) {
+      clearInterval(timer);
+      if (offEvent) offEvent();
+      statusEl.textContent = "Configuration timed out. Please try again.";
+      statusEl.className = "text-sm text-[var(--error)]";
+      return;
+    }
+    sendRpc("providers.local.status", {}).then(
+      (res) => {
+        if (!(res == null ? void 0 : res.ok)) return;
+        const st = res.payload;
+        if (st.status === "ready" || st.status === "loaded") {
+          completed = true;
+          clearInterval(timer);
+          if (offEvent) offEvent();
+          statusEl.textContent = `${model.displayName} configured successfully!`;
+          statusEl.className = "provider-status";
+          progressEl.style.display = "none";
+          fetchModels();
+          if (refreshProvidersPage) refreshProvidersPage();
+          setTimeout(closeProviderModal, 1500);
+        } else if (st.status === "error") {
+          completed = true;
+          clearInterval(timer);
+          if (offEvent) offEvent();
+          statusEl.textContent = st.error || "Configuration failed";
+          statusEl.className = "text-sm text-[var(--error)]";
+        }
+      }
+    );
+  }, 2e3);
+}
+function openProviderModalImpl() {
+  const m = els();
+  m.modal.classList.remove("hidden");
+  m.title.textContent = "Add LLM";
+  m.body.textContent = "Loading...";
+  sendRpc("providers.available", {}).then((res) => {
+    if (!(res == null ? void 0 : res.ok)) {
+      m.body.textContent = "Failed to load LLM providers.";
+      return;
+    }
+    const providers = res.payload || [];
+    providers.sort((a, b) => {
+      const aOrder = Number.isFinite(a.uiOrder) ? a.uiOrder : Number.MAX_SAFE_INTEGER;
+      const bOrder = Number.isFinite(b.uiOrder) ? b.uiOrder : Number.MAX_SAFE_INTEGER;
+      if (aOrder !== bOrder) return aOrder - bOrder;
+      return a.displayName.localeCompare(b.displayName);
+    });
+    m.body.textContent = "";
+    providers.forEach((p) => {
+      const item = document.createElement("div");
+      item.className = "provider-item";
+      const name = document.createElement("span");
+      name.className = "provider-item-name";
+      name.textContent = p.displayName;
+      item.appendChild(name);
+      const badges = document.createElement("div");
+      badges.className = "badge-row";
+      if (p.configured) {
+        const check = document.createElement("span");
+        check.className = "provider-item-badge configured";
+        check.textContent = "configured";
+        badges.appendChild(check);
+      }
+      if (p.isCustom) {
+        const customBadge = document.createElement("span");
+        customBadge.className = "provider-item-badge api-key";
+        customBadge.textContent = "Custom";
+        badges.appendChild(customBadge);
+      } else {
+        const badge = document.createElement("span");
+        badge.className = `provider-item-badge ${p.authType}`;
+        if (p.authType === "oauth") {
+          badge.textContent = "OAuth";
+        } else if (p.authType === "local") {
+          badge.textContent = "Local";
+        } else {
+          badge.textContent = "API Key";
+        }
+        badges.appendChild(badge);
+      }
+      item.appendChild(badges);
+      item.addEventListener("click", () => {
+        if (p.authType === "api-key") showApiKeyForm(p);
+        else if (p.authType === "oauth") showOAuthFlow(p);
+        else if (p.authType === "local") showLocalModelFlow(p);
+      });
+      m.body.appendChild(item);
+    });
+    const separator = document.createElement("div");
+    separator.className = "border-t border-[var(--border)] my-2";
+    m.body.appendChild(separator);
+    const customItem = document.createElement("div");
+    customItem.className = "provider-item";
+    const customName = document.createElement("span");
+    customName.className = "provider-item-name";
+    customName.textContent = "OpenAI Compatible";
+    customItem.appendChild(customName);
+    const customBadges = document.createElement("div");
+    customBadges.className = "badge-row";
+    const anyBadge = document.createElement("span");
+    anyBadge.className = "provider-item-badge api-key";
+    anyBadge.textContent = "Any Endpoint";
+    customBadges.appendChild(anyBadge);
+    customItem.appendChild(customBadges);
+    customItem.addEventListener("click", showCustomProviderForm);
+    m.body.appendChild(customItem);
+  });
+}
+export {
+  openProviderModalImpl
+};

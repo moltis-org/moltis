@@ -1,1 +1,53 @@
-function i(e){return typeof e=="string"?e.trim():""}function a(e){return i(e==null?void 0:e.name)||"moltis"}function c(e){return i(e==null?void 0:e.emoji)}function m(e){return a(e)}function f(e){return a(e)}function l(e){const t=document.createElement("canvas");t.width=64,t.height=64;const n=t.getContext("2d");return n?(n.clearRect(0,0,64,64),n.textAlign="center",n.textBaseline="middle",n.font="52px 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif",n.fillText(e,32,34),t.toDataURL("image/png")):null}function u(e){const t=c(e);if(!t)return!1;let n=Array.from(document.querySelectorAll('link[rel="icon"]'));if(n.length===0){const o=document.createElement("link");o.rel="icon",document.head.appendChild(o),n=[o]}const r=l(t);if(!r)return!1;for(const o of n)o.type="image/png",o.removeAttribute("sizes"),o.href=r;return!0}export{u as a,f as b,m as f};
+function trimString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function identityName(identity) {
+  const name = trimString(identity == null ? void 0 : identity.name);
+  return name || "moltis";
+}
+function identityEmoji(identity) {
+  return trimString(identity == null ? void 0 : identity.emoji);
+}
+function formatPageTitle(identity) {
+  return identityName(identity);
+}
+function formatLoginTitle(identity) {
+  return identityName(identity);
+}
+function emojiFaviconPng(emoji) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.clearRect(0, 0, 64, 64);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "52px 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif";
+  ctx.fillText(emoji, 32, 34);
+  return canvas.toDataURL("image/png");
+}
+function applyIdentityFavicon(identity) {
+  const emoji = identityEmoji(identity);
+  if (!emoji) return false;
+  let links = Array.from(document.querySelectorAll('link[rel="icon"]'));
+  if (links.length === 0) {
+    const fallback = document.createElement("link");
+    fallback.rel = "icon";
+    document.head.appendChild(fallback);
+    links = [fallback];
+  }
+  const href = emojiFaviconPng(emoji);
+  if (!href) return false;
+  for (const link of links) {
+    link.type = "image/png";
+    link.removeAttribute("sizes");
+    link.href = href;
+  }
+  return true;
+}
+export {
+  applyIdentityFavicon as a,
+  formatLoginTitle as b,
+  formatPageTitle as f
+};

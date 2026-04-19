@@ -193,10 +193,10 @@ export function VanillaConfirmDialog(): VNode | null {
 					<p style="font-size:.85rem;color:var(--text);margin:0">{s.message}</p>
 					<div style="display:flex;gap:8px;justify-content:flex-end">
 						<button type="button" onClick={() => close(false)} class="provider-btn provider-btn-secondary">
-							Cancel
+							{t("common:actions.cancel")}
 						</button>
 						<button type="button" onClick={() => close(true)} class="provider-btn provider-btn-danger">
-							Delete
+							{t("common:actions.delete")}
 						</button>
 					</div>
 				</div>
