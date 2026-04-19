@@ -1,4 +1,4 @@
-import { d as sendRpc, c as connected, bW as localizeRpcError, bX as pending, bY as setConnected, bZ as nextId, b_ as getPreferredLocale, b$ as setReconnectDelay, c0 as reconnectDelay, c1 as setWs, aw as d, ax as A, av as y } from "./theme.js";
+import { d as sendRpc, c as connected, bZ as localizeRpcError, b_ as pending, b$ as setConnected, c0 as nextId, c1 as getPreferredLocale, c2 as setReconnectDelay, c3 as reconnectDelay, c4 as setWs, aw as d, ax as A, av as y } from "./theme.js";
 import { u } from "./jsxRuntime.module.js";
 const gon = window.__MOLTIS__ || {};
 const listeners = {};
@@ -12,6 +12,12 @@ function set(key, value) {
 function onChange(key, fn) {
   if (!listeners[key]) listeners[key] = [];
   listeners[key].push(fn);
+}
+function offChange(key, fn) {
+  const arr = listeners[key];
+  if (!arr) return;
+  const idx = arr.indexOf(fn);
+  if (idx !== -1) arr.splice(idx, 1);
 }
 function refresh() {
   return fetch(`/api/gon?_=${Date.now()}`, {
@@ -31,6 +37,14 @@ function refresh() {
 function notify(key, value) {
   for (const fn of listeners[key] || []) fn(value);
 }
+const gon$1 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  get,
+  offChange,
+  onChange,
+  refresh,
+  set
+}, Symbol.toStringTag, { value: "Module" }));
 const eventListeners = {};
 function onEvent(eventName, handler) {
   (eventListeners[eventName] = eventListeners[eventName] || []).push(handler);
@@ -42,6 +56,11 @@ function onEvent(eventName, handler) {
     }
   };
 }
+const _events = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  eventListeners,
+  onEvent
+}, Symbol.toStringTag, { value: "Module" }));
 const ChannelType = {
   Telegram: "telegram",
   WhatsApp: "whatsapp",
@@ -224,6 +243,12 @@ function resetAuthRedirectGuard() {
   authRedirectPending = false;
 }
 window.addEventListener("moltis:auth-status-sync-complete", resetAuthRedirectGuard);
+function onServerRequest(method, handler) {
+  serverRequestHandlers[method] = handler;
+  return function off() {
+    delete serverRequestHandlers[method];
+  };
+}
 function connectWs(opts) {
   lastOpts = opts;
   const backoff = Object.assign({ factor: 1.5, max: 5e3 }, opts.backoff);
@@ -379,203 +404,13 @@ function forceReconnect(opts) {
   setReconnectDelay(1e3);
   connectWs(resolved);
 }
-const EMOJI_LIST = [
-  "🐶",
-  "🐱",
-  "🐰",
-  "🐹",
-  "🐻",
-  "🐺",
-  "🦁",
-  "🦅",
-  "🦉",
-  "🐧",
-  "🐢",
-  "🐍",
-  "🐉",
-  "🦄",
-  "🐙",
-  "🦀",
-  "🦞",
-  "🐝",
-  "🦊",
-  "🐿️",
-  "🦔",
-  "🦇",
-  "🐊",
-  "🐳",
-  "🐬",
-  "🦝",
-  "🦭",
-  "🦜",
-  "🦩",
-  "🐦",
-  "🐎",
-  "🦌",
-  "🐘",
-  "🦛",
-  "🐼",
-  "🐨",
-  "🤖",
-  "👾",
-  "👻",
-  "🎃",
-  "⭐",
-  "🔥",
-  "⚡",
-  "🌈",
-  "🌟",
-  "💡",
-  "🧠",
-  "🧭",
-  "🔮",
-  "🚀",
-  "🌍",
-  "🌵",
-  "🌻",
-  "🍀",
-  "🍄",
-  "❄️"
-];
-function EmojiPicker({ value, onChange: onChange2, onSelect }) {
-  const [open, setOpen] = d(false);
-  const wrapRef = A(null);
-  y(() => {
-    if (!open) return;
-    function onClick(e) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [open]);
-  return /* @__PURE__ */ u("div", { class: "settings-emoji-field", ref: wrapRef, children: [
-    /* @__PURE__ */ u(
-      "input",
-      {
-        type: "text",
-        class: "provider-key-input w-12 px-1 py-1 text-center text-xl",
-        value: value || "",
-        onInput: (e) => onChange2(e.target.value),
-        placeholder: "🐾"
-      }
-    ),
-    /* @__PURE__ */ u("button", { type: "button", class: "provider-btn provider-btn-sm", onClick: () => setOpen(!open), children: open ? "Close" : "Pick" }),
-    open ? /* @__PURE__ */ u("div", { class: "settings-emoji-picker", children: EMOJI_LIST.map((em) => /* @__PURE__ */ u(
-      "button",
-      {
-        type: "button",
-        class: `settings-emoji-btn ${value === em ? "active" : ""}`,
-        onClick: () => {
-          onChange2(em);
-          if (onSelect) onSelect(em);
-          setOpen(false);
-        },
-        children: em
-      }
-    )) }) : null
-  ] });
-}
-const MODEL_SERVICE_NOT_CONFIGURED = "model service not configured";
-const MODEL_TEST_RETRY_ATTEMPTS = 40;
-const MODEL_TEST_RETRY_DELAY_MS = 250;
-function humanizeProbeError(error) {
-  if (!error || typeof error !== "string") return error;
-  const lower = error.toLowerCase();
-  if (lower.includes("401") || lower.includes("unauthorized") || lower.includes("invalid api key") || lower.includes("invalid x-api-key")) {
-    return "Invalid API key. Please double-check and try again.";
-  }
-  if (lower.includes("403") || lower.includes("forbidden")) {
-    return "Your API key doesn't have access. Check your account permissions.";
-  }
-  if (lower.includes("permission")) {
-    return error;
-  }
-  if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
-    return "Rate limited by the provider. Wait a moment and try again.";
-  }
-  if (lower.includes("timeout") || lower.includes("timed out")) {
-    return "Connection timed out. Check your endpoint URL and try again.";
-  }
-  if (lower.includes("connection refused") || lower.includes("econnrefused")) {
-    return "Connection refused. Make sure the provider endpoint is running and reachable.";
-  }
-  if (lower.includes("dns") || lower.includes("getaddrinfo") || lower.includes("name or service not known")) {
-    return "Could not resolve the endpoint address. Check the URL and try again.";
-  }
-  if (lower.includes("ollama pull")) {
-    return error;
-  }
-  if (lower.includes("404") || lower.includes("not found")) {
-    return "Model not found at this endpoint. Make sure it is installed and try again.";
-  }
-  return error;
-}
-function isModelServiceNotConfigured(error) {
-  if (!error || typeof error !== "string") return false;
-  return error.toLowerCase().includes(MODEL_SERVICE_NOT_CONFIGURED);
-}
-function isTimeoutError(error) {
-  if (!error || typeof error !== "string") return false;
-  const lower = error.toLowerCase();
-  return lower.includes("timeout") || lower.includes("timed out");
-}
-async function validateProviderKey(provider, apiKey, baseUrl, model, requestId) {
-  var _a;
-  const payload = { provider, apiKey };
-  if (baseUrl) payload.baseUrl = baseUrl;
-  if (model) payload.model = model;
-  if (requestId) payload.requestId = requestId;
-  const res = await sendRpc("providers.validate_key", payload);
-  if (!(res == null ? void 0 : res.ok)) {
-    return {
-      valid: false,
-      error: humanizeProbeError(((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Failed to validate credentials.")
-    };
-  }
-  const data = res.payload || {};
-  if (data.valid) {
-    return { valid: true, models: data.models || [] };
-  }
-  return {
-    valid: false,
-    error: humanizeProbeError(data.error || "Validation failed.")
-  };
-}
-async function testModel(modelId) {
-  var _a;
-  for (let attempt = 0; attempt < MODEL_TEST_RETRY_ATTEMPTS; attempt++) {
-    const res = await sendRpc("models.test", { modelId });
-    if (res == null ? void 0 : res.ok) {
-      return { ok: true };
-    }
-    const message = ((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Model test failed.";
-    const lower = String(message).toLowerCase();
-    const shouldRetry = lower.includes(MODEL_SERVICE_NOT_CONFIGURED) && attempt < MODEL_TEST_RETRY_ATTEMPTS - 1;
-    if (!shouldRetry) {
-      return {
-        ok: false,
-        error: humanizeProbeError(message)
-      };
-    }
-    await new Promise((resolve) => {
-      window.setTimeout(resolve, MODEL_TEST_RETRY_DELAY_MS);
-    });
-  }
-  return {
-    ok: false,
-    error: humanizeProbeError("Model test failed.")
-  };
-}
-function buildSaveKeyPayload(providerName, apiKey, baseUrl, model) {
-  const payload = { provider: providerName, apiKey };
-  if (baseUrl) payload.baseUrl = baseUrl;
-  if (model) payload.model = model;
-  return payload;
-}
-function saveProviderKey(providerName, apiKey, baseUrl, model) {
-  const payload = buildSaveKeyPayload(providerName, apiKey, baseUrl, model);
-  return sendRpc("providers.save_key", payload);
-}
+const _wsConnect = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  connectWs,
+  forceReconnect,
+  onServerRequest,
+  subscribeEvents
+}, Symbol.toStringTag, { value: "Module" }));
 const KEY_SOURCE_BY_PROVIDER = {
   anthropic: {
     url: "https://console.anthropic.com/settings/keys",
@@ -693,6 +528,203 @@ function completeProviderOAuth(providerName, callback) {
     provider: providerName,
     callback
   });
+}
+const MODEL_SERVICE_NOT_CONFIGURED = "model service not configured";
+const MODEL_TEST_RETRY_ATTEMPTS = 40;
+const MODEL_TEST_RETRY_DELAY_MS = 250;
+function humanizeProbeError(error) {
+  if (!error || typeof error !== "string") return error;
+  const lower = error.toLowerCase();
+  if (lower.includes("401") || lower.includes("unauthorized") || lower.includes("invalid api key") || lower.includes("invalid x-api-key")) {
+    return "Invalid API key. Please double-check and try again.";
+  }
+  if (lower.includes("403") || lower.includes("forbidden")) {
+    return "Your API key doesn't have access. Check your account permissions.";
+  }
+  if (lower.includes("permission")) {
+    return error;
+  }
+  if (lower.includes("429") || lower.includes("rate limit") || lower.includes("too many requests")) {
+    return "Rate limited by the provider. Wait a moment and try again.";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out")) {
+    return "Connection timed out. Check your endpoint URL and try again.";
+  }
+  if (lower.includes("connection refused") || lower.includes("econnrefused")) {
+    return "Connection refused. Make sure the provider endpoint is running and reachable.";
+  }
+  if (lower.includes("dns") || lower.includes("getaddrinfo") || lower.includes("name or service not known")) {
+    return "Could not resolve the endpoint address. Check the URL and try again.";
+  }
+  if (lower.includes("ollama pull")) {
+    return error;
+  }
+  if (lower.includes("404") || lower.includes("not found")) {
+    return "Model not found at this endpoint. Make sure it is installed and try again.";
+  }
+  return error;
+}
+function isModelServiceNotConfigured(error) {
+  if (!error || typeof error !== "string") return false;
+  return error.toLowerCase().includes(MODEL_SERVICE_NOT_CONFIGURED);
+}
+function isTimeoutError(error) {
+  if (!error || typeof error !== "string") return false;
+  const lower = error.toLowerCase();
+  return lower.includes("timeout") || lower.includes("timed out");
+}
+async function validateProviderKey(provider, apiKey, baseUrl, model, requestId) {
+  var _a;
+  const payload = { provider, apiKey };
+  if (baseUrl) payload.baseUrl = baseUrl;
+  if (model) payload.model = model;
+  if (requestId) payload.requestId = requestId;
+  const res = await sendRpc("providers.validate_key", payload);
+  if (!(res == null ? void 0 : res.ok)) {
+    return {
+      valid: false,
+      error: humanizeProbeError(((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Failed to validate credentials.")
+    };
+  }
+  const data = res.payload || {};
+  if (data.valid) {
+    return { valid: true, models: data.models || [] };
+  }
+  return {
+    valid: false,
+    error: humanizeProbeError(data.error || "Validation failed.")
+  };
+}
+async function testModel(modelId) {
+  var _a;
+  for (let attempt = 0; attempt < MODEL_TEST_RETRY_ATTEMPTS; attempt++) {
+    const res = await sendRpc("models.test", { modelId });
+    if (res == null ? void 0 : res.ok) {
+      return { ok: true };
+    }
+    const message = ((_a = res == null ? void 0 : res.error) == null ? void 0 : _a.message) || "Model test failed.";
+    const lower = String(message).toLowerCase();
+    const shouldRetry = lower.includes(MODEL_SERVICE_NOT_CONFIGURED) && attempt < MODEL_TEST_RETRY_ATTEMPTS - 1;
+    if (!shouldRetry) {
+      return {
+        ok: false,
+        error: humanizeProbeError(message)
+      };
+    }
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, MODEL_TEST_RETRY_DELAY_MS);
+    });
+  }
+  return {
+    ok: false,
+    error: humanizeProbeError("Model test failed.")
+  };
+}
+function buildSaveKeyPayload(providerName, apiKey, baseUrl, model) {
+  const payload = { provider: providerName, apiKey };
+  if (baseUrl) payload.baseUrl = baseUrl;
+  if (model) payload.model = model;
+  return payload;
+}
+function saveProviderKey(providerName, apiKey, baseUrl, model) {
+  const payload = buildSaveKeyPayload(providerName, apiKey, baseUrl, model);
+  return sendRpc("providers.save_key", payload);
+}
+const EMOJI_LIST = [
+  "🐶",
+  "🐱",
+  "🐰",
+  "🐹",
+  "🐻",
+  "🐺",
+  "🦁",
+  "🦅",
+  "🦉",
+  "🐧",
+  "🐢",
+  "🐍",
+  "🐉",
+  "🦄",
+  "🐙",
+  "🦀",
+  "🦞",
+  "🐝",
+  "🦊",
+  "🐿️",
+  "🦔",
+  "🦇",
+  "🐊",
+  "🐳",
+  "🐬",
+  "🦝",
+  "🦭",
+  "🦜",
+  "🦩",
+  "🐦",
+  "🐎",
+  "🦌",
+  "🐘",
+  "🦛",
+  "🐼",
+  "🐨",
+  "🤖",
+  "👾",
+  "👻",
+  "🎃",
+  "⭐",
+  "🔥",
+  "⚡",
+  "🌈",
+  "🌟",
+  "💡",
+  "🧠",
+  "🧭",
+  "🔮",
+  "🚀",
+  "🌍",
+  "🌵",
+  "🌻",
+  "🍀",
+  "🍄",
+  "❄️"
+];
+function EmojiPicker({ value, onChange: onChange2, onSelect }) {
+  const [open, setOpen] = d(false);
+  const wrapRef = A(null);
+  y(() => {
+    if (!open) return;
+    function onClick(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+  return /* @__PURE__ */ u("div", { class: "settings-emoji-field", ref: wrapRef, children: [
+    /* @__PURE__ */ u(
+      "input",
+      {
+        type: "text",
+        class: "provider-key-input w-12 px-1 py-1 text-center text-xl",
+        value: value || "",
+        onInput: (e) => onChange2(e.target.value),
+        placeholder: "🐾"
+      }
+    ),
+    /* @__PURE__ */ u("button", { type: "button", class: "provider-btn provider-btn-sm", onClick: () => setOpen(!open), children: open ? "Close" : "Pick" }),
+    open ? /* @__PURE__ */ u("div", { class: "settings-emoji-picker", children: EMOJI_LIST.map((em) => /* @__PURE__ */ u(
+      "button",
+      {
+        type: "button",
+        class: `settings-emoji-btn ${value === em ? "active" : ""}`,
+        onClick: () => {
+          onChange2(em);
+          if (onSelect) onSelect(em);
+          setOpen(false);
+        },
+        children: em
+      }
+    )) }) : null
+  ] });
 }
 function validateIdentityFields(name, userName) {
   if (!(name.trim() || userName.trim())) {
@@ -888,21 +920,21 @@ function decodeBase64Safe(input) {
   return bytes;
 }
 export {
-  VOICE_COUNTERPART_IDS as $,
+  _wsConnect as $,
   eventListeners as A,
-  refresh as B,
+  providerApiKeyHelp as B,
   ChannelType as C,
-  providerApiKeyHelp as D,
-  EmojiPicker as E,
-  validateProviderKey as F,
-  completeProviderOAuth as G,
-  startProviderOAuth as H,
-  saveProviderKey as I,
-  testModel as J,
-  isModelServiceNotConfigured as K,
-  isTimeoutError as L,
+  validateProviderKey as D,
+  completeProviderOAuth as E,
+  startProviderOAuth as F,
+  saveProviderKey as G,
+  testModel as H,
+  isModelServiceNotConfigured as I,
+  isTimeoutError as J,
+  humanizeProbeError as K,
+  refresh as L,
   MATRIX_DEFAULT_HOMESERVER as M,
-  humanizeProbeError as N,
+  EmojiPicker as N,
   validateIdentityFields as O,
   updateIdentity as P,
   set as Q,
@@ -917,6 +949,9 @@ export {
   saveVoiceKey as Z,
   saveVoiceSettings as _,
   onChange as a,
+  gon$1 as a0,
+  _events as a1,
+  VOICE_COUNTERPART_IDS as a2,
   addChannel as b,
   MATRIX_ENCRYPTION_GUIDANCE as c,
   targetChecked as d,

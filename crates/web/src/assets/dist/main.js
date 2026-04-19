@@ -1,9 +1,9 @@
-const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["chunks/index.js","chunks/theme.js","chunks/open-modal.js","chunks/voice-utils.js","chunks/jsxRuntime.module.js","chunks/branding.js","chunks/time-format.js"])))=>i.map(i=>d[i]);
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["chunks/index.js","chunks/theme.js","chunks/open-modal.js","chunks/jsxRuntime.module.js","chunks/branding.js","chunks/voice-utils.js","chunks/time-format.js"])))=>i.map(i=>d[i]);
 var _a, _b;
 import { u } from "./chunks/jsxRuntime.module.js";
-import { _ as __vitePreload, s as setUnseenErrors, a as setUnseenWarns, u as unseenErrors, b as unseenWarns, c as connected, d as sendRpc, $, e as sessionTokens, f as formatTokens$1, g as chatMsgBox, p as parseErrorMessage, h as updateCountdown, i as chatBatchLoading, j as sessionContextWindow, k as sessionToolsEnabled, l as sessionExecPromptSymbol, m as commandModeEnabled, n as sessionExecMode, o as sessionCurrentInputTokens, q as chatInput, r as sessionStore, t as sessions$1, v as setLastHistoryIndex, w as activeSessionKey, x as lastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeCombo, U as nodeDropdown, V as nodeComboLabel, W as nodeComboBtn, X as nodeDropdownList, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as j, a7 as setSessionSandboxEnabled, a8 as hostExecIsRoot, a9 as sandboxLabel, aa as sandboxToggleBtn, ab as sessionSandboxEnabled, ac as setSessionSandboxImage, ad as sandboxImageLabel, ae as sandboxInfo, af as sandboxImageDropdown, ag as sandboxImageBtn, ah as sessionSandboxImage, ai as projectStore, aj as setSessions, ak as insertSessionInOrder, al as Session, am as setSelectedModelId, an as modelComboLabel, ao as setSessionSwitchInProgress, ap as setStreamEl, aq as setStreamText, ar as setLastToolOutput, as as setVoicePending, at as setActiveSessionKey, au as chatSeq, av as y$1, aw as d, ax as A, ay as S, az as projectFilterId, aA as getById$1, aB as q, aC as warmAudioPlayback, aD as selectedModelId, aE as formatBytes$3, aF as setCommandModeEnabled, aG as chatHistory, aH as chatHistoryIdx, aI as setChatHistoryDraft, aJ as setChatHistoryIdx, aK as chatHistoryDraft, aL as setChatHistory, aM as R, aN as setChatMsgBox, aO as setChatInput, aP as setChatSendBtn, aQ as setModelCombo, aR as setModelComboBtn, aS as setModelComboLabel, aT as setModelDropdown, aU as setModelSearchInput, aV as setModelDropdownList, aW as setNodeCombo, aX as setNodeComboBtn, aY as setNodeComboLabel, aZ as setNodeDropdown, a_ as setNodeDropdownList, a$ as setSandboxToggleBtn, b0 as setSandboxLabel, b1 as setSandboxImageBtn, b2 as setSandboxImageLabel, b3 as setSandboxImageDropdown, b4 as models, b5 as chatSendBtn, b6 as setModels, b7 as modelComboBtn, b8 as modelSearchInput, b9 as modelDropdownList, ba as modelCombo, bb as modelDropdown, bc as setModelIdx, bd as modelIdx, be as REASONING_SEP, bf as setProjects, bg as setProjectFilterId, bh as models$1, bi as useSignal, bj as connected$1, bk as setCachedChannels, bl as setRefreshChannelsPage, bm as cachedChannels, bn as setChannelEventUnsub, bo as channelEventUnsub, bp as streamEl, bq as renderMapPointGroups, br as renderMapLinks, bs as lastToolOutput, bt as localizeStructuredError, bu as voicePending, bv as streamText, bw as setSandboxInfo, bx as networkAuditEventHandler, by as refreshProvidersPage, bz as logsEventHandler, bA as setSubscribed, bB as projects$1, bC as sandboxInfo$1, bD as localizedApiErrorMessage, bE as setLogsEventHandler, bF as setNetworkAuditEventHandler, bG as modelVersionScore, bH as setRefreshProvidersPage, bI as setLocale, bJ as esc, bK as projectStore$1, bL as modelStore$1, bM as S$1, bN as initTheme, bO as injectMarkdownStyles, bP as init, bQ as translateStaticElements, bR as setAll$1, bS as setAll$2, bT as select$1, bU as selectedModelId$1 } from "./chunks/theme.js";
+import { _ as __vitePreload, s as setUnseenErrors, a as setUnseenWarns, u as unseenErrors, b as unseenWarns, c as connected, d as sendRpc, $, e as sessionTokens, f as formatTokens$1, g as chatMsgBox, h as updateCountdown, p as parseErrorMessage, i as chatInput, j as commandModeEnabled, k as sessionExecPromptSymbol, l as chatBatchLoading, m as sessionContextWindow, n as sessionToolsEnabled, o as sessionExecMode, q as sessionCurrentInputTokens, r as sessionStore, t as sessions, v as activeSessionKey, w as lastHistoryIndex, x as setLastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeComboBtn, U as nodeDropdownList, V as nodeCombo, W as nodeDropdown, X as nodeComboLabel, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as j, a7 as setSessionSandboxEnabled, a8 as hostExecIsRoot, a9 as sandboxLabel, aa as sandboxToggleBtn, ab as sessionSandboxEnabled, ac as setSessionSandboxImage, ad as sandboxImageLabel, ae as sandboxInfo, af as sandboxImageDropdown, ag as sandboxImageBtn, ah as sessionSandboxImage, ai as projectStore, aj as setSessions, ak as insertSessionInOrder, al as Session, am as chatSeq, an as setSelectedModelId, ao as modelComboLabel, ap as setSessionSwitchInProgress, aq as setStreamEl, ar as setStreamText, as as setLastToolOutput, at as setVoicePending, au as setActiveSessionKey, av as y$1, aw as d, ax as A, ay as S, az as projectFilterId, aA as getById$1, aB as q, aC as warmAudioPlayback, aD as selectedModelId, aE as formatBytes$3, aF as setCommandModeEnabled, aG as chatHistory, aH as chatHistoryIdx, aI as setChatHistoryDraft, aJ as setChatHistoryIdx, aK as chatHistoryDraft, aL as setChatHistory, aM as R, aN as setChatMsgBox, aO as setChatInput, aP as setChatSendBtn, aQ as setModelCombo, aR as setModelComboBtn, aS as setModelComboLabel, aT as setModelDropdown, aU as setModelSearchInput, aV as setModelDropdownList, aW as setNodeCombo, aX as setNodeComboBtn, aY as setNodeComboLabel, aZ as setNodeDropdown, a_ as setNodeDropdownList, a$ as setSandboxToggleBtn, b0 as setSandboxLabel, b1 as setSandboxImageBtn, b2 as setSandboxImageLabel, b3 as setSandboxImageDropdown, b4 as models, b5 as chatSendBtn, b6 as setModels, b7 as modelComboBtn, b8 as modelSearchInput, b9 as modelDropdownList, ba as modelCombo, bb as modelDropdown, bc as setModelIdx, bd as modelIdx, be as REASONING_SEP, bf as setProjects, bg as setProjectFilterId, bh as models$1, bi as useSignal, bj as connected$1, bk as setCachedChannels, bl as setRefreshChannelsPage, bm as cachedChannels, bn as setChannelEventUnsub, bo as channelEventUnsub, bp as streamEl, bq as renderMapPointGroups, br as renderMapLinks, bs as lastToolOutput, bt as localizeStructuredError, bu as voicePending, bv as streamText, bw as setSandboxInfo, bx as networkAuditEventHandler, by as refreshProvidersPage, bz as logsEventHandler, bA as setSubscribed, bB as modelVersionScore, bC as projects$1, bD as sandboxInfo$1, bE as localizedApiErrorMessage, bF as setLogsEventHandler, bG as setNetworkAuditEventHandler, bH as setRefreshProvidersPage, bI as setLocale, bJ as esc, bK as projectStore$1, bL as _modelStore, bM as S$1, bN as _sessionStoreModule, bO as _i18n, bP as _helpers, bQ as initTheme, bR as injectMarkdownStyles, bS as init, bT as translateStaticElements, bU as setAll$1, bV as setAll$2, bW as select$1, bX as selectedModelId$1 } from "./chunks/theme.js";
 import { f as formatPageTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
-import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as buildTeamsEndpoint, r as generateWebhookSecretHex, s as defaultTeamsBaseUrl, u as fetchChannelStatus, w as channelStorageNote, x as forceReconnect, y as connectWs, z as subscribeEvents, A as eventListeners, B as refresh, E as EmojiPicker, D as providerApiKeyHelp, F as validateProviderKey, G as completeProviderOAuth, H as startProviderOAuth, I as saveProviderKey, J as testModel, K as isModelServiceNotConfigured, L as isTimeoutError, N as humanizeProbeError, O as validateIdentityFields, P as updateIdentity, Q as set, R as prepareCreationOptions, S as detectPasskeyName, T as fetchVoiceProviders, U as fetchPhrase, V as testTts, W as decodeBase64Safe, X as transcribeAudio$1, Y as toggleVoiceProvider, Z as saveVoiceKey, _ as saveVoiceSettings } from "./chunks/voice-utils.js";
+import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as buildTeamsEndpoint, r as generateWebhookSecretHex, s as defaultTeamsBaseUrl, u as fetchChannelStatus, w as channelStorageNote, x as forceReconnect, y as connectWs, z as subscribeEvents, A as eventListeners, B as providerApiKeyHelp, D as validateProviderKey, E as completeProviderOAuth, F as startProviderOAuth, G as saveProviderKey, H as testModel, I as isModelServiceNotConfigured, J as isTimeoutError, K as humanizeProbeError, L as refresh, N as EmojiPicker, O as validateIdentityFields, P as updateIdentity, Q as set, R as prepareCreationOptions, S as detectPasskeyName, T as fetchVoiceProviders, U as fetchPhrase, V as testTts, W as decodeBase64Safe, X as transcribeAudio$1, Y as toggleVoiceProvider, Z as saveVoiceKey, _ as saveVoiceSettings, $ as _wsConnect, a0 as gon, a1 as _events } from "./chunks/voice-utils.js";
 import "./chunks/time-format.js";
 const BYTE_UNITS = [
   "B",
@@ -121,6 +121,9 @@ async function initHighlighter() {
   await highlighterInitPromise;
   return highlighter;
 }
+function isReady() {
+  return highlighter !== null;
+}
 async function ensureLanguageLoaded(lang) {
   if (!(highlighter && lang)) return false;
   const loadedLangs = highlighter.getLoadedLanguages();
@@ -189,6 +192,12 @@ async function highlightCodeBlocks(containerEl) {
     await highlightCodeElement(codeEl);
   }
 }
+const _codeHighlight = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  highlightCodeBlocks,
+  initHighlighter,
+  isReady
+}, Symbol.toStringTag, { value: "Module" }));
 function makeTelegramIcon() {
   const el = document.createElement("span");
   el.className = "icon icon-telegram";
@@ -625,17 +634,22 @@ function highlightTermInElement(el, query2) {
     (_a2 = textNode.parentNode) == null ? void 0 : _a2.replaceChild(frag, textNode);
   });
 }
+function chatAutoResize$1() {
+  if (!chatInput) return;
+  chatInput.style.height = "auto";
+  chatInput.style.height = `${Math.min(chatInput.scrollHeight, 120)}px`;
+}
 function updateCommandInputUI() {
   if (!chatInput) return;
   const row = chatInput.closest(".chat-input-row");
   if (row) {
     row.classList.toggle("command-mode", commandModeEnabled);
   }
-  const prompt = $("chatCommandPrompt");
-  if (prompt) {
-    prompt.textContent = sessionExecPromptSymbol || "$";
-    prompt.classList.toggle("chat-command-prompt-hidden", !commandModeEnabled);
-    prompt.setAttribute("aria-hidden", commandModeEnabled ? "false" : "true");
+  const prompt2 = $("chatCommandPrompt");
+  if (prompt2) {
+    prompt2.textContent = sessionExecPromptSymbol || "$";
+    prompt2.classList.toggle("chat-command-prompt-hidden", !commandModeEnabled);
+    prompt2.setAttribute("aria-hidden", commandModeEnabled ? "false" : "true");
   }
   if (commandModeEnabled) {
     chatInput.placeholder = "Run shell command…";
@@ -667,6 +681,25 @@ function updateTokenBar() {
   }
   bar.textContent = text;
 }
+const _chatUi = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  appendChannelFooter,
+  appendReasoningDisclosure,
+  chatAddErrorCard,
+  chatAddErrorMsg,
+  chatAddMsg,
+  chatAddMsgWithImages,
+  chatAutoResize: chatAutoResize$1,
+  highlightAndScroll,
+  highlightTermInElement,
+  removeThinking,
+  renderApprovalCard,
+  resolveApproval,
+  scrollChatToBottom,
+  stripChannelPrefix,
+  updateCommandInputUI,
+  updateTokenBar
+}, Symbol.toStringTag, { value: "Module" }));
 const historyByKey = /* @__PURE__ */ new Map();
 const revisionByKey = /* @__PURE__ */ new Map();
 const bytesByKey = /* @__PURE__ */ new Map();
@@ -821,6 +854,9 @@ function upsertByIndex(list2, next, historyIndex) {
 function getHistoryRevision(key) {
   return revisionByKey.get(key) || 0;
 }
+function hasSessionHistory(key) {
+  return historyByKey.has(key);
+}
 function getSessionHistory(key) {
   const history2 = historyByKey.get(key) || null;
   if (history2) touchHistoryKey(key);
@@ -861,6 +897,15 @@ function clearSessionHistory(key) {
   }
   dropHistoryKey(key);
 }
+const _sessionHistoryCache = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  clearSessionHistory,
+  getHistoryRevision,
+  getSessionHistory,
+  hasSessionHistory,
+  replaceSessionHistory,
+  upsertSessionHistoryMessage
+}, Symbol.toStringTag, { value: "Module" }));
 const SESSION_HISTORY_PAGE_LIMIT = 120;
 const HISTORY_AUTOLOAD_THRESHOLD_PX = 120;
 const sessionHistoryPaging = /* @__PURE__ */ new Map();
@@ -1106,7 +1151,7 @@ function shouldApplyServerHistory(key, serverHistory, requestRevision) {
 function syncHistoryState(key, history2, historyTailIndex, totalCountHint) {
   const loadedCount = Array.isArray(history2) ? history2.length : 0;
   const sessionEntry = sessionStore.getByKey(key);
-  const legacy = sessions$1.find((s) => s.key === key);
+  const legacy = sessions.find((s) => s.key === key);
   const existingCount = Number.isInteger(sessionEntry == null ? void 0 : sessionEntry.messageCount) ? sessionEntry == null ? void 0 : sessionEntry.messageCount : 0;
   const legacyCount = Number.isInteger(legacy == null ? void 0 : legacy.messageCount) ? legacy == null ? void 0 : legacy.messageCount : 0;
   const hintedCount = Number.isInteger(totalCountHint) ? totalCountHint : 0;
@@ -1506,6 +1551,8 @@ function postHistoryLoadActions(key, searchContext, msgEls, thinkingText, skipAu
     if (!skipAutoScroll) scrollChatToBottom();
   }
 }
+function updateChatSessionHeader() {
+}
 function renderWelcomeAgentPicker(card, activeAgentId, onActiveAgentResolved) {
   const container = card.querySelector("[data-welcome-agents]");
   if (!container) return;
@@ -1544,7 +1591,7 @@ function renderWelcomeAgentPicker(card, activeAgentId, onActiveAgentResolved) {
             live.dataVersion.value++;
           }
           void __vitePreload(async () => {
-            const { fetchSessions: fetchSessions2 } = await Promise.resolve().then(() => sessions);
+            const { fetchSessions: fetchSessions2 } = await Promise.resolve().then(() => _sessions);
             return { fetchSessions: fetchSessions2 };
           }, true ? void 0 : void 0).then(({ fetchSessions: fetchSessions2 }) => fetchSessions2());
           const welcome = (_a2 = chatMsgBox) == null ? void 0 : _a2.querySelector("#welcomeCard");
@@ -1683,7 +1730,8 @@ const sessionRender = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defin
   refreshWelcomeCardIfNeeded,
   renderHistory,
   renderWelcomeAgentPicker,
-  showSessionLoadIndicator
+  showSessionLoadIndicator,
+  updateChatSessionHeader
 }, Symbol.toStringTag, { value: "Module" }));
 const nodes$1 = y([]);
 const selectedNodeId = y(null);
@@ -1709,6 +1757,17 @@ function getById(id) {
   return nodes$1.value.find((n) => n.nodeId === id) || null;
 }
 const nodeStore = { nodes: nodes$1, selectedNodeId, selectedNode, setAll, fetch: fetch$1, select, getById };
+const _nodeStore = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  fetch: fetch$1,
+  getById,
+  nodeStore,
+  nodes: nodes$1,
+  select,
+  selectedNode,
+  selectedNodeId,
+  setAll
+}, Symbol.toStringTag, { value: "Module" }));
 let nodeIdx = -1;
 let eventUnsubs = [];
 function isSshTargetNode$2(node) {
@@ -1887,6 +1946,17 @@ function restoreNodeSelection(nodeId) {
   const node = nodeId ? getNodeByIdOrFallback(nodeId) : null;
   updateNodeComboLabel(node);
 }
+const _nodeSelector = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  bindNodeComboEvents,
+  closeNodeDropdown,
+  fetchNodes,
+  openNodeDropdown,
+  renderNodeList,
+  restoreNodeSelection,
+  selectNode,
+  unbindNodeEvents
+}, Symbol.toStringTag, { value: "Module" }));
 function closeProjectDropdown() {
   if (!projectDropdown) return;
   projectDropdown.classList.add("hidden");
@@ -2358,9 +2428,9 @@ function ensureSessionInClientStore(key, entry, projectId) {
   const created = { ...entry, key };
   if (projectId && !created.projectId) created.projectId = projectId;
   const createdSession = sessionStore.upsert(created);
-  const inLegacy = sessions$1.some((s) => s.key === key);
+  const inLegacy = sessions.some((s) => s.key === key);
   if (!inLegacy) {
-    setSessions(insertSessionInOrder(sessions$1, new Session(created)));
+    setSessions(insertSessionInOrder(sessions, new Session(created)));
   }
   return createdSession;
 }
@@ -2368,7 +2438,7 @@ function applyReplyingStateFromSwitchPayload(key, payload) {
   const replying = payload.replying === true;
   const session = sessionStore.getByKey(key);
   if (session) session.replying.value = replying;
-  const entry = sessions$1.find((s) => s.key === key);
+  const entry = sessions.find((s) => s.key === key);
   if (entry) entry._replying = replying;
   const voiceSession = sessionStore.getByKey(key);
   if (replying && payload.voicePending) {
@@ -2396,7 +2466,7 @@ function clearActiveSession() {
       updateTokenBar();
       const activeKey = sessionStore.activeSessionKey.value || activeSessionKey;
       void __vitePreload(async () => {
-        const { markSessionLocallyCleared: markSessionLocallyCleared2 } = await Promise.resolve().then(() => sessions);
+        const { markSessionLocallyCleared: markSessionLocallyCleared2 } = await Promise.resolve().then(() => _sessions);
         return { markSessionLocallyCleared: markSessionLocallyCleared2 };
       }, true ? void 0 : void 0).then(({ markSessionLocallyCleared: markSessionLocallyCleared2 }) => markSessionLocallyCleared2(activeKey));
       clearSessionHistory(activeKey);
@@ -3041,7 +3111,7 @@ function fetchSessions() {
     return;
   }
   sessionListPaging.loading = true;
-  const loadedCount = Array.isArray(sessions$1) ? sessions$1.length : 0;
+  const loadedCount = Array.isArray(sessions) ? sessions.length : 0;
   const refreshLimit = Math.max(
     SESSION_LIST_PAGE_LIMIT,
     Math.min(
@@ -3050,7 +3120,7 @@ function fetchSessions() {
     )
   );
   void fetchSessionListPage({ limit: refreshLimit }).then((page) => {
-    const merged = mergeSessionListPage(sessions$1, page.sessions, false);
+    const merged = mergeSessionListPage(sessions, page.sessions, false);
     applySessionList(merged);
     applySessionListPaging(page);
   }).catch(() => {
@@ -3184,7 +3254,7 @@ async function loadMoreSessionsPage() {
       cursor: sessionListPaging.nextCursor,
       limit: SESSION_LIST_PAGE_LIMIT
     });
-    const merged = mergeSessionListPage(sessions$1, page.sessions, true);
+    const merged = mergeSessionListPage(sessions, page.sessions, true);
     applySessionList(merged);
     if (page.sessions.length === 0) {
       applySessionListPaging({
@@ -3243,7 +3313,7 @@ function markSessionLocallyCleared(key) {
     session.version = localVersion + 1;
     session.dataVersion.value++;
   }
-  const legacy = sessions$1.find((s) => s.key === key);
+  const legacy = sessions.find((s) => s.key === key);
   if (legacy) {
     legacy.messageCount = 0;
     legacy.lastSeenMessageCount = 0;
@@ -3262,19 +3332,19 @@ function renderSessionList() {
 function setSessionReplying(key, replying) {
   const session = sessionStore.getByKey(key);
   if (session) session.replying.value = replying;
-  const entry = sessions$1.find((s) => s.key === key);
+  const entry = sessions.find((s) => s.key === key);
   if (entry) entry._replying = replying;
 }
 function setSessionActiveRunId(key, runId) {
   const session = sessionStore.getByKey(key);
   if (session) session.activeRunId.value = runId || null;
-  const entry = sessions$1.find((s) => s.key === key);
+  const entry = sessions.find((s) => s.key === key);
   if (entry) entry._activeRunId = runId || null;
 }
 function setSessionUnread(key, unread) {
   const session = sessionStore.getByKey(key);
   if (session) session.localUnread.value = unread;
-  const entry = sessions$1.find((s) => s.key === key);
+  const entry = sessions.find((s) => s.key === key);
   if (entry) entry._localUnread = unread;
 }
 function bumpSessionCount(key, increment) {
@@ -3282,7 +3352,7 @@ function bumpSessionCount(key, increment) {
   if (session) {
     session.bumpCount(increment);
   }
-  const entry = sessions$1.find((s) => s.key === key);
+  const entry = sessions.find((s) => s.key === key);
   if (entry) {
     entry.messageCount = (entry.messageCount || 0) + increment;
     if (key === activeSessionKey) {
@@ -3300,7 +3370,7 @@ function seedSessionPreviewFromUserText(key, text) {
     session.updatedAt = now;
     session.dataVersion.value++;
   }
-  const entry = sessions$1.find((s) => s.key === key);
+  const entry = sessions.find((s) => s.key === key);
   if (entry && !entry.preview) {
     entry.preview = preview;
     entry.updatedAt = now;
@@ -3315,7 +3385,7 @@ function removeSessionFromClientState(key, options) {
   const nextKey = opts.nextKey || sessionStore.activeSessionKey.value || "main";
   if (removedActive && nextKey !== sessionStore.activeSessionKey.value) sessionStore.setActive(nextKey);
   clearSessionHistoryCache(key);
-  setSessions(sessions$1.filter((session) => session.key !== key));
+  setSessions(sessions.filter((session) => session.key !== key));
   renderSessionList();
   if (!removedActive) return true;
   setActiveSessionKey(nextKey);
@@ -3366,7 +3436,7 @@ function clearAllSessions() {
   });
 }
 document.addEventListener("moltis:render-session-list", renderSessionList);
-const sessions = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const _sessions = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   appendLastMessageTimestamp,
   bumpSessionCount,
@@ -3386,7 +3456,8 @@ const sessions = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProp
   setSessionActiveRunId,
   setSessionReplying,
   setSessionUnread,
-  switchSession
+  switchSession,
+  updateChatSessionHeader
 }, Symbol.toStringTag, { value: "Module" }));
 const spinnerFrames = [
   "⠋",
@@ -9315,10 +9386,10 @@ function ChannelCard({ channel: ch }) {
     ] }),
     channelType(ch.type) === "matrix" && pendingVerifications.length > 0 && /* @__PURE__ */ u("div", { className: "rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100", children: [
       /* @__PURE__ */ u("div", { className: "font-medium text-sky-900", children: "Verification pending" }),
-      pendingVerifications.map((prompt, i) => /* @__PURE__ */ u("div", { className: "mt-1", children: [
+      pendingVerifications.map((prompt2, i) => /* @__PURE__ */ u("div", { className: "mt-1", children: [
         /* @__PURE__ */ u("div", { children: [
           "With ",
-          prompt.other_user_id
+          prompt2.other_user_id
         ] }),
         /* @__PURE__ */ u("div", { className: "text-emerald-200/90", children: [
           "Send ",
@@ -9667,6 +9738,28 @@ function teardownChannels() {
   if (_channelsContainer) R(null, _channelsContainer);
   _channelsContainer = null;
 }
+const _channelsPage = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  ConnectionModeHint,
+  channelLabel,
+  channelType,
+  editingChannel,
+  initChannels,
+  loadChannels,
+  prefetchChannels,
+  showAddDiscord,
+  showAddMatrix,
+  showAddNostr,
+  showAddSlack,
+  showAddTeams,
+  showAddTelegram,
+  showAddWhatsApp,
+  teardownChannels,
+  waPairingAccountId,
+  waPairingError,
+  waQrData,
+  waQrSvg
+}, Symbol.toStringTag, { value: "Module" }));
 function clearChatEmptyState() {
   if (!chatMsgBox) return;
   const welcome = chatMsgBox.querySelector("#welcomeCard");
@@ -10935,6 +11028,1774 @@ document.addEventListener("visibilitychange", () => {
     forceReconnect(connectOpts);
   }
 });
+const root = document.getElementById("modalRoot");
+function createModal(id, titleId, bodyId, closeId) {
+  const existing = document.getElementById(id);
+  if (existing) return existing;
+  const backdrop = document.createElement("div");
+  backdrop.id = id;
+  backdrop.className = "provider-modal-backdrop hidden";
+  const modal = document.createElement("div");
+  modal.className = "provider-modal";
+  const header = document.createElement("div");
+  header.className = "provider-modal-header";
+  const title = document.createElement("span");
+  title.id = titleId;
+  title.className = "text-sm font-medium text-[var(--text-strong)]";
+  header.appendChild(title);
+  const closeBtn = document.createElement("button");
+  closeBtn.id = closeId;
+  closeBtn.className = "text-[var(--muted)] hover:text-[var(--text)] cursor-pointer bg-transparent border-none text-lg leading-none";
+  closeBtn.textContent = "×";
+  header.appendChild(closeBtn);
+  modal.appendChild(header);
+  const body = document.createElement("div");
+  body.id = bodyId;
+  body.className = "provider-modal-body";
+  modal.appendChild(body);
+  backdrop.appendChild(modal);
+  root == null ? void 0 : root.appendChild(backdrop);
+  return backdrop;
+}
+function ensureProviderModal() {
+  const el = createModal("providerModal", "providerModalTitle", "providerModalBody", "providerModalClose");
+  const title = document.getElementById("providerModalTitle");
+  if (title) title.textContent = t("common:modals.addProvider");
+  return el;
+}
+function refreshModalTitles() {
+  const provider = document.getElementById("providerModalTitle");
+  if (provider) provider.textContent = t("common:modals.addProvider");
+  const channel = document.getElementById("channelModalTitle");
+  if (channel) channel.textContent = t("common:modals.addChannel");
+  const project = document.getElementById("projectModalTitle");
+  if (project) project.textContent = t("common:modals.manageProjects");
+}
+window.addEventListener("moltis:locale-changed", refreshModalTitles);
+let _els = null;
+function els() {
+  if (!_els) {
+    ensureProviderModal();
+    _els = {
+      modal: $("providerModal"),
+      body: $("providerModalBody"),
+      title: $("providerModalTitle"),
+      close: $("providerModalClose")
+    };
+    _els.close.addEventListener("click", closeProviderModal);
+    _els.modal.addEventListener("click", (e) => {
+      if (e.target === (_els == null ? void 0 : _els.modal)) closeProviderModal();
+    });
+  }
+  return _els;
+}
+const OPENAI_COMPATIBLE_PROVIDERS = [
+  "openai",
+  "mistral",
+  "openrouter",
+  "cerebras",
+  "minimax",
+  "moonshot",
+  "venice",
+  "ollama"
+];
+const BYOM_PROVIDERS = ["venice"];
+const VALIDATION_HINT_TEXT = "";
+const VALIDATION_PROGRESS_EVENT = "providers.validate.progress";
+let oauthStatusTimer = null;
+function clearOAuthStatusTimer() {
+  if (!oauthStatusTimer) return;
+  clearInterval(oauthStatusTimer);
+  oauthStatusTimer = null;
+}
+function setOAuthStatusTimer(timer) {
+  oauthStatusTimer = timer;
+}
+function getProviderModal() {
+  return els().modal;
+}
+function openProviderModal() {
+  __vitePreload(() => import("./chunks/open-modal.js"), true ? __vite__mapDeps([2,1,3,4,5,6]) : void 0).then((mod) => mod.openProviderModalImpl());
+}
+function closeProviderModal() {
+  clearOAuthStatusTimer();
+  els().modal.classList.add("hidden");
+}
+function setFormError(errorPanel, message) {
+  if (!errorPanel) return;
+  if (!message) {
+    errorPanel.style.display = "none";
+    errorPanel.textContent = "";
+    return;
+  }
+  errorPanel.textContent = `Error: ${message}`;
+  errorPanel.style.display = "";
+}
+function normalizeEndpointForCompare(rawUrl) {
+  if (!rawUrl) return null;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    const pathname = parsed.pathname.replace(/\/+$/, "");
+    return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase()}${pathname}`;
+  } catch {
+    return trimmed.replace(/\/+$/, "").toLowerCase();
+  }
+}
+function shouldUseCustomProviderForOpenAi(provider, endpointVal) {
+  if ((provider == null ? void 0 : provider.name) !== "openai") return false;
+  const normalizedEndpoint = normalizeEndpointForCompare(endpointVal);
+  if (!normalizedEndpoint) return false;
+  const normalizedDefault = normalizeEndpointForCompare(provider.defaultBaseUrl || "https://api.openai.com/v1");
+  return normalizedDefault !== null && normalizedEndpoint !== normalizedDefault;
+}
+function stripModelNamespace(modelId) {
+  if (!modelId || typeof modelId !== "string") return modelId || "";
+  const sep = modelId.lastIndexOf("::");
+  return sep >= 0 ? modelId.slice(sep + 2) : modelId;
+}
+function createValidationProgress(form, marginClass) {
+  const wrapper = document.createElement("div");
+  wrapper.className = `flex flex-col gap-2 ${marginClass || "mt-2"}`;
+  const progress = document.createElement("div");
+  progress.className = "download-progress";
+  const progressBar = document.createElement("div");
+  progressBar.className = "download-progress-bar";
+  progressBar.style.width = "0%";
+  progress.appendChild(progressBar);
+  wrapper.appendChild(progress);
+  const progressText = document.createElement("div");
+  progressText.className = "text-xs text-[var(--muted)]";
+  progressText.textContent = VALIDATION_HINT_TEXT;
+  wrapper.appendChild(progressText);
+  form.appendChild(wrapper);
+  return {
+    progress,
+    progressBar,
+    progressText,
+    value: 0
+  };
+}
+function clampProgressPercent(value) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, value));
+}
+function setValidationProgress(state, value, message) {
+  if (!state) return;
+  const next = clampProgressPercent(value);
+  state.value = Math.max(state.value, next);
+  state.progress.classList.remove("indeterminate");
+  state.progressBar.style.width = `${state.value.toFixed(1)}%`;
+  if (message) {
+    state.progressText.textContent = message;
+  }
+}
+function resetValidationProgress(state) {
+  if (!state) return;
+  state.value = 0;
+  state.progress.classList.remove("indeterminate");
+  state.progressBar.style.width = "0%";
+  state.progressText.textContent = VALIDATION_HINT_TEXT;
+}
+function completeValidationProgress(state, text) {
+  if (!state) return;
+  setValidationProgress(state, 100, text);
+}
+function createValidationRequestId() {
+  const nonce = Math.random().toString(36).slice(2, 10);
+  return `validate-${Date.now()}-${nonce}`;
+}
+function normalizeAttempt(value, fallback) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(1, Math.floor(value));
+}
+function progressFromValidationEvent(payload) {
+  if (!(payload == null ? void 0 : payload.phase)) return null;
+  const phase = payload.phase;
+  if (phase === "start") {
+    return { value: 8, message: payload.message || "Starting provider validation..." };
+  }
+  if (phase === "candidates_discovered") {
+    const count = Number.isFinite(payload.modelCount) ? payload.modelCount : null;
+    const message = count == null ? "Discovered candidate models." : `Discovered ${count} candidate models.`;
+    return { value: 24, message };
+  }
+  if (phase === "probe_started" || phase === "probe_failed" || phase === "probe_timeout") {
+    const total = normalizeAttempt(payload.totalAttempts, 1);
+    const attempt = Math.min(normalizeAttempt(payload.attempt, 1), total);
+    const value = 24 + attempt / total * 62;
+    const modelName = stripModelNamespace(payload.modelId);
+    const defaultMessage = modelName ? `Probing ${modelName} (${attempt}/${total})...` : `Probing model ${attempt}/${total}...`;
+    return {
+      value,
+      message: payload.message || defaultMessage
+    };
+  }
+  if (phase === "probe_succeeded") {
+    return { value: 94, message: payload.message || "Model probe succeeded." };
+  }
+  if (phase === "complete") {
+    return { value: 100, message: payload.message || "Validation complete." };
+  }
+  if (phase === "error") {
+    return { value: 98, message: payload.message || "Validation failed." };
+  }
+  return null;
+}
+function bindValidationProgressEvents(state, requestId) {
+  if (!(state && requestId)) return () => void 0;
+  const off2 = onEvent(VALIDATION_PROGRESS_EVENT, (payload) => {
+    const p = payload;
+    if (!p || p.requestId !== requestId) return;
+    const update = progressFromValidationEvent(p);
+    if (!update) return;
+    setValidationProgress(state, update.value, update.message);
+  });
+  return () => {
+    off2();
+  };
+}
+function showApiKeyForm(provider) {
+  const m = els();
+  m.title.textContent = provider.displayName;
+  m.body.textContent = "";
+  const form = document.createElement("div");
+  form.className = "provider-key-form";
+  const supportsEndpoint = OPENAI_COMPATIBLE_PROVIDERS.includes(provider.name);
+  const keyLabel = document.createElement("label");
+  keyLabel.className = "text-xs text-[var(--muted)]";
+  keyLabel.textContent = "API Key";
+  form.appendChild(keyLabel);
+  const keyInp = document.createElement("input");
+  keyInp.className = "provider-key-input";
+  keyInp.type = "password";
+  keyInp.placeholder = provider.keyOptional ? "(optional)" : "sk-...";
+  form.appendChild(keyInp);
+  const errorPanel = document.createElement("div");
+  errorPanel.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
+  errorPanel.style.display = "none";
+  form.appendChild(errorPanel);
+  const keyHelp = providerApiKeyHelp(provider);
+  if (keyHelp) {
+    const keyHelpLine = document.createElement("div");
+    keyHelpLine.className = "text-xs text-[var(--muted)] mt-1";
+    if (keyHelp.url) {
+      keyHelpLine.append(`${keyHelp.text} `);
+      const keyLink = document.createElement("a");
+      keyLink.href = keyHelp.url;
+      keyLink.target = "_blank";
+      keyLink.rel = "noopener noreferrer";
+      keyLink.className = "text-[var(--accent)] underline";
+      keyLink.textContent = keyHelp.label || keyHelp.url;
+      keyHelpLine.appendChild(keyLink);
+    } else {
+      keyHelpLine.textContent = keyHelp.text;
+    }
+    form.appendChild(keyHelpLine);
+  }
+  let endpointInp = null;
+  if (supportsEndpoint) {
+    const endpointLabel = document.createElement("label");
+    endpointLabel.className = "text-xs text-[var(--muted)]";
+    endpointLabel.style.marginTop = "8px";
+    endpointLabel.textContent = "Endpoint (optional)";
+    form.appendChild(endpointLabel);
+    endpointInp = document.createElement("input");
+    endpointInp.className = "provider-key-input";
+    endpointInp.type = "text";
+    endpointInp.placeholder = provider.defaultBaseUrl || "https://api.example.com/v1";
+    form.appendChild(endpointInp);
+    const hint = document.createElement("div");
+    hint.className = "text-xs text-[var(--muted)]";
+    hint.style.marginTop = "2px";
+    hint.textContent = "Leave empty to use the default endpoint.";
+    form.appendChild(hint);
+  }
+  let modelInp = null;
+  const needsModel = BYOM_PROVIDERS.includes(provider.name);
+  if (needsModel) {
+    const modelLabel = document.createElement("label");
+    modelLabel.className = "text-xs text-[var(--muted)]";
+    modelLabel.style.marginTop = "8px";
+    modelLabel.textContent = "Model ID";
+    form.appendChild(modelLabel);
+    modelInp = document.createElement("input");
+    modelInp.className = "provider-key-input";
+    modelInp.type = "text";
+    modelInp.placeholder = "model-id";
+    form.appendChild(modelInp);
+  }
+  const validationProgress = createValidationProgress(form, "mt-2");
+  const btns = document.createElement("div");
+  btns.className = "btn-row";
+  btns.style.marginTop = "12px";
+  const backBtn = document.createElement("button");
+  backBtn.className = "provider-btn provider-btn-secondary";
+  backBtn.textContent = "Back";
+  backBtn.addEventListener("click", openProviderModal);
+  btns.appendChild(backBtn);
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "provider-btn";
+  saveBtn.textContent = "Save";
+  saveBtn.addEventListener("click", () => {
+    const key = keyInp.value.trim();
+    if (!(key || provider.keyOptional)) {
+      setFormError(errorPanel, "API key is required.");
+      return;
+    }
+    if (needsModel && modelInp && !modelInp.value.trim()) {
+      setFormError(errorPanel, "Model ID is required.");
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving...";
+    setValidationProgress(validationProgress, 10, "Discovering models...");
+    setFormError(errorPanel, null);
+    const keyVal = key || provider.name;
+    const endpointVal = (endpointInp == null ? void 0 : endpointInp.value.trim()) || null;
+    const modelVal = (modelInp == null ? void 0 : modelInp.value.trim()) || null;
+    const requestId = createValidationRequestId();
+    const stopProgressEvents = bindValidationProgressEvents(validationProgress, requestId);
+    validateProviderKey(provider.name, keyVal, endpointVal, modelVal, requestId).then((result) => {
+      if (!result.valid) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save";
+        resetValidationProgress(validationProgress);
+        setFormError(errorPanel, result.error || "Failed to connect. Please check your credentials.");
+        return;
+      }
+      if (needsModel) {
+        completeValidationProgress(validationProgress, "Done.");
+        saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, null, false);
+        return;
+      }
+      const models2 = result.models || [];
+      completeValidationProgress(validationProgress, "Done.");
+      showModelSelector(provider, models2, keyVal, endpointVal, modelVal);
+    }).catch((err) => {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save";
+      resetValidationProgress(validationProgress);
+      setFormError(errorPanel, (err == null ? void 0 : err.message) || "Failed to connect.");
+    }).finally(() => {
+      stopProgressEvents();
+    });
+  });
+  btns.appendChild(saveBtn);
+  form.appendChild(btns);
+  m.body.appendChild(form);
+  keyInp.focus();
+}
+function showModelSelector(provider, models2, keyVal, endpointVal, modelVal, skipSave) {
+  const m = els();
+  m.title.textContent = `${provider.displayName} — Select Models`;
+  m.body.textContent = "";
+  const selectedIds = /* @__PURE__ */ new Set();
+  const wrapper = document.createElement("div");
+  wrapper.className = "provider-key-form flex flex-col min-h-0 flex-1";
+  const label2 = document.createElement("div");
+  label2.className = "text-xs font-medium text-[var(--text-strong)] mb-1 shrink-0";
+  label2.textContent = "Select models to add";
+  wrapper.appendChild(label2);
+  const hint = document.createElement("div");
+  hint.className = "text-xs text-[var(--muted)] mb-2 shrink-0";
+  hint.textContent = "Click models to toggle selection, or use Select All.";
+  wrapper.appendChild(hint);
+  let searchInp = null;
+  if (models2.length > 5) {
+    searchInp = document.createElement("input");
+    searchInp.type = "text";
+    searchInp.className = "provider-key-input w-full text-xs mb-2 shrink-0";
+    searchInp.placeholder = "Search models…";
+    wrapper.appendChild(searchInp);
+  }
+  const selectAllBtn = document.createElement("button");
+  selectAllBtn.className = "provider-btn provider-btn-secondary text-xs mb-2 shrink-0";
+  function getVisibleModels() {
+    const currentFilter = (searchInp == null ? void 0 : searchInp.value.trim()) || null;
+    if (!currentFilter) return models2;
+    const q2 = currentFilter.toLowerCase();
+    return models2.filter(
+      (mdl) => mdl.displayName.toLowerCase().includes(q2) || mdl.id.toLowerCase().includes(q2)
+    );
+  }
+  function updateSelectAllLabel() {
+    const visible = getVisibleModels();
+    const allVisible = visible.length > 0 && visible.every((mdl) => selectedIds.has(mdl.id));
+    selectAllBtn.textContent = allVisible ? "Deselect All" : "Select All";
+  }
+  updateSelectAllLabel();
+  selectAllBtn.addEventListener("click", () => {
+    const visible = getVisibleModels();
+    const allVisible = visible.every((mdl) => selectedIds.has(mdl.id));
+    if (allVisible) {
+      for (const mdl of visible) selectedIds.delete(mdl.id);
+    } else {
+      for (const visibleModel of visible) selectedIds.add(visibleModel.id);
+    }
+    updateSelectAllLabel();
+    updateStatus();
+    renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
+  });
+  wrapper.appendChild(selectAllBtn);
+  const list2 = document.createElement("div");
+  list2.className = "flex flex-col gap-1 overflow-y-auto flex-1 min-h-0 max-h-56";
+  wrapper.appendChild(list2);
+  const statusArea = document.createElement("div");
+  statusArea.className = "text-xs text-[var(--muted)] mt-2 shrink-0";
+  wrapper.appendChild(statusArea);
+  function updateStatus() {
+    const count = selectedIds.size;
+    statusArea.textContent = count === 0 ? "No models selected" : `${count} model${count > 1 ? "s" : ""} selected`;
+  }
+  const errorArea = document.createElement("div");
+  errorArea.className = "alert-error-text text-[var(--error)] whitespace-pre-line shrink-0";
+  errorArea.style.display = "none";
+  wrapper.appendChild(errorArea);
+  function renderCards(filter) {
+    list2.textContent = "";
+    let filtered = models2;
+    if (filter) {
+      const q2 = filter.toLowerCase();
+      filtered = models2.filter(
+        (mdl) => mdl.displayName.toLowerCase().includes(q2) || mdl.id.toLowerCase().includes(q2)
+      );
+    }
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-xs text-[var(--muted)] py-4 text-center";
+      empty.textContent = "No models match your search.";
+      list2.appendChild(empty);
+      return;
+    }
+    filtered.forEach((mdl) => {
+      const card = document.createElement("div");
+      card.className = `model-card ${selectedIds.has(mdl.id) ? "selected" : ""}`;
+      const header = document.createElement("div");
+      header.className = "flex items-center justify-between";
+      const name = document.createElement("span");
+      name.className = "text-sm font-medium text-[var(--text)]";
+      name.textContent = mdl.displayName;
+      header.appendChild(name);
+      const badges = document.createElement("div");
+      badges.className = "flex gap-2";
+      if (mdl.supportsTools) {
+        const toolsBadge = document.createElement("span");
+        toolsBadge.className = "recommended-badge";
+        toolsBadge.textContent = "Tools";
+        badges.appendChild(toolsBadge);
+      }
+      header.appendChild(badges);
+      card.appendChild(header);
+      const idLine = document.createElement("div");
+      idLine.className = "text-xs text-[var(--muted)] mt-1 font-mono";
+      idLine.textContent = mdl.id;
+      card.appendChild(idLine);
+      ((modelId) => {
+        card.addEventListener("click", () => {
+          if (selectedIds.has(modelId)) {
+            selectedIds.delete(modelId);
+          } else {
+            selectedIds.add(modelId);
+          }
+          updateSelectAllLabel();
+          updateStatus();
+          renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
+        });
+      })(mdl.id);
+      list2.appendChild(card);
+    });
+  }
+  renderCards(null);
+  updateStatus();
+  if (searchInp) {
+    searchInp.addEventListener("input", () => {
+      renderCards(searchInp == null ? void 0 : searchInp.value.trim());
+    });
+  }
+  const btns = document.createElement("div");
+  btns.className = "btn-row mt-3 shrink-0";
+  const backBtn = document.createElement("button");
+  backBtn.className = "provider-btn provider-btn-secondary";
+  backBtn.textContent = "Back";
+  backBtn.addEventListener("click", () => {
+    if (skipSave) {
+      openProviderModal();
+    } else {
+      showApiKeyForm(provider);
+    }
+  });
+  btns.appendChild(backBtn);
+  const continueBtn = document.createElement("button");
+  continueBtn.className = "provider-btn";
+  continueBtn.textContent = "Continue";
+  continueBtn.addEventListener("click", () => {
+    if (selectedIds.size === 0) {
+      errorArea.textContent = "Select at least one model to continue.";
+      errorArea.style.display = "";
+      return;
+    }
+    errorArea.style.display = "none";
+    continueBtn.disabled = true;
+    continueBtn.textContent = "Saving…";
+    saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, Array.from(selectedIds), !!skipSave);
+  });
+  btns.appendChild(continueBtn);
+  wrapper.appendChild(btns);
+  wrapper._errorArea = errorArea;
+  wrapper._resetSelection = () => {
+    continueBtn.disabled = false;
+    continueBtn.textContent = "Continue";
+    renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
+  };
+  m.body.appendChild(wrapper);
+}
+function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selectedModelIds, skipSave) {
+  const modelIds = Array.isArray(selectedModelIds) ? selectedModelIds : selectedModelIds ? [selectedModelIds] : [];
+  const m = els();
+  const saveAsCustomProvider = !skipSave && shouldUseCustomProviderForOpenAi(provider, endpointVal);
+  const modelsForSave = saveAsCustomProvider ? modelIds.map(stripModelNamespace) : [...modelIds];
+  const firstModelForSave = modelsForSave[0] || null;
+  const effectiveModelVal = provider.keyOptional && firstModelForSave ? firstModelForSave : modelVal;
+  function showError(msg) {
+    const wrapperEl = m.body.querySelector(".provider-key-form");
+    if (wrapperEl == null ? void 0 : wrapperEl._errorArea) {
+      setFormError(wrapperEl._errorArea, msg);
+      if (wrapperEl._resetSelection) wrapperEl._resetSelection();
+    }
+  }
+  let savePromise;
+  if (skipSave) {
+    savePromise = Promise.resolve({ ok: true });
+  } else if (saveAsCustomProvider) {
+    const customPayload = { baseUrl: endpointVal, apiKey: keyVal };
+    if (firstModelForSave) customPayload.model = firstModelForSave;
+    savePromise = sendRpc("providers.add_custom", customPayload);
+  } else {
+    savePromise = saveProviderKey(provider.name, keyVal || "", endpointVal, effectiveModelVal);
+  }
+  savePromise.then(async (res) => {
+    var _a2, _b2, _c, _d;
+    if (!(res == null ? void 0 : res.ok)) {
+      showError(((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to save credentials.");
+      return;
+    }
+    const savedProviderName = saveAsCustomProvider ? ((_b2 = res == null ? void 0 : res.payload) == null ? void 0 : _b2.providerName) || provider.name : provider.name;
+    const successDisplayName = saveAsCustomProvider ? ((_c = res == null ? void 0 : res.payload) == null ? void 0 : _c.displayName) || provider.displayName : provider.displayName;
+    let modelTimedOut = false;
+    if (modelIds.length > 0) {
+      const firstModelId = modelIds[0];
+      const firstModelForTest = saveAsCustomProvider ? `${savedProviderName}::${modelsForSave[0]}` : firstModelId;
+      const testResult2 = await testModel(firstModelForTest);
+      const modelServiceUnavailable = !testResult2.ok && isModelServiceNotConfigured(testResult2.error || "");
+      modelTimedOut = !testResult2.ok && isTimeoutError(testResult2.error || "");
+      if (!(testResult2.ok || modelServiceUnavailable || modelTimedOut)) {
+        showError(testResult2.error || "Model test failed. Try another model.");
+        return;
+      }
+      if (modelTimedOut) {
+        console.warn(
+          "models.test timed out for",
+          firstModelForTest,
+          "— saving models anyway (local servers may need longer to load)"
+        );
+      }
+      const saveModelsRes = await sendRpc("providers.save_models", {
+        provider: savedProviderName,
+        models: modelsForSave
+      });
+      if (!(saveModelsRes == null ? void 0 : saveModelsRes.ok)) {
+        showError(((_d = saveModelsRes == null ? void 0 : saveModelsRes.error) == null ? void 0 : _d.message) || "Failed to save models.");
+        return;
+      }
+      if (modelServiceUnavailable) {
+        console.warn("models.test unavailable in provider settings, saved selected models without probe");
+      }
+      localStorage.setItem("moltis-model", firstModelForTest);
+    }
+    m.body.textContent = "";
+    const status = document.createElement("div");
+    status.className = "provider-status";
+    const countMsg = modelIds.length > 1 ? ` with ${modelIds.length} models` : "";
+    status.textContent = `${successDisplayName} configured successfully${countMsg}!`;
+    m.body.appendChild(status);
+    if (modelTimedOut) {
+      const slowHint = document.createElement("div");
+      slowHint.className = "text-xs text-[var(--muted)] mt-1";
+      slowHint.textContent = "Note: model was slow to respond. It may need a moment to finish loading.";
+      m.body.appendChild(slowHint);
+    }
+    fetchModels();
+    if (refreshProvidersPage) refreshProvidersPage();
+    setTimeout(closeProviderModal, modelTimedOut ? 3500 : 1500);
+  }).catch((err) => {
+    showError((err == null ? void 0 : err.message) || "Failed to save credentials.");
+  });
+}
+function showOAuthFlow(provider) {
+  const m = els();
+  m.title.textContent = provider.displayName;
+  m.body.textContent = "";
+  const wrapper = document.createElement("div");
+  wrapper.className = "provider-key-form";
+  const desc = document.createElement("div");
+  desc.className = "text-xs text-[var(--muted)]";
+  desc.textContent = `Click below to authenticate with ${provider.displayName} via OAuth.`;
+  wrapper.appendChild(desc);
+  const manualWrap = document.createElement("div");
+  manualWrap.className = "flex flex-col gap-2 mt-2 hidden";
+  const manualHint = document.createElement("div");
+  manualHint.className = "text-xs text-[var(--muted)]";
+  manualHint.textContent = "If localhost callback fails, paste the redirect URL (or code#state) below.";
+  manualWrap.appendChild(manualHint);
+  const manualInput = document.createElement("input");
+  manualInput.type = "text";
+  manualInput.className = "provider-key-input w-full";
+  manualInput.placeholder = "http://localhost:1455/auth/callback?code=...&state=...";
+  manualWrap.appendChild(manualInput);
+  const manualBtns = document.createElement("div");
+  manualBtns.className = "btn-row";
+  const manualSubmitBtn = document.createElement("button");
+  manualSubmitBtn.className = "provider-btn provider-btn-secondary";
+  manualSubmitBtn.textContent = "Submit Callback";
+  manualBtns.appendChild(manualSubmitBtn);
+  manualWrap.appendChild(manualBtns);
+  wrapper.appendChild(manualWrap);
+  const btns = document.createElement("div");
+  btns.className = "btn-row";
+  const backBtn = document.createElement("button");
+  backBtn.className = "provider-btn provider-btn-secondary";
+  backBtn.textContent = "Back";
+  backBtn.addEventListener("click", () => {
+    clearOAuthStatusTimer();
+    openProviderModal();
+  });
+  btns.appendChild(backBtn);
+  const connectBtn = document.createElement("button");
+  connectBtn.className = "provider-btn";
+  connectBtn.textContent = "Connect";
+  let oauthCompleted = false;
+  function finishOAuthOnce() {
+    if (oauthCompleted) return;
+    oauthCompleted = true;
+    clearOAuthStatusTimer();
+    showOAuthModelSelector(provider);
+  }
+  function setManualSubmitting(submitting) {
+    manualSubmitBtn.disabled = submitting;
+    manualInput.disabled = submitting;
+    manualSubmitBtn.textContent = submitting ? "Submitting..." : "Submit Callback";
+  }
+  manualSubmitBtn.addEventListener("click", () => {
+    const callback = manualInput.value.trim();
+    if (!callback) {
+      desc.classList.add("text-error");
+      desc.textContent = "Paste the callback URL (or code#state) to continue.";
+      return;
+    }
+    setManualSubmitting(true);
+    completeProviderOAuth(provider.name, callback).then((res) => {
+      var _a2;
+      if (res == null ? void 0 : res.ok) {
+        connectBtn.textContent = "Connected";
+        desc.classList.remove("text-error");
+        desc.textContent = `${provider.displayName} connected successfully!`;
+        finishOAuthOnce();
+        return;
+      }
+      desc.classList.add("text-error");
+      desc.textContent = ((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to complete OAuth callback.";
+    }).catch((error2) => {
+      desc.classList.add("text-error");
+      desc.textContent = (error2 == null ? void 0 : error2.message) || "Failed to complete OAuth callback.";
+    }).finally(() => {
+      setManualSubmitting(false);
+    });
+  });
+  connectBtn.addEventListener("click", () => {
+    connectBtn.disabled = true;
+    connectBtn.textContent = "Starting...";
+    startProviderOAuth(provider.name).then((result) => {
+      if (result.status === "already") {
+        connectBtn.textContent = "Connected";
+        desc.classList.remove("text-error");
+        desc.textContent = `${provider.displayName} is already connected (imported credentials found).`;
+        finishOAuthOnce();
+      } else if (result.status === "browser") {
+        window.open(result.authUrl, "_blank");
+        connectBtn.textContent = "Waiting for auth...";
+        manualWrap.classList.remove("hidden");
+        pollOAuthStatus(provider, finishOAuthOnce);
+      } else if (result.status === "device") {
+        connectBtn.textContent = "Waiting for auth...";
+        desc.classList.remove("text-error");
+        desc.textContent = "";
+        manualWrap.classList.add("hidden");
+        const linkEl = document.createElement("a");
+        linkEl.href = result.verificationUrl || "";
+        linkEl.target = "_blank";
+        linkEl.className = "oauth-link";
+        linkEl.textContent = result.verificationUrl || "";
+        const codeEl = document.createElement("strong");
+        codeEl.textContent = result.userCode || "";
+        desc.appendChild(document.createTextNode("Go to "));
+        desc.appendChild(linkEl);
+        desc.appendChild(document.createTextNode(" and enter code: "));
+        desc.appendChild(codeEl);
+        pollOAuthStatus(provider, finishOAuthOnce);
+      } else {
+        clearOAuthStatusTimer();
+        connectBtn.disabled = false;
+        connectBtn.textContent = "Connect";
+        manualWrap.classList.add("hidden");
+        desc.textContent = result.error || "Failed to start OAuth";
+        desc.classList.add("text-error");
+      }
+    });
+  });
+  btns.appendChild(connectBtn);
+  wrapper.appendChild(btns);
+  m.body.appendChild(wrapper);
+}
+function pollOAuthStatus(provider, onAuthenticated) {
+  const m = els();
+  let attempts = 0;
+  const maxAttempts = 60;
+  clearOAuthStatusTimer();
+  setOAuthStatusTimer(
+    setInterval(() => {
+      attempts++;
+      if (attempts > maxAttempts) {
+        clearOAuthStatusTimer();
+        m.body.textContent = "";
+        const timeout = document.createElement("div");
+        timeout.className = "text-xs text-[var(--error)]";
+        timeout.textContent = "OAuth timed out. Please try again.";
+        m.body.appendChild(timeout);
+        return;
+      }
+      sendRpc("providers.oauth.status", { provider: provider.name }).then((res) => {
+        if ((res == null ? void 0 : res.ok) && res.payload && res.payload.authenticated) {
+          clearOAuthStatusTimer();
+          if (typeof onAuthenticated === "function") {
+            onAuthenticated();
+            return;
+          }
+          showOAuthModelSelector(provider);
+        }
+      });
+    }, 2e3)
+  );
+}
+function showOAuthModelSelector(provider) {
+  sendRpc("models.list", {}).then((modelsRes) => {
+    const allModels = (modelsRes == null ? void 0 : modelsRes.ok) ? modelsRes.payload || [] : [];
+    const needle = provider.name.replace(/-/g, "").toLowerCase();
+    const provModels = allModels.filter(
+      (entry) => {
+        var _a2;
+        return (_a2 = entry.provider) == null ? void 0 : _a2.toLowerCase().replace(/-/g, "").includes(needle);
+      }
+    );
+    if (provModels.length > 0) {
+      const mapped = provModels.map((entry) => ({
+        id: entry.id,
+        displayName: entry.displayName || entry.id,
+        provider: entry.provider,
+        supportsTools: entry.supportsTools
+      }));
+      showModelSelector(provider, mapped, null, null, null, true);
+    } else {
+      fetchModels();
+      if (refreshProvidersPage) refreshProvidersPage();
+      const modal = els();
+      modal.body.textContent = "";
+      const status = document.createElement("div");
+      status.className = "provider-status";
+      status.textContent = `${provider.displayName} connected successfully!`;
+      modal.body.appendChild(status);
+      setTimeout(closeProviderModal, 1500);
+    }
+  });
+}
+function openModelSelectorForProvider(providerName, providerDisplayName) {
+  const m = els();
+  m.modal.classList.remove("hidden");
+  m.title.textContent = `${providerDisplayName} — Preferred Models`;
+  m.body.textContent = "Loading models...";
+  Promise.all([sendRpc("models.list", {}), sendRpc("providers.available", {})]).then(
+    ([modelsRes, providersRes]) => {
+      const allModels = (modelsRes == null ? void 0 : modelsRes.ok) ? modelsRes.payload || [] : [];
+      const needle = providerName.replace(/-/g, "").toLowerCase();
+      const provModels = allModels.filter(
+        (entry) => {
+          var _a2;
+          return (_a2 = entry.provider) == null ? void 0 : _a2.toLowerCase().replace(/-/g, "").includes(needle);
+        }
+      );
+      if (provModels.length === 0) {
+        m.body.textContent = "";
+        const wrapper = document.createElement("div");
+        wrapper.className = "provider-key-form";
+        const msg = document.createElement("div");
+        msg.className = "text-xs text-[var(--muted)] py-4 text-center";
+        msg.textContent = "No models available yet. Try running Detect All Models first.";
+        wrapper.appendChild(msg);
+        const btns = document.createElement("div");
+        btns.className = "btn-row mt-3";
+        const closeBtn = document.createElement("button");
+        closeBtn.className = "provider-btn provider-btn-secondary";
+        closeBtn.textContent = "Close";
+        closeBtn.addEventListener("click", closeProviderModal);
+        btns.appendChild(closeBtn);
+        wrapper.appendChild(btns);
+        m.body.appendChild(wrapper);
+        return;
+      }
+      const savedModels = /* @__PURE__ */ new Set();
+      if (providersRes == null ? void 0 : providersRes.ok) {
+        const providerMeta = (providersRes.payload || []).find(
+          (p) => p.name === providerName
+        );
+        if (providerMeta == null ? void 0 : providerMeta.models) {
+          for (const sm of providerMeta.models) savedModels.add(sm);
+        }
+      }
+      const mapped = provModels.map((entry) => ({
+        id: entry.id,
+        displayName: entry.displayName || entry.id,
+        provider: entry.provider,
+        supportsTools: entry.supportsTools,
+        createdAt: entry.createdAt || 0
+      }));
+      showMultiModelSelector(providerName, providerDisplayName, mapped, savedModels);
+    }
+  );
+}
+function showMultiModelSelector(providerName, providerDisplayName, models2, savedModels) {
+  const m = els();
+  m.title.textContent = `${providerDisplayName} — Preferred Models`;
+  m.body.textContent = "";
+  const selectedIds = new Set(savedModels);
+  const probeResults = /* @__PURE__ */ new Map();
+  function probeModel(modelId) {
+    if (probeResults.has(modelId)) return;
+    probeResults.set(modelId, "probing");
+    renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
+    testModel(modelId).then((result) => {
+      if (isModelServiceNotConfigured(result.error || "")) {
+        probeResults.delete(modelId);
+      } else if (!result.ok && isTimeoutError(result.error || "")) {
+        probeResults.set(modelId, { error: "Slow to respond (may still work)", timeout: true });
+      } else {
+        probeResults.set(
+          modelId,
+          result.ok ? "ok" : { error: humanizeProbeError(result.error || "Unsupported") }
+        );
+      }
+      renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
+    });
+  }
+  const wrapper = document.createElement("div");
+  wrapper.className = "provider-key-form flex flex-col min-h-0 flex-1";
+  const label2 = document.createElement("div");
+  label2.className = "text-xs font-medium text-[var(--text-strong)] mb-1 shrink-0";
+  label2.textContent = "Select models to pin at the top of the dropdown";
+  wrapper.appendChild(label2);
+  const hint = document.createElement("div");
+  hint.className = "text-xs text-[var(--muted)] mb-2 shrink-0";
+  hint.textContent = "Selected models appear first in the session model selector.";
+  wrapper.appendChild(hint);
+  let searchInp = null;
+  if (models2.length > 5) {
+    searchInp = document.createElement("input");
+    searchInp.type = "text";
+    searchInp.className = "provider-key-input w-full text-xs mb-2 shrink-0";
+    searchInp.placeholder = "Search models…";
+    wrapper.appendChild(searchInp);
+  }
+  const list2 = document.createElement("div");
+  list2.className = "flex flex-col gap-1 overflow-y-auto flex-1 min-h-0";
+  wrapper.appendChild(list2);
+  const statusArea = document.createElement("div");
+  statusArea.className = "text-xs text-[var(--muted)] mt-2 shrink-0";
+  wrapper.appendChild(statusArea);
+  function updateStatus() {
+    const count = selectedIds.size;
+    statusArea.textContent = count === 0 ? "No models selected" : `${count} model${count > 1 ? "s" : ""} selected`;
+  }
+  function sortModelsForSelection(items) {
+    return [...items].sort((a, b) => {
+      const aSel = selectedIds.has(a.id) ? 0 : 1;
+      const bSel = selectedIds.has(b.id) ? 0 : 1;
+      if (aSel !== bSel) return aSel - bSel;
+      const aTime = a.createdAt || 0;
+      const bTime = b.createdAt || 0;
+      if (aTime !== bTime) return bTime - aTime;
+      const aVer = modelVersionScore(a.id);
+      const bVer = modelVersionScore(b.id);
+      if (aVer !== bVer) return bVer - aVer;
+      return (a.displayName || a.id).localeCompare(b.displayName || b.id);
+    });
+  }
+  function renderCards(filter) {
+    list2.textContent = "";
+    let filtered = models2;
+    if (filter) {
+      const q2 = filter.toLowerCase();
+      filtered = models2.filter(
+        (entry) => entry.displayName.toLowerCase().includes(q2) || entry.id.toLowerCase().includes(q2)
+      );
+    }
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-xs text-[var(--muted)] py-4 text-center";
+      empty.textContent = "No models match your search.";
+      list2.appendChild(empty);
+      return;
+    }
+    const sorted = sortModelsForSelection(filtered);
+    for (const mdl of sorted) {
+      const card = document.createElement("div");
+      card.className = `model-card ${selectedIds.has(mdl.id) ? "selected" : ""}`;
+      const header = document.createElement("div");
+      header.className = "flex items-center justify-between";
+      const nameSpan = document.createElement("span");
+      nameSpan.className = "text-sm font-medium text-[var(--text)] truncate";
+      nameSpan.textContent = mdl.displayName;
+      header.appendChild(nameSpan);
+      const badges = document.createElement("div");
+      badges.className = "flex gap-2";
+      if (mdl.supportsTools) {
+        const toolsBadge = document.createElement("span");
+        toolsBadge.className = "recommended-badge";
+        toolsBadge.textContent = "Tools";
+        badges.appendChild(toolsBadge);
+      }
+      const probe = probeResults.get(mdl.id);
+      if (probe === "probing") {
+        const probeBadge = document.createElement("span");
+        probeBadge.className = "tier-badge";
+        probeBadge.textContent = "Probing…";
+        badges.appendChild(probeBadge);
+      } else if (probe && probe !== "ok") {
+        const probeObj = probe;
+        const unsupBadge = document.createElement("span");
+        unsupBadge.className = probeObj.timeout ? "tier-badge" : "provider-item-badge warning";
+        unsupBadge.textContent = probeObj.timeout ? "Slow" : "Unsupported";
+        badges.appendChild(unsupBadge);
+      }
+      header.appendChild(badges);
+      card.appendChild(header);
+      const idLine = document.createElement("div");
+      idLine.className = "text-xs text-[var(--muted)] mt-1 font-mono";
+      idLine.textContent = mdl.id;
+      card.appendChild(idLine);
+      if (probe && probe !== "ok" && probe !== "probing" && probe.error) {
+        const errorLine = document.createElement("div");
+        errorLine.className = "text-xs font-medium text-[var(--danger,#ef4444)] mt-0.5";
+        errorLine.textContent = probe.error || "";
+        card.appendChild(errorLine);
+      }
+      if (mdl.createdAt) {
+        const dateLine = document.createElement("time");
+        dateLine.className = "text-xs text-[var(--muted)] mt-0.5 opacity-60 block";
+        dateLine.setAttribute("data-epoch-ms", String(mdl.createdAt * 1e3));
+        dateLine.setAttribute("data-format", "year-month");
+        card.appendChild(dateLine);
+      }
+      ((modelId) => {
+        card.addEventListener("click", () => {
+          if (selectedIds.has(modelId)) {
+            selectedIds.delete(modelId);
+          } else {
+            selectedIds.add(modelId);
+            probeModel(modelId);
+          }
+          renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
+          updateStatus();
+        });
+      })(mdl.id);
+      list2.appendChild(card);
+    }
+  }
+  renderCards(null);
+  updateStatus();
+  if (searchInp) {
+    searchInp.addEventListener("input", () => {
+      renderCards(searchInp == null ? void 0 : searchInp.value.trim());
+    });
+  }
+  const errorArea = document.createElement("div");
+  errorArea.className = "alert-error-text text-[var(--error)] whitespace-pre-line shrink-0";
+  errorArea.style.display = "none";
+  wrapper.appendChild(errorArea);
+  const btns = document.createElement("div");
+  btns.className = "btn-row mt-3 shrink-0";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "provider-btn provider-btn-secondary";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.addEventListener("click", closeProviderModal);
+  btns.appendChild(cancelBtn);
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "provider-btn";
+  saveBtn.textContent = "Save";
+  saveBtn.addEventListener("click", () => {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Saving…";
+    errorArea.style.display = "none";
+    sendRpc("providers.save_models", { provider: providerName, models: Array.from(selectedIds) }).then((res) => {
+      var _a2;
+      if (!(res == null ? void 0 : res.ok)) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Save";
+        errorArea.textContent = ((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to save model preferences.";
+        errorArea.style.display = "";
+        return;
+      }
+      fetchModels();
+      if (refreshProvidersPage) refreshProvidersPage();
+      closeProviderModal();
+    }).catch((err) => {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Save";
+      errorArea.textContent = (err == null ? void 0 : err.message) || "Failed to save model preferences.";
+      errorArea.style.display = "";
+    });
+  });
+  btns.appendChild(saveBtn);
+  wrapper.appendChild(btns);
+  m.body.appendChild(wrapper);
+}
+function showCustomProviderForm() {
+  const m = els();
+  m.title.textContent = "OpenAI Compatible";
+  m.body.textContent = "";
+  const form = document.createElement("div");
+  form.className = "provider-key-form";
+  const urlLabel = document.createElement("label");
+  urlLabel.className = "text-xs text-[var(--muted)]";
+  urlLabel.textContent = "Endpoint URL";
+  form.appendChild(urlLabel);
+  const urlInp = document.createElement("input");
+  urlInp.className = "provider-key-input";
+  urlInp.type = "text";
+  urlInp.placeholder = "https://api.example.com/v1";
+  form.appendChild(urlInp);
+  const keyLabel = document.createElement("label");
+  keyLabel.className = "text-xs text-[var(--muted)] mt-2";
+  keyLabel.textContent = "API Key";
+  form.appendChild(keyLabel);
+  const keyInp = document.createElement("input");
+  keyInp.className = "provider-key-input";
+  keyInp.type = "password";
+  keyInp.placeholder = "sk-...";
+  form.appendChild(keyInp);
+  const modelLabel = document.createElement("label");
+  modelLabel.className = "text-xs text-[var(--muted)] mt-2";
+  modelLabel.textContent = "Model ID (optional)";
+  form.appendChild(modelLabel);
+  const modelInp = document.createElement("input");
+  modelInp.className = "provider-key-input";
+  modelInp.type = "text";
+  modelInp.placeholder = "Leave blank for auto-discovery";
+  form.appendChild(modelInp);
+  const errorPanel = document.createElement("div");
+  errorPanel.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
+  errorPanel.style.display = "none";
+  form.appendChild(errorPanel);
+  const validationProgress = createValidationProgress(form, "mt-1");
+  const btns = document.createElement("div");
+  btns.className = "btn-row";
+  btns.style.marginTop = "12px";
+  const backBtn = document.createElement("button");
+  backBtn.className = "provider-btn provider-btn-secondary";
+  backBtn.textContent = "Back";
+  backBtn.addEventListener("click", openProviderModal);
+  btns.appendChild(backBtn);
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "provider-btn";
+  saveBtn.textContent = "Add Provider";
+  saveBtn.addEventListener("click", () => {
+    const url = urlInp.value.trim();
+    const key = keyInp.value.trim();
+    const model = modelInp.value.trim() || null;
+    if (!url) {
+      setFormError(errorPanel, "Endpoint URL is required.");
+      return;
+    }
+    if (!key) {
+      setFormError(errorPanel, "API key is required.");
+      return;
+    }
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Adding...";
+    setValidationProgress(validationProgress, 8, "Saving provider settings...");
+    setFormError(errorPanel, null);
+    sendRpc("providers.add_custom", { baseUrl: url, apiKey: key, model }).then((res) => {
+      var _a2;
+      if (!(res == null ? void 0 : res.ok)) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Add Provider";
+        resetValidationProgress(validationProgress);
+        setFormError(errorPanel, ((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to add provider.");
+        return;
+      }
+      const result = res.payload;
+      const providerName = result.providerName;
+      const displayName = result.displayName;
+      const requestId = createValidationRequestId();
+      setValidationProgress(validationProgress, 12, "Discovering models...");
+      const stopProgressEvents = bindValidationProgressEvents(validationProgress, requestId);
+      validateProviderKey(providerName, key, url, model, requestId).then((valResult) => {
+        if (!(valResult.valid || model)) {
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Add Provider";
+          resetValidationProgress(validationProgress);
+          setFormError(errorPanel, valResult.error || "No models discovered. Please specify a model ID.");
+          return;
+        }
+        if (valResult.models && valResult.models.length > 0) {
+          completeValidationProgress(validationProgress, "Done.");
+          const customProvider = {
+            name: providerName,
+            displayName,
+            authType: "api-key",
+            keyOptional: false
+          };
+          showModelSelector(customProvider, valResult.models, key, url, model, true);
+        } else if (model) {
+          sendRpc("providers.save_model", { provider: providerName, model }).then(() => {
+            completeValidationProgress(validationProgress, "Done.");
+            fetchModels();
+            if (refreshProvidersPage) refreshProvidersPage();
+            m.body.textContent = "";
+            const status = document.createElement("div");
+            status.className = "provider-status";
+            status.textContent = `${displayName} configured successfully!`;
+            m.body.appendChild(status);
+            setTimeout(closeProviderModal, 1500);
+          });
+        } else {
+          saveBtn.disabled = false;
+          saveBtn.textContent = "Add Provider";
+          resetValidationProgress(validationProgress);
+          setFormError(errorPanel, "No models discovered. Please specify a model ID.");
+        }
+      }).catch((err) => {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "Add Provider";
+        resetValidationProgress(validationProgress);
+        setFormError(errorPanel, (err == null ? void 0 : err.message) || "Validation failed.");
+      }).finally(() => {
+        stopProgressEvents();
+      });
+    }).catch((err) => {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Add Provider";
+      resetValidationProgress(validationProgress);
+      setFormError(errorPanel, (err == null ? void 0 : err.message) || "Failed to add provider.");
+    });
+  });
+  btns.appendChild(saveBtn);
+  form.appendChild(btns);
+  m.body.appendChild(form);
+  urlInp.focus();
+}
+let selectedBackend = null;
+function showLocalModelFlow(provider) {
+  const m = els();
+  m.title.textContent = provider.displayName;
+  m.body.textContent = "Loading system info...";
+  sendRpc("providers.local.system_info", {}).then((sysRes) => {
+    var _a2;
+    if (!(sysRes == null ? void 0 : sysRes.ok)) {
+      m.body.textContent = ((_a2 = sysRes == null ? void 0 : sysRes.error) == null ? void 0 : _a2.message) || "Failed to get system info";
+      return;
+    }
+    const sysInfo = sysRes.payload;
+    sendRpc("providers.local.models", {}).then((modelsRes) => {
+      var _a3;
+      if (!(modelsRes == null ? void 0 : modelsRes.ok)) {
+        m.body.textContent = ((_a3 = modelsRes == null ? void 0 : modelsRes.error) == null ? void 0 : _a3.message) || "Failed to get models";
+        return;
+      }
+      const modelsData = modelsRes.payload;
+      renderLocalModelSelection(provider, sysInfo, modelsData);
+    });
+  });
+}
+function renderLocalModelSelection(provider, sysInfo, modelsData) {
+  const m = els();
+  m.body.textContent = "";
+  selectedBackend = sysInfo.recommendedBackend || "GGUF";
+  const wrapper = document.createElement("div");
+  wrapper.className = "provider-key-form";
+  const sysSection = document.createElement("div");
+  sysSection.className = "flex flex-col gap-2 mb-4";
+  const sysTitle = document.createElement("div");
+  sysTitle.className = "text-xs font-medium text-[var(--text-strong)]";
+  sysTitle.textContent = "System Info";
+  sysSection.appendChild(sysTitle);
+  const sysDetails = document.createElement("div");
+  sysDetails.className = "flex gap-3 text-xs text-[var(--muted)]";
+  const ramSpan = document.createElement("span");
+  ramSpan.textContent = `RAM: ${sysInfo.totalRamGb}GB`;
+  sysDetails.appendChild(ramSpan);
+  const tierSpan = document.createElement("span");
+  tierSpan.textContent = `Tier: ${sysInfo.memoryTier}`;
+  sysDetails.appendChild(tierSpan);
+  if (sysInfo.hasGpu) {
+    const gpuSpan = document.createElement("span");
+    gpuSpan.className = "text-[var(--ok)]";
+    gpuSpan.textContent = "GPU available";
+    sysDetails.appendChild(gpuSpan);
+  }
+  sysSection.appendChild(sysDetails);
+  wrapper.appendChild(sysSection);
+  const backends = sysInfo.availableBackends || [];
+  if (sysInfo.isAppleSilicon && backends.length > 0) {
+    const backendSection = document.createElement("div");
+    backendSection.className = "flex flex-col gap-2 mb-4";
+    const backendLabel = document.createElement("div");
+    backendLabel.className = "text-xs font-medium text-[var(--text-strong)]";
+    backendLabel.textContent = "Inference Backend";
+    backendSection.appendChild(backendLabel);
+    const backendCards = document.createElement("div");
+    backendCards.className = "flex flex-col gap-2";
+    backends.forEach((b) => {
+      const card = document.createElement("div");
+      card.className = "backend-card";
+      if (!b.available) card.className += " disabled";
+      if (b.id === selectedBackend) card.className += " selected";
+      card.dataset.backendId = b.id;
+      const header = document.createElement("div");
+      header.className = "flex items-center justify-between";
+      const name = document.createElement("span");
+      name.className = "backend-name text-sm font-medium text-[var(--text)]";
+      name.textContent = b.name;
+      header.appendChild(name);
+      const badges = document.createElement("div");
+      badges.className = "flex gap-2";
+      if (b.id === sysInfo.recommendedBackend && b.available) {
+        const recBadge = document.createElement("span");
+        recBadge.className = "recommended-badge";
+        recBadge.textContent = "Recommended";
+        badges.appendChild(recBadge);
+      }
+      if (!b.available) {
+        const unavailBadge = document.createElement("span");
+        unavailBadge.className = "tier-badge";
+        unavailBadge.textContent = "Not installed";
+        badges.appendChild(unavailBadge);
+      }
+      header.appendChild(badges);
+      card.appendChild(header);
+      const desc = document.createElement("div");
+      desc.className = "text-xs text-[var(--muted)] mt-1";
+      desc.textContent = b.description;
+      card.appendChild(desc);
+      if (!b.available && b.id === "MLX") {
+        const cmds = b.installCommands || ["pip install mlx-lm"];
+        const tpl = $("tpl-install-hint");
+        const hintEl2 = tpl.content.cloneNode(true).firstElementChild;
+        const labelEl = hintEl2.querySelector("[data-install-label]");
+        const container = hintEl2.querySelector("[data-install-commands]");
+        labelEl.textContent = cmds.length === 1 ? "Install with:" : "Install with any of:";
+        const cmdTpl = $("tpl-install-cmd");
+        cmds.forEach((c) => {
+          const cmdEl = cmdTpl.content.cloneNode(true).firstElementChild;
+          cmdEl.textContent = c;
+          container.appendChild(cmdEl);
+        });
+        card.appendChild(hintEl2);
+      }
+      if (b.available) {
+        card.addEventListener("click", () => {
+          backendCards.querySelectorAll(".backend-card").forEach((c) => {
+            c.classList.remove("selected");
+          });
+          card.classList.add("selected");
+          selectedBackend = b.id;
+          if (wrapper._renderModelsForBackend) {
+            wrapper._renderModelsForBackend(b.id);
+          }
+          if (wrapper._updateFilenameVisibility) {
+            wrapper._updateFilenameVisibility(b.id);
+          }
+        });
+      }
+      backendCards.appendChild(card);
+    });
+    backendSection.appendChild(backendCards);
+    wrapper.appendChild(backendSection);
+  } else if (sysInfo.backendNote) {
+    const backendDiv = document.createElement("div");
+    backendDiv.className = "text-xs text-[var(--muted)] mb-4";
+    backendDiv.textContent = `Backend: ${sysInfo.backendNote}`;
+    wrapper.appendChild(backendDiv);
+  }
+  const modelsTitle = document.createElement("div");
+  modelsTitle.className = "text-xs font-medium text-[var(--text-strong)] mb-2";
+  modelsTitle.textContent = "Select a Model";
+  wrapper.appendChild(modelsTitle);
+  const modelsList = document.createElement("div");
+  modelsList.className = "flex flex-col gap-2";
+  modelsList.id = "local-model-list";
+  function renderModelsForBackend(backend) {
+    modelsList.textContent = "";
+    const recommended = modelsData.recommended || [];
+    const filtered = recommended.filter((mdl) => mdl.backend === backend);
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "text-xs text-[var(--muted)] py-4 text-center";
+      empty.textContent = `No models available for ${backend}`;
+      modelsList.appendChild(empty);
+      return;
+    }
+    filtered.forEach((model) => {
+      const card = createModelCard(model, provider, sysInfo.totalRamGb);
+      modelsList.appendChild(card);
+    });
+  }
+  renderModelsForBackend(selectedBackend);
+  wrapper._renderModelsForBackend = renderModelsForBackend;
+  wrapper.appendChild(modelsList);
+  const searchSection = document.createElement("div");
+  searchSection.className = "flex flex-col gap-2 mt-4 pt-4 border-t border-[var(--border)]";
+  const searchLabel = document.createElement("div");
+  searchLabel.className = "text-xs font-medium text-[var(--text-strong)]";
+  searchLabel.textContent = "Search HuggingFace";
+  searchSection.appendChild(searchLabel);
+  const searchRow = document.createElement("div");
+  searchRow.className = "flex gap-2";
+  const searchInput2 = document.createElement("input");
+  searchInput2.type = "text";
+  searchInput2.placeholder = "Search models...";
+  searchInput2.className = "provider-input flex-1";
+  searchRow.appendChild(searchInput2);
+  const searchBtn = document.createElement("button");
+  searchBtn.className = "provider-btn provider-btn-secondary";
+  searchBtn.textContent = "Search";
+  searchRow.appendChild(searchBtn);
+  searchSection.appendChild(searchRow);
+  const searchResults2 = document.createElement("div");
+  searchResults2.className = "flex flex-col gap-2 max-h-48 overflow-y-auto";
+  searchResults2.id = "hf-search-results";
+  searchSection.appendChild(searchResults2);
+  const doSearch2 = async () => {
+    var _a2, _b2;
+    const query2 = searchInput2.value.trim();
+    if (!query2) return;
+    searchBtn.disabled = true;
+    searchBtn.textContent = "Searching...";
+    searchResults2.textContent = "";
+    const res = await sendRpc("providers.local.search_hf", {
+      query: query2,
+      backend: selectedBackend,
+      limit: 15
+    });
+    searchBtn.disabled = false;
+    searchBtn.textContent = "Search";
+    if (!((res == null ? void 0 : res.ok) && ((_b2 = (_a2 = res.payload) == null ? void 0 : _a2.results) == null ? void 0 : _b2.length))) {
+      const noResults = document.createElement("div");
+      noResults.className = "text-xs text-[var(--muted)] py-2";
+      noResults.textContent = "No results found";
+      searchResults2.appendChild(noResults);
+      return;
+    }
+    res.payload.results.forEach((result) => {
+      const card = createHfSearchResultCard(result, provider);
+      searchResults2.appendChild(card);
+    });
+  };
+  searchBtn.addEventListener("click", doSearch2);
+  searchInput2.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) doSearch2();
+  });
+  let searchTimeout = null;
+  searchInput2.addEventListener("input", () => {
+    if (searchTimeout) clearTimeout(searchTimeout);
+    const query2 = searchInput2.value.trim();
+    if (query2.length >= 2) {
+      searchTimeout = setTimeout(doSearch2, 500);
+    }
+  });
+  wrapper.appendChild(searchSection);
+  const customSection = document.createElement("div");
+  customSection.className = "flex flex-col gap-2 mt-4 pt-4 border-t border-[var(--border)]";
+  const customLabel = document.createElement("div");
+  customLabel.className = "text-xs font-medium text-[var(--text-strong)]";
+  customLabel.textContent = "Or enter HuggingFace repo URL";
+  customSection.appendChild(customLabel);
+  const customRow = document.createElement("div");
+  customRow.className = "flex gap-2";
+  const customInput = document.createElement("input");
+  customInput.type = "text";
+  customInput.placeholder = selectedBackend === "MLX" ? "mlx-community/Model-Name" : "TheBloke/Model-GGUF";
+  customInput.className = "provider-input flex-1";
+  customRow.appendChild(customInput);
+  const customBtn = document.createElement("button");
+  customBtn.className = "provider-btn";
+  customBtn.textContent = "Use";
+  customRow.appendChild(customBtn);
+  customSection.appendChild(customRow);
+  const filenameRow = document.createElement("div");
+  filenameRow.className = "flex gap-2";
+  filenameRow.style.display = selectedBackend === "GGUF" ? "flex" : "none";
+  const filenameInput = document.createElement("input");
+  filenameInput.type = "text";
+  filenameInput.placeholder = "model-file.gguf (required for GGUF)";
+  filenameInput.className = "provider-input flex-1";
+  filenameRow.appendChild(filenameInput);
+  customSection.appendChild(filenameRow);
+  wrapper._updateFilenameVisibility = (backend) => {
+    filenameRow.style.display = backend === "GGUF" ? "flex" : "none";
+    customInput.placeholder = backend === "MLX" ? "mlx-community/Model-Name" : "TheBloke/Model-GGUF";
+  };
+  customBtn.addEventListener("click", async () => {
+    var _a2;
+    const repo = customInput.value.trim();
+    if (!repo) return;
+    const params = {
+      hfRepo: repo,
+      backend: selectedBackend
+    };
+    if (selectedBackend === "GGUF") {
+      const filename = filenameInput.value.trim();
+      if (!filename) {
+        filenameInput.focus();
+        return;
+      }
+      params.hfFilename = filename;
+    }
+    customBtn.disabled = true;
+    customBtn.textContent = "Configuring...";
+    const res = await sendRpc("providers.local.configure_custom", params);
+    customBtn.disabled = false;
+    customBtn.textContent = "Use";
+    if (res == null ? void 0 : res.ok) {
+      fetchModels();
+      if (refreshProvidersPage) refreshProvidersPage();
+      showModelDownloadProgress({ id: res.payload.modelId, displayName: repo }, provider);
+    } else {
+      const err = ((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to configure model";
+      const errEl = document.createElement("div");
+      errEl.className = "text-xs text-[var(--error)] py-2";
+      errEl.textContent = err;
+      searchResults2.textContent = "";
+      searchResults2.appendChild(errEl);
+    }
+  });
+  wrapper.appendChild(customSection);
+  const btns = document.createElement("div");
+  btns.className = "btn-row mt-4";
+  const backBtn = document.createElement("button");
+  backBtn.className = "provider-btn provider-btn-secondary";
+  backBtn.textContent = "Back";
+  backBtn.addEventListener("click", openProviderModal);
+  btns.appendChild(backBtn);
+  wrapper.appendChild(btns);
+  m.body.appendChild(wrapper);
+}
+function createHfSearchResultCard(model, provider) {
+  const card = document.createElement("div");
+  card.className = "model-card";
+  const header = document.createElement("div");
+  header.className = "flex items-center justify-between";
+  const name = document.createElement("span");
+  name.className = "text-sm font-medium text-[var(--text)]";
+  name.textContent = model.displayName;
+  header.appendChild(name);
+  const stats = document.createElement("div");
+  stats.className = "flex gap-2 text-xs text-[var(--muted)]";
+  if (model.downloads) {
+    const dl = document.createElement("span");
+    dl.textContent = `↓${formatDownloads(model.downloads)}`;
+    stats.appendChild(dl);
+  }
+  if (model.likes) {
+    const likes = document.createElement("span");
+    likes.textContent = `♥${model.likes}`;
+    stats.appendChild(likes);
+  }
+  header.appendChild(stats);
+  card.appendChild(header);
+  const repo = document.createElement("div");
+  repo.className = "text-xs text-[var(--muted)] mt-1";
+  repo.textContent = model.id;
+  card.appendChild(repo);
+  card.addEventListener("click", async () => {
+    var _a2;
+    if (card.dataset.configuring) return;
+    card.dataset.configuring = "true";
+    const params = {
+      hfRepo: model.id,
+      backend: model.backend
+    };
+    if (model.backend === "GGUF") {
+      const filename = prompt("Enter the GGUF filename (e.g., model-q4_k_m.gguf):");
+      if (!filename) {
+        delete card.dataset.configuring;
+        return;
+      }
+      params.hfFilename = filename;
+    }
+    card.style.opacity = "0.5";
+    card.style.pointerEvents = "none";
+    const modalEls = els();
+    modalEls.body.textContent = "";
+    const statusWrapper = document.createElement("div");
+    statusWrapper.className = "provider-key-form";
+    const statusText = document.createElement("div");
+    statusText.className = "text-sm text-[var(--text)]";
+    statusText.textContent = `Configuring ${model.displayName}...`;
+    statusWrapper.appendChild(statusText);
+    modalEls.body.appendChild(statusWrapper);
+    const res = await sendRpc("providers.local.configure_custom", params);
+    if (res == null ? void 0 : res.ok) {
+      fetchModels();
+      if (refreshProvidersPage) refreshProvidersPage();
+      showModelDownloadProgress(
+        { id: res.payload.modelId, displayName: model.displayName },
+        provider
+      );
+    } else {
+      const err = ((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to configure model";
+      statusText.className = "text-sm text-[var(--error)]";
+      statusText.textContent = err;
+    }
+  });
+  return card;
+}
+function formatDownloads(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return n.toString();
+}
+function createModelCard(model, provider, totalRamGb) {
+  const card = document.createElement("div");
+  card.className = "model-card";
+  const detectedRamGb = Number.isFinite(totalRamGb) ? totalRamGb : 0;
+  const hasEnoughRam = detectedRamGb >= model.minRamGb;
+  const header = document.createElement("div");
+  header.className = "flex items-center justify-between";
+  const name = document.createElement("span");
+  name.className = "text-sm font-medium text-[var(--text)]";
+  name.textContent = model.displayName;
+  header.appendChild(name);
+  const badges = document.createElement("div");
+  badges.className = "flex gap-2";
+  const ramBadge = document.createElement("span");
+  ramBadge.className = "tier-badge";
+  ramBadge.textContent = `${model.minRamGb}GB`;
+  badges.appendChild(ramBadge);
+  if (model.suggested && hasEnoughRam) {
+    const suggestedBadge = document.createElement("span");
+    suggestedBadge.className = "recommended-badge";
+    suggestedBadge.textContent = "Recommended";
+    badges.appendChild(suggestedBadge);
+  }
+  if (!hasEnoughRam) {
+    const insufficientBadge = document.createElement("span");
+    insufficientBadge.className = "tier-badge";
+    insufficientBadge.textContent = "Insufficient RAM";
+    badges.appendChild(insufficientBadge);
+  }
+  header.appendChild(badges);
+  card.appendChild(header);
+  const meta = document.createElement("div");
+  meta.className = "text-xs text-[var(--muted)] mt-1";
+  meta.textContent = `Context: ${(model.contextWindow / 1e3).toFixed(0)}k tokens`;
+  card.appendChild(meta);
+  if (!hasEnoughRam) {
+    card.classList.add("disabled");
+    const warning = document.createElement("div");
+    warning.className = "text-xs text-[var(--error)] mt-1";
+    warning.textContent = `You do not have enough RAM for this model (${detectedRamGb}GB detected, ${model.minRamGb}GB required).`;
+    card.appendChild(warning);
+    return card;
+  }
+  card.addEventListener("click", () => selectLocalModel(model, provider));
+  return card;
+}
+function showModelDownloadProgress(model, provider) {
+  const m = els();
+  m.modal.classList.remove("hidden");
+  m.body.textContent = "";
+  const wrapper = document.createElement("div");
+  wrapper.className = "provider-key-form";
+  const status = document.createElement("div");
+  status.className = "text-sm text-[var(--text)]";
+  status.textContent = `Configuring ${model.displayName}...`;
+  wrapper.appendChild(status);
+  const progress = document.createElement("div");
+  progress.className = "download-progress mt-4";
+  const progressBar = document.createElement("div");
+  progressBar.className = "download-progress-bar";
+  progressBar.style.width = "0%";
+  progress.appendChild(progressBar);
+  const progressText = document.createElement("div");
+  progressText.className = "text-xs text-[var(--muted)] mt-2";
+  progress.appendChild(progressText);
+  wrapper.appendChild(progress);
+  m.body.appendChild(wrapper);
+  const off2 = onEvent("local-llm.download", (payload) => {
+    const p = payload;
+    if (p.modelId !== model.id) return;
+    if (p.error) {
+      status.textContent = p.error;
+      status.className = "text-sm text-[var(--error)]";
+      off2();
+      return;
+    }
+    if (p.complete) {
+      status.textContent = `${model.displayName} downloaded successfully!`;
+      status.className = "provider-status";
+      progressBar.style.width = "100%";
+      progressText.textContent = "";
+      off2();
+      fetchModels();
+      if (refreshProvidersPage) refreshProvidersPage();
+      setTimeout(closeProviderModal, 1500);
+      return;
+    }
+    if (p.progress != null) {
+      progressBar.style.width = `${p.progress.toFixed(1)}%`;
+      status.textContent = `Downloading ${model.displayName}...`;
+    }
+    if (p.downloaded != null) {
+      const downloadedMb = (p.downloaded / (1024 * 1024)).toFixed(1);
+      if (p.total != null) {
+        const totalMb = (p.total / (1024 * 1024)).toFixed(1);
+        progressText.textContent = `${downloadedMb} MB / ${totalMb} MB`;
+      } else {
+        progressText.textContent = `${downloadedMb} MB downloaded`;
+      }
+    }
+  });
+  pollLocalStatus(model, provider, status, progress, off2);
+}
+function selectLocalModel(model, provider) {
+  const m = els();
+  m.body.textContent = "";
+  const wrapper = document.createElement("div");
+  wrapper.className = "provider-key-form";
+  const status = document.createElement("div");
+  status.className = "text-sm text-[var(--text)]";
+  status.textContent = `Configuring ${model.displayName}...`;
+  wrapper.appendChild(status);
+  const progress = document.createElement("div");
+  progress.className = "download-progress mt-4";
+  const progressBar = document.createElement("div");
+  progressBar.className = "download-progress-bar";
+  progressBar.style.width = "0%";
+  progress.appendChild(progressBar);
+  const progressText = document.createElement("div");
+  progressText.className = "text-xs text-[var(--muted)] mt-2";
+  progress.appendChild(progressText);
+  wrapper.appendChild(progress);
+  m.body.appendChild(wrapper);
+  const off2 = onEvent("local-llm.download", (payload) => {
+    const p = payload;
+    if (p.modelId !== model.id) return;
+    if (p.error) {
+      status.textContent = p.error;
+      status.className = "text-sm text-[var(--error)]";
+      off2();
+      return;
+    }
+    if (p.complete) {
+      status.textContent = `${model.displayName} downloaded successfully!`;
+      status.className = "provider-status";
+      progressBar.style.width = "100%";
+      progressText.textContent = "";
+      off2();
+      fetchModels();
+      if (refreshProvidersPage) refreshProvidersPage();
+      setTimeout(closeProviderModal, 1500);
+      return;
+    }
+    if (p.progress != null) {
+      progressBar.style.width = `${p.progress.toFixed(1)}%`;
+      status.textContent = `Downloading ${model.displayName}...`;
+    }
+    if (p.downloaded != null) {
+      const downloadedMb = (p.downloaded / (1024 * 1024)).toFixed(1);
+      if (p.total != null) {
+        const totalMb = (p.total / (1024 * 1024)).toFixed(1);
+        progressText.textContent = `${downloadedMb} MB / ${totalMb} MB`;
+      } else {
+        progressText.textContent = `${downloadedMb} MB downloaded`;
+      }
+    }
+  });
+  sendRpc("providers.local.configure", { modelId: model.id, backend: selectedBackend }).then((res) => {
+    var _a2;
+    if (!(res == null ? void 0 : res.ok)) {
+      status.textContent = ((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to configure model";
+      status.className = "text-sm text-[var(--error)]";
+      off2();
+      return;
+    }
+    pollLocalStatus(model, provider, status, progress, off2);
+  });
+}
+function pollLocalStatus(model, _provider, statusEl2, progressEl, offEvent) {
+  let attempts = 0;
+  const maxAttempts = 300;
+  let completed = false;
+  const timer = setInterval(() => {
+    if (completed) {
+      clearInterval(timer);
+      return;
+    }
+    attempts++;
+    if (attempts > maxAttempts) {
+      clearInterval(timer);
+      if (offEvent) offEvent();
+      statusEl2.textContent = "Configuration timed out. Please try again.";
+      statusEl2.className = "text-sm text-[var(--error)]";
+      return;
+    }
+    sendRpc("providers.local.status", {}).then(
+      (res) => {
+        if (!(res == null ? void 0 : res.ok)) return;
+        const st = res.payload;
+        if (st.status === "ready" || st.status === "loaded") {
+          completed = true;
+          clearInterval(timer);
+          if (offEvent) offEvent();
+          statusEl2.textContent = `${model.displayName} configured successfully!`;
+          statusEl2.className = "provider-status";
+          progressEl.style.display = "none";
+          fetchModels();
+          if (refreshProvidersPage) refreshProvidersPage();
+          setTimeout(closeProviderModal, 1500);
+        } else if (st.status === "error") {
+          completed = true;
+          clearInterval(timer);
+          if (offEvent) offEvent();
+          statusEl2.textContent = st.error || "Configuration failed";
+          statusEl2.className = "text-sm text-[var(--error)]";
+        }
+      }
+    );
+  }, 2e3);
+}
+const _providers = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  closeProviderModal,
+  getProviderModal,
+  openModelSelectorForProvider,
+  openProviderModal,
+  showApiKeyForm,
+  showCustomProviderForm,
+  showLocalModelFlow,
+  showModelDownloadProgress,
+  showOAuthFlow
+}, Symbol.toStringTag, { value: "Module" }));
 const initialCrons = get("crons") || [];
 const cronJobs = y(initialCrons);
 const cronStatus = y(get("cron_status"));
@@ -22066,1043 +23927,6 @@ function teardownNodes() {
   if (containerRef) R(null, containerRef);
   containerRef = null;
 }
-const root = document.getElementById("modalRoot");
-function createModal(id, titleId, bodyId, closeId) {
-  const existing = document.getElementById(id);
-  if (existing) return existing;
-  const backdrop = document.createElement("div");
-  backdrop.id = id;
-  backdrop.className = "provider-modal-backdrop hidden";
-  const modal = document.createElement("div");
-  modal.className = "provider-modal";
-  const header = document.createElement("div");
-  header.className = "provider-modal-header";
-  const title = document.createElement("span");
-  title.id = titleId;
-  title.className = "text-sm font-medium text-[var(--text-strong)]";
-  header.appendChild(title);
-  const closeBtn = document.createElement("button");
-  closeBtn.id = closeId;
-  closeBtn.className = "text-[var(--muted)] hover:text-[var(--text)] cursor-pointer bg-transparent border-none text-lg leading-none";
-  closeBtn.textContent = "×";
-  header.appendChild(closeBtn);
-  modal.appendChild(header);
-  const body = document.createElement("div");
-  body.id = bodyId;
-  body.className = "provider-modal-body";
-  modal.appendChild(body);
-  backdrop.appendChild(modal);
-  root == null ? void 0 : root.appendChild(backdrop);
-  return backdrop;
-}
-function ensureProviderModal() {
-  const el = createModal("providerModal", "providerModalTitle", "providerModalBody", "providerModalClose");
-  const title = document.getElementById("providerModalTitle");
-  if (title) title.textContent = t("common:modals.addProvider");
-  return el;
-}
-function refreshModalTitles() {
-  const provider = document.getElementById("providerModalTitle");
-  if (provider) provider.textContent = t("common:modals.addProvider");
-  const channel = document.getElementById("channelModalTitle");
-  if (channel) channel.textContent = t("common:modals.addChannel");
-  const project = document.getElementById("projectModalTitle");
-  if (project) project.textContent = t("common:modals.manageProjects");
-}
-window.addEventListener("moltis:locale-changed", refreshModalTitles);
-let _els = null;
-function els() {
-  if (!_els) {
-    ensureProviderModal();
-    _els = {
-      modal: $("providerModal"),
-      body: $("providerModalBody"),
-      title: $("providerModalTitle"),
-      close: $("providerModalClose")
-    };
-    _els.close.addEventListener("click", closeProviderModal);
-    _els.modal.addEventListener("click", (e) => {
-      if (e.target === (_els == null ? void 0 : _els.modal)) closeProviderModal();
-    });
-  }
-  return _els;
-}
-const OPENAI_COMPATIBLE_PROVIDERS = [
-  "openai",
-  "mistral",
-  "openrouter",
-  "cerebras",
-  "minimax",
-  "moonshot",
-  "venice",
-  "ollama"
-];
-const BYOM_PROVIDERS = ["venice"];
-const VALIDATION_HINT_TEXT = "";
-const VALIDATION_PROGRESS_EVENT = "providers.validate.progress";
-let oauthStatusTimer = null;
-function clearOAuthStatusTimer() {
-  if (!oauthStatusTimer) return;
-  clearInterval(oauthStatusTimer);
-  oauthStatusTimer = null;
-}
-function setOAuthStatusTimer(timer) {
-  oauthStatusTimer = timer;
-}
-function openProviderModal() {
-  __vitePreload(() => import("./chunks/open-modal.js"), true ? __vite__mapDeps([2,1,3,4,5,6]) : void 0).then((mod) => mod.openProviderModalImpl());
-}
-function closeProviderModal() {
-  clearOAuthStatusTimer();
-  els().modal.classList.add("hidden");
-}
-function setFormError(errorPanel, message) {
-  if (!errorPanel) return;
-  if (!message) {
-    errorPanel.style.display = "none";
-    errorPanel.textContent = "";
-    return;
-  }
-  errorPanel.textContent = `Error: ${message}`;
-  errorPanel.style.display = "";
-}
-function normalizeEndpointForCompare(rawUrl) {
-  if (!rawUrl) return null;
-  const trimmed = rawUrl.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed = new URL(trimmed);
-    const pathname = parsed.pathname.replace(/\/+$/, "");
-    return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase()}${pathname}`;
-  } catch {
-    return trimmed.replace(/\/+$/, "").toLowerCase();
-  }
-}
-function shouldUseCustomProviderForOpenAi(provider, endpointVal) {
-  if ((provider == null ? void 0 : provider.name) !== "openai") return false;
-  const normalizedEndpoint = normalizeEndpointForCompare(endpointVal);
-  if (!normalizedEndpoint) return false;
-  const normalizedDefault = normalizeEndpointForCompare(provider.defaultBaseUrl || "https://api.openai.com/v1");
-  return normalizedDefault !== null && normalizedEndpoint !== normalizedDefault;
-}
-function stripModelNamespace(modelId) {
-  if (!modelId || typeof modelId !== "string") return modelId || "";
-  const sep = modelId.lastIndexOf("::");
-  return sep >= 0 ? modelId.slice(sep + 2) : modelId;
-}
-function createValidationProgress(form, marginClass) {
-  const wrapper = document.createElement("div");
-  wrapper.className = `flex flex-col gap-2 ${marginClass || "mt-2"}`;
-  const progress = document.createElement("div");
-  progress.className = "download-progress";
-  const progressBar = document.createElement("div");
-  progressBar.className = "download-progress-bar";
-  progressBar.style.width = "0%";
-  progress.appendChild(progressBar);
-  wrapper.appendChild(progress);
-  const progressText = document.createElement("div");
-  progressText.className = "text-xs text-[var(--muted)]";
-  progressText.textContent = VALIDATION_HINT_TEXT;
-  wrapper.appendChild(progressText);
-  form.appendChild(wrapper);
-  return {
-    progress,
-    progressBar,
-    progressText,
-    value: 0
-  };
-}
-function clampProgressPercent(value) {
-  if (!Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(100, value));
-}
-function setValidationProgress(state, value, message) {
-  if (!state) return;
-  const next = clampProgressPercent(value);
-  state.value = Math.max(state.value, next);
-  state.progress.classList.remove("indeterminate");
-  state.progressBar.style.width = `${state.value.toFixed(1)}%`;
-  if (message) {
-    state.progressText.textContent = message;
-  }
-}
-function resetValidationProgress(state) {
-  if (!state) return;
-  state.value = 0;
-  state.progress.classList.remove("indeterminate");
-  state.progressBar.style.width = "0%";
-  state.progressText.textContent = VALIDATION_HINT_TEXT;
-}
-function completeValidationProgress(state, text) {
-  if (!state) return;
-  setValidationProgress(state, 100, text);
-}
-function createValidationRequestId() {
-  const nonce = Math.random().toString(36).slice(2, 10);
-  return `validate-${Date.now()}-${nonce}`;
-}
-function normalizeAttempt(value, fallback) {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.max(1, Math.floor(value));
-}
-function progressFromValidationEvent(payload) {
-  if (!(payload == null ? void 0 : payload.phase)) return null;
-  const phase = payload.phase;
-  if (phase === "start") {
-    return { value: 8, message: payload.message || "Starting provider validation..." };
-  }
-  if (phase === "candidates_discovered") {
-    const count = Number.isFinite(payload.modelCount) ? payload.modelCount : null;
-    const message = count == null ? "Discovered candidate models." : `Discovered ${count} candidate models.`;
-    return { value: 24, message };
-  }
-  if (phase === "probe_started" || phase === "probe_failed" || phase === "probe_timeout") {
-    const total = normalizeAttempt(payload.totalAttempts, 1);
-    const attempt = Math.min(normalizeAttempt(payload.attempt, 1), total);
-    const value = 24 + attempt / total * 62;
-    const modelName = stripModelNamespace(payload.modelId);
-    const defaultMessage = modelName ? `Probing ${modelName} (${attempt}/${total})...` : `Probing model ${attempt}/${total}...`;
-    return {
-      value,
-      message: payload.message || defaultMessage
-    };
-  }
-  if (phase === "probe_succeeded") {
-    return { value: 94, message: payload.message || "Model probe succeeded." };
-  }
-  if (phase === "complete") {
-    return { value: 100, message: payload.message || "Validation complete." };
-  }
-  if (phase === "error") {
-    return { value: 98, message: payload.message || "Validation failed." };
-  }
-  return null;
-}
-function bindValidationProgressEvents(state, requestId) {
-  if (!(state && requestId)) return () => void 0;
-  const off2 = onEvent(VALIDATION_PROGRESS_EVENT, (payload) => {
-    const p = payload;
-    if (!p || p.requestId !== requestId) return;
-    const update = progressFromValidationEvent(p);
-    if (!update) return;
-    setValidationProgress(state, update.value, update.message);
-  });
-  return () => {
-    off2();
-  };
-}
-function showApiKeyForm(provider) {
-  const m = els();
-  m.title.textContent = provider.displayName;
-  m.body.textContent = "";
-  const form = document.createElement("div");
-  form.className = "provider-key-form";
-  const supportsEndpoint = OPENAI_COMPATIBLE_PROVIDERS.includes(provider.name);
-  const keyLabel = document.createElement("label");
-  keyLabel.className = "text-xs text-[var(--muted)]";
-  keyLabel.textContent = "API Key";
-  form.appendChild(keyLabel);
-  const keyInp = document.createElement("input");
-  keyInp.className = "provider-key-input";
-  keyInp.type = "password";
-  keyInp.placeholder = provider.keyOptional ? "(optional)" : "sk-...";
-  form.appendChild(keyInp);
-  const errorPanel = document.createElement("div");
-  errorPanel.className = "alert-error-text text-[var(--error)] whitespace-pre-line";
-  errorPanel.style.display = "none";
-  form.appendChild(errorPanel);
-  const keyHelp = providerApiKeyHelp(provider);
-  if (keyHelp) {
-    const keyHelpLine = document.createElement("div");
-    keyHelpLine.className = "text-xs text-[var(--muted)] mt-1";
-    if (keyHelp.url) {
-      keyHelpLine.append(`${keyHelp.text} `);
-      const keyLink = document.createElement("a");
-      keyLink.href = keyHelp.url;
-      keyLink.target = "_blank";
-      keyLink.rel = "noopener noreferrer";
-      keyLink.className = "text-[var(--accent)] underline";
-      keyLink.textContent = keyHelp.label || keyHelp.url;
-      keyHelpLine.appendChild(keyLink);
-    } else {
-      keyHelpLine.textContent = keyHelp.text;
-    }
-    form.appendChild(keyHelpLine);
-  }
-  let endpointInp = null;
-  if (supportsEndpoint) {
-    const endpointLabel = document.createElement("label");
-    endpointLabel.className = "text-xs text-[var(--muted)]";
-    endpointLabel.style.marginTop = "8px";
-    endpointLabel.textContent = "Endpoint (optional)";
-    form.appendChild(endpointLabel);
-    endpointInp = document.createElement("input");
-    endpointInp.className = "provider-key-input";
-    endpointInp.type = "text";
-    endpointInp.placeholder = provider.defaultBaseUrl || "https://api.example.com/v1";
-    form.appendChild(endpointInp);
-    const hint = document.createElement("div");
-    hint.className = "text-xs text-[var(--muted)]";
-    hint.style.marginTop = "2px";
-    hint.textContent = "Leave empty to use the default endpoint.";
-    form.appendChild(hint);
-  }
-  let modelInp = null;
-  const needsModel = BYOM_PROVIDERS.includes(provider.name);
-  if (needsModel) {
-    const modelLabel = document.createElement("label");
-    modelLabel.className = "text-xs text-[var(--muted)]";
-    modelLabel.style.marginTop = "8px";
-    modelLabel.textContent = "Model ID";
-    form.appendChild(modelLabel);
-    modelInp = document.createElement("input");
-    modelInp.className = "provider-key-input";
-    modelInp.type = "text";
-    modelInp.placeholder = "model-id";
-    form.appendChild(modelInp);
-  }
-  const validationProgress = createValidationProgress(form, "mt-2");
-  const btns = document.createElement("div");
-  btns.className = "btn-row";
-  btns.style.marginTop = "12px";
-  const backBtn = document.createElement("button");
-  backBtn.className = "provider-btn provider-btn-secondary";
-  backBtn.textContent = "Back";
-  backBtn.addEventListener("click", openProviderModal);
-  btns.appendChild(backBtn);
-  const saveBtn = document.createElement("button");
-  saveBtn.className = "provider-btn";
-  saveBtn.textContent = "Save";
-  saveBtn.addEventListener("click", () => {
-    const key = keyInp.value.trim();
-    if (!(key || provider.keyOptional)) {
-      setFormError(errorPanel, "API key is required.");
-      return;
-    }
-    if (needsModel && modelInp && !modelInp.value.trim()) {
-      setFormError(errorPanel, "Model ID is required.");
-      return;
-    }
-    saveBtn.disabled = true;
-    saveBtn.textContent = "Saving...";
-    setValidationProgress(validationProgress, 10, "Discovering models...");
-    setFormError(errorPanel, null);
-    const keyVal = key || provider.name;
-    const endpointVal = (endpointInp == null ? void 0 : endpointInp.value.trim()) || null;
-    const modelVal = (modelInp == null ? void 0 : modelInp.value.trim()) || null;
-    const requestId = createValidationRequestId();
-    const stopProgressEvents = bindValidationProgressEvents(validationProgress, requestId);
-    validateProviderKey(provider.name, keyVal, endpointVal, modelVal, requestId).then((result) => {
-      if (!result.valid) {
-        saveBtn.disabled = false;
-        saveBtn.textContent = "Save";
-        resetValidationProgress(validationProgress);
-        setFormError(errorPanel, result.error || "Failed to connect. Please check your credentials.");
-        return;
-      }
-      if (needsModel) {
-        completeValidationProgress(validationProgress, "Done.");
-        saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, null, false);
-        return;
-      }
-      const models2 = result.models || [];
-      completeValidationProgress(validationProgress, "Done.");
-      showModelSelector(provider, models2, keyVal, endpointVal, modelVal);
-    }).catch((err) => {
-      saveBtn.disabled = false;
-      saveBtn.textContent = "Save";
-      resetValidationProgress(validationProgress);
-      setFormError(errorPanel, (err == null ? void 0 : err.message) || "Failed to connect.");
-    }).finally(() => {
-      stopProgressEvents();
-    });
-  });
-  btns.appendChild(saveBtn);
-  form.appendChild(btns);
-  m.body.appendChild(form);
-  keyInp.focus();
-}
-function showModelSelector(provider, models2, keyVal, endpointVal, modelVal, skipSave) {
-  const m = els();
-  m.title.textContent = `${provider.displayName} — Select Models`;
-  m.body.textContent = "";
-  const selectedIds = /* @__PURE__ */ new Set();
-  const wrapper = document.createElement("div");
-  wrapper.className = "provider-key-form flex flex-col min-h-0 flex-1";
-  const label2 = document.createElement("div");
-  label2.className = "text-xs font-medium text-[var(--text-strong)] mb-1 shrink-0";
-  label2.textContent = "Select models to add";
-  wrapper.appendChild(label2);
-  const hint = document.createElement("div");
-  hint.className = "text-xs text-[var(--muted)] mb-2 shrink-0";
-  hint.textContent = "Click models to toggle selection, or use Select All.";
-  wrapper.appendChild(hint);
-  let searchInp = null;
-  if (models2.length > 5) {
-    searchInp = document.createElement("input");
-    searchInp.type = "text";
-    searchInp.className = "provider-key-input w-full text-xs mb-2 shrink-0";
-    searchInp.placeholder = "Search models…";
-    wrapper.appendChild(searchInp);
-  }
-  const selectAllBtn = document.createElement("button");
-  selectAllBtn.className = "provider-btn provider-btn-secondary text-xs mb-2 shrink-0";
-  function getVisibleModels() {
-    const currentFilter = (searchInp == null ? void 0 : searchInp.value.trim()) || null;
-    if (!currentFilter) return models2;
-    const q2 = currentFilter.toLowerCase();
-    return models2.filter(
-      (mdl) => mdl.displayName.toLowerCase().includes(q2) || mdl.id.toLowerCase().includes(q2)
-    );
-  }
-  function updateSelectAllLabel() {
-    const visible = getVisibleModels();
-    const allVisible = visible.length > 0 && visible.every((mdl) => selectedIds.has(mdl.id));
-    selectAllBtn.textContent = allVisible ? "Deselect All" : "Select All";
-  }
-  updateSelectAllLabel();
-  selectAllBtn.addEventListener("click", () => {
-    const visible = getVisibleModels();
-    const allVisible = visible.every((mdl) => selectedIds.has(mdl.id));
-    if (allVisible) {
-      for (const mdl of visible) selectedIds.delete(mdl.id);
-    } else {
-      for (const visibleModel of visible) selectedIds.add(visibleModel.id);
-    }
-    updateSelectAllLabel();
-    updateStatus();
-    renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
-  });
-  wrapper.appendChild(selectAllBtn);
-  const list2 = document.createElement("div");
-  list2.className = "flex flex-col gap-1 overflow-y-auto flex-1 min-h-0 max-h-56";
-  wrapper.appendChild(list2);
-  const statusArea = document.createElement("div");
-  statusArea.className = "text-xs text-[var(--muted)] mt-2 shrink-0";
-  wrapper.appendChild(statusArea);
-  function updateStatus() {
-    const count = selectedIds.size;
-    statusArea.textContent = count === 0 ? "No models selected" : `${count} model${count > 1 ? "s" : ""} selected`;
-  }
-  const errorArea = document.createElement("div");
-  errorArea.className = "alert-error-text text-[var(--error)] whitespace-pre-line shrink-0";
-  errorArea.style.display = "none";
-  wrapper.appendChild(errorArea);
-  function renderCards(filter) {
-    list2.textContent = "";
-    let filtered = models2;
-    if (filter) {
-      const q2 = filter.toLowerCase();
-      filtered = models2.filter(
-        (mdl) => mdl.displayName.toLowerCase().includes(q2) || mdl.id.toLowerCase().includes(q2)
-      );
-    }
-    if (filtered.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "text-xs text-[var(--muted)] py-4 text-center";
-      empty.textContent = "No models match your search.";
-      list2.appendChild(empty);
-      return;
-    }
-    filtered.forEach((mdl) => {
-      const card = document.createElement("div");
-      card.className = `model-card ${selectedIds.has(mdl.id) ? "selected" : ""}`;
-      const header = document.createElement("div");
-      header.className = "flex items-center justify-between";
-      const name = document.createElement("span");
-      name.className = "text-sm font-medium text-[var(--text)]";
-      name.textContent = mdl.displayName;
-      header.appendChild(name);
-      const badges = document.createElement("div");
-      badges.className = "flex gap-2";
-      if (mdl.supportsTools) {
-        const toolsBadge = document.createElement("span");
-        toolsBadge.className = "recommended-badge";
-        toolsBadge.textContent = "Tools";
-        badges.appendChild(toolsBadge);
-      }
-      header.appendChild(badges);
-      card.appendChild(header);
-      const idLine = document.createElement("div");
-      idLine.className = "text-xs text-[var(--muted)] mt-1 font-mono";
-      idLine.textContent = mdl.id;
-      card.appendChild(idLine);
-      ((modelId) => {
-        card.addEventListener("click", () => {
-          if (selectedIds.has(modelId)) {
-            selectedIds.delete(modelId);
-          } else {
-            selectedIds.add(modelId);
-          }
-          updateSelectAllLabel();
-          updateStatus();
-          renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
-        });
-      })(mdl.id);
-      list2.appendChild(card);
-    });
-  }
-  renderCards(null);
-  updateStatus();
-  if (searchInp) {
-    searchInp.addEventListener("input", () => {
-      renderCards(searchInp == null ? void 0 : searchInp.value.trim());
-    });
-  }
-  const btns = document.createElement("div");
-  btns.className = "btn-row mt-3 shrink-0";
-  const backBtn = document.createElement("button");
-  backBtn.className = "provider-btn provider-btn-secondary";
-  backBtn.textContent = "Back";
-  backBtn.addEventListener("click", () => {
-    if (skipSave) {
-      openProviderModal();
-    } else {
-      showApiKeyForm(provider);
-    }
-  });
-  btns.appendChild(backBtn);
-  const continueBtn = document.createElement("button");
-  continueBtn.className = "provider-btn";
-  continueBtn.textContent = "Continue";
-  continueBtn.addEventListener("click", () => {
-    if (selectedIds.size === 0) {
-      errorArea.textContent = "Select at least one model to continue.";
-      errorArea.style.display = "";
-      return;
-    }
-    errorArea.style.display = "none";
-    continueBtn.disabled = true;
-    continueBtn.textContent = "Saving…";
-    saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, Array.from(selectedIds), !!skipSave);
-  });
-  btns.appendChild(continueBtn);
-  wrapper.appendChild(btns);
-  wrapper._errorArea = errorArea;
-  wrapper._resetSelection = () => {
-    continueBtn.disabled = false;
-    continueBtn.textContent = "Continue";
-    renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
-  };
-  m.body.appendChild(wrapper);
-}
-function saveAndFinishProvider(provider, keyVal, endpointVal, modelVal, selectedModelIds, skipSave) {
-  const modelIds = Array.isArray(selectedModelIds) ? selectedModelIds : selectedModelIds ? [selectedModelIds] : [];
-  const m = els();
-  const saveAsCustomProvider = !skipSave && shouldUseCustomProviderForOpenAi(provider, endpointVal);
-  const modelsForSave = saveAsCustomProvider ? modelIds.map(stripModelNamespace) : [...modelIds];
-  const firstModelForSave = modelsForSave[0] || null;
-  const effectiveModelVal = provider.keyOptional && firstModelForSave ? firstModelForSave : modelVal;
-  function showError(msg) {
-    const wrapperEl = m.body.querySelector(".provider-key-form");
-    if (wrapperEl == null ? void 0 : wrapperEl._errorArea) {
-      setFormError(wrapperEl._errorArea, msg);
-      if (wrapperEl._resetSelection) wrapperEl._resetSelection();
-    }
-  }
-  let savePromise;
-  if (skipSave) {
-    savePromise = Promise.resolve({ ok: true });
-  } else if (saveAsCustomProvider) {
-    const customPayload = { baseUrl: endpointVal, apiKey: keyVal };
-    if (firstModelForSave) customPayload.model = firstModelForSave;
-    savePromise = sendRpc("providers.add_custom", customPayload);
-  } else {
-    savePromise = saveProviderKey(provider.name, keyVal || "", endpointVal, effectiveModelVal);
-  }
-  savePromise.then(async (res) => {
-    var _a2, _b2, _c, _d;
-    if (!(res == null ? void 0 : res.ok)) {
-      showError(((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to save credentials.");
-      return;
-    }
-    const savedProviderName = saveAsCustomProvider ? ((_b2 = res == null ? void 0 : res.payload) == null ? void 0 : _b2.providerName) || provider.name : provider.name;
-    const successDisplayName = saveAsCustomProvider ? ((_c = res == null ? void 0 : res.payload) == null ? void 0 : _c.displayName) || provider.displayName : provider.displayName;
-    let modelTimedOut = false;
-    if (modelIds.length > 0) {
-      const firstModelId = modelIds[0];
-      const firstModelForTest = saveAsCustomProvider ? `${savedProviderName}::${modelsForSave[0]}` : firstModelId;
-      const testResult2 = await testModel(firstModelForTest);
-      const modelServiceUnavailable = !testResult2.ok && isModelServiceNotConfigured(testResult2.error || "");
-      modelTimedOut = !testResult2.ok && isTimeoutError(testResult2.error || "");
-      if (!(testResult2.ok || modelServiceUnavailable || modelTimedOut)) {
-        showError(testResult2.error || "Model test failed. Try another model.");
-        return;
-      }
-      if (modelTimedOut) {
-        console.warn(
-          "models.test timed out for",
-          firstModelForTest,
-          "— saving models anyway (local servers may need longer to load)"
-        );
-      }
-      const saveModelsRes = await sendRpc("providers.save_models", {
-        provider: savedProviderName,
-        models: modelsForSave
-      });
-      if (!(saveModelsRes == null ? void 0 : saveModelsRes.ok)) {
-        showError(((_d = saveModelsRes == null ? void 0 : saveModelsRes.error) == null ? void 0 : _d.message) || "Failed to save models.");
-        return;
-      }
-      if (modelServiceUnavailable) {
-        console.warn("models.test unavailable in provider settings, saved selected models without probe");
-      }
-      localStorage.setItem("moltis-model", firstModelForTest);
-    }
-    m.body.textContent = "";
-    const status = document.createElement("div");
-    status.className = "provider-status";
-    const countMsg = modelIds.length > 1 ? ` with ${modelIds.length} models` : "";
-    status.textContent = `${successDisplayName} configured successfully${countMsg}!`;
-    m.body.appendChild(status);
-    if (modelTimedOut) {
-      const slowHint = document.createElement("div");
-      slowHint.className = "text-xs text-[var(--muted)] mt-1";
-      slowHint.textContent = "Note: model was slow to respond. It may need a moment to finish loading.";
-      m.body.appendChild(slowHint);
-    }
-    fetchModels();
-    if (refreshProvidersPage) refreshProvidersPage();
-    setTimeout(closeProviderModal, modelTimedOut ? 3500 : 1500);
-  }).catch((err) => {
-    showError((err == null ? void 0 : err.message) || "Failed to save credentials.");
-  });
-}
-function showOAuthFlow(provider) {
-  const m = els();
-  m.title.textContent = provider.displayName;
-  m.body.textContent = "";
-  const wrapper = document.createElement("div");
-  wrapper.className = "provider-key-form";
-  const desc = document.createElement("div");
-  desc.className = "text-xs text-[var(--muted)]";
-  desc.textContent = `Click below to authenticate with ${provider.displayName} via OAuth.`;
-  wrapper.appendChild(desc);
-  const manualWrap = document.createElement("div");
-  manualWrap.className = "flex flex-col gap-2 mt-2 hidden";
-  const manualHint = document.createElement("div");
-  manualHint.className = "text-xs text-[var(--muted)]";
-  manualHint.textContent = "If localhost callback fails, paste the redirect URL (or code#state) below.";
-  manualWrap.appendChild(manualHint);
-  const manualInput = document.createElement("input");
-  manualInput.type = "text";
-  manualInput.className = "provider-key-input w-full";
-  manualInput.placeholder = "http://localhost:1455/auth/callback?code=...&state=...";
-  manualWrap.appendChild(manualInput);
-  const manualBtns = document.createElement("div");
-  manualBtns.className = "btn-row";
-  const manualSubmitBtn = document.createElement("button");
-  manualSubmitBtn.className = "provider-btn provider-btn-secondary";
-  manualSubmitBtn.textContent = "Submit Callback";
-  manualBtns.appendChild(manualSubmitBtn);
-  manualWrap.appendChild(manualBtns);
-  wrapper.appendChild(manualWrap);
-  const btns = document.createElement("div");
-  btns.className = "btn-row";
-  const backBtn = document.createElement("button");
-  backBtn.className = "provider-btn provider-btn-secondary";
-  backBtn.textContent = "Back";
-  backBtn.addEventListener("click", () => {
-    clearOAuthStatusTimer();
-    openProviderModal();
-  });
-  btns.appendChild(backBtn);
-  const connectBtn = document.createElement("button");
-  connectBtn.className = "provider-btn";
-  connectBtn.textContent = "Connect";
-  let oauthCompleted = false;
-  function finishOAuthOnce() {
-    if (oauthCompleted) return;
-    oauthCompleted = true;
-    clearOAuthStatusTimer();
-    showOAuthModelSelector(provider);
-  }
-  function setManualSubmitting(submitting) {
-    manualSubmitBtn.disabled = submitting;
-    manualInput.disabled = submitting;
-    manualSubmitBtn.textContent = submitting ? "Submitting..." : "Submit Callback";
-  }
-  manualSubmitBtn.addEventListener("click", () => {
-    const callback = manualInput.value.trim();
-    if (!callback) {
-      desc.classList.add("text-error");
-      desc.textContent = "Paste the callback URL (or code#state) to continue.";
-      return;
-    }
-    setManualSubmitting(true);
-    completeProviderOAuth(provider.name, callback).then((res) => {
-      var _a2;
-      if (res == null ? void 0 : res.ok) {
-        connectBtn.textContent = "Connected";
-        desc.classList.remove("text-error");
-        desc.textContent = `${provider.displayName} connected successfully!`;
-        finishOAuthOnce();
-        return;
-      }
-      desc.classList.add("text-error");
-      desc.textContent = ((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to complete OAuth callback.";
-    }).catch((error2) => {
-      desc.classList.add("text-error");
-      desc.textContent = (error2 == null ? void 0 : error2.message) || "Failed to complete OAuth callback.";
-    }).finally(() => {
-      setManualSubmitting(false);
-    });
-  });
-  connectBtn.addEventListener("click", () => {
-    connectBtn.disabled = true;
-    connectBtn.textContent = "Starting...";
-    startProviderOAuth(provider.name).then((result) => {
-      if (result.status === "already") {
-        connectBtn.textContent = "Connected";
-        desc.classList.remove("text-error");
-        desc.textContent = `${provider.displayName} is already connected (imported credentials found).`;
-        finishOAuthOnce();
-      } else if (result.status === "browser") {
-        window.open(result.authUrl, "_blank");
-        connectBtn.textContent = "Waiting for auth...";
-        manualWrap.classList.remove("hidden");
-        pollOAuthStatus(provider, finishOAuthOnce);
-      } else if (result.status === "device") {
-        connectBtn.textContent = "Waiting for auth...";
-        desc.classList.remove("text-error");
-        desc.textContent = "";
-        manualWrap.classList.add("hidden");
-        const linkEl = document.createElement("a");
-        linkEl.href = result.verificationUrl || "";
-        linkEl.target = "_blank";
-        linkEl.className = "oauth-link";
-        linkEl.textContent = result.verificationUrl || "";
-        const codeEl = document.createElement("strong");
-        codeEl.textContent = result.userCode || "";
-        desc.appendChild(document.createTextNode("Go to "));
-        desc.appendChild(linkEl);
-        desc.appendChild(document.createTextNode(" and enter code: "));
-        desc.appendChild(codeEl);
-        pollOAuthStatus(provider, finishOAuthOnce);
-      } else {
-        clearOAuthStatusTimer();
-        connectBtn.disabled = false;
-        connectBtn.textContent = "Connect";
-        manualWrap.classList.add("hidden");
-        desc.textContent = result.error || "Failed to start OAuth";
-        desc.classList.add("text-error");
-      }
-    });
-  });
-  btns.appendChild(connectBtn);
-  wrapper.appendChild(btns);
-  m.body.appendChild(wrapper);
-}
-function pollOAuthStatus(provider, onAuthenticated) {
-  const m = els();
-  let attempts = 0;
-  const maxAttempts = 60;
-  clearOAuthStatusTimer();
-  setOAuthStatusTimer(
-    setInterval(() => {
-      attempts++;
-      if (attempts > maxAttempts) {
-        clearOAuthStatusTimer();
-        m.body.textContent = "";
-        const timeout = document.createElement("div");
-        timeout.className = "text-xs text-[var(--error)]";
-        timeout.textContent = "OAuth timed out. Please try again.";
-        m.body.appendChild(timeout);
-        return;
-      }
-      sendRpc("providers.oauth.status", { provider: provider.name }).then((res) => {
-        if ((res == null ? void 0 : res.ok) && res.payload && res.payload.authenticated) {
-          clearOAuthStatusTimer();
-          if (typeof onAuthenticated === "function") {
-            onAuthenticated();
-            return;
-          }
-          showOAuthModelSelector(provider);
-        }
-      });
-    }, 2e3)
-  );
-}
-function showOAuthModelSelector(provider) {
-  sendRpc("models.list", {}).then((modelsRes) => {
-    const allModels = (modelsRes == null ? void 0 : modelsRes.ok) ? modelsRes.payload || [] : [];
-    const needle = provider.name.replace(/-/g, "").toLowerCase();
-    const provModels = allModels.filter(
-      (entry) => {
-        var _a2;
-        return (_a2 = entry.provider) == null ? void 0 : _a2.toLowerCase().replace(/-/g, "").includes(needle);
-      }
-    );
-    if (provModels.length > 0) {
-      const mapped = provModels.map((entry) => ({
-        id: entry.id,
-        displayName: entry.displayName || entry.id,
-        provider: entry.provider,
-        supportsTools: entry.supportsTools
-      }));
-      showModelSelector(provider, mapped, null, null, null, true);
-    } else {
-      fetchModels();
-      if (refreshProvidersPage) refreshProvidersPage();
-      const modal = els();
-      modal.body.textContent = "";
-      const status = document.createElement("div");
-      status.className = "provider-status";
-      status.textContent = `${provider.displayName} connected successfully!`;
-      modal.body.appendChild(status);
-      setTimeout(closeProviderModal, 1500);
-    }
-  });
-}
-function openModelSelectorForProvider(providerName, providerDisplayName) {
-  const m = els();
-  m.modal.classList.remove("hidden");
-  m.title.textContent = `${providerDisplayName} — Preferred Models`;
-  m.body.textContent = "Loading models...";
-  Promise.all([sendRpc("models.list", {}), sendRpc("providers.available", {})]).then(
-    ([modelsRes, providersRes]) => {
-      const allModels = (modelsRes == null ? void 0 : modelsRes.ok) ? modelsRes.payload || [] : [];
-      const needle = providerName.replace(/-/g, "").toLowerCase();
-      const provModels = allModels.filter(
-        (entry) => {
-          var _a2;
-          return (_a2 = entry.provider) == null ? void 0 : _a2.toLowerCase().replace(/-/g, "").includes(needle);
-        }
-      );
-      if (provModels.length === 0) {
-        m.body.textContent = "";
-        const wrapper = document.createElement("div");
-        wrapper.className = "provider-key-form";
-        const msg = document.createElement("div");
-        msg.className = "text-xs text-[var(--muted)] py-4 text-center";
-        msg.textContent = "No models available yet. Try running Detect All Models first.";
-        wrapper.appendChild(msg);
-        const btns = document.createElement("div");
-        btns.className = "btn-row mt-3";
-        const closeBtn = document.createElement("button");
-        closeBtn.className = "provider-btn provider-btn-secondary";
-        closeBtn.textContent = "Close";
-        closeBtn.addEventListener("click", closeProviderModal);
-        btns.appendChild(closeBtn);
-        wrapper.appendChild(btns);
-        m.body.appendChild(wrapper);
-        return;
-      }
-      const savedModels = /* @__PURE__ */ new Set();
-      if (providersRes == null ? void 0 : providersRes.ok) {
-        const providerMeta = (providersRes.payload || []).find(
-          (p) => p.name === providerName
-        );
-        if (providerMeta == null ? void 0 : providerMeta.models) {
-          for (const sm of providerMeta.models) savedModels.add(sm);
-        }
-      }
-      const mapped = provModels.map((entry) => ({
-        id: entry.id,
-        displayName: entry.displayName || entry.id,
-        provider: entry.provider,
-        supportsTools: entry.supportsTools,
-        createdAt: entry.createdAt || 0
-      }));
-      showMultiModelSelector(providerName, providerDisplayName, mapped, savedModels);
-    }
-  );
-}
-function showMultiModelSelector(providerName, providerDisplayName, models2, savedModels) {
-  const m = els();
-  m.title.textContent = `${providerDisplayName} — Preferred Models`;
-  m.body.textContent = "";
-  const selectedIds = new Set(savedModels);
-  const probeResults = /* @__PURE__ */ new Map();
-  function probeModel(modelId) {
-    if (probeResults.has(modelId)) return;
-    probeResults.set(modelId, "probing");
-    renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
-    testModel(modelId).then((result) => {
-      if (isModelServiceNotConfigured(result.error || "")) {
-        probeResults.delete(modelId);
-      } else if (!result.ok && isTimeoutError(result.error || "")) {
-        probeResults.set(modelId, { error: "Slow to respond (may still work)", timeout: true });
-      } else {
-        probeResults.set(
-          modelId,
-          result.ok ? "ok" : { error: humanizeProbeError(result.error || "Unsupported") }
-        );
-      }
-      renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
-    });
-  }
-  const wrapper = document.createElement("div");
-  wrapper.className = "provider-key-form flex flex-col min-h-0 flex-1";
-  const label2 = document.createElement("div");
-  label2.className = "text-xs font-medium text-[var(--text-strong)] mb-1 shrink-0";
-  label2.textContent = "Select models to pin at the top of the dropdown";
-  wrapper.appendChild(label2);
-  const hint = document.createElement("div");
-  hint.className = "text-xs text-[var(--muted)] mb-2 shrink-0";
-  hint.textContent = "Selected models appear first in the session model selector.";
-  wrapper.appendChild(hint);
-  let searchInp = null;
-  if (models2.length > 5) {
-    searchInp = document.createElement("input");
-    searchInp.type = "text";
-    searchInp.className = "provider-key-input w-full text-xs mb-2 shrink-0";
-    searchInp.placeholder = "Search models…";
-    wrapper.appendChild(searchInp);
-  }
-  const list2 = document.createElement("div");
-  list2.className = "flex flex-col gap-1 overflow-y-auto flex-1 min-h-0";
-  wrapper.appendChild(list2);
-  const statusArea = document.createElement("div");
-  statusArea.className = "text-xs text-[var(--muted)] mt-2 shrink-0";
-  wrapper.appendChild(statusArea);
-  function updateStatus() {
-    const count = selectedIds.size;
-    statusArea.textContent = count === 0 ? "No models selected" : `${count} model${count > 1 ? "s" : ""} selected`;
-  }
-  function sortModelsForSelection(items) {
-    return [...items].sort((a, b) => {
-      const aSel = selectedIds.has(a.id) ? 0 : 1;
-      const bSel = selectedIds.has(b.id) ? 0 : 1;
-      if (aSel !== bSel) return aSel - bSel;
-      const aTime = a.createdAt || 0;
-      const bTime = b.createdAt || 0;
-      if (aTime !== bTime) return bTime - aTime;
-      const aVer = modelVersionScore(a.id);
-      const bVer = modelVersionScore(b.id);
-      if (aVer !== bVer) return bVer - aVer;
-      return (a.displayName || a.id).localeCompare(b.displayName || b.id);
-    });
-  }
-  function renderCards(filter) {
-    list2.textContent = "";
-    let filtered = models2;
-    if (filter) {
-      const q2 = filter.toLowerCase();
-      filtered = models2.filter(
-        (entry) => entry.displayName.toLowerCase().includes(q2) || entry.id.toLowerCase().includes(q2)
-      );
-    }
-    if (filtered.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "text-xs text-[var(--muted)] py-4 text-center";
-      empty.textContent = "No models match your search.";
-      list2.appendChild(empty);
-      return;
-    }
-    const sorted = sortModelsForSelection(filtered);
-    for (const mdl of sorted) {
-      const card = document.createElement("div");
-      card.className = `model-card ${selectedIds.has(mdl.id) ? "selected" : ""}`;
-      const header = document.createElement("div");
-      header.className = "flex items-center justify-between";
-      const nameSpan = document.createElement("span");
-      nameSpan.className = "text-sm font-medium text-[var(--text)] truncate";
-      nameSpan.textContent = mdl.displayName;
-      header.appendChild(nameSpan);
-      const badges = document.createElement("div");
-      badges.className = "flex gap-2";
-      if (mdl.supportsTools) {
-        const toolsBadge = document.createElement("span");
-        toolsBadge.className = "recommended-badge";
-        toolsBadge.textContent = "Tools";
-        badges.appendChild(toolsBadge);
-      }
-      const probe = probeResults.get(mdl.id);
-      if (probe === "probing") {
-        const probeBadge = document.createElement("span");
-        probeBadge.className = "tier-badge";
-        probeBadge.textContent = "Probing…";
-        badges.appendChild(probeBadge);
-      } else if (probe && probe !== "ok") {
-        const probeObj = probe;
-        const unsupBadge = document.createElement("span");
-        unsupBadge.className = probeObj.timeout ? "tier-badge" : "provider-item-badge warning";
-        unsupBadge.textContent = probeObj.timeout ? "Slow" : "Unsupported";
-        badges.appendChild(unsupBadge);
-      }
-      header.appendChild(badges);
-      card.appendChild(header);
-      const idLine = document.createElement("div");
-      idLine.className = "text-xs text-[var(--muted)] mt-1 font-mono";
-      idLine.textContent = mdl.id;
-      card.appendChild(idLine);
-      if (probe && probe !== "ok" && probe !== "probing" && probe.error) {
-        const errorLine = document.createElement("div");
-        errorLine.className = "text-xs font-medium text-[var(--danger,#ef4444)] mt-0.5";
-        errorLine.textContent = probe.error || "";
-        card.appendChild(errorLine);
-      }
-      if (mdl.createdAt) {
-        const dateLine = document.createElement("time");
-        dateLine.className = "text-xs text-[var(--muted)] mt-0.5 opacity-60 block";
-        dateLine.setAttribute("data-epoch-ms", String(mdl.createdAt * 1e3));
-        dateLine.setAttribute("data-format", "year-month");
-        card.appendChild(dateLine);
-      }
-      ((modelId) => {
-        card.addEventListener("click", () => {
-          if (selectedIds.has(modelId)) {
-            selectedIds.delete(modelId);
-          } else {
-            selectedIds.add(modelId);
-            probeModel(modelId);
-          }
-          renderCards((searchInp == null ? void 0 : searchInp.value.trim()) || null);
-          updateStatus();
-        });
-      })(mdl.id);
-      list2.appendChild(card);
-    }
-  }
-  renderCards(null);
-  updateStatus();
-  if (searchInp) {
-    searchInp.addEventListener("input", () => {
-      renderCards(searchInp == null ? void 0 : searchInp.value.trim());
-    });
-  }
-  const errorArea = document.createElement("div");
-  errorArea.className = "alert-error-text text-[var(--error)] whitespace-pre-line shrink-0";
-  errorArea.style.display = "none";
-  wrapper.appendChild(errorArea);
-  const btns = document.createElement("div");
-  btns.className = "btn-row mt-3 shrink-0";
-  const cancelBtn = document.createElement("button");
-  cancelBtn.className = "provider-btn provider-btn-secondary";
-  cancelBtn.textContent = "Cancel";
-  cancelBtn.addEventListener("click", closeProviderModal);
-  btns.appendChild(cancelBtn);
-  const saveBtn = document.createElement("button");
-  saveBtn.className = "provider-btn";
-  saveBtn.textContent = "Save";
-  saveBtn.addEventListener("click", () => {
-    saveBtn.disabled = true;
-    saveBtn.textContent = "Saving…";
-    errorArea.style.display = "none";
-    sendRpc("providers.save_models", { provider: providerName, models: Array.from(selectedIds) }).then((res) => {
-      var _a2;
-      if (!(res == null ? void 0 : res.ok)) {
-        saveBtn.disabled = false;
-        saveBtn.textContent = "Save";
-        errorArea.textContent = ((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to save model preferences.";
-        errorArea.style.display = "";
-        return;
-      }
-      fetchModels();
-      if (refreshProvidersPage) refreshProvidersPage();
-      closeProviderModal();
-    }).catch((err) => {
-      saveBtn.disabled = false;
-      saveBtn.textContent = "Save";
-      errorArea.textContent = (err == null ? void 0 : err.message) || "Failed to save model preferences.";
-      errorArea.style.display = "";
-    });
-  });
-  btns.appendChild(saveBtn);
-  wrapper.appendChild(btns);
-  m.body.appendChild(wrapper);
-}
 const configuredModels = y([]);
 const providerMetaSig = y(/* @__PURE__ */ new Map());
 const loading$1 = y(false);
@@ -30656,8 +31480,26 @@ document.addEventListener("click", (e) => {
     hideSearch();
   }
 });
-window.__moltis_stores = { sessionStore, modelStore: modelStore$1, projectStore: projectStore$1 };
+window.__moltis_stores = { sessionStore, modelStore: _modelStore, projectStore: projectStore$1 };
 window.__moltis_state = S$1;
+window.__moltis_modules = {
+  state: S$1,
+  helpers: _helpers,
+  events: _events,
+  "chat-ui": _chatUi,
+  sessions: _sessions,
+  gon,
+  "code-highlight": _codeHighlight,
+  "ws-connect": _wsConnect,
+  "nodes-selector": _nodeSelector,
+  providers: _providers,
+  "page-channels": _channelsPage,
+  i18n: _i18n,
+  "stores/model-store": _modelStore,
+  "stores/session-store": _sessionStoreModule,
+  "stores/node-store": _nodeStore,
+  "stores/session-history-cache": _sessionHistoryCache
+};
 function preferredChatPath() {
   const key = localStorage.getItem("moltis-session") || "main";
   return sessionPath(key);
@@ -30711,7 +31553,7 @@ onChange("vault_status", showVaultBanner);
 function upsertSessionFromEvent(entry) {
   if (!(entry == null ? void 0 : entry.key)) return false;
   sessionStore.upsert(entry);
-  const legacy = sessions$1.slice();
+  const legacy = sessions.slice();
   const idx = legacy.findIndex((session) => session.key === entry.key);
   let nextEntry = { ...entry };
   if (idx >= 0) {
@@ -31086,18 +31928,9 @@ function startApp() {
   initInstallBanner();
 }
 export {
-  setValidationProgress as a,
-  createValidationRequestId as b,
-  createValidationProgress as c,
-  bindValidationProgressEvents as d,
+  showOAuthFlow as a,
+  showLocalModelFlow as b,
+  showCustomProviderForm as c,
   els as e,
-  completeValidationProgress as f,
-  showModelSelector as g,
-  fetchModels as h,
-  closeProviderModal as i,
-  showApiKeyForm as j,
-  showOAuthFlow as k,
-  openProviderModal as o,
-  resetValidationProgress as r,
-  setFormError as s
+  showApiKeyForm as s
 };

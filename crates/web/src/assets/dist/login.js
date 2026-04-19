@@ -1,5 +1,5 @@
 import { u } from "./chunks/jsxRuntime.module.js";
-import { bM as S, bN as initTheme, bP as init, aM as R, aw as d, av as y, Z as t } from "./chunks/theme.js";
+import { bM as S, bQ as initTheme, bS as init, aM as R, aw as d, av as y, Z as t } from "./chunks/theme.js";
 import { b as formatLoginTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
 window.__moltis_state = S;
 initTheme();

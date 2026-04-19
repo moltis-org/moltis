@@ -1,7 +1,7 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-var n$1, l$3, u$2, t$3, i$2, r$2, o$2, e$2, f$1, c$2, s$2, a$2, h$3, p$3, v$2, d$2 = {}, w$3 = [], _$2 = /acit|ex(?:s|g|n|p|$)|rph|grid|ows|mnc|ntw|ine[ch]|zoo|^ord|itera/i, g$2 = Array.isArray;
+var n$1, l$3, u$2, t$3, i$2, r$2, o$2, e$2, f$1, c$2, s$2, a$2, h$3, p$3, v$2, d$3 = {}, w$3 = [], _$2 = /acit|ex(?:s|g|n|p|$)|rph|grid|ows|mnc|ntw|ine[ch]|zoo|^ord|itera/i, g$2 = Array.isArray;
 function m$2(n2, l2) {
   for (var u2 in l2) n2[u2] = l2[u2];
   return n2;
@@ -53,7 +53,7 @@ function H() {
 }
 function L(n2, l2, u2, t2, i2, r2, o2, e2, f2, c2, s2) {
   var a2, h2, p2, v2, y2, _2, g2, m2 = t2 && t2.__k || w$3, b2 = l2.length;
-  for (f2 = T$1(u2, l2, m2, f2, b2), a2 = 0; a2 < b2; a2++) null != (p2 = u2.__k[a2]) && (h2 = -1 != p2.__i && m2[p2.__i] || d$2, p2.__i = a2, _2 = q$2(n2, p2, h2, i2, r2, o2, e2, f2, c2, s2), v2 = p2.__e, p2.ref && h2.ref != p2.ref && (h2.ref && J(h2.ref, null, p2), s2.push(p2.ref, p2.__c || v2, p2)), null == y2 && null != v2 && (y2 = v2), (g2 = !!(4 & p2.__u)) || h2.__k === p2.__k ? (f2 = j$2(p2, f2, n2, g2), g2 && h2.__e && (h2.__e = null)) : "function" == typeof p2.type && void 0 !== _2 ? f2 = _2 : v2 && (f2 = v2.nextSibling), p2.__u &= -7);
+  for (f2 = T$1(u2, l2, m2, f2, b2), a2 = 0; a2 < b2; a2++) null != (p2 = u2.__k[a2]) && (h2 = -1 != p2.__i && m2[p2.__i] || d$3, p2.__i = a2, _2 = q$2(n2, p2, h2, i2, r2, o2, e2, f2, c2, s2), v2 = p2.__e, p2.ref && h2.ref != p2.ref && (h2.ref && J(h2.ref, null, p2), s2.push(p2.ref, p2.__c || v2, p2)), null == y2 && null != v2 && (y2 = v2), (g2 = !!(4 & p2.__u)) || h2.__k === p2.__k ? (f2 = j$2(p2, f2, n2, g2), g2 && h2.__e && (h2.__e = null)) : "function" == typeof p2.type && void 0 !== _2 ? f2 = _2 : v2 && (f2 = v2.nextSibling), p2.__u &= -7);
   return u2.__e = y2, f2;
 }
 function T$1(n2, l2, u2, t2, i2) {
@@ -168,7 +168,7 @@ function E$1(n2) {
   return "object" != typeof n2 || null == n2 || n2.__b > 0 ? n2 : g$2(n2) ? n2.map(E$1) : m$2({}, n2);
 }
 function G(u2, t2, i2, r2, o2, e2, f2, c2, s2) {
-  var a2, h2, p2, v2, y2, w2, _2, m2 = i2.props || d$2, k2 = t2.props, x2 = t2.type;
+  var a2, h2, p2, v2, y2, w2, _2, m2 = i2.props || d$3, k2 = t2.props, x2 = t2.type;
   if ("svg" == x2 ? o2 = "http://www.w3.org/2000/svg" : "math" == x2 ? o2 = "http://www.w3.org/1998/Math/MathML" : o2 || (o2 = "http://www.w3.org/1999/xhtml"), null != e2) {
     for (a2 = 0; a2 < e2.length; a2++) if ((y2 = e2[a2]) && "setAttribute" in y2 == !!x2 && (x2 ? y2.localName == x2 : 3 == y2.nodeType)) {
       u2 = y2, e2[a2] = null;
@@ -218,7 +218,7 @@ function Q(n2, l2, u2) {
 }
 function R(u2, t2, i2) {
   var r2, o2, e2, f2;
-  t2 == document && (t2 = document.documentElement), l$3.__ && l$3.__(u2, t2), o2 = (r2 = false) ? null : t2.__k, e2 = [], f2 = [], q$2(t2, u2 = t2.__k = k$1(S$2, null, [u2]), o2 || d$2, d$2, t2.namespaceURI, o2 ? null : t2.firstChild ? n$1.call(t2.childNodes) : null, e2, o2 ? o2.__e : t2.firstChild, r2, f2), D$1(e2, u2, f2);
+  t2 == document && (t2 = document.documentElement), l$3.__ && l$3.__(u2, t2), o2 = (r2 = false) ? null : t2.__k, e2 = [], f2 = [], q$2(t2, u2 = t2.__k = k$1(S$2, null, [u2]), o2 || d$3, d$3, t2.namespaceURI, o2 ? null : t2.firstChild ? n$1.call(t2.childNodes) : null, e2, o2 ? o2.__e : t2.firstChild, r2, f2), D$1(e2, u2, f2);
 }
 n$1 = w$3.slice, l$3 = { __e: function(n2, l2, u2, t2) {
   for (var i2, r2, o2; l2 = l2.__; ) if ((i2 = l2.__c) && !i2.__) try {
@@ -317,7 +317,7 @@ function p$2(n2, t2) {
   var u2 = r$1.__H || (r$1.__H = { __: [], __h: [] });
   return n2 >= u2.__.length && u2.__.push({}), u2.__[n2];
 }
-function d$1(n2) {
+function d$2(n2) {
   return o$1 = 1, h$2(D, n2);
 }
 function h$2(n2, u2, i2) {
@@ -516,7 +516,7 @@ function o(i2) {
     r = t2;
   }
 }
-var h$1 = void 0, s = 0, v = 0, u = 0, e = 0, c = void 0, d = 0;
+var h$1 = void 0, s = 0, v = 0, u = 0, e = 0, c = void 0, d$1 = 0;
 function a(i2) {
   if (void 0 !== r) {
     var t2 = i2.n;
@@ -635,7 +635,7 @@ Object.defineProperty(l$1.prototype, "value", { get: function() {
     })(this);
     this.v = i2;
     this.i++;
-    d++;
+    d$1++;
     s++;
     try {
       for (var n2 = this.t; void 0 !== n2; n2 = n2.x) n2.t.N();
@@ -682,7 +682,7 @@ function p$1(i2, t2) {
   l$1.call(this, void 0);
   this.x = i2;
   this.s = void 0;
-  this.g = d - 1;
+  this.g = d$1 - 1;
   this.f = 4;
   this.W = null == t2 ? void 0 : t2.watched;
   this.Z = null == t2 ? void 0 : t2.unwatched;
@@ -694,8 +694,8 @@ p$1.prototype.h = function() {
   if (1 & this.f) return false;
   if (32 == (36 & this.f)) return true;
   this.f &= -5;
-  if (this.g === d) return true;
-  this.g = d;
+  if (this.g === d$1) return true;
+  this.g = d$1;
   this.f |= 1;
   if (this.i > 0 && !w$1(this)) {
     this.f &= -2;
@@ -844,7 +844,7 @@ function j(i2, t2) {
   r2[Symbol.dispose] = r2;
   return r2;
 }
-var l, h, p = "undefined" != typeof window && !!window.__PREACT_SIGNALS_DEVTOOLS__, _ = [];
+var l, d, h, p = "undefined" != typeof window && !!window.__PREACT_SIGNALS_DEVTOOLS__, _ = [];
 j(function() {
   l = this.N;
 })();
@@ -931,15 +931,18 @@ g("__r", function(i2, n2) {
         o2.setState({});
       }, "function" == typeof n2.type ? n2.type.displayName || n2.type.name : "");
     }
+    d = o2;
     b(r2);
   }
 });
 g("__e", function(i2, n2, r2, t2) {
   b();
+  d = void 0;
   i2(n2, r2, t2);
 });
 g("diffed", function(i2, n2) {
   b();
+  d = void 0;
   var r2;
   if ("string" == typeof n2.type && (r2 = n2.__e)) {
     var t2 = n2.__np, o2 = n2.props;
@@ -1033,6 +1036,16 @@ C$1.prototype.shouldComponentUpdate = function(i2, n2) {
 function useSignal(i2, n2) {
   return T(function() {
     return y$1(i2, n2);
+  }, []);
+}
+function useComputed(i2, n2) {
+  var r2 = A(i2);
+  r2.current = i2;
+  d.__$f |= 4;
+  return T(function() {
+    return g$1(function() {
+      return r2.current();
+    }, n2);
   }, []);
 }
 var q = function(i2) {
@@ -3288,6 +3301,7 @@ instance.loadLanguages;
 const STORAGE_KEY = "moltis-locale";
 let initPromise = null;
 const SUPPORTED_LOCALES = /* @__PURE__ */ new Set(["en", "fr", "zh"]);
+const supportedLocales = Object.freeze(["en", "fr", "zh"]);
 function normalizeLocaleTag(value) {
   if (!value) return "en";
   let tag = String(value).trim().replace("_", "-");
@@ -3377,6 +3391,19 @@ function t(key, opts) {
 function hasTranslation(key, opts) {
   return instance.exists(key, opts);
 }
+function useTranslation(ns) {
+  const bound = useComputed(() => {
+    locale.value;
+    return {
+      t: (key, opts) => {
+        const options = opts ? Object.assign({ ns }, opts) : { ns };
+        return instance.t(key, options);
+      },
+      locale: locale.value
+    };
+  });
+  return bound.value;
+}
 function setLocale(lng) {
   const normalized = resolveSupportedLocale(lng);
   localStorage.setItem(STORAGE_KEY, normalized);
@@ -3411,6 +3438,18 @@ function translateStaticElements(root) {
     applyStaticTranslation(el, el.getAttribute("data-i18n-aria-label"), "aria-label");
   }
 }
+const _i18n = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  getPreferredLocale,
+  hasTranslation,
+  init,
+  locale,
+  setLocale,
+  supportedLocales,
+  t,
+  translateStaticElements,
+  useTranslation
+}, Symbol.toStringTag, { value: "Module" }));
 const REASONING_SEP = "@reasoning-";
 const models$1 = y$1([]);
 const selectedModelId$1 = y$1(localStorage.getItem("moltis-model") || "");
@@ -3486,7 +3525,7 @@ const modelStore = {
   setReasoningEffort,
   getById: getById$1
 };
-const modelStore$1 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+const _modelStore = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   REASONING_SEP,
   effectiveModelId,
@@ -3834,6 +3873,29 @@ const sessionStore = {
   setShowArchivedSessions,
   notify
 };
+const _sessionStoreModule = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  Session,
+  activeSession,
+  activeSessionKey: activeSessionKey$1,
+  compareSessionOrder,
+  fetch: fetch$1,
+  getByKey,
+  insertSessionInOrder,
+  notify,
+  refreshInProgressKey,
+  remove,
+  sessionListTab,
+  sessionStore,
+  sessions: sessions$1,
+  setActive,
+  setAll,
+  setSessionListTab,
+  setShowArchivedSessions,
+  showArchivedSessions,
+  switchInProgress,
+  upsert
+}, Symbol.toStringTag, { value: "Module" }));
 const connected$1 = y$1(false);
 const cachedChannels$1 = y$1(null);
 const unseenErrors$1 = y$1(0);
@@ -5235,6 +5297,55 @@ function parseAgentsListPayload(payload) {
     agents
   };
 }
+function createEl(tag, attrs, children) {
+  const el = document.createElement(tag);
+  if (attrs) {
+    Object.keys(attrs).forEach((k2) => {
+      const value = attrs[k2];
+      if (value === void 0) return;
+      if (k2 === "className") el.className = value;
+      else if (k2 === "textContent") el.textContent = value;
+      else if (k2 === "style") el.style.cssText = value;
+      else el.setAttribute(k2, value);
+    });
+  }
+  if (children) {
+    children.forEach((c2) => {
+      if (c2) el.appendChild(c2);
+    });
+  }
+  return el;
+}
+const _helpers = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  createEl,
+  esc,
+  formatAssistantTokenUsage,
+  formatAudioDuration,
+  formatBytes,
+  formatTokenSpeed,
+  formatTokens,
+  localizeRpcError,
+  localizeStructuredError,
+  localizedApiErrorMessage,
+  localizedRpcErrorMessage,
+  modelVersionScore,
+  nextId,
+  parseAgentsListPayload,
+  parseErrorMessage,
+  renderAudioPlayer,
+  renderDocument,
+  renderMapLinks,
+  renderMapPointGroups,
+  renderMarkdown,
+  renderScreenshot,
+  sendRpc,
+  tokenSpeedPerSecond,
+  tokenSpeedTone,
+  toolCallSummary,
+  updateCountdown,
+  warmAudioPlayback
+}, Symbol.toStringTag, { value: "Module" }));
 function getSystemTheme() {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
@@ -5300,11 +5411,11 @@ export {
   setChatSeq as Q,
   y$1 as R,
   g$1 as S,
-  nodeCombo as T,
-  nodeDropdown as U,
-  nodeComboLabel as V,
-  nodeComboBtn as W,
-  nodeDropdownList as X,
+  nodeComboBtn as T,
+  nodeDropdownList as U,
+  nodeCombo as V,
+  nodeDropdown as W,
+  nodeComboLabel as X,
   projectComboLabel as Y,
   t as Z,
   __vitePreload as _,
@@ -5359,22 +5470,22 @@ export {
   setSessions as aj,
   insertSessionInOrder as ak,
   Session as al,
-  setSelectedModelId as am,
-  modelComboLabel as an,
-  setSessionSwitchInProgress as ao,
-  setStreamEl as ap,
-  setStreamText as aq,
-  setLastToolOutput as ar,
-  setVoicePending as as,
-  setActiveSessionKey as at,
-  chatSeq as au,
+  chatSeq as am,
+  setSelectedModelId as an,
+  modelComboLabel as ao,
+  setSessionSwitchInProgress as ap,
+  setStreamEl as aq,
+  setStreamText as ar,
+  setLastToolOutput as as,
+  setVoicePending as at,
+  setActiveSessionKey as au,
   y$2 as av,
-  d$1 as aw,
+  d$2 as aw,
   A as ax,
   S$2 as ay,
   projectFilterId$1 as az,
   unseenWarns as b,
-  setReconnectDelay as b$,
+  setConnected as b$,
   setSandboxLabel as b0,
   setSandboxImageBtn as b1,
   setSandboxImageLabel as b2,
@@ -5386,32 +5497,32 @@ export {
   modelSearchInput as b8,
   modelDropdownList as b9,
   setSubscribed as bA,
-  projects$1 as bB,
-  sandboxInfo$1 as bC,
-  localizedApiErrorMessage as bD,
-  setLogsEventHandler as bE,
-  setNetworkAuditEventHandler as bF,
-  modelVersionScore as bG,
+  modelVersionScore as bB,
+  projects$1 as bC,
+  sandboxInfo$1 as bD,
+  localizedApiErrorMessage as bE,
+  setLogsEventHandler as bF,
+  setNetworkAuditEventHandler as bG,
   setRefreshProvidersPage as bH,
   setLocale as bI,
   esc as bJ,
   projectStore$1 as bK,
-  modelStore$1 as bL,
+  _modelStore as bL,
   S as bM,
-  initTheme as bN,
-  injectMarkdownStyles as bO,
-  init as bP,
-  translateStaticElements as bQ,
-  setAll$2 as bR,
-  setAll$1 as bS,
-  select as bT,
-  selectedModelId$1 as bU,
-  l$3 as bV,
-  localizeRpcError as bW,
-  pending as bX,
-  setConnected as bY,
-  nextId as bZ,
-  getPreferredLocale as b_,
+  _sessionStoreModule as bN,
+  _i18n as bO,
+  _helpers as bP,
+  initTheme as bQ,
+  injectMarkdownStyles as bR,
+  init as bS,
+  translateStaticElements as bT,
+  setAll$2 as bU,
+  setAll$1 as bV,
+  select as bW,
+  selectedModelId$1 as bX,
+  l$3 as bY,
+  localizeRpcError as bZ,
+  pending as b_,
   modelCombo as ba,
   modelDropdown as bb,
   setModelIdx as bc,
@@ -5439,29 +5550,32 @@ export {
   refreshProvidersPage as by,
   logsEventHandler as bz,
   connected as c,
-  reconnectDelay as c0,
-  setWs as c1,
+  nextId as c0,
+  getPreferredLocale as c1,
+  setReconnectDelay as c2,
+  reconnectDelay as c3,
+  setWs as c4,
   sendRpc as d,
   sessionTokens as e,
   formatTokens as f,
   chatMsgBox as g,
   updateCountdown as h,
-  chatBatchLoading as i,
-  sessionContextWindow as j,
-  sessionToolsEnabled as k,
-  sessionExecPromptSymbol as l,
-  commandModeEnabled as m,
-  sessionExecMode as n,
-  sessionCurrentInputTokens as o,
+  chatInput as i,
+  commandModeEnabled as j,
+  sessionExecPromptSymbol as k,
+  chatBatchLoading as l,
+  sessionContextWindow as m,
+  sessionToolsEnabled as n,
+  sessionExecMode as o,
   parseErrorMessage as p,
-  chatInput as q,
+  sessionCurrentInputTokens as q,
   sessionStore as r,
   setUnseenErrors as s,
   sessions as t,
   unseenErrors as u,
-  setLastHistoryIndex as v,
-  activeSessionKey as w,
-  lastHistoryIndex as x,
+  activeSessionKey as v,
+  lastHistoryIndex as w,
+  setLastHistoryIndex as x,
   renderAudioPlayer as y,
   renderMarkdown as z
 };

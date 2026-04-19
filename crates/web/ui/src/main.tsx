@@ -27,10 +27,46 @@ import { initTheme, injectMarkdownStyles } from "./theme";
 import { GlobalDialogs } from "./ui";
 import { connect } from "./websocket";
 
-// Expose stores and connection state on window for E2E test access.
-// The e2e helpers import state.connected / state.ws to verify WS status.
+// E2E test module imports — tests dynamically import individual JS
+// modules (js/helpers.js, js/chat-ui.js, etc.) that no longer exist
+// as standalone files. We expose the bundled modules on window so
+// the shim files in assets/js/ can proxy to them.
+import * as _helpers from "./helpers";
+import * as _events from "./events";
+import * as _chatUi from "./chat-ui";
+import * as _sessions from "./sessions";
+import * as _codeHighlight from "./code-highlight";
+import * as _wsConnect from "./ws-connect";
+import * as _nodeSelector from "./nodes-selector";
+import * as _providers from "./providers";
+import * as _channelsPage from "./pages/ChannelsPage";
+import * as _i18n from "./i18n";
+import * as _modelStore from "./stores/model-store";
+import * as _sessionStoreModule from "./stores/session-store";
+import * as _nodeStore from "./stores/node-store";
+import * as _sessionHistoryCache from "./stores/session-history-cache";
+
+// Expose stores and modules for E2E test access.
 window.__moltis_stores = { sessionStore, modelStore, projectStore };
 window.__moltis_state = S;
+window.__moltis_modules = {
+	state: S,
+	helpers: _helpers,
+	events: _events,
+	"chat-ui": _chatUi,
+	sessions: _sessions,
+	gon: gon,
+	"code-highlight": _codeHighlight,
+	"ws-connect": _wsConnect,
+	"nodes-selector": _nodeSelector,
+	providers: _providers,
+	"page-channels": _channelsPage,
+	i18n: _i18n,
+	"stores/model-store": _modelStore,
+	"stores/session-store": _sessionStoreModule,
+	"stores/node-store": _nodeStore,
+	"stores/session-history-cache": _sessionHistoryCache,
+};
 
 // Import page modules to register their routes
 import "./pages/ChatPage";

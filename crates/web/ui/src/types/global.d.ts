@@ -20,4 +20,6 @@ interface Window {
 	__moltis_stores?: MoltisStores;
 	/** Exposed state module for E2E test WS connection checks. */
 	__moltis_state?: Record<string, unknown>;
+	/** Exposed bundled modules for E2E test dynamic imports. */
+	__moltis_modules?: Record<string, Record<string, unknown>>;
 }
