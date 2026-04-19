@@ -167,8 +167,8 @@ protect_head = 3                    # Head messages kept verbatim (recency/struc
 protect_tail_min = 20               # Minimum tail messages kept verbatim (recency/structured).
 tail_budget_ratio = 0.20            # Tail size as fraction of threshold_percent × context_window.
 tool_prune_char_threshold = 200     # Middle tool results longer than this get placeholder-replaced.
-summary_model = "openrouter/google/gemini-2.5-flash"   # RESERVED — see note below.
-max_summary_tokens = 4096           # RESERVED — see note below.
+summary_model = "openrouter/google/gemini-2.5-flash"   # Auxiliary model for LLM compaction (optional).
+max_summary_tokens = 4096           # Informational — reserved for provider-level overrides.
 show_settings_hint = true           # Show "Change chat.compaction.mode in moltis.toml…" footer.
 ```
 
@@ -226,20 +226,19 @@ tail-budget math inside recency-preserving and structured modes.
 
 ### Picking a summary model
 
-> ⚠️ **`summary_model` / `max_summary_tokens` are reserved for a
-> follow-up** — beads issue **moltis-8me**. They're present in the
-> config schema so you can start setting them today, but the
-> `structured` and `llm_replace` strategies currently **ignore** them
-> and always use the session's primary provider. Setting either field
-> to a non-default value triggers a one-shot runtime WARN that names
-> the fields and the tracking issue so you're not billed for the wrong
-> model without warning.
+`summary_model` accepts a provider-qualified model identifier resolved
+through the provider registry (e.g.
+`"openrouter/google/gemini-2.5-flash"`,
+`"anthropic/claude-3-5-haiku-20241022"`). When set, `structured` and
+`llm_replace` compaction modes use this model instead of the session's
+primary provider. If the configured model is not found in the registry, a
+WARN is logged and the session's primary provider is used as fallback.
 
-When the auxiliary-model subsystem lands, `summary_model` will take
-a provider-qualified model identifier understood by the provider
-registry (e.g. `"openrouter/google/gemini-2.5-flash"`,
-`"anthropic/claude-3-5-haiku-20241022"`). Leave it unset to reuse the
-session's primary model.
+Leave `summary_model` unset to reuse the session's primary model.
+
+`max_summary_tokens` is informational only — the streaming summary call
+runs with the provider's default max-tokens. The field exists for
+forward-compatibility with provider-level overrides.
 
 Small fast models are usually the right choice for compaction: they're
 cheap, respond in seconds, and are good at instruction-following on a
@@ -265,7 +264,7 @@ just like the pre-PR behaviour did.
 - **moltis-g37** — config scaffolding, docs, `llm_replace` mode ✓
 - **moltis-h0c** — `recency_preserving` mode ✓
 - **moltis-aff** — `structured` mode ✓
-- **moltis-8me** — auxiliary-model subsystem for cheap summary models *(follow-up, lets users route compaction to a cheap auxiliary model instead of the session's primary model)*
+- **moltis-8me** — auxiliary-model subsystem for cheap summary models *(wired for `summary_model`; `max_summary_tokens` informational-only)*
 
 ## Further reading
 
@@ -273,5 +272,7 @@ just like the pre-PR behaviour did.
   the head + LLM summary + tail strategy that inspired `structured` mode.
 - `openclaw/src/agents/compaction.ts` + `pi-hooks/compaction-safeguard.ts`
   — LLM compaction with quality auditing and tool-pair repair.
-- `crates/chat/src/compaction.rs` — current `deterministic` mode
-  implementation.
+- `crates/chat/src/compaction.rs` — `deterministic` mode implementation
+- `crates/chat/src/compaction_run/` — all compaction mode runners
+  (`deterministic.rs`, `recency_preserving.rs`, `structured.rs`,
+  `llm_replace.rs`, `runner.rs`)
