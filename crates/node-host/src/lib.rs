@@ -6,10 +6,12 @@
 //! authenticates with a device token, and handles `system.run` commands
 //! by executing them locally.
 
+pub mod error;
 pub mod runner;
 pub mod service;
 
 pub use {
+    error::Error,
     runner::{NodeConfig, NodeHost},
     service::ServiceConfig,
 };

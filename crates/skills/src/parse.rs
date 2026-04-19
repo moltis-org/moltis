@@ -1,9 +1,8 @@
 use std::path::Path;
 
-use {
-    anyhow::{Context, bail},
-    serde::Deserialize,
-};
+use serde::Deserialize;
+
+use crate::error::{Error, Result};
 
 use crate::types::{InstallKind, InstallSpec, SkillContent, SkillMetadata};
 
@@ -24,7 +23,7 @@ pub fn validate_name(name: &str) -> bool {
 
 /// When `name` fails validation, try to use `slug` (from frontmatter or `_meta.json`)
 /// as the internal name, storing the original `name` as `display_name`.
-fn resolve_name_or_slug(meta: &mut SkillMetadata, skill_dir: &Path) -> anyhow::Result<()> {
+fn resolve_name_or_slug(meta: &mut SkillMetadata, skill_dir: &Path) -> Result<()> {
     if validate_name(&meta.name) {
         return Ok(());
     }
@@ -53,32 +52,30 @@ fn resolve_name_or_slug(meta: &mut SkillMetadata, skill_dir: &Path) -> anyhow::R
             } else {
                 "_meta.json"
             };
-            bail!(
+            return Err(Error::Validation(format!(
                 "skill name '{}' is invalid and slug '{}' (from {}) is also invalid: \
                  must be 1-64 lowercase alphanumeric, hyphen, or colon chars \
                  (e.g. 'my-skill' or 'ns:skill')",
-                meta.name,
-                s,
-                source
-            );
+                meta.name, s, source
+            )));
         },
         None => {
-            bail!(
+            return Err(Error::Validation(format!(
                 "skill name '{}' is invalid and no slug provided: \
                  must be 1-64 lowercase alphanumeric, hyphen, or colon chars \
                  (e.g. 'my-skill' or 'ns:skill'), \
                  or provide a valid 'slug' field",
                 meta.name
-            );
+            )));
         },
     }
 }
 
 /// Parse a SKILL.md file into metadata only (frontmatter).
-pub fn parse_metadata(content: &str, skill_dir: &Path) -> anyhow::Result<SkillMetadata> {
+pub fn parse_metadata(content: &str, skill_dir: &Path) -> Result<SkillMetadata> {
     let (frontmatter, _body) = split_frontmatter(content)?;
-    let mut meta: SkillMetadata =
-        serde_yaml::from_str(&frontmatter).context("invalid SKILL.md frontmatter")?;
+    let mut meta: SkillMetadata = serde_yaml::from_str(&frontmatter)
+        .map_err(|e| Error::Parse(format!("invalid SKILL.md frontmatter: {e}")))?;
 
     resolve_name_or_slug(&mut meta, skill_dir)?;
 
@@ -88,10 +85,10 @@ pub fn parse_metadata(content: &str, skill_dir: &Path) -> anyhow::Result<SkillMe
 }
 
 /// Parse a SKILL.md file into full content (metadata + body).
-pub fn parse_skill(content: &str, skill_dir: &Path) -> anyhow::Result<SkillContent> {
+pub fn parse_skill(content: &str, skill_dir: &Path) -> Result<SkillContent> {
     let (frontmatter, body) = split_frontmatter(content)?;
-    let mut meta: SkillMetadata =
-        serde_yaml::from_str(&frontmatter).context("invalid SKILL.md frontmatter")?;
+    let mut meta: SkillMetadata = serde_yaml::from_str(&frontmatter)
+        .map_err(|e| Error::Parse(format!("invalid SKILL.md frontmatter: {e}")))?;
 
     resolve_name_or_slug(&mut meta, skill_dir)?;
 
@@ -264,17 +261,19 @@ pub fn read_meta_json(skill_dir: &Path) -> Option<SkillMetaJson> {
 }
 
 /// Split SKILL.md content at `---` delimiters into (frontmatter, body).
-fn split_frontmatter(content: &str) -> anyhow::Result<(String, String)> {
+fn split_frontmatter(content: &str) -> Result<(String, String)> {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
-        bail!("SKILL.md must start with YAML frontmatter delimited by ---");
+        return Err(Error::Parse(
+            "SKILL.md must start with YAML frontmatter delimited by ---".into(),
+        ));
     }
 
     // Skip the opening ---
     let after_open = &trimmed[3..];
     let close_pos = after_open
         .find("\n---")
-        .context("SKILL.md missing closing --- for frontmatter")?;
+        .ok_or_else(|| Error::Parse("SKILL.md missing closing --- for frontmatter".into()))?;
 
     let frontmatter = after_open[..close_pos].trim().to_string();
     let body = after_open[close_pos + 4..].trim().to_string();

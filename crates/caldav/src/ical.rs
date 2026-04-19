@@ -1,11 +1,11 @@
 //! iCalendar build/parse helpers using the `icalendar` crate.
 
-use {
-    anyhow::{Result, anyhow},
-    icalendar::{Calendar, Component, Event, EventLike},
-};
+use icalendar::{Calendar, Component, Event, EventLike};
 
-use crate::types::{EventSummary, NewEvent, UpdateEvent};
+use crate::{
+    error::{Error, Result},
+    types::{EventSummary, NewEvent, UpdateEvent},
+};
 
 /// Build a VCALENDAR string containing a single VEVENT from the given parameters.
 #[must_use]
@@ -42,7 +42,7 @@ pub fn build_vevent(event: &NewEvent, uid: &str) -> String {
 pub fn parse_events(ical_data: &str, href: &str, etag: &str) -> Result<Vec<EventSummary>> {
     let calendar: Calendar = ical_data
         .parse()
-        .map_err(|e| anyhow!("failed to parse iCalendar data: {e}"))?;
+        .map_err(|e| Error::IcalParse(format!("failed to parse iCalendar data: {e}")))?;
 
     let mut events = Vec::new();
     for component in &calendar.components {
@@ -76,7 +76,7 @@ pub fn parse_events(ical_data: &str, href: &str, etag: &str) -> Result<Vec<Event
 pub fn merge_updates(existing: &str, updates: &UpdateEvent) -> Result<String> {
     let mut calendar: Calendar = existing
         .parse()
-        .map_err(|e| anyhow!("failed to parse existing iCalendar data: {e}"))?;
+        .map_err(|e| Error::IcalParse(format!("failed to parse existing iCalendar data: {e}")))?;
 
     let mut new_components = Vec::new();
     for component in calendar.components.drain(..) {

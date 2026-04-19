@@ -44,7 +44,7 @@ pub async fn prepare_gateway(
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
     session_event_bus: Option<SessionEventBus>,
-) -> anyhow::Result<PreparedGateway> {
+) -> crate::error::Result<PreparedGateway> {
     // Install a process-level rustls CryptoProvider early, before any channel
     // plugin (Slack, Discord, etc.) creates outbound TLS connections via
     // hyper-rustls.  Without this, `--no-tls` deployments skip the TLS cert
@@ -73,7 +73,8 @@ pub async fn prepare_gateway(
         tailscale_reset_on_exit_override,
         session_event_bus,
     )
-    .await?;
+    .await
+    .map_err(|e| crate::Error::Config(e.to_string()))?;
 
     let PreparedGatewayCore {
         state,

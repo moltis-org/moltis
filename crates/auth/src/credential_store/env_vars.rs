@@ -4,12 +4,12 @@ use std::sync::Arc;
 #[cfg(feature = "vault")]
 use moltis_vault::Vault;
 
+#[cfg(feature = "vault")]
+use crate::Error;
 use crate::{
     Result,
     credential_store::{CredentialStore, EnvVarEntry},
 };
-#[cfg(feature = "vault")]
-use crate::Error;
 
 impl CredentialStore {
     /// List all environment variables (names only, no values).

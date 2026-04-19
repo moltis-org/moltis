@@ -618,7 +618,7 @@ pub(crate) async fn start_skill_hot_reload_watcher() -> anyhow::Result<(
         .await
         .map_err(|error| anyhow::anyhow!("skills watcher task failed: {error}"))??;
 
-    moltis_skills::watcher::SkillWatcher::start(watch_specs)
+    Ok(moltis_skills::watcher::SkillWatcher::start(watch_specs)?)
 }
 
 // ── Local-LLM model restoration ─────────────────────────────────────────────

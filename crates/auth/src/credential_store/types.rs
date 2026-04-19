@@ -96,7 +96,9 @@ impl SshAuthMode {
         match value {
             "system" => Ok(Self::System),
             "managed" => Ok(Self::Managed),
-            _ => Err(crate::Error::Ssh(format!("unknown ssh auth mode '{value}'"))),
+            _ => Err(crate::Error::Ssh(format!(
+                "unknown ssh auth mode '{value}'"
+            ))),
         }
     }
 }

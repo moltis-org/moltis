@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::types::SkillsManifest;
+use crate::{error::Result, types::SkillsManifest};
 
 /// Persistent manifest storage with atomic writes.
 pub struct ManifestStore {
@@ -13,12 +13,12 @@ impl ManifestStore {
     }
 
     /// Default manifest path: `~/.moltis/skills-manifest.json`.
-    pub fn default_path() -> anyhow::Result<PathBuf> {
+    pub fn default_path() -> Result<PathBuf> {
         Ok(moltis_config::data_dir().join("skills-manifest.json"))
     }
 
     /// Load manifest from disk, returning a default if missing.
-    pub fn load(&self) -> anyhow::Result<SkillsManifest> {
+    pub fn load(&self) -> Result<SkillsManifest> {
         if !self.path.exists() {
             return Ok(SkillsManifest::default());
         }
@@ -28,7 +28,7 @@ impl ManifestStore {
     }
 
     /// Save manifest atomically via temp file + rename.
-    pub fn save(&self, manifest: &SkillsManifest) -> anyhow::Result<()> {
+    pub fn save(&self, manifest: &SkillsManifest) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }

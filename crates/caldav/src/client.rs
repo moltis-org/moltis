@@ -3,13 +3,15 @@
 use std::sync::Arc;
 
 use {
-    anyhow::{Result, anyhow},
     async_trait::async_trait,
     secrecy::{ExposeSecret, Secret},
 };
 
-use crate::types::{
-    CalendarInfo, CreatedEvent, EventSummary, NewEvent, TimeRange, UpdateEvent, UpdatedEvent,
+use crate::{
+    error::{Error, Result},
+    types::{
+        CalendarInfo, CreatedEvent, EventSummary, NewEvent, TimeRange, UpdateEvent, UpdatedEvent,
+    },
 };
 
 /// Trait for CalDAV server interactions.
@@ -71,11 +73,11 @@ impl LibDavCalDavClient {
     ) -> Result<Self> {
         let uri: http::Uri = base_url
             .parse()
-            .map_err(|e| anyhow!("invalid CalDAV URL '{base_url}': {e}"))?;
+            .map_err(|e| Error::InvalidUrl(format!("invalid CalDAV URL '{base_url}': {e}")))?;
 
         let https_connector = hyper_rustls::HttpsConnectorBuilder::new()
             .with_native_roots()
-            .map_err(|e| anyhow!("failed to load native TLS roots: {e}"))?
+            .map_err(|e| Error::Protocol(format!("failed to load native TLS roots: {e}")))?
             .https_or_http()
             .enable_http1()
             .build();
@@ -94,7 +96,7 @@ impl LibDavCalDavClient {
 
         let caldav_client = libdav::CalDavClient::bootstrap_via_service_discovery(webdav)
             .await
-            .map_err(|e| anyhow!("CalDAV service discovery failed: {e}"))?;
+            .map_err(|e| Error::Protocol(format!("CalDAV service discovery failed: {e}")))?;
 
         Ok(Self {
             inner: caldav_client,
@@ -107,7 +109,7 @@ impl LibDavCalDavClient {
             .inner
             .find_current_user_principal()
             .await
-            .map_err(|e| anyhow!("failed to find user principal: {e}"))?;
+            .map_err(|e| Error::Protocol(format!("failed to find user principal: {e}")))?;
 
         match principal {
             Some(principal_uri) => {
@@ -115,7 +117,9 @@ impl LibDavCalDavClient {
                     .inner
                     .request(libdav::caldav::FindCalendarHomeSet::new(&principal_uri))
                     .await
-                    .map_err(|e| anyhow!("failed to find calendar home set: {e}"))?;
+                    .map_err(|e| {
+                        Error::Protocol(format!("failed to find calendar home set: {e}"))
+                    })?;
                 if response.home_sets.is_empty() {
                     Ok(vec![self.inner.base_url().clone()])
                 } else {
@@ -138,7 +142,7 @@ impl CalDavClient for LibDavCalDavClient {
                 .inner
                 .request(libdav::caldav::FindCalendars::new(home_url))
                 .await
-                .map_err(|e| anyhow!("failed to find calendars: {e}"))?;
+                .map_err(|e| Error::Protocol(format!("failed to find calendars: {e}")))?;
 
             for cal in found.calendars {
                 let display_name = self
@@ -193,7 +197,7 @@ impl CalDavClient for LibDavCalDavClient {
             .inner
             .request(libdav::caldav::GetCalendarResources::new(calendar_href))
             .await
-            .map_err(|e| anyhow!("failed to fetch calendar resources: {e}"))?;
+            .map_err(|e| Error::Protocol(format!("failed to fetch calendar resources: {e}")))?;
 
         let mut events = Vec::new();
         for resource in &response.resources {
@@ -228,7 +232,7 @@ impl CalDavClient for LibDavCalDavClient {
             .inner
             .request(put_request)
             .await
-            .map_err(|e| anyhow!("failed to create event: {e}"))?;
+            .map_err(|e| Error::Protocol(format!("failed to create event: {e}")))?;
 
         Ok(CreatedEvent {
             href: event_href,
@@ -248,17 +252,16 @@ impl CalDavClient for LibDavCalDavClient {
             .inner
             .request(libdav::caldav::GetCalendarResources::new(href).with_hrefs([href]))
             .await
-            .map_err(|e| anyhow!("failed to fetch event for update: {e}"))?;
+            .map_err(|e| Error::Protocol(format!("failed to fetch event for update: {e}")))?;
 
         let resource = resources
             .resources
             .first()
-            .ok_or_else(|| anyhow!("event not found at {href}"))?;
+            .ok_or_else(|| Error::NotFound(format!("event not found at {href}")))?;
 
-        let content = resource
-            .content
-            .as_ref()
-            .map_err(|status| anyhow!("server returned {status} for event at {href}"))?;
+        let content = resource.content.as_ref().map_err(|status| {
+            Error::Protocol(format!("server returned {status} for event at {href}"))
+        })?;
 
         let merged = crate::ical::merge_updates(&content.data, &updates)?;
 
@@ -268,7 +271,7 @@ impl CalDavClient for LibDavCalDavClient {
             .inner
             .request(put_request)
             .await
-            .map_err(|e| anyhow!("failed to update event: {e}"))?;
+            .map_err(|e| Error::Protocol(format!("failed to update event: {e}")))?;
 
         Ok(UpdatedEvent {
             href: href.to_string(),
@@ -282,7 +285,7 @@ impl CalDavClient for LibDavCalDavClient {
         self.inner
             .request(delete_request)
             .await
-            .map_err(|e| anyhow!("failed to delete event: {e}"))?;
+            .map_err(|e| Error::Protocol(format!("failed to delete event: {e}")))?;
 
         Ok(())
     }

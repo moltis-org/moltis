@@ -29,7 +29,7 @@ struct MockEmbedder;
 
 #[async_trait]
 impl EmbeddingProvider for MockEmbedder {
-    async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+    async fn embed(&self, text: &str) -> moltis_memory::Result<Vec<f32>> {
         let lower = text.to_lowercase();
         Ok(KEYWORDS
             .iter()

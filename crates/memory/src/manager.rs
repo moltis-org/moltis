@@ -14,6 +14,7 @@ use crate::{
     chunker::chunk_content,
     config::MemoryConfig,
     embeddings::EmbeddingProvider,
+    error::Result,
     schema::{ChunkRow, FileRow},
     search::{self, SearchResult},
     store::{CacheEntry, MemoryStore},
@@ -99,10 +100,7 @@ impl MemoryManager {
     }
 
     /// Resolve a file path by a content-hash prefix.
-    pub async fn resolve_file_by_hash_prefix(
-        &self,
-        hash_prefix: &str,
-    ) -> anyhow::Result<Option<String>> {
+    pub async fn resolve_file_by_hash_prefix(&self, hash_prefix: &str) -> Result<Option<String>> {
         let prefix = hash_prefix.trim_start_matches('#');
         let files = self.store.list_files().await?;
         Ok(files
@@ -112,7 +110,7 @@ impl MemoryManager {
     }
 
     /// Synchronize: walk configured directories, detect changed files, re-chunk and re-embed.
-    pub async fn sync(&self) -> anyhow::Result<SyncReport> {
+    pub async fn sync(&self) -> Result<SyncReport> {
         let mut report = SyncReport::default();
 
         let mut discovered_paths = Vec::new();
@@ -194,14 +192,14 @@ impl MemoryManager {
     }
 
     /// Sync a single file by path. Returns true if it was updated.
-    pub async fn sync_path(&self, path: &Path) -> anyhow::Result<bool> {
+    pub async fn sync_path(&self, path: &Path) -> Result<bool> {
         let path_str = path.to_string_lossy().to_string();
         let mut report = SyncReport::default();
         self.sync_file(path, &path_str, &mut report).await
     }
 
     /// Remove a file path from the memory index after the backing file is gone.
-    pub async fn remove_path(&self, path: &Path) -> anyhow::Result<bool> {
+    pub async fn remove_path(&self, path: &Path) -> Result<bool> {
         let path_str = path.to_string_lossy().to_string();
         let had_file = self.store.get_file(&path_str).await?.is_some();
         let had_chunks = !self.store.get_chunks_for_file(&path_str).await?.is_empty();
@@ -219,7 +217,7 @@ impl MemoryManager {
         path: &Path,
         path_str: &str,
         report: &mut SyncReport,
-    ) -> anyhow::Result<bool> {
+    ) -> Result<bool> {
         let metadata = tokio::fs::metadata(path).await?;
         let mtime = metadata
             .modified()?
@@ -378,7 +376,7 @@ impl MemoryManager {
     /// Search memory. Uses hybrid (vector + keyword) when embeddings are available,
     /// falls back to keyword-only search otherwise.
     #[tracing::instrument(skip(self), fields(query_len = query.len(), limit))]
-    pub async fn search(&self, query: &str, limit: usize) -> anyhow::Result<Vec<SearchResult>> {
+    pub async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
         if let Some(ref embedder) = self.embedder {
             search::hybrid_search(
                 self.store.as_ref(),
@@ -396,12 +394,12 @@ impl MemoryManager {
     }
 
     /// Get a specific chunk by ID.
-    pub async fn get_chunk(&self, id: &str) -> anyhow::Result<Option<ChunkRow>> {
+    pub async fn get_chunk(&self, id: &str) -> Result<Option<ChunkRow>> {
         self.store.get_chunk_by_id(id).await
     }
 
     /// Get status information about the memory system.
-    pub async fn status(&self) -> anyhow::Result<MemoryStatus> {
+    pub async fn status(&self) -> Result<MemoryStatus> {
         let files = self.store.list_files().await?;
         let mut total_chunks = 0usize;
         for file in &files {
@@ -545,7 +543,7 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingProvider for MockEmbedder {
-        async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        async fn embed(&self, text: &str) -> Result<Vec<f32>> {
             Ok(keyword_embedding(text))
         }
 
@@ -863,7 +861,7 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingProvider for CountingEmbedder {
-        async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        async fn embed(&self, text: &str) -> Result<Vec<f32>> {
             self.embed_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(keyword_embedding(text))
@@ -909,7 +907,7 @@ mod tests {
 
         #[async_trait]
         impl EmbeddingProvider for ArcEmbedder {
-            async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+            async fn embed(&self, text: &str) -> Result<Vec<f32>> {
                 self.0.embed(text).await
             }
 

@@ -1,4 +1,7 @@
-use crate::{Result, credential_store::{CredentialStore, PasskeyEntry}};
+use crate::{
+    Result,
+    credential_store::{CredentialStore, PasskeyEntry},
+};
 
 impl CredentialStore {
     /// Store a new passkey credential.

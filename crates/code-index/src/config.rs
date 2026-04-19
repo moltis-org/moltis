@@ -157,28 +157,22 @@ impl CodeIndexConfig {
         let path_lower = relative_path.to_ascii_lowercase();
         // Normalize separators.
         let path_forward = path_lower.replace('\\', "/");
-        self.skip_paths
-            .iter()
-            .any(|pattern| {
-                // Strip trailing slashes so "vendor/" is treated as "vendor" for
-                // segment matching.
-                let p = pattern.trim_end_matches('/').to_ascii_lowercase();
-                // Exact prefix match (handles both "vendor/foo" and "vendor/").
-                if path_forward.starts_with(&p)
-                    || path_forward.starts_with(&format!("{p}/"))
-                {
-                    return true;
-                }
-                // Segment match: check if any path component equals the pattern.
-                // This catches "src/vendor/foo.rs" when pattern is "vendor".
-                if !p.contains('/') {
-                    path_forward
-                        .split('/')
-                        .any(|segment| segment == p.as_str())
-                } else {
-                    false
-                }
-            })
+        self.skip_paths.iter().any(|pattern| {
+            // Strip trailing slashes so "vendor/" is treated as "vendor" for
+            // segment matching.
+            let p = pattern.trim_end_matches('/').to_ascii_lowercase();
+            // Exact prefix match (handles both "vendor/foo" and "vendor/").
+            if path_forward.starts_with(&p) || path_forward.starts_with(&format!("{p}/")) {
+                return true;
+            }
+            // Segment match: check if any path component equals the pattern.
+            // This catches "src/vendor/foo.rs" when pattern is "vendor".
+            if !p.contains('/') {
+                path_forward.split('/').any(|segment| segment == p.as_str())
+            } else {
+                false
+            }
+        })
     }
 
     /// Return a [`FilterConfig`](crate::filter::FilterConfig) for the file watcher.

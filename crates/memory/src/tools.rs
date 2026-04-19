@@ -324,7 +324,7 @@ fn resolve_memory_tool_path(manager: &dyn MemoryRuntime, file: &str) -> anyhow::
     let data_dir = manager
         .data_dir()
         .ok_or_else(|| anyhow::anyhow!("memory writes are disabled (no data_dir configured)"))?;
-    validate_memory_path(data_dir, file)
+    Ok(validate_memory_path(data_dir, file)?)
 }
 
 async fn checkpoint_memory_path(
@@ -365,7 +365,7 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingProvider for MockEmbedder {
-        async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        async fn embed(&self, text: &str) -> crate::error::Result<Vec<f32>> {
             let lower = text.to_lowercase();
             Ok(KEYWORDS
                 .iter()

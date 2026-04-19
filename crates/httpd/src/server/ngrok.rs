@@ -69,7 +69,7 @@ impl NgrokController {
     pub async fn apply(
         &self,
         ngrok_config: &moltis_config::NgrokConfig,
-    ) -> anyhow::Result<Option<NgrokRuntimeStatus>> {
+    ) -> crate::error::Result<Option<NgrokRuntimeStatus>> {
         self.stop().await?;
 
         if !ngrok_config.enabled {
@@ -94,11 +94,11 @@ impl NgrokController {
     async fn start(
         &self,
         ngrok_config: &moltis_config::NgrokConfig,
-    ) -> anyhow::Result<NgrokActiveTunnel> {
+    ) -> crate::error::Result<NgrokActiveTunnel> {
         let app = {
             let stored = self.inner.app.read().await;
             stored.clone().ok_or_else(|| {
-                anyhow::anyhow!("ngrok tunnel cannot start before the HTTP app is ready")
+                crate::Error::Ngrok("ngrok tunnel cannot start before the HTTP app is ready".into())
             })?
         };
 
@@ -111,7 +111,7 @@ impl NgrokController {
         .await
     }
 
-    pub async fn stop(&self) -> anyhow::Result<()> {
+    pub async fn stop(&self) -> crate::error::Result<()> {
         use ngrok::prelude::TunnelCloser;
 
         let active_tunnel = {

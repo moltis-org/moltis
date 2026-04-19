@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 use crate::{
+    error::Result,
     formats::PluginFormat,
     manifest::ManifestStore,
     parse,
@@ -13,7 +14,7 @@ use crate::{
 #[async_trait]
 pub trait SkillDiscoverer: Send + Sync {
     /// Scan configured paths and return metadata for all discovered skills.
-    async fn discover(&self) -> anyhow::Result<Vec<SkillMetadata>>;
+    async fn discover(&self) -> Result<Vec<SkillMetadata>>;
 }
 
 /// Default filesystem-based skill discoverer.
@@ -54,7 +55,7 @@ impl FsSkillDiscoverer {
 
 #[async_trait]
 impl SkillDiscoverer for FsSkillDiscoverer {
-    async fn discover(&self) -> anyhow::Result<Vec<SkillMetadata>> {
+    async fn discover(&self) -> Result<Vec<SkillMetadata>> {
         let mut skills = Vec::new();
 
         for (base_path, source) in &self.search_paths {

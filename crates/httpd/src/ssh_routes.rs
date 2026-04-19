@@ -769,7 +769,9 @@ fn build_ssh_test_response(
     }
 }
 
-async fn generate_ssh_key_material(name: &str) -> anyhow::Result<(SecretString, String, String)> {
+async fn generate_ssh_key_material(
+    name: &str,
+) -> crate::error::Result<(SecretString, String, String)> {
     let dir = tempfile::tempdir()?;
     let key_path = dir.path().join("moltis_deploy_key");
     let output = Command::new("ssh-keygen")
@@ -784,7 +786,9 @@ async fn generate_ssh_key_material(name: &str) -> anyhow::Result<(SecretString, 
         .output()
         .await?;
     if !output.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+        return Err(crate::Error::Ssh(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
     }
 
     let private_key = SecretString::new(tokio::fs::read_to_string(&key_path).await?);
@@ -796,7 +800,7 @@ async fn generate_ssh_key_material(name: &str) -> anyhow::Result<(SecretString, 
 async fn inspect_imported_private_key(
     private_key: &SecretString,
     passphrase: Option<&SecretString>,
-) -> anyhow::Result<(SecretString, String, String)> {
+) -> crate::error::Result<(SecretString, String, String)> {
     let dir = tempfile::tempdir()?;
     let key_path = dir.path().join("imported_key");
     tokio::fs::write(&key_path, private_key.expose_secret()).await?;
@@ -824,11 +828,12 @@ async fn inspect_imported_private_key(
             .trim()
             .to_string();
         if passphrase.is_none() && looks_like_passphrase_error(&stderr) {
-            anyhow::bail!(
+            return Err(crate::Error::Ssh(
                 "this private key is passphrase-protected, provide the passphrase to import it"
-            );
+                    .into(),
+            ));
         }
-        anyhow::bail!(stderr);
+        return Err(crate::Error::Ssh(stderr));
     }
 
     if let Some(passphrase) = passphrase {
@@ -843,13 +848,20 @@ async fn inspect_imported_private_key(
         let _decrypt_askpass = configure_ssh_askpass(&mut decrypt_command, passphrase)?;
         let decrypt_output = decrypt_command.output().await?;
         if !decrypt_output.status.success() {
-            anyhow::bail!("{}", String::from_utf8_lossy(&decrypt_output.stderr).trim());
+            return Err(crate::Error::Ssh(
+                String::from_utf8_lossy(&decrypt_output.stderr)
+                    .trim()
+                    .to_string(),
+            ));
         }
     }
 
     let fingerprint = ssh_keygen_fingerprint(&key_path).await?;
     let decrypted_private_key = SecretString::new(tokio::fs::read_to_string(&key_path).await?);
-    let public_key = String::from_utf8(public_output.stdout)?.trim().to_string();
+    let public_key = String::from_utf8(public_output.stdout)
+        .map_err(|e| crate::Error::Ssh(e.to_string()))?
+        .trim()
+        .to_string();
     Ok((decrypted_private_key, public_key, fingerprint))
 }
 
@@ -871,7 +883,7 @@ fn looks_like_passphrase_error(stderr: &str) -> bool {
 fn configure_ssh_askpass(
     command: &mut Command,
     passphrase: &SecretString,
-) -> anyhow::Result<tempfile::TempDir> {
+) -> crate::error::Result<tempfile::TempDir> {
     let dir = tempfile::tempdir()?;
     let askpass_path = dir.path().join("askpass.sh");
     let passphrase_path = dir.path().join("askpass.sh.pass");
@@ -890,19 +902,23 @@ fn configure_ssh_askpass(
     Ok(dir)
 }
 
-async fn ssh_keygen_fingerprint(path: &std::path::Path) -> anyhow::Result<String> {
+async fn ssh_keygen_fingerprint(path: &std::path::Path) -> crate::error::Result<String> {
     let output = Command::new("ssh-keygen")
         .arg("-lf")
         .arg(path)
         .output()
         .await?;
     if !output.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+        return Err(crate::Error::Ssh(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
     }
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    String::from_utf8(output.stdout)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| crate::Error::Ssh(e.to_string()))
 }
 
-async fn validate_known_host_entry(known_host: &str) -> anyhow::Result<()> {
+async fn validate_known_host_entry(known_host: &str) -> crate::error::Result<()> {
     let dir = tempfile::tempdir()?;
     let known_hosts_path = dir.path().join("known_hosts");
     tokio::fs::write(&known_hosts_path, format!("{known_host}\n")).await?;
@@ -913,7 +929,9 @@ async fn validate_known_host_entry(known_host: &str) -> anyhow::Result<()> {
     }
     let _ = ssh_keygen_fingerprint(&known_hosts_path)
         .await
-        .map_err(|_| anyhow::anyhow!("known host entry is not a valid known_hosts line"))?;
+        .map_err(|_| {
+            crate::Error::Ssh("known host entry is not a valid known_hosts line".into())
+        })?;
     Ok(())
 }
 
@@ -962,7 +980,7 @@ fn fallback_scan_host(target: &str) -> String {
 async fn resolve_scan_target(
     target: &str,
     port: Option<u16>,
-) -> anyhow::Result<ResolvedScanTarget> {
+) -> crate::error::Result<ResolvedScanTarget> {
     let output = Command::new("ssh")
         .arg("-G")
         .arg("--")
@@ -992,10 +1010,12 @@ async fn resolve_scan_target(
 async fn scan_target_known_host(
     target: &str,
     port: Option<u16>,
-) -> anyhow::Result<ScannedKnownHost> {
+) -> crate::error::Result<ScannedKnownHost> {
     let resolved = resolve_scan_target(target, port).await?;
     if resolved.host.is_empty() {
-        anyhow::bail!("could not resolve a hostname for ssh target '{target}'");
+        return Err(crate::Error::Ssh(format!(
+            "could not resolve a hostname for ssh target '{target}'"
+        )));
     }
 
     let mut command = Command::new("ssh-keyscan");
@@ -1006,18 +1026,23 @@ async fn scan_target_known_host(
     command.arg(&resolved.host);
     let output = command.output().await?;
     if !output.status.success() {
-        anyhow::bail!("{}", String::from_utf8_lossy(&output.stderr).trim());
+        return Err(crate::Error::Ssh(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
     }
-    let known_host = String::from_utf8(output.stdout)?.trim().to_string();
+    let known_host = String::from_utf8(output.stdout)
+        .map_err(|e| crate::Error::Ssh(e.to_string()))?
+        .trim()
+        .to_string();
     if known_host.is_empty() {
-        anyhow::bail!(
+        return Err(crate::Error::Ssh(format!(
             "ssh-keyscan did not return any host keys for {}{}",
             resolved.host,
             resolved
                 .port
                 .map(|value| format!(":{value}"))
                 .unwrap_or_default()
-        );
+        )));
     }
     validate_known_host_entry(&known_host).await?;
 

@@ -222,14 +222,11 @@ pub fn build_initial_snapshot(
             },
         };
 
-        snapshot.insert(
-            rel_str,
-            FileMeta {
-                content_hash: hash,
-                modified_time,
-                size: meta.len(),
-            },
-        );
+        snapshot.insert(rel_str, FileMeta {
+            content_hash: hash,
+            modified_time,
+            size: meta.len(),
+        });
     }
 
     Ok(snapshot)
@@ -256,14 +253,11 @@ pub fn build_snapshot_from_filtered(filtered: &[FilteredFile]) -> HashSnapshot {
             .map_or(0, |d| d.as_secs());
 
         if let Ok(hash) = content_hash(&file.path) {
-            snapshot.insert(
-                rel_str,
-                FileMeta {
-                    content_hash: hash,
-                    modified_time,
-                    size: meta.len(),
-                },
-            );
+            snapshot.insert(rel_str, FileMeta {
+                content_hash: hash,
+                modified_time,
+                size: meta.len(),
+            });
         }
     }
     snapshot
@@ -350,14 +344,11 @@ mod tests {
         let mut previous = build_initial_snapshot(repo_dir, &config).unwrap();
 
         // Insert a fake file that doesn't exist on disk.
-        previous.insert(
-            "fake/deleted_file.rs".to_string(),
-            FileMeta {
-                content_hash: "abc123".to_string(),
-                modified_time: 0,
-                size: 100,
-            },
-        );
+        previous.insert("fake/deleted_file.rs".to_string(), FileMeta {
+            content_hash: "abc123".to_string(),
+            modified_time: 0,
+            size: 100,
+        });
 
         let (delta, _) = compute_delta(repo_dir, &config, &previous).unwrap();
         assert!(
@@ -385,9 +376,7 @@ mod tests {
                 "hash for {path} should be 64 hex chars"
             );
             assert!(
-                meta.content_hash
-                    .chars()
-                    .all(|c| c.is_ascii_hexdigit()),
+                meta.content_hash.chars().all(|c| c.is_ascii_hexdigit()),
                 "hash for {path} should be hex, got {}",
                 meta.content_hash
             );

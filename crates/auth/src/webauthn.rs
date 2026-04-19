@@ -143,9 +143,7 @@ impl WebAuthnState {
         let (_, pending) = self
             .pending_registrations
             .remove(challenge_id)
-            .ok_or_else(|| {
-                Error::WebAuthn("no pending registration for this challenge".into())
-            })?;
+            .ok_or_else(|| Error::WebAuthn("no pending registration for this challenge".into()))?;
 
         if pending.created_at.elapsed().as_secs() > CHALLENGE_TTL_SECS {
             return Err(Error::WebAuthn("registration challenge expired".into()));

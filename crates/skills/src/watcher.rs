@@ -9,7 +9,6 @@ use std::{
 };
 
 use {
-    anyhow::Result,
     notify_debouncer_full::{
         DebounceEventResult, Debouncer, RecommendedCache, new_debouncer, notify::RecursiveMode,
     },
@@ -19,6 +18,7 @@ use {
 
 use crate::{
     discover::FsSkillDiscoverer,
+    error::Result,
     manifest::ManifestStore,
     types::{SkillSource, SkillsManifest},
 };

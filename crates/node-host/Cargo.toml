@@ -8,7 +8,6 @@ default = ["metrics"]
 metrics = ["dep:moltis-metrics"]
 
 [dependencies]
-anyhow            = { workspace = true }
 futures           = { workspace = true }
 moltis-config     = { workspace = true }
 moltis-metrics    = { optional = true, workspace = true }
@@ -18,6 +17,7 @@ rustls            = { workspace = true }
 serde             = { workspace = true }
 serde_json        = { workspace = true }
 sysinfo           = { workspace = true }
+thiserror         = { workspace = true }
 tokio             = { workspace = true }
 tokio-tungstenite = { features = ["rustls-tls-webpki-roots"], workspace = true }
 tracing           = { workspace = true }

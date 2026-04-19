@@ -5,13 +5,13 @@ use std::{
 };
 
 use {
-    anyhow::{Context, bail},
     flate2::{Compression, read::GzDecoder, write::GzEncoder},
     tar::{Archive, Builder, Header},
     walkdir::WalkDir,
 };
 
 use crate::{
+    error::{Error, Result},
     formats::{PluginFormat, detect_format, scan_with_adapter},
     install::scan_repo_skills,
     manifest::ManifestStore,
@@ -46,7 +46,7 @@ pub struct ImportedRepoBundle {
     pub skills: Vec<SkillMetadata>,
 }
 
-pub fn default_export_dir() -> anyhow::Result<PathBuf> {
+pub fn default_export_dir() -> Result<PathBuf> {
     Ok(moltis_config::data_dir().join("skill-exports"))
 }
 
@@ -54,7 +54,7 @@ pub async fn export_repo_bundle(
     source: &str,
     install_dir: &Path,
     output_path: Option<&Path>,
-) -> anyhow::Result<ExportedRepoBundle> {
+) -> Result<ExportedRepoBundle> {
     let manifest_path = ManifestStore::default_path()?;
     let store = ManifestStore::new(manifest_path);
     export_repo_bundle_with_store(source, install_dir, output_path, &store).await
@@ -63,7 +63,7 @@ pub async fn export_repo_bundle(
 pub async fn import_repo_bundle(
     bundle_path: &Path,
     install_dir: &Path,
-) -> anyhow::Result<ImportedRepoBundle> {
+) -> Result<ImportedRepoBundle> {
     let manifest_path = ManifestStore::default_path()?;
     let store = ManifestStore::new(manifest_path);
     import_repo_bundle_with_store(bundle_path, install_dir, &store).await
@@ -74,15 +74,18 @@ pub async fn export_repo_bundle_with_store(
     install_dir: &Path,
     output_path: Option<&Path>,
     store: &ManifestStore,
-) -> anyhow::Result<ExportedRepoBundle> {
+) -> Result<ExportedRepoBundle> {
     let manifest = store.load()?;
     let repo = manifest
         .find_repo(source)
         .cloned()
-        .ok_or_else(|| anyhow::anyhow!("repo '{source}' not found"))?;
+        .ok_or_else(|| Error::NotFound(format!("repo '{source}' not found")))?;
     let repo_dir = install_dir.join(&repo.repo_name);
     if !repo_dir.is_dir() {
-        bail!("repo directory missing on disk: {}", repo_dir.display());
+        return Err(Error::NotFound(format!(
+            "repo directory missing on disk: {}",
+            repo_dir.display()
+        )));
     }
 
     let bundle_path = resolve_bundle_output_path(output_path, &repo.repo_name)?;
@@ -109,7 +112,7 @@ pub async fn import_repo_bundle_with_store(
     bundle_path: &Path,
     install_dir: &Path,
     store: &ManifestStore,
-) -> anyhow::Result<ImportedRepoBundle> {
+) -> Result<ImportedRepoBundle> {
     tokio::fs::create_dir_all(install_dir).await?;
 
     let bundle_path = bundle_path.to_path_buf();
@@ -136,10 +139,10 @@ pub async fn import_repo_bundle_with_store(
     let (format, skills_meta, skill_states) = scan_imported_repo(&repo_dir, install_dir).await?;
     if skills_meta.is_empty() {
         let _ = tokio::fs::remove_dir_all(&repo_dir).await;
-        bail!(
+        return Err(Error::Bundle(format!(
             "imported bundle '{}' contains no usable skills",
             bundle_path.display()
-        );
+        )));
     }
 
     let mut repo = manifest_bundle.repo;
@@ -179,7 +182,7 @@ pub async fn import_repo_bundle_with_store(
 async fn scan_imported_repo(
     repo_dir: &Path,
     install_dir: &Path,
-) -> anyhow::Result<(PluginFormat, Vec<SkillMetadata>, Vec<SkillState>)> {
+) -> Result<(PluginFormat, Vec<SkillMetadata>, Vec<SkillState>)> {
     let format = detect_format(repo_dir);
     let (skills_meta, skill_states) = match format {
         PluginFormat::Skill => scan_repo_skills(repo_dir, install_dir).await?,
@@ -204,17 +207,19 @@ async fn scan_imported_repo(
                     .collect();
                 (meta, states)
             },
-            None => bail!("no adapter available for imported repo format '{}'", format),
+            None => {
+                return Err(Error::Bundle(format!(
+                    "no adapter available for imported repo format '{}'",
+                    format
+                )));
+            },
         },
     };
 
     Ok((format, skills_meta, skill_states))
 }
 
-fn resolve_bundle_output_path(
-    output_path: Option<&Path>,
-    repo_name: &str,
-) -> anyhow::Result<PathBuf> {
+fn resolve_bundle_output_path(output_path: Option<&Path>, repo_name: &str) -> Result<PathBuf> {
     let default_name = format!("{repo_name}-{}.tar.gz", current_time_ms());
     let path = match output_path {
         Some(path) if path.is_dir() => path.join(default_name),
@@ -228,7 +233,7 @@ fn write_bundle_archive(
     bundle: &PortableRepoBundle,
     repo_dir: &Path,
     bundle_path: &Path,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     let file = File::create(bundle_path)?;
     let encoder = GzEncoder::new(file, Compression::default());
     let mut builder = Builder::new(encoder);
@@ -250,7 +255,7 @@ fn write_bundle_archive(
 
         let relative = path
             .strip_prefix(repo_dir)
-            .with_context(|| format!("failed to relativize {}", path.display()))?;
+            .map_err(|_| Error::Bundle(format!("failed to relativize {}", path.display())))?;
         let archive_path = Path::new(BUNDLE_REPO_PREFIX).join(relative);
         if metadata.is_dir() {
             builder.append_dir(&archive_path, path)?;
@@ -265,7 +270,7 @@ fn write_bundle_archive(
     Ok(())
 }
 
-fn read_bundle_manifest(bundle_path: &Path) -> anyhow::Result<PortableRepoBundle> {
+fn read_bundle_manifest(bundle_path: &Path) -> Result<PortableRepoBundle> {
     let file = File::open(bundle_path)?;
     let decoder = GzDecoder::new(file);
     let mut archive = Archive::new(decoder);
@@ -278,24 +283,23 @@ fn read_bundle_manifest(bundle_path: &Path) -> anyhow::Result<PortableRepoBundle
             entry.read_to_string(&mut data)?;
             let bundle: PortableRepoBundle = serde_json::from_str(&data)?;
             if bundle.version != BUNDLE_VERSION {
-                bail!(
+                return Err(Error::Bundle(format!(
                     "unsupported skill bundle version {} (expected {})",
-                    bundle.version,
-                    BUNDLE_VERSION
-                );
+                    bundle.version, BUNDLE_VERSION
+                )));
             }
             return Ok(bundle);
         }
     }
 
-    bail!(
+    Err(Error::Bundle(format!(
         "bundle '{}' is missing {}",
         bundle_path.display(),
         BUNDLE_MANIFEST_PATH
-    )
+    )))
 }
 
-fn extract_bundle_archive(bundle_path: &Path, target_dir: &Path) -> anyhow::Result<()> {
+fn extract_bundle_archive(bundle_path: &Path, target_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(target_dir)?;
     let canonical_target = std::fs::canonicalize(target_dir)?;
 
@@ -307,10 +311,10 @@ fn extract_bundle_archive(bundle_path: &Path, target_dir: &Path) -> anyhow::Resu
         let mut entry = entry?;
         let entry_type = entry.header().entry_type();
         if entry_type.is_symlink() || entry_type.is_hard_link() {
-            bail!(
+            return Err(Error::Bundle(format!(
                 "bundle '{}' contains unsupported link entries",
                 bundle_path.display()
-            );
+            )));
         }
 
         let path = entry.path()?.into_owned();
@@ -331,14 +335,18 @@ fn extract_bundle_archive(bundle_path: &Path, target_dir: &Path) -> anyhow::Resu
             std::fs::create_dir_all(parent)?;
             let canonical_parent = std::fs::canonicalize(parent)?;
             if !canonical_parent.starts_with(&canonical_target) {
-                bail!("bundle entry escaped import directory");
+                return Err(Error::Bundle(
+                    "bundle entry escaped import directory".into(),
+                ));
             }
         }
 
         if dest.exists() {
             let metadata = std::fs::symlink_metadata(&dest)?;
             if metadata.file_type().is_symlink() {
-                bail!("bundle entry resolves to a symlink destination");
+                return Err(Error::Bundle(
+                    "bundle entry resolves to a symlink destination".into(),
+                ));
             }
         }
 
@@ -348,10 +356,13 @@ fn extract_bundle_archive(bundle_path: &Path, target_dir: &Path) -> anyhow::Resu
     Ok(())
 }
 
-fn sanitize_bundle_repo_path(path: &Path) -> anyhow::Result<Option<PathBuf>> {
+fn sanitize_bundle_repo_path(path: &Path) -> Result<Option<PathBuf>> {
     let mut components = path.components();
     let Some(Component::Normal(prefix)) = components.next() else {
-        bail!("bundle contains invalid path '{}'", path.display());
+        return Err(Error::Bundle(format!(
+            "bundle contains invalid path '{}'",
+            path.display()
+        )));
     };
     if prefix != BUNDLE_REPO_PREFIX {
         return Ok(None);
@@ -366,7 +377,10 @@ fn sanitize_bundle_repo_path(path: &Path) -> anyhow::Result<Option<PathBuf>> {
         match component {
             Component::Normal(_) | Component::CurDir => {},
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                bail!("bundle contains unsafe path '{}'", path.display());
+                return Err(Error::Bundle(format!(
+                    "bundle contains unsafe path '{}'",
+                    path.display()
+                )));
             },
         }
     }

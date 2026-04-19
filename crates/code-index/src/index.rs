@@ -663,7 +663,7 @@ impl CodeIndex {
                                 })
                                 .collect()
                         }
-                    }
+                    },
                     Err(e) => {
                         #[cfg(feature = "tracing")]
                         warn!(
@@ -870,7 +870,7 @@ mod tests {
 
     #[async_trait]
     impl moltis_memory::embeddings::EmbeddingProvider for MockEmbedder {
-        async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+        async fn embed(&self, text: &str) -> moltis_memory::error::Result<Vec<f32>> {
             let mut vec = vec![0.0f32; self.dims];
             for (i, b) in text.as_bytes().iter().enumerate() {
                 vec[i % self.dims] += *b as f32 / 255.0;
@@ -902,8 +902,8 @@ mod tests {
 
     #[async_trait]
     impl moltis_memory::embeddings::EmbeddingProvider for FailingEmbedder {
-        async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
-            anyhow::bail!("embed failed")
+        async fn embed(&self, _text: &str) -> moltis_memory::error::Result<Vec<f32>> {
+            Err(moltis_memory::Error::Embedding("embed failed".into()))
         }
 
         fn model_name(&self) -> &str {

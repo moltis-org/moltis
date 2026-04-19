@@ -11,18 +11,24 @@ const MEMORY_DIR_PREFIX: &str = "memory/";
 /// - `MEMORY.md`
 /// - `memory.md`
 /// - `memory/<name>.md` (single segment only)
-pub fn validate_memory_path(data_dir: &Path, file: &str) -> anyhow::Result<PathBuf> {
+pub fn validate_memory_path(data_dir: &Path, file: &str) -> crate::error::Result<PathBuf> {
     let path = file.trim();
     if path.is_empty() {
-        anyhow::bail!("memory path cannot be empty");
+        return Err(crate::error::Error::Validation(
+            "memory path cannot be empty".into(),
+        ));
     }
 
     if Path::new(path).is_absolute() {
-        anyhow::bail!("memory path must be relative");
+        return Err(crate::error::Error::Validation(
+            "memory path must be relative".into(),
+        ));
     }
 
     if path.contains('\\') {
-        anyhow::bail!("memory path must use '/' separators");
+        return Err(crate::error::Error::Validation(
+            "memory path must use '/' separators".into(),
+        ));
     }
 
     if ROOT_MEMORY_FILES.contains(&path) {
@@ -30,15 +36,15 @@ pub fn validate_memory_path(data_dir: &Path, file: &str) -> anyhow::Result<PathB
     }
 
     let Some(name) = path.strip_prefix(MEMORY_DIR_PREFIX) else {
-        anyhow::bail!(
+        return Err(crate::error::Error::Validation(format!(
             "invalid memory path '{path}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
-        );
+        )));
     };
 
     if !is_valid_memory_file_name(name) {
-        anyhow::bail!(
+        return Err(crate::error::Error::Validation(format!(
             "invalid memory path '{path}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
-        );
+        )));
     }
 
     Ok(data_dir.join(MEMORY_DIR_PREFIX).join(name))
@@ -60,9 +66,11 @@ pub fn remove_exact_text(
     content: &str,
     snippet: &str,
     remove_all: bool,
-) -> anyhow::Result<TextRemovalResult> {
+) -> crate::error::Result<TextRemovalResult> {
     if snippet.trim().is_empty() {
-        anyhow::bail!("text to remove cannot be empty");
+        return Err(crate::error::Error::Validation(
+            "text to remove cannot be empty".into(),
+        ));
     }
 
     let variants = text_variants(snippet);
@@ -88,7 +96,9 @@ pub fn remove_exact_text(
         });
     }
 
-    anyhow::bail!("text to remove was not found in the target memory file")
+    Err(crate::error::Error::Validation(
+        "text to remove was not found in the target memory file".into(),
+    ))
 }
 
 fn text_variants(snippet: &str) -> Vec<String> {

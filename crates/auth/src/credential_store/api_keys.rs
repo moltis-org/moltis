@@ -75,10 +75,7 @@ impl CredentialStore {
     /// `None` if invalid or revoked.
     ///
     /// Supports both salted (HMAC-SHA256) and legacy unsalted (SHA-256) keys.
-    pub async fn verify_api_key(
-        &self,
-        raw_key: &str,
-    ) -> Result<Option<ApiKeyVerification>> {
+    pub async fn verify_api_key(&self, raw_key: &str) -> Result<Option<ApiKeyVerification>> {
         let rows: Vec<(i64, String, Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT id, key_hash, scopes, key_salt FROM api_keys WHERE revoked_at IS NULL",
         )

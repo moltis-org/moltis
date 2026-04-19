@@ -4,7 +4,9 @@ use secrecy::Secret;
 
 use crate::{
     Error, Result,
-    credential_store::{CredentialStore, SshAuthMode, SshKeyEntry, SshResolvedTarget, SshTargetEntry},
+    credential_store::{
+        CredentialStore, SshAuthMode, SshKeyEntry, SshResolvedTarget, SshTargetEntry,
+    },
 };
 
 impl CredentialStore {
@@ -424,10 +426,7 @@ impl CredentialStore {
         }))
     }
 
-    pub async fn resolve_ssh_target(
-        &self,
-        node_ref: &str,
-    ) -> Result<Option<SshResolvedTarget>> {
+    pub async fn resolve_ssh_target(&self, node_ref: &str) -> Result<Option<SshResolvedTarget>> {
         if let Some(id_str) = node_ref.strip_prefix("ssh:target:")
             && let Ok(id) = id_str.parse::<i64>()
         {
@@ -456,10 +455,7 @@ impl CredentialStore {
         }))
     }
 
-    pub async fn resolve_ssh_target_by_id(
-        &self,
-        id: i64,
-    ) -> Result<Option<SshResolvedTarget>> {
+    pub async fn resolve_ssh_target_by_id(&self, id: i64) -> Result<Option<SshResolvedTarget>> {
         let row: Option<(
             i64,
             String,

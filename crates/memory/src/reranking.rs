@@ -10,7 +10,10 @@ use {
     tracing::{debug, warn},
 };
 
-use crate::search::SearchResult;
+use crate::{
+    error::{Error, Result},
+    search::SearchResult,
+};
 
 /// Trait for LLM reranking providers.
 #[async_trait]
@@ -22,7 +25,7 @@ pub trait RerankerProvider: Send + Sync {
         query: &str,
         results: Vec<SearchResult>,
         top_k: usize,
-    ) -> anyhow::Result<Vec<SearchResult>>;
+    ) -> Result<Vec<SearchResult>>;
 }
 
 /// A reranker that uses an LLM to score and reorder results.
@@ -39,7 +42,7 @@ pub struct LlmReranker {
 #[async_trait]
 pub trait LlmClient: Send + Sync {
     /// Send a completion request and get the response text.
-    async fn complete(&self, prompt: &str, model: Option<&str>) -> anyhow::Result<String>;
+    async fn complete(&self, prompt: &str, model: Option<&str>) -> Result<String>;
 }
 
 impl LlmReranker {
@@ -95,7 +98,7 @@ impl LlmReranker {
     }
 
     /// Parse the LLM response into scores.
-    fn parse_scores(&self, response: &str, expected_count: usize) -> anyhow::Result<Vec<f32>> {
+    fn parse_scores(&self, response: &str, expected_count: usize) -> Result<Vec<f32>> {
         // Try to extract JSON array from response
         let response = response.trim();
 
@@ -107,7 +110,11 @@ impl LlmReranker {
         let scores: Vec<f32> = serde_json::from_str(json_str)?;
 
         if scores.len() != expected_count {
-            anyhow::bail!("expected {} scores, got {}", expected_count, scores.len());
+            return Err(Error::Reranking(format!(
+                "expected {} scores, got {}",
+                expected_count,
+                scores.len()
+            )));
         }
 
         // Clamp scores to 0.0-1.0 range
@@ -122,7 +129,7 @@ impl RerankerProvider for LlmReranker {
         query: &str,
         mut results: Vec<SearchResult>,
         top_k: usize,
-    ) -> anyhow::Result<Vec<SearchResult>> {
+    ) -> Result<Vec<SearchResult>> {
         if results.is_empty() {
             return Ok(results);
         }
@@ -201,7 +208,7 @@ impl RerankerProvider for NoOpReranker {
         _query: &str,
         results: Vec<SearchResult>,
         top_k: usize,
-    ) -> anyhow::Result<Vec<SearchResult>> {
+    ) -> Result<Vec<SearchResult>> {
         Ok(results.into_iter().take(top_k).collect())
     }
 }
@@ -217,7 +224,7 @@ mod tests {
 
     #[async_trait]
     impl LlmClient for MockLlmClient {
-        async fn complete(&self, _prompt: &str, _model: Option<&str>) -> anyhow::Result<String> {
+        async fn complete(&self, _prompt: &str, _model: Option<&str>) -> Result<String> {
             Ok(self.response.clone())
         }
     }

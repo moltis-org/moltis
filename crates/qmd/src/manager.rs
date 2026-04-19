@@ -10,6 +10,8 @@ use {
     tracing::{debug, info},
 };
 
+use crate::error::{Error, Result};
+
 /// Configuration for the QMD manager.
 #[derive(Debug, Clone)]
 pub struct QmdManagerConfig {
@@ -220,17 +222,17 @@ impl QmdManager {
     }
 
     /// Return the current QMD version.
-    pub async fn version(&self) -> anyhow::Result<String> {
+    pub async fn version(&self) -> Result<String> {
         let output = Command::new(&self.config.command)
             .arg("--version")
             .envs(&self.config.env_overrides)
             .output()
             .await?;
         if !output.status.success() {
-            anyhow::bail!(
-                "QMD version probe failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
+            return Err(Error::CommandFailed {
+                command: "version".into(),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
+            });
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
@@ -245,15 +247,15 @@ impl QmdManager {
         command
     }
 
-    async fn run_with_timeout(&self, mut command: Command) -> anyhow::Result<std::process::Output> {
+    async fn run_with_timeout(&self, mut command: Command) -> Result<std::process::Output> {
         let timeout_duration = Duration::from_millis(self.config.timeout_ms);
         match timeout(timeout_duration, command.output()).await {
             Ok(result) => Ok(result?),
-            Err(_) => anyhow::bail!("QMD command timed out after {}ms", self.config.timeout_ms),
+            Err(_) => Err(Error::Timeout(self.config.timeout_ms)),
         }
     }
 
-    async fn collection_exists(&self, name: &str) -> anyhow::Result<bool> {
+    async fn collection_exists(&self, name: &str) -> Result<bool> {
         let mut command = self.command_with_index();
         command
             .arg("collection")
@@ -269,13 +271,9 @@ impl QmdManager {
     /// Idempotent — if the collection already exists, this is a no-op.
     /// Useful for registering collections discovered at runtime (e.g. per-project
     /// code index directories) rather than only those pre-configured at startup.
-    pub async fn ensure_collection(
-        &self,
-        name: &str,
-        collection: &QmdCollection,
-    ) -> anyhow::Result<()> {
+    pub async fn ensure_collection(&self, name: &str, collection: &QmdCollection) -> Result<()> {
         if !self.is_available().await {
-            anyhow::bail!("QMD is not available");
+            return Err(Error::NotAvailable);
         }
 
         if self.collection_exists(name).await? {
@@ -296,11 +294,10 @@ impl QmdManager {
 
         let output = self.run_with_timeout(command).await?;
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!(
-                "QMD collection add failed for {name}: {}",
-                stderr.trim()
-            );
+            return Err(Error::CommandFailed {
+                command: format!("collection add {name}"),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
+            });
         }
 
         Ok(())
@@ -311,7 +308,7 @@ impl QmdManager {
     /// Iterates the collections set at construction time and registers any
     /// that don't already exist. For dynamic per-call registration, use
     /// [`ensure_collection`](Self::ensure_collection) instead.
-    pub async fn ensure_collections(&self) -> anyhow::Result<()> {
+    pub async fn ensure_collections(&self) -> Result<()> {
         for (name, collection) in &self.config.collections {
             self.ensure_collection(name, collection).await?;
         }
@@ -319,7 +316,7 @@ impl QmdManager {
     }
 
     /// Refresh indexed content, and optionally embeddings, after a write or startup sync.
-    pub async fn refresh_index(&self, enable_embeddings: bool) -> anyhow::Result<()> {
+    pub async fn refresh_index(&self, enable_embeddings: bool) -> Result<()> {
         self.ensure_collections().await?;
 
         let mut update = self.command_with_index();
@@ -329,8 +326,10 @@ impl QmdManager {
             .stderr(Stdio::piped());
         let output = self.run_with_timeout(update).await?;
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("QMD update failed: {}", stderr.trim());
+            return Err(Error::CommandFailed {
+                command: "update".into(),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
+            });
         }
 
         if enable_embeddings {
@@ -341,8 +340,10 @@ impl QmdManager {
                 .stderr(Stdio::piped());
             let output = self.run_with_timeout(embed).await?;
             if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("QMD embed failed: {}", stderr.trim());
+                return Err(Error::CommandFailed {
+                    command: "embed".into(),
+                    stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
+                });
             }
         }
 
@@ -355,9 +356,9 @@ impl QmdManager {
         query: &str,
         mode: SearchMode,
         limit: usize,
-    ) -> anyhow::Result<Vec<QmdSearchResult>> {
+    ) -> Result<Vec<QmdSearchResult>> {
         if !self.is_available().await {
-            anyhow::bail!("QMD is not available");
+            return Err(Error::NotAvailable);
         }
 
         let mut command = self.command_with_index();
@@ -381,8 +382,10 @@ impl QmdManager {
 
         let output = self.run_with_timeout(command).await?;
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("QMD search failed: {}", stderr.trim());
+            return Err(Error::CommandFailed {
+                command: mode.command_name().into(),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
+            });
         }
 
         let results: Vec<QmdSearchResult> = serde_json::from_slice(&output.stdout)?;
@@ -391,20 +394,12 @@ impl QmdManager {
     }
 
     /// Fast keyword search using BM25.
-    pub async fn keyword_search(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> anyhow::Result<Vec<QmdSearchResult>> {
+    pub async fn keyword_search(&self, query: &str, limit: usize) -> Result<Vec<QmdSearchResult>> {
         self.search(query, SearchMode::Keyword, limit).await
     }
 
     /// Vector similarity search.
-    pub async fn vector_search(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> anyhow::Result<Vec<QmdSearchResult>> {
+    pub async fn vector_search(&self, query: &str, limit: usize) -> Result<Vec<QmdSearchResult>> {
         self.search(query, SearchMode::Vector, limit).await
     }
 
@@ -414,7 +409,7 @@ impl QmdManager {
         query: &str,
         limit: usize,
         rerank: bool,
-    ) -> anyhow::Result<Vec<QmdSearchResult>> {
+    ) -> Result<Vec<QmdSearchResult>> {
         self.search(query, SearchMode::Hybrid { rerank }, limit)
             .await
     }
@@ -425,9 +420,9 @@ impl QmdManager {
         target: &str,
         from_line: Option<i64>,
         max_lines: Option<usize>,
-    ) -> anyhow::Result<String> {
+    ) -> Result<String> {
         if !self.is_available().await {
-            anyhow::bail!("QMD is not available");
+            return Err(Error::NotAvailable);
         }
 
         let mut command = self.command_with_index();
@@ -446,8 +441,10 @@ impl QmdManager {
 
         let output = self.run_with_timeout(command).await?;
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("QMD get failed: {}", stderr.trim());
+            return Err(Error::CommandFailed {
+                command: "get".into(),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().into(),
+            });
         }
 
         Ok(String::from_utf8(output.stdout)?.trim().to_string())

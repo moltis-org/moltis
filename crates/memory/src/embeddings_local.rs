@@ -146,13 +146,14 @@ fn embed_sync(backend: &LlamaBackend, model: &LlamaModel, text: &str) -> Result<
 
 #[async_trait]
 impl EmbeddingProvider for LocalGgufEmbeddingProvider {
-    async fn embed(&self, text: &str) -> Result<Vec<f32>> {
+    async fn embed(&self, text: &str) -> crate::error::Result<Vec<f32>> {
         let model = self.model.lock().await;
         let text = text.to_string();
         // llama-cpp-2 is CPU-bound; use block_in_place to avoid starving the async runtime
         let backend = &self.backend.0;
         let model_ref = &*model;
-        let result = tokio::task::block_in_place(move || embed_sync(backend, model_ref, &text))?;
+        let result = tokio::task::block_in_place(move || embed_sync(backend, model_ref, &text))
+            .map_err(|e| crate::error::Error::Embedding(e.to_string()))?;
         Ok(result)
     }
 
