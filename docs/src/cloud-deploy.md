@@ -16,6 +16,7 @@ HTTP mode. The key settings are:
 | `--port <PORT>` | Listen port | Must match provider's expected internal port |
 | `MOLTIS_CONFIG_DIR=/data/config` | Config directory | Persist moltis.toml, credentials |
 | `MOLTIS_DATA_DIR=/data` | Data directory | Persist databases, sessions, memory |
+| `MOLTIS_EXTERNAL_URL` | Public URL | Derives WebAuthn RP ID/origin for reverse proxy (see below) |
 | `MOLTIS_DEPLOY_PLATFORM` | Deploy platform | Hides local-only providers (see below) |
 | `MOLTIS_PASSWORD` | Initial password | Set auth password via environment variable |
 
@@ -27,6 +28,25 @@ enabled behind a TLS-terminating proxy. Use `--no-tls` (or
 Only keep Moltis TLS enabled when your proxy talks HTTPS to Moltis (or uses
 TCP TLS passthrough). In that case, set `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true`.
 ```
+
+### WebAuthn behind a reverse proxy
+
+Passkeys are hostname-bound. When Moltis runs behind a reverse proxy with a
+public domain (e.g. `https://moltis.example.com`), WebAuthn needs to know
+the public origin. Set `server.external_url` in `moltis.toml` or the
+`MOLTIS_EXTERNAL_URL` environment variable:
+
+```toml
+[server]
+external_url = "https://moltis.example.com"
+```
+
+This derives the WebAuthn RP ID and origin automatically. Legacy env vars
+(`MOLTIS_WEBAUTHN_RP_ID`, `MOLTIS_WEBAUTHN_ORIGIN`) still work as fallbacks.
+
+Some platforms set provider-specific env vars that Moltis auto-detects
+(`FLY_APP_NAME`, `APP_DOMAIN`, `APP_URL`, `RENDER_EXTERNAL_URL`), so you
+may not need to configure anything explicitly.
 
 ```admonish warning
 **Sandbox limitation**: Most cloud providers do not support Docker-in-Docker.
@@ -110,6 +130,7 @@ fly volumes create moltis_data --region iad --size 1
 
 - **Image**: pulled from `ghcr.io/moltis-org/moltis:latest`
 - **Port**: internal 8080, Fly terminates TLS and routes HTTPS traffic
+- **Proxy**: `MOLTIS_BEHIND_PROXY=true` set automatically
 - **Storage**: a Fly Volume mounted at `/data` persists the database, sessions,
   and memory files
 - **Auto-scaling**: machines stop when idle and start on incoming requests
@@ -156,9 +177,12 @@ The repository includes a `render.yaml` blueprint. Click the button above or:
 ### Configuration details
 
 - **Port**: Render uses port 10000 by default
-- **Persistent disk**: 1 GB mounted at `/data` (included in the blueprint)
+- **Storage**: data is written to `/tmp/moltis` (ephemeral — lost on redeploy)
 - **Environment**: set `MOLTIS_PASSWORD` in the Render dashboard under
-  **Environment** > **Secret Files** or **Environment Variables**
+  **Environment** > **Secret Files** or **Environment Variables**. The
+  blueprint auto-configures `MOLTIS_NO_TLS`, `MOLTIS_BEHIND_PROXY`,
+  `MOLTIS_CONFIG_DIR`, `MOLTIS_DATA_DIR`, and `MOLTIS_DEPLOY_PLATFORM`. Render's
+  `RENDER_EXTERNAL_URL` env var is auto-detected for WebAuthn.
 
 <!-- TODO: Railway deploy does not work yet
 ## Railway
