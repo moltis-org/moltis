@@ -19,9 +19,6 @@ pub enum Error {
 
     #[error("{0}")]
     Ngrok(String),
-
-    #[error(transparent)]
-    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
