@@ -141,7 +141,9 @@ app_password = "your-client-secret-here"
 | `retry_base_delay_ms` | no | `250` | Base delay (ms) for exponential backoff |
 | `retry_max_delay_ms` | no | `10000` | Maximum retry delay (ms) |
 | `history_limit` | no | `50` | Max messages fetched for thread context (requires Graph API permissions) |
-| `graph_tenant_id` | no | — | Tenant ID for Graph API operations (thread history, reactions, search) |
+| `oauth_tenant` | no | `"botframework.com"` | OAuth tenant segment for Bot Framework token issuance |
+| `oauth_scope` | no | `"https://api.botframework.com/.default"` | OAuth scope for Bot Framework connector API |
+| `graph_tenant_id` | no | — | Tenant ID for Graph API operations (thread history, reactions, search, pins) |
 
 ### Full Example
 
@@ -342,8 +344,9 @@ moltis channels teams bootstrap \
 ```
 
 This generates the webhook endpoint URL and writes the configuration to
-`moltis.toml`. Add `--dry-run` to preview without saving, or `--open` to
-launch the Azure documentation in your browser.
+`moltis.toml`. Add `--dry-run` to preview without saving, `--force` to overwrite
+an existing account without confirmation, or `--open` to launch the
+Azure documentation in your browser.
 
 ## Crate Structure
 
@@ -360,7 +363,7 @@ crates/msteams/
     ├── chunking.rs                  # Message text chunking
     ├── config.rs                    # MsTeamsAccountConfig + per-team overrides
     ├── errors.rs                    # Error classification + retry logic
-    ├── graph.rs                     # Graph API (history, reactions, search, pins)
+    ├── graph.rs                     # Graph API (history, reactions, search, pins, member info)
     ├── jwt.rs                       # Bot Framework JWT validation (JWKS)
     ├── outbound.rs                  # ChannelOutbound + streaming + reactions
     ├── plugin.rs                    # ChannelPlugin + ChannelThreadContext
