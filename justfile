@@ -228,9 +228,7 @@ build-test: build-css
     set -euo pipefail
     echo "==> Building all workspace targets (bins + tests)..."
     if [ "$(uname -s)" = "Darwin" ]; then
-        cargo +{{nightly_toolchain}} build --workspace --all-targets --exclude moltis-providers --exclude moltis-gateway
-        cargo +{{nightly_toolchain}} build -p moltis-providers --all-targets --features local-llm-metal
-        cargo +{{nightly_toolchain}} build -p moltis-gateway --all-targets --features local-llm-metal
+        cargo +{{nightly_toolchain}} build --workspace --all-targets
     else
         cargo +{{nightly_toolchain}} build --workspace --all-features --all-targets
     fi
@@ -241,13 +239,9 @@ build-test: build-css
     trap 'rm -f "${RUST_LOG}" "${E2E_LOG}"' EXIT
 
     if [ "$(uname -s)" = "Darwin" ]; then
-        (
-            cargo +{{nightly_toolchain}} nextest run --workspace --exclude moltis-providers --exclude moltis-gateway
-            cargo +{{nightly_toolchain}} nextest run -p moltis-providers --features local-llm-metal
-            cargo +{{nightly_toolchain}} nextest run -p moltis-gateway --features local-llm-metal
-        ) > "${RUST_LOG}" 2>&1 &
+        cargo +{{nightly_toolchain}} nextest run --workspace > "${RUST_LOG}" 2>&1 &
     else
-        cargo +{{nightly_toolchain}} nextest run --all-features > "${RUST_LOG}" 2>&1 &
+        cargo +{{nightly_toolchain}} nextest run --workspace --all-features > "${RUST_LOG}" 2>&1 &
     fi
     TEST_PID=$!
 
@@ -316,14 +310,14 @@ changelog-release version:
 ship commit_message='' pr_title='' pr_body='':
     ./scripts/ship-pr.sh {{ quote(commit_message) }} {{ quote(pr_title) }} {{ quote(pr_body) }}
 
-# Run all tests (nightly to share build cache with clippy/lint, OS-aware)
+# Run all tests (nightly to share build cache with clippy/lint, OS-aware).
+# On macOS: single nextest run using default features (includes Metal, not CUDA).
+# On Linux: --all-features (includes CUDA).
 test:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" = "Darwin" ]; then
-        cargo +{{nightly_toolchain}} nextest run --workspace --exclude moltis-providers --exclude moltis-gateway
-        cargo +{{nightly_toolchain}} nextest run -p moltis-providers --features local-llm-metal
-        cargo +{{nightly_toolchain}} nextest run -p moltis-gateway --features local-llm-metal
+        cargo +{{nightly_toolchain}} nextest run --workspace
     else
         cargo +{{nightly_toolchain}} nextest run --workspace --all-features
     fi
