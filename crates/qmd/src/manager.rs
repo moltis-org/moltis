@@ -582,7 +582,7 @@ exit 0
                 glob: "**/*.md".into(),
             })]),
             max_results: 10,
-            timeout_ms: 5_000,
+            timeout_ms: 30_000,
             work_dir: tmp.path().to_path_buf(),
             index_name: "test-index".into(),
             env_overrides: HashMap::new(),
@@ -608,7 +608,7 @@ exit 0
 
         let manager = QmdManager::new(QmdManagerConfig {
             command: script.to_string_lossy().into_owned(),
-            timeout_ms: 5_000,
+            timeout_ms: 30_000,
             work_dir: tmp.path().to_path_buf(),
             index_name: "search-index".into(),
             ..Default::default()

@@ -7,7 +7,7 @@ retries = 0
 # QMD tests spawn shell scripts that time out under heavy parallelism.
 # Run them serially to avoid flaky failures.
 [test-groups.qmd-serial]
-max-threads = 2
+max-threads = 1
 
 [[profile.default.overrides]]
 filter = "package(moltis-qmd)"
