@@ -44,11 +44,20 @@ automatically excluded from the proxy (`no_proxy`).
 
 ### Slack caveat
 
-Slack streaming messages (progressive edits) are proxied via reqwest.
-However, regular `chat.postMessage` calls go through the `slack-morphism`
-library's built-in hyper connector, which does **not** use the upstream
-proxy. If you need full Slack proxy coverage, also set the `HTTPS_PROXY`
-environment variable.
+Slack has two streaming modes (configured per account via `stream_mode`):
+
+- **Edit-in-place** (default): Uses `slack-morphism`'s built-in hyper
+  connector. The upstream proxy does **not** apply to `chat.postMessage` or
+  `chat.update` calls in this mode. Set the `HTTPS_PROXY` environment
+  variable for full proxy coverage.
+
+- **Native** (`stream_mode = "native"`): Uses Slack's
+  `chat.startStream`/`appendStream`/`stopStream` API via reqwest, which
+  **is** proxied through the upstream proxy.
+
+Regardless of streaming mode, file uploads and interactive message
+responses also go through slack-morphism's hyper connector and are not
+proxied. For full Slack proxy coverage, also set `HTTPS_PROXY`.
 
 ### Telegram caveat
 
