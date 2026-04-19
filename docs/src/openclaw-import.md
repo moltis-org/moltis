@@ -23,7 +23,7 @@ If the directory exists and contains recognizable OpenClaw files (`openclaw.json
 | **Memory** | `MEMORY.md` and all `memory/*.md` files | `~/.moltis/MEMORY.md` and `~/.moltis/memory/` | Imports daily logs, project notes, and all other markdown memory files. Appends with `<!-- Imported from OpenClaw -->` separator for idempotency |
 | **Channels** | Telegram and Discord bot configuration in `openclaw.json` | `moltis.toml` channels section | Supports both flat and multi-account Telegram configs |
 | **Sessions** | JSONL conversation files under `agents/*/sessions/` | `~/.moltis/sessions/` and `~/.moltis/memory/sessions/` | Converts OpenClaw message format to Moltis format; prefixes keys with `oc:`. Also generates markdown transcripts for memory search indexing |
-| **MCP Servers** | `mcp-servers.json` | `~/.moltis/mcp-servers.json` | Merges with existing servers; skips duplicates by name |
+| **MCP Servers** | `mcp-servers.json` | `~/.moltis/mcp-servers.json` | Merges with existing servers; skips duplicates by name. *(Module exists but is not yet wired into the import pipeline)* |
 | **Workspace Files** | `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, `AGENTS.md`, `HEARTBEAT.md`, `BOOT.md` | `~/.moltis/` (root) or `~/.moltis/agents/<id>/` | Copies raw workspace files; skips if destination already has user content. Replaces auto-seeded defaults |
 | **Agent Presets** | Non-default agents in `agents.list` | `moltis.toml` `[agents.presets.*]` | Creates `spawn_agent` presets with name, theme, and model. Existing presets are preserved |
 
@@ -87,11 +87,10 @@ OpenClaw installation detected at /Users/you/.openclaw
 
   Identity:        available (agent: "friday")
   Providers:       available (2 auth profiles)
-  Skills:          3 skills found
-  Memory:          available (MEMORY.md + 12 memory files)
-  Channels:        available (1 Telegram account)
-  Sessions:        47 session files across 2 agents
-  MCP Servers:     4 servers configured
+  Skills:          3 skill(s)
+  Memory:          available (12 memory file(s))
+  Channels:        available (1 Telegram account(s))
+  Sessions:        47 session(s)
   Workspace Files: SOUL.md, IDENTITY.md, USER.md, TOOLS.md, HEARTBEAT.md
 ```
 
@@ -123,7 +122,7 @@ Import only specific categories:
 moltis import select -c providers,skills,memory
 ```
 
-Valid category names: `identity`, `providers`, `skills`, `memory`, `channels`, `sessions`, `mcp_servers`, `workspace-files`.
+Valid category names: `identity`, `providers`, `skills`, `memory`, `channels`, `sessions`, `workspace-files`.
 
 Combine with `--dry-run` to preview:
 
@@ -151,7 +150,6 @@ Example `openclaw.import` params:
   "memory": true,
   "channels": false,
   "sessions": false,
-  "mcp_servers": true,
   "workspace_files": true
 }
 ```
@@ -216,9 +214,11 @@ OpenClaw and Moltis use different names for some providers:
 | `google` | `gemini` |
 | `anthropic` | `anthropic` |
 | `openai` | `openai` |
+| `groq` | `groq` |
+| `xai` | `xai` |
+| `deepseek` | `deepseek` |
+| `ollama` | `ollama` |
 | `openrouter` | `openrouter` |
-
-Unmapped provider names are passed through as-is.
 
 ## Unsupported Channels
 
