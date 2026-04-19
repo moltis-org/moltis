@@ -61,7 +61,7 @@ mod tests {
             mode: CompactionMode::Deterministic,
             ..Default::default()
         };
-        let outcome = super::super::run_compaction(&history, &config, None)
+        let outcome = super::super::run_compaction(&history, &config, None, None)
             .await
             .expect("deterministic dispatch succeeds");
         assert_eq!(

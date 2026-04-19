@@ -85,6 +85,7 @@ pub(crate) async fn run_with_tools(
     active_event_forwarders: &Arc<RwLock<HashMap<String, tokio::task::JoinHandle<String>>>>,
     terminal_runs: &Arc<RwLock<HashSet<String>>>,
     sender_name: Option<String>,
+    summary_provider: Option<Arc<dyn moltis_agents::model::LlmProvider>>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
 
@@ -829,6 +830,7 @@ pub(crate) async fn run_with_tools(
                 session_key,
                 &persona.config.chat.compaction,
                 Some(&*provider_ref),
+                summary_provider.as_deref(),
             )
             .await
             {

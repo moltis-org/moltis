@@ -17,6 +17,11 @@ use super::{CompactionOutcome, CompactionRunError, shared::build_summary_message
 
 /// Run the streaming-summary replace-all strategy against `history`.
 ///
+/// `provider` is the LLM to use for the summary call. This is already
+/// resolved upstream: if `chat.compaction.summary_model` is configured
+/// and the model exists in the registry, the caller passes that provider;
+/// otherwise the session's primary provider is forwarded.
+///
 /// Builds a system / history / directive prompt using structured
 /// `ChatMessage` objects so role boundaries stay intact (prevents
 /// prompt injection via role prefixes in user content), streams the
@@ -25,7 +30,7 @@ use super::{CompactionOutcome, CompactionRunError, shared::build_summary_message
 /// broadcast can show how many tokens were spent.
 pub(super) async fn run(
     history: &[Value],
-    config: &CompactionConfig,
+    _config: &CompactionConfig,
     provider: &dyn LlmProvider,
 ) -> Result<CompactionOutcome, CompactionRunError> {
     let mut summary_messages = vec![ChatMessage::system(
@@ -64,10 +69,6 @@ pub(super) async fn run(
             | StreamEvent::ReasoningDelta(_) => {},
         }
     }
-
-    // `config.summary_model` / `max_summary_tokens` aren't wired yet —
-    // tracked by beads issue moltis-8me.
-    let _ = config;
 
     if summary.is_empty() {
         return Err(CompactionRunError::EmptySummary);
@@ -114,7 +115,7 @@ mod tests {
             mode: CompactionMode::LlmReplace,
             ..Default::default()
         };
-        let err = super::super::run_compaction(&history, &config, None)
+        let err = super::super::run_compaction(&history, &config, None, None)
             .await
             .unwrap_err();
         match err {
@@ -131,7 +132,7 @@ mod tests {
             ..Default::default()
         };
         let provider = StubProvider::new_ok("stubbed summary body");
-        let outcome = super::super::run_compaction(&history, &config, Some(&provider))
+        let outcome = super::super::run_compaction(&history, &config, Some(&provider), None)
             .await
             .expect("llm_replace succeeds with stub provider");
         assert_eq!(outcome.effective_mode, CompactionMode::LlmReplace);

@@ -1043,6 +1043,25 @@ impl LiveChatService {
         let terminal_runs = Arc::clone(&self.terminal_runs);
         let deferred_channel_target = deferred_channel_target.clone();
 
+        // Resolve summary provider for compaction before entering the
+        // spawned task (needs `self.providers` which is not `Send` across
+        // the `tokio::spawn` boundary).
+        let summary_provider =
+            if let Some(ref model_id) = persona.config.chat.compaction.summary_model {
+                let reg = self.providers.read().await;
+                let resolved = reg.get(model_id);
+                if resolved.is_none() {
+                    tracing::warn!(
+                        summary_model = %model_id,
+                        "send: configured summary_model not found in provider registry, \
+                         falling back to primary provider for compaction"
+                    );
+                }
+                resolved
+            } else {
+                None
+            };
+
         let handle = tokio::spawn(async move {
             let permit = permit; // hold permit until agent run completes
             let ctx_ref = project_context.as_deref();
@@ -1072,6 +1091,7 @@ impl LiveChatService {
                 )
                 .await;
             }
+
             let agent_fut = async {
                 if stream_only {
                     run_streaming(
@@ -1129,6 +1149,7 @@ impl LiveChatService {
                         &active_event_forwarders,
                         &terminal_runs,
                         sender_name,
+                        summary_provider,
                     )
                     .await
                 }
