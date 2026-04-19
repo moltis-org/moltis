@@ -166,7 +166,6 @@ The bridge is already functional for core flows (version, chat, streaming, provi
 |----------|---------|
 | `moltis_get_config` | Read full config |
 | `moltis_save_config` | Write config values |
-| `moltis_get_identity` | Read agent identity |
 | `moltis_save_identity` | Update agent identity |
 | `moltis_get_soul` | Read agent soul/prompt |
 | `moltis_save_soul` | Update agent soul |

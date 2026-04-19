@@ -43,7 +43,7 @@ The API is organized across six modules:
 
 | Module | Functions |
 |--------|-----------|
-| `ffi_core` | `moltis_version`, `moltis_get_identity`, `moltis_chat_json`, `moltis_chat_stream`, `moltis_known_providers`, `moltis_detect_providers`, `moltis_save_provider_config`, `moltis_list_models`, `moltis_refresh_registry`, `moltis_set_log_callback`, `moltis_set_session_event_callback`, `moltis_set_network_audit_callback`, `moltis_start_httpd`, `moltis_stop_httpd`, `moltis_httpd_status`, `moltis_abort_session`, `moltis_peek_session`, `moltis_shutdown` |
+| `ffi_core` | `moltis_version`, `moltis_get_identity`, `moltis_chat_json`, `moltis_known_providers`, `moltis_detect_providers`, `moltis_save_provider_config`, `moltis_list_models`, `moltis_refresh_registry`, `moltis_set_log_callback`, `moltis_set_session_event_callback`, `moltis_set_network_audit_callback`, `moltis_start_httpd`, `moltis_stop_httpd`, `moltis_httpd_status`, `moltis_abort_session`, `moltis_peek_session`, `moltis_shutdown` |
 | `ffi_config` | `moltis_get_config`, `moltis_save_config`, `moltis_memory_status`, `moltis_memory_config_get`, `moltis_memory_config_update`, `moltis_memory_qmd_status`, `moltis_get_soul`, `moltis_save_soul`, `moltis_save_identity`, `moltis_save_user_profile`, `moltis_list_env_vars`, `moltis_set_env_var`, `moltis_delete_env_var` |
 | `ffi_sessions` | `moltis_list_sessions`, `moltis_switch_session`, `moltis_create_session`, `moltis_session_chat_stream` |
 | `ffi_auth` | `moltis_auth_status`, `moltis_auth_password_change`, `moltis_auth_reset`, `moltis_auth_list_passkeys`, `moltis_auth_remove_passkey`, `moltis_auth_rename_passkey` |
