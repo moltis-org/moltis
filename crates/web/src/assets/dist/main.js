@@ -29537,7 +29537,6 @@ function VoiceSection() {
           const payload = res.payload;
           const bytes = decodeBase64Safe(payload.audio);
           const audioMime = payload.mimeType || payload.content_type || "audio/mpeg";
-          console.log("[TTS] audio received: %d bytes, mime=%s, format=%s", bytes.length, audioMime, payload.format);
           const blob = new Blob([bytes], { type: audioMime });
           const url = URL.createObjectURL(blob);
           const audio = new Audio(url);
@@ -29590,7 +29589,6 @@ function VoiceSection() {
           const audioBlob = new Blob(audioChunks2, { type: mediaRecorder2.mimeType || mimeType });
           try {
             const resp = await transcribeAudio$1(activeSessionKey, providerId, audioBlob);
-            console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
             if (resp.ok) {
               const sttRes = await resp.json();
               if (sttRes.ok && typeof ((_a3 = sttRes.transcription) == null ? void 0 : _a3.text) === "string") {

@@ -4156,12 +4156,6 @@ function VoiceStep({ onNext, onBack }) {
         if ((res == null ? void 0 : res.ok) && ((_a = res.payload) == null ? void 0 : _a.audio)) {
           const bytes = decodeBase64Safe(res.payload.audio);
           const audioMime = res.payload.mimeType || res.payload.content_type || "audio/mpeg";
-          console.log(
-            "[TTS] audio received: %d bytes, mime=%s, format=%s",
-            bytes.length,
-            audioMime,
-            res.payload.format
-          );
           const blob = new Blob([bytes.buffer], { type: audioMime });
           const url = URL.createObjectURL(blob);
           const audio = new Audio(url);
@@ -4220,7 +4214,6 @@ function VoiceStep({ onNext, onBack }) {
           });
           try {
             const resp = await transcribeAudio(activeSessionKey, providerId, audioBlob);
-            console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
             if (resp.ok) {
               const sttRes = await resp.json();
               if (sttRes.ok && typeof ((_a2 = sttRes.transcription) == null ? void 0 : _a2.text) === "string") {

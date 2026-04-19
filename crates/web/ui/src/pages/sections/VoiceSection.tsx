@@ -189,7 +189,6 @@ export function VoiceSection(): VNode {
 					const payload = res.payload as { audio: string; mimeType?: string; content_type?: string; format?: string };
 					const bytes = decodeBase64Safe(payload.audio);
 					const audioMime = payload.mimeType || payload.content_type || "audio/mpeg";
-					console.log("[TTS] audio received: %d bytes, mime=%s, format=%s", bytes.length, audioMime, payload.format);
 					const blob = new Blob([bytes as BlobPart], { type: audioMime });
 					const url = URL.createObjectURL(blob);
 					const audio = new Audio(url);
@@ -244,7 +243,6 @@ export function VoiceSection(): VNode {
 
 					try {
 						const resp = await transcribeAudio(S.activeSessionKey, providerId, audioBlob);
-						console.log("[STT] upload response: status=%d ok=%s", resp.status, resp.ok);
 						if (resp.ok) {
 							const sttRes = (await resp.json()) as {
 								ok?: boolean;

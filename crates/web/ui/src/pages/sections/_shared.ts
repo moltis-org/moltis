@@ -21,11 +21,8 @@ export interface IdentityData {
 	[key: string]: unknown;
 }
 
-export interface RpcResponse {
-	ok?: boolean;
-	payload?: unknown;
-	error?: { message?: string };
-}
+import type { RpcResponse } from "../../types/rpc";
+export type { RpcResponse };
 
 export interface SectionItem {
 	id?: string;

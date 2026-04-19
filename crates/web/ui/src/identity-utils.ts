@@ -24,11 +24,7 @@ export interface IdentityFields {
 	user_timezone?: string;
 }
 
-interface RpcResponse {
-	ok?: boolean;
-	error?: { code?: string; message?: string };
-	payload?: Record<string, unknown>;
-}
+import type { RpcResponse } from "./types/rpc";
 
 interface UpdateIdentityOptions {
 	agentId?: string;
