@@ -4,7 +4,8 @@ name              = "moltis-tools"
 version.workspace = true
 
 [features]
-default       = ["firecrawl", "fs-tools", "metrics", "wasm"]
+bundled-skills = ["moltis-skills/bundled-skills"]
+default        = ["firecrawl", "fs-tools", "metrics", "wasm"]
 embedded-wasm = []
 firecrawl     = []
 # Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep).

@@ -17,6 +17,9 @@ pub mod requirements;
 pub mod safety;
 pub mod types;
 
+#[cfg(feature = "bundled-skills")]
+pub mod bundled;
+
 pub use error::Error;
 
 /// Canonical list of sidecar subdirectories a skill directory may contain,

@@ -107,6 +107,7 @@ caldav = ["moltis-gateway/caldav"]
 # even when the underlying implementation remains feature-gated in lower crates.
 default = [
   "agent",
+  "bundled-skills",
   "caldav",
   "code-splitter",
   "file-watcher",
@@ -135,6 +136,7 @@ default = [
   "web-ui",
   "whatsapp",
 ]
+bundled-skills  = ["moltis-gateway/bundled-skills"]
 llm-compaction = ["moltis-gateway/llm-compaction"]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight

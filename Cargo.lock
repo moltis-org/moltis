@@ -8120,6 +8120,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "flate2",
+ "include_dir",
  "moltis-config",
  "moltis-metrics",
  "notify-debouncer-full",

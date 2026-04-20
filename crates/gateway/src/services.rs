@@ -238,9 +238,22 @@ impl SkillsService for NoopSkillsService {
             discover::{FsSkillDiscoverer, SkillDiscoverer},
             requirements::check_requirements,
         };
-        let search_paths = FsSkillDiscoverer::default_paths();
-        let discoverer = FsSkillDiscoverer::new(search_paths);
-        let skills = discoverer.discover().await.map_err(ServiceError::message)?;
+        let fs_discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths());
+
+        #[cfg(feature = "bundled-skills")]
+        let skills = {
+            let bundled = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+            let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
+                Box::new(fs_discoverer),
+                bundled,
+            );
+            composite.discover().await.map_err(ServiceError::message)?
+        };
+        #[cfg(not(feature = "bundled-skills"))]
+        let skills = fs_discoverer
+            .discover()
+            .await
+            .map_err(ServiceError::message)?;
         let items: Vec<_> = skills
             .iter()
             .map(|s| {
@@ -865,9 +878,22 @@ impl SkillsService for NoopSkillsService {
             .unwrap_or(false);
 
         // Discover the skill to get its requirements
-        let search_paths = FsSkillDiscoverer::default_paths();
-        let discoverer = FsSkillDiscoverer::new(search_paths);
-        let skills = discoverer.discover().await.map_err(ServiceError::message)?;
+        let fs_discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths());
+
+        #[cfg(feature = "bundled-skills")]
+        let skills = {
+            let bundled = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+            let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
+                Box::new(fs_discoverer),
+                bundled,
+            );
+            composite.discover().await.map_err(ServiceError::message)?
+        };
+        #[cfg(not(feature = "bundled-skills"))]
+        let skills = fs_discoverer
+            .discover()
+            .await
+            .map_err(ServiceError::message)?;
 
         let meta = skills
             .iter()

@@ -345,6 +345,8 @@ impl AgentTool for DeleteSkillTool {
 /// server to load `SKILL.md` by absolute path.
 pub struct ReadSkillTool {
     discoverer: Arc<dyn SkillDiscoverer>,
+    #[cfg(feature = "bundled-skills")]
+    bundled_store: Option<Arc<moltis_skills::bundled::BundledSkillStore>>,
 }
 
 impl ReadSkillTool {
@@ -354,7 +356,24 @@ impl ReadSkillTool {
     /// `<available_skills>` prompt block so names listed there always resolve.
     #[must_use]
     pub fn new(discoverer: Arc<dyn SkillDiscoverer>) -> Self {
-        Self { discoverer }
+        Self {
+            discoverer,
+            #[cfg(feature = "bundled-skills")]
+            bundled_store: None,
+        }
+    }
+
+    /// Construct a `ReadSkillTool` with bundled skill support.
+    #[cfg(feature = "bundled-skills")]
+    #[must_use]
+    pub fn with_bundled(
+        discoverer: Arc<dyn SkillDiscoverer>,
+        bundled_store: Arc<moltis_skills::bundled::BundledSkillStore>,
+    ) -> Self {
+        Self {
+            discoverer,
+            bundled_store: Some(bundled_store),
+        }
     }
 
     /// Convenience constructor that uses
@@ -366,7 +385,11 @@ impl ReadSkillTool {
     pub fn with_default_paths() -> Self {
         use moltis_skills::discover::FsSkillDiscoverer;
         let discoverer = Arc::new(FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths()));
-        Self { discoverer }
+        Self {
+            discoverer,
+            #[cfg(feature = "bundled-skills")]
+            bundled_store: None,
+        }
     }
 }
 
@@ -427,6 +450,14 @@ impl AgentTool for ReadSkillTool {
             ))
         })?;
 
+        // Bundled skills are served from the embedded store, not the filesystem.
+        #[cfg(feature = "bundled-skills")]
+        if meta.source.as_ref() == Some(&SkillSource::Bundled) {
+            if let Some(ref store) = self.bundled_store {
+                return read_bundled(name, meta, store, file_path);
+            }
+        }
+
         if let Some(rel) = file_path {
             // Plugin-backed skills can be a single `.md` file rather than
             // a directory containing SKILL.md. Reject sidecar requests on
@@ -451,6 +482,101 @@ impl AgentTool for ReadSkillTool {
 
         read_primary(name, meta).await
     }
+}
+
+/// Read a bundled skill from the embedded store (no filesystem I/O).
+#[cfg(feature = "bundled-skills")]
+fn read_bundled(
+    name: &str,
+    meta: &moltis_skills::types::SkillMetadata,
+    store: &moltis_skills::bundled::BundledSkillStore,
+    file_path: Option<&str>,
+) -> anyhow::Result<Value> {
+    if let Some(rel) = file_path {
+        // Sidecar read from bundled store.
+        return match store.read_sidecar(name, rel) {
+            Some((bytes, true)) => {
+                let text = String::from_utf8_lossy(&bytes);
+                Ok(json!({
+                    "name": name,
+                    "file_path": rel,
+                    "bytes": bytes.len(),
+                    "content": text,
+                    "is_binary": false,
+                }))
+            },
+            Some((bytes, false)) => Ok(json!({
+                "name": name,
+                "file_path": rel,
+                "bytes": bytes.len(),
+                "is_binary": true,
+                "note": format!("Binary file ({} bytes). Contents omitted.", bytes.len()),
+            })),
+            None => {
+                let available = store.list_sidecars(name);
+                let hint = if available.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    available
+                        .iter()
+                        .map(|(p, _)| p.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                Err(Error::message(format!(
+                    "sidecar file '{rel}' not found in bundled skill '{name}'. \
+                     Available sidecar files: {hint}"
+                ))
+                .into())
+            },
+        };
+    }
+
+    // Primary read from bundled store.
+    let body = store
+        .read_skill(name)
+        .ok_or_else(|| Error::message(format!("bundled skill '{name}' body not readable")))?;
+
+    let linked: Vec<Value> = store
+        .list_sidecars(name)
+        .into_iter()
+        .map(|(path, bytes)| json!({"path": path, "bytes": bytes}))
+        .collect();
+
+    let mut response = serde_json::Map::new();
+    response.insert("name".into(), json!(name));
+    response.insert("description".into(), json!(meta.description));
+    response.insert("source".into(), json!("bundled"));
+    response.insert("body".into(), json!(body));
+    response.insert("bytes".into(), json!(body.len()));
+
+    if let Some(display_name) = &meta.display_name {
+        response.insert("display_name".into(), json!(display_name));
+    }
+    if let Some(license) = &meta.license {
+        response.insert("license".into(), json!(license));
+    }
+    if let Some(homepage) = &meta.homepage {
+        response.insert("homepage".into(), json!(homepage));
+    }
+    if let Some(origin) = &meta.origin {
+        response.insert("origin".into(), json!(origin));
+    }
+    if !meta.allowed_tools.is_empty() {
+        response.insert("allowed_tools".into(), json!(meta.allowed_tools));
+    }
+    if !linked.is_empty() {
+        response.insert(
+            "usage_hint".into(),
+            json!(
+                "To view a linked file, call read_skill again with file_path \
+                 set to one of the paths in linked_files."
+            ),
+        );
+    }
+    response.insert("linked_files".into(), json!(linked));
+
+    Ok(Value::Object(response))
 }
 
 /// Read the main SKILL.md body (or the plugin's `.md` file) plus the list of
@@ -573,6 +699,7 @@ async fn read_primary(
         Some(SkillSource::Personal) => "personal",
         Some(SkillSource::Plugin) => "plugin",
         Some(SkillSource::Registry) => "registry",
+        Some(SkillSource::Bundled) => "bundled",
         None => "unknown",
     };
 

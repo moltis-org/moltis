@@ -22,10 +22,10 @@ pub fn generate_skills_prompt(skills: &[SkillMetadata]) -> String {
 
     let mut out = String::from("## Available Skills\n\n<available_skills>\n");
     for skill in skills {
-        let source = if skill.source.as_ref() == Some(&SkillSource::Plugin) {
-            "plugin"
-        } else {
-            "skill"
+        let source = match skill.source.as_ref() {
+            Some(SkillSource::Plugin) => "plugin",
+            Some(SkillSource::Bundled) => "bundled",
+            _ => "skill",
         };
         out.push_str(&format!(
             "<skill name=\"{}\" source=\"{}\">\n{}\n</skill>\n",

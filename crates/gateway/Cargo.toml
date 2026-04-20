@@ -91,9 +91,11 @@ which                   = { optional = true, workspace = true }
 
 [features]
 agent = []
+bundled-skills = ["moltis-skills/bundled-skills", "moltis-tools/bundled-skills"]
 caldav = ["dep:moltis-caldav"]
 default = [
   "agent",
+  "bundled-skills",
   "caldav",
   "code-index-builtin",
   "file-watcher",
