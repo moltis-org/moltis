@@ -17,11 +17,36 @@ use {
     crate::error::{Error, Result},
 };
 
+/// Packages that are installed via dedicated setup steps rather than plain apt-get.
+/// These are filtered from the apt package list to avoid version conflicts.
+const NODESOURCE_SUPERSEDED_PACKAGES: &[&str] = &["npm"];
+
 pub(crate) fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> String {
-    let pkg_list = canonical_sandbox_packages(packages).join(" ");
+    let canonical = canonical_sandbox_packages(packages);
+    let has_nodejs = canonical.iter().any(|p| p == "nodejs");
+    let pkg_list: Vec<&str> = canonical
+        .iter()
+        .map(String::as_str)
+        .filter(|p| !NODESOURCE_SUPERSEDED_PACKAGES.contains(p))
+        .collect();
+    let pkg_str = pkg_list.join(" ");
+
+    // If nodejs is requested, set up NodeSource 22.x repo before apt-get so
+    // `apt-get install nodejs` pulls Node 22 LTS (which bundles npm).
+    let nodesource_setup = if has_nodejs {
+        "RUN install -m 0755 -d /etc/apt/keyrings && \\\n    \
+             curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+| gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \\\n    \
+             echo \"deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main\" \
+> /etc/apt/sources.list.d/nodesource.list\n"
+    } else {
+        ""
+    };
+
     format!(
         "FROM {base}\n\
-RUN apt-get update -qq && apt-get install -y -qq {pkg_list} \
+{nodesource_setup}\
+RUN apt-get update -qq && apt-get install -y -qq {pkg_str} \
     && mkdir -p {SANDBOX_HOME_DIR}\n\
 RUN if command -v corepack >/dev/null 2>&1; then corepack enable; fi\n\
 RUN if command -v go >/dev/null 2>&1; then \

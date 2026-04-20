@@ -475,8 +475,7 @@ packages = [
     "python3-pip",
     "python3-venv",
     "python-is-python3",
-    "nodejs",
-    "npm",
+    "nodejs",  # installed via NodeSource 22.x (npm bundled)
     "ruby",
     "ruby-dev",
     "golang-go",

@@ -49,8 +49,7 @@ const CATEGORY_MAP: &[(&str, &[&str])] = &[
         "python3-pip",
         "python3-venv",
         "python-is-python3",
-        "nodejs",
-        "npm",
+        "nodejs", // NodeSource 22.x (npm bundled)
         "ruby",
         "golang-go",
     ]),
