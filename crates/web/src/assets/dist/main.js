@@ -3659,6 +3659,78 @@ function SessionList() {
   }
   return /* @__PURE__ */ u("div", { ref: spinnersRef, children: roots.map((s) => renderTree(s, 0)) });
 }
+const REPO = "moltis-org/moltis";
+const CACHE_KEY = "moltis-github-stats";
+const CACHE_TTL_MS = 60 * 60 * 1e3;
+function readCache() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const cached2 = JSON.parse(raw);
+    if (Date.now() - cached2.fetchedAt < CACHE_TTL_MS) return cached2;
+  } catch {
+  }
+  return null;
+}
+function writeCache(stats) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(stats));
+  } catch {
+  }
+}
+function setBadge(id, count) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = count !== null && count > 0 ? String(count) : "";
+}
+function applyStats(stats) {
+  setBadge("githubIssuesCount", stats.issues);
+  setBadge("githubDiscussionsCount", stats.discussions);
+}
+async function fetchIssuesCount() {
+  try {
+    const resp = await fetch(
+      `https://api.github.com/search/issues?q=repo:${REPO}+type:issue+state:open&per_page=1`
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.total_count ?? null;
+  } catch {
+    return null;
+  }
+}
+async function fetchDiscussionsCount() {
+  try {
+    const resp = await fetch(
+      `https://api.github.com/repos/${REPO}/discussions?per_page=1`
+    );
+    if (!resp.ok) return null;
+    const link = resp.headers.get("Link");
+    if (link) {
+      const match = /[&?]page=(\d+)>;\s*rel="last"/.exec(link);
+      if (match) return Number.parseInt(match[1], 10);
+    }
+    const items = await resp.json();
+    return items.length;
+  } catch {
+    return null;
+  }
+}
+async function fetchAndCache() {
+  const [issues, discussions] = await Promise.all([
+    fetchIssuesCount(),
+    fetchDiscussionsCount()
+  ]);
+  const stats = { issues, discussions, fetchedAt: Date.now() };
+  writeCache(stats);
+  applyStats(stats);
+}
+const cached = readCache();
+if (cached) {
+  applyStats(cached);
+} else {
+  fetchAndCache();
+}
 let navPanel = null;
 let navOverlay = null;
 let sessionsPanel = null;
