@@ -5701,20 +5701,22 @@ function parseAsciiTable(lines, start) {
     next
   };
 }
-function renderAsciiTables(s2) {
+function extractAsciiTables(s2) {
   const lines = s2.split("\n");
   const out = [];
+  const tables = [];
   for (let i2 = 0; i2 < lines.length; ) {
     const asciiTable = parseAsciiTable(lines, i2);
     if (asciiTable) {
-      out.push(asciiTable.html);
+      out.push(`@@MOLTIS_ASCII_TABLE_${tables.length}@@`);
+      tables.push(asciiTable.html);
       i2 = asciiTable.next;
       continue;
     }
     out.push(lines[i2]);
     i2++;
   }
-  return out.join("\n");
+  return { text: out.join("\n"), tables };
 }
 function sanitizeHref(href) {
   const trimmed = href.trim();
@@ -5740,8 +5742,9 @@ mdRenderer.link = ({ href, text }) => {
 mdRenderer.html = ({ text }) => esc(text);
 const markedInstance = new D$1({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
 function renderMarkdown(raw) {
-  const asciiProcessed = renderAsciiTables(raw);
-  const result = markedInstance.parse(asciiProcessed);
+  const { text, tables } = extractAsciiTables(raw);
+  let result = markedInstance.parse(text);
+  result = result.replace(/@@MOLTIS_ASCII_TABLE_(\d+)@@/g, (_2, idx) => tables[Number(idx)] || "");
   return result;
 }
 function sendRpc(method, params) {

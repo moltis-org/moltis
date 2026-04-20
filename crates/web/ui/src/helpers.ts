@@ -215,21 +215,23 @@ function parseAsciiTable(lines: string[], start: number): TableParseResult | nul
 }
 
 /** Convert ASCII-bordered tables (+---+---+ style) to HTML. Pipe tables are handled by marked. */
-function renderAsciiTables(s: string): string {
+/** Extract ASCII tables into placeholders, returning the modified text and table HTML map. */
+function extractAsciiTables(s: string): { text: string; tables: string[] } {
 	const lines = s.split("\n");
 	const out: string[] = [];
+	const tables: string[] = [];
 	for (let i = 0; i < lines.length; ) {
 		const asciiTable = parseAsciiTable(lines, i);
 		if (asciiTable) {
-			out.push(asciiTable.html);
+			out.push(`@@MOLTIS_ASCII_TABLE_${tables.length}@@`);
+			tables.push(asciiTable.html);
 			i = asciiTable.next;
 			continue;
 		}
-
 		out.push(lines[i]);
 		i++;
 	}
-	return out.join("\n");
+	return { text: out.join("\n"), tables };
 }
 
 /** Only allow safe URL protocols for rendered links. */
@@ -260,9 +262,11 @@ mdRenderer.html = ({ text }) => esc(text);
 const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
 
 export function renderMarkdown(raw: string): string {
-	// Pre-process: extract ASCII tables (marked doesn't handle +---+---+ style)
-	const asciiProcessed = renderAsciiTables(raw);
-	const result = markedInstance.parse(asciiProcessed) as string;
+	// Extract ASCII tables as placeholders before marked processes the text.
+	// Re-insert after marked is done so the HTML doesn't get escaped.
+	const { text, tables } = extractAsciiTables(raw);
+	let result = markedInstance.parse(text) as string;
+	result = result.replace(/@@MOLTIS_ASCII_TABLE_(\d+)@@/g, (_: string, idx: string) => tables[Number(idx)] || "");
 	return result;
 }
 
