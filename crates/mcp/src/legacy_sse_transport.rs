@@ -114,9 +114,13 @@ impl LegacySseTransport {
 
     /// Discover the message endpoint by connecting to the SSE stream.
     ///
-    /// Sends a GET request to the SSE URL and parses the `event: endpoint`
-    /// event to extract the message URL.
+    /// Sends a GET request to the SSE URL and streams the response,
+    /// returning as soon as the `event: endpoint` event is found. This avoids
+    /// blocking on servers that keep the SSE connection open after the initial
+    /// endpoint event.
     async fn discover_endpoint(&self) -> Result<String> {
+        use futures::StreamExt;
+
         debug!(url = %self.display_url, "discovering legacy SSE message endpoint");
 
         let mut req = self
@@ -161,39 +165,54 @@ impl LegacySseTransport {
             )));
         }
 
-        // Read the response body and parse SSE events to find `event: endpoint`.
-        let body = resp.text().await.with_context(|| {
-            format!(
-                "failed to read legacy SSE endpoint discovery response from '{}'",
-                self.display_url
-            )
-        })?;
+        // Stream the response incrementally. Real SSE servers keep the
+        // connection open after sending `event: endpoint`, so we must not
+        // wait for EOF. Return as soon as the endpoint event is parsed.
+        let mut stream = resp.bytes_stream();
+        let mut buf = String::new();
 
-        parse_endpoint_event(&body, self.sse_url.expose_secret()).with_context(|| {
-            format!(
-                "failed to find 'endpoint' event in SSE stream from '{}'",
-                self.display_url
-            )
-        })
-    }
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk
+                .map_err(sanitize_reqwest_error)
+                .with_context(|| format!("error reading SSE stream from '{}'", self.display_url))?;
+            buf.push_str(&String::from_utf8_lossy(&chunk));
 
-    /// Get or discover the message endpoint URL.
-    async fn get_message_url(&self) -> Result<String> {
-        {
-            let cached = self.message_url.read().await;
-            if let Some(url) = cached.as_ref() {
-                return Ok(url.clone());
+            if let Ok(url) = parse_endpoint_event(&buf, self.sse_url.expose_secret()) {
+                return Ok(url);
             }
         }
 
+        // Stream closed without finding an endpoint event.
+        Err(Error::message(format!(
+            "no 'endpoint' event found in SSE stream from '{}' \
+             (server may not support legacy SSE transport)",
+            self.display_url
+        )))
+    }
+
+    /// Get or discover the message endpoint URL.
+    ///
+    /// Uses a double-checked pattern to avoid duplicate discovery when
+    /// multiple requests race on a cold start.
+    async fn get_message_url(&self) -> Result<String> {
+        if let Some(url) = self.message_url.read().await.as_ref() {
+            return Ok(url.clone());
+        }
+
         let endpoint = self.discover_endpoint().await?;
+
+        // Re-check under write lock: another caller may have completed
+        // discovery between our read-unlock and write-lock.
+        let mut slot = self.message_url.write().await;
+        if let Some(existing) = slot.as_ref() {
+            return Ok(existing.clone());
+        }
+
         info!(
             url = %self.display_url,
             message_endpoint = %endpoint,
             "discovered legacy SSE message endpoint"
         );
-
-        let mut slot = self.message_url.write().await;
         *slot = Some(endpoint.clone());
         Ok(endpoint)
     }
@@ -264,6 +283,8 @@ impl LegacySseTransport {
 
 /// Parse the `event: endpoint` SSE event from the response body and resolve it
 /// against the base SSE URL.
+///
+/// Only matches data lines preceded by an explicit `event: endpoint` line.
 fn parse_endpoint_event(body: &str, base_url: &str) -> Result<String> {
     let mut current_event: Option<&str> = None;
 
@@ -278,12 +299,7 @@ fn parse_endpoint_event(body: &str, base_url: &str) -> Result<String> {
         if let Some(data) = trimmed.strip_prefix("data:") {
             let data = data.trim();
 
-            // Accept endpoint data regardless of whether the event type was
-            // explicitly set (some servers omit the `event:` line).
-            let is_endpoint_event = current_event == Some("endpoint")
-                || current_event.is_none() && looks_like_endpoint_data(data);
-
-            if is_endpoint_event && !data.is_empty() {
+            if current_event == Some("endpoint") && !data.is_empty() {
                 return resolve_endpoint_url(data, base_url);
             }
             continue;
@@ -299,11 +315,6 @@ fn parse_endpoint_event(body: &str, base_url: &str) -> Result<String> {
         "no 'endpoint' event found in SSE stream (server may not support legacy SSE transport)"
             .to_string(),
     ))
-}
-
-/// Heuristic: does this data line look like an endpoint path/URL?
-fn looks_like_endpoint_data(data: &str) -> bool {
-    data.starts_with('/') || data.starts_with('?') || data.starts_with("http")
 }
 
 /// Resolve endpoint data (which may be relative) against the base SSE URL.
@@ -504,14 +515,19 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_endpoint_event_without_event_type_line() {
-        // Some servers omit the `event:` line and just send `data:` with a path
+    fn test_parse_endpoint_event_without_event_type_line_is_rejected() {
+        // Data lines without an explicit `event: endpoint` are not treated as endpoints
         let body = "data: /message?sessionId=implicit-endpoint\n\n";
+        let result = parse_endpoint_event(body, "http://localhost:3001/");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_endpoint_event_ignores_non_endpoint_events() {
+        // Other event types with path-like data must not be mistaken for endpoints
+        let body = "event: message\ndata: /error/occurred\n\nevent: endpoint\ndata: /message?sessionId=real\n\n";
         let result = parse_endpoint_event(body, "http://localhost:3001/").unwrap();
-        assert_eq!(
-            result,
-            "http://localhost:3001/message?sessionId=implicit-endpoint"
-        );
+        assert_eq!(result, "http://localhost:3001/message?sessionId=real");
     }
 
     // ── Integration tests with mock server ────────────────────────────
