@@ -12,6 +12,8 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [gh]
 ---
 
 # GitHub Repository Management

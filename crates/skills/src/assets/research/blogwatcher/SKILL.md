@@ -14,6 +14,12 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [blogwatcher]
+  install:
+    - kind: go
+      module: github.com/JulienBreux/blogwatcher@latest
+      bins: [blogwatcher]
 ---
 
 # Blogwatcher

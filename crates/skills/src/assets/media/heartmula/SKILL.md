@@ -10,6 +10,13 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [hf]
+  install:
+    - kind: uv
+      package: huggingface-hub[cli]
+      bins: [hf]
+      label: "Install Hugging Face CLI"
 ---
 
 # HeartMuLa - Open-Source Music Generation

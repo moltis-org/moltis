@@ -6,6 +6,13 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [manim]
+  install:
+    - kind: uv
+      package: manim
+      bins: [manim]
+      label: "Install Manim (math animation)"
 ---
 
 # Manim Video Production Pipeline

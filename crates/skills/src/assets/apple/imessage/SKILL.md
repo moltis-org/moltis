@@ -14,6 +14,13 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [imsg]
+  install:
+    - kind: brew
+      formula: steipete/tap/imsg
+      bins: [imsg]
+      label: "Install imsg (iMessage CLI)"
 ---
 
 # iMessage

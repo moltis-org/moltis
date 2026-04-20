@@ -13,6 +13,8 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  any_bins: [obsidian, vim]
 ---
 
 # Karpathy's LLM Wiki

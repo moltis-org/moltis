@@ -14,6 +14,13 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [openhue]
+  install:
+    - kind: brew
+      formula: openhue/tap/openhue-cli
+      bins: [openhue]
+      label: "Install OpenHue CLI"
 ---
 
 # OpenHue CLI

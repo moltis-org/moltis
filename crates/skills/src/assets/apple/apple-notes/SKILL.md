@@ -15,6 +15,14 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [memo]
+  install:
+    - kind: brew
+      formula: antoniorodr/memo/memo
+      bins: [memo]
+      os: [darwin]
+      label: "Install memo (Apple Notes CLI)"
 ---
 
 # Apple Notes

@@ -12,6 +12,12 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [python3]
+  install:
+    - kind: uv
+      package: pymupdf4llm
+      label: "Install pymupdf4llm (PDF extraction)"
 ---
 
 # PDF & Document Extraction

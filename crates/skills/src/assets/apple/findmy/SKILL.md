@@ -12,6 +12,13 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [peekaboo]
+  install:
+    - kind: brew
+      formula: steipete/tap/peekaboo
+      bins: [peekaboo]
+      label: "Install Peekaboo (Find My CLI)"
 ---
 
 # Find My (Apple)

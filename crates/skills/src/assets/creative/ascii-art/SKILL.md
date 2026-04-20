@@ -14,6 +14,25 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  any_bins: [pyfiglet, cowsay, boxes, toilet, ascii-image-converter, jp2a]
+  install:
+    - kind: uv
+      package: pyfiglet
+      bins: [pyfiglet]
+      label: "Install pyfiglet (text banners)"
+    - kind: brew
+      formula: cowsay
+      bins: [cowsay]
+    - kind: brew
+      formula: boxes
+      bins: [boxes]
+    - kind: brew
+      formula: toilet
+      bins: [toilet]
+    - kind: go
+      module: github.com/TheZoraiz/ascii-image-converter
+      bins: [ascii-image-converter]
 ---
 
 # ASCII Art Skill

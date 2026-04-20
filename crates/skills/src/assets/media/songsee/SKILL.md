@@ -14,6 +14,12 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [songsee]
+  install:
+    - kind: go
+      module: github.com/steipete/songsee/cmd/songsee@latest
+      bins: [songsee]
 ---
 
 # songsee

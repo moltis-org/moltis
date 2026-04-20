@@ -14,6 +14,17 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [himalaya]
+  install:
+    - kind: brew
+      formula: himalaya
+      bins: [himalaya]
+      os: [darwin]
+    - kind: cargo
+      package: himalaya
+      bins: [himalaya]
+      label: "Install Himalaya (CLI email)"
 ---
 
 # Himalaya Email CLI

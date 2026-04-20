@@ -12,6 +12,12 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [claude]
+  install:
+    - kind: npm
+      package: @anthropic-ai/claude-code
+      bins: [claude]
 ---
 
 # Claude Code — Hermes Orchestration Guide

@@ -12,6 +12,13 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [nano-pdf]
+  install:
+    - kind: uv
+      package: nano-pdf
+      bins: [nano-pdf]
+      label: "Install nano-pdf"
 ---
 
 # nano-pdf

@@ -12,6 +12,12 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [codex]
+  install:
+    - kind: npm
+      package: @openai/codex
+      bins: [codex]
 ---
 
 # Codex CLI

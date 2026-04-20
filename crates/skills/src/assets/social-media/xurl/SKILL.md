@@ -16,6 +16,16 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [xurl]
+  install:
+    - kind: brew
+      formula: xdevplatform/tap/xurl
+      bins: [xurl]
+      os: [darwin]
+    - kind: go
+      module: github.com/xdevplatform/xurl@latest
+      bins: [xurl]
 ---
 
 # xurl — X (Twitter) API via the Official CLI

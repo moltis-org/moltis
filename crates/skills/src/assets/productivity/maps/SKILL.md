@@ -19,6 +19,8 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [python3]
 ---
 
 # Maps Skill

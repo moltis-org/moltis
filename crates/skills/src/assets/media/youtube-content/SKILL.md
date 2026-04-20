@@ -9,6 +9,12 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [python3]
+  install:
+    - kind: uv
+      package: youtube-transcript-api
+      label: "Install youtube-transcript-api"
 ---
 
 # YouTube Content Tool

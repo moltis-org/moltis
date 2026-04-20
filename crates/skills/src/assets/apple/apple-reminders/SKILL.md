@@ -14,6 +14,13 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [remi]
+  install:
+    - kind: brew
+      formula: steipete/tap/remi
+      bins: [remi]
+      label: "Install remi (Apple Reminders CLI)"
 ---
 
 # Apple Reminders

@@ -6,6 +6,16 @@ origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
   version: 9f22977f
+requires:
+  bins: [python3]
+  install:
+    - kind: uv
+      package: markitdown
+      label: "Install markitdown (PPTX reader)"
+    - kind: npm
+      package: pptxgenjs
+      bins: [pptxgenjs]
+      label: "Install pptxgenjs (PPTX writer)"
 ---
 
 # Powerpoint Skill
