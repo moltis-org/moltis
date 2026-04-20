@@ -269,6 +269,7 @@ Convert text to speech.
 **Audio Formats:**
 - `mp3` (default) - Widely compatible
 - `opus` / `ogg` - Good for Telegram voice notes
+- `webm` - Browser MediaRecorder default
 - `aac` - Apple devices
 - `pcm` - Raw audio
 
@@ -357,6 +358,11 @@ language = "en"
 # binary_path = "/usr/local/bin/sherpa-onnx-offline"  # optional
 model_dir = "~/.moltis/models/sherpa-onnx-whisper-tiny.en"  # required
 language = "en"
+
+[voice.stt.elevenlabs]
+# api_key = "sk_..."  # from ELEVENLABS_API_KEY env or config
+# model = "scribe_v2"  # optional
+# language = "en"  # optional ISO 639-1 hint
 ```
 
 ### Local Provider Setup
@@ -476,7 +482,8 @@ List available STT providers.
   { "id": "mistral", "name": "Mistral AI", "configured": false },
   { "id": "voxtral-local", "name": "Voxtral (Local)", "configured": false },
   { "id": "whisper-cli", "name": "whisper.cpp", "configured": false },
-  { "id": "sherpa-onnx", "name": "sherpa-onnx", "configured": false }
+  { "id": "sherpa-onnx", "name": "sherpa-onnx", "configured": false },
+  { "id": "elevenlabs", "name": "ElevenLabs Scribe", "configured": false }
 ]
 ```
 
@@ -513,7 +520,7 @@ Transcribe audio to text.
 
 **Parameters:**
 - `audio` (required): Base64-encoded audio data
-- `format`: Audio format (`mp3`, `opus`, `ogg`, `aac`, `pcm`)
+- `format`: Audio format (`mp3`, `opus`, `ogg`, `webm`, `aac`, `pcm`)
 - `language`: ISO 639-1 code to improve accuracy
 - `prompt`: Context hint (terminology, topic)
 
@@ -526,7 +533,7 @@ Change the active STT provider.
 { "provider": "groq" }
 ```
 
-Valid provider IDs: `whisper`, `groq`, `deepgram`, `google`, `mistral`, `voxtral-local`, `whisper-cli`, `sherpa-onnx`
+Valid provider IDs: `whisper`, `groq`, `deepgram`, `google`, `mistral`, `voxtral-local`, `whisper-cli`, `sherpa-onnx`, `elevenlabs`
 
 ## Code Structure
 
@@ -550,6 +557,7 @@ src/
     ├── deepgram.rs     # Deepgram implementation
     ├── google.rs       # Google Cloud Speech-to-Text
     ├── mistral.rs      # Mistral AI Voxtral cloud implementation
+    ├── elevenlabs.rs   # ElevenLabs Scribe STT implementation
     ├── voxtral_local.rs # Voxtral via local vLLM server
     ├── cli_utils.rs    # Shared utilities for CLI providers
     ├── whisper_cli.rs  # whisper.cpp CLI wrapper
