@@ -83,9 +83,7 @@ all third-party integrations.
 ## Will This Change?
 
 If Anthropic introduces a developer OAuth program with client ID registration
-in the future, Moltis will adopt it.  The generic infrastructure for
-OAuth-to-API-key exchange already exists in the codebase (the `api_key_endpoint`
-field on `OAuthConfig`), so adding support would be straightforward.
+in the future, Moltis will adopt it.
 
 ## References
 
