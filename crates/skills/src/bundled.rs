@@ -323,49 +323,230 @@ fn find_skill_dir_embedded_recursive(
 mod tests {
     use super::*;
 
+    fn store() -> BundledSkillStore {
+        BundledSkillStore::new()
+    }
+
+    // ── Discovery ───────────────────────────────────────────────────────
+
     #[test]
     fn bundled_skills_are_discovered() {
-        let store = BundledSkillStore::new();
-        let skills = store.discover();
+        let skills = store().discover();
         assert!(
-            !skills.is_empty(),
-            "bundled skills directory should contain at least one skill"
+            skills.len() >= 90,
+            "expected ≥90 bundled skills, got {}",
+            skills.len()
         );
         for skill in &skills {
             assert_eq!(skill.source, Some(SkillSource::Bundled));
-            assert!(!skill.name.is_empty());
-            assert!(!skill.description.is_empty());
+            assert!(!skill.name.is_empty(), "skill has empty name");
+            assert!(
+                !skill.description.is_empty(),
+                "skill {} has empty description",
+                skill.name
+            );
         }
     }
 
     #[test]
-    fn bundled_skill_content_readable() {
-        let store = BundledSkillStore::new();
-        let skills = store.discover();
-        let first = skills.first().expect("need at least one bundled skill");
-        let body = store.read_skill(&first.name);
-        assert!(body.is_some(), "should be able to read skill body");
-        assert!(
-            !body.as_ref().map_or(true, String::is_empty),
-            "skill body should not be empty"
-        );
+    fn no_duplicate_skill_names() {
+        let skills = store().discover();
+        let mut seen = std::collections::HashSet::new();
+        for skill in &skills {
+            assert!(
+                seen.insert(&skill.name),
+                "duplicate bundled skill name: {}",
+                skill.name
+            );
+        }
     }
 
     #[test]
-    fn bundled_skill_origin_deserialized() {
-        let store = BundledSkillStore::new();
-        let skills = store.discover();
-        // At least one bundled skill should have origin metadata.
-        let has_origin = skills.iter().any(|s| s.origin.is_some());
-        assert!(
-            has_origin,
-            "at least one bundled skill should have origin metadata"
-        );
+    fn all_names_pass_validation() {
+        let skills = store().discover();
+        for skill in &skills {
+            assert!(
+                parse::validate_name(&skill.name),
+                "skill name '{}' fails validation",
+                skill.name
+            );
+        }
+    }
+
+    // ── Category ────────────────────────────────────────────────────────
+
+    #[test]
+    fn every_bundled_skill_has_category() {
+        let skills = store().discover();
+        for skill in &skills {
+            assert!(
+                skill.category.is_some(),
+                "skill '{}' has no category",
+                skill.name
+            );
+            assert!(
+                !skill.category.as_ref().map_or(true, String::is_empty),
+                "skill '{}' has empty category",
+                skill.name
+            );
+        }
+    }
+
+    #[test]
+    fn known_categories_present() {
+        let skills = store().discover();
+        let cats: std::collections::HashSet<String> =
+            skills.iter().filter_map(|s| s.category.clone()).collect();
+        // These categories must exist (from both hermes and openclaw copies).
+        for expected in [
+            "research",
+            "creative",
+            "mlops",
+            "software-development",
+            "productivity",
+        ] {
+            assert!(
+                cats.contains(expected),
+                "expected category '{}' not found in {:?}",
+                expected,
+                cats
+            );
+        }
+    }
+
+    #[test]
+    fn category_derived_from_top_level_directory() {
+        let skills = store().discover();
+        // axolotl lives at mlops/training/axolotl — category should be "mlops"
+        let axolotl = skills.iter().find(|s| s.name == "axolotl");
+        if let Some(skill) = axolotl {
+            assert_eq!(skill.category.as_deref(), Some("mlops"));
+        }
+        // arxiv lives at research/arxiv — category should be "research"
+        let arxiv = skills.iter().find(|s| s.name == "arxiv");
+        if let Some(skill) = arxiv {
+            assert_eq!(skill.category.as_deref(), Some("research"));
+        }
+    }
+
+    // ── Origin ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn all_bundled_skills_have_origin() {
+        let skills = store().discover();
+        for skill in &skills {
+            assert!(
+                skill.origin.is_some(),
+                "skill '{}' has no origin metadata",
+                skill.name
+            );
+        }
+    }
+
+    #[test]
+    fn origin_sources_are_known() {
+        let skills = store().discover();
+        let sources: std::collections::HashSet<String> = skills
+            .iter()
+            .filter_map(|s| s.origin.as_ref()?.source.clone())
+            .collect();
+        // All skills should come from one of our vetted sources.
+        for source in &sources {
+            assert!(
+                source == "hermes-agent" || source == "openclaw",
+                "unexpected origin source: '{}'",
+                source
+            );
+        }
+    }
+
+    // ── Content reading ─────────────────────────────────────────────────
+
+    #[test]
+    fn every_bundled_skill_body_is_readable() {
+        let s = store();
+        let skills = s.discover();
+        for skill in &skills {
+            let body = s.read_skill(&skill.name);
+            assert!(body.is_some(), "skill '{}' body not readable", skill.name);
+            assert!(
+                !body.as_ref().map_or(true, String::is_empty),
+                "skill '{}' has empty body",
+                skill.name
+            );
+        }
     }
 
     #[test]
     fn missing_skill_returns_none() {
-        let store = BundledSkillStore::new();
-        assert!(store.read_skill("nonexistent-skill-xyz").is_none());
+        assert!(store().read_skill("nonexistent-skill-xyz").is_none());
+    }
+
+    #[test]
+    fn missing_sidecar_returns_none() {
+        assert!(store().read_sidecar("arxiv", "nonexistent.md").is_none());
+    }
+
+    // ── Specific skills smoke tests ─────────────────────────────────────
+
+    #[test]
+    fn arxiv_skill_metadata() {
+        let skills = store().discover();
+        let arxiv = skills
+            .iter()
+            .find(|s| s.name == "arxiv")
+            .expect("arxiv should be bundled");
+        assert_eq!(arxiv.category.as_deref(), Some("research"));
+        assert!(arxiv.description.contains("arXiv"));
+        assert_eq!(
+            arxiv.origin.as_ref().and_then(|o| o.source.as_deref()),
+            Some("hermes-agent")
+        );
+    }
+
+    #[test]
+    fn weather_skill_metadata() {
+        let skills = store().discover();
+        let weather = skills
+            .iter()
+            .find(|s| s.name == "weather")
+            .expect("weather should be bundled");
+        assert_eq!(weather.category.as_deref(), Some("smart-home"));
+        assert_eq!(
+            weather.origin.as_ref().and_then(|o| o.source.as_deref()),
+            Some("openclaw")
+        );
+    }
+
+    #[test]
+    fn himalaya_has_requires() {
+        let skills = store().discover();
+        let himalaya = skills
+            .iter()
+            .find(|s| s.name == "himalaya")
+            .expect("himalaya should be bundled");
+        assert!(
+            himalaya.requires.bins.contains(&"himalaya".to_string()),
+            "himalaya should require the himalaya binary"
+        );
+        assert!(
+            !himalaya.requires.install.is_empty(),
+            "himalaya should have install instructions"
+        );
+    }
+
+    #[test]
+    fn webhook_subscriptions_is_moltis_native() {
+        let s = store();
+        let body = s.read_skill("webhook-subscriptions").expect("should exist");
+        // The rewritten skill should reference Moltis RPC, not Hermes CLI.
+        assert!(
+            body.contains("webhooks.create"),
+            "webhook skill should reference Moltis RPC API"
+        );
+        assert!(
+            !body.contains("hermes webhook"),
+            "webhook skill should not reference Hermes CLI"
+        );
     }
 }
