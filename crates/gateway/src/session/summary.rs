@@ -13,7 +13,7 @@ use crate::state::GatewayState;
 /// Run the session-end memory summary if the config flag is enabled and
 /// the session has enough messages to be worth summarizing.
 pub(crate) async fn run_session_summary_if_enabled(state: &Arc<GatewayState>, session_key: &str) {
-    let config = moltis_config::discover_and_load();
+    let config = &state.config;
     if !config.memory.enable_session_summary {
         return;
     }

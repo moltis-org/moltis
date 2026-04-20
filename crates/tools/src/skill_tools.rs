@@ -1234,12 +1234,16 @@ fn split_frontmatter_body(raw: &str) -> (&str, &str) {
 }
 
 /// Replace the `description: ...` line in a frontmatter block.
+///
+/// The value is YAML-quoted to prevent indicator characters (`{`, `[`, `>`, `|`,
+/// etc.) from being misinterpreted as YAML structure.
 fn update_frontmatter_description(frontmatter: &str, new_desc: &str) -> String {
     let mut result = String::with_capacity(frontmatter.len() + new_desc.len());
     let mut found = false;
     for line in frontmatter.lines() {
         if line.starts_with("description:") && !found {
-            result.push_str(&format!("description: {new_desc}"));
+            let quoted = yaml_quote(new_desc);
+            result.push_str(&format!("description: {quoted}"));
             found = true;
         } else {
             result.push_str(line);
@@ -1251,6 +1255,15 @@ fn update_frontmatter_description(frontmatter: &str, new_desc: &str) -> String {
         result.push('\n');
     }
     result
+}
+
+/// Quote a string for safe YAML scalar emission. Plain scalars starting with
+/// YAML indicator characters (`{`, `[`, `>`, `|`, `*`, `&`, `!`, `%`, `@`, `` ` ``)
+/// or containing `: ` would be misinterpreted. Always double-quoting is safe
+/// and avoids edge-case surprises.
+fn yaml_quote(s: &str) -> String {
+    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
 fn build_skill_md(name: &str, description: &str, body: &str, allowed_tools: &[String]) -> String {

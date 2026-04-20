@@ -1208,6 +1208,7 @@ impl LiveChatService {
                     if interval > 0
                         && turn_number > 0
                         && turn_number % interval == 0
+                        && !stream_only
                         && memory_write_mode_allows_save(write_mode)
                         && let Some(mm) = state.memory_manager()
                     {

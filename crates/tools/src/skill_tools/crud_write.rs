@@ -672,7 +672,10 @@ async fn test_patch_skill_updates_description() {
         .unwrap();
 
     let content = std::fs::read_to_string(tmp.path().join("skills/my-skill/SKILL.md")).unwrap();
-    assert!(content.contains("description: new desc"));
+    assert!(
+        content.contains("description: \"new desc\""),
+        "patched description should be YAML-quoted: {content}"
+    );
     assert!(content.contains("Goodbye world"));
 }
 
@@ -783,7 +786,10 @@ fn test_split_frontmatter_body_no_trailing_newline() {
 fn test_update_frontmatter_description_replaces() {
     let fm = "---\nname: foo\ndescription: old\n---\n\n";
     let result = update_frontmatter_description(fm, "new desc");
-    assert!(result.contains("description: new desc"));
+    assert!(
+        result.contains("description: \"new desc\""),
+        "description should be YAML-quoted: {result}"
+    );
     assert!(!result.contains("description: old"));
     assert!(result.contains("name: foo"));
 }
@@ -801,7 +807,21 @@ fn test_update_frontmatter_description_missing_field() {
 fn test_update_frontmatter_description_with_yaml_special_chars() {
     let fm = "---\nname: foo\ndescription: old\n---\n\n";
     let result = update_frontmatter_description(fm, "has: colons and # hashes");
-    assert!(result.contains("description: has: colons and # hashes"));
+    // Value should be double-quoted to prevent YAML misinterpretation.
+    assert!(
+        result.contains(r#"description: "has: colons and # hashes""#),
+        "description should be YAML-quoted: {result}"
+    );
+}
+
+#[test]
+fn test_update_frontmatter_description_escapes_quotes() {
+    let fm = "---\nname: foo\ndescription: old\n---\n\n";
+    let result = update_frontmatter_description(fm, r#"says "hello""#);
+    assert!(
+        result.contains(r#"description: "says \"hello\"""#),
+        "internal quotes should be escaped: {result}"
+    );
 }
 
 #[cfg(unix)]
