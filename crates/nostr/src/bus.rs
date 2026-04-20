@@ -307,7 +307,40 @@ async fn handle_event(
         })
         .await;
 
-    // 9. Dispatch to gateway
+    // 9. Intercept slash commands before dispatching to the LLM.
+    let reply_to = moltis_channels::ChannelReplyTarget {
+        channel_type: moltis_channels::ChannelType::Nostr,
+        account_id: account_id.to_string(),
+        chat_id: sender_hex.clone(),
+        message_id: Some(event.id.to_hex()),
+        thread_id: None,
+    };
+
+    if let Some(cmd_text) = text.strip_prefix('/') {
+        let cmd_name = cmd_text.split_whitespace().next().unwrap_or("");
+        if moltis_channels::commands::is_channel_command(cmd_name, cmd_text) {
+            let response = if cmd_name == "help" {
+                Ok(moltis_channels::commands::help_text())
+            } else {
+                event_sink
+                    .dispatch_command(cmd_text, reply_to, Some(&sender_hex))
+                    .await
+            };
+            let reply_text = match response {
+                Ok(msg) => msg,
+                Err(e) => format!("Error: {e}"),
+            };
+            if let Err(e) =
+                crate::gift_wrap::send_gift_wrapped_dm(client, keys, &sender_pubkey, &reply_text)
+                    .await
+            {
+                tracing::warn!(account_id, "failed to send command response: {e}");
+            }
+            return;
+        }
+    }
+
+    // 10. Dispatch to gateway
     let meta = moltis_channels::ChannelMessageMeta {
         channel_type: moltis_channels::ChannelType::Nostr,
         sender_name: None,
@@ -318,14 +351,6 @@ async fn handle_event(
         agent_id: None,
         audio_filename: None,
         documents: None,
-    };
-
-    let reply_to = moltis_channels::ChannelReplyTarget {
-        channel_type: moltis_channels::ChannelType::Nostr,
-        account_id: account_id.to_string(),
-        chat_id: sender_hex,
-        message_id: Some(event.id.to_hex()),
-        thread_id: None,
     };
 
     event_sink.dispatch_to_chat(text, reply_to, meta).await;

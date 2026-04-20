@@ -52,22 +52,10 @@ pub async fn start_polling(
     bot.delete_webhook().send().await?;
 
     // Register slash commands for autocomplete in Telegram clients.
-    let commands = vec![
-        BotCommand::new("new", "Start a new session"),
-        BotCommand::new("sessions", "List and switch sessions"),
-        BotCommand::new("attach", "Attach an existing session here"),
-        BotCommand::new("approvals", "List pending exec approvals"),
-        BotCommand::new("approve", "Approve a pending exec request"),
-        BotCommand::new("deny", "Deny a pending exec request"),
-        BotCommand::new("agent", "Switch session agent"),
-        BotCommand::new("model", "Switch provider/model"),
-        BotCommand::new("sandbox", "Toggle sandbox and choose image"),
-        BotCommand::new("sh", "Enable shell command mode"),
-        BotCommand::new("clear", "Clear session history"),
-        BotCommand::new("compact", "Compact session (summarize)"),
-        BotCommand::new("context", "Show session context info"),
-        BotCommand::new("help", "Show available commands"),
-    ];
+    let commands: Vec<BotCommand> = moltis_channels::commands::all_commands()
+        .iter()
+        .map(|c| BotCommand::new(c.name, c.description))
+        .collect();
     if let Err(e) = bot.set_my_commands(commands).await {
         warn!(account_id, "failed to register bot commands: {e}");
     }

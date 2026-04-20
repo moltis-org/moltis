@@ -5,6 +5,7 @@
 //! messaging, status, and gateway lifecycle.
 
 pub mod channel_webhook_middleware;
+pub mod commands;
 pub mod config_view;
 pub mod contract;
 pub mod error;
