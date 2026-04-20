@@ -99,11 +99,11 @@ impl Default for BundledSkillStore {
 /// Supports arbitrary nesting (e.g. `mlops/training/axolotl/SKILL.md`).
 fn discover_from_fs(assets_dir: &Path) -> Vec<SkillMetadata> {
     let mut skills = Vec::new();
-    discover_from_fs_recursive(assets_dir, &mut skills);
+    discover_from_fs_recursive(assets_dir, assets_dir, &mut skills);
     skills
 }
 
-fn discover_from_fs_recursive(dir: &Path, skills: &mut Vec<SkillMetadata>) {
+fn discover_from_fs_recursive(assets_root: &Path, dir: &Path, skills: &mut Vec<SkillMetadata>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -120,6 +120,7 @@ fn discover_from_fs_recursive(dir: &Path, skills: &mut Vec<SkillMetadata>) {
             match parse::parse_metadata(&content, &path) {
                 Ok(mut meta) => {
                     meta.source = Some(SkillSource::Bundled);
+                    meta.category = category_from_path(assets_root, &path);
                     skills.push(meta);
                 },
                 Err(e) => {
@@ -128,9 +129,17 @@ fn discover_from_fs_recursive(dir: &Path, skills: &mut Vec<SkillMetadata>) {
             }
         } else {
             // No SKILL.md here — recurse into subdirectories (category nesting).
-            discover_from_fs_recursive(&path, skills);
+            discover_from_fs_recursive(assets_root, &path, skills);
         }
     }
+}
+
+/// Extract the top-level category from a skill's path relative to the assets root.
+/// e.g. `assets/research/arxiv` → `"research"`, `assets/mlops/training/axolotl` → `"mlops"`.
+fn category_from_path(assets_root: &Path, skill_dir: &Path) -> Option<String> {
+    let rel = skill_dir.strip_prefix(assets_root).ok()?;
+    let first_component = rel.components().next()?;
+    Some(first_component.as_os_str().to_string_lossy().into_owned())
 }
 
 /// Read SKILL.md body from the filesystem.
@@ -218,6 +227,13 @@ fn discover_from_embedded_recursive(
             match parse::parse_metadata(content, &synthetic_path) {
                 Ok(mut meta) => {
                     meta.source = Some(SkillSource::Bundled);
+                    // Extract category from first path component (e.g. "research/arxiv" → "research").
+                    meta.category = sub_dir
+                        .path()
+                        .components()
+                        .next()
+                        .and_then(|c| c.as_os_str().to_str())
+                        .map(String::from);
                     skills.push(meta);
                 },
                 Err(e) => {

@@ -266,6 +266,7 @@ impl SkillsService for NoopSkillsService {
                 serde_json::json!({
                     "name": s.name,
                     "description": s.description,
+                    "category": s.category,
                     "license": s.license,
                     "allowed_tools": s.allowed_tools,
                     "path": s.path.to_string_lossy(),

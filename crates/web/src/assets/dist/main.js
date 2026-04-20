@@ -15029,7 +15029,16 @@ function EnabledSkillsTable() {
   const activeDetail = useSignal(null);
   const detailLoading = useSignal(false);
   const pending = useSignal(null);
+  const activeCategory = useSignal(null);
   if (!(s == null ? void 0 : s.length)) return null;
+  const categories = g(() => {
+    const cats = /* @__PURE__ */ new Set();
+    for (const sk of enabledSkills.value) {
+      cats.add(sk.category || "other");
+    }
+    return Array.from(cats).sort();
+  });
+  const filtered = activeCategory.value ? s.filter((sk) => (sk.category || "other") === activeCategory.value) : s;
   function isDisc(sk) {
     return sk.source === "personal" || sk.source === "project";
   }
@@ -15071,7 +15080,49 @@ function EnabledSkillsTable() {
     });
   }
   return /* @__PURE__ */ u("div", { className: "skills-section", children: [
-    /* @__PURE__ */ u("h3", { className: "skills-section-title", children: "Enabled Skills" }),
+    /* @__PURE__ */ u("h3", { className: "skills-section-title", children: [
+      "Enabled Skills",
+      /* @__PURE__ */ u("span", { className: "ml-2 text-xs font-normal text-[var(--muted)]", children: [
+        "(",
+        s.length,
+        ")"
+      ] })
+    ] }),
+    categories.value.length > 1 && /* @__PURE__ */ u("div", { className: "flex flex-wrap gap-1.5 mb-3", children: [
+      /* @__PURE__ */ u(
+        "button",
+        {
+          className: `skills-category-pill ${activeCategory.value === null ? "active" : ""}`,
+          onClick: () => {
+            activeCategory.value = null;
+          },
+          children: [
+            "All (",
+            s.length,
+            ")"
+          ]
+        }
+      ),
+      categories.value.map((cat) => {
+        const count = s.filter((sk) => (sk.category || "other") === cat).length;
+        return /* @__PURE__ */ u(
+          "button",
+          {
+            className: `skills-category-pill ${activeCategory.value === cat ? "active" : ""}`,
+            onClick: () => {
+              activeCategory.value = activeCategory.value === cat ? null : cat;
+            },
+            children: [
+              cat,
+              " (",
+              count,
+              ")"
+            ]
+          },
+          cat
+        );
+      })
+    ] }),
     /* @__PURE__ */ u("div", { className: "skills-table-wrap", children: /* @__PURE__ */ u("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: ".82rem" }, children: [
       /* @__PURE__ */ u("thead", { children: /* @__PURE__ */ u("tr", { style: { borderBottom: "1px solid var(--border)", background: "var(--surface)" }, children: [
         /* @__PURE__ */ u(
@@ -15118,7 +15169,7 @@ function EnabledSkillsTable() {
         ),
         /* @__PURE__ */ u("th", {})
       ] }) }),
-      /* @__PURE__ */ u("tbody", { children: s.map((sk) => {
+      /* @__PURE__ */ u("tbody", { children: filtered.map((sk) => {
         var _a2;
         return /* @__PURE__ */ u(
           "tr",
@@ -15136,7 +15187,10 @@ function EnabledSkillsTable() {
                     color: "var(--accent)",
                     fontFamily: "var(--font-mono)"
                   },
-                  children: sk.name
+                  children: [
+                    sk.name,
+                    sk.category && !activeCategory.value && /* @__PURE__ */ u("span", { className: "skills-category-badge", children: sk.category })
+                  ]
                 }
               ),
               /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: sk.description || "—" }),

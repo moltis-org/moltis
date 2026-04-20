@@ -27,8 +27,13 @@ pub fn generate_skills_prompt(skills: &[SkillMetadata]) -> String {
             Some(SkillSource::Bundled) => "bundled",
             _ => "skill",
         };
+        let category_attr = skill
+            .category
+            .as_deref()
+            .map(|c| format!(" category=\"{c}\""))
+            .unwrap_or_default();
         out.push_str(&format!(
-            "<skill name=\"{}\" source=\"{}\">\n{}\n</skill>\n",
+            "<skill name=\"{}\" source=\"{}\"{category_attr}>\n{}\n</skill>\n",
             skill.name, source, skill.description,
         ));
     }

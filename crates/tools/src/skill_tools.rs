@@ -547,6 +547,9 @@ fn read_bundled(
     response.insert("name".into(), json!(name));
     response.insert("description".into(), json!(meta.description));
     response.insert("source".into(), json!("bundled"));
+    if let Some(ref cat) = meta.category {
+        response.insert("category".into(), json!(cat));
+    }
     response.insert("body".into(), json!(body));
     response.insert("bytes".into(), json!(body.len()));
 

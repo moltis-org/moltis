@@ -19,6 +19,7 @@ import { ConfirmDialog, requestConfirm } from "../ui";
 interface SkillSummary {
 	name: string;
 	description?: string;
+	category?: string;
 	source?: string;
 	enabled?: boolean;
 	protected?: boolean;
@@ -845,7 +846,23 @@ function EnabledSkillsTable(): VNode | null {
 	const activeDetail = useSignal<SkillDetail | null>(null);
 	const detailLoading = useSignal(false);
 	const pending = useSignal<string | null>(null);
+	const activeCategory = useSignal<string | null>(null);
 	if (!s?.length) return null;
+
+	// Build sorted category list from skills
+	const categories = computed(() => {
+		const cats = new Set<string>();
+		for (const sk of enabledSkills.value) {
+			cats.add(sk.category || "other");
+		}
+		return Array.from(cats).sort();
+	});
+
+	// Filter skills by active category
+	const filtered = activeCategory.value
+		? s.filter((sk) => (sk.category || "other") === activeCategory.value)
+		: s;
+
 	function isDisc(sk: SkillSummary): boolean {
 		return sk.source === "personal" || sk.source === "project";
 	}
@@ -887,7 +904,32 @@ function EnabledSkillsTable(): VNode | null {
 	}
 	return (
 		<div className="skills-section">
-			<h3 className="skills-section-title">Enabled Skills</h3>
+			<h3 className="skills-section-title">
+				Enabled Skills
+				<span className="ml-2 text-xs font-normal text-[var(--muted)]">({s.length})</span>
+			</h3>
+			{categories.value.length > 1 && (
+				<div className="flex flex-wrap gap-1.5 mb-3">
+					<button
+						className={`skills-category-pill ${activeCategory.value === null ? "active" : ""}`}
+						onClick={() => { activeCategory.value = null; }}
+					>
+						All ({s.length})
+					</button>
+					{categories.value.map((cat) => {
+						const count = s.filter((sk) => (sk.category || "other") === cat).length;
+						return (
+							<button
+								key={cat}
+								className={`skills-category-pill ${activeCategory.value === cat ? "active" : ""}`}
+								onClick={() => { activeCategory.value = activeCategory.value === cat ? null : cat; }}
+							>
+								{cat} ({count})
+							</button>
+						);
+					})}
+				</div>
+			)}
 			<div className="skills-table-wrap">
 				<table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".82rem" }}>
 					<thead>
@@ -932,7 +974,7 @@ function EnabledSkillsTable(): VNode | null {
 						</tr>
 					</thead>
 					<tbody>
-						{s.map((sk) => (
+						{filtered.map((sk) => (
 							<tr
 								key={sk.name}
 								className="cursor-pointer"
@@ -948,6 +990,9 @@ function EnabledSkillsTable(): VNode | null {
 									}}
 								>
 									{sk.name}
+									{sk.category && !activeCategory.value && (
+										<span className="skills-category-badge">{sk.category}</span>
+									)}
 								</td>
 								<td style={{ padding: "8px 12px" }}>{sk.description || "\u2014"}</td>
 								<td style={{ padding: "8px 12px" }}>

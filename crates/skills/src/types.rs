@@ -182,6 +182,10 @@ pub struct SkillMetadata {
     /// Provenance of a bundled or imported skill (upstream repo, commit, date).
     #[serde(default)]
     pub origin: Option<SkillOrigin>,
+    /// Category for grouping in the UI (e.g. "research", "creative", "mlops").
+    /// Derived from the parent directory name for bundled skills.
+    #[serde(skip)]
+    pub category: Option<String>,
     /// Filesystem path to the skill directory.
     #[serde(skip)]
     pub path: PathBuf,

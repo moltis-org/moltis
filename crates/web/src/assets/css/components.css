@@ -930,6 +930,42 @@
   background: var(--bg-hover);
 }
 
+.skills-category-pill {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.skills-category-pill:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.skills-category-pill.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.skills-category-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 400;
+  font-family: var(--font-sans, sans-serif);
+  vertical-align: middle;
+}
+
 .skill-editor-form {
   display: flex;
   flex-direction: column;
