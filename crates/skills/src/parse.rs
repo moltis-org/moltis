@@ -52,22 +52,20 @@ fn resolve_name_or_slug(meta: &mut SkillMetadata, skill_dir: &Path) -> Result<()
             } else {
                 "_meta.json"
             };
-            return Err(Error::Validation(format!(
+            Err(Error::Validation(format!(
                 "skill name '{}' is invalid and slug '{}' (from {}) is also invalid: \
                  must be 1-64 lowercase alphanumeric, hyphen, or colon chars \
                  (e.g. 'my-skill' or 'ns:skill')",
                 meta.name, s, source
-            )));
+            )))
         },
-        None => {
-            return Err(Error::Validation(format!(
-                "skill name '{}' is invalid and no slug provided: \
+        None => Err(Error::Validation(format!(
+            "skill name '{}' is invalid and no slug provided: \
                  must be 1-64 lowercase alphanumeric, hyphen, or colon chars \
                  (e.g. 'my-skill' or 'ns:skill'), \
                  or provide a valid 'slug' field",
-                meta.name
-            )));
-        },
+            meta.name
+        ))),
     }
 }
 

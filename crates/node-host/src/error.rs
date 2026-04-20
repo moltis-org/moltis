@@ -19,7 +19,7 @@ pub enum Error {
 
     /// WebSocket transport error.
     #[error(transparent)]
-    WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+    WebSocket(Box<tokio_tungstenite::tungstenite::Error>),
 
     /// Configuration problem (missing file, bad value, etc.).
     #[error("{0}")]
@@ -44,3 +44,9 @@ pub enum Error {
 
 /// Convenience alias used throughout this crate.
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl From<tokio_tungstenite::tungstenite::Error> for Error {
+    fn from(e: tokio_tungstenite::tungstenite::Error) -> Self {
+        Self::WebSocket(Box::new(e))
+    }
+}
