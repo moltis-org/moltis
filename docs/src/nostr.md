@@ -132,14 +132,22 @@ When `otp_self_approval` is enabled and a non-allowlisted sender messages the
 bot, the sender appears in the Senders tab of the web UI where they can be
 approved or denied. This works the same as OTP for Telegram and Matrix.
 
-## NIP-04 Encryption
+## NIP-04 / NIP-44 / NIP-59 Encryption
 
-All messages between the bot and users are encrypted using
-[NIP-04](https://github.com/nostr-protocol/nips/blob/master/04.md) (kind:4
-events). The bot can also decrypt inbound NIP-04 messages from any client that
-supports this standard.
+All messages between the bot and users are encrypted:
 
-NIP-44 and NIP-17 (gift-wrapped DMs) are planned for future releases.
+- **NIP-04** (kind:4) — legacy encrypted DMs. Decrypted inbound, and used
+  as fallback for outbound when the recipient doesn't support NIP-59.
+- **NIP-44** — modern encryption. Tried as fallback when NIP-04 decryption
+  fails on inbound kind:4 events.
+- **NIP-59 Gift Wrap** (kind:1059) — [private DMs](https://github.com/nostr-protocol/nips/blob/master/59.md)
+  using ephemeral keys. Fully hides sender and receiver metadata from
+  relays. The bot subscribes to both kind:4 and kind:1059, and automatically
+  sends gift-wrapped replies to recipients that send gift-wrapped messages.
+
+Gift wrap timestamps are randomly tweaked by 0–2 days (per the NIP-59
+spec), so the relay subscription uses a wider `since` window to avoid
+missing recent wraps.
 
 ## Relay Health
 
