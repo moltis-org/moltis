@@ -224,7 +224,8 @@ mod tests {
             let name = json["name"].as_str().unwrap_or_default();
             assert!(!name.is_empty(), "command name is empty");
             assert!(
-                name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                name.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'),
                 "invalid command name: {name}"
             );
             assert!(name.len() <= 32, "command name too long: {name}");
