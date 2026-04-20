@@ -15296,7 +15296,7 @@ function EnabledSkillsTable() {
                 ),
                 /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: sk.description || "—" }),
                 /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: /* @__PURE__ */ u("span", { className: ((_b2 = sk.source) == null ? void 0 : _b2.includes("/")) ? "tier-badge" : "recommended-badge", children: sk.source }) }),
-                /* @__PURE__ */ u("td", { style: { padding: "8px 12px", textAlign: "right" }, children: /* @__PURE__ */ u(
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px", textAlign: "right" }, children: sk.source !== "bundled" && /* @__PURE__ */ u(
                   "button",
                   {
                     disabled: isDisc(sk) && sk.protected === true || pending.value === sk.name,

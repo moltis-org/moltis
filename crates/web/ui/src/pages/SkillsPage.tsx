@@ -1023,20 +1023,22 @@ function EnabledSkillsTable(): VNode | null {
 											<span className={sk.source?.includes("/") ? "tier-badge" : "recommended-badge"}>{sk.source}</span>
 										</td>
 										<td style={{ padding: "8px 12px", textAlign: "right" }}>
-											<button
-												disabled={(isDisc(sk) && sk.protected === true) || pending.value === sk.name}
-												className={
-													isDisc(sk)
-														? "provider-btn provider-btn-sm provider-btn-danger"
-														: "provider-btn provider-btn-sm provider-btn-secondary"
-												}
-												onClick={(e) => {
-													e.stopPropagation();
-													onDisable(sk);
-												}}
-											>
-												{pending.value === sk.name ? "..." : isDisc(sk) ? "Delete" : "Disable"}
-											</button>
+											{sk.source !== "bundled" && (
+												<button
+													disabled={(isDisc(sk) && sk.protected === true) || pending.value === sk.name}
+													className={
+														isDisc(sk)
+															? "provider-btn provider-btn-sm provider-btn-danger"
+															: "provider-btn provider-btn-sm provider-btn-secondary"
+													}
+													onClick={(e) => {
+														e.stopPropagation();
+														onDisable(sk);
+													}}
+												>
+													{pending.value === sk.name ? "..." : isDisc(sk) ? "Delete" : "Disable"}
+												</button>
+											)}
 										</td>
 									</tr>
 									{isActive && activeDetail.value && (
