@@ -5729,14 +5729,15 @@ mdRenderer.code = ({ text, lang }) => {
 `;
 };
 mdRenderer.table = (token) => {
-  const header = token.header.map((cell) => `<th>${cell.text}</th>`).join("");
-  const body = token.rows.map((row) => `<tr>${row.map((cell) => `<td>${cell.text}</td>`).join("")}</tr>`).join("");
+  const header = token.header.map((cell) => `<th>${esc(cell.text)}</th>`).join("");
+  const body = token.rows.map((row) => `<tr>${row.map((cell) => `<td>${esc(cell.text)}</td>`).join("")}</tr>`).join("");
   return `<div class="msg-table-wrap"><table class="msg-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>
 `;
 };
 mdRenderer.link = ({ href, text }) => {
   return `<a href="${sanitizeHref(href)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
 };
+mdRenderer.html = ({ text }) => esc(text);
 const markedInstance = new D$1({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
 function renderMarkdown(raw) {
   const asciiProcessed = renderAsciiTables(raw);

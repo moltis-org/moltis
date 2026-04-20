@@ -247,13 +247,15 @@ mdRenderer.code = ({ text, lang }) => {
 	return `<pre class="code-block">${badge}<code${langAttr}>${esc(text)}</code></pre>\n`;
 };
 mdRenderer.table = (token) => {
-	const header = token.header.map((cell) => `<th>${cell.text}</th>`).join("");
-	const body = token.rows.map((row) => `<tr>${row.map((cell) => `<td>${cell.text}</td>`).join("")}</tr>`).join("");
+	const header = token.header.map((cell) => `<th>${esc(cell.text)}</th>`).join("");
+	const body = token.rows.map((row) => `<tr>${row.map((cell) => `<td>${esc(cell.text)}</td>`).join("")}</tr>`).join("");
 	return `<div class="msg-table-wrap"><table class="msg-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>\n`;
 };
 mdRenderer.link = ({ href, text }) => {
 	return `<a href="${sanitizeHref(href)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
 };
+
+mdRenderer.html = ({ text }) => esc(text);
 
 const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
 
