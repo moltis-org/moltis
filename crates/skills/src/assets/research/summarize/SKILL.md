@@ -6,7 +6,7 @@ requires:
   bins: [summarize]
   install:
     - kind: npm
-      package: “@anthropics/summarize”
+      package: “@steipete/summarize”
       bins: [summarize]
       label: “Install summarize CLI (npm)”
 origin:

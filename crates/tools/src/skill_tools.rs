@@ -450,11 +450,21 @@ impl AgentTool for ReadSkillTool {
             ))
         })?;
 
+        // Auto-install missing requirements before reading the skill.
+        // Only runs when loading the primary body (not sidecar files).
+        let install_note = if file_path.is_none() {
+            auto_install_requirements(meta).await
+        } else {
+            None
+        };
+
         // Bundled skills are served from the embedded store, not the filesystem.
         #[cfg(feature = "bundled-skills")]
         if meta.source.as_ref() == Some(&SkillSource::Bundled) {
             if let Some(ref store) = self.bundled_store {
-                return read_bundled(name, meta, store, file_path);
+                let mut result = read_bundled(name, meta, store, file_path)?;
+                inject_install_note(&mut result, &install_note);
+                return Ok(result);
             }
         }
 
@@ -480,7 +490,82 @@ impl AgentTool for ReadSkillTool {
             return read_sidecar(name, &meta.path, rel).await;
         }
 
-        read_primary(name, meta).await
+        let mut result = read_primary(name, meta).await?;
+        inject_install_note(&mut result, &install_note);
+        Ok(result)
+    }
+}
+
+/// Check skill requirements and auto-install missing binaries if install specs
+/// are available. Returns a human-readable note describing what was installed,
+/// or `None` if nothing was needed.
+async fn auto_install_requirements(meta: &moltis_skills::types::SkillMetadata) -> Option<String> {
+    use moltis_skills::requirements::{check_requirements, install_command_preview, run_install};
+
+    let elig = check_requirements(meta);
+    if elig.eligible || elig.install_options.is_empty() {
+        return None;
+    }
+
+    let missing = &elig.missing_bins;
+    tracing::info!(
+        skill = %meta.name,
+        missing = ?missing,
+        "auto-installing missing skill dependencies"
+    );
+
+    let mut installed = Vec::new();
+    let mut failed = Vec::new();
+
+    for spec in &elig.install_options {
+        let preview = install_command_preview(spec).unwrap_or_default();
+        match run_install(spec).await {
+            Ok(result) if result.success => {
+                tracing::info!(skill = %meta.name, command = %preview, "dependency installed");
+                installed.push(preview);
+            },
+            Ok(result) => {
+                tracing::warn!(
+                    skill = %meta.name,
+                    command = %preview,
+                    stderr = %result.stderr,
+                    "dependency install failed"
+                );
+                failed.push(format!(
+                    "{preview}: {}",
+                    result.stderr.lines().next().unwrap_or("unknown error")
+                ));
+            },
+            Err(e) => {
+                tracing::warn!(skill = %meta.name, command = %preview, %e, "dependency install error");
+                failed.push(format!("{preview}: {e}"));
+            },
+        }
+    }
+
+    let mut note = String::new();
+    if !installed.is_empty() {
+        note.push_str(&format!("Auto-installed: {}", installed.join(", ")));
+    }
+    if !failed.is_empty() {
+        if !note.is_empty() {
+            note.push_str(". ");
+        }
+        note.push_str(&format!("Failed to install: {}", failed.join("; ")));
+    }
+    if note.is_empty() {
+        None
+    } else {
+        Some(note)
+    }
+}
+
+/// Inject an install note into a skill read response.
+fn inject_install_note(result: &mut Value, note: &Option<String>) {
+    if let Some(msg) = note {
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("install_note".into(), json!(msg));
+        }
     }
 }
 
