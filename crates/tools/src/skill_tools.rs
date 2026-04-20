@@ -493,6 +493,13 @@ fn read_bundled(
     file_path: Option<&str>,
 ) -> anyhow::Result<Value> {
     if let Some(rel) = file_path {
+        // Validate + normalise the sidecar path the same way the FS path does.
+        // In embedded mode include_dir returns None for traversal attempts, but
+        // the dev-mode filesystem fallback uses a weaker starts_with guard.
+        let rel_normalized = normalize_relative_skill_file_path(rel)
+            .map_err(|e| Error::message(format!("invalid file_path: {e}")))?;
+        let rel = rel_normalized.to_str().unwrap_or(rel);
+
         // Sidecar read from bundled store.
         return match store.read_sidecar(name, rel) {
             Some((bytes, true)) => {

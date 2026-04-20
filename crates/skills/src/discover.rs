@@ -118,10 +118,10 @@ impl CompositeSkillDiscoverer {
 impl SkillDiscoverer for CompositeSkillDiscoverer {
     async fn discover(&self) -> Result<Vec<SkillMetadata>> {
         let mut skills = self.inner.discover().await?;
-        let seen: std::collections::HashSet<String> =
+        let mut seen: std::collections::HashSet<String> =
             skills.iter().map(|s| s.name.clone()).collect();
         for bundled in self.bundled.discover() {
-            if !seen.contains(&bundled.name) {
+            if seen.insert(bundled.name.clone()) {
                 skills.push(bundled);
             }
         }
