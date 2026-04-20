@@ -5716,11 +5716,16 @@ function renderAsciiTables(s2) {
   }
   return out.join("\n");
 }
+function sanitizeHref(href) {
+  const trimmed = href.trim();
+  if (/^(https?:|mailto:|#)/i.test(trimmed)) return trimmed;
+  return "#";
+}
 const mdRenderer = new y$3();
 mdRenderer.code = ({ text, lang }) => {
   const langAttr = lang ? ` data-lang="${esc(lang)}"` : "";
   const badge = lang ? `<div class="code-lang-badge">${esc(lang)}</div>` : "";
-  return `<pre class="code-block">${badge}<code${langAttr}>${text}</code></pre>
+  return `<pre class="code-block">${badge}<code${langAttr}>${esc(text)}</code></pre>
 `;
 };
 mdRenderer.table = (token) => {
@@ -5730,7 +5735,7 @@ mdRenderer.table = (token) => {
 `;
 };
 mdRenderer.link = ({ href, text }) => {
-  return `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+  return `<a href="${sanitizeHref(href)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
 };
 const markedInstance = new D$1({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
 function renderMarkdown(raw) {

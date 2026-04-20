@@ -232,12 +232,19 @@ function renderAsciiTables(s: string): string {
 	return out.join("\n");
 }
 
+/** Only allow safe URL protocols for rendered links. */
+function sanitizeHref(href: string): string {
+	const trimmed = href.trim();
+	if (/^(https?:|mailto:|#)/i.test(trimmed)) return trimmed;
+	return "#";
+}
+
 /** Custom marked renderer that applies our CSS classes. */
 const mdRenderer = new Renderer();
 mdRenderer.code = ({ text, lang }) => {
 	const langAttr = lang ? ` data-lang="${esc(lang)}"` : "";
 	const badge = lang ? `<div class="code-lang-badge">${esc(lang)}</div>` : "";
-	return `<pre class="code-block">${badge}<code${langAttr}>${text}</code></pre>\n`;
+	return `<pre class="code-block">${badge}<code${langAttr}>${esc(text)}</code></pre>\n`;
 };
 mdRenderer.table = (token) => {
 	const header = token.header.map((cell) => `<th>${cell.text}</th>`).join("");
@@ -245,7 +252,7 @@ mdRenderer.table = (token) => {
 	return `<div class="msg-table-wrap"><table class="msg-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>\n`;
 };
 mdRenderer.link = ({ href, text }) => {
-	return `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+	return `<a href="${sanitizeHref(href)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
 };
 
 const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
