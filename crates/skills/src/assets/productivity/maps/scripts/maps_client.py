@@ -878,7 +878,7 @@ def cmd_timezone(args):
             if isinstance(offset_info, dict):
                 oh = offset_info.get("hours", 0)
                 om = abs(offset_info.get("minutes", 0))
-                os_ = offset_info.get("seconds", 0)
+                _ = offset_info.get("seconds", 0)  # seconds unused but kept for completeness
                 sign = "+" if oh >= 0 else "-"
                 utc_offset = f"{sign}{abs(oh):02d}:{om:02d}"
             elif tz_data.get("standardUtcOffset"):
