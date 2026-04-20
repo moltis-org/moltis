@@ -46,13 +46,22 @@ function applyStats(stats: GitHubStats): void {
 }
 
 async function fetchIssuesCount(): Promise<number | null> {
+	// Use the regular issues endpoint (60 req/min unauthenticated) instead of
+	// /search/issues (10 req/min). Parse the Link header for total count.
 	try {
 		const resp = await fetch(
-			`https://api.github.com/search/issues?q=repo:${REPO}+is:issue+is:open&per_page=1`,
+			`https://api.github.com/repos/${REPO}/issues?state=open&per_page=1`,
 		);
 		if (!resp.ok) return null;
-		const data = (await resp.json()) as { total_count?: number };
-		return data.total_count ?? null;
+
+		const link = resp.headers.get("Link");
+		if (link) {
+			const match = /[&?]page=(\d+)>;\s*rel="last"/.exec(link);
+			if (match) return Number.parseInt(match[1], 10);
+		}
+		// No Link header means ≤1 page; count the items directly.
+		const items = (await resp.json()) as unknown[];
+		return items.length;
 	} catch {
 		return null;
 	}
@@ -64,7 +73,7 @@ async function fetchDiscussionsCount(): Promise<number | null> {
 	// which equals the total open discussion count.
 	try {
 		const resp = await fetch(
-			`https://api.github.com/repos/${REPO}/discussions?per_page=1&state=open`,
+			`https://api.github.com/repos/${REPO}/discussions?per_page=1`,
 		);
 		if (!resp.ok) return null;
 
