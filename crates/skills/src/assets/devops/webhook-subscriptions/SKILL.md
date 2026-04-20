@@ -1,10 +1,7 @@
 ---
 name: webhook-subscriptions
-description: Create and manage webhook subscriptions for event-driven agent activation, or for direct push notifications (zero LLM cost). Use when the user wants external services to trigger agent runs OR push notifications to chats.
-version: 1.1.0
-metadata:
-  hermes:
-    tags: [webhook, events, automation, integrations, notifications, push]
+description: Create and manage webhook subscriptions for event-driven agent activation. Use when the user wants external services (GitHub, GitLab, Stripe, Linear, PagerDuty, Sentry, or any generic source) to trigger agent runs by POSTing events to a URL.
+version: 2.0.0
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
@@ -13,195 +10,294 @@ origin:
 
 # Webhook Subscriptions
 
-Create dynamic webhook subscriptions so external services (GitHub, GitLab, Stripe, CI/CD, IoT sensors, monitoring tools) can trigger Hermes agent runs by POSTing events to a URL.
+Create webhook subscriptions so external services can trigger agent runs by POSTing events to Moltis.
 
-## Setup (Required First)
+Webhooks are available as soon as the Moltis gateway is running — no extra setup needed.
 
-The webhook platform must be enabled before subscriptions can be created. Check with:
-```bash
-hermes webhook list
+## Ingress Endpoint
+
+Each webhook gets a unique URL:
+
+```
+POST https://<moltis-host>/api/webhooks/ingest/{public_id}
 ```
 
-If it says "Webhook platform is not enabled", set it up:
+The `public_id` is a high-entropy identifier like `wh_a1b2c3d4...` assigned at creation.
 
-### Option 1: Setup wizard
-```bash
-hermes gateway setup
-```
-Follow the prompts to enable webhooks, set the port, and set a global HMAC secret.
+## Managing Webhooks
 
-### Option 2: Manual config
-Add to `~/.hermes/config.yaml`:
-```yaml
-platforms:
-  webhook:
-    enabled: true
-    extra:
-      host: "0.0.0.0"
-      port: 8644
-      secret: "generate-a-strong-secret-here"
-```
+Webhooks are managed via RPC or the web UI. The RPC namespace is `webhooks.*`.
 
-### Option 3: Environment variables
-Add to `~/.hermes/.env`:
-```bash
-WEBHOOK_ENABLED=true
-WEBHOOK_PORT=8644
-WEBHOOK_SECRET=generate-a-strong-secret-here
+### Create a webhook
+
+```json
+// RPC: webhooks.create
+{
+  "name": "github-issues",
+  "description": "Triage new GitHub issues",
+  "source_profile": "github",
+  "auth_mode": "github_hmac_sha256",
+  "auth_config": { "secret": "your-github-webhook-secret" },
+  "event_filter": { "allow": ["issues.opened", "issues.reopened"] },
+  "session_mode": "per_entity",
+  "system_prompt_suffix": "Triage this issue: assign a priority label and suggest next steps."
+}
 ```
 
-After configuration, start (or restart) the gateway:
-```bash
-hermes gateway run
-# Or if using systemd:
-systemctl --user restart hermes-gateway
+Returns the webhook with its `public_id` (the URL slug) and all configuration.
+
+### List webhooks
+
+```json
+// RPC: webhooks.list
 ```
 
-Verify it's running:
-```bash
-curl http://localhost:8644/health
+### Get webhook details
+
+```json
+// RPC: webhooks.get
+{ "id": 123 }
 ```
 
-## Commands
+### Update a webhook
 
-All management is via the `hermes webhook` CLI command:
-
-### Create a subscription
-```bash
-hermes webhook subscribe <name> \
-  --prompt "Prompt template with {payload.fields}" \
-  --events "event1,event2" \
-  --description "What this does" \
-  --skills "skill1,skill2" \
-  --deliver telegram \
-  --deliver-chat-id "12345" \
-  --secret "optional-custom-secret"
+```json
+// RPC: webhooks.update
+{
+  "id": 123,
+  "patch": {
+    "enabled": false,
+    "event_filter": { "allow": ["issues.opened"], "deny": ["issues.closed"] }
+  }
+}
 ```
 
-Returns the webhook URL and HMAC secret. The user configures their service to POST to that URL.
+### Delete a webhook
 
-### List subscriptions
-```bash
-hermes webhook list
+```json
+// RPC: webhooks.delete
+{ "id": 123 }
 ```
 
-### Remove a subscription
-```bash
-hermes webhook remove <name>
+### View deliveries
+
+```json
+// RPC: webhooks.deliveries
+{ "webhookId": 123, "limit": 50, "offset": 0 }
+
+// RPC: webhooks.delivery_get
+{ "id": 456 }
+
+// RPC: webhooks.delivery_payload
+{ "id": 456 }
 ```
 
-### Test a subscription
-```bash
-hermes webhook test <name>
-hermes webhook test <name> --payload '{"key": "value"}'
+## Source Profiles
+
+Each webhook has a `source_profile` that determines how events are parsed and authenticated. Use the profile that matches the sending service for best results.
+
+| Profile | Auth Mode | Event Parsing | Dedup Header |
+|---------|-----------|---------------|-------------|
+| `github` | `github_hmac_sha256` | `x-github-event` + action | `x-github-delivery` |
+| `gitlab` | `gitlab_token` | Event from headers | GitLab delivery ID |
+| `stripe` | `stripe_webhook_signature` | Event type from JSON body | Stripe event ID |
+| `linear` | `linear_webhook_signature` | Event from headers | Linear delivery ID |
+| `pagerduty` | `pagerduty_v2_signature` | Event from headers | PagerDuty dedup key |
+| `sentry` | `sentry_webhook_signature` | Event from headers | Sentry event ID |
+| `generic` | `none` (or any) | `x-event-type` header | `x-delivery-id` / `idempotency-key` |
+
+List available profiles via RPC:
+
+```json
+// RPC: webhooks.profiles
 ```
 
-## Prompt Templates
+## Authentication Modes
 
-Prompts support `{dot.notation}` for accessing nested payload fields:
+| Mode | Config Keys | What It Verifies |
+|------|-----------|-----------------|
+| `none` | — | Nothing (open endpoint) |
+| `static_header` | `header`, `value` | Exact match on a custom header |
+| `bearer` | `token` | `Authorization: Bearer <token>` |
+| `github_hmac_sha256` | `secret` | HMAC-SHA256 of body vs `x-hub-signature-256` |
+| `gitlab_token` | `token` | Exact match of `x-gitlab-token` |
+| `stripe_webhook_signature` | `secret` | Stripe `t=TIMESTAMP,v1=SIG` format with 5min tolerance |
+| `linear_webhook_signature` | `secret` | HMAC-SHA256 vs `linear-signature` |
+| `pagerduty_v2_signature` | `secret` | HMAC-SHA256 vs `x-pagerduty-signature` |
+| `sentry_webhook_signature` | `secret` | HMAC-SHA256 vs `sentry-hook-signature` |
 
-- `{issue.title}` — GitHub issue title
-- `{pull_request.user.login}` — PR author
-- `{data.object.amount}` — Stripe payment amount
-- `{sensor.temperature}` — IoT sensor reading
+All verifications use constant-time comparison to prevent timing attacks.
 
-If no prompt is specified, the full JSON payload is dumped into the agent prompt.
+## Session Modes
+
+Control how webhook deliveries are grouped into agent sessions:
+
+| Mode | Behavior | Use When |
+|------|----------|----------|
+| `per_delivery` | Fresh session for each POST | Independent events (alerts, deploys) |
+| `per_entity` | Same session for same entity | Related events (all activity on PR #123) |
+| `named_session` | Fixed session from `named_session_key` | All events share one conversation |
+
+`per_entity` is powerful for GitHub: all events for the same PR or issue land in the same session, so the agent has full context of the conversation.
+
+## Event Filtering
+
+Filter which event types trigger agent runs:
+
+```json
+{
+  "event_filter": {
+    "allow": ["issues.opened", "pull_request.opened"],
+    "deny": ["issues.closed"]
+  }
+}
+```
+
+- If `allow` is non-empty, only listed events pass.
+- `deny` always wins over `allow`.
+- Filtered events return `200 OK` with `status: filtered` (the sender sees success).
+
+## Tool Policy
+
+Restrict which tools the agent may use for webhook-triggered runs:
+
+```json
+{
+  "tool_policy": {
+    "allow": ["exec", "web_fetch"],
+    "deny": ["delete_file"]
+  }
+}
+```
+
+## IP Allowlist
+
+Restrict which IPs can send webhooks:
+
+```json
+{
+  "allowed_cidrs": ["192.30.252.0/22", "185.199.108.0/22"]
+}
+```
+
+For GitHub, use their published webhook IP ranges. CIDR check runs before auth verification.
 
 ## Common Patterns
 
-### GitHub: new issues
-```bash
-hermes webhook subscribe github-issues \
-  --events "issues" \
-  --prompt "New GitHub issue #{issue.number}: {issue.title}\n\nAction: {action}\nAuthor: {issue.user.login}\nBody:\n{issue.body}\n\nPlease triage this issue." \
-  --deliver telegram \
-  --deliver-chat-id "-100123456789"
+### GitHub: triage new issues
+
+```json
+{
+  "name": "github-issues",
+  "source_profile": "github",
+  "auth_mode": "github_hmac_sha256",
+  "auth_config": { "secret": "whsec_..." },
+  "event_filter": { "allow": ["issues.opened"] },
+  "session_mode": "per_entity",
+  "system_prompt_suffix": "Triage this issue: assign priority, suggest labels, draft a response."
+}
 ```
 
-Then in GitHub repo Settings → Webhooks → Add webhook:
-- Payload URL: the returned webhook_url
-- Content type: application/json
-- Secret: the returned secret
-- Events: "Issues"
+Then in GitHub repo → Settings → Webhooks → Add webhook:
+- **Payload URL:** `https://<moltis-host>/api/webhooks/ingest/<public_id>`
+- **Content type:** `application/json`
+- **Secret:** same as `auth_config.secret`
+- **Events:** Select "Issues"
 
-### GitHub: PR reviews
-```bash
-hermes webhook subscribe github-prs \
-  --events "pull_request" \
-  --prompt "PR #{pull_request.number} {action}: {pull_request.title}\nBy: {pull_request.user.login}\nBranch: {pull_request.head.ref}\n\n{pull_request.body}" \
-  --skills "github-code-review" \
-  --deliver github_comment
+### GitHub: PR review assistant
+
+```json
+{
+  "name": "github-prs",
+  "source_profile": "github",
+  "auth_mode": "github_hmac_sha256",
+  "auth_config": { "secret": "whsec_..." },
+  "event_filter": { "allow": ["pull_request.opened", "pull_request.synchronize"] },
+  "session_mode": "per_entity",
+  "system_prompt_suffix": "Review this PR for code quality, potential bugs, and style issues."
+}
 ```
 
-### Stripe: payment events
-```bash
-hermes webhook subscribe stripe-payments \
-  --events "payment_intent.succeeded,payment_intent.payment_failed" \
-  --prompt "Payment {data.object.status}: {data.object.amount} cents from {data.object.receipt_email}" \
-  --deliver telegram \
-  --deliver-chat-id "-100123456789"
+### Stripe: payment monitoring
+
+```json
+{
+  "name": "stripe-payments",
+  "source_profile": "stripe",
+  "auth_mode": "stripe_webhook_signature",
+  "auth_config": { "secret": "whsec_..." },
+  "event_filter": {
+    "allow": ["payment_intent.succeeded", "payment_intent.payment_failed", "charge.dispute.created"]
+  },
+  "session_mode": "per_delivery",
+  "system_prompt_suffix": "Summarize this payment event and flag anything unusual."
+}
 ```
 
-### CI/CD: build notifications
-```bash
-hermes webhook subscribe ci-builds \
-  --events "pipeline" \
-  --prompt "Build {object_attributes.status} on {project.name} branch {object_attributes.ref}\nCommit: {commit.message}" \
-  --deliver discord \
-  --deliver-chat-id "1234567890"
+### Generic: monitoring alerts
+
+```json
+{
+  "name": "alerts",
+  "source_profile": "generic",
+  "auth_mode": "bearer",
+  "auth_config": { "token": "my-alert-token" },
+  "session_mode": "per_delivery",
+  "system_prompt_suffix": "Investigate this alert and suggest remediation steps."
+}
 ```
 
-### Generic monitoring alert
-```bash
-hermes webhook subscribe alerts \
-  --prompt "Alert: {alert.name}\nSeverity: {alert.severity}\nMessage: {alert.message}\n\nPlease investigate and suggest remediation." \
-  --deliver origin
+### GitLab: pipeline notifications
+
+```json
+{
+  "name": "gitlab-ci",
+  "source_profile": "gitlab",
+  "auth_mode": "gitlab_token",
+  "auth_config": { "token": "my-gitlab-token" },
+  "event_filter": { "allow": ["pipeline"] },
+  "session_mode": "per_delivery",
+  "system_prompt_suffix": "Summarize this CI pipeline result."
+}
 ```
 
-### Direct delivery (no agent, zero LLM cost)
+## Rate Limiting
 
-For use cases where you just want to push a notification through to a user's chat — no reasoning, no agent loop — add `--deliver-only`. The rendered `--prompt` template becomes the literal message body and is dispatched directly to the target adapter.
+Global config in `moltis.toml`:
 
-Use this for:
-- External service push notifications (Supabase/Firebase webhooks → Telegram)
-- Monitoring alerts that should forward verbatim
-- Inter-agent pings where one agent is telling another agent's user something
-- Any webhook where an LLM round trip would be wasted effort
-
-```bash
-hermes webhook subscribe antenna-matches \
-  --deliver telegram \
-  --deliver-chat-id "123456789" \
-  --deliver-only \
-  --prompt "🎉 New match: {match.user_name} matched with you!" \
-  --description "Antenna match notifications"
+```toml
+[webhooks.rate_limit]
+enabled = true
+requests_per_minute = 300
+burst = 30
 ```
 
-The POST returns `200 OK` on successful delivery, `502` on target failure — so upstream services can retry intelligently. HMAC auth, rate limits, and idempotency still apply.
+Per-webhook rate limits are set via `rate_limit_per_minute` (default 60) in the webhook config.
 
-Requires `--deliver` to be a real target (telegram, discord, slack, github_comment, etc.) — `--deliver log` is rejected because log-only direct delivery is pointless.
+Exceeded limits return `429 Too Many Requests`.
 
-## Security
+## Built-in Deduplication
 
-- Each subscription gets an auto-generated HMAC-SHA256 secret (or provide your own with `--secret`)
-- The webhook adapter validates signatures on every incoming POST
-- Static routes from config.yaml cannot be overwritten by dynamic subscriptions
-- Subscriptions persist to `~/.hermes/webhook_subscriptions.json`
+If a service retries a delivery, Moltis automatically deduplicates based on the delivery key (e.g. `x-github-delivery` header). Duplicate POSTs return `200 OK` with `status: deduplicated` — no double processing.
 
 ## How It Works
 
-1. `hermes webhook subscribe` writes to `~/.hermes/webhook_subscriptions.json`
-2. The webhook adapter hot-reloads this file on each incoming request (mtime-gated, negligible overhead)
-3. When a POST arrives matching a route, the adapter formats the prompt and triggers an agent run
-4. The agent's response is delivered to the configured target (Telegram, Discord, GitHub comment, etc.)
+1. External service POSTs to `/api/webhooks/ingest/{public_id}`
+2. Moltis verifies auth, checks CIDR allowlist, enforces rate limits
+3. Source profile parses event type and delivery key from headers/body
+4. Event filter decides whether to process or skip
+5. Deduplication check prevents duplicate processing
+6. Delivery is persisted and queued for async processing
+7. The webhook worker normalizes the payload into a human-readable message
+8. An agent run is triggered with the normalized message + `system_prompt_suffix`
+9. The full delivery history (status, tokens, duration, tool actions) is recorded
 
 ## Troubleshooting
 
-If webhooks aren't working:
-
-1. **Is the gateway running?** Check with `systemctl --user status hermes-gateway` or `ps aux | grep gateway`
-2. **Is the webhook server listening?** `curl http://localhost:8644/health` should return `{"status": "ok"}`
-3. **Check gateway logs:** `grep webhook ~/.hermes/logs/gateway.log | tail -20`
-4. **Signature mismatch?** Verify the secret in your service matches the one from `hermes webhook list`. GitHub sends `X-Hub-Signature-256`, GitLab sends `X-Gitlab-Token`.
-5. **Firewall/NAT?** The webhook URL must be reachable from the service. For local development, use a tunnel (ngrok, cloudflared).
-6. **Wrong event type?** Check `--events` filter matches what the service sends. Use `hermes webhook test <name>` to verify the route works.
+1. **Is Moltis running?** `curl http://localhost:<port>/api/gon` should return JSON.
+2. **Auth failure (401)?** Verify the secret in your service matches `auth_config`. GitHub sends `X-Hub-Signature-256`, GitLab sends `X-Gitlab-Token`, Stripe uses `Stripe-Signature`.
+3. **IP blocked (403)?** Check `allowed_cidrs` matches the sender's IP range.
+4. **Rate limited (429)?** Check per-webhook and global rate limits.
+5. **Events filtered?** Verify `event_filter.allow` includes the event type the service sends. Check delivery history for `status: filtered`.
+6. **Firewall/NAT?** The webhook URL must be reachable from the sending service. For local development, use a tunnel (ngrok, cloudflared, or Moltis's built-in Tailscale/ngrok support).
+7. **Check delivery history:** Use `webhooks.deliveries` RPC to inspect status, rejection reasons, and timing.
