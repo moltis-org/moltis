@@ -131,6 +131,7 @@ Gateway server configuration.
 | `update_releases_url` | optional string | — | URL of the releases manifest (`releases.json`) used by the update checker. Defaults to `https://www.moltis.org/releases.json` when unset. |
 | `db_pool_max_connections` | integer | `5` | Maximum number of SQLite pool connections. Lower values reduce memory usage for personal gateways. |
 | `shiki_cdn_url` | optional string | — | Base URL for the Shiki syntax-highlighting library loaded by the web UI. Defaults to `https://esm.sh/shiki@3.2.1?bundle` when unset. |
+| `external_url` | optional string | — | Public URL when running behind a reverse proxy (e.g. `https://moltis.example.com`). Used to derive the WebAuthn RP ID and origin so passkey auth works with the proxy's public hostname. `MOLTIS_EXTERNAL_URL` env var takes precedence. |
 | `terminal_enabled` | bool | `true` | Enable or disable the host terminal in the web UI. Set to `false` to prevent an unsandboxed shell. The `MOLTIS_TERMINAL_DISABLED` env var (`1` or `true`) takes precedence. |
 
 
@@ -275,8 +276,8 @@ User profile collected during onboarding.
 | `protect_tail_min` | integer | `20` | Minimum number of tail messages preserved verbatim (floor under token-budget cut). |
 | `tail_budget_ratio` | float | `0.20` | Tail protection window as a fraction of `threshold_percent × context_window`. |
 | `tool_prune_char_threshold` | integer | `200` | Tool-result content longer than this is replaced with a placeholder in the collapsed middle region. |
-| `summary_model` | optional string | `null` | Provider-qualified model for LLM summary calls (e.g. `"openrouter/google/gemini-2.5-flash"`). ⚠️ **Not yet implemented** — setting this field triggers a warning. |
-| `max_summary_tokens` | integer | `4096` | Maximum output tokens for LLM summary calls. `0` accepts provider default. ⚠️ **Not yet implemented** — has no effect. |
+| `summary_model` | optional string | `null` | Provider-qualified model for LLM summary calls (e.g. `"openrouter/google/gemini-2.5-flash"`). Resolved from `ProviderRegistry`; falls back to the session's primary provider with a warning when the configured model is not found. |
+| `max_summary_tokens` | integer | `4096` | Maximum output tokens for LLM summary calls. `0` accepts the provider default. |
 | `show_settings_hint` | bool | `true` | Whether the "Change `chat.compaction.mode` in moltis.toml…" hint is included in compaction notifications. |
 
 
@@ -554,6 +555,9 @@ Default `tool_overrides` entries:
 | registry_mode | string (enum) | `"full"` | How tool schemas are presented to the model. One of: `full` (all schemas sent every turn), `lazy` (only `tool_search` sent; model discovers tools on demand). |
 | agent_loop_detector_window | integer | `3` | Window size for the tool-call reflex-loop detector. When this many consecutive tool calls share the same tool + (args or error), the runner injects a directive intervention message. Set to 0 to disable. |
 | agent_loop_detector_strip_tools_on_second_fire | bool | `true` | When the loop detector fires a second time (stage 2), strip the tool schema list for a single LLM turn so the model is forced to respond in text. |
+| tool_result_compaction_ratio | integer | `75` | Percentage of the provider's context window at which per-iteration tool-result compaction starts. Oldest results are compacted first. Set to `0` to disable. |
+| preemptive_overflow_ratio | integer | `90` | Percentage of the provider's context window at which a hard `ContextWindowExceeded` error fires even after compaction. Must be greater than `tool_result_compaction_ratio`. |
+| compaction_min_iterations | integer | `3` | Minimum number of agent loop iterations before per-iteration tool-result compaction is allowed to fire. Prevents premature context destruction in short loops. |
 
 ---
 
