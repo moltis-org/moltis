@@ -75,13 +75,10 @@ export function moveFirstQueuedToChat(): void {
 // ── Markdown rendering ────────────────────────────────────────
 
 /**
- * Safe wrapper: renderMarkdown calls esc() first -- all user input is
- * HTML-escaped before being passed to innerHTML. This is the standard
- * rendering path for chat messages.
+ * Safe wrapper: renderMarkdown uses the `marked` library which HTML-escapes
+ * all input by default. No raw user content reaches innerHTML.
  */
 export function setSafeMarkdownHtml(el: HTMLElement, text: string): void {
-	// Security: renderMarkdown HTML-escapes all input via esc() before
-	// applying markdown formatting. No raw user content reaches innerHTML.
 	const rendered = renderMarkdown(text);
 	el.textContent = "";
 	const wrapper = document.createElement("span");

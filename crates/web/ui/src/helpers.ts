@@ -1,4 +1,5 @@
 // ── Helpers ──────────────────────────────────────────────────
+import { Marked, Renderer } from "marked";
 import { hasTranslation, t } from "./i18n";
 import * as S from "./state";
 import type { RpcResponse } from "./types";
@@ -8,11 +9,6 @@ declare global {
 	interface Window {
 		webkitAudioContext?: typeof AudioContext;
 	}
-}
-
-interface CodeBlock {
-	lang: string;
-	code: string;
 }
 
 interface TableParseResult {
@@ -187,39 +183,6 @@ function buildTableHtml(headerCells: string[], bodyRows: string[][]): string {
 	return `<div class="msg-table-wrap"><table class="msg-table">${thead}${tbody}</table></div>`;
 }
 
-function isMarkdownPipeRow(line: string): boolean {
-	if (!stripAnsi(line).includes("|")) return false;
-	return splitPipeCells(line).length >= 2;
-}
-
-function isMarkdownSeparatorRow(line: string, expectedCols: number): boolean {
-	const cells = splitPipeCells(line);
-	if (cells.length !== expectedCols) return false;
-	return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
-}
-
-function parseMarkdownTable(lines: string[], start: number): TableParseResult | null {
-	if (start + 1 >= lines.length) return null;
-	if (!isMarkdownPipeRow(lines[start])) return null;
-	const headerCells = splitPipeCells(lines[start]);
-	if (headerCells.length < 2) return null;
-	if (!isMarkdownSeparatorRow(lines[start + 1], headerCells.length)) return null;
-
-	const bodyRows: string[][] = [];
-	let next = start + 2;
-	while (next < lines.length) {
-		const candidate = lines[next];
-		if (!candidate.trim()) break;
-		if (!isMarkdownPipeRow(candidate)) break;
-		bodyRows.push(splitPipeCells(candidate));
-		next++;
-	}
-	return {
-		html: buildTableHtml(headerCells, bodyRows),
-		next: next,
-	};
-}
-
 function isAsciiBorderRow(line: string): boolean {
 	return /^\+(?:[-=]+\+)+$/.test(stripAnsi(line).trim());
 }
@@ -251,17 +214,11 @@ function parseAsciiTable(lines: string[], start: number): TableParseResult | nul
 	};
 }
 
-function renderTables(s: string): string {
+/** Convert ASCII-bordered tables (+---+---+ style) to HTML. Pipe tables are handled by marked. */
+function renderAsciiTables(s: string): string {
 	const lines = s.split("\n");
 	const out: string[] = [];
 	for (let i = 0; i < lines.length; ) {
-		const markdownTable = parseMarkdownTable(lines, i);
-		if (markdownTable) {
-			out.push(markdownTable.html);
-			i = markdownTable.next;
-			continue;
-		}
-
 		const asciiTable = parseAsciiTable(lines, i);
 		if (asciiTable) {
 			out.push(asciiTable.html);
@@ -275,138 +232,29 @@ function renderTables(s: string): string {
 	return out.join("\n");
 }
 
-/** Convert inline markdown syntax to HTML (code, bold, italic, strikethrough, links). */
-function renderInlineMarkdown(s: string): string {
-	s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
-	s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-	s = s.replace(/\*(.+?)\*/g, "<em>$1</em>");
-	s = s.replace(/~~(.+?)~~/g, "<del>$1</del>");
-	// Links: [text](url) — only after HTML-escaping so no injection possible
-	s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-	return s;
-}
+/** Custom marked renderer that applies our CSS classes. */
+const mdRenderer = new Renderer();
+mdRenderer.code = ({ text, lang }) => {
+	const langAttr = lang ? ` data-lang="${esc(lang)}"` : "";
+	const badge = lang ? `<div class="code-lang-badge">${esc(lang)}</div>` : "";
+	return `<pre class="code-block">${badge}<code${langAttr}>${text}</code></pre>\n`;
+};
+mdRenderer.table = (token) => {
+	const header = token.header.map((cell) => `<th>${cell.text}</th>`).join("");
+	const body = token.rows.map((row) => `<tr>${row.map((cell) => `<td>${cell.text}</td>`).join("")}</tr>`).join("");
+	return `<div class="msg-table-wrap"><table class="msg-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>\n`;
+};
+mdRenderer.link = ({ href, text }) => {
+	return `<a href="${href}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+};
 
-/** Convert block-level markdown (headings, lists, blockquotes, HRs) to HTML. */
-function renderBlockMarkdown(s: string): string {
-	const lines = s.split("\n");
-	const out: string[] = [];
-	let inList: "ul" | "ol" | null = null;
-	let inBlockquote = false;
-
-	for (const line of lines) {
-		// Horizontal rule (protected as placeholder before inline formatting)
-		if (line.trim() === "@@MOLTIS_HR@@") {
-			if (inList) {
-				out.push(`</${inList}>`);
-				inList = null;
-			}
-			if (inBlockquote) {
-				out.push("</blockquote>");
-				inBlockquote = false;
-			}
-			out.push("<hr>");
-			continue;
-		}
-
-		// Headings (# to ######)
-		const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
-		if (headingMatch) {
-			if (inList) {
-				out.push(`</${inList}>`);
-				inList = null;
-			}
-			if (inBlockquote) {
-				out.push("</blockquote>");
-				inBlockquote = false;
-			}
-			const level = headingMatch[1].length;
-			out.push(`<h${level}>${headingMatch[2]}</h${level}>`);
-			continue;
-		}
-
-		// Blockquote (> is HTML-escaped to &gt;)
-		const bqMatch = line.match(/^&gt;\s?(.*)$/);
-		if (bqMatch) {
-			if (inList) {
-				out.push(`</${inList}>`);
-				inList = null;
-			}
-			if (!inBlockquote) {
-				out.push("<blockquote>");
-				inBlockquote = true;
-			}
-			out.push(bqMatch[1]);
-			continue;
-		}
-		if (inBlockquote) {
-			out.push("</blockquote>");
-			inBlockquote = false;
-		}
-
-		// Unordered list item (- or *)
-		const ulMatch = line.match(/^[\s]*[-*]\s+(.+)$/);
-		if (ulMatch) {
-			if (inList === "ol") {
-				out.push("</ol>");
-				inList = null;
-			}
-			if (inList !== "ul") {
-				out.push("<ul>");
-				inList = "ul";
-			}
-			out.push(`<li>${ulMatch[1]}</li>`);
-			continue;
-		}
-
-		// Ordered list item
-		const olMatch = line.match(/^[\s]*\d+\.\s+(.+)$/);
-		if (olMatch) {
-			if (inList === "ul") {
-				out.push("</ul>");
-				inList = null;
-			}
-			if (inList !== "ol") {
-				out.push("<ol>");
-				inList = "ol";
-			}
-			out.push(`<li>${olMatch[1]}</li>`);
-			continue;
-		}
-
-		// Close open list if current line is not a list item
-		if (inList) {
-			out.push(`</${inList}>`);
-			inList = null;
-		}
-
-		out.push(line);
-	}
-	if (inList) out.push(`</${inList}>`);
-	if (inBlockquote) out.push("</blockquote>");
-	return out.join("\n");
-}
+const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
 
 export function renderMarkdown(raw: string): string {
-	let s = esc(raw);
-	const codeBlocks: CodeBlock[] = [];
-	s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_: string, lang: string, code: string) => {
-		codeBlocks.push({ lang: lang, code: code });
-		return `@@MOLTIS_CODE_BLOCK_${codeBlocks.length - 1}@@`;
-	});
-	s = renderTables(s);
-	// Protect horizontal rules from inline formatting (e.g. *** would match italic)
-	s = s.replace(/^(-{3,}|\*{3,}|_{3,})$/gm, "@@MOLTIS_HR@@");
-	s = renderInlineMarkdown(s);
-	s = renderBlockMarkdown(s);
-	// Re-insert code blocks
-	s = s.replace(/@@MOLTIS_CODE_BLOCK_(\d+)@@/g, (_: string, idx: string) => {
-		const block = codeBlocks[Number(idx)];
-		if (!block) return "";
-		const langAttr = block.lang ? ` data-lang="${block.lang}"` : "";
-		const badge = block.lang ? `<div class="code-lang-badge">${block.lang}</div>` : "";
-		return `<pre class="code-block">${badge}<code${langAttr}>${block.code}</code></pre>`;
-	});
-	return s;
+	// Pre-process: extract ASCII tables (marked doesn't handle +---+---+ style)
+	const asciiProcessed = renderAsciiTables(raw);
+	const result = markedInstance.parse(asciiProcessed) as string;
+	return result;
 }
 
 export function sendRpc<T = unknown>(method: string, params: unknown): Promise<RpcResponse<T>> {
