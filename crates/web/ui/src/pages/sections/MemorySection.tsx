@@ -27,6 +27,11 @@ interface MemoryConfig {
 	session_export?: string;
 	prompt_memory_mode?: string;
 	qmd_feature_enabled?: boolean;
+	enable_prefetch?: boolean;
+	prefetch_limit?: number;
+	auto_extract_interval?: number;
+	enable_session_summary?: boolean;
+	enable_self_improvement?: boolean;
 }
 
 interface QmdStatus {
@@ -52,6 +57,11 @@ export function MemorySection(): VNode {
 	const [searchMergeStrategy, setSearchMergeStrategy] = useState("rrf");
 	const [sessionExport, setSessionExport] = useState("on-new-or-reset");
 	const [promptMemoryMode, setPromptMemoryMode] = useState("live-reload");
+	const [enablePrefetch, setEnablePrefetch] = useState(true);
+	const [prefetchLimit, setPrefetchLimit] = useState(3);
+	const [autoExtractInterval, setAutoExtractInterval] = useState(5);
+	const [enableSessionSummary, setEnableSessionSummary] = useState(true);
+	const [enableSelfImprovement, setEnableSelfImprovement] = useState(true);
 
 	useEffect(() => {
 		Promise.all([sendRpc("memory.status", {}), sendRpc("memory.config.get", {}), sendRpc("memory.qmd.status", {})])
@@ -72,6 +82,11 @@ export function MemorySection(): VNode {
 					setSearchMergeStrategy(cfg.search_merge_strategy || "rrf");
 					setSessionExport(cfg.session_export || "on-new-or-reset");
 					setPromptMemoryMode(cfg.prompt_memory_mode || "live-reload");
+					setEnablePrefetch(cfg.enable_prefetch ?? true);
+					setPrefetchLimit(cfg.prefetch_limit ?? 3);
+					setAutoExtractInterval(cfg.auto_extract_interval ?? 5);
+					setEnableSessionSummary(cfg.enable_session_summary ?? true);
+					setEnableSelfImprovement(cfg.enable_self_improvement ?? true);
 				}
 				if (qmdRes?.ok) {
 					setQmdStatus(qmdRes.payload as QmdStatus);
@@ -101,6 +116,11 @@ export function MemorySection(): VNode {
 			search_merge_strategy: searchMergeStrategy,
 			session_export: sessionExport,
 			prompt_memory_mode: promptMemoryMode,
+			enable_prefetch: enablePrefetch,
+			prefetch_limit: prefetchLimit,
+			auto_extract_interval: autoExtractInterval,
+			enable_session_summary: enableSessionSummary,
+			enable_self_improvement: enableSelfImprovement,
 		}).then((res: RpcResponse) => {
 			save.setSaving(false);
 			if (res?.ok) {
@@ -539,6 +559,118 @@ export function MemorySection(): VNode {
 							</p>
 						</div>
 					</label>
+				</div>
+
+				<div>
+					<SubHeading title="Agent Self-Improvement" />
+					<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
+						Controls how the agent learns autonomously across sessions.
+					</p>
+					<div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+						<label className="text-xs flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={enableSelfImprovement}
+								onChange={(e: Event) => {
+									setEnableSelfImprovement(targetChecked(e));
+									rerender();
+								}}
+							/>
+							<div>
+								<span className="text-[var(--text)]">Skill self-improvement prompting</span>
+								<span className="text-[var(--muted)] block text-[.7rem]">
+									Encourage the agent to create reusable skills after complex tasks
+								</span>
+							</div>
+						</label>
+						<label className="text-xs flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={enablePrefetch}
+								onChange={(e: Event) => {
+									setEnablePrefetch(targetChecked(e));
+									rerender();
+								}}
+							/>
+							<div>
+								<span className="text-[var(--text)]">Memory recall (prefetch)</span>
+								<span className="text-[var(--muted)] block text-[.7rem]">
+									Automatically recall relevant memories before each turn
+								</span>
+							</div>
+						</label>
+						{enablePrefetch ? (
+							<div style={{ marginLeft: "24px" }}>
+								<label className="text-xs text-[var(--muted)]">
+									Max results per turn:{" "}
+									<input
+										type="number"
+										min={1}
+										max={10}
+										className="provider-key-input"
+										style={{ width: "60px", marginLeft: "4px" }}
+										value={prefetchLimit}
+										onChange={(e: Event) => {
+											setPrefetchLimit(Number.parseInt(targetValue(e), 10) || 3);
+											rerender();
+										}}
+									/>
+								</label>
+							</div>
+						) : null}
+						<label className="text-xs flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={autoExtractInterval > 0}
+								onChange={(e: Event) => {
+									setAutoExtractInterval(targetChecked(e) ? 5 : 0);
+									rerender();
+								}}
+							/>
+							<div>
+								<span className="text-[var(--text)]">Periodic memory extraction</span>
+								<span className="text-[var(--muted)] block text-[.7rem]">
+									Automatically save important context every N turns
+								</span>
+							</div>
+						</label>
+						{autoExtractInterval > 0 ? (
+							<div style={{ marginLeft: "24px" }}>
+								<label className="text-xs text-[var(--muted)]">
+									Every{" "}
+									<input
+										type="number"
+										min={1}
+										max={50}
+										className="provider-key-input"
+										style={{ width: "60px", margin: "0 4px" }}
+										value={autoExtractInterval}
+										onChange={(e: Event) => {
+											setAutoExtractInterval(Number.parseInt(targetValue(e), 10) || 5);
+											rerender();
+										}}
+									/>
+									turns
+								</label>
+							</div>
+						) : null}
+						<label className="text-xs flex items-center gap-2 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={enableSessionSummary}
+								onChange={(e: Event) => {
+									setEnableSessionSummary(targetChecked(e));
+									rerender();
+								}}
+							/>
+							<div>
+								<span className="text-[var(--text)]">Session-end summary</span>
+								<span className="text-[var(--muted)] block text-[.7rem]">
+									Summarize accomplishments when a session is reset
+								</span>
+							</div>
+						</label>
+					</div>
 				</div>
 
 				<div>

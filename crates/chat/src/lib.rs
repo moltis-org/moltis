@@ -16,12 +16,12 @@ pub mod error;
 pub mod runtime;
 
 pub use {
-    memory_tools::MemoryForgetTool,
+    memory_tools::{AgentScopedMemoryWriter, MemoryForgetTool},
     models::{DisabledModelsStore, LiveModelService, UnsupportedModelInfo},
     runtime::{ChatRuntime, TtsOverride},
     service::{ActiveToolCall, LiveChatService},
     types::{
-        BroadcastOpts, model_matches_allowlist, model_matches_allowlist_with_provider,
-        normalize_model_key,
+        BroadcastOpts, memory_write_mode_allows_save, model_matches_allowlist,
+        model_matches_allowlist_with_provider, normalize_model_key,
     },
 };

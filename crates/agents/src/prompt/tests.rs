@@ -249,6 +249,7 @@ fn test_workspace_file_metadata_marks_truncation() {
         None,
         PromptBuildLimits {
             workspace_file_max_chars: 10,
+            ..Default::default()
         },
         None,
     );

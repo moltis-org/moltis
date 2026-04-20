@@ -55,6 +55,33 @@ pub struct MemoryEmbeddingConfig {
     /// QMD-specific configuration (only used when backend = "qmd").
     #[serde(default)]
     pub qmd: QmdConfig,
+    /// Prefetch relevant memories at the start of each turn and inject them
+    /// into the system prompt as `<recalled_context>`. Default: true.
+    #[serde(default = "default_true")]
+    pub enable_prefetch: bool,
+    /// Maximum number of memories to prefetch per turn. Default: 3.
+    #[serde(default = "default_prefetch_limit")]
+    pub prefetch_limit: usize,
+    /// Run a background memory extraction every N turns (0 = disabled,
+    /// only pre-compaction). Default: 5.
+    #[serde(default = "default_auto_extract_interval")]
+    pub auto_extract_interval: u32,
+    /// Write a session summary to memory when a session ends
+    /// (`/new`, `/reset`, or timeout). Default: true.
+    #[serde(default = "default_true")]
+    pub enable_session_summary: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_prefetch_limit() -> usize {
+    3
+}
+
+fn default_auto_extract_interval() -> u32 {
+    5
 }
 
 /// High-level orchestration style for prompt memory and memory tools.

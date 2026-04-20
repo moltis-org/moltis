@@ -662,6 +662,7 @@ search_paths = []                 # Additional directories to search for skills
 auto_load = []                    # Skills to always load without explicit activation
                                   # Example: ["code-review", "commit"]
 enable_agent_sidecar_files = false # Allow agents to write supplementary text files inside personal skill dirs
+enable_self_improvement = true    # Include system prompt guidance encouraging autonomous skill creation/update
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MCP SERVERS
@@ -862,6 +863,10 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # base_url = "http://localhost:11434/v1"  # Builtin backend only: embedding API base (host, /v1, or /embeddings)
 # model = "nomic-embed-text"      # Builtin backend only: embedding model name
 # api_key = "..."                 # Builtin backend only: API key (optional for local endpoints like Ollama)
+# enable_prefetch = true           # Recall relevant memories before each turn (injected as <recalled_context>)
+# prefetch_limit = 3               # Max memories to prefetch per turn (1-10)
+# auto_extract_interval = 5        # Run background memory extraction every N turns (0 = disabled)
+# enable_session_summary = true    # Write a session summary to memory on /new, /reset, or timeout
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHANNELS

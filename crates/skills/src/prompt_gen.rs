@@ -52,6 +52,26 @@ pub fn generate_skills_prompt(skills: &[SkillMetadata]) -> String {
     out
 }
 
+/// Generate the self-improvement guidance section for the system prompt.
+///
+/// This instructs the agent to proactively create and maintain skills after
+/// complex tasks. Appended after the `<available_skills>` block when
+/// `[skills] enable_self_improvement = true` (the default).
+pub fn generate_skill_self_improvement_prompt() -> &'static str {
+    "\
+## Skill Self-Improvement
+
+You have tools to create, read, update, and delete personal skills. Use them proactively:
+
+- After completing a complex task (5+ tool calls), consider saving the approach as a reusable skill with `create_skill`
+- After fixing a tricky error or discovering a non-obvious workflow, save it so you don't have to rediscover it
+- When a skill you're using has stale or incorrect instructions, fix it with `patch_skill` (surgical find/replace) or `update_skill` (full rewrite)
+- When you notice a skill could benefit from reference data, use `write_skill_files` to add sidecar files
+
+Do NOT create skills for trivial or one-off tasks. Good skills encode multi-step procedures, domain-specific knowledge, or workflows that are likely to recur.
+"
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -204,6 +224,23 @@ mod tests {
         assert_eq!(
             prompt.matches("read_skill").count(),
             single_skill_prompt.matches("read_skill").count()
+        );
+    }
+
+    #[test]
+    fn test_self_improvement_prompt_contains_key_guidance() {
+        let prompt = generate_skill_self_improvement_prompt();
+        assert!(prompt.contains("Skill Self-Improvement"));
+        assert!(prompt.contains("create_skill"));
+        assert!(prompt.contains("patch_skill"));
+        assert!(prompt.contains("update_skill"));
+        assert!(
+            prompt.contains("5+ tool calls"),
+            "should mention the complexity threshold"
+        );
+        assert!(
+            prompt.contains("Do NOT create skills for trivial"),
+            "should discourage trivial skill creation"
         );
     }
 }

@@ -27001,6 +27001,11 @@ function MemorySection() {
   const [searchMergeStrategy, setSearchMergeStrategy] = d("rrf");
   const [sessionExport, setSessionExport] = d("on-new-or-reset");
   const [promptMemoryMode, setPromptMemoryMode] = d("live-reload");
+  const [enablePrefetch, setEnablePrefetch] = d(true);
+  const [prefetchLimit, setPrefetchLimit] = d(3);
+  const [autoExtractInterval, setAutoExtractInterval] = d(5);
+  const [enableSessionSummary, setEnableSessionSummary] = d(true);
+  const [enableSelfImprovement, setEnableSelfImprovement] = d(true);
   y$1(() => {
     Promise.all([sendRpc("memory.status", {}), sendRpc("memory.config.get", {}), sendRpc("memory.qmd.status", {})]).then(([statusRes, configRes, qmdRes]) => {
       if (statusRes == null ? void 0 : statusRes.ok) {
@@ -27019,6 +27024,11 @@ function MemorySection() {
         setSearchMergeStrategy(cfg.search_merge_strategy || "rrf");
         setSessionExport(cfg.session_export || "on-new-or-reset");
         setPromptMemoryMode(cfg.prompt_memory_mode || "live-reload");
+        setEnablePrefetch(cfg.enable_prefetch ?? true);
+        setPrefetchLimit(cfg.prefetch_limit ?? 3);
+        setAutoExtractInterval(cfg.auto_extract_interval ?? 5);
+        setEnableSessionSummary(cfg.enable_session_summary ?? true);
+        setEnableSelfImprovement(cfg.enable_self_improvement ?? true);
       }
       if (qmdRes == null ? void 0 : qmdRes.ok) {
         setQmdStatus(qmdRes.payload);
@@ -27044,7 +27054,12 @@ function MemorySection() {
       llm_reranking: llmReranking,
       search_merge_strategy: searchMergeStrategy,
       session_export: sessionExport,
-      prompt_memory_mode: promptMemoryMode
+      prompt_memory_mode: promptMemoryMode,
+      enable_prefetch: enablePrefetch,
+      prefetch_limit: prefetchLimit,
+      auto_extract_interval: autoExtractInterval,
+      enable_session_summary: enableSessionSummary,
+      enable_self_improvement: enableSelfImprovement
     }).then((res) => {
       var _a2;
       save.setSaving(false);
@@ -27493,6 +27508,119 @@ function MemorySection() {
           /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", style: { margin: "2px 0 0" }, children: "Use the LLM to rerank search results for better relevance (slower but more accurate)." })
         ] })
       ] }) }),
+      /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u(SubHeading, { title: "Agent Self-Improvement" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", style: { margin: "0 0 8px" }, children: "Controls how the agent learns autonomously across sessions." }),
+        /* @__PURE__ */ u("div", { style: { display: "flex", flexDirection: "column", gap: "10px" }, children: [
+          /* @__PURE__ */ u("label", { className: "text-xs flex items-center gap-2 cursor-pointer", children: [
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "checkbox",
+                checked: enableSelfImprovement,
+                onChange: (e) => {
+                  setEnableSelfImprovement(targetChecked(e));
+                  rerender$1();
+                }
+              }
+            ),
+            /* @__PURE__ */ u("div", { children: [
+              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Skill self-improvement prompting" }),
+              /* @__PURE__ */ u("span", { className: "text-[var(--muted)] block text-[.7rem]", children: "Encourage the agent to create reusable skills after complex tasks" })
+            ] })
+          ] }),
+          /* @__PURE__ */ u("label", { className: "text-xs flex items-center gap-2 cursor-pointer", children: [
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "checkbox",
+                checked: enablePrefetch,
+                onChange: (e) => {
+                  setEnablePrefetch(targetChecked(e));
+                  rerender$1();
+                }
+              }
+            ),
+            /* @__PURE__ */ u("div", { children: [
+              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Memory recall (prefetch)" }),
+              /* @__PURE__ */ u("span", { className: "text-[var(--muted)] block text-[.7rem]", children: "Automatically recall relevant memories before each turn" })
+            ] })
+          ] }),
+          enablePrefetch ? /* @__PURE__ */ u("div", { style: { marginLeft: "24px" }, children: /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: [
+            "Max results per turn:",
+            " ",
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "number",
+                min: 1,
+                max: 10,
+                className: "provider-key-input",
+                style: { width: "60px", marginLeft: "4px" },
+                value: prefetchLimit,
+                onChange: (e) => {
+                  setPrefetchLimit(Number.parseInt(targetValue(e), 10) || 3);
+                  rerender$1();
+                }
+              }
+            )
+          ] }) }) : null,
+          /* @__PURE__ */ u("label", { className: "text-xs flex items-center gap-2 cursor-pointer", children: [
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "checkbox",
+                checked: autoExtractInterval > 0,
+                onChange: (e) => {
+                  setAutoExtractInterval(targetChecked(e) ? 5 : 0);
+                  rerender$1();
+                }
+              }
+            ),
+            /* @__PURE__ */ u("div", { children: [
+              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Periodic memory extraction" }),
+              /* @__PURE__ */ u("span", { className: "text-[var(--muted)] block text-[.7rem]", children: "Automatically save important context every N turns" })
+            ] })
+          ] }),
+          autoExtractInterval > 0 ? /* @__PURE__ */ u("div", { style: { marginLeft: "24px" }, children: /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: [
+            "Every",
+            " ",
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "number",
+                min: 1,
+                max: 50,
+                className: "provider-key-input",
+                style: { width: "60px", margin: "0 4px" },
+                value: autoExtractInterval,
+                onChange: (e) => {
+                  setAutoExtractInterval(Number.parseInt(targetValue(e), 10) || 5);
+                  rerender$1();
+                }
+              }
+            ),
+            "turns"
+          ] }) }) : null,
+          /* @__PURE__ */ u("label", { className: "text-xs flex items-center gap-2 cursor-pointer", children: [
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "checkbox",
+                checked: enableSessionSummary,
+                onChange: (e) => {
+                  setEnableSessionSummary(targetChecked(e));
+                  rerender$1();
+                }
+              }
+            ),
+            /* @__PURE__ */ u("div", { children: [
+              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Session-end summary" }),
+              /* @__PURE__ */ u("span", { className: "text-[var(--muted)] block text-[.7rem]", children: "Summarize accomplishments when a session is reset" })
+            ] })
+          ] })
+        ] })
+      ] }),
       /* @__PURE__ */ u("div", { children: [
         /* @__PURE__ */ u(SubHeading, { title: "Session Export" }),
         /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", style: { margin: "0 0 8px" }, children: "Export session transcripts into searchable memory when a session is rolled over." }),

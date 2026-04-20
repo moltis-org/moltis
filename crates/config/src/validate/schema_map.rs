@@ -247,6 +247,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("url", Leaf),
             ("headers", Map(Box::new(Leaf))),
             ("oauth", mcp_oauth_override()),
+            ("display_name", Leaf),
         ]))
     };
 
@@ -377,6 +378,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("search_paths", Leaf),
                 ("auto_load", Leaf),
                 ("enable_agent_sidecar_files", Leaf),
+                ("enable_self_improvement", Leaf),
             ])),
         ),
         (
@@ -480,6 +482,10 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("search_merge_strategy", Leaf),
                 ("session_export", Leaf),
                 ("qmd", qmd()),
+                ("enable_prefetch", Leaf),
+                ("prefetch_limit", Leaf),
+                ("auto_extract_interval", Leaf),
+                ("enable_session_summary", Leaf),
             ])),
         ),
         (

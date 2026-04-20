@@ -1056,6 +1056,9 @@ pub(super) async fn complete_startup(
             tool_registry.register(Box::new(moltis_tools::skill_tools::UpdateSkillTool::new(
                 data_dir.clone(),
             )));
+            tool_registry.register(Box::new(moltis_tools::skill_tools::PatchSkillTool::new(
+                data_dir.clone(),
+            )));
             tool_registry.register(Box::new(moltis_tools::skill_tools::DeleteSkillTool::new(
                 data_dir.clone(),
             )));

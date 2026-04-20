@@ -982,6 +982,277 @@ impl AgentTool for WriteSkillFilesTool {
     }
 }
 
+/// Tool that applies surgical find/replace patches to an existing personal skill.
+///
+/// Unlike [`UpdateSkillTool`], which requires a full SKILL.md rewrite, this tool
+/// applies one or more exact-string replacements. This reduces hallucination risk
+/// and token cost when making incremental fixes.
+pub struct PatchSkillTool {
+    data_dir: PathBuf,
+    checkpoints: CheckpointManager,
+}
+
+impl PatchSkillTool {
+    pub fn new(data_dir: PathBuf) -> Self {
+        let checkpoints = CheckpointManager::new(data_dir.clone());
+        Self {
+            data_dir,
+            checkpoints,
+        }
+    }
+
+    fn skills_dir(&self) -> PathBuf {
+        self.data_dir.join("skills")
+    }
+}
+
+/// Maximum number of patches per call.
+const MAX_PATCHES_PER_CALL: usize = 10;
+
+#[async_trait]
+impl AgentTool for PatchSkillTool {
+    fn name(&self) -> &str {
+        "patch_skill"
+    }
+
+    fn description(&self) -> &str {
+        "Apply surgical find/replace patches to an existing personal skill's SKILL.md. \
+         More efficient than update_skill when fixing a few lines — avoids regenerating \
+         the entire body."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        json!({
+            "type": "object",
+            "required": ["name", "patches"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Skill name to patch"
+                },
+                "patches": {
+                    "type": "array",
+                    "description": "Ordered list of find/replace operations applied sequentially",
+                    "minItems": 1,
+                    "maxItems": MAX_PATCHES_PER_CALL,
+                    "items": {
+                        "type": "object",
+                        "required": ["find", "replace"],
+                        "properties": {
+                            "find": {
+                                "type": "string",
+                                "description": "Exact string to find in the skill body"
+                            },
+                            "replace": {
+                                "type": "string",
+                                "description": "Replacement string"
+                            }
+                        }
+                    }
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Optional: update the frontmatter description"
+                }
+            }
+        })
+    }
+
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::message("missing 'name'"))?;
+        let patches = params
+            .get("patches")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| Error::message("missing 'patches'"))?;
+        let new_description = params.get("description").and_then(|v| v.as_str());
+
+        if !moltis_skills::parse::validate_name(name) {
+            return Err(Error::message(format!(
+                "invalid skill name '{name}': must be 1-64 lowercase alphanumeric/hyphen chars"
+            ))
+            .into());
+        }
+        if patches.is_empty() {
+            return Err(Error::message("at least one patch is required").into());
+        }
+        if patches.len() > MAX_PATCHES_PER_CALL {
+            return Err(Error::message(format!(
+                "too many patches: maximum is {MAX_PATCHES_PER_CALL}"
+            ))
+            .into());
+        }
+
+        let skill_dir = self.skills_dir().join(name);
+        if !skill_dir.exists() {
+            return Err(Error::message(format!(
+                "skill '{name}' does not exist; use create_skill first"
+            ))
+            .into());
+        }
+
+        // Reject symlinked skill directories (same check as DeleteSkillTool).
+        let canonical_base = self
+            .skills_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| self.skills_dir().clone());
+        let canonical_target = skill_dir
+            .canonicalize()
+            .unwrap_or_else(|_| skill_dir.clone());
+        if !canonical_target.starts_with(&canonical_base) {
+            return Err(Error::message("can only patch personal skills").into());
+        }
+        match tokio::fs::symlink_metadata(&skill_dir).await {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(Error::message(format!(
+                    "skill '{name}' directory must not be a symlink"
+                ))
+                .into());
+            },
+            Ok(_) => {},
+            Err(e) => {
+                return Err(
+                    Error::message(format!("skill '{name}' path not accessible: {e}")).into(),
+                );
+            },
+        }
+
+        let skill_md_path = skill_dir.join("SKILL.md");
+        let raw = tokio::fs::read_to_string(&skill_md_path)
+            .await
+            .map_err(|e| Error::message(format!("failed to read skill '{name}': {e}")))?;
+
+        // Parse frontmatter + body.
+        let (frontmatter_block, body) = split_frontmatter_body(&raw);
+
+        // Apply patches sequentially to the body.
+        let mut patched_body = body.to_string();
+        let mut applied = 0usize;
+        for (i, patch) in patches.iter().enumerate() {
+            let find = patch
+                .get("find")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| Error::message(format!("patch[{i}]: missing 'find'")))?;
+            let replace = patch
+                .get("replace")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| Error::message(format!("patch[{i}]: missing 'replace'")))?;
+
+            if find.is_empty() {
+                return Err(Error::message(format!("patch[{i}]: 'find' must not be empty")).into());
+            }
+            if !patched_body.contains(find) {
+                return Err(Error::message(format!(
+                    "patch[{i}]: string not found in skill body: {find:?}"
+                ))
+                .into());
+            }
+
+            patched_body = patched_body.replacen(find, replace, 1);
+            applied += 1;
+        }
+
+        // Optionally update the frontmatter description.
+        let final_content = if let Some(desc) = new_description {
+            let updated_fm = update_frontmatter_description(frontmatter_block, desc);
+            format!("{updated_fm}{patched_body}")
+        } else {
+            format!("{frontmatter_block}{patched_body}")
+        };
+
+        // Ensure trailing newline.
+        let final_content = if final_content.ends_with('\n') {
+            final_content
+        } else {
+            format!("{final_content}\n")
+        };
+
+        let checkpoint = self
+            .checkpoints
+            .checkpoint_path(&skill_dir, "patch_skill")
+            .await?;
+
+        tokio::fs::write(&skill_md_path, &final_content).await?;
+
+        // Run injection scan on the result.
+        let hits = moltis_skills::safety::scan_skill_body(name, &patched_body);
+        let warning = if !hits.is_empty() {
+            tracing::warn!(
+                skill = %name,
+                patterns = ?hits,
+                "patched skill body contains potential prompt-injection patterns"
+            );
+            Some(format!(
+                "Warning: patched body matches injection patterns: {}",
+                hits.join(", ")
+            ))
+        } else {
+            None
+        };
+
+        let mut response = json!({
+            "patched": true,
+            "patches_applied": applied,
+            "checkpointId": checkpoint.id,
+        });
+        if let Some(warn_msg) = warning
+            && let Some(m) = response.as_object_mut()
+        {
+            m.insert("warning".into(), json!(warn_msg));
+        }
+
+        Ok(response)
+    }
+}
+
+/// Split a SKILL.md file into its frontmatter block (including delimiters and
+/// trailing newline) and the body. If there is no frontmatter, frontmatter_block
+/// is empty.
+fn split_frontmatter_body(raw: &str) -> (&str, &str) {
+    if !raw.starts_with("---") {
+        return ("", raw);
+    }
+    // Find the closing `---` after the opening one.
+    if let Some(end_idx) = raw[3..].find("\n---") {
+        // end_idx is relative to raw[3..], so the closing `---` starts at 3 + end_idx + 1
+        let closing_end = 3 + end_idx + 1 + 3; // skip the `---`
+        // Include any trailing newline(s) after the closing `---`.
+        let after_closing = &raw[closing_end..];
+        let body_start = if after_closing.starts_with("\n\n") {
+            closing_end + 2
+        } else if after_closing.starts_with('\n') {
+            closing_end + 1
+        } else {
+            closing_end
+        };
+        (&raw[..body_start], &raw[body_start..])
+    } else {
+        ("", raw)
+    }
+}
+
+/// Replace the `description: ...` line in a frontmatter block.
+fn update_frontmatter_description(frontmatter: &str, new_desc: &str) -> String {
+    let mut result = String::with_capacity(frontmatter.len() + new_desc.len());
+    let mut found = false;
+    for line in frontmatter.lines() {
+        if line.starts_with("description:") && !found {
+            result.push_str(&format!("description: {new_desc}"));
+            found = true;
+        } else {
+            result.push_str(line);
+        }
+        result.push('\n');
+    }
+    // Preserve the blank line between frontmatter and body if the original had one.
+    if frontmatter.ends_with("\n\n") && !result.ends_with("\n\n") {
+        result.push('\n');
+    }
+    result
+}
+
 fn build_skill_md(name: &str, description: &str, body: &str, allowed_tools: &[String]) -> String {
     let mut frontmatter = format!("---\nname: {name}\ndescription: {description}\n");
     if !allowed_tools.is_empty() {

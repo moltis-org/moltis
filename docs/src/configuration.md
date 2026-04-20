@@ -168,6 +168,7 @@ Configure skill discovery and agent-managed personal skills:
 enabled = true
 auto_load = ["commit"]
 enable_agent_sidecar_files = false  # Opt-in: allow agents to write sidecar text files in personal skills
+enable_self_improvement = true     # System prompt guidance for autonomous skill creation/update
 ```
 
 `enable_agent_sidecar_files` is disabled by default. When enabled, Moltis
@@ -176,6 +177,12 @@ such as `script.sh`, `Dockerfile`, templates, or `_meta.json` inside
 `<data_dir>/skills/<name>/`. Writes stay confined to that personal skill
 directory, reject path traversal and symlink escapes, and are recorded in
 `~/.moltis/logs/security-audit.jsonl`.
+
+`enable_self_improvement` (default: true) injects system prompt guidance that
+encourages the agent to proactively create and update skills after complex
+tasks (5+ tool calls), tricky error fixes, or non-obvious workflows. The
+`patch_skill` tool allows surgical find/replace updates without rewriting the
+entire skill body.
 
 ## Chat Message Queue
 

@@ -135,6 +135,52 @@ pub(crate) async fn run_streaming(
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
 
+    // ── Memory prefetch (same logic as run_with_tools) ───────────
+    let mut memory_text_with_prefetch: Option<String> = None;
+    if persona.config.memory.enable_prefetch {
+        let query_text = match user_content {
+            UserContent::Text(t) => Some(t.as_str()),
+            UserContent::Multimodal(parts) => parts.iter().find_map(|p| match p {
+                moltis_agents::model::ContentPart::Text(t) => Some(t.as_str()),
+                _ => None,
+            }),
+        };
+        if let Some(query) = query_text
+            && query.len() >= 10
+            && !query.starts_with('/')
+            && let Some(manager) = state.memory_manager()
+        {
+            let limit = persona.config.memory.prefetch_limit.clamp(1, 10);
+            match manager.search(query, limit).await {
+                Ok(results) if !results.is_empty() => {
+                    let recalled = crate::run_with_tools::format_recalled_context(&results);
+                    let mut combined = persona
+                        .memory_text
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_string();
+                    if !combined.is_empty() {
+                        combined.push_str("\n\n");
+                    }
+                    combined.push_str(&recalled);
+                    memory_text_with_prefetch = Some(combined);
+                    info!(
+                        results = results.len(),
+                        session = %session_key,
+                        "memory prefetch (streaming): injected recalled context"
+                    );
+                },
+                Ok(_) => {},
+                Err(e) => {
+                    warn!(error = %e, "memory prefetch (streaming) failed");
+                },
+            }
+        }
+    }
+    let effective_memory_text = memory_text_with_prefetch
+        .as_deref()
+        .or(persona.memory_text.as_deref());
+
     let system_prompt = build_system_prompt_minimal_runtime_details(
         project_context,
         Some(&persona.identity),
@@ -144,7 +190,7 @@ pub(crate) async fn run_streaming(
         persona.agents_text.as_deref(),
         persona.tools_text.as_deref(),
         runtime_context,
-        persona.memory_text.as_deref(),
+        effective_memory_text,
         prompt_build_limits_from_config(&persona.config),
         persona.guidelines_text.as_deref(),
     )

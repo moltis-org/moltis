@@ -77,6 +77,10 @@ pub struct SkillsConfig {
     /// Whether agents may write supplementary files inside personal skill directories.
     #[serde(default)]
     pub enable_agent_sidecar_files: bool,
+    /// Inject system-prompt guidance encouraging the agent to autonomously create
+    /// and update skills after complex tasks. Default: true.
+    #[serde(default = "default_true")]
+    pub enable_self_improvement: bool,
 }
 
 /// MCP (Model Context Protocol) server configuration.

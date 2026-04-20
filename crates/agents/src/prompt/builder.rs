@@ -272,7 +272,12 @@ fn build_system_prompt_full(
     append_boot_section(&mut prompt, boot_text);
     append_project_context(&mut prompt, project_context);
     append_runtime_section(&mut prompt, runtime_context, include_tools);
-    append_skills_section(&mut prompt, include_tools, skills);
+    append_skills_section(
+        &mut prompt,
+        include_tools,
+        skills,
+        limits.enable_skill_self_improvement,
+    );
     let workspace_files =
         append_workspace_files_section(&mut prompt, agents_text, tools_text, limits);
     append_memory_section(&mut prompt, memory_text, &tool_schemas);
@@ -403,9 +408,18 @@ fn append_runtime_section(
     }
 }
 
-fn append_skills_section(prompt: &mut String, include_tools: bool, skills: &[SkillMetadata]) {
+fn append_skills_section(
+    prompt: &mut String,
+    include_tools: bool,
+    skills: &[SkillMetadata],
+    enable_self_improvement: bool,
+) {
     if include_tools && !skills.is_empty() {
         prompt.push_str(&moltis_skills::prompt_gen::generate_skills_prompt(skills));
+        if enable_self_improvement {
+            prompt.push_str(moltis_skills::prompt_gen::generate_skill_self_improvement_prompt());
+            prompt.push('\n');
+        }
     }
 }
 
