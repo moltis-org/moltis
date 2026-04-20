@@ -275,6 +275,117 @@ function renderTables(s: string): string {
 	return out.join("\n");
 }
 
+/** Convert inline markdown syntax to HTML (code, bold, italic, strikethrough, links). */
+function renderInlineMarkdown(s: string): string {
+	s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+	s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+	s = s.replace(/\*(.+?)\*/g, "<em>$1</em>");
+	s = s.replace(/~~(.+?)~~/g, "<del>$1</del>");
+	// Links: [text](url) — only after HTML-escaping so no injection possible
+	s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+	return s;
+}
+
+/** Convert block-level markdown (headings, lists, blockquotes, HRs) to HTML. */
+function renderBlockMarkdown(s: string): string {
+	const lines = s.split("\n");
+	const out: string[] = [];
+	let inList: "ul" | "ol" | null = null;
+	let inBlockquote = false;
+
+	for (const line of lines) {
+		// Horizontal rule (protected as placeholder before inline formatting)
+		if (line.trim() === "@@MOLTIS_HR@@") {
+			if (inList) {
+				out.push(`</${inList}>`);
+				inList = null;
+			}
+			if (inBlockquote) {
+				out.push("</blockquote>");
+				inBlockquote = false;
+			}
+			out.push("<hr>");
+			continue;
+		}
+
+		// Headings (# to ######)
+		const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+		if (headingMatch) {
+			if (inList) {
+				out.push(`</${inList}>`);
+				inList = null;
+			}
+			if (inBlockquote) {
+				out.push("</blockquote>");
+				inBlockquote = false;
+			}
+			const level = headingMatch[1].length;
+			out.push(`<h${level}>${headingMatch[2]}</h${level}>`);
+			continue;
+		}
+
+		// Blockquote (> is HTML-escaped to &gt;)
+		const bqMatch = line.match(/^&gt;\s?(.*)$/);
+		if (bqMatch) {
+			if (inList) {
+				out.push(`</${inList}>`);
+				inList = null;
+			}
+			if (!inBlockquote) {
+				out.push("<blockquote>");
+				inBlockquote = true;
+			}
+			out.push(bqMatch[1]);
+			continue;
+		}
+		if (inBlockquote) {
+			out.push("</blockquote>");
+			inBlockquote = false;
+		}
+
+		// Unordered list item (- or *)
+		const ulMatch = line.match(/^[\s]*[-*]\s+(.+)$/);
+		if (ulMatch) {
+			if (inList === "ol") {
+				out.push("</ol>");
+				inList = null;
+			}
+			if (inList !== "ul") {
+				out.push("<ul>");
+				inList = "ul";
+			}
+			out.push(`<li>${ulMatch[1]}</li>`);
+			continue;
+		}
+
+		// Ordered list item
+		const olMatch = line.match(/^[\s]*\d+\.\s+(.+)$/);
+		if (olMatch) {
+			if (inList === "ul") {
+				out.push("</ul>");
+				inList = null;
+			}
+			if (inList !== "ol") {
+				out.push("<ol>");
+				inList = "ol";
+			}
+			out.push(`<li>${olMatch[1]}</li>`);
+			continue;
+		}
+
+		// Close open list if current line is not a list item
+		if (inList) {
+			out.push(`</${inList}>`);
+			inList = null;
+		}
+
+		out.push(line);
+	}
+	if (inList) out.push(`</${inList}>`);
+	if (inBlockquote) out.push("</blockquote>");
+	return out.join("\n");
+}
+
 export function renderMarkdown(raw: string): string {
 	let s = esc(raw);
 	const codeBlocks: CodeBlock[] = [];
@@ -283,8 +394,11 @@ export function renderMarkdown(raw: string): string {
 		return `@@MOLTIS_CODE_BLOCK_${codeBlocks.length - 1}@@`;
 	});
 	s = renderTables(s);
-	s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
-	s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+	// Protect horizontal rules from inline formatting (e.g. *** would match italic)
+	s = s.replace(/^(-{3,}|\*{3,}|_{3,})$/gm, "@@MOLTIS_HR@@");
+	s = renderInlineMarkdown(s);
+	s = renderBlockMarkdown(s);
+	// Re-insert code blocks
 	s = s.replace(/@@MOLTIS_CODE_BLOCK_(\d+)@@/g, (_: string, idx: string) => {
 		const block = codeBlocks[Number(idx)];
 		if (!block) return "";

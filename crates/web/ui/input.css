@@ -205,6 +205,7 @@
     background: var(--assistant-bg);
     border: 1px solid var(--assistant-border);
     color: var(--text);
+    white-space: normal;
   }
   .msg.system {
     align-self: center;

@@ -60,8 +60,70 @@
   border: 1px solid var(--assistant-border);
   color: var(--text);
   align-self: flex-start;
+  white-space: normal;
 }
 
+/* ── Markdown block elements inside messages ── */
+
+.msg h1, .msg h2, .msg h3, .msg h4, .msg h5, .msg h6 {
+  color: var(--text-strong);
+  font-weight: 600;
+  margin: 0.6em 0 0.3em;
+  line-height: 1.3;
+}
+
+.msg h1 { font-size: 1.3em; }
+.msg h2 { font-size: 1.15em; }
+.msg h3 { font-size: 1.05em; }
+.msg h4, .msg h5, .msg h6 { font-size: 1em; }
+
+.msg h1:first-child, .msg h2:first-child, .msg h3:first-child {
+  margin-top: 0;
+}
+
+.msg ul, .msg ol {
+  margin: 0.4em 0;
+  padding-left: 1.5em;
+}
+
+.msg ul { list-style-type: disc; }
+.msg ol { list-style-type: decimal; }
+
+.msg li {
+  margin: 0.15em 0;
+}
+
+.msg blockquote {
+  border-left: 3px solid var(--border-strong);
+  margin: 0.4em 0;
+  padding: 0.2em 0.8em;
+  color: var(--muted);
+}
+
+.msg hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.6em 0;
+}
+
+.msg em {
+  font-style: italic;
+}
+
+.msg del {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.msg a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.msg a:hover {
+  color: var(--accent-hover);
+}
 
 .msg.system {
   color: var(--muted);

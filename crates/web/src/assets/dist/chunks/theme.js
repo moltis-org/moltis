@@ -4587,6 +4587,99 @@ function renderTables(s2) {
   }
   return out.join("\n");
 }
+function renderInlineMarkdown(s2) {
+  s2 = s2.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s2 = s2.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  s2 = s2.replace(/\*(.+?)\*/g, "<em>$1</em>");
+  s2 = s2.replace(/~~(.+?)~~/g, "<del>$1</del>");
+  s2 = s2.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  return s2;
+}
+function renderBlockMarkdown(s2) {
+  const lines = s2.split("\n");
+  const out = [];
+  let inList = null;
+  let inBlockquote = false;
+  for (const line of lines) {
+    if (line.trim() === "@@MOLTIS_HR@@") {
+      if (inList) {
+        out.push(`</${inList}>`);
+        inList = null;
+      }
+      if (inBlockquote) {
+        out.push("</blockquote>");
+        inBlockquote = false;
+      }
+      out.push("<hr>");
+      continue;
+    }
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      if (inList) {
+        out.push(`</${inList}>`);
+        inList = null;
+      }
+      if (inBlockquote) {
+        out.push("</blockquote>");
+        inBlockquote = false;
+      }
+      const level = headingMatch[1].length;
+      out.push(`<h${level}>${headingMatch[2]}</h${level}>`);
+      continue;
+    }
+    const bqMatch = line.match(/^&gt;\s?(.*)$/);
+    if (bqMatch) {
+      if (inList) {
+        out.push(`</${inList}>`);
+        inList = null;
+      }
+      if (!inBlockquote) {
+        out.push("<blockquote>");
+        inBlockquote = true;
+      }
+      out.push(bqMatch[1]);
+      continue;
+    }
+    if (inBlockquote) {
+      out.push("</blockquote>");
+      inBlockquote = false;
+    }
+    const ulMatch = line.match(/^[\s]*[-*]\s+(.+)$/);
+    if (ulMatch) {
+      if (inList === "ol") {
+        out.push("</ol>");
+        inList = null;
+      }
+      if (inList !== "ul") {
+        out.push("<ul>");
+        inList = "ul";
+      }
+      out.push(`<li>${ulMatch[1]}</li>`);
+      continue;
+    }
+    const olMatch = line.match(/^[\s]*\d+\.\s+(.+)$/);
+    if (olMatch) {
+      if (inList === "ul") {
+        out.push("</ul>");
+        inList = null;
+      }
+      if (inList !== "ol") {
+        out.push("<ol>");
+        inList = "ol";
+      }
+      out.push(`<li>${olMatch[1]}</li>`);
+      continue;
+    }
+    if (inList) {
+      out.push(`</${inList}>`);
+      inList = null;
+    }
+    out.push(line);
+  }
+  if (inList) out.push(`</${inList}>`);
+  if (inBlockquote) out.push("</blockquote>");
+  return out.join("\n");
+}
 function renderMarkdown(raw) {
   let s2 = esc(raw);
   const codeBlocks = [];
@@ -4595,8 +4688,9 @@ function renderMarkdown(raw) {
     return `@@MOLTIS_CODE_BLOCK_${codeBlocks.length - 1}@@`;
   });
   s2 = renderTables(s2);
-  s2 = s2.replace(/`([^`]+)`/g, "<code>$1</code>");
-  s2 = s2.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  s2 = s2.replace(/^(-{3,}|\*{3,}|_{3,})$/gm, "@@MOLTIS_HR@@");
+  s2 = renderInlineMarkdown(s2);
+  s2 = renderBlockMarkdown(s2);
   s2 = s2.replace(/@@MOLTIS_CODE_BLOCK_(\d+)@@/g, (_2, idx) => {
     const block = codeBlocks[Number(idx)];
     if (!block) return "";
