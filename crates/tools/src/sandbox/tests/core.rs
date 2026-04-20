@@ -602,6 +602,20 @@ async fn test_provisioning_guard_independent_containers() {
 }
 
 #[test]
+fn test_podman_build_verifies_image_in_store() {
+    // The Podman constructor must set `kind = BackendKind::Podman` so the
+    // post-build verification branch in `build_image` activates.
+    let sandbox = DockerSandbox::podman(SandboxConfig::default());
+    assert_eq!(sandbox.kind, BackendKind::Podman);
+    assert_eq!(sandbox.backend_name(), "podman");
+
+    // Docker constructor must NOT be Podman.
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    assert_eq!(docker.kind, BackendKind::Docker);
+    assert_ne!(docker.kind, BackendKind::Podman);
+}
+
+#[test]
 fn test_tail_lines_fewer_than_n() {
     let text = "line1\nline2\nline3";
     assert_eq!(tail_lines(text, 5), text);

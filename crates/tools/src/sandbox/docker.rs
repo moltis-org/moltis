@@ -51,7 +51,7 @@ pub(crate) enum BackendKind {
 /// behaviour branching without string comparisons.
 pub struct DockerSandbox {
     pub config: SandboxConfig,
-    kind: BackendKind,
+    pub(crate) kind: BackendKind,
     cli: &'static str,
     backend_label: &'static str,
     /// Container names that have already been provisioned in this process.
@@ -98,7 +98,7 @@ impl DockerSandbox {
         format!("{}-{}", self.container_prefix(), id.key)
     }
 
-    fn image_repo(&self) -> &str {
+    pub(crate) fn image_repo(&self) -> &str {
         self.container_prefix()
     }
 
@@ -306,6 +306,99 @@ impl DockerSandbox {
         };
         Ok(result.tag)
     }
+
+    /// Export an image from BuildKit's cache into the Podman store.
+    ///
+    /// When Podman delegates `podman build` to a BuildKit daemon the image may
+    /// land only in BuildKit's internal cache.  This method re-runs the build
+    /// with `--output type=docker,dest=<file>` (a BuildKit cache-hit, so
+    /// essentially free) and pipes the tarball into `podman load`.
+    async fn export_buildkit_image_to_store(
+        &self,
+        tag: &str,
+        dockerfile_path: &std::path::Path,
+        context_dir: &std::path::Path,
+    ) -> Result<()> {
+        let tar_path = std::env::temp_dir().join(format!(
+            "moltis-sandbox-export-{}.tar",
+            uuid::Uuid::new_v4()
+        ));
+
+        // Re-build with docker-archive output.  BuildKit's layer cache makes
+        // this a near-instant cache hit for the same Dockerfile.
+        let export_output = tokio::process::Command::new(self.cli)
+            .args([
+                "build",
+                "--output",
+                &format!("type=docker,dest={}", tar_path.display()),
+                "-f",
+            ])
+            .arg(dockerfile_path)
+            .arg(context_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await?;
+
+        if !export_output.status.success() {
+            let _ = std::fs::remove_file(&tar_path);
+            let stderr = String::from_utf8_lossy(&export_output.stderr);
+            return Err(Error::message(format!(
+                "podman build --output failed for {tag}: {}",
+                stderr.trim()
+            )));
+        }
+
+        // Load the tarball into the Podman store.
+        let load_output = tokio::process::Command::new(self.cli)
+            .args(["load", "-i"])
+            .arg(&tar_path)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await?;
+
+        let _ = std::fs::remove_file(&tar_path);
+
+        if !load_output.status.success() {
+            let stderr = String::from_utf8_lossy(&load_output.stderr);
+            return Err(Error::message(format!(
+                "podman load failed for {tag}: {}",
+                stderr.trim()
+            )));
+        }
+
+        // The loaded image may have a different name — re-tag it.
+        let retag_output = tokio::process::Command::new(self.cli)
+            .args(["tag"])
+            .arg(tag)
+            .arg(tag)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await;
+
+        // Ignore tag errors — the load may have already applied the right name.
+        if let Ok(ref o) = retag_output
+            && !o.status.success()
+        {
+            debug!(
+                tag,
+                stderr = %String::from_utf8_lossy(&o.stderr).trim(),
+                "podman tag after load failed (non-fatal)"
+            );
+        }
+
+        // Final verification.
+        if !sandbox_image_exists(self.cli, tag).await {
+            return Err(Error::message(format!(
+                "image {tag} still missing from podman store after BuildKit export"
+            )));
+        }
+
+        info!(tag, "successfully exported BuildKit image to podman store");
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -443,11 +536,9 @@ impl Sandbox for DockerSandbox {
             .output()
             .await;
 
-        // Clean up temp dir regardless of result.
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-
         let output = output?;
         if !output.status.success() {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             warn!(
@@ -466,6 +557,23 @@ impl Sandbox for DockerSandbox {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         debug!(tag, output = %tail_lines(&stdout, 20), "docker build output");
+
+        // Podman with BuildKit: the build may succeed (exit 0) but leave the
+        // image in BuildKit's internal cache instead of the Podman store.
+        // Verify the image is actually present and recover if not.
+        if self.kind == BackendKind::Podman && !sandbox_image_exists(self.cli, &tag).await {
+            warn!(
+                tag,
+                "podman build succeeded but image missing from store \
+                 (likely BuildKit delegation), exporting via tarball"
+            );
+            self.export_buildkit_image_to_store(&tag, &dockerfile_path, &tmp_dir)
+                .await?;
+        }
+
+        // Clean up temp dir after post-build verification.
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+
         info!(tag, "pre-built sandbox image ready");
         Ok(Some(BuildImageResult { tag, built: true }))
     }
