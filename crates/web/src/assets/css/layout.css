@@ -98,6 +98,23 @@
   height: 14px;
 }
 
+.header-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  line-height: 1;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  background: var(--border);
+  color: var(--muted);
+  font-weight: 500;
+  text-align: center;
+}
+
+.header-badge:empty {
+  display: none;
+}
+
 /* ── Model Dropdown ── */
 
 .model-combo { position: relative; }

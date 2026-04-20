@@ -1924,6 +1924,14 @@
     -webkit-mask-image: url("./icons/masks/mask-d579c16638bc3452.svg");
     mask-image: url("./icons/masks/mask-d579c16638bc3452.svg");
   }
+  .icon-github-issue {
+    -webkit-mask-image: url("./icons/masks/mask-github-issue.svg");
+    mask-image: url("./icons/masks/mask-github-issue.svg");
+  }
+  .icon-github-discussion {
+    -webkit-mask-image: url("./icons/masks/mask-github-discussion.svg");
+    mask-image: url("./icons/masks/mask-github-discussion.svg");
+  }
   .icon-chart-bar {
     -webkit-mask-image: url("./icons/masks/mask-b9bf0315417c03e4.svg");
     mask-image: url("./icons/masks/mask-b9bf0315417c03e4.svg");
