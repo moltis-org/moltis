@@ -46,7 +46,7 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl From<tokio_tungstenite::tungstenite::Error> for Error {
-    fn from(e: tokio_tungstenite::tungstenite::Error) -> Self {
-        Self::WebSocket(Box::new(e))
+    fn from(error: tokio_tungstenite::tungstenite::Error) -> Self {
+        Self::WebSocket(Box::new(error))
     }
 }

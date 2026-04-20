@@ -11,6 +11,7 @@ fi
 
 node --input-type=module - "$locales_dir" <<'NODE'
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -32,8 +33,19 @@ function flattenKeys(value, prefix = "", out = new Set()) {
 	return out;
 }
 
+// Node <22 cannot import .ts files directly.  The locale modules are
+// plain-JS default exports so we can safely copy them to a temp .mjs
+// file for import when the original extension is unsupported.
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "i18n-"));
+
 async function loadLocaleModule(filePath) {
-	const fileUrl = `${pathToFileURL(filePath).href}?v=${Date.now()}`;
+	let target = filePath;
+	if (filePath.endsWith(".ts")) {
+		const tmp = path.join(tmpDir, `${path.basename(filePath, ".ts")}-${Date.now()}.mjs`);
+		fs.copyFileSync(filePath, tmp);
+		target = tmp;
+	}
+	const fileUrl = `${pathToFileURL(target).href}?v=${Date.now()}`;
 	const mod = await import(fileUrl);
 	return mod.default ?? {};
 }
@@ -109,6 +121,8 @@ for (const namespaceFile of namespaceFiles) {
 		}
 	}
 }
+
+fs.rmSync(tmpDir, { recursive: true, force: true });
 
 if (hasFailures) {
 	process.exit(1);

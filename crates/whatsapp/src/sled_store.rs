@@ -665,6 +665,11 @@ mod tests {
         SledStore::open(dir.path()).unwrap()
     }
 
+    fn close_store(store: SledStore) {
+        store.db.flush().unwrap();
+        drop(store);
+    }
+
     #[tokio::test]
     async fn identity_roundtrip() {
         let store = temp_store();
@@ -789,6 +794,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
+            close_store(store);
         }
 
         {
@@ -903,6 +909,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
+            close_store(store);
         }
 
         {
@@ -947,6 +954,7 @@ mod tests {
             store.put_session("addr", b"session-data").await.unwrap();
             let id = store.create().await.unwrap();
             assert_eq!(id, 0);
+            close_store(store);
         }
 
         // Reopen and verify.
