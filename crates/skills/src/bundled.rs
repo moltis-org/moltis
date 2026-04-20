@@ -319,6 +319,7 @@ fn find_skill_dir_embedded_recursive(
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,7 +386,7 @@ mod tests {
                 skill.name
             );
             assert!(
-                !skill.category.as_ref().map_or(true, String::is_empty),
+                !skill.category.as_ref().is_none_or(String::is_empty),
                 "skill '{}' has empty category",
                 skill.name
             );
@@ -470,7 +471,7 @@ mod tests {
             let body = s.read_skill(&skill.name);
             assert!(body.is_some(), "skill '{}' body not readable", skill.name);
             assert!(
-                !body.as_ref().map_or(true, String::is_empty),
+                !body.as_ref().is_none_or(String::is_empty),
                 "skill '{}' has empty body",
                 skill.name
             );
