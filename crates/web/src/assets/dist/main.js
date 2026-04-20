@@ -3690,16 +3690,11 @@ function applyStats(stats) {
 async function fetchIssuesCount() {
   try {
     const resp = await fetch(
-      `https://api.github.com/repos/${REPO}/issues?state=open&per_page=1`
+      `https://api.github.com/search/issues?q=repo:${REPO}+type:issue+state:open&per_page=1`
     );
     if (!resp.ok) return null;
-    const link = resp.headers.get("Link");
-    if (link) {
-      const match = /[&?]page=(\d+)>;\s*rel="last"/.exec(link);
-      if (match) return Number.parseInt(match[1], 10);
-    }
-    const items = await resp.json();
-    return items.length;
+    const data = await resp.json();
+    return data.total_count ?? null;
   } catch {
     return null;
   }

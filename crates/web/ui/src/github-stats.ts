@@ -46,22 +46,16 @@ function applyStats(stats: GitHubStats): void {
 }
 
 async function fetchIssuesCount(): Promise<number | null> {
-	// Use the regular issues endpoint (60 req/min unauthenticated) instead of
-	// /search/issues (10 req/min). Parse the Link header for total count.
+	// Use the Search API with type:issue to exclude PRs from the count.
+	// Rate limit is 10 req/min unauthenticated, but with 1-hour caching
+	// we only make 1 req/hour/user so this is never an issue in practice.
 	try {
 		const resp = await fetch(
-			`https://api.github.com/repos/${REPO}/issues?state=open&per_page=1`,
+			`https://api.github.com/search/issues?q=repo:${REPO}+type:issue+state:open&per_page=1`,
 		);
 		if (!resp.ok) return null;
-
-		const link = resp.headers.get("Link");
-		if (link) {
-			const match = /[&?]page=(\d+)>;\s*rel="last"/.exec(link);
-			if (match) return Number.parseInt(match[1], 10);
-		}
-		// No Link header means ≤1 page; count the items directly.
-		const items = (await resp.json()) as unknown[];
-		return items.length;
+		const data = (await resp.json()) as { total_count?: number };
+		return data.total_count ?? null;
 	} catch {
 		return null;
 	}
