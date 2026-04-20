@@ -1,7 +1,6 @@
 ---
 name: webhook-subscriptions
 description: Create and manage webhook subscriptions for event-driven agent activation. Use when the user wants external services (GitHub, GitLab, Stripe, Linear, PagerDuty, Sentry, or any generic source) to trigger agent runs by POSTing events to a URL.
-version: 2.0.0
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent

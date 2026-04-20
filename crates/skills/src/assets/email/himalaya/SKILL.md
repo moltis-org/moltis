@@ -1,15 +1,6 @@
 ---
 name: himalaya
 description: CLI to manage emails via IMAP/SMTP. Use himalaya to list, read, write, reply, forward, search, and organize emails from the terminal. Supports multiple accounts and message composition with MML (MIME Meta Language).
-version: 1.0.0
-author: community
-license: MIT
-metadata:
-  hermes:
-    tags: [Email, IMAP, SMTP, CLI, Communication]
-    homepage: https://github.com/pimalaya/himalaya
-prerequisites:
-  commands: [himalaya]
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
@@ -88,7 +79,7 @@ message.send.backend.auth.type = "password"
 message.send.backend.auth.cmd = "pass show email/smtp"
 ```
 
-## Hermes Integration Notes
+## Integration Notes
 
 - **Reading, listing, searching, moving, deleting** all work directly through the terminal tool
 - **Composing/replying/forwarding** — piped input (`cat << EOF | himalaya template send`) is recommended for reliability. Interactive `$EDITOR` mode works with `pty=true` + background + process tool, but requires knowing the editor and its commands
@@ -145,7 +136,7 @@ himalaya message export 42 --full
 
 ### Reply to an Email
 
-To reply non-interactively from Hermes, read the original message, compose a reply, and pipe it:
+To reply non-interactively from Moltis, read the original message, compose a reply, and pipe it:
 
 ```bash
 # Get the reply template, edit it, and send
@@ -180,7 +171,7 @@ himalaya template forward 42 | sed 's/^To:.*/To: newrecipient@example.com/' | hi
 
 ### Write a New Email
 
-**Non-interactive (use this from Hermes)** — pipe the message via stdin:
+**Non-interactive (use this from Moltis)** — pipe the message via stdin:
 
 ```bash
 cat << 'EOF' | himalaya template send

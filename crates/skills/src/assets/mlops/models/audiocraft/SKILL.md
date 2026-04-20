@@ -1,14 +1,6 @@
 ---
 name: audiocraft-audio-generation
 description: PyTorch library for audio generation including text-to-music (MusicGen) and text-to-sound (AudioGen). Use when you need to generate music from text descriptions, create sound effects, or perform melody-conditioned music generation.
-version: 1.0.0
-author: Orchestra Research
-license: MIT
-dependencies: [audiocraft, torch>=2.0.0, transformers>=4.30.0]
-metadata:
-  hermes:
-    tags: [Multimodal, Audio Generation, Text-to-Music, Text-to-Audio, MusicGen]
-
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent

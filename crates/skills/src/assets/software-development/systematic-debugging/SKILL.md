@@ -1,13 +1,6 @@
 ---
 name: systematic-debugging
 description: Use when encountering any bug, test failure, or unexpected behavior. 4-phase root cause investigation — NO fixes without understanding the problem first.
-version: 1.1.0
-author: Hermes Agent (adapted from obra/superpowers)
-license: MIT
-metadata:
-  hermes:
-    tags: [debugging, troubleshooting, problem-solving, root-cause, investigation]
-    related_skills: [test-driven-development, writing-plans, subagent-driven-development]
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
@@ -318,11 +311,11 @@ If you catch yourself thinking:
 | **3. Hypothesis** | Form theory, test minimally, one variable at a time | Confirmed or new hypothesis |
 | **4. Implementation** | Create regression test, fix root cause, verify | Bug resolved, all tests pass |
 
-## Hermes Agent Integration
+## Moltis Integration
 
 ### Investigation Tools
 
-Use these Hermes tools during Phase 1:
+Use these Moltis tools during Phase 1:
 
 - **`search_files`** — Find error strings, trace function calls, locate patterns
 - **`read_file`** — Read source code with line numbers for precise analysis

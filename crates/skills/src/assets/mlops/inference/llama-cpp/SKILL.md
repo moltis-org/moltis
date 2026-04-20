@@ -1,13 +1,6 @@
 ---
 name: llama-cpp
 description: Run LLM inference with llama.cpp on CPU, Apple Silicon, AMD/Intel GPUs, or NVIDIA — plus GGUF model conversion and quantization (2–8 bit with K-quants and imatrix). Covers CLI, Python bindings, OpenAI-compatible server, and Ollama/LM Studio integration. Use for edge deployment, M1/M2/M3/M4 Macs, CUDA-less environments, or flexible local quantization.
-version: 2.0.0
-author: Orchestra Research
-license: MIT
-dependencies: [llama-cpp-python>=0.2.0]
-metadata:
-  hermes:
-    tags: [llama.cpp, GGUF, Quantization, CPU Inference, Apple Silicon, Edge Deployment, Non-NVIDIA, AMD GPUs, Intel GPUs, Embedded, Model Compression]
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent

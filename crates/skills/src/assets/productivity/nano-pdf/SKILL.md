@@ -1,13 +1,6 @@
 ---
 name: nano-pdf
 description: Edit PDFs with natural-language instructions using the nano-pdf CLI. Modify text, fix typos, update titles, and make content changes to specific pages without manual editing.
-version: 1.0.0
-author: community
-license: MIT
-metadata:
-  hermes:
-    tags: [PDF, Documents, Editing, NLP, Productivity]
-    homepage: https://pypi.org/project/nano-pdf/
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
@@ -28,7 +21,7 @@ Edit PDFs using natural-language instructions. Point it at a page and describe w
 ## Prerequisites
 
 ```bash
-# Install with uv (recommended — already available in Hermes)
+# Install with uv (recommended — already available in Moltis)
 uv pip install nano-pdf
 
 # Or with pip

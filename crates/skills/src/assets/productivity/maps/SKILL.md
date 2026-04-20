@@ -6,15 +6,6 @@ description: >
   distance + time, turn-by-turn directions, timezone lookup, bounding
   box + area for a named place, and POI search within a rectangle.
   Uses OpenStreetMap + Overpass + OSRM. Free, no API key.
-version: 1.2.0
-author: Mibayy
-license: MIT
-metadata:
-  hermes:
-    tags: [maps, geocoding, places, routing, distance, directions, nearby, location, openstreetmap, nominatim, overpass, osrm]
-    category: productivity
-    requires_toolsets: [terminal]
-    supersedes: [find-nearby]
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
@@ -49,12 +40,12 @@ functionality is covered by the `nearby` command below, with the same
 
 Python 3.8+ (stdlib only — no pip installs needed).
 
-Script path: `~/.hermes/skills/maps/scripts/maps_client.py`
+Script path: `~/.moltis/skills/maps/scripts/maps_client.py`
 
 ## Commands
 
 ```bash
-MAPS=~/.hermes/skills/maps/scripts/maps_client.py
+MAPS=~/.moltis/skills/maps/scripts/maps_client.py
 ```
 
 ### search — Geocode a place name
@@ -196,9 +187,9 @@ current.
 ## Verification
 
 ```bash
-python3 ~/.hermes/skills/maps/scripts/maps_client.py search "Statue of Liberty"
+python3 ~/.moltis/skills/maps/scripts/maps_client.py search "Statue of Liberty"
 # Should return lat ~40.689, lon ~-74.044
 
-python3 ~/.hermes/skills/maps/scripts/maps_client.py nearby --near "Times Square" --category restaurant --limit 3
+python3 ~/.moltis/skills/maps/scripts/maps_client.py nearby --near "Times Square" --category restaurant --limit 3
 # Should return a list of restaurants within ~500m of Times Square
 ```

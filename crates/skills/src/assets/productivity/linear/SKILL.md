@@ -1,15 +1,6 @@
 ---
 name: linear
 description: Manage Linear issues, projects, and teams via the GraphQL API. Create, update, search, and organize issues. Uses API key auth (no OAuth needed). All operations via curl — no dependencies.
-version: 1.0.0
-author: Hermes Agent
-license: MIT
-prerequisites:
-  env_vars: [LINEAR_API_KEY]
-  commands: [curl]
-metadata:
-  hermes:
-    tags: [Linear, Project Management, Issues, GraphQL, API, Productivity]
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
@@ -23,7 +14,7 @@ Manage Linear issues, projects, and teams directly via the GraphQL API using `cu
 ## Setup
 
 1. Get a personal API key from **Linear Settings > API > Personal API keys**
-2. Set `LINEAR_API_KEY` in your environment (via `hermes setup` or your env config)
+2. Set `LINEAR_API_KEY` in your environment (via `Moltis settings` or your env config)
 
 ## API Basics
 

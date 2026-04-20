@@ -1,15 +1,6 @@
 ---
 name: pixel-art
 description: Convert images into retro pixel art with hardware-accurate palettes (NES, Game Boy, PICO-8, C64, etc.), and animate them into short videos. Presets cover arcade, SNES, and 10+ era-correct looks. Use `clarify` to let the user pick a style before generating.
-version: 2.0.0
-author: dodo-reach
-license: MIT
-metadata:
-  hermes:
-    tags: [creative, pixel-art, arcade, snes, nes, gameboy, retro, image, video]
-    category: creative
-    credits:
-      - "Hardware palettes and animation loops ported from Synero/pixel-art-studio (MIT) — https://github.com/Synero/pixel-art-studio"
 origin:
   source: hermes-agent
   url: https://github.com/nousresearch/hermes-agent
@@ -139,7 +130,7 @@ pixel_art("in.png", "out.png", preset="snes", palette="PICO_8", block=6)
 
 ```python
 import sys
-sys.path.insert(0, "/home/teknium/.hermes/skills/creative/pixel-art/scripts")
+sys.path.insert(0, "~/.moltis/skills/creative/pixel-art/scripts")
 from pixel_art import pixel_art
 from pixel_art_video import pixel_art_video
 
@@ -161,7 +152,7 @@ pixel_art_video(
 ### CLI
 
 ```bash
-cd /home/teknium/.hermes/skills/creative/pixel-art/scripts
+cd ~/.moltis/skills/creative/pixel-art/scripts
 
 python pixel_art.py in.jpg out.png --preset gameboy
 python pixel_art.py in.jpg out.png --preset snes --palette PICO_8 --block 6
@@ -192,7 +183,7 @@ Quantizing before would waste error-diffusion on detail that disappears.
 
 - Python 3.9+
 - Pillow (`pip install Pillow`)
-- ffmpeg on PATH (only needed for video — Hermes installs package this)
+- ffmpeg on PATH (only needed for video — Moltis installs package this)
 
 ## Pitfalls
 

@@ -11,7 +11,7 @@ requires:
 
 # Obsidian Vault
 
-**Location:** Set via `OBSIDIAN_VAULT_PATH` environment variable (e.g. in `~/.hermes/.env`).
+**Location:** Set via `OBSIDIAN_VAULT_PATH` environment variable (e.g. in `your environment`).
 
 If unset, defaults to `~/Documents/Obsidian Vault`.
 
