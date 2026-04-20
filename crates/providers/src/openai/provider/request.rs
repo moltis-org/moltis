@@ -105,6 +105,12 @@ impl OpenAiProvider {
         {
             return false;
         }
+        // Fireworks Fire Pass router models for Kimi route to Moonshot,
+        // which rejects strict-mode schemas (type arrays, forced
+        // additionalProperties). Issue #810.
+        if self.is_fireworks_kimi_router() {
+            return false;
+        }
         true
     }
 
@@ -113,6 +119,20 @@ impl OpenAiProvider {
             || self.base_url.contains("moonshot.ai")
             || self.base_url.contains("moonshot.cn")
             || self.model.starts_with("kimi-")
+            // Fireworks Fire Pass routes kimi-k2p5-turbo to Moonshot,
+            // which requires reasoning_content on tool-call messages.
+            || self.is_fireworks_kimi_router()
+    }
+
+    /// Detect Fireworks Fire Pass router models that route to Moonshot/Kimi.
+    ///
+    /// These models use Fireworks as a proxy but the backend is Moonshot's Kimi
+    /// API, which has different schema and message requirements than Fireworks'
+    /// native models. Pattern: `accounts/fireworks/routers/kimi-*`.
+    fn is_fireworks_kimi_router(&self) -> bool {
+        self.base_url.contains("fireworks.ai")
+            && self.model.contains("/routers/")
+            && self.model.contains("kimi")
     }
 
     /// Some providers (e.g. MiniMax) reject `role: "system"` in the messages
@@ -564,5 +584,65 @@ mod tests {
         assert_eq!(messages[0]["role"], "system");
         assert_eq!(messages[0]["content"], "sys1\n\nsys2");
         assert_eq!(messages[1]["role"], "user");
+    }
+
+    // ── Fireworks Kimi router detection (issue #810) ─────────────────
+
+    #[test]
+    fn fireworks_kimi_router_disables_strict_tools() {
+        let p = provider(
+            "accounts/fireworks/routers/kimi-k2p5-turbo",
+            "fireworks",
+            "https://api.fireworks.ai/inference/v1",
+        );
+        assert!(
+            !p.needs_strict_tools(),
+            "Fireworks Kimi router must not use strict tools (issue #810)"
+        );
+    }
+
+    #[test]
+    fn fireworks_kimi_router_requires_reasoning_content() {
+        let p = provider(
+            "accounts/fireworks/routers/kimi-k2p5-turbo",
+            "fireworks",
+            "https://api.fireworks.ai/inference/v1",
+        );
+        assert!(
+            p.requires_reasoning_content_on_tool_messages(),
+            "Fireworks Kimi router must add reasoning_content (issue #810)"
+        );
+    }
+
+    #[test]
+    fn fireworks_native_model_still_uses_strict_tools() {
+        let p = provider(
+            "accounts/fireworks/models/deepseek-v3p2",
+            "fireworks",
+            "https://api.fireworks.ai/inference/v1",
+        );
+        assert!(
+            p.needs_strict_tools(),
+            "Native Fireworks models should use strict tools"
+        );
+    }
+
+    #[test]
+    fn fireworks_native_model_no_reasoning_content() {
+        let p = provider(
+            "accounts/fireworks/models/deepseek-v3p2",
+            "fireworks",
+            "https://api.fireworks.ai/inference/v1",
+        );
+        assert!(
+            !p.requires_reasoning_content_on_tool_messages(),
+            "Native Fireworks models should not add reasoning_content"
+        );
+    }
+
+    #[test]
+    fn moonshot_direct_still_requires_reasoning_content() {
+        let p = provider("kimi-k2.5", "moonshot", "https://api.moonshot.ai/v1");
+        assert!(p.requires_reasoning_content_on_tool_messages());
     }
 }

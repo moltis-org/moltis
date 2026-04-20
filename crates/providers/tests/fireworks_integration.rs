@@ -328,6 +328,99 @@ async fn catalog_models_are_live() {
     );
 }
 
+// ── Fire Pass router: Kimi K2.5 Turbo (issue #810) ──────────────────────────
+
+const KIMI_ROUTER_MODEL: &str = "accounts/fireworks/routers/kimi-k2p5-turbo";
+
+/// Basic completion via Fireworks Fire Pass router to Kimi K2.5 must succeed.
+/// Regression test for issue #810 where strict mode schemas caused 400 errors.
+#[tokio::test]
+#[ignore]
+async fn kimi_router_basic_completion() {
+    let p = make_provider(KIMI_ROUTER_MODEL);
+    let messages = vec![ChatMessage::user(
+        "What is 2+2? Answer with just the number.",
+    )];
+
+    let response = p
+        .complete(&messages, &[])
+        .await
+        .expect("Kimi K2.5 via Fire Pass should succeed (issue #810)");
+
+    let text = response.text.expect("should have text response");
+    assert!(text.contains('4'), "expected '4' in response: {text:?}");
+}
+
+/// Tool calling via Fireworks Fire Pass Kimi K2.5 must not return 400.
+/// This was the primary regression in issue #810: strict tool schemas were
+/// sent to a backend that doesn't support them.
+#[tokio::test]
+#[ignore]
+async fn kimi_router_tool_call_no_400() {
+    let p = make_provider(KIMI_ROUTER_MODEL);
+    let tools = vec![weather_tool()];
+    let messages = vec![ChatMessage::user(
+        "What's the weather in Berlin? You must use the get_weather tool.",
+    )];
+
+    let response = p
+        .complete(&messages, &tools)
+        .await
+        .expect("Kimi K2.5 via Fire Pass tool call should not 400 (issue #810)");
+
+    assert!(
+        !response.tool_calls.is_empty(),
+        "Kimi router should call tools, got text: {:?}",
+        response.text
+    );
+    assert_eq!(response.tool_calls[0].name, "get_weather");
+}
+
+/// Multi-turn tool use with Kimi via Fire Pass: exercises reasoning_content
+/// serialization that Moonshot requires on assistant tool-call messages.
+#[tokio::test]
+#[ignore]
+async fn kimi_router_multi_turn_tool_use() {
+    let p = make_provider(KIMI_ROUTER_MODEL);
+    let tools = vec![weather_tool()];
+
+    // Step 1: trigger tool call
+    let messages = vec![ChatMessage::user(
+        "What's the weather in Tokyo? You must use the get_weather tool.",
+    )];
+    let response = p
+        .complete(&messages, &tools)
+        .await
+        .expect("first turn should succeed");
+
+    assert!(
+        !response.tool_calls.is_empty(),
+        "should call get_weather, got text: {:?}",
+        response.text
+    );
+    let tc = &response.tool_calls[0];
+
+    // Step 2: provide result
+    let messages = vec![
+        ChatMessage::user("What's the weather in Tokyo? You must use the get_weather tool."),
+        ChatMessage::assistant_with_tools(response.text.clone(), vec![ToolCall {
+            id: tc.id.clone(),
+            name: tc.name.clone(),
+            arguments: tc.arguments.clone(),
+            metadata: tc.metadata.clone(),
+        }]),
+        ChatMessage::tool(&tc.id, r#"{"temperature": 28, "condition": "sunny"}"#),
+    ];
+
+    let final_response = p
+        .complete(&messages, &tools)
+        .await
+        .expect("second turn with tool result should succeed (issue #810)");
+
+    let text = final_response.text.expect("should have text response");
+    assert!(!text.is_empty(), "final response should not be empty");
+}
+
 /// Discover new models via the Fireworks /models endpoint and compare with
 /// our static catalog.
 #[tokio::test]
