@@ -141,12 +141,12 @@ impl AgentTool for ReadSkillTool {
 
         // Bundled skills are served from the embedded store, not the filesystem.
         #[cfg(feature = "bundled-skills")]
-        if meta.source.as_ref() == Some(&SkillSource::Bundled) {
-            if let Some(ref store) = self.bundled_store {
-                let mut result = read_bundled(name, meta, store, file_path)?;
-                inject_install_note(&mut result, &install_note);
-                return Ok(result);
-            }
+        if meta.source.as_ref() == Some(&SkillSource::Bundled)
+            && let Some(ref store) = self.bundled_store
+        {
+            let mut result = read_bundled(name, meta, store, file_path)?;
+            inject_install_note(&mut result, &install_note);
+            return Ok(result);
         }
 
         if let Some(rel) = file_path {
@@ -651,9 +651,9 @@ async fn auto_install_requirements(meta: &moltis_skills::types::SkillMetadata) -
 
 /// Inject an install note into a skill read response.
 fn inject_install_note(result: &mut Value, note: &Option<String>) {
-    if let Some(msg) = note {
-        if let Some(obj) = result.as_object_mut() {
-            obj.insert("install_note".into(), json!(msg));
-        }
+    if let Some(msg) = note
+        && let Some(obj) = result.as_object_mut()
+    {
+        obj.insert("install_note".into(), json!(msg));
     }
 }
