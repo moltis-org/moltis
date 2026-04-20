@@ -261,9 +261,27 @@ pub(crate) async fn discover_skills_if_enabled(
     if !config.skills.enabled {
         return Vec::new();
     }
-    let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
-    let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
-    match discoverer.discover().await {
+    let fs_discoverer = moltis_skills::discover::FsSkillDiscoverer::new(
+        moltis_skills::discover::FsSkillDiscoverer::default_paths(),
+    );
+
+    #[cfg(feature = "bundled-skills")]
+    let skills = {
+        use moltis_skills::discover::SkillDiscoverer;
+        let bundled = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+        let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
+            Box::new(fs_discoverer),
+            bundled,
+        );
+        composite.discover().await
+    };
+    #[cfg(not(feature = "bundled-skills"))]
+    let skills = {
+        use moltis_skills::discover::SkillDiscoverer;
+        fs_discoverer.discover().await
+    };
+
+    match skills {
         Ok(skills) => skills,
         Err(e) => {
             warn!("failed to discover skills: {e}");

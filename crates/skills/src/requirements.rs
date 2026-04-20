@@ -22,7 +22,7 @@ pub fn install_program_and_args(spec: &InstallSpec) -> Result<(&'static str, Vec
                 .package
                 .as_deref()
                 .ok_or_else(|| Error::Install("npm install requires 'package'".into()))?;
-            ("npm", vec!["install", "-g", "--ignore-scripts", package])
+            ("npm", vec!["install", "-g", package])
         },
         InstallKind::Go => {
             let module = spec
