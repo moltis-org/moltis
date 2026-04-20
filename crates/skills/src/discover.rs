@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
@@ -90,6 +87,9 @@ impl SkillDiscoverer for FsSkillDiscoverer {
 }
 
 // ── Composite discoverer (fs + bundled) ─────────────────────────────────────
+
+#[cfg(feature = "bundled-skills")]
+use std::sync::Arc;
 
 /// Discoverer that merges filesystem-discovered skills with bundled skills.
 ///
