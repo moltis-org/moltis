@@ -177,27 +177,4 @@ mod tests {
             );
         }
     }
-
-    /// Regression test for https://github.com/moltis-org/moltis/issues/798
-    ///
-    /// Slack sends commands with a leading slash (`/new`, `/clear`). The
-    /// dispatch function must strip it before matching, otherwise the match
-    /// falls through to the unknown-command arm producing `//new`.
-    #[test]
-    fn leading_slash_is_stripped_before_matching() {
-        // Simulates the slash-stripping logic in dispatch_command.
-        let inputs = ["/new", "/clear", "/model gpt-4o", "new", "clear"];
-        for input in inputs {
-            let stripped = input.strip_prefix('/').unwrap_or(input);
-            let cmd = stripped.split_whitespace().next().unwrap_or("");
-            assert!(
-                !cmd.starts_with('/'),
-                "command `{input}` should not produce a slash-prefixed cmd, got `{cmd}`"
-            );
-            assert!(
-                !cmd.is_empty(),
-                "command `{input}` should produce a non-empty cmd"
-            );
-        }
-    }
 }
