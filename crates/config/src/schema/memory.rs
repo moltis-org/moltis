@@ -8,7 +8,7 @@ use {
 ///
 /// Controls which embedding provider the memory system uses.
 /// If not configured, the system auto-detects from available providers.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MemoryEmbeddingConfig {
     /// High-level memory orchestration style.
@@ -70,6 +70,31 @@ pub struct MemoryEmbeddingConfig {
     /// (`/new`, `/reset`, or timeout). Default: true.
     #[serde(default = "default_true")]
     pub enable_session_summary: bool,
+}
+
+impl Default for MemoryEmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            style: MemoryStyle::default(),
+            agent_write_mode: AgentMemoryWriteMode::default(),
+            user_profile_write_mode: UserProfileWriteMode::default(),
+            backend: MemoryBackend::default(),
+            provider: None,
+            disable_rag: false,
+            base_url: None,
+            model: None,
+            api_key: None,
+            citations: MemoryCitationsMode::default(),
+            llm_reranking: false,
+            search_merge_strategy: MemorySearchMergeStrategy::default(),
+            session_export: default_session_export_mode(),
+            qmd: QmdConfig::default(),
+            enable_prefetch: true,
+            prefetch_limit: 3,
+            auto_extract_interval: 5,
+            enable_session_summary: true,
+        }
+    }
 }
 
 fn default_true() -> bool {
