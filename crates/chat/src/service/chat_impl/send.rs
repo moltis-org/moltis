@@ -1077,6 +1077,9 @@ impl LiveChatService {
             // Clone the provider for potential periodic memory extraction
             // (the original Arc is moved into run_with_tools / run_streaming).
             let provider_for_extraction = Arc::clone(&provider);
+            // Capture config values before persona is moved into the agent future.
+            let auto_extract_interval = persona.config.memory.auto_extract_interval;
+            let extraction_write_mode = persona.config.memory.agent_write_mode;
             let agent_fut = async {
                 if stream_only {
                     run_streaming(
@@ -1200,9 +1203,9 @@ impl LiveChatService {
                     // ── Periodic background memory extraction ──────────────
                     // Every `auto_extract_interval` turns, spawn a background
                     // silent turn to save important recent context to memory.
-                    let mem_cfg = moltis_config::discover_and_load();
-                    let interval = mem_cfg.memory.auto_extract_interval;
-                    let write_mode = mem_cfg.memory.agent_write_mode;
+                    // Uses config values captured before persona was moved.
+                    let interval = auto_extract_interval;
+                    let write_mode = extraction_write_mode;
                     // A "turn" = user + assistant = 2 messages.
                     let turn_number = count / 2;
                     if interval > 0
