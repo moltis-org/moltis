@@ -73,6 +73,7 @@
 
 - [Docker](docker.md)
 - [Cloud Deploy](cloud-deploy.md)
+- [VPS Deployment](deploy-vps.md)
 
 ---
 

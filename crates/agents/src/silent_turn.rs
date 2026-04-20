@@ -6,10 +6,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(feature = "metrics")]
+use std::time::Instant;
+
 use {
     anyhow::Result,
     tracing::{debug, info, warn},
 };
+
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, histogram, labels, memory as mem_metrics};
 
 use crate::{
     memory_writer::{MemoryWriteResult, MemoryWriter},
@@ -120,6 +126,41 @@ impl AgentTool for MemoryWriteFileTool {
     }
 }
 
+const SESSION_SUMMARY_SYSTEM_PROMPT: &str = r#"You are a session summarizer. Review the conversation and write a concise summary to memory using the write_file tool.
+
+Focus on:
+- What was accomplished (key outcomes and decisions)
+- What was left unfinished (follow-up items)
+- Any preferences or patterns the user demonstrated
+- Technical context that would help resume this work
+
+Write to `memory/YYYY-MM-DD.md` (append, don't overwrite).
+Be concise — 5-15 bullet points maximum.
+Do NOT respond to the user. Only use the write_file tool to save the summary."#;
+
+const PERIODIC_EXTRACT_SYSTEM_PROMPT: &str = r#"You are a memory extraction agent. Review the recent conversation turns below and save any important new information to memory using the write_file tool.
+
+Save information that would be useful in future conversations:
+- User preferences and working style
+- Key decisions and their reasoning
+- Important facts, names, dates, and relationships
+- Technical context (tools, languages, frameworks)
+
+Write to `memory/YYYY-MM-DD.md` (append, don't overwrite).
+Be concise — only save genuinely new information not already in memory.
+Do NOT respond to the user. Only use the write_file tool to save memories."#;
+
+/// Prompt variant for [`run_silent_memory_turn_with_prompt`].
+#[derive(Debug)]
+pub enum SilentTurnPrompt {
+    /// Pre-compaction memory flush (default).
+    Compaction,
+    /// Periodic background extraction for the last N turns.
+    PeriodicExtract,
+    /// Session-end summary.
+    SessionSummary,
+}
+
 /// Run a silent memory turn before compaction.
 ///
 /// Gives the LLM a special system prompt asking it to save important memories
@@ -130,6 +171,18 @@ pub async fn run_silent_memory_turn(
     provider: Arc<dyn LlmProvider>,
     conversation: &[ChatMessage],
     writer: Arc<dyn MemoryWriter>,
+) -> Result<Vec<PathBuf>> {
+    run_silent_memory_turn_with_prompt(provider, conversation, writer, SilentTurnPrompt::Compaction)
+        .await
+}
+
+/// Run a silent memory turn with a specific prompt variant.
+#[tracing::instrument(skip(provider, conversation, writer), fields(variant))]
+pub async fn run_silent_memory_turn_with_prompt(
+    provider: Arc<dyn LlmProvider>,
+    conversation: &[ChatMessage],
+    writer: Arc<dyn MemoryWriter>,
+    prompt_variant: SilentTurnPrompt,
 ) -> Result<Vec<PathBuf>> {
     let write_tool = Arc::new(MemoryWriteFileTool::new(writer));
 
@@ -181,16 +234,26 @@ pub async fn run_silent_memory_turn(
         conversation_text.push_str(&format!("{role}: {truncated}\n\n"));
     }
 
+    let (system_prompt, label) = match prompt_variant {
+        SilentTurnPrompt::Compaction => (MEMORY_FLUSH_SYSTEM_PROMPT, "compaction"),
+        SilentTurnPrompt::PeriodicExtract => (PERIODIC_EXTRACT_SYSTEM_PROMPT, "periodic-extract"),
+        SilentTurnPrompt::SessionSummary => (SESSION_SUMMARY_SYSTEM_PROMPT, "session-summary"),
+    };
+
     info!(
         messages = conversation.len(),
-        "running silent memory turn before compaction"
+        variant = label,
+        "running silent memory turn"
     );
+
+    #[cfg(feature = "metrics")]
+    let start = Instant::now();
 
     let user_content = crate::model::UserContent::Text(conversation_text);
     let result = run_agent_loop(
         provider,
         &tools,
-        MEMORY_FLUSH_SYSTEM_PROMPT,
+        system_prompt,
         &user_content,
         None, // no event callbacks — silent
         None, // no history
@@ -200,16 +263,49 @@ pub async fn run_silent_memory_turn(
     match result {
         Ok(run_result) => {
             let paths = write_tool.take_written_paths();
+            #[cfg(feature = "metrics")]
+            {
+                let duration = start.elapsed().as_secs_f64();
+                counter!(
+                    mem_metrics::SILENT_TURNS_TOTAL,
+                    labels::VARIANT => label,
+                    labels::SUCCESS => "true"
+                )
+                .increment(1);
+                histogram!(
+                    mem_metrics::SILENT_TURN_DURATION_SECONDS,
+                    labels::VARIANT => label
+                )
+                .record(duration);
+                counter!(mem_metrics::SILENT_TURN_FILES_WRITTEN, labels::VARIANT => label)
+                    .increment(paths.len() as u64);
+            }
             info!(
                 files_written = paths.len(),
                 tool_calls = run_result.tool_calls_made,
+                variant = label,
                 "silent memory turn complete"
             );
             Ok(paths)
         },
         Err(e) => {
-            warn!(error = %e, "silent memory turn failed");
-            Ok(Vec::new()) // Don't fail compaction if memory flush fails
+            #[cfg(feature = "metrics")]
+            {
+                let duration = start.elapsed().as_secs_f64();
+                counter!(
+                    mem_metrics::SILENT_TURNS_TOTAL,
+                    labels::VARIANT => label,
+                    labels::SUCCESS => "false"
+                )
+                .increment(1);
+                histogram!(
+                    mem_metrics::SILENT_TURN_DURATION_SECONDS,
+                    labels::VARIANT => label
+                )
+                .record(duration);
+            }
+            warn!(error = %e, variant = label, "silent memory turn failed");
+            Ok(Vec::new())
         },
     }
 }
@@ -364,6 +460,116 @@ mod tests {
 
         // Should succeed even with empty conversation (provider still writes)
         assert!(!paths.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_periodic_extract_variant_writes_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let provider = Arc::new(MemoryWritingProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let writer: Arc<dyn MemoryWriter> = Arc::new(MockMemoryWriter {
+            dir: tmp.path().to_path_buf(),
+        });
+
+        let conversation = vec![
+            ChatMessage::user("Set up a CI pipeline for the project."),
+            ChatMessage::assistant("Done! I configured GitHub Actions with lint and test jobs."),
+        ];
+
+        let paths = run_silent_memory_turn_with_prompt(
+            provider,
+            &conversation,
+            writer,
+            SilentTurnPrompt::PeriodicExtract,
+        )
+        .await
+        .unwrap();
+
+        assert!(!paths.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_session_summary_variant_writes_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let provider = Arc::new(MemoryWritingProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let writer: Arc<dyn MemoryWriter> = Arc::new(MockMemoryWriter {
+            dir: tmp.path().to_path_buf(),
+        });
+
+        let conversation = vec![
+            ChatMessage::user("Help me refactor the auth module."),
+            ChatMessage::assistant("Refactored auth into separate middleware and handler modules."),
+            ChatMessage::user("Now add passkey support."),
+            ChatMessage::assistant("Added WebAuthn passkey registration and login."),
+        ];
+
+        let paths = run_silent_memory_turn_with_prompt(
+            provider,
+            &conversation,
+            writer,
+            SilentTurnPrompt::SessionSummary,
+        )
+        .await
+        .unwrap();
+
+        assert!(!paths.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_silent_turn_variant_does_not_crash_on_failure() {
+        /// Provider that always returns an error.
+        struct FailingProvider;
+
+        #[async_trait::async_trait]
+        impl LlmProvider for FailingProvider {
+            fn name(&self) -> &str {
+                "failing"
+            }
+
+            fn id(&self) -> &str {
+                "fail-model"
+            }
+
+            fn supports_tools(&self) -> bool {
+                true
+            }
+
+            async fn complete(
+                &self,
+                _messages: &[ChatMessage],
+                _tools: &[serde_json::Value],
+            ) -> Result<CompletionResponse> {
+                Err(anyhow::anyhow!("simulated LLM failure"))
+            }
+
+            fn stream(
+                &self,
+                _messages: Vec<ChatMessage>,
+            ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+                Box::pin(tokio_stream::empty())
+            }
+        }
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let provider = Arc::new(FailingProvider);
+        let writer: Arc<dyn MemoryWriter> = Arc::new(MockMemoryWriter {
+            dir: tmp.path().to_path_buf(),
+        });
+
+        // Should return Ok(empty) instead of propagating the error.
+        let paths = run_silent_memory_turn_with_prompt(
+            provider,
+            &[ChatMessage::user("test")],
+            writer,
+            SilentTurnPrompt::PeriodicExtract,
+        )
+        .await
+        .unwrap();
+
+        assert!(paths.is_empty());
     }
 
     #[test]

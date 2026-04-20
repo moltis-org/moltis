@@ -831,6 +831,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         moltis_config::PromptMemoryMode::FrozenAtSessionStart => "frozen-at-session-start",
                     },
                     "qmd_feature_enabled": cfg!(feature = "qmd"),
+                    "enable_prefetch": memory.enable_prefetch,
+                    "prefetch_limit": memory.prefetch_limit,
+                    "auto_extract_interval": memory.auto_extract_interval,
+                    "enable_session_summary": memory.enable_session_summary,
+                    "enable_self_improvement": config.skills.enable_self_improvement,
                 }))
             })
         }),
@@ -937,6 +942,33 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     });
                 let prompt_memory_mode_value = parse_prompt_memory_mode(prompt_memory_mode)?;
                 let mut effective_disable_rag = current_memory.disable_rag;
+                let enable_prefetch = ctx
+                    .params
+                    .get("enable_prefetch")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(current_memory.enable_prefetch);
+                let prefetch_limit = ctx
+                    .params
+                    .get("prefetch_limit")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize)
+                    .unwrap_or(current_memory.prefetch_limit);
+                let auto_extract_interval = ctx
+                    .params
+                    .get("auto_extract_interval")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32)
+                    .unwrap_or(current_memory.auto_extract_interval);
+                let enable_session_summary = ctx
+                    .params
+                    .get("enable_session_summary")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(current_memory.enable_session_summary);
+                let enable_self_improvement = ctx
+                    .params
+                    .get("enable_self_improvement")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(current_config.skills.enable_self_improvement);
                 if let Err(e) = moltis_config::update_config(|cfg| {
                     cfg.memory.style = style_value;
                     cfg.memory.agent_write_mode = agent_write_mode_value;
@@ -950,6 +982,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         cfg.memory.disable_rag = value;
                     }
                     cfg.memory.session_export = session_export;
+                    cfg.memory.enable_prefetch = enable_prefetch;
+                    cfg.memory.prefetch_limit = prefetch_limit;
+                    cfg.memory.auto_extract_interval = auto_extract_interval;
+                    cfg.memory.enable_session_summary = enable_session_summary;
+                    cfg.skills.enable_self_improvement = enable_self_improvement;
                     cfg.chat.prompt_memory_mode = prompt_memory_mode_value;
                     effective_disable_rag = cfg.memory.disable_rag;
                 }) {
@@ -971,6 +1008,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         moltis_config::SessionExportMode::OnNewOrReset => "on-new-or-reset",
                     },
                     "prompt_memory_mode": prompt_memory_mode,
+                    "enable_prefetch": enable_prefetch,
+                    "prefetch_limit": prefetch_limit,
+                    "auto_extract_interval": auto_extract_interval,
+                    "enable_session_summary": enable_session_summary,
+                    "enable_self_improvement": enable_self_improvement,
                 }))
             })
         }),

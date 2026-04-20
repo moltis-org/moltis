@@ -1186,7 +1186,7 @@ pub(crate) fn refresh_runtime_prompt_time(
     host.today = Some(prompt_today_for_timezone(host.timezone.as_deref()));
 }
 
-pub(crate) fn memory_write_mode_allows_save(mode: AgentMemoryWriteMode) -> bool {
+pub fn memory_write_mode_allows_save(mode: AgentMemoryWriteMode) -> bool {
     !matches!(mode, AgentMemoryWriteMode::Off)
 }
 

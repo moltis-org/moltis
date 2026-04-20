@@ -492,6 +492,371 @@ async fn test_write_skill_files_rejects_symlinked_skill_root() {
     assert!(!real_dir.join("payload.sh").exists());
 }
 
+// ── PatchSkillTool tests ────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_patch_skill_single_patch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let create = CreateSkillTool::new(tmp.path().to_path_buf());
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+
+    create
+        .execute(json!({
+            "name": "my-skill",
+            "description": "A test skill",
+            "body": "Step 1: Do X\nStep 2: Do Y\nStep 3: Do Z"
+        }))
+        .await
+        .unwrap();
+
+    let result = patch
+        .execute(json!({
+            "name": "my-skill",
+            "patches": [
+                { "find": "Do Y", "replace": "Do B" }
+            ]
+        }))
+        .await
+        .unwrap();
+
+    assert!(result["patched"].as_bool().unwrap());
+    assert_eq!(result["patches_applied"].as_u64().unwrap(), 1);
+
+    let content = std::fs::read_to_string(tmp.path().join("skills/my-skill/SKILL.md")).unwrap();
+    assert!(content.contains("Do B"));
+    assert!(content.contains("Do X"));
+    assert!(content.contains("Do Z"));
+    // Frontmatter should be preserved.
+    assert!(content.contains("name: my-skill"));
+    assert!(content.contains("description: A test skill"));
+}
+
+#[tokio::test]
+async fn test_patch_skill_multiple_patches_in_order() {
+    let tmp = tempfile::tempdir().unwrap();
+    let create = CreateSkillTool::new(tmp.path().to_path_buf());
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+
+    create
+        .execute(json!({
+            "name": "my-skill",
+            "description": "test",
+            "body": "AAA BBB CCC"
+        }))
+        .await
+        .unwrap();
+
+    let result = patch
+        .execute(json!({
+            "name": "my-skill",
+            "patches": [
+                { "find": "AAA", "replace": "111" },
+                { "find": "BBB", "replace": "222" },
+                { "find": "CCC", "replace": "333" }
+            ]
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(result["patches_applied"].as_u64().unwrap(), 3);
+    let content = std::fs::read_to_string(tmp.path().join("skills/my-skill/SKILL.md")).unwrap();
+    assert!(content.contains("111 222 333"));
+}
+
+#[tokio::test]
+async fn test_patch_skill_find_not_found_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let create = CreateSkillTool::new(tmp.path().to_path_buf());
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+
+    create
+        .execute(json!({
+            "name": "my-skill",
+            "description": "test",
+            "body": "Hello world"
+        }))
+        .await
+        .unwrap();
+
+    let result = patch
+        .execute(json!({
+            "name": "my-skill",
+            "patches": [
+                { "find": "NOTFOUND", "replace": "oops" }
+            ]
+        }))
+        .await;
+
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("not found"), "error: {err_msg}");
+}
+
+#[tokio::test]
+async fn test_patch_skill_nonexistent_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+
+    let result = patch
+        .execute(json!({
+            "name": "nope",
+            "patches": [{ "find": "a", "replace": "b" }]
+        }))
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_patch_skill_invalid_name_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+
+    let result = patch
+        .execute(json!({
+            "name": "Bad Name",
+            "patches": [{ "find": "a", "replace": "b" }]
+        }))
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_patch_skill_empty_patches_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let create = CreateSkillTool::new(tmp.path().to_path_buf());
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+
+    create
+        .execute(json!({
+            "name": "my-skill",
+            "description": "test",
+            "body": "body"
+        }))
+        .await
+        .unwrap();
+
+    let result = patch
+        .execute(json!({
+            "name": "my-skill",
+            "patches": []
+        }))
+        .await;
+
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_patch_skill_updates_description() {
+    let tmp = tempfile::tempdir().unwrap();
+    let create = CreateSkillTool::new(tmp.path().to_path_buf());
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+
+    create
+        .execute(json!({
+            "name": "my-skill",
+            "description": "old desc",
+            "body": "Hello world"
+        }))
+        .await
+        .unwrap();
+
+    patch
+        .execute(json!({
+            "name": "my-skill",
+            "patches": [{ "find": "Hello", "replace": "Goodbye" }],
+            "description": "new desc"
+        }))
+        .await
+        .unwrap();
+
+    let content = std::fs::read_to_string(tmp.path().join("skills/my-skill/SKILL.md")).unwrap();
+    assert!(
+        content.contains("description: \"new desc\""),
+        "patched description should be YAML-quoted: {content}"
+    );
+    assert!(content.contains("Goodbye world"));
+}
+
+#[tokio::test]
+async fn test_patch_skill_creates_checkpoint() {
+    let tmp = tempfile::tempdir().unwrap();
+    let create = CreateSkillTool::new(tmp.path().to_path_buf());
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+    let checkpoints = CheckpointManager::new(tmp.path().to_path_buf());
+
+    create
+        .execute(json!({
+            "name": "my-skill",
+            "description": "test",
+            "body": "AAA BBB"
+        }))
+        .await
+        .unwrap();
+
+    let result = patch
+        .execute(json!({
+            "name": "my-skill",
+            "patches": [{ "find": "AAA", "replace": "XXX" }]
+        }))
+        .await
+        .unwrap();
+
+    let checkpoint_id = result["checkpointId"].as_str().unwrap();
+    checkpoints.restore(checkpoint_id).await.unwrap();
+
+    let content = std::fs::read_to_string(tmp.path().join("skills/my-skill/SKILL.md")).unwrap();
+    assert!(
+        content.contains("AAA BBB"),
+        "checkpoint should restore original"
+    );
+}
+
+#[tokio::test]
+async fn test_patch_skill_empty_find_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let create = CreateSkillTool::new(tmp.path().to_path_buf());
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+
+    create
+        .execute(json!({
+            "name": "my-skill",
+            "description": "test",
+            "body": "body"
+        }))
+        .await
+        .unwrap();
+
+    let result = patch
+        .execute(json!({
+            "name": "my-skill",
+            "patches": [{ "find": "", "replace": "oops" }]
+        }))
+        .await;
+
+    assert!(result.is_err());
+}
+
+// ── split_frontmatter_body / update_frontmatter_description tests ───────
+
+#[test]
+fn test_split_frontmatter_body_with_frontmatter() {
+    let raw = "---\nname: foo\ndescription: bar\n---\n\nBody text here.";
+    let (fm, body) = split_frontmatter_body(raw);
+    assert!(fm.starts_with("---"));
+    assert!(fm.contains("name: foo"));
+    assert_eq!(body, "Body text here.");
+}
+
+#[test]
+fn test_split_frontmatter_body_no_frontmatter() {
+    let raw = "Just a body.";
+    let (fm, body) = split_frontmatter_body(raw);
+    assert_eq!(fm, "");
+    assert_eq!(body, "Just a body.");
+}
+
+#[test]
+fn test_split_frontmatter_body_unclosed_frontmatter() {
+    let raw = "---\nname: foo\nno closing delimiter";
+    let (fm, body) = split_frontmatter_body(raw);
+    // Unclosed frontmatter is treated as no frontmatter.
+    assert_eq!(fm, "");
+    assert_eq!(body, raw);
+}
+
+#[test]
+fn test_split_frontmatter_body_empty_frontmatter() {
+    let raw = "---\n---\nBody after empty frontmatter.";
+    let (fm, body) = split_frontmatter_body(raw);
+    assert!(fm.contains("---\n---"));
+    assert_eq!(body, "Body after empty frontmatter.");
+}
+
+#[test]
+fn test_split_frontmatter_body_no_trailing_newline() {
+    let raw = "---\nname: x\n---";
+    let (fm, body) = split_frontmatter_body(raw);
+    assert!(fm.contains("---\nname: x\n---"));
+    assert_eq!(body, "");
+}
+
+#[test]
+fn test_update_frontmatter_description_replaces() {
+    let fm = "---\nname: foo\ndescription: old\n---\n\n";
+    let result = update_frontmatter_description(fm, "new desc");
+    assert!(
+        result.contains("description: \"new desc\""),
+        "description should be YAML-quoted: {result}"
+    );
+    assert!(!result.contains("description: old"));
+    assert!(result.contains("name: foo"));
+}
+
+#[test]
+fn test_update_frontmatter_description_missing_field() {
+    let fm = "---\nname: foo\n---\n\n";
+    let result = update_frontmatter_description(fm, "new desc");
+    // No description line to replace — should preserve original.
+    assert!(!result.contains("new desc"));
+    assert!(result.contains("name: foo"));
+}
+
+#[test]
+fn test_update_frontmatter_description_with_yaml_special_chars() {
+    let fm = "---\nname: foo\ndescription: old\n---\n\n";
+    let result = update_frontmatter_description(fm, "has: colons and # hashes");
+    // Value should be double-quoted to prevent YAML misinterpretation.
+    assert!(
+        result.contains(r#"description: "has: colons and # hashes""#),
+        "description should be YAML-quoted: {result}"
+    );
+}
+
+#[test]
+fn test_update_frontmatter_description_escapes_quotes() {
+    let fm = "---\nname: foo\ndescription: old\n---\n\n";
+    let result = update_frontmatter_description(fm, r#"says "hello""#);
+    assert!(
+        result.contains(r#"description: "says \"hello\"""#),
+        "internal quotes should be escaped: {result}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_patch_skill_rejects_symlinked_skill_root() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+
+    let skills_dir = tmp.path().join("skills");
+    std::fs::create_dir_all(&skills_dir).unwrap();
+    let real_dir = outside.path().join("real-skill");
+    std::fs::create_dir_all(&real_dir).unwrap();
+    std::fs::write(
+        real_dir.join("SKILL.md"),
+        "---\nname: evil\ndescription: evil\n---\n\nevil body",
+    )
+    .unwrap();
+    symlink(&real_dir, skills_dir.join("evil")).unwrap();
+
+    let patch = PatchSkillTool::new(tmp.path().to_path_buf());
+    let result = patch
+        .execute(json!({
+            "name": "evil",
+            "patches": [{ "find": "evil", "replace": "good" }]
+        }))
+        .await;
+
+    assert!(result.is_err());
+    // Original file should not be modified.
+    let content = std::fs::read_to_string(real_dir.join("SKILL.md")).unwrap();
+    assert!(content.contains("evil body"));
+}
+
 #[tokio::test]
 async fn test_write_skill_files_rollback_on_error() {
     let tmp = tempfile::tempdir().unwrap();

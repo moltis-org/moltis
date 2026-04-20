@@ -246,6 +246,7 @@ pub(crate) fn prompt_build_limits_from_config(
 ) -> PromptBuildLimits {
     PromptBuildLimits {
         workspace_file_max_chars: config.chat.workspace_file_max_chars,
+        enable_skill_self_improvement: config.skills.enable_self_improvement,
     }
 }
 

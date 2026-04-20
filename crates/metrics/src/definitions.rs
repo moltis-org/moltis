@@ -158,6 +158,16 @@ pub mod memory {
     pub const DOCUMENTS_COUNT: &str = "moltis_memory_documents_count";
     /// Total memory size in bytes
     pub const SIZE_BYTES: &str = "moltis_memory_size_bytes";
+    /// Total prefetch attempts (label: status=hit|miss|skip|error)
+    pub const PREFETCH_TOTAL: &str = "moltis_memory_prefetch_total";
+    /// Prefetch search duration in seconds
+    pub const PREFETCH_DURATION_SECONDS: &str = "moltis_memory_prefetch_duration_seconds";
+    /// Total silent memory turns (label: variant=compaction|periodic-extract|session-summary)
+    pub const SILENT_TURNS_TOTAL: &str = "moltis_memory_silent_turns_total";
+    /// Silent turn duration in seconds
+    pub const SILENT_TURN_DURATION_SECONDS: &str = "moltis_memory_silent_turn_duration_seconds";
+    /// Files written by silent memory turns
+    pub const SILENT_TURN_FILES_WRITTEN: &str = "moltis_memory_silent_turn_files_written";
 }
 
 /// Plugin metrics
@@ -542,6 +552,7 @@ pub mod labels {
     pub const ACCOUNT_ID: &str = "account_id";
     pub const FILE_TYPE: &str = "file_type";
     pub const REJECTION_REASON: &str = "rejection_reason";
+    pub const VARIANT: &str = "variant";
 }
 
 /// Standard histogram buckets for different metric types

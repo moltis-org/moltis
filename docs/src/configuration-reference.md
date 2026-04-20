@@ -336,6 +336,7 @@ User profile collected during onboarding.
 | `search_paths` | array | `[]` | Extra directories to search for skills. |
 | `auto_load` | array | `[]` | Skills to always load (by name) without explicit activation. |
 | `enable_agent_sidecar_files` | bool | `false` | Whether agents may write supplementary files inside personal skill directories. |
+| `enable_self_improvement` | bool | `true` | Include system prompt guidance encouraging the agent to autonomously create and update skills after complex tasks. |
 
 ---
 

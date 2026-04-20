@@ -109,12 +109,15 @@ pub struct PromptRuntimeContext {
 #[derive(Debug, Clone, Copy)]
 pub struct PromptBuildLimits {
     pub workspace_file_max_chars: usize,
+    /// Inject skill self-improvement guidance into the system prompt.
+    pub enable_skill_self_improvement: bool,
 }
 
 impl Default for PromptBuildLimits {
     fn default() -> Self {
         Self {
             workspace_file_max_chars: DEFAULT_WORKSPACE_FILE_MAX_CHARS,
+            enable_skill_self_improvement: true,
         }
     }
 }

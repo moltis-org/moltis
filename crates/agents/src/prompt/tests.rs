@@ -249,6 +249,7 @@ fn test_workspace_file_metadata_marks_truncation() {
         None,
         PromptBuildLimits {
             workspace_file_max_chars: 10,
+            ..Default::default()
         },
         None,
     );
@@ -1189,4 +1190,74 @@ fn test_empty_string_guidelines_falls_through_to_hardcoded() {
     );
     // Some("") should fall through to TOOL_GUIDELINES, not produce no guidelines
     assert!(prompt.contains("## Silent Replies"));
+}
+
+#[test]
+fn test_skill_self_improvement_included_when_enabled() {
+    let tools = ToolRegistry::new();
+    let skills = vec![SkillMetadata {
+        name: "demo".into(),
+        description: "Demo skill".into(),
+        path: std::path::PathBuf::from("/skills/demo"),
+        ..Default::default()
+    }];
+    let output = build_system_prompt_with_session_runtime_details(
+        &tools,
+        true,
+        None,
+        &skills,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        PromptBuildLimits {
+            enable_skill_self_improvement: true,
+            ..Default::default()
+        },
+        None,
+    );
+    assert!(
+        output.prompt.contains("Skill Self-Improvement"),
+        "self-improvement guidance should be present when enabled"
+    );
+}
+
+#[test]
+fn test_skill_self_improvement_omitted_when_disabled() {
+    let tools = ToolRegistry::new();
+    let skills = vec![SkillMetadata {
+        name: "demo".into(),
+        description: "Demo skill".into(),
+        path: std::path::PathBuf::from("/skills/demo"),
+        ..Default::default()
+    }];
+    let output = build_system_prompt_with_session_runtime_details(
+        &tools,
+        true,
+        None,
+        &skills,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        PromptBuildLimits {
+            enable_skill_self_improvement: false,
+            ..Default::default()
+        },
+        None,
+    );
+    assert!(
+        !output.prompt.contains("Skill Self-Improvement"),
+        "self-improvement guidance should be omitted when disabled"
+    );
+    // Skills block itself should still be present.
+    assert!(output.prompt.contains("<available_skills>"));
 }

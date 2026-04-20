@@ -62,7 +62,7 @@ impl Default for MetricsConfig {
 }
 
 /// Skills configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SkillsConfig {
     /// Whether the skills system is enabled.
@@ -77,6 +77,22 @@ pub struct SkillsConfig {
     /// Whether agents may write supplementary files inside personal skill directories.
     #[serde(default)]
     pub enable_agent_sidecar_files: bool,
+    /// Inject system-prompt guidance encouraging the agent to autonomously create
+    /// and update skills after complex tasks. Default: true.
+    #[serde(default = "default_true")]
+    pub enable_self_improvement: bool,
+}
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            search_paths: Vec::new(),
+            auto_load: Vec::new(),
+            enable_agent_sidecar_files: false,
+            enable_self_improvement: true,
+        }
+    }
 }
 
 /// MCP (Model Context Protocol) server configuration.
