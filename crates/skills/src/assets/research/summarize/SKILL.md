@@ -2,6 +2,13 @@
 name: summarize
 description: Summarize or extract text/transcripts from URLs, podcasts, and local files (great fallback for “transcribe this YouTube/video”).
 homepage: https://summarize.sh
+requires:
+  bins: [summarize]
+  install:
+    - kind: npm
+      package: “@anthropics/summarize”
+      bins: [summarize]
+      label: “Install summarize CLI (npm)”
 origin:
   source: openclaw
   url: https://github.com/openclaw/openclaw
