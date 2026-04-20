@@ -266,6 +266,7 @@ async fn multi_turn_tool_use_streaming() {
             id: tc_id.clone(),
             name: tc_name.clone(),
             arguments: args,
+            metadata: None,
         }]),
         ChatMessage::tool(tc_id, r#"{"temperature": 15, "condition": "cloudy"}"#),
     ];

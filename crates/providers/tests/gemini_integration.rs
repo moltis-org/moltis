@@ -179,10 +179,9 @@ async fn multi_turn_tool_use() {
         .expect("first turn");
     assert!(!r.tool_calls.is_empty(), "should call tool");
     let tc = &r.tool_calls[0];
-    // Gemini requires `thought_signature` on replayed tool calls.
-    // ChatMessage doesn't carry provider-specific metadata; the gateway
-    // preserves raw JSON across turns in production.
-    match p
+    // ToolCall.metadata now carries `thought_signature` from the first turn,
+    // so multi-turn should succeed without the previous 400 error.
+    let r2 = p
         .complete(
             &[
                 ChatMessage::user("Weather in London? Use get_weather."),
@@ -190,22 +189,15 @@ async fn multi_turn_tool_use() {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
                     arguments: tc.arguments.clone(),
+                    metadata: tc.metadata.clone(),
                 }]),
                 ChatMessage::tool(&tc.id, r#"{"temperature": 15, "condition": "cloudy"}"#),
             ],
             &tools,
         )
         .await
-    {
-        Ok(r2) => assert!(r2.text.is_some(), "should have text after tool result"),
-        Err(e) if e.to_string().contains("thought_signature") => {
-            eprintln!(
-                "multi-turn 400 (expected): Gemini requires thought_signature \
-                 from step 1 but ChatMessage doesn't carry it"
-            );
-        },
-        Err(e) => panic!("unexpected error in multi-turn: {e}"),
-    }
+        .expect("multi-turn should succeed with thought_signature round-tripped");
+    assert!(r2.text.is_some(), "should have text after tool result");
 }
 
 // ── Probe & streaming ────────────────────────────────────────────────────────

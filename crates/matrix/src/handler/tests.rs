@@ -542,22 +542,13 @@ fn otp_request_message_does_not_leak_codes() {
 
 #[test]
 fn help_text_lists_all_commands() {
-    use super::HELP_TEXT;
-    for cmd in [
-        "/new",
-        "/sessions",
-        "/agent",
-        "/model",
-        "/sandbox",
-        "/sh",
-        "/clear",
-        "/compact",
-        "/context",
-        "/peek",
-        "/stop",
-        "/help",
-    ] {
-        assert!(HELP_TEXT.contains(cmd), "HELP_TEXT should mention {cmd}");
+    let help = super::channel_help_text();
+    for cmd in moltis_channels::commands::all_commands() {
+        let slash_cmd = format!("/{}", cmd.name);
+        assert!(
+            help.contains(&slash_cmd),
+            "help text should mention {slash_cmd}"
+        );
     }
 }
 

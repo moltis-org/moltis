@@ -11,6 +11,84 @@ use {
     tracing::debug,
 };
 
+/// Whether a property schema contains at least one type-defining keyword.
+///
+/// Google AI Studio (as opposed to Vertex AI) rejects properties that have
+/// only a `description` but no structural type info. This helper is used
+/// by [`PruneOrphanedRequiredTransform`] and [`EnsurePropertyTypeTransform`]
+/// to decide which properties are "defined" (#793).
+fn has_usable_type(v: &serde_json::Value) -> bool {
+    let Some(obj) = v.as_object() else {
+        // Boolean schema: `true` / `false` — not a concrete type definition.
+        return false;
+    };
+    if obj.is_empty() {
+        return false;
+    }
+    const TYPE_KEYWORDS: &[&str] = &["type", "enum", "anyOf", "oneOf", "allOf", "$ref"];
+    TYPE_KEYWORDS.iter().any(|k| obj.contains_key(*k))
+}
+
+/// Infer `"type": "string"` for required properties that have a `description`
+/// but no type-defining keyword.
+///
+/// Google AI Studio rejects schemas where `required` references a property
+/// that only has a `description`. Rather than pruning the property name
+/// (which loses context for the LLM), we infer the safest type (#793).
+#[derive(Debug, Clone, Default)]
+struct EnsurePropertyTypeTransform;
+
+impl Transform for EnsurePropertyTypeTransform {
+    fn transform(&mut self, schema: &mut Schema) {
+        let Some(obj) = schema.as_object_mut() else {
+            return;
+        };
+
+        let required_names: BTreeSet<String> = obj
+            .get("required")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if required_names.is_empty() {
+            return;
+        }
+
+        let Some(props) = obj.get_mut("properties").and_then(|v| v.as_object_mut()) else {
+            return;
+        };
+
+        for name in &required_names {
+            if let Some(prop_schema) = props.get_mut(name) {
+                // Skip bare boolean `true` (canonicalized "accept anything"
+                // schema) and empty `{}` — these are genuinely undefined
+                // properties and should be handled by pruning, not promoted.
+                if prop_schema.as_bool().is_some()
+                    || prop_schema.as_object().is_some_and(|o| o.is_empty())
+                {
+                    continue;
+                }
+                // Object with metadata (e.g. `description`) but no
+                // type-defining keyword — infer `"type": "string"` so the
+                // property name is preserved for the LLM (#793).
+                let needs_type = prop_schema
+                    .as_object()
+                    .is_some_and(|o| !o.is_empty() && !has_usable_type(prop_schema));
+                if needs_type && let Some(prop_obj) = prop_schema.as_object_mut() {
+                    prop_obj.insert(
+                        "type".to_string(),
+                        serde_json::Value::String("string".to_string()),
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Prune `required` entries that reference properties not defined in `properties`.
 ///
 /// MCP tools (e.g. Home Assistant with 80+ tools) may declare `required`
@@ -28,24 +106,19 @@ impl Transform for PruneOrphanedRequiredTransform {
             return;
         };
 
-        // Collect property names that have a meaningful schema.  Properties
-        // with bare boolean schemas (`true`) or empty objects (`{}`) are
-        // treated as undefined because:
-        //  - canonicalization adds `true` (the "accept anything" schema) for
-        //    orphaned `required` entries
-        //  - keyword stripping can reduce a property to `{}` when all its
-        //    keywords were unsupported
-        // In both cases the property has no usable type information and Gemini
-        // rejects it with "property is not defined" (issue #747).
+        // Collect property names that have a meaningful, usable schema.
+        // A property must have at least one type-defining keyword to be
+        // considered defined.  Properties with bare boolean schemas (`true`),
+        // empty objects (`{}`), or only `description` (no type info) are
+        // treated as undefined because Google AI Studio rejects them with
+        // "property is not defined" (issues #747, #793).
         let defined_props: BTreeSet<String> = obj
             .get("properties")
             .and_then(|v| v.as_object())
             .map(|props| {
                 props
                     .iter()
-                    .filter(|(_, v)| {
-                        v.as_bool().is_none() && !v.as_object().is_some_and(|o| o.is_empty())
-                    })
+                    .filter(|(_, v)| has_usable_type(v))
                     .map(|(k, _)| k.clone())
                     .collect()
             })
@@ -333,10 +406,16 @@ pub(crate) fn sanitize_schema_for_openai_compat(schema: &mut serde_json::Value) 
     let mut simplify_composite = RecursiveTransform(SimplifyCompositeTransform);
     simplify_composite.transform(&mut transformed);
 
+    // Infer `"type": "string"` for required properties that have metadata
+    // (e.g. `description`) but no type-defining keyword. Must run before
+    // pruning so the property is considered "defined" (#793).
+    let mut ensure_type = RecursiveTransform(EnsurePropertyTypeTransform);
+    ensure_type.transform(&mut transformed);
+
     // Prune `required` entries that reference properties not defined in
     // `properties`. Keyword stripping above can remove property definitions
     // (e.g. `dependentSchemas`, `if/then/else`) while leaving their names
-    // in `required`. Gemini rejects such schemas (issue #747).
+    // in `required`. Gemini/Google AI Studio rejects such schemas (#747, #793).
     let mut prune_orphaned_required = RecursiveTransform(PruneOrphanedRequiredTransform);
     prune_orphaned_required.transform(&mut transformed);
 

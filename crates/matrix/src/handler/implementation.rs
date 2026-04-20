@@ -48,19 +48,9 @@ use crate::{
 
 const UTD_NOTICE_COOLDOWN: Duration = Duration::from_secs(300);
 
-const HELP_TEXT: &str = "Available commands:\n\
-    /new — Start a new session\n\
-    /sessions — List and switch sessions\n\
-    /agent — Switch session agent\n\
-    /model — Switch provider/model\n\
-    /sandbox — Toggle sandbox and choose image\n\
-    /sh — Enable command mode (/sh off to exit)\n\
-    /clear — Clear session history\n\
-    /compact — Compact session (summarize)\n\
-    /context — Show session context info\n\
-    /peek — Show current thinking/tool status\n\
-    /stop — Abort the current running agent\n\
-    /help — Show this help";
+fn channel_help_text() -> String {
+    moltis_channels::commands::help_text()
+}
 
 fn should_ignore_initial_sync_history(accounts: &AccountStateMap, account_id: &str) -> bool {
     let guard = accounts.read().unwrap_or_else(|error| error.into_inner());
@@ -392,29 +382,33 @@ pub async fn handle_room_message(
             }
         }
 
-        // Intercept slash commands before dispatching to LLM.
+        // Intercept known slash commands before dispatching to LLM.
+        // Unknown commands (e.g. /foo) and /sh with arbitrary args
+        // (e.g. /sh ls -la) fall through to the LLM.
         if matches!(kind, ChannelMessageKind::Text)
             && let Some(cmd_text) = body.strip_prefix('/')
         {
             let cmd_name = cmd_text.split_whitespace().next().unwrap_or("");
-            let response = if cmd_name == "help" {
-                Ok(HELP_TEXT.to_string())
-            } else {
-                sink.dispatch_command(cmd_text, reply_to, Some(&sender_id))
-                    .await
-            };
-            let text = match response {
-                Ok(msg) => msg,
-                Err(e) => format!("Error: {e}"),
-            };
-            if let Err(error) = send_text(&room, &text).await {
-                warn!(
-                    account_id,
-                    room = %room_id,
-                    "failed to send Matrix command response: {error}"
-                );
+            if moltis_channels::commands::is_channel_command(cmd_name, cmd_text) {
+                let response = if cmd_name == "help" {
+                    Ok(channel_help_text())
+                } else {
+                    sink.dispatch_command(cmd_text, reply_to, Some(&sender_id))
+                        .await
+                };
+                let text = match response {
+                    Ok(msg) => msg,
+                    Err(e) => format!("Error: {e}"),
+                };
+                if let Err(error) = send_text(&room, &text).await {
+                    warn!(
+                        account_id,
+                        room = %room_id,
+                        "failed to send Matrix command response: {error}"
+                    );
+                }
+                return;
             }
-            return;
         }
 
         sink.dispatch_to_chat(&body, reply_to, meta).await;

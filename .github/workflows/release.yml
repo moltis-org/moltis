@@ -122,6 +122,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+      - name: Mark workspace safe for gix (container uid mismatch)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Dry-run short-circuit
         if: ${{ env.RELEASE_DRY_RUN == 'true' }}
         run: echo "Dry run enabled, skipping clippy job"

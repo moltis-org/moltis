@@ -200,14 +200,22 @@ impl ChatMessage {
                     let tc_json: Vec<serde_json::Value> = tool_calls
                         .iter()
                         .map(|tc| {
-                            serde_json::json!({
+                            let mut tc_val = serde_json::json!({
                                 "id": tc.id,
                                 "type": "function",
                                 "function": {
                                     "name": tc.name,
                                     "arguments": tc.arguments.to_string(),
                                 }
-                            })
+                            });
+                            if let Some(ref meta) = tc.metadata
+                                && let Some(obj) = tc_val.as_object_mut()
+                            {
+                                for (k, v) in meta {
+                                    obj.insert(k.clone(), v.clone());
+                                }
+                            }
+                            tc_val
                         })
                         .collect();
                     let mut msg = serde_json::json!({
@@ -231,6 +239,26 @@ impl ChatMessage {
                 })
             },
         }
+    }
+}
+
+/// Extract allowlisted metadata keys from a tool-call JSON object.
+///
+/// Returns `None` when no metadata keys are present, keeping the common path
+/// allocation-free.
+#[must_use]
+pub fn extract_tool_call_metadata(
+    tc: &serde_json::Value,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let obj = tc.as_object()?;
+    let meta: serde_json::Map<_, _> = TOOL_CALL_METADATA_KEYS
+        .iter()
+        .filter_map(|&k| obj.get(k).map(|v| (k.to_string(), v.clone())))
+        .collect();
+    if meta.is_empty() {
+        None
+    } else {
+        Some(meta)
     }
 }
 
@@ -367,10 +395,12 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                                 let name = tc["function"]["name"].as_str()?.to_string();
                                 let arguments =
                                     decode_tool_call_arguments(tc["function"].get("arguments"));
+                                let metadata = extract_tool_call_metadata(tc);
                                 Some(ToolCall {
                                     id,
                                     name,
                                     arguments,
+                                    metadata,
                                 })
                             })
                             .collect()
@@ -451,6 +481,8 @@ pub enum StreamEvent {
         name: String,
         /// Index of this tool call in the response (0-based).
         index: usize,
+        /// Provider-specific metadata (e.g. Gemini `thought_signature`).
+        metadata: Option<serde_json::Map<String, serde_json::Value>>,
     },
     /// Streaming delta for tool call arguments (JSON fragment).
     ToolCallArgumentsDelta {
@@ -611,7 +643,13 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    /// Provider-specific opaque metadata to round-trip (e.g. Gemini `thought_signature`).
+    /// Only allowlisted keys are extracted; see [`TOOL_CALL_METADATA_KEYS`].
+    pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
 }
+
+/// Keys extracted from provider tool-call JSON into [`ToolCall::metadata`].
+pub const TOOL_CALL_METADATA_KEYS: &[&str] = &["thought_signature"];
 
 #[derive(Debug, Clone, Default)]
 pub struct Usage {
@@ -787,6 +825,7 @@ mod tests {
             id: "call_1".into(),
             name: "exec".into(),
             arguments: serde_json::json!({"cmd": "ls"}),
+            metadata: None,
         }]);
         let val = msg.to_openai_value();
         assert_eq!(val["role"], "assistant");
@@ -1020,6 +1059,7 @@ mod tests {
                     id: "call_1".to_string(),
                     name: "exec".to_string(),
                     arguments: serde_json::json!({}),
+                    metadata: None,
                 }],
             },
             ChatMessage::tool("call_1", "result"),
@@ -1041,6 +1081,7 @@ mod tests {
                     "multiline": false,
                     "type": null
                 }),
+                metadata: None,
             }],
         }];
         let values: Vec<serde_json::Value> = original.iter().map(|m| m.to_openai_value()).collect();
@@ -1360,5 +1401,99 @@ mod tests {
             },
             _ => panic!("expected User message"),
         }
+    }
+
+    // ── ToolCall metadata round-trip ────────────────────────────────
+
+    #[test]
+    fn to_openai_value_metadata_serialization() {
+        // With metadata: thought_signature appears at tool-call level.
+        let mut meta = serde_json::Map::new();
+        meta.insert("thought_signature".into(), "sig123".into());
+        let msg = ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_1".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({"cmd": "ls"}),
+            metadata: Some(meta),
+        }]);
+        let tcs = msg.to_openai_value()["tool_calls"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(tcs[0]["thought_signature"], "sig123");
+        assert_eq!(tcs[0]["id"], "call_1");
+        // Without metadata: no extra fields.
+        let msg2 = ChatMessage::assistant_with_tools(None, vec![ToolCall {
+            id: "call_2".into(),
+            name: "exec".into(),
+            arguments: serde_json::json!({}),
+            metadata: None,
+        }]);
+        let tcs2 = msg2.to_openai_value()["tool_calls"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(tcs2[0].get("thought_signature").is_none());
+    }
+
+    #[test]
+    fn values_to_chat_messages_metadata_extraction() {
+        // Present: extracted into ToolCall.metadata.
+        let with = vec![serde_json::json!({
+            "role": "assistant", "content": null,
+            "tool_calls": [{"id": "c1", "thought_signature": "sig_abc",
+                            "function": {"name": "exec", "arguments": "{}"}}]
+        })];
+        let msgs = values_to_chat_messages(&with);
+        match &msgs[0] {
+            ChatMessage::Assistant { tool_calls, .. } => {
+                let meta = tool_calls[0].metadata.as_ref().expect("metadata present");
+                assert_eq!(meta["thought_signature"], "sig_abc");
+            },
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+        // Absent: metadata is None.
+        let without = vec![serde_json::json!({
+            "role": "assistant",
+            "tool_calls": [{"id": "c1", "function": {"name": "exec", "arguments": "{}"}}]
+        })];
+        match &values_to_chat_messages(&without)[0] {
+            ChatMessage::Assistant { tool_calls, .. } => assert!(tool_calls[0].metadata.is_none()),
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn metadata_round_trip_through_openai_value() {
+        let mut meta = serde_json::Map::new();
+        meta.insert("thought_signature".into(), "sig_round".into());
+        let original = [ChatMessage::Assistant {
+            content: None,
+            tool_calls: vec![ToolCall {
+                id: "call_1".into(),
+                name: "exec".into(),
+                arguments: serde_json::json!({}),
+                metadata: Some(meta),
+            }],
+        }];
+        let values: Vec<serde_json::Value> = original.iter().map(|m| m.to_openai_value()).collect();
+        match &values_to_chat_messages(&values)[0] {
+            ChatMessage::Assistant { tool_calls, .. } => {
+                let meta = tool_calls[0].metadata.as_ref().expect("metadata lost");
+                assert_eq!(meta["thought_signature"], "sig_round");
+            },
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extract_tool_call_metadata_filters_unknown_keys() {
+        let tc = serde_json::json!({
+            "id": "call_1", "thought_signature": "sig",
+            "unknown_field": "ignored", "function": {"name": "exec"}
+        });
+        let meta = extract_tool_call_metadata(&tc).expect("should extract");
+        assert_eq!(meta.len(), 1);
+        assert_eq!(meta["thought_signature"], "sig");
     }
 }

@@ -12,41 +12,16 @@ pub struct SlackCommandDef {
 }
 
 /// Returns the list of channel control commands.
+///
+/// Derives from the centralized registry in `moltis_channels::commands`.
 pub fn command_definitions() -> Vec<SlackCommandDef> {
-    vec![
-        SlackCommandDef {
-            name: "new",
-            description: "Start a new conversation session",
-        },
-        SlackCommandDef {
-            name: "clear",
-            description: "Clear the current session history",
-        },
-        SlackCommandDef {
-            name: "compact",
-            description: "Compact the current session to save context",
-        },
-        SlackCommandDef {
-            name: "context",
-            description: "Show the current session context usage",
-        },
-        SlackCommandDef {
-            name: "model",
-            description: "View or change the AI model",
-        },
-        SlackCommandDef {
-            name: "sessions",
-            description: "List and switch between sessions",
-        },
-        SlackCommandDef {
-            name: "agent",
-            description: "View or switch the active agent persona",
-        },
-        SlackCommandDef {
-            name: "help",
-            description: "Show available commands",
-        },
-    ]
+    moltis_channels::commands::all_commands()
+        .iter()
+        .map(|c| SlackCommandDef {
+            name: c.name,
+            description: c.description,
+        })
+        .collect()
 }
 
 /// Generate a Slack app manifest YAML snippet for slash commands.

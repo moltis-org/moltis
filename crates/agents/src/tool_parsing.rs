@@ -50,6 +50,7 @@ fn new_text_tool_call(
         id: new_synthetic_tool_call_id("text"),
         name: name.to_string(),
         arguments: serde_json::Value::Object(arguments),
+        metadata: None,
     }
 }
 
@@ -546,6 +547,7 @@ fn try_parse_tool_json(json_str: &str) -> Option<ToolCall> {
         id: new_synthetic_tool_call_id("text"),
         name: tool_name,
         arguments,
+        metadata: None,
     })
 }
 

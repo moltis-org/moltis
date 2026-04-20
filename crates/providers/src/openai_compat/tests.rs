@@ -1,5 +1,8 @@
+use moltis_agents::model::StreamEvent;
+
 use super::{
-    parse_responses_completion, parse_tool_calls, sanitize_schema_for_openai_compat,
+    SseLineResult, StreamingToolState, parse_responses_completion, parse_tool_calls,
+    process_openai_sse_line, sanitize_schema_for_openai_compat,
     strict_mode::patch_schema_for_strict_mode, to_openai_tools, to_responses_api_tools,
 };
 
@@ -1016,6 +1019,149 @@ fn sanitize_draft07_schema_uses_canonicalization_not_fallback() {
         verbose_enum.len(),
         2,
         "boolean enum should have [false, true]"
+    );
+}
+
+/// `has_usable_type` considers bare `true`, empty `{}`, and description-only
+/// schemas as NOT having a usable type.  Properties that were genuinely
+/// defined (with `type`, `enum`, etc.) survive.
+#[test]
+fn schema_normalization_prunes_orphaned_required_with_stricter_check() {
+    // This tests the strengthened `has_usable_type` check.
+    // `area_id` has no definition at all (canonicalized to `true`), while
+    // `entity_id` has a real type — only `entity_id` should remain required.
+    let mut schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "entity_id": { "type": "string" },
+            "brightness": { "type": "integer" }
+        },
+        "required": ["entity_id", "brightness", "orphan"]
+    });
+
+    sanitize_schema_for_openai_compat(&mut schema);
+
+    let required = schema["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("required should be an array"));
+    let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+    assert!(names.contains(&"entity_id"), "entity_id should stay");
+    assert!(names.contains(&"brightness"), "brightness should stay");
+    assert!(
+        !names.contains(&"orphan"),
+        "orphan property with no definition should be pruned"
+    );
+}
+
+/// The strengthened `has_usable_type` check rejects description-only and
+/// empty-object properties that were previously considered "defined".
+/// This test verifies the end-to-end pruning behavior.
+#[test]
+fn schema_normalization_prunes_description_only_from_required() {
+    // `description`-only property gets canonicalized to `true`, then the
+    // stricter `has_usable_type` check in `PruneOrphanedRequiredTransform`
+    // drops it from `required`.
+    let mut schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "query": { "type": "string" },
+            "context": { "description": "Search context" }
+        },
+        "required": ["query", "context"]
+    });
+
+    sanitize_schema_for_openai_compat(&mut schema);
+
+    let required = schema["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("required should be an array"));
+    let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+    assert!(names.contains(&"query"), "typed property stays in required");
+    assert!(
+        !names.contains(&"context"),
+        "description-only property should be pruned from required"
+    );
+}
+
+// ── Streaming metadata extraction ──────────────────────────────────
+
+/// SSE chunk with `thought_signature` emits it in ToolCallStart metadata.
+#[test]
+fn streaming_tool_call_start_extracts_thought_signature() {
+    let data = serde_json::json!({
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "call_1",
+                    "thought_signature": "sig_xyz",
+                    "function": { "name": "get_weather", "arguments": "" }
+                }]
+            }
+        }]
+    })
+    .to_string();
+
+    let mut state = StreamingToolState::default();
+    let result = process_openai_sse_line(&data, &mut state);
+    let SseLineResult::Events(events) = result else {
+        panic!("expected Events");
+    };
+    let found = events
+        .iter()
+        .any(|e| matches!(e, StreamEvent::ToolCallStart { metadata, .. } if metadata.as_ref().is_some_and(|m| m["thought_signature"] == "sig_xyz")));
+    assert!(
+        found,
+        "should emit ToolCallStart with thought_signature metadata"
+    );
+}
+
+/// SSE chunk without `thought_signature` has None metadata.
+#[test]
+fn streaming_tool_call_start_no_metadata_when_absent() {
+    let data = serde_json::json!({
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": "call_1",
+                    "function": { "name": "exec", "arguments": "" }
+                }]
+            }
+        }]
+    })
+    .to_string();
+
+    let mut state = StreamingToolState::default();
+    let result = process_openai_sse_line(&data, &mut state);
+    let SseLineResult::Events(events) = result else {
+        panic!("expected Events");
+    };
+    let found = events
+        .iter()
+        .any(|e| matches!(e, StreamEvent::ToolCallStart { metadata: None, .. }));
+    assert!(found, "ToolCallStart should have None metadata");
+}
+
+/// Non-streaming `parse_tool_calls` extracts metadata.
+#[test]
+fn parse_tool_calls_extracts_metadata() {
+    let message = serde_json::json!({
+        "tool_calls": [{
+            "id": "call_1",
+            "thought_signature": "sig_abc",
+            "function": { "name": "exec", "arguments": "{}" }
+        }]
+    });
+
+    let tool_calls = parse_tool_calls(&message);
+    assert_eq!(tool_calls.len(), 1);
+    assert!(
+        tool_calls[0]
+            .metadata
+            .as_ref()
+            .is_some_and(|m| m["thought_signature"] == "sig_abc"),
+        "should extract thought_signature into metadata"
     );
 }
 

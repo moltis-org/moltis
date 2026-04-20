@@ -562,6 +562,7 @@ pub(crate) async fn run_with_tools(
                             id.clone(),
                             name.clone(),
                             tracked_args.clone(),
+                            None,
                             seq,
                             Some(run_id.as_str()),
                         );

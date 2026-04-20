@@ -147,6 +147,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+      - name: Mark workspace safe for gix (container uid mismatch)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Clean up corrupted cargo config
         run: rm -f ~/.cargo/config.toml
       - name: Install build dependencies
@@ -461,6 +463,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+      - name: Mark workspace safe for gix (container uid mismatch)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Clean up corrupted cargo config
         run: rm -f ~/.cargo/config.toml
       - name: Install build dependencies

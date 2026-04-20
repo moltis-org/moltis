@@ -3,3 +3,4 @@
 mod basic;
 mod compaction;
 mod helpers;
+mod parallel;

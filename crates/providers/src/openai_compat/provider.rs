@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use {
     moltis_agents::model::{
         ChatMessage, CompletionResponse, StreamEvent, ToolCall, Usage, UserContent,
-        decode_tool_call_arguments,
+        decode_tool_call_arguments, extract_tool_call_metadata,
     },
     serde::Serialize,
     tracing::trace,
@@ -269,10 +269,12 @@ pub fn parse_tool_calls(message: &serde_json::Value) -> Vec<ToolCall> {
                     let id = tc["id"].as_str()?.to_string();
                     let name = tc["function"]["name"].as_str()?.to_string();
                     let arguments = decode_tool_call_arguments(tc["function"].get("arguments"));
+                    let metadata = extract_tool_call_metadata(tc);
                     Some(ToolCall {
                         id,
                         name,
                         arguments,
+                        metadata,
                     })
                 })
                 .collect()
@@ -671,10 +673,12 @@ pub fn process_openai_sse_line(data: &str, state: &mut StreamingToolState) -> Ss
                 state
                     .tool_calls
                     .insert(index, (id.to_string(), name.to_string(), String::new()));
+                let metadata = extract_tool_call_metadata(tc);
                 events.push(StreamEvent::ToolCallStart {
                     id: id.to_string(),
                     name: name.to_string(),
                     index,
+                    metadata,
                 });
             }
 
@@ -848,7 +852,12 @@ pub fn process_responses_sse_line(data: &str, state: &mut ResponsesStreamState) 
                 let index = responses_output_index(&evt, state.current_tool_index);
                 state.current_tool_index = state.current_tool_index.max(index + 1);
                 state.tool_calls.insert(index, (id.clone(), name.clone()));
-                SseLineResult::Events(vec![raw, StreamEvent::ToolCallStart { id, name, index }])
+                SseLineResult::Events(vec![raw, StreamEvent::ToolCallStart {
+                    id,
+                    name,
+                    index,
+                    metadata: None,
+                }])
             } else {
                 SseLineResult::Events(vec![raw])
             }
@@ -956,6 +965,7 @@ pub fn parse_responses_completion(resp: &serde_json::Value) -> CompletionRespons
                         id,
                         name,
                         arguments,
+                        metadata: None,
                     });
                 },
                 _ => {},

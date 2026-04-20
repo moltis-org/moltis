@@ -114,3 +114,63 @@ pub(in crate::channel_events) async fn dispatch_command(
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// Verify that every command in the centralized registry (except `"help"`,
+    /// which channels handle locally) has a matching arm in `dispatch_command`.
+    ///
+    /// This is a compile/test-time safety net: if a new command is added to the
+    /// registry but not wired into gateway dispatch, this test will fail.
+    #[test]
+    fn all_registered_commands_have_dispatch_arms() {
+        // The set of commands that channels handle locally and never reach
+        // gateway dispatch.
+        let locally_handled = ["help"];
+
+        // The set of commands that dispatch_command handles.  Keep this list
+        // in sync with the match arms above.
+        let dispatched = [
+            "new",
+            "clear",
+            "compact",
+            "context",
+            "sessions",
+            "attach",
+            "approvals",
+            "approve",
+            "deny",
+            "agent",
+            "model",
+            "sandbox",
+            "sh",
+            "stop",
+            "peek",
+        ];
+
+        for cmd in moltis_channels::commands::all_commands() {
+            if locally_handled.contains(&cmd.name) {
+                continue;
+            }
+            assert!(
+                dispatched.contains(&cmd.name),
+                "command `/{name}` is registered in moltis_channels::commands but has no \
+                 dispatch arm in gateway dispatch_command. Add a match arm or update this test.",
+                name = cmd.name,
+            );
+        }
+
+        // Reverse check: every dispatch arm should be in the registry.
+        let registry_names: Vec<&str> = moltis_channels::commands::all_commands()
+            .iter()
+            .map(|c| c.name)
+            .collect();
+        for name in &dispatched {
+            assert!(
+                registry_names.contains(name),
+                "dispatch arm `/{name}` exists but is not in the centralized command registry. \
+                 Add it to moltis_channels::commands::all_commands().",
+            );
+        }
+    }
+}

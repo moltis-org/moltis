@@ -261,6 +261,7 @@ mod tests {
                             "path": "MEMORY.md",
                             "content": "# Memories\n\nUser prefers Rust over Python."
                         }),
+                        metadata: None,
                     }],
                     usage: Usage {
                         input_tokens: 100,

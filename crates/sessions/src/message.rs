@@ -178,6 +178,9 @@ pub struct PersistedToolCall {
     #[serde(rename = "type")]
     pub call_type: String,
     pub function: PersistedFunction,
+    /// Provider-specific metadata round-tripped for replay (e.g. Gemini `thought_signature`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 /// Function details in a tool call.
@@ -925,5 +928,62 @@ mod tests {
         let json = msg.to_value();
         // reasoning field should not be present when None.
         assert!(json.get("reasoning").is_none());
+    }
+
+    // ── PersistedToolCall metadata ──────────────────────────────────
+
+    #[test]
+    fn persisted_tool_call_backward_compat_deserialize_without_metadata() {
+        // Old sessions stored without metadata — must deserialize as None.
+        let json = serde_json::json!({
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "exec", "arguments": "{}"}
+        });
+        let tc: PersistedToolCall = serde_json::from_value(json).unwrap();
+        assert!(tc.metadata.is_none());
+    }
+
+    #[test]
+    fn persisted_tool_call_metadata_none_omitted_in_json() {
+        let tc = PersistedToolCall {
+            id: "call_1".into(),
+            call_type: "function".into(),
+            function: PersistedFunction {
+                name: "exec".into(),
+                arguments: "{}".into(),
+            },
+            metadata: None,
+        };
+        let json = serde_json::to_value(&tc).unwrap();
+        assert!(
+            json.get("metadata").is_none(),
+            "None metadata should be omitted"
+        );
+    }
+
+    #[test]
+    fn persisted_tool_call_metadata_round_trip() {
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "thought_signature".into(),
+            serde_json::Value::String("sig_abc".into()),
+        );
+        let tc = PersistedToolCall {
+            id: "call_1".into(),
+            call_type: "function".into(),
+            function: PersistedFunction {
+                name: "exec".into(),
+                arguments: "{}".into(),
+            },
+            metadata: Some(meta),
+        };
+        let json = serde_json::to_value(&tc).unwrap();
+        assert_eq!(json["metadata"]["thought_signature"], "sig_abc");
+
+        // Deserialize back.
+        let tc2: PersistedToolCall = serde_json::from_value(json).unwrap();
+        let meta2 = tc2.metadata.unwrap();
+        assert_eq!(meta2["thought_signature"], "sig_abc");
     }
 }

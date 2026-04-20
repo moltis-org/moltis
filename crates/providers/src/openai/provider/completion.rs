@@ -457,6 +457,7 @@ impl OpenAiProvider {
                     id,
                     name,
                     arguments,
+                    metadata: None,
                 })
             })
             .collect();

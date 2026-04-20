@@ -237,6 +237,7 @@ async fn multi_turn_tool_use() {
             id: tc.id.clone(),
             name: tc.name.clone(),
             arguments: tc.arguments.clone(),
+            metadata: tc.metadata.clone(),
         }]),
         ChatMessage::tool(&tc.id, r#"{"temperature": 15, "condition": "cloudy"}"#),
     ];

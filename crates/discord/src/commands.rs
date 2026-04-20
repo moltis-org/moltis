@@ -16,17 +16,13 @@ use {
 use crate::state::AccountStateMap;
 
 /// Build the set of global slash commands to register.
+///
+/// Derives from the centralized command registry in `moltis_channels::commands`.
 pub fn build_commands() -> Vec<CreateCommand> {
-    vec![
-        CreateCommand::new("new").description("Start a new chat session"),
-        CreateCommand::new("clear").description("Clear the current session history"),
-        CreateCommand::new("compact").description("Summarize the current session"),
-        CreateCommand::new("context").description("Show session info (model, tokens, plugins)"),
-        CreateCommand::new("model").description("List or switch the AI model"),
-        CreateCommand::new("sessions").description("List or switch chat sessions"),
-        CreateCommand::new("agent").description("List or switch agents"),
-        CreateCommand::new("help").description("Show available commands"),
-    ]
+    moltis_channels::commands::all_commands()
+        .iter()
+        .map(|c| CreateCommand::new(c.name).description(c.description))
+        .collect()
 }
 
 /// Register global slash commands for the bot.
@@ -207,9 +203,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_commands_returns_expected_count() {
+    fn build_commands_matches_registry_count() {
         let commands = build_commands();
-        assert_eq!(commands.len(), 8, "expected 8 slash commands");
+        let registry_count = moltis_channels::commands::all_commands().len();
+        assert_eq!(
+            commands.len(),
+            registry_count,
+            "build_commands should produce one command per registry entry"
+        );
     }
 
     #[test]
@@ -223,7 +224,8 @@ mod tests {
             let name = json["name"].as_str().unwrap_or_default();
             assert!(!name.is_empty(), "command name is empty");
             assert!(
-                name.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
+                name.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'),
                 "invalid command name: {name}"
             );
             assert!(name.len() <= 32, "command name too long: {name}");
@@ -255,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn expected_command_names_present() {
+    fn all_registry_commands_present() {
         let commands = build_commands();
         let names: Vec<String> = commands
             .iter()
@@ -265,12 +267,11 @@ mod tests {
                     .and_then(|v| v["name"].as_str().map(String::from))
             })
             .collect();
-        for expected in [
-            "new", "clear", "compact", "context", "model", "sessions", "agent", "help",
-        ] {
+        for cmd in moltis_channels::commands::all_commands() {
             assert!(
-                names.contains(&expected.to_string()),
-                "missing expected slash command: {expected}"
+                names.contains(&cmd.name.to_string()),
+                "missing slash command from registry: {}",
+                cmd.name
             );
         }
     }

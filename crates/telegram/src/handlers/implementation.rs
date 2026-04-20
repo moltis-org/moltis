@@ -697,7 +697,7 @@ pub async fn handle_message_direct(
                 }
 
                 let response = if cmd == "help" {
-                    "Available commands:\n/new — Start a new session\n/sessions — List and switch this chat's sessions\n/attach — Attach an existing session to this chat\n/approvals — List pending exec approvals for this session\n/approve N — Approve a pending exec request\n/deny N — Deny a pending exec request\n/agent — Switch session agent\n/model — Switch provider/model\n/sandbox — Toggle sandbox and choose image\n/sh — Enable command mode (/sh off to exit)\n/clear — Clear session history\n/compact — Compact session (summarize)\n/context — Show session context info\n/help — Show this help".to_string()
+                    moltis_channels::commands::help_text()
                 } else {
                     match sink
                         .dispatch_command(cmd_text, reply_target.clone(), Some(&peer_id))
@@ -763,15 +763,7 @@ pub async fn handle_message_direct(
 }
 
 fn should_intercept_slash_command(cmd: &str, cmd_text: &str) -> bool {
-    match cmd {
-        "new" | "clear" | "compact" | "context" | "model" | "sandbox" | "sessions" | "attach"
-        | "approvals" | "approve" | "deny" | "agent" | "help" => true,
-        "sh" => {
-            let args = cmd_text.strip_prefix(cmd).unwrap_or("").trim();
-            args.is_empty() || matches!(args, "on" | "off" | "exit" | "status")
-        },
-        _ => false,
-    }
+    moltis_channels::commands::is_channel_command(cmd, cmd_text)
 }
 
 /// Handle an edited message — only processes live location updates.

@@ -790,7 +790,9 @@ fn stream_events_to_completion(events: Vec<StreamEvent>) -> CompletionResponse {
     for event in events {
         match event {
             StreamEvent::Delta(s) => text_parts.push(s),
-            StreamEvent::ToolCallStart { id, name, index } => {
+            StreamEvent::ToolCallStart {
+                id, name, index, ..
+            } => {
                 while pending_tools.len() <= index {
                     pending_tools.push((String::new(), String::new(), String::new()));
                 }
@@ -810,6 +812,7 @@ fn stream_events_to_completion(events: Vec<StreamEvent>) -> CompletionResponse {
                         id: entry.0.clone(),
                         name: entry.1.clone(),
                         arguments,
+                        metadata: None,
                     });
                 }
             },

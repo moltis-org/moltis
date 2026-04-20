@@ -113,6 +113,7 @@ fn build_persisted_tool_call(
     tool_call_id: impl Into<String>,
     tool_name: impl Into<String>,
     arguments: Option<Value>,
+    metadata: Option<serde_json::Map<String, Value>>,
 ) -> PersistedToolCall {
     PersistedToolCall {
         id: tool_call_id.into(),
@@ -123,6 +124,7 @@ fn build_persisted_tool_call(
                 .unwrap_or_else(|| serde_json::json!({}))
                 .to_string(),
         },
+        metadata,
     }
 }
 
@@ -130,6 +132,7 @@ pub(crate) fn build_tool_call_assistant_message(
     tool_call_id: impl Into<String>,
     tool_name: impl Into<String>,
     arguments: Option<Value>,
+    metadata: Option<serde_json::Map<String, Value>>,
     seq: Option<u64>,
     run_id: Option<&str>,
 ) -> PersistedMessage {
@@ -151,6 +154,7 @@ pub(crate) fn build_tool_call_assistant_message(
             tool_call_id,
             tool_name,
             arguments,
+            metadata,
         )]),
         reasoning: None,
         llm_api_response: None,
@@ -630,6 +634,7 @@ mod tests {
             "tool-1",
             "exec",
             Some(serde_json::json!({"cmd": "ls"})),
+            None,
             Some(3),
             Some("run-1"),
         );

@@ -315,6 +315,7 @@ pub async fn run_agent_loop_with_context(
                 id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
+                metadata: None,
             }];
         }
 

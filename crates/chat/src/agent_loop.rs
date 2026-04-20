@@ -361,6 +361,7 @@ pub(crate) async fn run_explicit_shell_command(
                 tool_call_id.clone(),
                 "exec",
                 Some(tool_args.clone()),
+                None,
                 client_seq,
                 Some(run_id),
             );
@@ -413,6 +414,7 @@ pub(crate) async fn run_explicit_shell_command(
                 tool_call_id.clone(),
                 "exec",
                 Some(tool_args.clone()),
+                None,
                 client_seq,
                 Some(run_id),
             );

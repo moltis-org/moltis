@@ -132,6 +132,7 @@ impl LlmProvider for ToolCallingProvider {
                     id: "call_1".into(),
                     name: "echo_tool".into(),
                     arguments: serde_json::json!({"text": "hi"}),
+                    metadata: None,
                 }],
                 usage: Usage {
                     input_tokens: 10,
@@ -522,6 +523,7 @@ impl LlmProvider for PreemptiveOverflowProvider {
                     id: "overflow_call".into(),
                     name: "overflow_tool".into(),
                     arguments: serde_json::json!({}),
+                    metadata: None,
                 }],
                 usage: Usage::default(),
             })
@@ -576,6 +578,7 @@ impl LlmProvider for VisionEnabledProvider {
                     id: "call_screenshot".into(),
                     name: "screenshot_tool".into(),
                     arguments: serde_json::json!({}),
+                    metadata: None,
                 }],
                 usage: Usage {
                     input_tokens: 10,
