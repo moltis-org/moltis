@@ -923,8 +923,8 @@ function EnabledSkillsTable(): VNode | null {
 					placeholder="Search skills..."
 					value={searchQuery.value}
 					onInput={(e) => {
-					searchQuery.value = (e.target as HTMLInputElement).value;
-				}}
+						searchQuery.value = (e.target as HTMLInputElement).value;
+					}}
 					className="skills-install-input"
 					style={{ maxWidth: "240px", fontSize: ".78rem", padding: "4px 8px" }}
 				/>
@@ -946,8 +946,8 @@ function EnabledSkillsTable(): VNode | null {
 								key={cat}
 								className={`skills-category-pill ${activeCategory.value === cat ? "active" : ""}`}
 								onClick={() => {
-								activeCategory.value = activeCategory.value === cat ? null : cat;
-							}}
+									activeCategory.value = activeCategory.value === cat ? null : cat;
+								}}
 							>
 								{cat} ({count})
 							</button>
