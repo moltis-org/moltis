@@ -33,8 +33,10 @@ done < <(
   find . \( -name '*.rs' -o -name '*.ts' -o -name '*.tsx' \) \
     -not -path './target/*' \
     -not -path './.claude/*' \
+    -not -path './.moltis/*' \
     -not -path '*/node_modules/*' \
     -not -path '*/e2e/*' \
+    -not -path '*/skills/src/assets/*' \
     -print0 \
   | xargs -0 wc -l \
   | awk -v max="$MAX_LINES" '$2 != "total" && $1 > max { printf "%d\t%s\n", $1, $2 }' \
