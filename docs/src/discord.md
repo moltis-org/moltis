@@ -92,6 +92,8 @@ offered = ["telegram", "discord"]
 | `status` | no | `"online"` | Bot online status: `"online"`, `"idle"`, `"dnd"`, or `"invisible"` |
 | `otp_self_approval` | no | `true` | Enable OTP self-approval for non-allowlisted DM users |
 | `otp_cooldown_secs` | no | `300` | Cooldown in seconds after 3 failed OTP attempts |
+| `channel_overrides` | no | `{}` | Per-channel model/provider/agent overrides (channel ID → override) |
+| `user_overrides` | no | `{}` | Per-user model/provider/agent overrides (user ID → override) |
 
 ### Full Example
 
@@ -321,14 +323,16 @@ and is working on a reply.
 crates/discord/
 ├── Cargo.toml
 └── src/
-    ├── lib.rs         # Public exports
-    ├── commands.rs    # Native Discord slash command registration
-    ├── config.rs      # DiscordAccountConfig (token, policies, presence, OTP)
-    ├── error.rs       # Error enum (Config, Gateway, Send, Channel)
-    ├── handler.rs     # serenity EventHandler (inbound + OTP + interactions)
-    ├── outbound.rs    # ChannelOutbound + ChannelStreamOutbound impls
-    ├── plugin.rs      # ChannelPlugin + ChannelStatus impls
-    └── state.rs       # AccountState + AccountStateMap (includes OtpState)
+    ├── lib.rs              # Public exports
+    ├── commands.rs         # Native Discord slash command registration
+    ├── config.rs           # DiscordAccountConfig (token, policies, presence, OTP)
+    ├── error.rs            # Error enum (Config, Gateway, Send, Channel)
+    ├── handler.rs          # Inbound handler entrypoint
+    │   ├── implementation.rs  # Serenity EventHandler (inbound + OTP + interactions)
+    │   └── tests.rs          # Handler tests
+    ├── outbound.rs         # ChannelOutbound + ChannelStreamOutbound impls
+    ├── plugin.rs           # ChannelPlugin + ChannelStatus impls
+    └── state.rs            # AccountState + AccountStateMap (includes OtpState)
 ```
 
 The crate implements the same trait set as `moltis-telegram` and `moltis-msteams`:
