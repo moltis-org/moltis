@@ -9,7 +9,7 @@ requires:
   bins: [claude]
   install:
     - kind: npm
-      package: @anthropic-ai/claude-code
+      package: "@anthropic-ai/claude-code"
       bins: [claude]
 ---
 

@@ -14,7 +14,7 @@ requires:
       bins: [xurl]
       os: [darwin]
     - kind: go
-      module: github.com/xdevplatform/xurl@latest
+      module: "github.com/xdevplatform/xurl@latest"
       bins: [xurl]
 ---
 

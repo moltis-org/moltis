@@ -9,7 +9,7 @@ requires:
   bins: [blogwatcher]
   install:
     - kind: go
-      module: github.com/JulienBreux/blogwatcher@latest
+      module: "github.com/JulienBreux/blogwatcher@latest"
       bins: [blogwatcher]
 ---
 

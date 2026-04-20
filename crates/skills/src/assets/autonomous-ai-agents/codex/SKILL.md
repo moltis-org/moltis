@@ -9,7 +9,7 @@ requires:
   bins: [codex]
   install:
     - kind: npm
-      package: @openai/codex
+      package: "@openai/codex"
       bins: [codex]
 ---
 

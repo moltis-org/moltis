@@ -9,7 +9,7 @@ requires:
   bins: [songsee]
   install:
     - kind: go
-      module: github.com/steipete/songsee/cmd/songsee@latest
+      module: "github.com/steipete/songsee/cmd/songsee@latest"
       bins: [songsee]
 ---
 
