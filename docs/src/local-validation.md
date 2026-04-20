@@ -43,13 +43,18 @@ checks in the PR.
 
 - The script requires a clean working tree (no uncommitted or untracked
   changes). Commit or stash local changes before running.
-- On macOS without CUDA (`nvcc`), the script automatically falls back to
-  non-CUDA test/coverage defaults for local runs.
+- On macOS without CUDA (`nvcc`), the script uses an OS-aware feature split:
+  `local-llm-metal` for `moltis-providers` and `moltis-gateway`, no Linux CUDA
+  path. This matches the repo's `just lint` / `just test` contract. CI still
+  covers the full Linux/CUDA `--all-features` path.
 - On Linux, `local/lint` and `local/test` use `--all-features`. If you want
   the opt-in Vulkan path covered locally, install the Vulkan development
   packages first, for example `libvulkan-dev` and `glslang-tools` on Debian/Ubuntu
   (on Ubuntu 22.04, install `glslang-tools` from the LunarG Vulkan SDK).
-- `local/lint` uses the same clippy flags as CI and release:
+- When `just` and a `justfile` are detected, `local/lint`, `local/test`, and
+  `local/fmt` delegate to `just lint`, `just test`, and `just format-check`
+  respectively. The raw cargo commands are used as fallback.
+- `local/lint` falls back to the same clippy flags as CI and release:
   `cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`.
 - `zizmor` is installed automatically (Homebrew on macOS, apt on Linux) when
   not already available.
