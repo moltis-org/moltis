@@ -63,6 +63,16 @@ navigation_timeout_ms = 30000  # Page load timeout
 # user_agent = "Custom UA"         # Custom user agent
 # chrome_args = ["--disable-extensions"]  # Extra args
 
+# Profile persistence (default: true)
+# persist_profile = true    # Persist cookies, auth state, local storage across sessions
+# profile_dir = "/custom/path"  # Override profile directory (implies persist_profile)
+
+# Memory-saving Chrome flags (injected when system RAM < threshold)
+# low_memory_threshold_mb = 2048  # Set to 0 to disable
+
+# Browserless API compatibility
+# browserless_api_version = "v1"  # "v1" (default) or "v2" (adds /chrome, /chromium fallback)
+
 # Sandbox image (browser sandbox mode follows session sandbox mode)
 sandbox_image = "docker.io/browserless/chrome"  # Container image for sandboxed sessions
 # allowed_domains = ["example.com", "*.trusted.org"]  # Restrict navigation
@@ -259,6 +269,46 @@ provides:
 - Interacting with SPAs
 - Sites that require JavaScript
 - Taking screenshots
+
+### Profile Persistence
+
+By default (`persist_profile = true`), Chrome user data (cookies, auth state,
+local storage) is persisted across browser sessions. The profile is stored at
+`data_dir()/browser/profile/` unless overridden:
+
+```toml
+[tools.browser]
+persist_profile = true          # default; set false to start fresh each time
+profile_dir = \"/custom/path\"   # optional override (implies persist_profile = true)
+```
+
+When `persist_profile = false`, each browser launch starts with a clean slate.
+This is useful for testing or when you want isolated sessions.
+
+### Browserless API Version
+
+When connecting to a Browserless container, Moltis supports two API modes:
+
+```toml
+[tools.browser]
+browserless_api_version = \"v1\"  # \"v1\" (default) or \"v2\"
+```
+
+- **`v1`** (default): connects directly to the base websocket URL.
+- **`v2`**: when the URL path is `/`, also tries `/chrome` and `/chromium`
+  as fallback paths. Useful for newer Browserless server deployments that
+  changed their websocket endpoint layout.
+
+### Low-Memory Mode
+
+When system RAM falls below `low_memory_threshold_mb` (default: 2048 MB),
+Moltis automatically injects Chrome flags that reduce memory usage
+(disable GPU, reduce process count, etc.):
+
+```toml
+[tools.browser]
+low_memory_threshold_mb = 2048  # Set to 0 to disable
+```
 
 ## Metrics
 
