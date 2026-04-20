@@ -992,63 +992,71 @@ function EnabledSkillsTable(): VNode | null {
 						</tr>
 					</thead>
 					<tbody>
-						{filtered.map((sk) => (
-							<tr
-								key={sk.name}
-								className="cursor-pointer"
-								style={{ borderBottom: "1px solid var(--border)" }}
-								onClick={() => loadDetail(sk)}
-							>
-								<td
-									style={{
-										padding: "8px 12px",
-										fontWeight: 500,
-										color: "var(--accent)",
-										fontFamily: "var(--font-mono)",
-									}}
-								>
-									{sk.name}
-									{sk.category && !activeCategory.value && (
-										<span className="skills-category-badge">{sk.category}</span>
-									)}
-								</td>
-								<td style={{ padding: "8px 12px" }}>{sk.description || "\u2014"}</td>
-								<td style={{ padding: "8px 12px" }}>
-									<span className={sk.source?.includes("/") ? "tier-badge" : "recommended-badge"}>{sk.source}</span>
-								</td>
-								<td style={{ padding: "8px 12px", textAlign: "right" }}>
-									<button
-										disabled={(isDisc(sk) && sk.protected === true) || pending.value === sk.name}
-										className={
-											isDisc(sk)
-												? "provider-btn provider-btn-sm provider-btn-danger"
-												: "provider-btn provider-btn-sm provider-btn-secondary"
-										}
-										onClick={(e) => {
-											e.stopPropagation();
-											onDisable(sk);
+						{filtered.map((sk) => {
+							const isActive = activeDetail.value?.name === sk.name;
+							return (
+								<>
+									<tr
+										key={sk.name}
+										className="cursor-pointer"
+										style={{
+											borderBottom: isActive ? "none" : "1px solid var(--border)",
+											background: isActive ? "var(--bg-hover)" : undefined,
 										}}
+										onClick={() => loadDetail(sk)}
 									>
-										{pending.value === sk.name ? "..." : isDisc(sk) ? "Delete" : "Disable"}
-									</button>
-								</td>
-							</tr>
-						))}
+										<td
+											style={{
+												padding: "8px 12px",
+												fontWeight: 500,
+												color: "var(--accent)",
+												fontFamily: "var(--font-mono)",
+											}}
+										>
+											{sk.name}
+											{sk.category && !activeCategory.value && (
+												<span className="skills-category-badge">{sk.category}</span>
+											)}
+										</td>
+										<td style={{ padding: "8px 12px" }}>{sk.description || "\u2014"}</td>
+										<td style={{ padding: "8px 12px" }}>
+											<span className={sk.source?.includes("/") ? "tier-badge" : "recommended-badge"}>{sk.source}</span>
+										</td>
+										<td style={{ padding: "8px 12px", textAlign: "right" }}>
+											<button
+												disabled={(isDisc(sk) && sk.protected === true) || pending.value === sk.name}
+												className={
+													isDisc(sk)
+														? "provider-btn provider-btn-sm provider-btn-danger"
+														: "provider-btn provider-btn-sm provider-btn-secondary"
+												}
+												onClick={(e) => {
+													e.stopPropagation();
+													onDisable(sk);
+												}}
+											>
+												{pending.value === sk.name ? "..." : isDisc(sk) ? "Delete" : "Disable"}
+											</button>
+										</td>
+									</tr>
+									{isActive && activeDetail.value && (
+										<tr key={`${sk.name}-detail`}>
+											<td colSpan={4} style={{ padding: 0, borderBottom: "1px solid var(--border)" }}>
+												<SkillDetailPanel
+													detail={activeDetail.value}
+													repoSource={activeDetail.value.source}
+													onClose={() => { activeDetail.value = null; }}
+													onReload={() => loadDetail({ name: activeDetail.value?.name, source: activeDetail.value?.source } as SkillSummary)}
+												/>
+											</td>
+										</tr>
+									)}
+								</>
+							);
+						})}
 					</tbody>
 				</table>
 			</div>
-			{activeDetail.value && (
-				<SkillDetailPanel
-					detail={activeDetail.value}
-					repoSource={activeDetail.value.source}
-					onClose={() => {
-						activeDetail.value = null;
-					}}
-					onReload={() =>
-						loadDetail({ name: activeDetail.value?.name, source: activeDetail.value?.source } as SkillSummary)
-					}
-				/>
-			)}
 		</div>
 	);
 }

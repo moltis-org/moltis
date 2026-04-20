@@ -15266,63 +15266,69 @@ function EnabledSkillsTable() {
         /* @__PURE__ */ u("th", {})
       ] }) }),
       /* @__PURE__ */ u("tbody", { children: filtered.map((sk) => {
-        var _a2;
-        return /* @__PURE__ */ u(
-          "tr",
-          {
-            className: "cursor-pointer",
-            style: { borderBottom: "1px solid var(--border)" },
-            onClick: () => loadDetail(sk),
-            children: [
-              /* @__PURE__ */ u(
-                "td",
-                {
-                  style: {
-                    padding: "8px 12px",
-                    fontWeight: 500,
-                    color: "var(--accent)",
-                    fontFamily: "var(--font-mono)"
-                  },
-                  children: [
-                    sk.name,
-                    sk.category && !activeCategory.value && /* @__PURE__ */ u("span", { className: "skills-category-badge", children: sk.category })
-                  ]
-                }
-              ),
-              /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: sk.description || "—" }),
-              /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: /* @__PURE__ */ u("span", { className: ((_a2 = sk.source) == null ? void 0 : _a2.includes("/")) ? "tier-badge" : "recommended-badge", children: sk.source }) }),
-              /* @__PURE__ */ u("td", { style: { padding: "8px 12px", textAlign: "right" }, children: /* @__PURE__ */ u(
-                "button",
-                {
-                  disabled: isDisc(sk) && sk.protected === true || pending.value === sk.name,
-                  className: isDisc(sk) ? "provider-btn provider-btn-sm provider-btn-danger" : "provider-btn provider-btn-sm provider-btn-secondary",
-                  onClick: (e) => {
-                    e.stopPropagation();
-                    onDisable(sk);
-                  },
-                  children: pending.value === sk.name ? "..." : isDisc(sk) ? "Delete" : "Disable"
-                }
-              ) })
-            ]
-          },
-          sk.name
-        );
+        var _a2, _b2;
+        const isActive = ((_a2 = activeDetail.value) == null ? void 0 : _a2.name) === sk.name;
+        return /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u(
+            "tr",
+            {
+              className: "cursor-pointer",
+              style: {
+                borderBottom: isActive ? "none" : "1px solid var(--border)",
+                background: isActive ? "var(--bg-hover)" : void 0
+              },
+              onClick: () => loadDetail(sk),
+              children: [
+                /* @__PURE__ */ u(
+                  "td",
+                  {
+                    style: {
+                      padding: "8px 12px",
+                      fontWeight: 500,
+                      color: "var(--accent)",
+                      fontFamily: "var(--font-mono)"
+                    },
+                    children: [
+                      sk.name,
+                      sk.category && !activeCategory.value && /* @__PURE__ */ u("span", { className: "skills-category-badge", children: sk.category })
+                    ]
+                  }
+                ),
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: sk.description || "—" }),
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: /* @__PURE__ */ u("span", { className: ((_b2 = sk.source) == null ? void 0 : _b2.includes("/")) ? "tier-badge" : "recommended-badge", children: sk.source }) }),
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px", textAlign: "right" }, children: /* @__PURE__ */ u(
+                  "button",
+                  {
+                    disabled: isDisc(sk) && sk.protected === true || pending.value === sk.name,
+                    className: isDisc(sk) ? "provider-btn provider-btn-sm provider-btn-danger" : "provider-btn provider-btn-sm provider-btn-secondary",
+                    onClick: (e) => {
+                      e.stopPropagation();
+                      onDisable(sk);
+                    },
+                    children: pending.value === sk.name ? "..." : isDisc(sk) ? "Delete" : "Disable"
+                  }
+                ) })
+              ]
+            },
+            sk.name
+          ),
+          isActive && activeDetail.value && /* @__PURE__ */ u("tr", { children: /* @__PURE__ */ u("td", { colSpan: 4, style: { padding: 0, borderBottom: "1px solid var(--border)" }, children: /* @__PURE__ */ u(
+            SkillDetailPanel,
+            {
+              detail: activeDetail.value,
+              repoSource: activeDetail.value.source,
+              onClose: () => {
+                activeDetail.value = null;
+              },
+              onReload: () => {
+                var _a3, _b3;
+                return loadDetail({ name: (_a3 = activeDetail.value) == null ? void 0 : _a3.name, source: (_b3 = activeDetail.value) == null ? void 0 : _b3.source });
+              }
+            }
+          ) }) }, `${sk.name}-detail`)
+        ] });
       }) })
-    ] }) }),
-    activeDetail.value && /* @__PURE__ */ u(
-      SkillDetailPanel,
-      {
-        detail: activeDetail.value,
-        repoSource: activeDetail.value.source,
-        onClose: () => {
-          activeDetail.value = null;
-        },
-        onReload: () => {
-          var _a2, _b2;
-          return loadDetail({ name: (_a2 = activeDetail.value) == null ? void 0 : _a2.name, source: (_b2 = activeDetail.value) == null ? void 0 : _b2.source });
-        }
-      }
-    )
+    ] }) })
   ] });
 }
 function SkillsPageComponent() {
