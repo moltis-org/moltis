@@ -55,7 +55,7 @@ pub fn generate_skills_prompt_with_budget(skills: &[SkillMetadata], max_chars: u
     let mut lo = 0usize;
     let mut hi = skills.len();
     while lo < hi {
-        let mid = (lo + hi + 1) / 2;
+        let mid = (lo + hi).div_ceil(2);
         let block = build_skills_block(&skills[..mid], Format::Compact);
         if block.len() + activation.len() <= max_chars {
             lo = mid;
