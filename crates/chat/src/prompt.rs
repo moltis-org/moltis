@@ -11,7 +11,6 @@ use {
     },
     moltis_config::{AgentMemoryWriteMode, LoadedWorkspaceMarkdown, MemoryStyle, PromptMemoryMode},
     moltis_sessions::{metadata::SessionEntry, state_store::SessionStateStore},
-    moltis_skills::discover::SkillDiscoverer,
     moltis_tools::policy::{PolicyContext, resolve_effective_policy},
 };
 
