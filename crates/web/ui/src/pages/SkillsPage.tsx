@@ -914,14 +914,17 @@ function EnabledSkillsTable(): VNode | null {
 				<h3 className="skills-section-title" style={{ margin: 0 }}>
 					Enabled Skills
 					<span className="ml-2 text-xs font-normal text-[var(--muted)]">
-						({filtered.length}{filtered.length !== s.length ? ` of ${s.length}` : ""})
+						({filtered.length}
+						{filtered.length !== s.length ? ` of ${s.length}` : ""})
 					</span>
 				</h3>
 				<input
 					type="text"
 					placeholder="Search skills..."
 					value={searchQuery.value}
-					onInput={(e) => { searchQuery.value = (e.target as HTMLInputElement).value; }}
+					onInput={(e) => {
+					searchQuery.value = (e.target as HTMLInputElement).value;
+				}}
 					className="skills-install-input"
 					style={{ maxWidth: "240px", fontSize: ".78rem", padding: "4px 8px" }}
 				/>
@@ -930,7 +933,9 @@ function EnabledSkillsTable(): VNode | null {
 				<div className="flex flex-wrap gap-1.5 mb-3">
 					<button
 						className={`skills-category-pill ${activeCategory.value === null ? "active" : ""}`}
-						onClick={() => { activeCategory.value = null; }}
+						onClick={() => {
+							activeCategory.value = null;
+						}}
 					>
 						All ({s.length})
 					</button>
@@ -940,7 +945,9 @@ function EnabledSkillsTable(): VNode | null {
 							<button
 								key={cat}
 								className={`skills-category-pill ${activeCategory.value === cat ? "active" : ""}`}
-								onClick={() => { activeCategory.value = activeCategory.value === cat ? null : cat; }}
+								onClick={() => {
+								activeCategory.value = activeCategory.value === cat ? null : cat;
+							}}
 							>
 								{cat} ({count})
 							</button>
@@ -1047,8 +1054,15 @@ function EnabledSkillsTable(): VNode | null {
 												<SkillDetailPanel
 													detail={activeDetail.value}
 													repoSource={activeDetail.value.source}
-													onClose={() => { activeDetail.value = null; }}
-													onReload={() => loadDetail({ name: activeDetail.value?.name, source: activeDetail.value?.source } as SkillSummary)}
+													onClose={() => {
+														activeDetail.value = null;
+													}}
+													onReload={() =>
+														loadDetail({
+															name: activeDetail.value?.name,
+															source: activeDetail.value?.source,
+														} as SkillSummary)
+													}
 												/>
 											</td>
 										</tr>

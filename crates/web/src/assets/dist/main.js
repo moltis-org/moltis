@@ -15315,7 +15315,10 @@ function EnabledSkillsTable() {
               },
               onReload: () => {
                 var _a3, _b3;
-                return loadDetail({ name: (_a3 = activeDetail.value) == null ? void 0 : _a3.name, source: (_b3 = activeDetail.value) == null ? void 0 : _b3.source });
+                return loadDetail({
+                  name: (_a3 = activeDetail.value) == null ? void 0 : _a3.name,
+                  source: (_b3 = activeDetail.value) == null ? void 0 : _b3.source
+                });
               }
             }
           ) }) }, `${sk.name}-detail`)
