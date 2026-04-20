@@ -17,8 +17,8 @@ use {
     crate::error::{Error, Result},
 };
 
-/// Packages that are installed via dedicated setup steps rather than plain apt-get.
-/// These are filtered from the apt package list to avoid version conflicts.
+/// Packages superseded by NodeSource's `nodejs` (which bundles npm).
+/// Only filtered when `nodejs` is in the package list.
 const NODESOURCE_SUPERSEDED_PACKAGES: &[&str] = &["npm"];
 
 pub(crate) fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> String {
@@ -27,18 +27,21 @@ pub(crate) fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> Strin
     let pkg_list: Vec<&str> = canonical
         .iter()
         .map(String::as_str)
-        .filter(|p| !NODESOURCE_SUPERSEDED_PACKAGES.contains(p))
+        .filter(|p| !has_nodejs || !NODESOURCE_SUPERSEDED_PACKAGES.contains(p))
         .collect();
     let pkg_str = pkg_list.join(" ");
 
-    // If nodejs is requested, set up NodeSource 22.x repo before apt-get so
-    // `apt-get install nodejs` pulls Node 22 LTS (which bundles npm).
+    // If nodejs is requested, bootstrap curl+gnupg, add the NodeSource 22.x
+    // repo, then let the main apt-get install pick up nodejs v22 (bundles npm).
     let nodesource_setup = if has_nodejs {
-        "RUN install -m 0755 -d /etc/apt/keyrings && \\\n    \
-             curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-| gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \\\n    \
-             echo \"deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main\" \
-> /etc/apt/sources.list.d/nodesource.list\n"
+        "RUN apt-get update -qq \
+&& apt-get install -y -qq curl gnupg \
+&& install -m 0755 -d /etc/apt/keyrings \
+&& curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+   | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+&& echo \"deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main\" \
+   > /etc/apt/sources.list.d/nodesource.list \
+&& rm -rf /var/lib/apt/lists/*\n"
     } else {
         ""
     };
