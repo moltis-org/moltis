@@ -44,9 +44,17 @@ Restore a checkpoint by ID.
 
 ## Mutation Results
 
-Checkpointed tools return a `checkpointId` field in their result payload. That
-gives agents and users a direct restore handle without first listing every
-checkpoint.
+Checkpointed tools return a `checkpointId` (skill/memory tools) or
+`checkpoint_id` (fs tools: Write, Edit, MultiEdit) field in their result
+payload. That gives agents and users a direct restore handle without first
+listing every checkpoint.
+
+## Filesystem Tool Integration
+
+When `[tools.fs].checkpoint_before_mutation = true`, the built-in
+`Write`, `Edit`, and `MultiEdit` tools automatically create per-file
+checkpoints before each mutation. This is independent of the skill/memory
+checkpointing above. See [Filesystem Tools](tools-fs.md) for configuration.
 
 ## Behavior
 
