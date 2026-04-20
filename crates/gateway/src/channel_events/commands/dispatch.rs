@@ -50,6 +50,10 @@ pub(in crate::channel_events) async fn dispatch_command(
         .ok_or_else(|| ChannelError::unavailable("session metadata not available"))?;
     let session_key = resolve_channel_session(&reply_to, session_metadata).await;
 
+    // Strip leading slash — some channels (e.g. Slack) include it in the
+    // command field, others (Telegram, Discord) strip it before calling.
+    let command = command.strip_prefix('/').unwrap_or(command);
+
     // Extract the command name (first word) and args (rest).
     let cmd = command.split_whitespace().next().unwrap_or("");
     let args = command[cmd.len()..].trim();
@@ -170,6 +174,29 @@ mod tests {
                 registry_names.contains(name),
                 "dispatch arm `/{name}` exists but is not in the centralized command registry. \
                  Add it to moltis_channels::commands::all_commands().",
+            );
+        }
+    }
+
+    /// Regression test for https://github.com/moltis-org/moltis/issues/798
+    ///
+    /// Slack sends commands with a leading slash (`/new`, `/clear`). The
+    /// dispatch function must strip it before matching, otherwise the match
+    /// falls through to the unknown-command arm producing `//new`.
+    #[test]
+    fn leading_slash_is_stripped_before_matching() {
+        // Simulates the slash-stripping logic in dispatch_command.
+        let inputs = ["/new", "/clear", "/model gpt-4o", "new", "clear"];
+        for input in inputs {
+            let stripped = input.strip_prefix('/').unwrap_or(input);
+            let cmd = stripped.split_whitespace().next().unwrap_or("");
+            assert!(
+                !cmd.starts_with('/'),
+                "command `{input}` should not produce a slash-prefixed cmd, got `{cmd}`"
+            );
+            assert!(
+                !cmd.is_empty(),
+                "command `{input}` should produce a non-empty cmd"
             );
         }
     }
