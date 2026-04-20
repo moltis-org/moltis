@@ -847,6 +847,7 @@ function EnabledSkillsTable(): VNode | null {
 	const detailLoading = useSignal(false);
 	const pending = useSignal<string | null>(null);
 	const activeCategory = useSignal<string | null>(null);
+	const searchQuery = useSignal("");
 	if (!s?.length) return null;
 
 	// Build sorted category list from skills
@@ -858,10 +859,15 @@ function EnabledSkillsTable(): VNode | null {
 		return Array.from(cats).sort();
 	});
 
-	// Filter skills by active category
-	const filtered = activeCategory.value
-		? s.filter((sk) => (sk.category || "other") === activeCategory.value)
-		: s;
+	// Filter skills by search query and active category
+	const filtered = s.filter((sk) => {
+		if (activeCategory.value && (sk.category || "other") !== activeCategory.value) return false;
+		if (searchQuery.value) {
+			const q = searchQuery.value.toLowerCase();
+			return sk.name.toLowerCase().includes(q) || (sk.description || "").toLowerCase().includes(q);
+		}
+		return true;
+	});
 
 	function isDisc(sk: SkillSummary): boolean {
 		return sk.source === "personal" || sk.source === "project";
@@ -904,10 +910,22 @@ function EnabledSkillsTable(): VNode | null {
 	}
 	return (
 		<div className="skills-section">
-			<h3 className="skills-section-title">
-				Enabled Skills
-				<span className="ml-2 text-xs font-normal text-[var(--muted)]">({s.length})</span>
-			</h3>
+			<div className="flex items-center gap-3 mb-2">
+				<h3 className="skills-section-title" style={{ margin: 0 }}>
+					Enabled Skills
+					<span className="ml-2 text-xs font-normal text-[var(--muted)]">
+						({filtered.length}{filtered.length !== s.length ? ` of ${s.length}` : ""})
+					</span>
+				</h3>
+				<input
+					type="text"
+					placeholder="Search skills..."
+					value={searchQuery.value}
+					onInput={(e) => { searchQuery.value = (e.target as HTMLInputElement).value; }}
+					className="skills-install-input"
+					style={{ maxWidth: "240px", fontSize: ".78rem", padding: "4px 8px" }}
+				/>
+			</div>
 			{categories.value.length > 1 && (
 				<div className="flex flex-wrap gap-1.5 mb-3">
 					<button

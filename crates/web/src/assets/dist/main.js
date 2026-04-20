@@ -15102,6 +15102,7 @@ function EnabledSkillsTable() {
   const detailLoading = useSignal(false);
   const pending = useSignal(null);
   const activeCategory = useSignal(null);
+  const searchQuery = useSignal("");
   if (!(s == null ? void 0 : s.length)) return null;
   const categories = g(() => {
     const cats = /* @__PURE__ */ new Set();
@@ -15110,7 +15111,14 @@ function EnabledSkillsTable() {
     }
     return Array.from(cats).sort();
   });
-  const filtered = activeCategory.value ? s.filter((sk) => (sk.category || "other") === activeCategory.value) : s;
+  const filtered = s.filter((sk) => {
+    if (activeCategory.value && (sk.category || "other") !== activeCategory.value) return false;
+    if (searchQuery.value) {
+      const q2 = searchQuery.value.toLowerCase();
+      return sk.name.toLowerCase().includes(q2) || (sk.description || "").toLowerCase().includes(q2);
+    }
+    return true;
+  });
   function isDisc(sk) {
     return sk.source === "personal" || sk.source === "project";
   }
@@ -15152,13 +15160,29 @@ function EnabledSkillsTable() {
     });
   }
   return /* @__PURE__ */ u("div", { className: "skills-section", children: [
-    /* @__PURE__ */ u("h3", { className: "skills-section-title", children: [
-      "Enabled Skills",
-      /* @__PURE__ */ u("span", { className: "ml-2 text-xs font-normal text-[var(--muted)]", children: [
-        "(",
-        s.length,
-        ")"
-      ] })
+    /* @__PURE__ */ u("div", { className: "flex items-center gap-3 mb-2", children: [
+      /* @__PURE__ */ u("h3", { className: "skills-section-title", style: { margin: 0 }, children: [
+        "Enabled Skills",
+        /* @__PURE__ */ u("span", { className: "ml-2 text-xs font-normal text-[var(--muted)]", children: [
+          "(",
+          filtered.length,
+          filtered.length !== s.length ? ` of ${s.length}` : "",
+          ")"
+        ] })
+      ] }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          placeholder: "Search skills...",
+          value: searchQuery.value,
+          onInput: (e) => {
+            searchQuery.value = e.target.value;
+          },
+          className: "skills-install-input",
+          style: { maxWidth: "240px", fontSize: ".78rem", padding: "4px 8px" }
+        }
+      )
     ] }),
     categories.value.length > 1 && /* @__PURE__ */ u("div", { className: "flex flex-wrap gap-1.5 mb-3", children: [
       /* @__PURE__ */ u(
