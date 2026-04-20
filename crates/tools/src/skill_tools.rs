@@ -500,68 +500,35 @@ impl AgentTool for ReadSkillTool {
     }
 }
 
-/// Check skill requirements and auto-install missing binaries if install specs
-/// are available. Returns a human-readable note describing what was installed,
-/// or `None` if nothing was needed.
+/// Check skill requirements and return install instructions if binaries are
+/// missing. Does NOT run the install — the agent should run the commands via
+/// `exec` so they execute in the correct environment (sandbox or host).
 async fn auto_install_requirements(meta: &moltis_skills::types::SkillMetadata) -> Option<String> {
-    use moltis_skills::requirements::{check_requirements, install_command_preview, run_install};
+    use moltis_skills::requirements::{check_requirements, install_command_preview};
 
     let elig = check_requirements(meta);
     if elig.eligible || elig.install_options.is_empty() {
         return None;
     }
 
-    let missing = &elig.missing_bins;
-    tracing::info!(
-        skill = %meta.name,
-        missing = ?missing,
-        "auto-installing missing skill dependencies"
-    );
+    let commands: Vec<String> = elig
+        .install_options
+        .iter()
+        .filter_map(|spec| install_command_preview(spec).ok())
+        .collect();
 
-    let mut installed = Vec::new();
-    let mut failed = Vec::new();
-
-    for spec in &elig.install_options {
-        let preview = install_command_preview(spec).unwrap_or_default();
-        match run_install(spec).await {
-            Ok(result) if result.success => {
-                tracing::info!(skill = %meta.name, command = %preview, "dependency installed");
-                installed.push(preview);
-            },
-            Ok(result) => {
-                tracing::warn!(
-                    skill = %meta.name,
-                    command = %preview,
-                    stderr = %result.stderr,
-                    "dependency install failed"
-                );
-                failed.push(format!(
-                    "{preview}: {}",
-                    result.stderr.lines().next().unwrap_or("unknown error")
-                ));
-            },
-            Err(e) => {
-                tracing::warn!(skill = %meta.name, command = %preview, %e, "dependency install error");
-                failed.push(format!("{preview}: {e}"));
-            },
-        }
+    if commands.is_empty() {
+        return Some(format!(
+            "Missing binaries: {}. No install instructions available.",
+            elig.missing_bins.join(", ")
+        ));
     }
 
-    let mut note = String::new();
-    if !installed.is_empty() {
-        note.push_str(&format!("Auto-installed: {}", installed.join(", ")));
-    }
-    if !failed.is_empty() {
-        if !note.is_empty() {
-            note.push_str(". ");
-        }
-        note.push_str(&format!("Failed to install: {}", failed.join("; ")));
-    }
-    if note.is_empty() {
-        None
-    } else {
-        Some(note)
-    }
+    Some(format!(
+        "Missing binaries: {}. Install with: {}",
+        elig.missing_bins.join(", "),
+        commands.join(" OR ")
+    ))
 }
 
 /// Inject an install note into a skill read response.
