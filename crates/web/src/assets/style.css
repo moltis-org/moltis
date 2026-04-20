@@ -1075,6 +1075,9 @@
     font-size: var(--text-xs);
     line-height: var(--tw-leading, var(--text-xs--line-height));
   }
+  .text-\[\.7rem\] {
+    font-size: .7rem;
+  }
   .text-\[0\.6rem\] {
     font-size: 0.6rem;
   }

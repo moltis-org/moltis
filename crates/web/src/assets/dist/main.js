@@ -3689,9 +3689,7 @@ function applyStats(stats) {
 }
 async function fetchIssuesCount() {
   try {
-    const resp = await fetch(
-      `https://api.github.com/search/issues?q=repo:${REPO}+type:issue+state:open&per_page=1`
-    );
+    const resp = await fetch(`https://api.github.com/search/issues?q=repo:${REPO}+type:issue+state:open&per_page=1`);
     if (!resp.ok) return null;
     const data = await resp.json();
     return data.total_count ?? null;
@@ -3701,9 +3699,7 @@ async function fetchIssuesCount() {
 }
 async function fetchDiscussionsCount() {
   try {
-    const resp = await fetch(
-      `https://api.github.com/repos/${REPO}/discussions?per_page=1`
-    );
+    const resp = await fetch(`https://api.github.com/repos/${REPO}/discussions?per_page=1`);
     if (!resp.ok) return null;
     const link = resp.headers.get("Link");
     if (link) {
@@ -3717,10 +3713,7 @@ async function fetchDiscussionsCount() {
   }
 }
 async function fetchAndCache() {
-  const [issues, discussions] = await Promise.all([
-    fetchIssuesCount(),
-    fetchDiscussionsCount()
-  ]);
+  const [issues, discussions] = await Promise.all([fetchIssuesCount(), fetchDiscussionsCount()]);
   const stats = { issues, discussions, fetchedAt: Date.now() };
   writeCache(stats);
   applyStats(stats);
