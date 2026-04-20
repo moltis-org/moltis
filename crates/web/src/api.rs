@@ -586,13 +586,27 @@ pub async fn api_skills_handler(State(state): State<AppState>) -> impl IntoRespo
                 moltis_skills::types::SkillSource::Project,
             ),
         ];
-        let discoverer = FsSkillDiscoverer::new(search_paths);
-        if let Ok(discovered) = discoverer.discover().await {
+        let fs_discoverer = FsSkillDiscoverer::new(search_paths);
+
+        #[cfg(feature = "bundled-skills")]
+        let discovered = {
+            let bundled = std::sync::Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+            let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
+                Box::new(fs_discoverer),
+                bundled,
+            );
+            composite.discover().await
+        };
+        #[cfg(not(feature = "bundled-skills"))]
+        let discovered = fs_discoverer.discover().await;
+
+        if let Ok(discovered) = discovered {
             for s in discovered {
                 let protected = moltis_gateway::services::is_protected_discovered_skill(&s.name);
                 skills.push(serde_json::json!({
                     "name": s.name,
                     "description": s.description,
+                    "category": s.category,
                     "source": s.source,
                     "enabled": true,
                     "protected": protected,

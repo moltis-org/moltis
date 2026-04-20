@@ -136,7 +136,7 @@ default = [
   "web-ui",
   "whatsapp",
 ]
-bundled-skills  = ["moltis-gateway/bundled-skills"]
+bundled-skills  = ["moltis-gateway/bundled-skills", "moltis-web?/bundled-skills"]
 llm-compaction = ["moltis-gateway/llm-compaction"]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight

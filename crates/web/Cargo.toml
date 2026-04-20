@@ -38,6 +38,7 @@ tempfile = { workspace = true }
 
 [features]
 agent              = ["moltis-gateway/agent"]
+bundled-skills     = ["moltis-skills/bundled-skills"]
 default            = ["embedded-assets"]
 embedded-assets    = ["dep:include_dir"]
 graphql            = ["moltis-gateway/graphql", "moltis-httpd/graphql"]
