@@ -95,29 +95,29 @@ impl Default for BundledSkillStore {
 
 // ── Filesystem (dev mode) ───────────────────────────────────────────────────
 
-/// Walk `assets/<category>/<skill>/SKILL.md` on the filesystem.
+/// Recursively walk the assets directory for SKILL.md files on the filesystem.
+/// Supports arbitrary nesting (e.g. `mlops/training/axolotl/SKILL.md`).
 fn discover_from_fs(assets_dir: &Path) -> Vec<SkillMetadata> {
     let mut skills = Vec::new();
-    let Ok(categories) = std::fs::read_dir(assets_dir) else {
-        return skills;
+    discover_from_fs_recursive(assets_dir, &mut skills);
+    skills
+}
+
+fn discover_from_fs_recursive(dir: &Path, skills: &mut Vec<SkillMetadata>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
     };
-    for cat_entry in categories.flatten() {
-        if !cat_entry.path().is_dir() {
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
             continue;
         }
-        let Ok(skill_dirs) = std::fs::read_dir(cat_entry.path()) else {
-            continue;
-        };
-        for skill_entry in skill_dirs.flatten() {
-            let skill_dir = skill_entry.path();
-            if !skill_dir.is_dir() {
-                continue;
-            }
-            let skill_md = skill_dir.join("SKILL.md");
+        let skill_md = path.join("SKILL.md");
+        if skill_md.is_file() {
             let Ok(content) = std::fs::read_to_string(&skill_md) else {
                 continue;
             };
-            match parse::parse_metadata(&content, &skill_dir) {
+            match parse::parse_metadata(&content, &path) {
                 Ok(mut meta) => {
                     meta.source = Some(SkillSource::Bundled);
                     skills.push(meta);
@@ -126,9 +126,11 @@ fn discover_from_fs(assets_dir: &Path) -> Vec<SkillMetadata> {
                     tracing::warn!(path = %skill_md.display(), %e, "failed to parse bundled SKILL.md");
                 },
             }
+        } else {
+            // No SKILL.md here — recurse into subdirectories (category nesting).
+            discover_from_fs_recursive(&path, skills);
         }
     }
-    skills
 }
 
 /// Read SKILL.md body from the filesystem.
@@ -173,16 +175,21 @@ fn list_sidecars_fs(assets_dir: &Path, name: &str) -> Vec<(String, u64)> {
     out
 }
 
-/// Find a skill directory by name under the two-level `<category>/<skill>/` layout.
-fn find_skill_dir_fs(assets_dir: &Path, name: &str) -> Option<PathBuf> {
-    let categories = std::fs::read_dir(assets_dir).ok()?;
-    for cat_entry in categories.flatten() {
-        if !cat_entry.path().is_dir() {
+/// Recursively find a skill directory by name under the assets tree.
+fn find_skill_dir_fs(dir: &Path, name: &str) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
             continue;
         }
-        let candidate = cat_entry.path().join(name);
-        if candidate.is_dir() && candidate.join("SKILL.md").is_file() {
-            return Some(candidate);
+        let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if dir_name == name && path.join("SKILL.md").is_file() {
+            return Some(path);
+        }
+        // Recurse into subdirectories (category nesting).
+        if let Some(found) = find_skill_dir_fs(&path, name) {
+            return Some(found);
         }
     }
     None
@@ -190,20 +197,24 @@ fn find_skill_dir_fs(assets_dir: &Path, name: &str) -> Option<PathBuf> {
 
 // ── Embedded (release mode) ─────────────────────────────────────────────────
 
-/// Walk the embedded `include_dir!` tree for SKILL.md files.
+/// Recursively walk the embedded `include_dir!` tree for SKILL.md files.
 fn discover_from_embedded() -> Vec<SkillMetadata> {
     let mut skills = Vec::new();
-    for category_dir in BUNDLED_ASSETS.dirs() {
-        for skill_dir in category_dir.dirs() {
-            let Some(skill_md) = skill_dir.get_file("SKILL.md") else {
-                continue;
-            };
+    discover_from_embedded_recursive(&BUNDLED_ASSETS, &mut skills);
+    skills
+}
+
+fn discover_from_embedded_recursive(
+    dir: &include_dir::Dir<'static>,
+    skills: &mut Vec<SkillMetadata>,
+) {
+    for sub_dir in dir.dirs() {
+        if let Some(skill_md) = sub_dir.get_file("SKILL.md") {
             let Ok(content) = std::str::from_utf8(skill_md.contents()) else {
                 continue;
             };
-            // Use a synthetic path for the skill directory (never hits filesystem).
             let synthetic_path =
-                PathBuf::from("__bundled__").join(skill_dir.path().to_string_lossy().as_ref());
+                PathBuf::from("__bundled__").join(sub_dir.path().to_string_lossy().as_ref());
             match parse::parse_metadata(content, &synthetic_path) {
                 Ok(mut meta) => {
                     meta.source = Some(SkillSource::Bundled);
@@ -211,15 +222,17 @@ fn discover_from_embedded() -> Vec<SkillMetadata> {
                 },
                 Err(e) => {
                     tracing::warn!(
-                        path = %skill_dir.path().display(),
+                        path = %sub_dir.path().display(),
                         %e,
                         "failed to parse embedded bundled SKILL.md"
                     );
                 },
             }
+        } else {
+            // No SKILL.md here — recurse into subdirectories.
+            discover_from_embedded_recursive(sub_dir, skills);
         }
     }
-    skills
 }
 
 /// Read SKILL.md body from the embedded directory.
@@ -263,19 +276,26 @@ fn list_sidecars_embedded(name: &str) -> Vec<(String, u64)> {
     out
 }
 
-/// Find a skill subdirectory by name in the embedded two-level layout.
+/// Recursively find a skill subdirectory by name in the embedded tree.
 fn find_skill_dir_embedded(name: &str) -> Option<&'static include_dir::Dir<'static>> {
-    for category_dir in BUNDLED_ASSETS.dirs() {
-        for skill_dir in category_dir.dirs() {
-            // Match on the directory name (last path component).
-            let dir_name = skill_dir
-                .path()
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            if dir_name == name && skill_dir.get_file("SKILL.md").is_some() {
-                return Some(skill_dir);
-            }
+    find_skill_dir_embedded_recursive(&BUNDLED_ASSETS, name)
+}
+
+fn find_skill_dir_embedded_recursive(
+    dir: &'static include_dir::Dir<'static>,
+    name: &str,
+) -> Option<&'static include_dir::Dir<'static>> {
+    for sub_dir in dir.dirs() {
+        let dir_name = sub_dir
+            .path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if dir_name == name && sub_dir.get_file("SKILL.md").is_some() {
+            return Some(sub_dir);
+        }
+        if let Some(found) = find_skill_dir_embedded_recursive(sub_dir, name) {
+            return Some(found);
         }
     }
     None
