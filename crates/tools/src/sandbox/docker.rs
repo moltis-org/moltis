@@ -324,13 +324,17 @@ impl DockerSandbox {
             uuid::Uuid::new_v4()
         ));
 
-        // Re-build with docker-archive output.  BuildKit's layer cache makes
-        // this a near-instant cache hit for the same Dockerfile.
+        // Re-build with docker-archive output.  The `-t` flag embeds the
+        // correct tag in the archive so `podman load` names it correctly.
+        // BuildKit's layer cache makes this a near-instant cache hit for the
+        // same Dockerfile.
         let export_output = tokio::process::Command::new(self.cli)
             .args([
                 "build",
                 "--output",
                 &format!("type=docker,dest={}", tar_path.display()),
+                "-t",
+                tag,
                 "-f",
             ])
             .arg(dockerfile_path)
@@ -366,27 +370,6 @@ impl DockerSandbox {
                 "podman load failed for {tag}: {}",
                 stderr.trim()
             )));
-        }
-
-        // The loaded image may have a different name — re-tag it.
-        let retag_output = tokio::process::Command::new(self.cli)
-            .args(["tag"])
-            .arg(tag)
-            .arg(tag)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .output()
-            .await;
-
-        // Ignore tag errors — the load may have already applied the right name.
-        if let Ok(ref o) = retag_output
-            && !o.status.success()
-        {
-            debug!(
-                tag,
-                stderr = %String::from_utf8_lossy(&o.stderr).trim(),
-                "podman tag after load failed (non-fatal)"
-            );
         }
 
         // Final verification.
@@ -567,12 +550,15 @@ impl Sandbox for DockerSandbox {
                 "podman build succeeded but image missing from store \
                  (likely BuildKit delegation), exporting via tarball"
             );
-            self.export_buildkit_image_to_store(&tag, &dockerfile_path, &tmp_dir)
-                .await?;
+            let export_result = self
+                .export_buildkit_image_to_store(&tag, &dockerfile_path, &tmp_dir)
+                .await;
+            // Clean up temp dir regardless of export result.
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            export_result?;
+        } else {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
         }
-
-        // Clean up temp dir after post-build verification.
-        let _ = std::fs::remove_dir_all(&tmp_dir);
 
         info!(tag, "pre-built sandbox image ready");
         Ok(Some(BuildImageResult { tag, built: true }))
