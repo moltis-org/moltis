@@ -336,14 +336,19 @@ ambiguous.
 
 ## Network policy
 
-By default, sandbox containers have no network access (`no_network = true`).
-For tasks that need filtered internet access, use
-[trusted network mode](trusted-network.md) — a proxy-based allowlist that
-lets containers reach approved domains while blocking everything else.
+The default network policy is `"trusted"`, which routes all container traffic
+through an HTTP CONNECT proxy that only allows requests to domains on the
+`trusted_domains` list. Other modes:
+
+- `"blocked"` — no network access at all (`--network=none`)
+- `"trusted"` (default) — proxy-based domain allowlist
+- `"bypass"` — unrestricted network, no proxy, no audit logging
+
+The legacy `no_network = true` field is equivalent to `network = "blocked"`.
 
 ```toml
 [tools.exec.sandbox]
-network = "trusted"
+network = "trusted"                      # "blocked", "trusted" (default), "bypass"
 trusted_domains = ["registry.npmjs.org", "github.com"]
 ```
 
@@ -354,6 +359,60 @@ network audit log.
 > backends. The restricted-host backend uses `HOME=/tmp` and does not mount
 > persistent storage.
 
+## Sandbox mode and scope
+
+The `mode` field controls which commands run inside the sandbox:
+
+```toml
+[tools.exec.sandbox]
+mode = "all"                      # "all" — all exec commands run in sandbox
+                                 # "off" — no sandboxing, commands run on host
+scope = "session"                 # "session" — per-session sandbox containers
+                                 # "gateway" — shared across sessions
+```
+
+The `workspace_mount` field controls how workspace directories are mounted:
+
+```toml
+workspace_mount = "ro"            # "ro" — read-only (safe)
+                                 # "rw" — read-write
+```
+
+## Custom image
+
+Override the default sandbox image:
+
+```toml
+[tools.exec.sandbox]
+image = "my-custom-sandbox:latest"
+container_prefix = "moltis"       # optional prefix for container names
+```
+
+## Sandbox packages
+
+Packages installed in sandbox containers via `apt-get`. Set to an empty list
+to skip provisioning:
+
+```toml
+[tools.exec.sandbox]
+packages = ["curl", "git", "python3"]
+```
+
+A curated default list is provided covering common CLI tools, language
+runtimes, and utilities for LLM-driven tasks.
+
+## Tool policy overrides
+
+Restrict which tools are available when running inside the sandbox. This acts
+as layer 6 in the policy resolution chain:
+
+```toml
+[tools.exec.sandbox.tools_policy]
+allow = ["exec"]                   # Only allow exec tool inside sandbox
+deny = ["browser"]                 # Deny browser tool inside sandbox
+# profile = "restricted"           # Optional named policy profile
+```
+
 ## Resource limits
 
 ```toml
@@ -361,6 +420,18 @@ network audit log.
 memory_limit = "512M"
 cpu_quota = 1.0
 pids_max = 256
+```
+
+For the WASM backend, per-tool fuel and memory limits can be configured:
+
+```toml
+[tools.exec.sandbox.wasm_tool_limits]
+default_memory = 16777216         # 16 MiB default per tool
+default_fuel = 1000000             # 1M instructions default per tool
+
+[tools.exec.sandbox.wasm_tool_limits.tool_overrides.calc]
+fuel = 100000                     # 100K instructions for calc
+memory = 2097152                   # 2 MiB for calc
 ```
 
 How resource limits are applied depends on the backend:
