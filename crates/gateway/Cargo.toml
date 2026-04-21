@@ -29,6 +29,7 @@ moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
 moltis-cron             = { workspace = true }
 moltis-discord          = { workspace = true }
+moltis-home-assistant   = { optional = true, workspace = true }
 moltis-matrix           = { optional = true, workspace = true }
 moltis-mcp              = { workspace = true }
 moltis-mcp-agent-bridge = { workspace = true }
@@ -92,9 +93,11 @@ which                   = { optional = true, workspace = true }
 [features]
 agent = []
 caldav = ["dep:moltis-caldav"]
+home-assistant = ["dep:moltis-home-assistant"]
 default = [
   "agent",
   "caldav",
+  "home-assistant",
   "code-index-builtin",
   "file-watcher",
   "firecrawl",

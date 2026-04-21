@@ -44,7 +44,8 @@ pub use {
     schema::{
         AgentIdentity, AgentMemoryWriteMode, AgentPreset, AgentsConfig, AuthConfig, CacheRetention,
         CalDavAccountConfig, CalDavConfig, ChannelToolPolicyOverride, ChannelsConfig, ChatConfig,
-        CompactionConfig, CompactionMode, GeoLocation, GroupToolPolicy, MemoryBackend,
+        CompactionConfig, CompactionMode, GeoLocation, GroupToolPolicy, HeartbeatConfig,
+        HomeAssistantAccountConfig, HomeAssistantConfig, MemoryBackend,
         MemoryCitationsMode, MemoryProvider, MemoryScope, MemorySearchMergeStrategy, MemoryStyle,
         MessageQueueMode, MoltisConfig, NgrokConfig, PresetMemoryConfig, PresetToolPolicy,
         PromptMemoryMode, ResolvedIdentity, SessionAccessPolicyConfig, SessionExportMode, Timezone,

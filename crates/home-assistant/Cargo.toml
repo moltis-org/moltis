@@ -1,0 +1,33 @@
+[package]
+edition.workspace    = true
+name                 = "moltis-home-assistant"
+repository.workspace = true
+version.workspace    = true
+description          = "Home Assistant integration for Moltis"
+
+[dependencies]
+anyhow            = { workspace = true }
+async-trait       = { workspace = true }
+bytes             = { workspace = true }
+futures-util      = { workspace = true }
+moltis-agents     = { workspace = true }
+moltis-config     = { workspace = true }
+reqwest           = { workspace = true }
+secrecy           = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+thiserror         = { workspace = true }
+tokio             = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing           = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[features]
+default = ["tracing"]
+metrics = []
+tracing = []
+
+[lints]
+workspace = true
