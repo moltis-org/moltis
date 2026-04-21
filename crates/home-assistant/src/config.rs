@@ -28,6 +28,7 @@ pub fn resolve_instance<'a>(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use secrecy::Secret;
@@ -88,5 +89,62 @@ mod tests {
         );
         let (name, _) = resolve_instance(&config, Some("office")).unwrap();
         assert_eq!(name, "office");
+    }
+
+    #[test]
+    fn resolve_ambiguous_without_default() {
+        let mut config = make_config();
+        config.instances.insert(
+            "office".to_owned(),
+            HomeAssistantAccountConfig {
+                url: Some("http://office:8123".to_owned()),
+                token: Some(Secret::new("office-token".to_owned())),
+                timeout_seconds: 10,
+            },
+        );
+        // Two instances, no default, no explicit choice → error
+        let result = resolve_instance(&config, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("home") && err.contains("office"));
+    }
+
+    #[test]
+    fn resolve_default_instance_overrides_ambiguous() {
+        let mut config = make_config();
+        config.default_instance = Some("office".to_owned());
+        config.instances.insert(
+            "office".to_owned(),
+            HomeAssistantAccountConfig {
+                url: Some("http://office:8123".to_owned()),
+                token: Some(Secret::new("office-token".to_owned())),
+                timeout_seconds: 10,
+            },
+        );
+        let (name, _) = resolve_instance(&config, None).unwrap();
+        assert_eq!(name, "office");
+    }
+
+    #[test]
+    fn resolve_explicit_overrides_default() {
+        let mut config = make_config();
+        config.default_instance = Some("home".to_owned());
+        config.instances.insert(
+            "office".to_owned(),
+            HomeAssistantAccountConfig {
+                url: Some("http://office:8123".to_owned()),
+                token: Some(Secret::new("office-token".to_owned())),
+                timeout_seconds: 10,
+            },
+        );
+        let (name, _) = resolve_instance(&config, Some("office")).unwrap();
+        assert_eq!(name, "office");
+    }
+
+    #[test]
+    fn resolve_empty_instance_list() {
+        let config = HomeAssistantConfig::default();
+        let err = resolve_instance(&config, None).unwrap_err();
+        assert!(err.to_string().contains("none are"));
     }
 }

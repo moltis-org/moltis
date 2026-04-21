@@ -130,8 +130,10 @@ pub enum HaEvent {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn entity_domain_extraction() {
@@ -182,5 +184,121 @@ mod tests {
         let state: EntityState = serde_json::from_str(raw).unwrap();
         assert_eq!(state.entity_id, "sensor.temperature");
         assert_eq!(state.state, "22.5");
+    }
+
+    #[test]
+    fn entity_state_deserialization_minimal() {
+        // HA may return entities with minimal fields
+        let raw = r#"{
+            "entity_id": "binary_sensor.door",
+            "state": "off",
+            "attributes": {},
+            "last_changed": "2026-01-01T00:00:00+00:00",
+            "last_updated": "2026-01-01T00:00:00+00:00",
+            "context": {"id": "x", "parent_id": null, "user_id": null}
+        }"#;
+        let state: EntityState = serde_json::from_str(raw).unwrap();
+        assert_eq!(state.entity_id, "binary_sensor.door");
+        assert!(state.friendly_name().is_none());
+        assert!(state.area_id().is_none());
+    }
+
+    #[test]
+    fn entity_state_with_unavailable() {
+        let raw = r#"{
+            "entity_id": "sensor.broken",
+            "state": "unavailable",
+            "attributes": {"friendly_name": "Broken Sensor"},
+            "last_changed": "2026-01-01T00:00:00+00:00",
+            "last_updated": "2026-01-01T00:00:00+00:00",
+            "context": {}
+        }"#;
+        let state: EntityState = serde_json::from_str(raw).unwrap();
+        assert_eq!(state.state, "unavailable");
+    }
+
+    #[test]
+    fn target_area_builder() {
+        let t = Target::area("kitchen");
+        assert_eq!(t.area_id, vec!["kitchen"]);
+        assert!(t.entity_id.is_empty());
+        assert!(t.device_id.is_empty());
+    }
+
+    #[test]
+    fn target_device_builder() {
+        let t = Target::device("abc123");
+        assert_eq!(t.device_id, vec!["abc123"]);
+        assert!(t.entity_id.is_empty());
+    }
+
+    #[test]
+    fn target_multi_entity() {
+        let t = Target {
+            entity_id: vec!["light.1".into(), "light.2".into()],
+            ..Target::default()
+        };
+        let json = serde_json::to_value(&t).unwrap();
+        assert_eq!(json["entity_id"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn target_default_is_empty() {
+        let t = Target::default();
+        let json = serde_json::to_value(&t).unwrap();
+        // All empty vecs should be skipped
+        assert_eq!(json.as_object().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn entity_state_serialization_roundtrip() {
+        let state = EntityState {
+            entity_id: "switch.test".to_owned(),
+            state: "on".to_owned(),
+            attributes: json!({"friendly_name": "Test"}),
+            last_changed: "2026-01-01T00:00:00+00:00".to_owned(),
+            last_updated: "2026-01-01T00:00:00+00:00".to_owned(),
+            context: json!({"id": "abc"}),
+        };
+        let serialized = serde_json::to_value(&state).unwrap();
+        let deserialized: EntityState = serde_json::from_value(serialized).unwrap();
+        assert_eq!(deserialized.entity_id, "switch.test");
+        assert_eq!(deserialized.state, "on");
+    }
+
+    #[test]
+    fn ha_config_response_deserialization() {
+        let raw = r#"{
+            "version": "2025.2.0",
+            "unit_system": {"length": "km", "mass": "kg"},
+            "location_name": "Cottage",
+            "latitude": 44.5,
+            "longitude": -64.0,
+            "elevation": 10.0,
+            "time_zone": "America/Halifax",
+            "components": ["light", "sensor"],
+            "config_dir": "/config"
+        }"#;
+        let config: HaConfigResponse = serde_json::from_str(raw).unwrap();
+        assert_eq!(config.version, "2025.2.0");
+        assert_eq!(config.location_name, "Cottage");
+        assert_eq!(config.components, vec!["light", "sensor"]);
+    }
+
+    #[test]
+    fn service_description_deserialization() {
+        let raw = r#"{
+            "domain": "climate",
+            "services": {
+                "set_temperature": {
+                    "name": "Set temperature",
+                    "target": {"entity_id": {}},
+                    "fields": {"temperature": {"name": "Temperature"}}
+                }
+            }
+        }"#;
+        let svc: ServiceDescription = serde_json::from_str(raw).unwrap();
+        assert_eq!(svc.domain, "climate");
+        assert!(svc.services["set_temperature"]["name"].is_string());
     }
 }

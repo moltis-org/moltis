@@ -23,7 +23,9 @@ tracing           = { workspace = true }
 urlencoding        = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
+wiremock = "0.6"
+serde_json = { workspace = true }
 
 [features]
 default = ["tracing"]

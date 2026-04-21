@@ -338,3 +338,545 @@ impl HomeAssistantClient {
         resp.bytes().await.map_err(Error::from)
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{header, method, path, query_param},
+    };
+
+    fn test_account(url: &str) -> HomeAssistantAccountConfig {
+        HomeAssistantAccountConfig {
+            url: Some(url.to_owned()),
+            token: Some(secrecy::Secret::new("test-token".to_owned())),
+            timeout_seconds: 10,
+        }
+    }
+
+    fn test_state_json() -> serde_json::Value {
+        json!([{
+            "entity_id": "light.living_room",
+            "state": "on",
+            "attributes": {
+                "friendly_name": "Living Room",
+                "area_id": "living_room"
+            },
+            "last_changed": "2026-01-01T00:00:00+00:00",
+            "last_updated": "2026-01-01T00:00:00+00:00",
+            "context": {"id": "abc", "parent_id": null, "user_id": null}
+        }])
+    }
+
+    fn test_config_json() -> serde_json::Value {
+        json!({
+            "version": "2025.1.0",
+            "unit_system": "metric",
+            "location_name": "Home",
+            "latitude": 45.0,
+            "longitude": -63.0,
+            "elevation": 30.0,
+            "time_zone": "America/Halifax",
+            "components": ["light", "switch", "sensor"],
+            "config_dir": "/config"
+        })
+    }
+
+    fn test_services_json() -> serde_json::Value {
+        json!([{
+            "domain": "light",
+            "services": {
+                "turn_on": {"name": "Turn on", "target": {}},
+                "turn_off": {"name": "Turn off", "target": {}}
+            }
+        }])
+    }
+
+    // --- health_check ---
+
+    #[tokio::test]
+    async fn health_check_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/config"))
+            .and(header("authorization", "Bearer test-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(test_config_json()))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        assert!(client.health_check().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn health_check_unauthorized() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/config"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let err = client.health_check().await.unwrap_err();
+        assert!(matches!(err, Error::Auth(_)));
+    }
+
+    #[tokio::test]
+    async fn health_check_forbidden() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/config"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let err = client.health_check().await.unwrap_err();
+        assert!(matches!(err, Error::Auth(_)));
+    }
+
+    #[tokio::test]
+    async fn health_check_server_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/config"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let err = client.health_check().await.unwrap_err();
+        assert!(matches!(err, Error::Connection(_)));
+    }
+
+    // --- get_config ---
+
+    #[tokio::test]
+    async fn get_config_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/config"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(test_config_json()))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let config = client.get_config().await.unwrap();
+        assert_eq!(config.version, "2025.1.0");
+        assert_eq!(config.location_name, "Home");
+        assert_eq!(config.latitude, 45.0);
+        assert_eq!(config.longitude, -63.0);
+        assert_eq!(config.elevation, 30.0);
+        assert_eq!(config.time_zone, "America/Halifax");
+        assert_eq!(config.components, vec!["light", "switch", "sensor"]);
+    }
+
+    // --- get_states ---
+
+    #[tokio::test]
+    async fn get_states_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/states"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(test_state_json()))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let states = client.get_states().await.unwrap();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].entity_id, "light.living_room");
+        assert_eq!(states[0].state, "on");
+    }
+
+    #[tokio::test]
+    async fn get_states_empty() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/states"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let states = client.get_states().await.unwrap();
+        assert!(states.is_empty());
+    }
+
+    // --- get_state ---
+
+    #[tokio::test]
+    async fn get_state_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/states/light.living_room"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "entity_id": "light.living_room",
+                "state": "on",
+                "attributes": {"friendly_name": "Living Room"},
+                "last_changed": "2026-01-01T00:00:00+00:00",
+                "last_updated": "2026-01-01T00:00:00+00:00",
+                "context": {"id": "abc", "parent_id": null, "user_id": null}
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let state = client.get_state("light.living_room").await.unwrap();
+        assert!(state.is_some());
+        assert_eq!(state.unwrap().entity_id, "light.living_room");
+    }
+
+    #[tokio::test]
+    async fn get_state_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/states/light.nonexistent"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let state = client.get_state("light.nonexistent").await.unwrap();
+        assert!(state.is_none());
+    }
+
+    // --- get_services ---
+
+    #[tokio::test]
+    async fn get_services_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/services"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(test_services_json()))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let services = client.get_services().await.unwrap();
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].domain, "light");
+    }
+
+    // --- call_service ---
+
+    #[tokio::test]
+    async fn call_service_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/light/turn_on"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let result = client
+            .call_service("light", "turn_on", None, None)
+            .await
+            .unwrap();
+        assert_eq!(result, json!([]));
+    }
+
+    #[tokio::test]
+    async fn call_service_with_target() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/light/turn_on"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let target = Target::entity("light.living_room");
+        client
+            .call_service("light", "turn_on", Some(&target), None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn call_service_with_data() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/light/turn_on"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let data = json!({"brightness": 255, "color_temp": 370});
+        client
+            .call_service("light", "turn_on", None, Some(data))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn call_service_rejects_non_object_data() {
+        let client = HomeAssistantClient::new(&test_account("http://localhost:1")).unwrap();
+        let err = client
+            .call_service("light", "turn_on", None, Some(json!("not an object")))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Client(_)));
+    }
+
+    #[tokio::test]
+    async fn call_service_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/light/turn_on"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_json(json!({"error": "entity not found"})),
+            )
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let err = client
+            .call_service("light", "turn_on", None, None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::ServiceCall(_)));
+    }
+
+    // --- turn_on / turn_off / toggle ---
+
+    #[tokio::test]
+    async fn turn_on_delegates_to_service() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/light/turn_on"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        assert!(client.turn_on("light.living_room").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn turn_off_delegates_to_service() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/light/turn_off"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        assert!(client.turn_off("light.living_room").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn toggle_delegates_to_service() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/light/toggle"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        assert!(client.toggle("light.living_room").await.is_ok());
+    }
+
+    // --- fire_event ---
+
+    #[tokio::test]
+    async fn fire_event_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/events/custom_event"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"message": "ok"})))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        assert!(client
+            .fire_event("custom_event", Some(json!({"key": "value"})))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn fire_event_no_data() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/events/custom_event"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        assert!(client.fire_event("custom_event", None).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn fire_event_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/events/custom_event"))
+            .respond_with(ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let err = client.fire_event("custom_event", None).await.unwrap_err();
+        assert!(matches!(err, Error::Event(_)));
+    }
+
+    // --- get_history ---
+
+    #[tokio::test]
+    async fn get_history_success() {
+        let server = MockServer::start().await;
+        // HA history API: GET /api/history/period/<start_time>?filter_entity_id=...
+        Mock::given(method("GET"))
+            .and(path("/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00"))
+            .and(query_param("filter_entity_id", "sensor.temperature"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
+                "entity_id": "sensor.temperature",
+                "state": "22.5",
+                "attributes": {},
+                "last_changed": "2026-01-01T00:00:00+00:00",
+                "last_updated": "2026-01-01T00:00:00+00:00",
+                "context": {}
+            }])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let history = client
+            .get_history("sensor.temperature", "2026-01-01T00:00:00+00:00", None)
+            .await
+            .unwrap();
+        assert_eq!(history.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn get_history_with_end_time() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let history = client
+            .get_history(
+                "sensor.temperature",
+                "2026-01-01T00:00:00+00:00",
+                Some("2026-01-02T00:00:00+00:00"),
+            )
+            .await
+            .unwrap();
+        assert!(history.is_empty());
+    }
+
+    // --- camera_proxy ---
+
+    #[tokio::test]
+    async fn camera_proxy_success() {
+        let server = MockServer::start().await;
+        let fake_image = bytes::Bytes::from_static(b"\x89PNG\r\n\x1a\nfake");
+        Mock::given(method("GET"))
+            .and(path("/api/camera_proxy/camera.front_door"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(fake_image.clone()))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let bytes = client.camera_proxy("camera.front_door").await.unwrap();
+        assert_eq!(bytes, fake_image);
+    }
+
+    #[tokio::test]
+    async fn camera_proxy_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/camera_proxy/camera.nonexistent"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let err = client.camera_proxy("camera.nonexistent").await.unwrap_err();
+        assert!(matches!(err, Error::Camera(_)));
+    }
+
+    // --- construction ---
+
+    #[test]
+    fn new_rejects_missing_url() {
+        let account = HomeAssistantAccountConfig {
+            url: None,
+            token: Some(secrecy::Secret::new("tok".to_owned())),
+            timeout_seconds: 10,
+        };
+        assert!(HomeAssistantClient::new(&account).is_err());
+    }
+
+    #[test]
+    fn new_rejects_missing_token() {
+        let account = HomeAssistantAccountConfig {
+            url: Some("http://localhost:8123".to_owned()),
+            token: None,
+            timeout_seconds: 10,
+        };
+        assert!(HomeAssistantClient::new(&account).is_err());
+    }
+
+    #[test]
+    fn new_strips_trailing_slash() {
+        let client = HomeAssistantClient::new(&test_account("http://localhost:8123/")).unwrap();
+        assert_eq!(client.base_url, "http://localhost:8123");
+    }
+
+    // --- extract_domain helper ---
+
+    #[test]
+    fn extract_domain_standard() {
+        assert_eq!(extract_domain("light.living_room"), "light");
+        assert_eq!(extract_domain("sensor.temperature_2"), "sensor");
+        assert_eq!(extract_domain("switch.kitchen_fan"), "switch");
+    }
+
+    #[test]
+    fn extract_domain_edge_cases() {
+        assert_eq!(extract_domain("noperiod"), "noperiod");
+        assert_eq!(extract_domain(""), "");
+        assert_eq!(extract_domain("homeassistant.hello"), "homeassistant");
+    }
+
+    // --- check_auth_status helper ---
+
+    #[test]
+    fn check_auth_status_ok() {
+        assert!(check_auth_status(reqwest::StatusCode::OK).is_ok());
+        assert!(check_auth_status(reqwest::StatusCode::NO_CONTENT).is_ok());
+        assert!(check_auth_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR).is_ok());
+    }
+
+    #[test]
+    fn check_auth_status_401() {
+        assert!(matches!(
+            check_auth_status(reqwest::StatusCode::UNAUTHORIZED),
+            Err(Error::Auth(_))
+        ));
+    }
+
+    #[test]
+    fn check_auth_status_403() {
+        assert!(matches!(
+            check_auth_status(reqwest::StatusCode::FORBIDDEN),
+            Err(Error::Auth(_))
+        ));
+    }
+}

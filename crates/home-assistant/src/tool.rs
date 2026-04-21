@@ -337,3 +337,476 @@ impl AgentTool for HomeAssistantTool {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::types::EntityState;
+    use moltis_config::HomeAssistantAccountConfig;
+    use serde_json::json;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    fn make_tool(server: &MockServer) -> HomeAssistantTool {
+        let mut config = HomeAssistantConfig::default();
+        config.enabled = true;
+        config.instances.insert(
+            "home".to_owned(),
+            HomeAssistantAccountConfig {
+                url: Some(server.uri()),
+                token: Some(secrecy::Secret::new("test-token".to_owned())),
+                timeout_seconds: 10,
+            },
+        );
+        HomeAssistantTool::from_config(&config).unwrap()
+    }
+
+    fn state_list_json() -> Value {
+        json!([
+            {
+                "entity_id": "light.living_room",
+                "state": "on",
+                "attributes": {"friendly_name": "Living Room", "area_id": "living"},
+                "last_changed": "2026-01-01T00:00:00+00:00",
+                "last_updated": "2026-01-01T00:00:00+00:00",
+                "context": {"id": "a", "parent_id": null, "user_id": null}
+            },
+            {
+                "entity_id": "light.bedroom",
+                "state": "off",
+                "attributes": {"friendly_name": "Bedroom", "area_id": "bedroom"},
+                "last_changed": "2026-01-01T00:00:00+00:00",
+                "last_updated": "2026-01-01T00:00:00+00:00",
+                "context": {"id": "b", "parent_id": null, "user_id": null}
+            },
+            {
+                "entity_id": "switch.kitchen",
+                "state": "on",
+                "attributes": {"friendly_name": "Kitchen Fan", "area_id": "kitchen"},
+                "last_changed": "2026-01-01T00:00:00+00:00",
+                "last_updated": "2026-01-01T00:00:00+00:00",
+                "context": {"id": "c", "parent_id": null, "user_id": null}
+            },
+            {
+                "entity_id": "sensor.temperature",
+                "state": "22.5",
+                "attributes": {"friendly_name": "Temp", "unit_of_measurement": "°C"},
+                "last_changed": "2026-01-01T00:00:00+00:00",
+                "last_updated": "2026-01-01T00:00:00+00:00",
+                "context": {"id": "d", "parent_id": null, "user_id": null}
+            }
+        ])
+    }
+
+    fn config_json() -> Value {
+        json!({
+            "version": "2025.1.0",
+            "unit_system": "metric",
+            "location_name": "Home",
+            "latitude": 45.0,
+            "longitude": -63.0,
+            "elevation": 30.0,
+            "time_zone": "America/Halifax",
+            "components": ["light", "switch", "sensor"],
+            "config_dir": "/config"
+        })
+    }
+
+    // --- from_config ---
+
+    #[test]
+    fn from_config_returns_none_when_disabled() {
+        let config = HomeAssistantConfig::default();
+        assert!(HomeAssistantTool::from_config(&config).is_none());
+    }
+
+    #[test]
+    fn from_config_returns_none_when_empty_instances() {
+        let mut config = HomeAssistantConfig::default();
+        config.enabled = true;
+        assert!(HomeAssistantTool::from_config(&config).is_none());
+    }
+
+    // --- filter_entities ---
+
+    #[test]
+    fn filter_entities_no_filter() {
+        let states: Vec<EntityState> =
+            serde_json::from_value(state_list_json()).unwrap();
+        let result = HomeAssistantTool::filter_entities(&states, None, None);
+        assert_eq!(result.len(), 4);
+    }
+
+    #[test]
+    fn filter_entities_by_domain() {
+        let states: Vec<EntityState> =
+            serde_json::from_value(state_list_json()).unwrap();
+        let result = HomeAssistantTool::filter_entities(&states, Some("light"), None);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn filter_entities_by_area() {
+        let states: Vec<EntityState> =
+            serde_json::from_value(state_list_json()).unwrap();
+        let result = HomeAssistantTool::filter_entities(&states, None, Some("living"));
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn filter_entities_by_domain_and_area() {
+        let states: Vec<EntityState> =
+            serde_json::from_value(state_list_json()).unwrap();
+        let result = HomeAssistantTool::filter_entities(&states, Some("light"), Some("bedroom"));
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn filter_entities_no_match() {
+        let states: Vec<EntityState> =
+            serde_json::from_value(state_list_json()).unwrap();
+        let result = HomeAssistantTool::filter_entities(&states, Some("climate"), None);
+        assert!(result.is_empty());
+    }
+
+    // --- tool metadata ---
+
+    #[tokio::test]
+    async fn tool_name() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        assert_eq!(tool.name(), "home_assistant");
+    }
+
+    #[tokio::test]
+    async fn tool_description_contains_operations() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let desc = tool.description();
+        assert!(desc.contains("list_entities"));
+        assert!(desc.contains("turn_on"));
+        assert!(desc.contains("call_service"));
+    }
+
+    #[tokio::test]
+    async fn tool_schema_has_required_operation() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let schema = tool.parameters_schema();
+        let required = schema.get("required").unwrap().as_array().unwrap();
+        assert!(required.contains(&json!("operation")));
+    }
+
+    #[tokio::test]
+    async fn tool_schema_has_all_operations() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let schema = tool.parameters_schema();
+        let ops = schema
+            .pointer("/properties/operation/enum")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert!(ops.contains(&json!("list_entities")));
+        assert!(ops.contains(&json!("get_state")));
+        assert!(ops.contains(&json!("turn_on")));
+        assert!(ops.contains(&json!("turn_off")));
+        assert!(ops.contains(&json!("toggle")));
+        assert!(ops.contains(&json!("call_service")));
+        assert!(ops.contains(&json!("get_config")));
+    }
+
+    // --- execute: list_entities ---
+
+    #[tokio::test]
+    async fn execute_list_entities() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/states"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(state_list_json()))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({"operation": "list_entities"}))
+            .await
+            .unwrap();
+        assert_eq!(result["count"], 4);
+        assert_eq!(result["entities"].as_array().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn execute_list_entities_filtered_by_domain() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/states"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(state_list_json()))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({"operation": "list_entities", "domain": "light"}))
+            .await
+            .unwrap();
+        assert_eq!(result["count"], 2);
+    }
+
+    // --- execute: get_state ---
+
+    #[tokio::test]
+    async fn execute_get_state_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/states/light.living_room"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "entity_id": "light.living_room",
+                "state": "on",
+                "attributes": {"friendly_name": "Living Room"},
+                "last_changed": "2026-01-01T00:00:00+00:00",
+                "last_updated": "2026-01-01T00:00:00+00:00",
+                "context": {"id": "a", "parent_id": null, "user_id": null}
+            })))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({"operation": "get_state", "entity_id": "light.living_room"}))
+            .await
+            .unwrap();
+        assert_eq!(result["entity_id"], "light.living_room");
+        assert_eq!(result["state"], "on");
+    }
+
+    #[tokio::test]
+    async fn execute_get_state_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/states/light.nonexistent"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({"operation": "get_state", "entity_id": "light.nonexistent"}))
+            .await
+            .unwrap();
+        assert_eq!(result["found"], false);
+    }
+
+    // --- execute: turn_on / turn_off / toggle ---
+
+    #[tokio::test]
+    async fn execute_turn_on() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/light/turn_on"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({"operation": "turn_on", "entity_id": "light.living_room"}))
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "ok");
+        assert_eq!(result["entity_id"], "light.living_room");
+    }
+
+    #[tokio::test]
+    async fn execute_turn_off() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/light/turn_off"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({"operation": "turn_off", "entity_id": "light.bedroom"}))
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn execute_toggle() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/switch/toggle"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({"operation": "toggle", "entity_id": "switch.kitchen"}))
+            .await
+            .unwrap();
+        assert_eq!(result["action"], "toggle");
+        assert_eq!(result["status"], "ok");
+    }
+
+    // --- execute: call_service ---
+
+    #[tokio::test]
+    async fn execute_call_service() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/homeassistant/turn_off"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({
+                "operation": "call_service",
+                "service_domain": "homeassistant",
+                "service": "turn_off"
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result, json!([]));
+    }
+
+    #[tokio::test]
+    async fn execute_call_service_with_area_target() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/light/turn_on"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        tool.execute(json!({
+            "operation": "call_service",
+            "service_domain": "light",
+            "service": "turn_on",
+            "area_id": "living"
+        }))
+        .await
+        .unwrap();
+    }
+
+    // --- execute: get_config ---
+
+    #[tokio::test]
+    async fn execute_get_config() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/config"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(config_json()))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({"operation": "get_config"}))
+            .await
+            .unwrap();
+        assert_eq!(result["version"], "2025.1.0");
+        assert_eq!(result["location_name"], "Home");
+        // config_dir must be redacted
+        assert!(result.get("config_dir").is_none());
+    }
+
+    // --- execute: error cases ---
+
+    #[tokio::test]
+    async fn execute_unknown_operation() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let err = tool
+            .execute(json!({"operation": "destroy_house"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown operation"));
+    }
+
+    #[tokio::test]
+    async fn execute_missing_operation() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let err = tool.execute(json!({})).await.unwrap_err();
+        assert!(err.to_string().contains("missing 'operation'"));
+    }
+
+    #[tokio::test]
+    async fn execute_turn_on_missing_entity_id() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let err = tool
+            .execute(json!({"operation": "turn_on"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("missing 'entity_id'"));
+    }
+
+    #[tokio::test]
+    async fn execute_get_state_missing_entity_id() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let err = tool
+            .execute(json!({"operation": "get_state"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("missing 'entity_id'"));
+    }
+
+    #[tokio::test]
+    async fn execute_call_service_missing_domain() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let err = tool
+            .execute(json!({"operation": "call_service", "service": "turn_on"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("missing 'service_domain'"));
+    }
+
+    #[tokio::test]
+    async fn execute_call_service_missing_service() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let err = tool
+            .execute(json!({"operation": "call_service", "service_domain": "light"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("missing 'service'"));
+    }
+
+    // --- warmup ---
+
+    #[tokio::test]
+    async fn warmup_preconnects_clients() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        tool.warmup().await.unwrap();
+        // After warmup, the client should be cached (no HTTP call needed)
+        // The next call should work without hitting the mock server again
+        // (we just verify warmup itself doesn't fail)
+    }
+
+    // --- instance resolution ---
+
+    #[tokio::test]
+    async fn execute_with_unknown_instance_errors() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let err = tool
+            .execute(json!({"operation": "get_config", "instance": "nonexistent"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no HA instance"));
+    }
+}

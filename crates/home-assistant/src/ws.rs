@@ -256,3 +256,256 @@ impl HaWebSocket {
         }
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tokio::net::TcpListener;
+
+    /// Start a minimal HA-compatible WS server on a random port.
+    ///
+    /// Sends `auth_required` → expects `auth` → responds `auth_ok`.
+    /// Then echoes back any text messages as events.
+    async fn start_mock_ha_ws() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    let (mut write, mut read) = ws.split();
+
+                    // Send auth_required
+                    let auth_required = json!({"type": "auth_required", "ha_version": "2025.1"});
+                    write
+                        .send(Message::Text(auth_required.to_string().into()))
+                        .await
+                        .unwrap();
+
+                    // Wait for auth
+                    match read.next().await {
+                        Some(Ok(Message::Text(text))) => {
+                            let val: Value = serde_json::from_str(&text).unwrap();
+                            if val.get("type").and_then(|t| t.as_str()) == Some("auth") {
+                                let auth_ok = json!({"type": "auth_ok", "ha_version": "2025.1"});
+                                write
+                                    .send(Message::Text(auth_ok.to_string().into()))
+                                    .await
+                                    .unwrap();
+                            } else {
+                                let auth_invalid = json!({"type": "auth_invalid", "message": "bad token"});
+                                write
+                                    .send(Message::Text(auth_invalid.to_string().into()))
+                                    .await
+                                    .unwrap();
+                                return;
+                            }
+                        }
+                        _ => return,
+                    }
+
+                    // Echo incoming messages back as-is (simulates event bus)
+                    while let Some(msg) = read.next().await {
+                        match msg {
+                            Ok(Message::Text(text)) => {
+                                let _ = write.send(Message::Text(text)).await;
+                            }
+                            Ok(Message::Ping(data)) => {
+                                let _ = write.send(Message::Pong(data)).await;
+                            }
+                            Ok(Message::Close(_)) | Err(_) => break,
+                            _ => {}
+                        }
+                    }
+                });
+            }
+        });
+
+        port
+    }
+
+    /// Start a mock HA WS server that closes before auth_ok.
+    async fn start_mock_ha_ws_auth_reject() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    let (mut write, _read) = ws.split();
+
+                    let auth_required = json!({"type": "auth_required"});
+                    write
+                        .send(Message::Text(auth_required.to_string().into()))
+                        .await
+                        .unwrap();
+                    // Close without sending auth_ok
+                    drop(write);
+                });
+            }
+        });
+
+        port
+    }
+
+    #[tokio::test]
+    async fn subscribe_authenticates_successfully() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        // If subscribe returns Ok, auth handshake succeeded
+        let rx = ws.subscribe().await;
+        assert!(rx.is_ok());
+    }
+
+    #[tokio::test]
+    async fn call_command_returns_not_implemented() {
+        let ws = HaWebSocket::new("ws://127.0.0.1:1", "token");
+        let err = ws.call_command(json!({"type": "call_service"})).await;
+        assert!(err.is_err());
+        assert!(matches!(err.unwrap_err(), Error::WebSocket(_)));
+    }
+
+    #[tokio::test]
+    async fn new_generates_unique_ids() {
+        let ws = HaWebSocket::new("ws://localhost:1", "token");
+        let id1 = ws.next_id();
+        let id2 = ws.next_id();
+        let id3 = ws.next_id();
+        assert!(id1 < id2);
+        assert!(id2 < id3);
+    }
+
+    #[tokio::test]
+    async fn subscribe_rejects_bad_auth() {
+        let port = start_mock_ha_ws_auth_reject().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "bad-token",
+        );
+
+        let result = ws.subscribe().await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn dispatch_event_state_changed() {
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            HaWebSocket::dispatch_event(
+                &json!({
+                    "type": "event",
+                    "event": {
+                        "event_type": "state_changed",
+                        "data": {
+                            "entity_id": "light.living_room",
+                            "old_state": {"state": "off"},
+                            "new_state": {"state": "on"}
+                        }
+                    }
+                }),
+                &tx,
+            )
+            .await;
+
+            let event = rx.recv().await.unwrap();
+            match event {
+                HaEvent::StateChanged { entity_id, old_state, new_state } => {
+                    assert_eq!(entity_id, "light.living_room");
+                    assert_eq!(old_state.unwrap()["state"], "off");
+                    assert_eq!(new_state.unwrap()["state"], "on");
+                }
+                other => panic!("expected StateChanged, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn dispatch_event_trigger() {
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            HaWebSocket::dispatch_event(
+                &json!({
+                    "type": "event",
+                    "event": {
+                        "event_type": "trigger",
+                        "variables": {"trigger_id": "t1", "platform": "state"}
+                    }
+                }),
+                &tx,
+            )
+            .await;
+
+            let event = rx.recv().await.unwrap();
+            match event {
+                HaEvent::Trigger { variables } => {
+                    assert_eq!(variables["trigger_id"], "t1");
+                }
+                other => panic!("expected Trigger, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn dispatch_event_unknown_event_type_becomes_raw() {
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            HaWebSocket::dispatch_event(
+                &json!({
+                    "type": "event",
+                    "event": {
+                        "event_type": "custom_event",
+                        "data": {"message": "hello"}
+                    }
+                }),
+                &tx,
+            )
+            .await;
+
+            let event = rx.recv().await.unwrap();
+            assert!(matches!(event, HaEvent::Raw(_)));
+        });
+    }
+
+    #[test]
+    fn dispatch_event_non_event_type_becomes_raw() {
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            HaWebSocket::dispatch_event(
+                &json!({"type": "something_else", "data": 42}),
+                &tx,
+            )
+            .await;
+
+            let event = rx.recv().await.unwrap();
+            assert!(matches!(event, HaEvent::Raw(_)));
+        });
+    }
+
+    #[test]
+    fn dispatch_event_pong_is_noop() {
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            HaWebSocket::dispatch_event(&json!({"type": "pong"}), &tx).await;
+            // Pong should not produce any event
+            assert!(rx.try_recv().is_err());
+        });
+    }
+}
