@@ -185,25 +185,30 @@ pub struct CompactionConfig {
     #[serde(default = "default_compaction_tool_prune_chars")]
     pub tool_prune_char_threshold: u32,
 
-    /// Provider-qualified model identifier reserved for the auxiliary-
-    /// model subsystem (e.g. `"openrouter/google/gemini-2.5-flash"`).
+    /// Provider-qualified model identifier used for LLM-backed compaction
+    /// (e.g. `"openrouter/google/gemini-2.5-flash"`).
     ///
-    /// **Not wired yet** — tracked by beads issue `moltis-8me`. Until
-    /// that lands, `structured` and `llm_replace` always use the
-    /// session's primary provider regardless of this value. If you set
-    /// it today the strategy emits a one-shot WARN naming the field
-    /// and the tracking issue so you're not billed for the wrong
-    /// model without warning.
+    /// When set, `structured` and `llm_replace` modes route their summary
+    /// call to this provider instead of the session's primary model. The
+    /// provider is resolved once at the start of each agent turn via
+    /// [`ProviderRegistry::get()`]; if the model ID is not found in the
+    /// registry a one-shot `WARN` is emitted and the primary provider is
+    /// used instead (silent fallback, no error).
+    ///
+    /// The summary model's `context_window()` is also used to size the
+    /// head/tail boundary computation, so the compacted history fits the
+    /// model that will consume it on the next turn.
     #[serde(default)]
     pub summary_model: Option<String>,
 
     /// Maximum output tokens reserved for LLM summary calls. Set to `0`
     /// to accept the provider default. Default: `4096`.
     ///
-    /// **Not wired yet** — tracked by beads issue `moltis-8me`. Until
-    /// that lands, the streaming summary call runs with whatever the
-    /// provider's default max-tokens is. Setting this to a non-default
-    /// value triggers the same one-shot WARN as `summary_model`.
+    /// **Not wired yet** — `LlmProvider::stream()` does not expose a
+    /// `max_tokens` parameter. The streaming summary call runs with
+    /// whatever the provider's default max-tokens is. This field exists
+    /// for forward-compatibility once the provider trait gains that
+    /// knob.
     #[serde(default = "default_compaction_max_summary_tokens")]
     pub max_summary_tokens: u32,
 
