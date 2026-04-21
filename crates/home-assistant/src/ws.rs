@@ -29,6 +29,7 @@ use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::error::{Error, Result};
@@ -44,6 +45,9 @@ type Pending = oneshot::Sender<Result<Value>>;
 /// Shared write handle behind a mutex for sending WS messages.
 type WriteHandle = futures_util::stream::SplitSink<WsStream, Message>;
 
+/// Default interval between HA WebSocket pings.
+const HEARTBEAT_INTERVAL_SECS: u64 = 30;
+
 /// An active WebSocket connection to Home Assistant.
 ///
 /// Holds the event receiver and a shared write handle for sending commands.
@@ -54,6 +58,12 @@ type WriteHandle = futures_util::stream::SplitSink<WsStream, Message>;
 /// `recv()` returns `None` when the connection is closed (server shutdown,
 /// network error). There is no automatic reconnect — create a new
 /// [`HaConnection`] via [`HaWebSocket::subscribe`] to re-establish.
+///
+/// # Heartbeat
+///
+/// A background task sends application-level pings every 30 seconds to
+/// keep the connection alive. The heartbeat is automatically cancelled when
+/// `HaConnection` is dropped.
 pub struct HaConnection {
     /// Receives [`HaEvent`] from the background reader task.
     events: mpsc::Receiver<HaEvent>,
@@ -63,6 +73,8 @@ pub struct HaConnection {
     next_id: Arc<AtomicU64>,
     /// Pending request-response map: message id → sender.
     pending: Arc<Mutex<HashMap<u64, Pending>>>,
+    /// Handle for the background heartbeat task. Aborted on drop.
+    _heartbeat: JoinHandle<()>,
 }
 
 impl HaConnection {
@@ -125,26 +137,26 @@ impl HaConnection {
         }
     }
 
-    /// Subscribe to entity state changes via `subscribe_entities`.
+    /// Subscribe to entity state changes.
     ///
-    /// Pass `entity_ids` as `Some(&[...])` to filter specific entities,
+    /// This is a convenience wrapper around [`subscribe_events`] that
+    /// subscribes to `"state_changed"` events, which is how HA delivers
+    /// entity state updates over WebSocket.
+    ///
+    /// Note: there is no HA WebSocket command named `subscribe_entities` —
+    /// that name is reserved for the HA frontend's internal API. The correct
+    /// public API command is `subscribe_events` with `event_type: "state_changed"`.
+    ///
+    /// Pass `entity_ids` as `Some(&[...])` to subscribe to specific entities,
     /// or `None` to subscribe to all entity changes.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
     pub async fn subscribe_entities(
         &self,
         entity_ids: Option<&[&str]>,
     ) -> Result<()> {
-        let mut payload = serde_json::Map::new();
-        payload.insert("type".to_owned(), Value::String("subscribe_entities".to_owned()));
-        if let Some(ids) = entity_ids {
-            if !ids.is_empty() {
-                let arr: Vec<Value> = ids.iter().map(|id| Value::String(id.to_string())).collect();
-                payload.insert("entity_ids".to_owned(), Value::Array(arr));
-            }
-        }
-
-        self.call_command(Value::Object(payload)).await?;
-        Ok(())
+        // HA does not support entity_id filtering via subscribe_events.
+        // Use subscribe_events with "state_changed" and filter client-side.
+        self.subscribe_events(Some("state_changed")).await
     }
 
     /// Subscribe to the HA event bus for a specific event type.
@@ -153,12 +165,28 @@ impl HaConnection {
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
     pub async fn subscribe_events(&self, event_type: Option<&str>) -> Result<()> {
         let mut payload = serde_json::Map::new();
-        payload.insert("type".to_owned(), Value::String("subscribe_events".to_owned()));
+        payload.insert(
+            "type".to_owned(),
+            Value::String("subscribe_events".to_owned()),
+        );
         if let Some(et) = event_type {
             payload.insert("event_type".to_owned(), Value::String(et.to_owned()));
         }
 
         self.call_command(Value::Object(payload)).await?;
+        Ok(())
+    }
+
+    /// Send an application-level ping and wait for the pong response.
+    ///
+    /// HA expects periodic pings to keep the connection alive. This sends
+    /// `"type": "ping"` and waits for `"type": "pong"`.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
+    pub async fn ping(&self) -> Result<()> {
+        let result = self
+            .call_command(serde_json::json!({"type": "ping"}))
+            .await?;
+        // pong responses have no payload (result is null)
         Ok(())
     }
 }
@@ -209,12 +237,47 @@ impl HaWebSocket {
         ));
 
         Self::spawn_reader(tx, read, Arc::clone(&pending));
+        let _heartbeat = Self::spawn_heartbeat(Arc::clone(&write));
 
         Ok(HaConnection {
             events,
             write,
             next_id,
             pending,
+            _heartbeat,
+        })
+    }
+
+    /// Spawn a background task that sends periodic pings to keep the
+    /// connection alive. Exits silently when the write handle fails
+    /// (connection closed).
+    fn spawn_heartbeat(write: Arc<Mutex<WriteHandle>>) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+                HEARTBEAT_INTERVAL_SECS,
+            ));
+            // Don't bombard if we fall behind
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                interval.tick().await;
+                let ping_msg = serde_json::json!({"type": "ping"});
+                let Ok(text) = serde_json::to_string(&ping_msg) else {
+                    break;
+                };
+                let mut w = write.lock().await;
+                if w
+                    .send(Message::Text(text.into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                drop(w);
+
+                #[cfg(feature = "tracing")]
+                tracing::debug!("HA WebSocket ping sent");
+            }
         })
     }
 
@@ -591,6 +654,95 @@ mod tests {
             .subscribe_entities(Some(&["light.living_room", "sensor.temperature"]))
             .await;
         assert!(result.is_ok());
+    }
+
+    /// Start a mock HA WS server that records command types received.
+    async fn start_mock_ha_ws_recording() -> (u16, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let commands: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+        let cmd_clone = Arc::clone(&commands);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let cmd = Arc::clone(&cmd_clone);
+                tokio::spawn(async move {
+                    let ws = tokio_tungstenite::accept_async(stream)
+                        .await
+                        .expect("mock WS accept (recording)");
+                    let (mut write, mut read) = ws.split();
+
+                    let auth_required = json!({"type": "auth_required", "ha_version": "2025.1"});
+                    let _ = write
+                        .send(Message::Text(auth_required.to_string().into()))
+                        .await;
+
+                    match read.next().await {
+                        Some(Ok(Message::Text(text))) => {
+                            let val: Value = serde_json::from_str(&text).unwrap_or_default();
+                            if val
+                                .get("type")
+                                .and_then(|t| t.as_str())
+                                == Some("auth")
+                            {
+                                let auth_ok = json!({"type": "auth_ok", "ha_version": "2025.1"});
+                                let _ = write
+                                    .send(Message::Text(auth_ok.to_string().into()))
+                                    .await;
+                            } else {
+                                return;
+                            }
+                        }
+                        _ => return,
+                    }
+
+                    while let Some(msg) = read.next().await {
+                        if let Ok(Message::Text(text)) = msg {
+                            if let Ok(val) = serde_json::from_str::<Value>(&text) {
+                                if let Some(cmd_type) =
+                                    val.get("type").and_then(|t| t.as_str())
+                                {
+                                    cmd.lock().await.push(cmd_type.to_owned());
+                                }
+                                if let Some(id) = val.get("id") {
+                                    let response = json!({
+                                        "id": id,
+                                        "type": "result",
+                                        "success": true,
+                                        "result": null
+                                    });
+                                    let _ = write
+                                        .send(Message::Text(response.to_string().into()))
+                                        .await;
+                                }
+                            }
+                        } else if let Ok(Message::Close(_)) | Err(_) = msg {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+
+        (port, commands)
+    }
+
+    #[tokio::test]
+    async fn subscribe_entities_sends_subscribe_events_state_changed() {
+        let (port, commands) = start_mock_ha_ws_recording().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        conn.subscribe_entities(None).await.unwrap();
+
+        let cmds = commands.lock().await;
+        assert!(
+            cmds.iter().any(|c| c == "subscribe_events"),
+            "expected subscribe_events command, got: {cmds:?}"
+        );
     }
 
     #[tokio::test]

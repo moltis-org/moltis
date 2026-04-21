@@ -156,6 +156,10 @@ impl HomeAssistantClient {
     /// The `data` is passed directly as the JSON body — HA parses it as
     /// `service_data`. Use the `target` field to target by area, device,
     /// or label instead of listing individual entity IDs.
+    ///
+    /// Set `return_response` to `true` for services that return data
+    /// (e.g. `weather.get_forecasts`). The response will include
+    /// `changed_states` and `service_response` fields.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(domain, service)))]
     pub async fn call_service(
         &self,
@@ -163,6 +167,7 @@ impl HomeAssistantClient {
         service: &str,
         target: Option<&Target>,
         data: Option<serde_json::Value>,
+        return_response: bool,
     ) -> Result<serde_json::Value> {
         let (_, auth) = self.auth_header();
 
@@ -208,12 +213,17 @@ impl HomeAssistantClient {
             }
         }
 
+        let mut url = format!(
+            "{}/api/services/{domain}/{service}",
+            self.base_url
+        );
+        if return_response {
+            url.push_str("?return_response");
+        }
+
         let resp = self
             .http
-            .post(format!(
-                "{}/api/services/{domain}/{service}",
-                self.base_url
-            ))
+            .post(&url)
             .header("Authorization", &auth)
             .header("Content-Type", "application/json")
             .json(&body)
@@ -243,7 +253,7 @@ impl HomeAssistantClient {
     pub async fn turn_on(&self, entity_id: &str) -> Result<()> {
         let domain = extract_domain(entity_id);
         let target = Target::entity(entity_id);
-        self.call_service(domain, "turn_on", Some(&target), None)
+        self.call_service(domain, "turn_on", Some(&target), None, false)
             .await?;
         Ok(())
     }
@@ -253,7 +263,7 @@ impl HomeAssistantClient {
     pub async fn turn_off(&self, entity_id: &str) -> Result<()> {
         let domain = extract_domain(entity_id);
         let target = Target::entity(entity_id);
-        self.call_service(domain, "turn_off", Some(&target), None)
+        self.call_service(domain, "turn_off", Some(&target), None, false)
             .await?;
         Ok(())
     }
@@ -263,12 +273,15 @@ impl HomeAssistantClient {
     pub async fn toggle(&self, entity_id: &str) -> Result<()> {
         let domain = extract_domain(entity_id);
         let target = Target::entity(entity_id);
-        self.call_service(domain, "toggle", Some(&target), None)
+        self.call_service(domain, "toggle", Some(&target), None, false)
             .await?;
         Ok(())
     }
 
     /// Fire a custom event on the HA event bus.
+    ///
+    /// The `event_data` value is sent as the raw JSON body per the HA REST API spec.
+    /// Pass `None` to fire with no data payload.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(event_type)))]
     pub async fn fire_event(
         &self,
@@ -276,10 +289,7 @@ impl HomeAssistantClient {
         event_data: Option<serde_json::Value>,
     ) -> Result<()> {
         let (_, auth) = self.auth_header();
-        let mut body = serde_json::Map::new();
-        if let Some(d) = event_data {
-            body.insert("event_data".to_owned(), d);
-        }
+        let body = event_data.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
         let resp = self
             .http
@@ -373,6 +383,20 @@ mod tests {
         Mock, MockServer, ResponseTemplate,
         matchers::{header, method, path, query_param},
     };
+
+    /// Custom wiremock matcher for query parameters that are flags (no value).
+    struct QueryFlag {
+        key: &'static str,
+    }
+
+    impl wiremock::Match for QueryFlag {
+        fn matches(&self, request: &wiremock::Request) -> bool {
+            request
+                .url
+                .query_pairs()
+                .any(|(k, _)| k == self.key)
+        }
+    }
 
     fn test_account(url: &str) -> HomeAssistantAccountConfig {
         HomeAssistantAccountConfig {
@@ -600,7 +624,7 @@ mod tests {
 
         let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
         let result = client
-            .call_service("light", "turn_on", None, None)
+            .call_service("light", "turn_on", None, None, false)
             .await
             .unwrap();
         assert_eq!(result, json!([]));
@@ -618,7 +642,7 @@ mod tests {
         let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
         let target = Target::entity("light.living_room");
         client
-            .call_service("light", "turn_on", Some(&target), None)
+            .call_service("light", "turn_on", Some(&target), None, false)
             .await
             .unwrap();
     }
@@ -635,7 +659,7 @@ mod tests {
         let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
         let data = json!({"brightness": 255, "color_temp": 370});
         client
-            .call_service("light", "turn_on", None, Some(data))
+            .call_service("light", "turn_on", None, Some(data), false)
             .await
             .unwrap();
     }
@@ -644,7 +668,7 @@ mod tests {
     async fn call_service_rejects_non_object_data() {
         let client = HomeAssistantClient::new(&test_account("http://localhost:1")).unwrap();
         let err = client
-            .call_service("light", "turn_on", None, Some(json!("not an object")))
+            .call_service("light", "turn_on", None, Some(json!("not an object")), false)
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Client(_)));
@@ -664,10 +688,31 @@ mod tests {
 
         let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
         let err = client
-            .call_service("light", "turn_on", None, None)
+            .call_service("light", "turn_on", None, None, false)
             .await
             .unwrap_err();
         assert!(matches!(err, Error::ServiceCall(_)));
+    }
+
+    #[tokio::test]
+    async fn call_service_return_response_appends_query_param() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/services/weather/get_forecasts"))
+            .and(QueryFlag { key: "return_response" })
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "changed_states": [],
+                "service_response": {"forecast": []}
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let result = client
+            .call_service("weather", "get_forecasts", None, None, true)
+            .await
+            .unwrap();
+        assert!(result.get("service_response").is_some());
     }
 
     // --- turn_on / turn_off / toggle ---

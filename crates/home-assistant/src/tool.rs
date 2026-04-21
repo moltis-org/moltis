@@ -314,7 +314,7 @@ impl AgentTool for HomeAssistantTool {
                 let target = area_id.map(|a| Target::area(a));
 
                 let result = client
-                    .call_service(domain, service, target.as_ref(), params.get("data").cloned())
+                    .call_service(domain, service, target.as_ref(), params.get("data").cloned(), false)
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
