@@ -120,28 +120,31 @@ fn stop_container_by_id(backend: ContainerBackend, container_id: &str) {
         },
     }
 
-    // Apple Container requires explicit deletion after stop.
-    #[cfg(target_os = "macos")]
-    if backend == ContainerBackend::AppleContainer {
-        match Command::new("container")
-            .args(["rm", container_id])
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                debug!(container_id, "browser container removed");
-            },
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                warn!(
-                    container_id,
-                    error = %stderr.trim(),
-                    "failed to remove browser container"
-                );
-            },
-            Err(e) => {
-                warn!(container_id, error = %e, "failed to run container rm");
-            },
-        }
+    // Containers are started without --rm so that logs and status remain
+    // available for diagnostics after a crash.  Explicitly remove the
+    // container after stopping it.
+    match Command::new(cli).args(["rm", container_id]).output() {
+        Ok(output) if output.status.success() => {
+            debug!(container_id, backend = cli, "browser container removed");
+        },
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(
+                container_id,
+                backend = cli,
+                error = %stderr.trim(),
+                "failed to remove browser container"
+            );
+        },
+        Err(e) => {
+            warn!(
+                container_id,
+                backend = cli,
+                error = %e,
+                "failed to run {} rm",
+                cli
+            );
+        },
     }
 }
 
@@ -283,20 +286,11 @@ impl BrowserContainer {
             }
 
             if let Some(ref logs) = container_logs {
-                // Truncate to last 50 lines to keep output manageable
-                let tail: String = logs
-                    .lines()
-                    .rev()
-                    .take(50)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                // Already limited to 50 lines by --tail 50 in fetch_container_logs
                 warn!(
                     container_id,
-                    logs = tail,
-                    "browser container logs (last 50 lines)"
+                    logs = %logs,
+                    "browser container logs"
                 );
             } else {
                 warn!(container_id, "no container logs available");
@@ -479,7 +473,6 @@ fn start_oci_container(
     let mut run_args = vec![
         "run".to_string(),
         "-d".to_string(),
-        "--rm".to_string(),
         "--name".to_string(),
         container_name.clone(),
         "-p".to_string(),
@@ -675,11 +668,21 @@ fn find_available_port() -> Result<u16> {
 
 /// Fetch the last logs from a container for diagnostic purposes.
 fn fetch_container_logs(backend: ContainerBackend, container_id: &str) -> Option<String> {
+    // Apple Container CLI may not support `logs --tail`
+    #[cfg(target_os = "macos")]
+    if backend == ContainerBackend::AppleContainer {
+        return None;
+    }
+
     let cli = backend.cli();
     let output = Command::new(cli)
         .args(["logs", "--tail", "50", container_id])
         .output()
         .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
