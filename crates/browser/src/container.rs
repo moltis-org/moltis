@@ -220,6 +220,7 @@ impl BrowserContainer {
             image,
             host_port,
             backend = backend.cli(),
+            container_host,
             "starting browser container"
         );
 
@@ -259,13 +260,57 @@ impl BrowserContainer {
 
         // Wait for the container to be ready
         if let Err(error) = wait_for_ready(container_host, host_port) {
+            // Fetch container logs before cleanup to help diagnose why Chrome
+            // didn't start (e.g. crash, missing libs, permission errors).
+            let container_logs = fetch_container_logs(backend, &container_id);
+            let container_status = inspect_container_status(backend, &container_id);
+
             warn!(
                 container_id,
                 host_port,
+                container_host,
                 backend = backend.cli(),
                 error = %error,
                 "browser container failed readiness check, cleaning up"
             );
+
+            if let Some(ref status) = container_status {
+                warn!(
+                    container_id,
+                    container_status = status,
+                    "browser container status at time of failure"
+                );
+            }
+
+            if let Some(ref logs) = container_logs {
+                // Truncate to last 50 lines to keep output manageable
+                let tail: String = logs
+                    .lines()
+                    .rev()
+                    .take(50)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                warn!(
+                    container_id,
+                    logs = tail,
+                    "browser container logs (last 50 lines)"
+                );
+            } else {
+                warn!(container_id, "no container logs available");
+            }
+
+            if is_running_in_container() {
+                warn!(
+                    container_host,
+                    "moltis appears to be running inside a container — if the browser \
+                     container is a sibling (not nested), set browser.container_host to \
+                     the Docker host IP or \"host.docker.internal\" in moltis.toml"
+                );
+            }
+
             stop_container_by_id(backend, &container_id);
             return Err(error);
         }
@@ -461,6 +506,12 @@ fn start_oci_container(
 
     run_args.push(image.to_string());
 
+    info!(
+        backend = cli,
+        args = %run_args.join(" "),
+        "browser container run command"
+    );
+
     let output = Command::new(cli)
         .args(&run_args)
         .output()
@@ -620,6 +671,87 @@ fn find_available_port() -> Result<u16> {
 
     drop(listener);
     Ok(port)
+}
+
+/// Fetch the last logs from a container for diagnostic purposes.
+fn fetch_container_logs(backend: ContainerBackend, container_id: &str) -> Option<String> {
+    let cli = backend.cli();
+    let output = Command::new(cli)
+        .args(["logs", "--tail", "50", container_id])
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Browserless/Chrome may log to either stdout or stderr
+    let combined = format!("{stdout}{stderr}");
+    let trimmed = combined.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// Inspect a container's status (running, exited, etc.) for diagnostics.
+fn inspect_container_status(backend: ContainerBackend, container_id: &str) -> Option<String> {
+    let cli = backend.cli();
+
+    #[cfg(target_os = "macos")]
+    if backend == ContainerBackend::AppleContainer {
+        // Apple Container doesn't support `inspect --format`
+        return None;
+    }
+
+    let output = Command::new(cli)
+        .args([
+            "inspect",
+            "--format",
+            "{{.State.Status}} (ExitCode={{.State.ExitCode}}, OOMKilled={{.State.OOMKilled}})",
+            container_id,
+        ])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if status.is_empty() {
+            None
+        } else {
+            Some(status)
+        }
+    } else {
+        None
+    }
+}
+
+/// Detect whether we are running inside a container (Docker/Podman/etc.).
+///
+/// Checks for `/.dockerenv` (Docker) and cgroup markers (various runtimes).
+fn is_running_in_container() -> bool {
+    use std::path::Path;
+
+    // Docker creates this file inside its containers
+    if Path::new("/.dockerenv").exists() {
+        return true;
+    }
+
+    // Podman/other runtimes may set container env vars
+    if std::env::var_os("container").is_some() {
+        return true;
+    }
+
+    // Check cgroup for container markers
+    if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup")
+        && (cgroup.contains("docker")
+            || cgroup.contains("kubepods")
+            || cgroup.contains("containerd"))
+    {
+        return true;
+    }
+
+    false
 }
 
 /// Wait for the container to be ready by probing the Chrome DevTools endpoint.
