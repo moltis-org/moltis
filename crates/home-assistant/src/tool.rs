@@ -167,6 +167,7 @@ impl AgentTool for HomeAssistantTool {
         })
     }
 
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(operation)))]
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let operation = params
             .get("operation")

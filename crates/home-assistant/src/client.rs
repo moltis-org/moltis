@@ -32,6 +32,7 @@ pub struct HomeAssistantClient {
 
 impl HomeAssistantClient {
     /// Build a client from account config.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub fn new(account: &HomeAssistantAccountConfig) -> Result<Self> {
         let url = account
             .url
@@ -63,6 +64,7 @@ impl HomeAssistantClient {
     /// Check if the HA instance is reachable and the token is valid.
     ///
     /// Hits the authenticated `GET /api/config` endpoint.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn health_check(&self) -> Result<()> {
         let (_, auth) = self.auth_header();
         let resp = self
@@ -82,6 +84,7 @@ impl HomeAssistantClient {
     }
 
     /// Fetch the HA instance configuration.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_config(&self) -> Result<HaConfigResponse> {
         let (_, auth) = self.auth_header();
         let resp = self
@@ -97,6 +100,7 @@ impl HomeAssistantClient {
     }
 
     /// Get all entity states.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_states(&self) -> Result<Vec<EntityState>> {
         let (_, auth) = self.auth_header();
         let resp = self
@@ -112,6 +116,7 @@ impl HomeAssistantClient {
     }
 
     /// Get a single entity state. Returns `None` if entity not found (404).
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_state(&self, entity_id: &str) -> Result<Option<EntityState>> {
         let (_, auth) = self.auth_header();
         let resp = self
@@ -131,6 +136,7 @@ impl HomeAssistantClient {
     }
 
     /// Get all registered services.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_services(&self) -> Result<Vec<ServiceDescription>> {
         let (_, auth) = self.auth_header();
         let resp = self
@@ -150,6 +156,7 @@ impl HomeAssistantClient {
     /// The `data` is passed directly as the JSON body — HA parses it as
     /// `service_data`. Use the `target` field to target by area, device,
     /// or label instead of listing individual entity IDs.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(domain, service)))]
     pub async fn call_service(
         &self,
         domain: &str,
@@ -191,6 +198,13 @@ impl HomeAssistantClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            #[cfg(feature = "tracing")]
+            tracing::warn!(
+                domain,
+                service,
+                status = %status,
+                "service call failed"
+            );
             return Err(Error::ServiceCall(format!(
                 "service {domain}.{service} returned {status}: {text}"
             )));
@@ -200,6 +214,7 @@ impl HomeAssistantClient {
     }
 
     /// Turn an entity on.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
     pub async fn turn_on(&self, entity_id: &str) -> Result<()> {
         let domain = extract_domain(entity_id);
         let target = Target::entity(entity_id);
@@ -209,6 +224,7 @@ impl HomeAssistantClient {
     }
 
     /// Turn an entity off.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
     pub async fn turn_off(&self, entity_id: &str) -> Result<()> {
         let domain = extract_domain(entity_id);
         let target = Target::entity(entity_id);
@@ -218,6 +234,7 @@ impl HomeAssistantClient {
     }
 
     /// Toggle an entity.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
     pub async fn toggle(&self, entity_id: &str) -> Result<()> {
         let domain = extract_domain(entity_id);
         let target = Target::entity(entity_id);
@@ -227,6 +244,7 @@ impl HomeAssistantClient {
     }
 
     /// Fire a custom event on the HA event bus.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(event_type)))]
     pub async fn fire_event(
         &self,
         event_type: &str,
@@ -265,6 +283,7 @@ impl HomeAssistantClient {
     ///
     /// All URL parameters are percent-encoded to handle ISO 8601 timestamps
     /// and entity IDs with special characters.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id = filter_entity_id)))]
     pub async fn get_history(
         &self,
         filter_entity_id: &str,
@@ -295,6 +314,7 @@ impl HomeAssistantClient {
     }
 
     /// Fetch camera proxy image bytes for a camera entity.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
     pub async fn camera_proxy(&self, entity_id: &str) -> Result<bytes::Bytes> {
         let (_, auth) = self.auth_header();
         let resp = self
