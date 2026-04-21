@@ -134,7 +134,8 @@ pub(super) fn extract_document_file(msg: &Message) -> Option<DocumentFileInfo> {
                 // Telegram often sends application/octet-stream for file types
                 // it doesn't recognise (e.g. .md, .toml, .yaml). Fall back to
                 // extension-based detection so these documents aren't silently
-                // dropped.
+                // dropped. Only the last extension segment is consulted
+                // (e.g. "archive.tar.gz" → "gz"), which is intentional.
                 let media_type = if normalized == "application/octet-stream" {
                     d.document
                         .file_name
@@ -265,6 +266,9 @@ pub(super) fn should_inline_document_text(media_type: &str) -> bool {
             | "text/x-yaml"
             | "application/json"
             | "application/xml"
+            // mime_guess returns text/x-toml and text/x-yaml for the inference
+            // path; the application/* variants cover cases where Telegram (or
+            // another source) sends these MIME types directly.
             | "application/toml"
             | "application/yaml"
             | "application/x-yaml"
