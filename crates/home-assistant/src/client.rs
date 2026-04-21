@@ -168,7 +168,32 @@ impl HomeAssistantClient {
 
         let mut body = serde_json::Map::new();
         if let Some(t) = target {
-            body.insert("target".to_owned(), serde_json::to_value(t)?);
+            // HA REST API expects target fields flattened at top level, not nested
+            // under a "target" key (that format is for WebSocket only).
+            if !t.entity_id.is_empty() {
+                body.insert(
+                    "entity_id".to_owned(),
+                    serde_json::to_value(&t.entity_id)?,
+                );
+            }
+            if !t.device_id.is_empty() {
+                body.insert(
+                    "device_id".to_owned(),
+                    serde_json::to_value(&t.device_id)?,
+                );
+            }
+            if !t.area_id.is_empty() {
+                body.insert(
+                    "area_id".to_owned(),
+                    serde_json::to_value(&t.area_id)?,
+                );
+            }
+            if !t.label_id.is_empty() {
+                body.insert(
+                    "label_id".to_owned(),
+                    serde_json::to_value(&t.label_id)?,
+                );
+            }
         }
         if let Some(d) = data {
             // HA expects service_data as a JSON object merged into the body.
