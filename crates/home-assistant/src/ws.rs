@@ -261,6 +261,9 @@ impl HaWebSocket {
 
             loop {
                 interval.tick().await;
+                // Fire-and-forget ping without an id.
+                // HA will reply with a WebSocket protocol pong (no id).
+                // The reader handles these at the transport level.
                 let ping_msg = serde_json::json!({"type": "ping"});
                 let Ok(text) = serde_json::to_string(&ping_msg) else {
                     break;
@@ -360,6 +363,13 @@ impl HaWebSocket {
                         if let Some(id) = val.get("id").and_then(|i| i.as_u64()) {
                             let mut map = pending.lock().await;
                             if let Some(sender) = map.remove(&id) {
+                                // Handle pong responses to ping commands.
+                                // HA pong has `{"id": N, "type": "pong"}` — no `success` field.
+                                if val.get("type").and_then(|t| t.as_str()) == Some("pong") {
+                                    let _ = sender.send(Ok(Value::Null));
+                                    continue;
+                                }
+
                                 let result = match val.get("success").and_then(|s| s.as_bool()) {
                                     Some(true) => Ok(val
                                         .get("result")
@@ -743,6 +753,89 @@ mod tests {
             cmds.iter().any(|c| c == "subscribe_events"),
             "expected subscribe_events command, got: {cmds:?}"
         );
+    }
+
+    /// Start a mock HA WS server that replies to ping with pong.
+    async fn start_mock_ha_ws_pong() -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let ws = tokio_tungstenite::accept_async(stream)
+                        .await
+                        .expect("mock WS accept (pong)");
+                    let (mut write, mut read) = ws.split();
+
+                    let auth_required = json!({"type": "auth_required", "ha_version": "2025.1"});
+                    let _ = write
+                        .send(Message::Text(auth_required.to_string().into()))
+                        .await;
+
+                    match read.next().await {
+                        Some(Ok(Message::Text(text))) => {
+                            let val: Value = serde_json::from_str(&text).unwrap_or_default();
+                            if val.get("type").and_then(|t| t.as_str()) == Some("auth") {
+                                let auth_ok = json!({"type": "auth_ok", "ha_version": "2025.1"});
+                                let _ = write
+                                    .send(Message::Text(auth_ok.to_string().into()))
+                                    .await;
+                            } else {
+                                return;
+                            }
+                        }
+                        _ => return,
+                    }
+
+                    while let Some(msg) = read.next().await {
+                        match msg {
+                            Ok(Message::Text(text)) => {
+                                let val: Value = serde_json::from_str(&text).unwrap_or_default();
+                                if let Some(id) = val.get("id") {
+                                    let cmd_type = val.get("type").and_then(|t| t.as_str());
+                                    let response = if cmd_type == Some("ping") {
+                                        json!({"id": id, "type": "pong"})
+                                    } else {
+                                        json!({
+                                            "id": id,
+                                            "type": "result",
+                                            "success": true,
+                                            "result": null
+                                        })
+                                    };
+                                    let _ = write
+                                        .send(Message::Text(response.to_string().into()))
+                                        .await;
+                                }
+                            }
+                            Ok(Message::Close(_)) | Err(_) => break,
+                            _ => {}
+                        }
+                    }
+                });
+            }
+        });
+
+        port
+    }
+
+    #[tokio::test]
+    async fn ping_receives_pong() {
+        let port = start_mock_ha_ws_pong().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            conn.ping(),
+        )
+        .await;
+        assert!(result.is_ok(), "ping() timed out — pong not received");
+        assert!(result.unwrap().is_ok(), "ping() returned error");
     }
 
     #[tokio::test]
