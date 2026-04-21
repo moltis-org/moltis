@@ -70,28 +70,11 @@ impl HaWebSocket {
     ///
     /// Must be called after [`Self::subscribe`] to ensure the reader
     /// task is running and can dispatch responses.
-    pub async fn call_command(&self, command: Value) -> Result<Value> {
-        let id = self.next_id();
-
-        let mut msg = command.as_object()
-            .cloned()
-            .unwrap_or_default();
-        msg.insert("id".to_owned(), Value::Number(id.into()));
-        let _msg = Value::Object(msg);
-
-        let (sender, receiver) = oneshot::channel();
-        {
-            let mut pending = self.pending.lock().await;
-            pending.insert(id, sender);
-        }
-
-        // We need a write handle — this requires structural changes for full
-        // request-response over WS. For now, commands go via REST. This method
-        // is a placeholder for Phase 2 WS command support.
-        let _ = receiver.await.map_err(|_| {
-            Error::WebSocket("response channel closed".to_owned())
-        })?;
-
+    ///
+    /// **Not yet implemented** — use the REST client for commands.
+    /// This will be completed in Phase 2 when the write handle is
+    /// moved into the shared state.
+    pub async fn call_command(&self, _command: Value) -> Result<Value> {
         Err(Error::WebSocket(
             "WS commands not yet implemented — use REST client".to_owned(),
         ))
