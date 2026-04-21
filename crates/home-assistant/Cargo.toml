@@ -20,6 +20,7 @@ thiserror         = { workspace = true }
 tokio             = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tracing           = { workspace = true }
+urlencoding        = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
