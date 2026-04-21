@@ -110,28 +110,6 @@ impl Target {
     }
 }
 
-/// Area registry entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Area {
-    pub area_id: String,
-    pub name: String,
-    #[serde(default)]
-    pub picture: Option<String>,
-}
-
-/// Device registry entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Device {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub area_id: Option<String>,
-    #[serde(default)]
-    pub manufacturer: Option<String>,
-    #[serde(default)]
-    pub model: Option<String>,
-}
-
 /// Incoming HA WebSocket event.
 #[derive(Debug)]
 pub enum HaEvent {

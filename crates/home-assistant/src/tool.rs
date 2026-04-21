@@ -184,6 +184,7 @@ impl AgentTool for HomeAssistantTool {
                 let domain = params.get("domain").and_then(|v| v.as_str());
                 let area_id = params.get("area_id").and_then(|v| v.as_str());
 
+                // TODO: use POST /api/states with filter body for large instances
                 let states = client
                     .get_states()
                     .await
@@ -296,6 +297,7 @@ impl AgentTool for HomeAssistantTool {
                     "elevation": config.elevation,
                     "time_zone": config.time_zone,
                     "components": config.components,
+                    // config_dir omitted — server filesystem path, not useful to LLM
                 }))
             }
 
@@ -305,21 +307,31 @@ impl AgentTool for HomeAssistantTool {
 
     async fn warmup(&self) -> anyhow::Result<()> {
         // Pre-build clients for all configured instances.
-        for (name, account) in &self.config.instances {
-            if account.url.is_some() && account.token.is_some() {
+        // Construct outside the lock to avoid holding it during I/O.
+        let built: Vec<(String, SharedClient)> = self
+            .config
+            .instances
+            .iter()
+            .filter(|(_, a)| a.url.is_some() && a.token.is_some())
+            .filter_map(|(name, account)| {
                 match HomeAssistantClient::new(account) {
                     Ok(client) => {
-                        let mut clients = self.clients.write().await;
-                        clients.insert(name.clone(), Arc::new(client));
                         #[cfg(feature = "tracing")]
                         tracing::info!(instance = %name, "HA client pre-connected");
+                        Some((name.clone(), Arc::new(client)))
                     }
                     Err(e) => {
                         #[cfg(feature = "tracing")]
                         tracing::warn!(instance = %name, error = %e, "HA client warmup failed");
+                        None
                     }
                 }
-            }
+            })
+            .collect();
+
+        let mut clients = self.clients.write().await;
+        for (name, client) in built {
+            clients.insert(name, client);
         }
         Ok(())
     }
