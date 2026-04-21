@@ -48,6 +48,12 @@ type WriteHandle = futures_util::stream::SplitSink<WsStream, Message>;
 ///
 /// Holds the event receiver and a shared write handle for sending commands.
 /// Created via [`HaWebSocket::subscribe`].
+///
+/// # Reconnection
+///
+/// `recv()` returns `None` when the connection is closed (server shutdown,
+/// network error). There is no automatic reconnect — create a new
+/// [`HaConnection`] via [`HaWebSocket::subscribe`] to re-establish.
 pub struct HaConnection {
     /// Receives [`HaEvent`] from the background reader task.
     events: mpsc::Receiver<HaEvent>,
@@ -69,12 +75,12 @@ impl HaConnection {
 
     /// Send a command over the WebSocket and wait for the response.
     ///
-    /// The `command` must be a valid HA WS command message (e.g. `call_service`,
-    /// `subscribe_events`, `get_states`). The `type` field will be added automatically
-    /// if not present.
+    /// The `command` must be a JSON object with at least a `type` field
+    /// (e.g. `call_service`, `subscribe_events`, `get_states`).
+    /// An `id` field is automatically added for request-response tracking.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
     pub async fn call_command(&self, command: Value) -> Result<Value> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
         let mut msg = command;
         if !msg.is_object() {
@@ -196,7 +202,11 @@ impl HaWebSocket {
             Arc::new(Mutex::new(HashMap::new()));
 
         let write = Arc::new(Mutex::new(write));
-        let next_id = Arc::new(AtomicU64::new(self.next_id.load(Ordering::Relaxed)));
+        // Snapshot the factory counter and advance it so the next subscribe()
+        // call starts from a higher base, avoiding ID collisions.
+        let next_id = Arc::new(AtomicU64::new(
+            self.next_id.fetch_add(10_000, Ordering::SeqCst) + 1,
+        ));
 
         Self::spawn_reader(tx, read, Arc::clone(&pending));
 
@@ -403,7 +413,9 @@ mod tests {
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 tokio::spawn(async move {
-                    let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    let ws = tokio_tungstenite::accept_async(stream)
+                        .await
+                        .expect("mock WS accept");
                     let (mut write, mut read) = ws.split();
 
                     // Send auth_required
@@ -411,24 +423,25 @@ mod tests {
                     write
                         .send(Message::Text(auth_required.to_string().into()))
                         .await
-                        .unwrap();
+                        .expect("mock WS send auth_required");
 
                     // Wait for auth
                     match read.next().await {
                         Some(Ok(Message::Text(text))) => {
-                            let val: Value = serde_json::from_str(&text).unwrap();
+                            let val: Value = serde_json::from_str(&text)
+                                .expect("mock WS auth message parse");
                             if val.get("type").and_then(|t| t.as_str()) == Some("auth") {
                                 let auth_ok = json!({"type": "auth_ok", "ha_version": "2025.1"});
                                 write
                                     .send(Message::Text(auth_ok.to_string().into()))
                                     .await
-                                    .unwrap();
+                                    .expect("mock WS send auth_ok");
                             } else {
                                 let auth_invalid = json!({"type": "auth_invalid", "message": "bad token"});
                                 write
                                     .send(Message::Text(auth_invalid.to_string().into()))
                                     .await
-                                    .unwrap();
+                                    .expect("mock WS send auth_invalid");
                                 return;
                             }
                         }
@@ -439,7 +452,8 @@ mod tests {
                     while let Some(msg) = read.next().await {
                         match msg {
                             Ok(Message::Text(text)) => {
-                                let val: Value = serde_json::from_str(&text).unwrap();
+                                let val: Value = serde_json::from_str(&text)
+                                    .expect("mock WS message parse");
                                 if let Some(id) = val.get("id") {
                                     let response = json!({
                                         "id": id,
@@ -477,14 +491,16 @@ mod tests {
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 tokio::spawn(async move {
-                    let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    let ws = tokio_tungstenite::accept_async(stream)
+                        .await
+                        .expect("mock WS accept (reject)");
                     let (mut write, _read) = ws.split();
 
                     let auth_required = json!({"type": "auth_required"});
                     write
                         .send(Message::Text(auth_required.to_string().into()))
                         .await
-                        .unwrap();
+                        .expect("mock WS send auth_required (reject)");
                     // Close without sending auth_ok
                     drop(write);
                 });

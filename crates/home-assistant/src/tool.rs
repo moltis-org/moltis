@@ -344,15 +344,20 @@ impl AgentTool for HomeAssistantTool {
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-                // Summarise: domain → list of service names
+                // Summarise: domain → {service_name: description}
                 let mut summary = serde_json::Map::new();
                 for svc in &services {
-                    let names: Vec<&str> = svc
-                        .services
-                        .as_object()
-                        .map(|m| m.keys().map(String::as_str).collect())
-                        .unwrap_or_default();
-                    summary.insert(svc.domain.clone(), json!(names));
+                    let mut domain_services = serde_json::Map::new();
+                    if let Some(obj) = svc.services.as_object() {
+                        for (name, info) in obj {
+                            let desc = info
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            domain_services.insert(name.clone(), json!(desc));
+                        }
+                    }
+                    summary.insert(svc.domain.clone(), Value::Object(domain_services));
                 }
 
                 Ok(json!({
@@ -379,9 +384,13 @@ impl AgentTool for HomeAssistantTool {
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
+                // HA returns Vec<Vec<StateChange>> — one inner array per entity.
+                let record_count: usize = history.iter().map(|arr| arr.as_array().map_or(0, Vec::len)).sum();
+
                 Ok(json!({
                     "entity_id": entity_id,
-                    "entries": history.len(),
+                    "entities": history.len(),
+                    "records": record_count,
                     "history": history,
                 }))
             }
@@ -952,8 +961,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["count"], 2);
-        assert_eq!(result["domains"]["light"].as_array().unwrap().len(), 2);
-        assert_eq!(result["domains"]["climate"].as_array().unwrap().len(), 1);
+        // Now returns domain → {service_name: description}
+        let light_services = result["domains"]["light"].as_object().unwrap();
+        assert_eq!(light_services.len(), 2);
+        assert_eq!(light_services["turn_on"], "Turn On");
+        assert_eq!(light_services["turn_off"], "Turn Off");
+        let climate_services = result["domains"]["climate"].as_object().unwrap();
+        assert_eq!(climate_services["set_temperature"], "Set Temperature");
     }
 
     // --- execute: get_history ---
@@ -986,7 +1000,8 @@ mod tests {
             }))
             .await
             .unwrap();
-        assert_eq!(result["entries"], 1);
+        assert_eq!(result["entities"], 1);
+        assert_eq!(result["records"], 2);
         assert_eq!(result["entity_id"], "sensor.temperature");
     }
 
