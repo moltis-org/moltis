@@ -2,6 +2,25 @@
 //!
 //! Provides real-time event streaming and request-response commands
 //! over the HA WebSocket protocol at `/api/websocket`.
+//!
+//! # Usage
+//!
+//! ```ignore
+//! let ws = HaWebSocket::new("ws://homeassistant.local:8123/api/websocket", "token");
+//! let conn = ws.subscribe().await?;
+//!
+//! // Subscribe to entity state changes
+//! conn.subscribe_entities(None).await?;
+//!
+//! // Receive events
+//! while let Some(event) = conn.recv().await {
+//!     match event {
+//!         HaEvent::StateChanged { entity_id, .. } => { /* ... */ }
+//!         HaEvent::Disconnected => break,
+//!         _ => {}
+//!     }
+//! }
+//! ```
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,13 +41,129 @@ type WsStream = tokio_tungstenite::WebSocketStream<
 /// A pending WebSocket request awaiting a server response.
 type Pending = oneshot::Sender<Result<Value>>;
 
-/// WebSocket client for Home Assistant real-time events and commands.
+/// Shared write handle behind a mutex for sending WS messages.
+type WriteHandle = futures_util::stream::SplitSink<WsStream, Message>;
+
+/// An active WebSocket connection to Home Assistant.
+///
+/// Holds the event receiver and a shared write handle for sending commands.
+/// Created via [`HaWebSocket::subscribe`].
+pub struct HaConnection {
+    /// Receives [`HaEvent`] from the background reader task.
+    events: mpsc::Receiver<HaEvent>,
+    /// Shared write half for sending commands.
+    write: Arc<Mutex<WriteHandle>>,
+    /// ID counter for request-response commands.
+    next_id: Arc<AtomicU64>,
+    /// Pending request-response map: message id → sender.
+    pending: Arc<Mutex<HashMap<u64, Pending>>>,
+}
+
+impl HaConnection {
+    /// Receive the next event from the event bus.
+    ///
+    /// Returns `None` when the connection is closed.
+    pub async fn recv(&mut self) -> Option<HaEvent> {
+        self.events.recv().await
+    }
+
+    /// Send a command over the WebSocket and wait for the response.
+    ///
+    /// The `command` must be a valid HA WS command message (e.g. `call_service`,
+    /// `subscribe_events`, `get_states`). The `type` field will be added automatically
+    /// if not present.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
+    pub async fn call_command(&self, command: Value) -> Result<Value> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        let mut msg = command;
+        if !msg.is_object() {
+            return Err(Error::WebSocket("command must be a JSON object".to_owned()));
+        }
+        msg.as_object_mut()
+            .ok_or_else(|| Error::WebSocket("command must be a JSON object".to_owned()))?
+            .insert("id".to_owned(), Value::Number(id.into()));
+
+        // Register pending response
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = self.pending.lock().await;
+            pending.insert(id, tx);
+        }
+
+        // Send the message
+        let text = serde_json::to_string(&msg)
+            .map_err(|e| Error::WebSocket(format!("failed to serialize command: {e}")))?;
+
+        let mut write = self.write.lock().await;
+        write
+            .send(Message::Text(text.into()))
+            .await
+            .map_err(|e| Error::WebSocket(format!("failed to send command: {e}")))?;
+        drop(write);
+
+        // Wait for response with timeout
+        match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(Error::WebSocket(
+                "response channel closed unexpectedly".to_owned(),
+            )),
+            Err(_) => {
+                // Clean up pending entry
+                let mut pending = self.pending.lock().await;
+                pending.remove(&id);
+                Err(Error::WebSocket(
+                    "command timed out after 30s".to_owned(),
+                ))
+            }
+        }
+    }
+
+    /// Subscribe to entity state changes via `subscribe_entities`.
+    ///
+    /// Pass `entity_ids` as `Some(&[...])` to filter specific entities,
+    /// or `None` to subscribe to all entity changes.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
+    pub async fn subscribe_entities(
+        &self,
+        entity_ids: Option<&[&str]>,
+    ) -> Result<()> {
+        let mut payload = serde_json::Map::new();
+        payload.insert("type".to_owned(), Value::String("subscribe_entities".to_owned()));
+        if let Some(ids) = entity_ids {
+            if !ids.is_empty() {
+                let arr: Vec<Value> = ids.iter().map(|id| Value::String(id.to_string())).collect();
+                payload.insert("entity_ids".to_owned(), Value::Array(arr));
+            }
+        }
+
+        self.call_command(Value::Object(payload)).await?;
+        Ok(())
+    }
+
+    /// Subscribe to the HA event bus for a specific event type.
+    ///
+    /// Use `event_type = None` to subscribe to all events.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
+    pub async fn subscribe_events(&self, event_type: Option<&str>) -> Result<()> {
+        let mut payload = serde_json::Map::new();
+        payload.insert("type".to_owned(), Value::String("subscribe_events".to_owned()));
+        if let Some(et) = event_type {
+            payload.insert("event_type".to_owned(), Value::String(et.to_owned()));
+        }
+
+        self.call_command(Value::Object(payload)).await?;
+        Ok(())
+    }
+}
+
+/// WebSocket client factory for Home Assistant real-time events and commands.
+///
+/// Use [`Self::subscribe`] to connect, authenticate, and obtain a [`HaConnection`].
 pub struct HaWebSocket {
     url: String,
     token: String,
     next_id: AtomicU64,
-    /// Pending request-response map: message id → sender.
-    pending: Arc<Mutex<HashMap<u64, Pending>>>,
 }
 
 impl HaWebSocket {
@@ -39,20 +174,15 @@ impl HaWebSocket {
             url: url.to_owned(),
             token: token.to_owned(),
             next_id: AtomicU64::new(1),
-            pending: Arc::new(Mutex::new(HashMap::new())),
         }
-    }
-
-    fn next_id(&self) -> u64 {
-        self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Connect, authenticate, and spawn the background reader.
     ///
-    /// Returns a receiver that yields [`HaEvent`] until disconnect.
-    /// Use [`Self::call_command`] for request-response commands.
-    pub async fn subscribe(&self) -> Result<mpsc::Receiver<HaEvent>> {
-        let (tx, rx) = mpsc::channel(256);
+    /// Returns a [`HaConnection`] for receiving events and sending commands.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "info"))]
+    pub async fn subscribe(&self) -> Result<HaConnection> {
+        let (tx, events) = mpsc::channel(256);
 
         let (ws_stream, _) = tokio_tungstenite::connect_async(&self.url)
             .await
@@ -61,28 +191,26 @@ impl HaWebSocket {
         let (mut write, mut read) = ws_stream.split();
 
         Self::authenticate(&mut write, &mut read, &self.token).await?;
-        Self::spawn_reader(tx, read, Arc::clone(&self.pending));
 
-        Ok(rx)
-    }
+        let pending: Arc<Mutex<HashMap<u64, Pending>>> =
+            Arc::new(Mutex::new(HashMap::new()));
 
-    /// Send a command and wait for the response.
-    ///
-    /// Must be called after [`Self::subscribe`] to ensure the reader
-    /// task is running and can dispatch responses.
-    ///
-    /// **Not yet implemented** — use the REST client for commands.
-    /// This will be completed in Phase 2 when the write handle is
-    /// moved into the shared state.
-    pub async fn call_command(&self, _command: Value) -> Result<Value> {
-        Err(Error::WebSocket(
-            "WS commands not yet implemented — use REST client".to_owned(),
-        ))
+        let write = Arc::new(Mutex::new(write));
+        let next_id = Arc::new(AtomicU64::new(self.next_id.load(Ordering::Relaxed)));
+
+        Self::spawn_reader(tx, read, Arc::clone(&pending));
+
+        Ok(HaConnection {
+            events,
+            write,
+            next_id,
+            pending,
+        })
     }
 
     /// Perform the HA WebSocket auth handshake.
     async fn authenticate(
-        write: &mut futures_util::stream::SplitSink<WsStream, Message>,
+        write: &mut WriteHandle,
         read: &mut futures_util::stream::SplitStream<WsStream>,
         token: &str,
     ) -> Result<()> {
@@ -267,7 +395,7 @@ mod tests {
     /// Start a minimal HA-compatible WS server on a random port.
     ///
     /// Sends `auth_required` → expects `auth` → responds `auth_ok`.
-    /// Then echoes back any text messages as events.
+    /// Echoes back messages with an `id` field as `{success: true, result: null}`.
     async fn start_mock_ha_ws() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -307,11 +435,25 @@ mod tests {
                         _ => return,
                     }
 
-                    // Echo incoming messages back as-is (simulates event bus)
+                    // Echo incoming messages: if they have an `id`, respond with success
                     while let Some(msg) = read.next().await {
                         match msg {
                             Ok(Message::Text(text)) => {
-                                let _ = write.send(Message::Text(text)).await;
+                                let val: Value = serde_json::from_str(&text).unwrap();
+                                if let Some(id) = val.get("id") {
+                                    let response = json!({
+                                        "id": id,
+                                        "type": "result",
+                                        "success": true,
+                                        "result": null
+                                    });
+                                    let _ = write
+                                        .send(Message::Text(response.to_string().into()))
+                                        .await;
+                                } else {
+                                    // No id — just echo
+                                    let _ = write.send(Message::Text(text)).await;
+                                }
                             }
                             Ok(Message::Ping(data)) => {
                                 let _ = write.send(Message::Pong(data)).await;
@@ -327,7 +469,7 @@ mod tests {
         port
     }
 
-    /// Start a mock HA WS server that closes before auth_ok.
+    /// Start a mock HA WS server that rejects auth.
     async fn start_mock_ha_ws_auth_reject() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -360,27 +502,8 @@ mod tests {
             "test-token",
         );
 
-        // If subscribe returns Ok, auth handshake succeeded
-        let rx = ws.subscribe().await;
-        assert!(rx.is_ok());
-    }
-
-    #[tokio::test]
-    async fn call_command_returns_not_implemented() {
-        let ws = HaWebSocket::new("ws://127.0.0.1:1", "token");
-        let err = ws.call_command(json!({"type": "call_service"})).await;
-        assert!(err.is_err());
-        assert!(matches!(err.unwrap_err(), Error::WebSocket(_)));
-    }
-
-    #[tokio::test]
-    async fn new_generates_unique_ids() {
-        let ws = HaWebSocket::new("ws://localhost:1", "token");
-        let id1 = ws.next_id();
-        let id2 = ws.next_id();
-        let id3 = ws.next_id();
-        assert!(id1 < id2);
-        assert!(id2 < id3);
+        let result = ws.subscribe().await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -393,6 +516,88 @@ mod tests {
 
         let result = ws.subscribe().await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn call_command_sends_and_receives_response() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let result = conn
+            .call_command(json!({"type": "ping"}))
+            .await
+            .unwrap();
+
+        // call_command returns the "result" field on success
+        assert!(result.is_null());
+    }
+
+    #[tokio::test]
+    async fn call_command_rejects_non_object() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let result = conn.call_command(json!("not an object")).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn subscribe_entities_command() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let result = conn.subscribe_entities(None).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn subscribe_entities_with_filter() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let result = conn
+            .subscribe_entities(Some(&["light.living_room", "sensor.temperature"]))
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn subscribe_events_command() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let result = conn.subscribe_events(Some("state_changed")).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn new_generates_unique_ids() {
+        let ws = HaWebSocket::new("ws://localhost:1", "token");
+        let id1 = ws.next_id.fetch_add(1, Ordering::Relaxed);
+        let id2 = ws.next_id.fetch_add(1, Ordering::Relaxed);
+        let id3 = ws.next_id.fetch_add(1, Ordering::Relaxed);
+        assert!(id1 < id2);
+        assert!(id2 < id3);
     }
 
     #[test]

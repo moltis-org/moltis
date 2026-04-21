@@ -62,10 +62,14 @@ impl HomeAssistantTool {
     }
 
     /// Extract entities matching a filter from a state list.
+    ///
+    /// Supports domain, area_id, and entity_id prefix filters.
+    /// Multiple filters are AND-combined.
     fn filter_entities(
         states: &[EntityState],
         domain: Option<&str>,
         area_id: Option<&str>,
+        entity_id_prefix: Option<&str>,
     ) -> Vec<Value> {
         states
             .iter()
@@ -77,6 +81,11 @@ impl HomeAssistantTool {
                 }
                 if let Some(a) = area_id {
                     if s.area_id() != Some(a) {
+                        return false;
+                    }
+                }
+                if let Some(prefix) = entity_id_prefix {
+                    if !s.entity_id.starts_with(prefix) {
                         return false;
                     }
                 }
@@ -111,9 +120,15 @@ impl AgentTool for HomeAssistantTool {
          - turn_on: Turn an entity on. Params: entity_id (required).\n\
          - turn_off: Turn an entity off. Params: entity_id (required).\n\
          - toggle: Toggle an entity. Params: entity_id (required).\n\
-         - call_service: Call any HA service. Params: domain, service (required), \
+         - call_service: Call any HA service. Params: service_domain, service (required), \
            data (optional JSON object), area_id (optional).\n\
-         - get_config: Get HA instance info (version, location, components).\n\n\
+         - get_config: Get HA instance info (version, location, components).\n\
+         - get_services: List all available services.\n\
+         - get_history: Get state history for an entity. Params: entity_id (required), \
+           start_time (required ISO 8601), end_time (optional ISO 8601).\n\
+         - fire_event: Fire a custom event. Params: event_type (required), \
+           data (optional JSON object).\n\
+         - health_check: Verify HA instance is reachable and token is valid.\n\n\
          Pass 'instance' to select a specific HA instance if multiple are configured."
     }
 
@@ -132,6 +147,10 @@ impl AgentTool for HomeAssistantTool {
                         "toggle",
                         "call_service",
                         "get_config",
+                        "get_services",
+                        "get_history",
+                        "fire_event",
+                        "health_check",
                     ],
                     "description": "The operation to perform"
                 },
@@ -151,6 +170,10 @@ impl AgentTool for HomeAssistantTool {
                     "type": "string",
                     "description": "Filter entities by area ID"
                 },
+                "entity_id_prefix": {
+                    "type": "string",
+                    "description": "Filter entities by entity_id prefix (e.g. 'light.' for all lights)"
+                },
                 "service_domain": {
                     "type": "string",
                     "description": "Service domain for call_service (e.g. 'light')"
@@ -161,7 +184,19 @@ impl AgentTool for HomeAssistantTool {
                 },
                 "data": {
                     "type": "object",
-                    "description": "Service data for call_service"
+                    "description": "JSON object data (for call_service or fire_event)"
+                },
+                "event_type": {
+                    "type": "string",
+                    "description": "Event type for fire_event (e.g. 'my_custom_event')"
+                },
+                "start_time": {
+                    "type": "string",
+                    "description": "ISO 8601 start time for get_history"
+                },
+                "end_time": {
+                    "type": "string",
+                    "description": "ISO 8601 end time for get_history"
                 },
             }
         })
@@ -184,14 +219,16 @@ impl AgentTool for HomeAssistantTool {
             "list_entities" => {
                 let domain = params.get("domain").and_then(|v| v.as_str());
                 let area_id = params.get("area_id").and_then(|v| v.as_str());
+                let entity_id_prefix = params.get("entity_id_prefix").and_then(|v| v.as_str());
 
-                // TODO: use POST /api/states with filter body for large instances
                 let states = client
                     .get_states()
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-                let filtered = Self::filter_entities(&states, domain, area_id);
+                let filtered = Self::filter_entities(
+                    &states, domain, area_id, entity_id_prefix,
+                );
                 Ok(json!({
                     "count": filtered.len(),
                     "entities": filtered,
@@ -298,8 +335,81 @@ impl AgentTool for HomeAssistantTool {
                     "elevation": config.elevation,
                     "time_zone": config.time_zone,
                     "components": config.components,
-                    // config_dir omitted — server filesystem path, not useful to LLM
                 }))
+            }
+
+            "get_services" => {
+                let services = client
+                    .get_services()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                // Summarise: domain → list of service names
+                let mut summary = serde_json::Map::new();
+                for svc in &services {
+                    let names: Vec<&str> = svc
+                        .services
+                        .as_object()
+                        .map(|m| m.keys().map(String::as_str).collect())
+                        .unwrap_or_default();
+                    summary.insert(svc.domain.clone(), json!(names));
+                }
+
+                Ok(json!({
+                    "count": services.len(),
+                    "domains": summary,
+                }))
+            }
+
+            "get_history" => {
+                let entity_id = params
+                    .get("entity_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("missing 'entity_id' parameter"))?;
+
+                let start_time = params
+                    .get("start_time")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("missing 'start_time' parameter"))?;
+
+                let end_time = params.get("end_time").and_then(|v| v.as_str());
+
+                let history = client
+                    .get_history(entity_id, start_time, end_time)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                Ok(json!({
+                    "entity_id": entity_id,
+                    "entries": history.len(),
+                    "history": history,
+                }))
+            }
+
+            "fire_event" => {
+                let event_type = params
+                    .get("event_type")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("missing 'event_type' parameter"))?;
+
+                client
+                    .fire_event(event_type, params.get("data").cloned())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                Ok(json!({
+                    "event_type": event_type,
+                    "status": "fired",
+                }))
+            }
+
+            "health_check" => {
+                client
+                    .health_check()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                Ok(json!({ "status": "ok" }))
             }
 
             other => Err(anyhow::anyhow!("unknown operation: '{other}'")),
@@ -436,7 +546,7 @@ mod tests {
     fn filter_entities_no_filter() {
         let states: Vec<EntityState> =
             serde_json::from_value(state_list_json()).unwrap();
-        let result = HomeAssistantTool::filter_entities(&states, None, None);
+        let result = HomeAssistantTool::filter_entities(&states, None, None, None);
         assert_eq!(result.len(), 4);
     }
 
@@ -444,7 +554,7 @@ mod tests {
     fn filter_entities_by_domain() {
         let states: Vec<EntityState> =
             serde_json::from_value(state_list_json()).unwrap();
-        let result = HomeAssistantTool::filter_entities(&states, Some("light"), None);
+        let result = HomeAssistantTool::filter_entities(&states, Some("light"), None, None);
         assert_eq!(result.len(), 2);
     }
 
@@ -452,7 +562,7 @@ mod tests {
     fn filter_entities_by_area() {
         let states: Vec<EntityState> =
             serde_json::from_value(state_list_json()).unwrap();
-        let result = HomeAssistantTool::filter_entities(&states, None, Some("living"));
+        let result = HomeAssistantTool::filter_entities(&states, None, Some("living"), None);
         assert_eq!(result.len(), 1);
     }
 
@@ -460,7 +570,7 @@ mod tests {
     fn filter_entities_by_domain_and_area() {
         let states: Vec<EntityState> =
             serde_json::from_value(state_list_json()).unwrap();
-        let result = HomeAssistantTool::filter_entities(&states, Some("light"), Some("bedroom"));
+        let result = HomeAssistantTool::filter_entities(&states, Some("light"), Some("bedroom"), None);
         assert_eq!(result.len(), 1);
     }
 
@@ -468,8 +578,26 @@ mod tests {
     fn filter_entities_no_match() {
         let states: Vec<EntityState> =
             serde_json::from_value(state_list_json()).unwrap();
-        let result = HomeAssistantTool::filter_entities(&states, Some("climate"), None);
+        let result = HomeAssistantTool::filter_entities(&states, Some("climate"), None, None);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn filter_entities_by_entity_id_prefix() {
+        let states: Vec<EntityState> =
+            serde_json::from_value(state_list_json()).unwrap();
+        let result = HomeAssistantTool::filter_entities(&states, None, None, Some("light."));
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn filter_entities_by_prefix_and_domain() {
+        let states: Vec<EntityState> =
+            serde_json::from_value(state_list_json()).unwrap();
+        // prefix "sensor." + domain "sensor" — should match 1
+        let result = HomeAssistantTool::filter_entities(&states, Some("sensor"), None, Some("sensor."));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["entity_id"], "sensor.temperature");
     }
 
     // --- tool metadata ---
@@ -489,6 +617,10 @@ mod tests {
         assert!(desc.contains("list_entities"));
         assert!(desc.contains("turn_on"));
         assert!(desc.contains("call_service"));
+        assert!(desc.contains("get_services"));
+        assert!(desc.contains("get_history"));
+        assert!(desc.contains("fire_event"));
+        assert!(desc.contains("health_check"));
     }
 
     #[tokio::test]
@@ -517,6 +649,10 @@ mod tests {
         assert!(ops.contains(&json!("toggle")));
         assert!(ops.contains(&json!("call_service")));
         assert!(ops.contains(&json!("get_config")));
+        assert!(ops.contains(&json!("get_services")));
+        assert!(ops.contains(&json!("get_history")));
+        assert!(ops.contains(&json!("fire_event")));
+        assert!(ops.contains(&json!("health_check")));
     }
 
     // --- execute: list_entities ---
@@ -783,6 +919,174 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("missing 'service'"));
+    }
+
+    // --- execute: get_services ---
+
+    #[tokio::test]
+    async fn execute_get_services() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/services"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {
+                    "domain": "light",
+                    "services": {
+                        "turn_on": {"name": "Turn On"},
+                        "turn_off": {"name": "Turn Off"}
+                    }
+                },
+                {
+                    "domain": "climate",
+                    "services": {
+                        "set_temperature": {"name": "Set Temperature"}
+                    }
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({"operation": "get_services"}))
+            .await
+            .unwrap();
+        assert_eq!(result["count"], 2);
+        assert_eq!(result["domains"]["light"].as_array().unwrap().len(), 2);
+        assert_eq!(result["domains"]["climate"].as_array().unwrap().len(), 1);
+    }
+
+    // --- execute: get_history ---
+
+    #[tokio::test]
+    async fn execute_get_history() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/history/period/2026-04-20T00%3A00%3A00%2B00%3A00"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                [{
+                    "entity_id": "sensor.temperature",
+                    "state": "20.0",
+                    "last_changed": "2026-04-20T00:00:00+00:00"
+                }, {
+                    "entity_id": "sensor.temperature",
+                    "state": "21.5",
+                    "last_changed": "2026-04-20T12:00:00+00:00"
+                }]
+            ])))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({
+                "operation": "get_history",
+                "entity_id": "sensor.temperature",
+                "start_time": "2026-04-20T00:00:00+00:00"
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result["entries"], 1);
+        assert_eq!(result["entity_id"], "sensor.temperature");
+    }
+
+    #[tokio::test]
+    async fn execute_get_history_missing_entity_id() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let err = tool
+            .execute(json!({
+                "operation": "get_history",
+                "start_time": "2026-04-20T00:00:00+00:00"
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("missing 'entity_id'"));
+    }
+
+    #[tokio::test]
+    async fn execute_get_history_missing_start_time() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let err = tool
+            .execute(json!({
+                "operation": "get_history",
+                "entity_id": "sensor.temperature"
+            }))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("missing 'start_time'"));
+    }
+
+    // --- execute: fire_event ---
+
+    #[tokio::test]
+    async fn execute_fire_event() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/events/custom_event"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({
+                "operation": "fire_event",
+                "event_type": "custom_event",
+                "data": {"key": "value"}
+            }))
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "fired");
+        assert_eq!(result["event_type"], "custom_event");
+    }
+
+    #[tokio::test]
+    async fn execute_fire_event_missing_event_type() {
+        let server = MockServer::start().await;
+        let tool = make_tool(&server);
+        let err = tool
+            .execute(json!({"operation": "fire_event"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("missing 'event_type'"));
+    }
+
+    // --- execute: health_check ---
+
+    #[tokio::test]
+    async fn execute_health_check() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/config"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let result = tool
+            .execute(json!({"operation": "health_check"}))
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn execute_health_check_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/config"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let tool = make_tool(&server);
+        let err = tool
+            .execute(json!({"operation": "health_check"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("500"));
     }
 
     // --- warmup ---

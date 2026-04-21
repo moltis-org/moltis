@@ -12,3 +12,4 @@ pub mod ws;
 
 pub use config::{HomeAssistantAccountConfig, HomeAssistantConfig};
 pub use error::Error;
+pub use ws::HaConnection;
