@@ -8615,7 +8615,8 @@ function EditChannelModal() {
   function buildUpdateConfig(form) {
     var _a2, _b2, _c, _d, _e;
     const updateConfig = {};
-    updateConfig.dm_policy = ((_a2 = form.querySelector("[data-field=dmPolicy]")) == null ? void 0 : _a2.value) || "open";
+    const dmFallback = isWhatsApp ? "open" : "allowlist";
+    updateConfig.dm_policy = ((_a2 = form.querySelector("[data-field=dmPolicy]")) == null ? void 0 : _a2.value) || dmFallback;
     updateConfig.allowlist = allowlistItems.value;
     if (isMatrix) {
       updateConfig.user_allowlist = allowlistItems.value;

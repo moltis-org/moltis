@@ -131,7 +131,8 @@ export function EditChannelModal(): VNode | null {
 
 	function buildUpdateConfig(form: HTMLElement): ChannelConfig {
 		const updateConfig: ChannelConfig = {};
-		updateConfig.dm_policy = (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement)?.value || "open";
+		const dmFallback = isWhatsApp ? "open" : "allowlist";
+		updateConfig.dm_policy = (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement)?.value || dmFallback;
 		updateConfig.allowlist = allowlistItems.value;
 		if (isMatrix) {
 			updateConfig.user_allowlist = allowlistItems.value;
