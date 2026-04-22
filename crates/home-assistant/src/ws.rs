@@ -10,7 +10,7 @@
 //! let conn = ws.subscribe().await?;
 //!
 //! // Subscribe to entity state changes
-//! conn.subscribe_entities(None).await?;
+//! let _sub_id = conn.subscribe_entities().await?;
 //!
 //! // Receive events
 //! while let Some(event) = conn.recv().await {
@@ -33,7 +33,7 @@ use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::error::{Error, Result};
-use crate::types::HaEvent;
+use crate::types::{HaEvent, Target};
 
 type WsStream = tokio_tungstenite::WebSocketStream<
     tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
@@ -143,27 +143,22 @@ impl HaConnection {
     /// subscribes to `"state_changed"` events, which is how HA delivers
     /// entity state updates over WebSocket.
     ///
+    /// Returns the subscription ID for use with [`unsubscribe_events`].
+    ///
     /// Note: there is no HA WebSocket command named `subscribe_entities` —
     /// that name is reserved for the HA frontend's internal API. The correct
     /// public API command is `subscribe_events` with `event_type: "state_changed"`.
-    ///
-    /// Pass `entity_ids` as `Some(&[...])` to subscribe to specific entities,
-    /// or `None` to subscribe to all entity changes.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
-    pub async fn subscribe_entities(
-        &self,
-        entity_ids: Option<&[&str]>,
-    ) -> Result<()> {
-        // HA does not support entity_id filtering via subscribe_events.
-        // Use subscribe_events with "state_changed" and filter client-side.
+    pub async fn subscribe_entities(&self) -> Result<u64> {
         self.subscribe_events(Some("state_changed")).await
     }
 
     /// Subscribe to the HA event bus for a specific event type.
     ///
     /// Use `event_type = None` to subscribe to all events.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
-    pub async fn subscribe_events(&self, event_type: Option<&str>) -> Result<()> {
+    ///
+    /// Returns the subscription ID (the command `id` HA uses to track
+    /// this subscription). Pass it to [`unsubscribe_events`] to cancel.
+    pub async fn subscribe_events(&self, event_type: Option<&str>) -> Result<u64> {
         let mut payload = serde_json::Map::new();
         payload.insert(
             "type".to_owned(),
@@ -173,8 +168,61 @@ impl HaConnection {
             payload.insert("event_type".to_owned(), Value::String(et.to_owned()));
         }
 
-        self.call_command(Value::Object(payload)).await?;
+        let _result = self.call_command(Value::Object(payload)).await?;
+        // The subscription ID is the `id` we sent. Extract it from the
+        // internal counter: we just incremented, so subtract 1.
+        let sub_id = self.next_id.load(Ordering::SeqCst).saturating_sub(1);
+        Ok(sub_id)
+    }
+
+    /// Unsubscribe from a previously subscribed event stream.
+    ///
+    /// The `subscription` ID is the value returned by [`subscribe_events`].
+    pub async fn unsubscribe_events(&self, subscription: u64) -> Result<()> {
+        self.call_command(serde_json::json!({
+            "type": "unsubscribe_events",
+            "subscription": subscription,
+        }))
+        .await?;
         Ok(())
+    }
+
+    /// Call a HA service over WebSocket.
+    ///
+    /// Unlike the REST API, the WebSocket `call_service` command accepts
+    /// `target` as a nested JSON object (not flattened).
+    /// Set `return_response` to `true` for services that return data
+    /// (e.g. `weather.get_forecasts`).
+    pub async fn call_service(
+        &self,
+        domain: &str,
+        service: &str,
+        target: Option<&Target>,
+        service_data: Option<Value>,
+        return_response: bool,
+    ) -> Result<Value> {
+        let mut payload = serde_json::json!({
+            "type": "call_service",
+            "domain": domain,
+            "service": service,
+        });
+
+        if let Some(t) = target {
+            // WS format: target is a nested object
+            let obj = payload.as_object_mut().unwrap();
+            obj.insert("target".to_owned(), serde_json::to_value(t)?);
+        }
+        if let Some(d) = service_data {
+            let obj = payload.as_object_mut().unwrap();
+            obj.insert("service_data".to_owned(), d);
+        }
+        if return_response {
+            let obj = payload.as_object_mut().unwrap();
+            obj.insert("return_response".to_owned(), Value::Bool(true));
+        }
+
+        let result = self.call_command(payload).await?;
+        Ok(result)
     }
 
     /// Send an application-level ping and wait for the pong response.
@@ -183,7 +231,7 @@ impl HaConnection {
     /// `"type": "ping"` and waits for `"type": "pong"`.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
     pub async fn ping(&self) -> Result<()> {
-        let result = self
+        let _result = self
             .call_command(serde_json::json!({"type": "ping"}))
             .await?;
         // pong responses have no payload (result is null)
@@ -647,12 +695,12 @@ mod tests {
         );
 
         let conn = ws.subscribe().await.unwrap();
-        let result = conn.subscribe_entities(None).await;
-        assert!(result.is_ok());
+        let sub_id = conn.subscribe_entities().await.unwrap();
+        assert!(sub_id > 0);
     }
 
     #[tokio::test]
-    async fn subscribe_entities_with_filter() {
+    async fn subscribe_events_returns_id_and_unsubscribes() {
         let port = start_mock_ha_ws().await;
         let ws = HaWebSocket::new(
             &format!("ws://127.0.0.1:{port}"),
@@ -660,9 +708,14 @@ mod tests {
         );
 
         let conn = ws.subscribe().await.unwrap();
-        let result = conn
-            .subscribe_entities(Some(&["light.living_room", "sensor.temperature"]))
-            .await;
+        let sub_id = conn
+            .subscribe_events(Some("state_changed"))
+            .await
+            .unwrap();
+        assert!(sub_id > 0);
+
+        // Unsubscribe using the returned ID
+        let result = conn.unsubscribe_events(sub_id).await;
         assert!(result.is_ok());
     }
 
@@ -746,7 +799,7 @@ mod tests {
         );
 
         let conn = ws.subscribe().await.unwrap();
-        conn.subscribe_entities(None).await.unwrap();
+        conn.subscribe_entities().await.unwrap();
 
         let cmds = commands.lock().await;
         assert!(
@@ -847,8 +900,36 @@ mod tests {
         );
 
         let conn = ws.subscribe().await.unwrap();
-        let result = conn.subscribe_events(Some("state_changed")).await;
+        let sub_id = conn.subscribe_events(Some("state_changed")).await;
+        assert!(sub_id.is_ok());
+    }
+
+    #[tokio::test]
+    async fn call_service_sends_nested_target() {
+        let (port, commands) = start_mock_ha_ws_recording().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let target = Target::entity("light.living_room");
+        let result = conn
+            .call_service(
+                "light",
+                "turn_on",
+                Some(&target),
+                Some(json!({"brightness": 255})),
+                false,
+            )
+            .await;
         assert!(result.is_ok());
+
+        let cmds = commands.lock().await;
+        assert!(
+            cmds.iter().any(|c| c == "call_service"),
+            "expected call_service command, got: {cmds:?}"
+        );
     }
 
     #[tokio::test]

@@ -314,6 +314,111 @@ impl HomeAssistantClient {
         Ok(())
     }
 
+    /// Set or create an entity state.
+    ///
+    /// Sends `POST /api/states/{entity_id}` with `state` and optional
+    /// `attributes`. Returns the new [`EntityState`] from the server.
+    ///
+    /// Requires admin privileges in Home Assistant.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
+    pub async fn set_state(
+        &self,
+        entity_id: &str,
+        state: &str,
+        attributes: Option<serde_json::Value>,
+    ) -> Result<EntityState> {
+        let (_, auth) = self.auth_header();
+
+        let mut body = serde_json::Map::new();
+        body.insert("state".to_owned(), serde_json::Value::String(state.to_owned()));
+        if let Some(attrs) = attributes {
+            body.insert("attributes".to_owned(), attrs);
+        }
+
+        let resp = self
+            .http
+            .post(format!(
+                "{}/api/states/{entity_id}",
+                self.base_url
+            ))
+            .header("Authorization", &auth)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        check_auth_status(status)?;
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Error::ServiceCall(format!(
+                "set_state {entity_id} returned {status}: {text}"
+            )));
+        }
+
+        resp.json().await.map_err(Error::from)
+    }
+
+    /// Fetch logbook entries.
+    ///
+    /// Returns a chronological list of logbook entries (state changes,
+    /// automations triggered, etc.) for the given time window.
+    ///
+    /// - `timestamp`: ISO 8601 datetime for the start of the period.
+    ///   If `None`, defaults to the start of the current local day.
+    /// - `end_time`: Optional ISO 8601 datetime for the end of the period.
+    /// - `entity_id`: Optional entity to filter entries for.
+    /// - `period`: Number of days to include (default 1). Ignored if
+    ///   `end_time` is provided.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
+    pub async fn get_logbook(
+        &self,
+        timestamp: Option<&str>,
+        end_time: Option<&str>,
+        entity_id: Option<&str>,
+        period: Option<u32>,
+    ) -> Result<Vec<serde_json::Value>> {
+        let (_, auth) = self.auth_header();
+
+        let url = if let Some(ts) = timestamp {
+            format!(
+                "{}/api/logbook/{}",
+                self.base_url,
+                urlencoding::encode(ts),
+            )
+        } else {
+            format!("{}/api/logbook", self.base_url)
+        };
+
+        let mut query = Vec::new();
+        if let Some(end) = end_time {
+            query.push(format!("end_time={}", urlencoding::encode(end)));
+        }
+        if let Some(entity) = entity_id {
+            query.push(format!("entity={}", urlencoding::encode(entity)));
+        }
+        if let Some(p) = period {
+            query.push(format!("period={p}"));
+        }
+
+        let full_url = if query.is_empty() {
+            url
+        } else {
+            format!("{url}?{}", query.join("&"))
+        };
+
+        let resp = self
+            .http
+            .get(&full_url)
+            .header("Authorization", &auth)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        check_auth_status(status)?;
+        resp.json().await.map_err(Error::from)
+    }
+
     /// Fetch state history for entities within a time range.
     ///
     /// All URL parameters are percent-encoded to handle ISO 8601 timestamps
@@ -879,6 +984,148 @@ mod tests {
         let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
         let err = client.camera_proxy("camera.nonexistent").await.unwrap_err();
         assert!(matches!(err, Error::Camera(_)));
+    }
+
+    // --- set_state ---
+
+    #[tokio::test]
+    async fn set_state_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/states/input_boolean.test_mode"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "entity_id": "input_boolean.test_mode",
+                "state": "on",
+                "attributes": {"friendly_name": "Test Mode"},
+                "last_changed": "2026-01-01T00:00:00+00:00",
+                "last_updated": "2026-01-01T00:00:00+00:00",
+                "context": {}
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let state = client
+            .set_state("input_boolean.test_mode", "on", None)
+            .await
+            .unwrap();
+        assert_eq!(state.entity_id, "input_boolean.test_mode");
+        assert_eq!(state.state, "on");
+    }
+
+    #[tokio::test]
+    async fn set_state_with_attributes() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/states/sensor.custom"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                "entity_id": "sensor.custom",
+                "state": "42",
+                "attributes": {"unit_of_measurement": "°C", "friendly_name": "Custom"},
+                "last_changed": "2026-01-01T00:00:00+00:00",
+                "last_updated": "2026-01-01T00:00:00+00:00",
+                "context": {}
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let state = client
+            .set_state(
+                "sensor.custom",
+                "42",
+                Some(json!({"unit_of_measurement": "°C", "friendly_name": "Custom"})),
+            )
+            .await
+            .unwrap();
+        assert_eq!(state.state, "42");
+    }
+
+    #[tokio::test]
+    async fn set_state_failure() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/states/light.test"))
+            .respond_with(ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let err = client.set_state("light.test", "on", None).await.unwrap_err();
+        assert!(matches!(err, Error::ServiceCall(_)));
+    }
+
+    // --- get_logbook ---
+
+    #[tokio::test]
+    async fn get_logbook_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/logbook/2026-04-21T00%3A00%3A00"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {
+                    "name": "Living Room",
+                    "entity_id": "light.living_room",
+                    "state": "on",
+                    "last_changed": "2026-04-21T12:00:00+00:00"
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let entries = client
+            .get_logbook(
+                Some("2026-04-21T00:00:00"),
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["entity_id"], "light.living_room");
+    }
+
+    #[tokio::test]
+    async fn get_logbook_with_entity_and_period() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/logbook/2026-04-20T00%3A00%3A00"))
+            .and(query_param("entity", "light.living_room"))
+            .and(query_param("period", "3"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let entries = client
+            .get_logbook(
+                Some("2026-04-20T00:00:00"),
+                None,
+                Some("light.living_room"),
+                Some(3),
+            )
+            .await
+            .unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_logbook_default_today() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/logbook"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&server)
+            .await;
+
+        let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
+        let entries = client
+            .get_logbook(None, None, None, None)
+            .await
+            .unwrap();
+        assert!(entries.is_empty());
     }
 
     // --- construction ---
