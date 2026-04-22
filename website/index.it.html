@@ -1006,7 +1006,7 @@
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
                         <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">MIT</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">license</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">licenza</p>
                     </div>
                 </div>
                 <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">*Il codice unsafe è isolato in FFI Swift, wrapper per modelli locali e confini WASM/runtime precompilati. I percorsi principali di agente e gateway restano in Rust sicuro.</p>
@@ -1036,7 +1036,7 @@
                             <tr class="bg-gray-50 dark:bg-gray-900/50">
                                 <th class="px-3 py-2.5 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800 sticky left-0 bg-gray-50 dark:bg-gray-900/80 z-10"></th>
                                 <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800"><a href="https://github.com/openclaw/openclaw" target="_blank" rel="noopener" class="hover:text-orange-500 transition-colors">OpenClaw</a></th>
-                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800"><a href="https://github.com/NousResearch/hermes-agent" target="_blank" rel="noopener" class="hover:text-orange-500 transition-colors">Hermes</a></th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800"><a href="https://github.com/NousResearch/hermes-agent" target="_blank" rel="noopener" class="hover:text-orange-500 transition-colors">Hermes Agent</a></th>
                                 <th class="px-3 py-2.5 font-semibold text-orange-600 dark:text-orange-400 border-b border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">Moltis</th>
                             </tr>
                         </thead>
@@ -1091,8 +1091,8 @@
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Hook</td>
-                                <td class="px-3 py-2">Plugin/runtime hooks</td>
-                                <td class="px-3 py-2">Hook/plugins</td>
+                                <td class="px-3 py-2">Hook plugin/runtime</td>
+                                <td class="px-3 py-2">Hook/plugin</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">15 event types</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
@@ -1132,7 +1132,7 @@
                             <tr class="bg-gray-50 dark:bg-gray-900/50">
                                 <th class="px-3 py-2.5 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800 sticky left-0 bg-gray-50 dark:bg-gray-900/80 z-10"></th>
                                 <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">OpenClaw</th>
-                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">Hermes</th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">Hermes Agent</th>
                                 <th class="px-3 py-2.5 font-semibold text-orange-600 dark:text-orange-400 border-b border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">Moltis</th>
                             </tr>
                         </thead>
@@ -1145,32 +1145,32 @@
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">Gestione segreti</td>
-                                <td class="px-3 py-2">Config, env, and plugin paths</td>
-                                <td class="px-3 py-2">Config and provider credentials</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Encrypted vault, redacted, zeroed</td>
+                                <td class="px-3 py-2">Percorsi di configurazione, ambiente e plugin</td>
+                                <td class="px-3 py-2">Configurazione e credenziali provider</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Vault cifrato, oscurato, azzerato</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Protezione SSRF</td>
-                                <td class="px-3 py-2">Tool/plugin dependent</td>
-                                <td class="px-3 py-2">Tool/backend dependent</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Blocks loopback/private/CGNAT</td>
+                                <td class="px-3 py-2">Dipende da strumento/plugin</td>
+                                <td class="px-3 py-2">Dipende da strumento/backend</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Blocca loopback/privati/CGNAT</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">WebSocket origin</td>
-                                <td class="px-3 py-2">Gateway dependent</td>
-                                <td class="px-3 py-2">Gateway dependent</td>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">Origine WebSocket</td>
+                                <td class="px-3 py-2">Dipende dal gateway</td>
+                                <td class="px-3 py-2">Dipende dal gateway</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Rifiuto cross-origin</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Controllo hook</td>
-                                <td class="px-3 py-2">Plugin/runtime hooks</td>
-                                <td class="px-3 py-2">Hook/plugins</td>
+                                <td class="px-3 py-2">Hook plugin/runtime</td>
+                                <td class="px-3 py-2">Hook/plugin</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Ispeziona / modifica / blocca</td>
                             </tr>
                             <tr>
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Rate limiting</td>
-                                <td class="px-3 py-2">Gateway dependent</td>
-                                <td class="px-3 py-2">Gateway dependent</td>
+                                <td class="px-3 py-2">Dipende dal gateway</td>
+                                <td class="px-3 py-2">Dipende dal gateway</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Throttle per IP + limiti login</td>
                             </tr>
                         </tbody>
@@ -1192,7 +1192,7 @@
                             <tr class="bg-gray-50 dark:bg-gray-900/50">
                                 <th class="px-3 py-2.5 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800 sticky left-0 bg-gray-50 dark:bg-gray-900/80 z-10"></th>
                                 <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">OpenClaw</th>
-                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">Hermes</th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">Hermes Agent</th>
                                 <th class="px-3 py-2.5 font-semibold text-orange-600 dark:text-orange-400 border-b border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">Moltis</th>
                             </tr>
                         </thead>
@@ -1227,7 +1227,7 @@
                 <p class="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">*Misurato con tokei da checkout locali, escludendo cartelle di dipendenze e output generato. Le righe di codice indicano scala e auditabilita, non una classifica.</p>
             </div>
 
-            <p class="text-[10px] text-gray-400 dark:text-gray-500 text-center">Based on local checkout snapshots and public project information. Projects evolve quickly — check each repo for the latest. <a href="https://docs.moltis.org/comparison.html" class="text-orange-500 dark:text-orange-400 hover:underline">Confronto completo nella documentazione</a>.</p>
+            <p class="text-[10px] text-gray-400 dark:text-gray-500 text-center">Basato su snapshot di checkout locali e informazioni pubbliche dei progetti. I progetti evolvono rapidamente — controlla ogni repository per le informazioni più recenti. <a href="https://docs.moltis.org/comparison.html" class="text-orange-500 dark:text-orange-400 hover:underline">Confronto completo nella documentazione</a>.</p>
         </div>
     </div>
 
@@ -1236,7 +1236,7 @@
     <!-- ============================================================ -->
     <footer class="relative z-10 text-center px-4 pb-8 pt-4">
         <p class="max-w-2xl mx-auto mb-4 text-xs sm:text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
-            Local AI assistants are still early software. Treat Moltis as alpha: run it carefully, review tool permissions, and avoid giving broad system access you do not need. Use responsibly.
+            Gli assistenti IA locali sono ancora software giovane. Considera Moltis una versione alpha: eseguilo con attenzione, rivedi i permessi degli strumenti ed evita di concedere accesso ampio al sistema se non serve. Usalo responsabilmente.
         </p>
         <p class="inline-flex items-center gap-3 text-xs text-gray-400 dark:text-gray-600">
             <span class="inline-flex items-center gap-1.5">

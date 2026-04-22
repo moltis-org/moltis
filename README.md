@@ -47,7 +47,7 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 
 ## Comparison
 
-| | OpenClaw | Hermes | **Moltis** |
+| | OpenClaw | Hermes Agent | **Moltis** |
 |---|---|---|---|
 | Primary stack | TypeScript + Swift/Kotlin companion apps | Python + TypeScript TUI/web surfaces | **Rust** |
 | Runtime | Node.js + npm/pnpm/bun | Python + uv/pip, optional Node UI pieces | **Single Rust binary** |
