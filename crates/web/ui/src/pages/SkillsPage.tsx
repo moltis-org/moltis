@@ -327,13 +327,31 @@ function BundleTransferBox(): VNode {
 	);
 }
 
-const featuredSkills = [
+interface FeaturedSkill {
+	repo: string;
+	desc: string;
+	hasRecipe?: boolean;
+}
+const featuredSkills: FeaturedSkill[] = [
 	{ repo: "openclaw/skills", desc: "Community skills from ClawdHub" },
 	{ repo: "anthropics/skills", desc: "Official Anthropic agent skills" },
 	{ repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection" },
 	{ repo: "vercel-labs/skills", desc: "Vercel skills toolkit" },
+	{ repo: "garrytan/gbrain", desc: "Knowledge graph with hybrid search for agent memory", hasRecipe: true },
 ];
-function FeaturedCard({ skill: f }: { skill: { repo: string; desc: string } }): VNode {
+
+/** After installing a repo with a recipe, fetch and display the post-install instructions. */
+async function checkPostInstallRecipe(source: string): Promise<void> {
+	const res = await sendRpc("skills.recipe", { source });
+	if (!res?.ok) return;
+	const payload = res.payload as Record<string, unknown> | undefined;
+	if (!payload?.found) return;
+	const recipe = payload.recipe as { title?: string; instructions?: string } | undefined;
+	if (!recipe?.instructions) return;
+	showToast(`${recipe.title || "Setup"}: post-install recipe available. Check the chat to run it.`, "success");
+}
+
+function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
 	const installing = useSignal(false);
 	const href = /^https?:\/\//.test(f.repo) ? f.repo : `https://github.com/${f.repo}`;
 	return (
@@ -360,6 +378,7 @@ function FeaturedCard({ skill: f }: { skill: { repo: string; desc: string } }): 
 					installing.value = true;
 					doInstall(f.repo).then(() => {
 						installing.value = false;
+						if (f.hasRecipe) checkPostInstallRecipe(f.repo);
 					});
 				}}
 				disabled={installing.value}

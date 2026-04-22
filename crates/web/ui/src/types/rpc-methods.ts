@@ -154,6 +154,16 @@ export interface RpcMethodMap {
 	"skills.skill.disable": unknown;
 	"skills.bundled.categories": unknown;
 	"skills.bundled.toggle_category": unknown;
+	"skills.recipe": {
+		found: boolean;
+		recipe?: {
+			source: string;
+			title: string;
+			instructions: string;
+			mcp_servers: unknown[];
+			skills_to_enable: string[];
+		};
+	};
 
 	// ── STT (Speech-to-Text) ────────────────────────────────────
 	"stt.status": unknown;

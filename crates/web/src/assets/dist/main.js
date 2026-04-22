@@ -14575,8 +14575,18 @@ const featuredSkills = [
   { repo: "openclaw/skills", desc: "Community skills from ClawdHub" },
   { repo: "anthropics/skills", desc: "Official Anthropic agent skills" },
   { repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection" },
-  { repo: "vercel-labs/skills", desc: "Vercel skills toolkit" }
+  { repo: "vercel-labs/skills", desc: "Vercel skills toolkit" },
+  { repo: "garrytan/gbrain", desc: "Knowledge graph with hybrid search for agent memory", hasRecipe: true }
 ];
+async function checkPostInstallRecipe(source) {
+  const res = await sendRpc("skills.recipe", { source });
+  if (!(res == null ? void 0 : res.ok)) return;
+  const payload = res.payload;
+  if (!(payload == null ? void 0 : payload.found)) return;
+  const recipe = payload.recipe;
+  if (!(recipe == null ? void 0 : recipe.instructions)) return;
+  showToast$3(`${recipe.title || "Setup"}: post-install recipe available. Check the chat to run it.`, "success");
+}
 function FeaturedCard$1({ skill: f }) {
   const installing = useSignal(false);
   const href = /^https?:\/\//.test(f.repo) ? f.repo : `https://github.com/${f.repo}`;
@@ -14607,6 +14617,7 @@ function FeaturedCard$1({ skill: f }) {
           installing.value = true;
           doInstall(f.repo).then(() => {
             installing.value = false;
+            if (f.hasRecipe) checkPostInstallRecipe(f.repo);
           });
         },
         disabled: installing.value,

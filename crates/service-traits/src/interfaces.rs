@@ -610,6 +610,7 @@ pub trait SkillsService: Send + Sync {
     async fn skill_save(&self, params: Value) -> ServiceResult;
     async fn bundled_categories(&self) -> ServiceResult;
     async fn bundled_toggle_category(&self, params: Value) -> ServiceResult;
+    async fn recipe(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopSkillsStub;
@@ -706,6 +707,10 @@ impl SkillsService for NoopSkillsStub {
 
     async fn bundled_toggle_category(&self, _params: Value) -> ServiceResult {
         Err("skills service not configured".into())
+    }
+
+    async fn recipe(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "found": false }))
     }
 }
 

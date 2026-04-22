@@ -65,6 +65,7 @@ const READ_METHODS: &[&str] = &[
     "skills.security.status",
     "skills.security.scan",
     "skills.repos.list",
+    "skills.recipe",
     "skills.bundled.categories",
     "voicewake.get",
     "sessions.list",

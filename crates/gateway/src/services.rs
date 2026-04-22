@@ -1168,6 +1168,20 @@ impl SkillsService for NoopSkillsService {
             "results": results,
         }))
     }
+
+    async fn recipe(&self, params: Value) -> ServiceResult {
+        let source = params
+            .get("source")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'source' parameter".to_string())?;
+        match moltis_skills::recipes::get_recipe(source) {
+            Some(recipe) => Ok(serde_json::json!({
+                "found": true,
+                "recipe": recipe,
+            })),
+            None => Ok(serde_json::json!({ "found": false })),
+        }
+    }
 }
 
 fn local_repo_head_sha(repo_dir: &Path) -> Option<String> {
