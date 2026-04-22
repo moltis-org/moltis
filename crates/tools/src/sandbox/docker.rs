@@ -255,6 +255,32 @@ impl DockerSandbox {
         args
     }
 
+    /// Mount the host `moltis-ctl` binary into the sandbox at `/usr/local/bin/moltis-ctl`.
+    ///
+    /// Locates the binary next to the current executable (same directory as `moltis`),
+    /// and if found, bind-mounts it read-only. This allows skills to call `moltis-ctl`
+    /// inside sandboxes to communicate with the gateway.
+    fn moltis_ctl_mount_args() -> Vec<String> {
+        let Ok(current_exe) = std::env::current_exe() else {
+            return Vec::new();
+        };
+        let Some(exe_dir) = current_exe.parent() else {
+            return Vec::new();
+        };
+        let ctl_binary = exe_dir.join("moltis-ctl");
+        if !ctl_binary.is_file() {
+            tracing::debug!(
+                path = %ctl_binary.display(),
+                "moltis-ctl binary not found next to server, skipping sandbox mount"
+            );
+            return Vec::new();
+        }
+        vec![
+            "-v".to_string(),
+            format!("{}:/usr/local/bin/moltis-ctl:ro", ctl_binary.display()),
+        ]
+    }
+
     pub(crate) fn workspace_args(&self) -> Vec<String> {
         let guest_workspace_dir = moltis_config::data_dir();
         let host_workspace_dir = host_visible_data_dir(&self.config, Some(self.cli));
@@ -444,6 +470,7 @@ impl Sandbox for DockerSandbox {
         args.extend(Self::hardening_args(is_prebuilt, self.kind, is_wsl()));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
+        args.extend(Self::moltis_ctl_mount_args());
 
         args.push(image.clone());
         args.extend(["sleep".to_string(), "infinity".to_string()]);
