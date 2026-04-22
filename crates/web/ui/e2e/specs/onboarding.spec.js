@@ -484,17 +484,15 @@ test.describe("Onboarding wizard", () => {
 		await page.getByRole("button", { name: "Skip for now", exact: true }).click();
 
 		const channelHeading = page.getByRole("heading", { name: "Connect a Channel", exact: true });
-		for (let i = 0; i < 5; i++) {
+		for (let i = 0; i < 6; i++) {
 			if (await channelHeading.isVisible().catch(() => false)) {
 				break;
 			}
-			const skipBtn = page.getByRole("button", { name: "Skip for now", exact: true });
-			const continueBtn = page.getByRole("button", { name: "Continue", exact: true });
-			if (await skipBtn.isVisible().catch(() => false)) {
-				await skipBtn.click();
-			} else if (await continueBtn.isVisible().catch(() => false)) {
-				await continueBtn.click();
-			}
+			// Each step may have "Continue", "Skip for now", or both. Try either.
+			const nextBtn = page.getByRole("button", { name: /^(Continue|Skip for now)$/ }).first();
+			await expect(nextBtn).toBeVisible({ timeout: 5_000 });
+			await nextBtn.click();
+			await page.waitForTimeout(300);
 		}
 
 		await expect(channelHeading).toBeVisible();
