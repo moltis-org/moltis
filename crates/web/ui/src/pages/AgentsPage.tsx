@@ -67,6 +67,13 @@ interface PresetCardProps {
 	onCreate: (preset: ConfigPreset) => void;
 }
 
+interface AgentConceptCardProps {
+	title: string;
+	badge: string;
+	description: string;
+	detail: string;
+}
+
 const WS_RETRY_LIMIT = 75;
 const WS_RETRY_DELAY_MS = 200;
 
@@ -453,6 +460,49 @@ function PresetCard({ preset, creating, onCreate }: PresetCardProps): VNode {
 	);
 }
 
+// ── Agent system overview ──────────────────────────────────
+
+function AgentConceptCard({ title, badge, description, detail }: AgentConceptCardProps): VNode {
+	return (
+		<div className="backend-card flex flex-col gap-2">
+			<div className="flex items-center justify-between gap-3">
+				<h3 className="text-sm font-medium text-[var(--text-strong)]">{title}</h3>
+				<span className="tier-badge">{badge}</span>
+			</div>
+			<p className="text-xs text-[var(--text)] leading-relaxed m-0">{description}</p>
+			<p className="text-xs text-[var(--muted)] leading-relaxed m-0">{detail}</p>
+		</div>
+	);
+}
+
+function AgentSystemOverview(): VNode {
+	return (
+		<section className="flex flex-col gap-2 max-w-[900px]" aria-label="Agent system overview">
+			<h3 className="text-xs font-medium text-[var(--muted)]">How Agent Types Fit Together</h3>
+			<div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+				<AgentConceptCard
+					title="Chat Agents"
+					badge="identity"
+					description="Persistent personas you can select in chat."
+					detail="Each chat agent has its own memory, system prompt, sessions, and chat fallback setting."
+				/>
+				<AgentConceptCard
+					title="Delegated Sub-Agents"
+					badge="spawn"
+					description="Config roles available to spawn_agent immediately."
+					detail="They guide delegated work without creating chat history. Add one to chat when you want it as a full agent."
+				/>
+				<AgentConceptCard
+					title="Modes"
+					badge="coming"
+					description="Upcoming per-session overlays for how an agent should work right now."
+					detail="Modes will be for temporary workflows like Plan, Build, Review, or Concise, without changing identity."
+				/>
+			</div>
+		</section>
+	);
+}
+
 // ── Main page ───────────────────────────────────────────────
 
 function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
@@ -618,9 +668,11 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 				</button>
 			</div>
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
-				Create agent personas with different identities and personalities. Each agent has its own memory and system
-				prompt.
+				Create persistent chat identities, promote useful sub-agent presets, and understand where future session modes
+				will fit.
 			</p>
+
+			<AgentSystemOverview />
 
 			{error && (
 				<span className="text-xs" style={{ color: "var(--error)" }}>
@@ -646,8 +698,8 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 					<div className="flex flex-col gap-1">
 						<h3 className="text-xs font-medium text-[var(--muted)]">Sub-Agent Presets</h3>
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-							These config presets are available to the spawn_agent tool immediately. Add one to chat to create a
-							regular agent with its own persona, memory, and sessions.
+							These config presets are already usable by spawn_agent for delegated work. Add one to chat only when you
+							want that preset to become a persistent chat agent with memory and sessions.
 						</p>
 					</div>
 					{configPresets.map((preset) => (

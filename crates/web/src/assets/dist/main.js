@@ -20795,6 +20795,50 @@ function PresetCard({ preset, creating, onCreate }) {
     )
   ] });
 }
+function AgentConceptCard({ title, badge, description, detail }) {
+  return /* @__PURE__ */ u("div", { className: "backend-card flex flex-col gap-2", children: [
+    /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-3", children: [
+      /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)]", children: title }),
+      /* @__PURE__ */ u("span", { className: "tier-badge", children: badge })
+    ] }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--text)] leading-relaxed m-0", children: description }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed m-0", children: detail })
+  ] });
+}
+function AgentSystemOverview() {
+  return /* @__PURE__ */ u("section", { className: "flex flex-col gap-2 max-w-[900px]", "aria-label": "Agent system overview", children: [
+    /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "How Agent Types Fit Together" }),
+    /* @__PURE__ */ u("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-2", children: [
+      /* @__PURE__ */ u(
+        AgentConceptCard,
+        {
+          title: "Chat Agents",
+          badge: "identity",
+          description: "Persistent personas you can select in chat.",
+          detail: "Each chat agent has its own memory, system prompt, sessions, and chat fallback setting."
+        }
+      ),
+      /* @__PURE__ */ u(
+        AgentConceptCard,
+        {
+          title: "Delegated Sub-Agents",
+          badge: "spawn",
+          description: "Config roles available to spawn_agent immediately.",
+          detail: "They guide delegated work without creating chat history. Add one to chat when you want it as a full agent."
+        }
+      ),
+      /* @__PURE__ */ u(
+        AgentConceptCard,
+        {
+          title: "Modes",
+          badge: "coming",
+          description: "Upcoming per-session overlays for how an agent should work right now.",
+          detail: "Modes will be for temporary workflows like Plan, Build, Review, or Concise, without changing identity."
+        }
+      )
+    ] })
+  ] });
+}
 function AgentsPageComponent({ subPath }) {
   const [agents, setAgents] = d([]);
   const [configPresets, setConfigPresets] = d([]);
@@ -20941,7 +20985,8 @@ function AgentsPageComponent({ subPath }) {
         }
       )
     ] }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { maxWidth: "600px", margin: 0 }, children: "Create agent personas with different identities and personalities. Each agent has its own memory and system prompt." }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { maxWidth: "600px", margin: 0 }, children: "Create persistent chat identities, promote useful sub-agent presets, and understand where future session modes will fit." }),
+    /* @__PURE__ */ u(AgentSystemOverview, {}),
     error2 && /* @__PURE__ */ u("span", { className: "text-xs", style: { color: "var(--error)" }, children: error2 }),
     /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", style: { maxWidth: "600px" }, children: agents.map((agent) => /* @__PURE__ */ u(
       AgentCard,
@@ -20957,7 +21002,7 @@ function AgentsPageComponent({ subPath }) {
     configPresets.length > 0 && /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 mt-2", style: { maxWidth: "600px" }, children: [
       /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
         /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Sub-Agent Presets" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "These config presets are available to the spawn_agent tool immediately. Add one to chat to create a regular agent with its own persona, memory, and sessions." })
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "These config presets are already usable by spawn_agent for delegated work. Add one to chat only when you want that preset to become a persistent chat agent with memory and sessions." })
       ] }),
       configPresets.map((preset) => /* @__PURE__ */ u(
         PresetCard,

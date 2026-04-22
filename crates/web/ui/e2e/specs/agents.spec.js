@@ -86,6 +86,15 @@ test.describe("Agents settings page", () => {
 
 		await expect(page).toHaveURL(/\/settings\/agents$/);
 		await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+		const overview = page.getByLabel("Agent system overview");
+		await expect(overview.getByRole("heading", { name: "Chat Agents", exact: true })).toBeVisible();
+		await expect(overview.getByText("Persistent personas you can select in chat.", { exact: true })).toBeVisible();
+		await expect(overview.getByRole("heading", { name: "Delegated Sub-Agents", exact: true })).toBeVisible();
+		await expect(
+			overview.getByText("Config roles available to spawn_agent immediately.", { exact: true }),
+		).toBeVisible();
+		await expect(overview.getByRole("heading", { name: "Modes", exact: true })).toBeVisible();
+		await expect(overview.getByText("Upcoming per-session overlays", { exact: false })).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -134,7 +143,7 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByRole("heading", { name: "Sub-Agent Presets", exact: true })).toBeVisible({
 			timeout: 10_000,
 		});
-		await expect(page.getByText("available to the spawn_agent tool immediately", { exact: false })).toBeVisible();
+		await expect(page.getByText("already usable by spawn_agent", { exact: false })).toBeVisible();
 		const presetCard = page.locator(".backend-card").filter({ hasText: "Coder" }).filter({ hasText: "config" }).first();
 		await expect(presetCard).toBeVisible({ timeout: 10_000 });
 		await presetCard.getByRole("button", { name: "Add to Chat", exact: true }).click();
