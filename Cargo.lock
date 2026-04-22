@@ -7447,6 +7447,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-ctl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "uuid",
+]
+
+[[package]]
 name = "moltis-discord"
 version = "0.1.0"
 dependencies = [
