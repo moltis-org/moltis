@@ -14345,6 +14345,178 @@ function teardownProjects() {
   _projectsContainer = null;
 }
 registerPage(routes.projects, initProjects, teardownProjects);
+let searchTimer$1 = null;
+function ResultCard({ result, onInstalled }) {
+  const installing = useSignal(false);
+  const installed = useSignal(false);
+  const error2 = useSignal(null);
+  async function doInstall2() {
+    installing.value = true;
+    error2.value = null;
+    const res = await sendRpc("skills.clawhub.install", { slug: result.slug });
+    installing.value = false;
+    if (res == null ? void 0 : res.ok) {
+      installed.value = true;
+      const payload = res.payload;
+      const skills = (payload == null ? void 0 : payload.installed) || [];
+      const source = `clawhub:${result.slug}`;
+      for (const skill of skills) {
+        if (!skill.name) continue;
+        await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
+        await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
+      }
+      onInstalled();
+    } else {
+      error2.value = String((res == null ? void 0 : res.error) || "Install failed");
+    }
+  }
+  return /* @__PURE__ */ u("div", { className: "skills-featured-card", children: [
+    /* @__PURE__ */ u("div", { style: { flex: 1, minWidth: 0 }, children: [
+      /* @__PURE__ */ u("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }, children: [
+        /* @__PURE__ */ u(
+          "span",
+          {
+            style: {
+              fontFamily: "var(--font-mono)",
+              fontSize: ".82rem",
+              fontWeight: 500,
+              color: "var(--text-strong)"
+            },
+            children: result.displayName || result.slug
+          }
+        ),
+        result.slug !== result.displayName && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: result.slug }),
+        result.verified && /* @__PURE__ */ u(
+          "span",
+          {
+            style: {
+              fontSize: ".62rem",
+              padding: "1px 4px",
+              borderRadius: "var(--radius-sm)",
+              background: "var(--success-bg, rgba(34,197,94,.12))",
+              color: "var(--success, #22c55e)"
+            },
+            children: "verified"
+          }
+        ),
+        result.ownerHandle && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: [
+          "by ",
+          result.ownerHandle
+        ] }),
+        result.downloads != null && result.downloads > 0 && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: [
+          result.downloads.toLocaleString(),
+          " downloads"
+        ] })
+      ] }),
+      result.summary && /* @__PURE__ */ u(
+        "div",
+        {
+          style: {
+            fontSize: ".75rem",
+            color: "var(--muted)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap"
+          },
+          children: result.summary
+        }
+      ),
+      error2.value && /* @__PURE__ */ u("div", { style: { fontSize: ".72rem", color: "var(--danger, #ef4444)", marginTop: "2px" }, children: error2.value })
+    ] }),
+    /* @__PURE__ */ u(
+      "button",
+      {
+        onClick: () => {
+          if (!(installed.value || installing.value)) doInstall2().catch(console.error);
+        },
+        disabled: installed.value || installing.value,
+        style: {
+          background: "var(--surface2)",
+          border: "1px solid var(--border)",
+          color: installed.value ? "var(--success, #22c55e)" : "var(--text)",
+          borderRadius: "var(--radius-sm)",
+          fontSize: ".72rem",
+          padding: "4px 10px",
+          cursor: installed.value ? "default" : "pointer",
+          whiteSpace: "nowrap",
+          opacity: installed.value ? 0.8 : 1
+        },
+        children: installed.value ? "Installed" : installing.value ? "Installing…" : "Install"
+      }
+    )
+  ] });
+}
+function ClawHubSection({ onChanged }) {
+  const query2 = useSignal("");
+  const results = useSignal([]);
+  const searching = useSignal(false);
+  const searched = useSignal(false);
+  const inputRef = A(null);
+  function doSearch2(q2) {
+    if (!q2.trim()) {
+      results.value = [];
+      searched.value = false;
+      return;
+    }
+    searching.value = true;
+    sendRpc("skills.clawhub.search", { query: q2.trim() }).then((res) => {
+      searching.value = false;
+      searched.value = true;
+      if (res == null ? void 0 : res.ok) {
+        const payload = res.payload;
+        results.value = (payload == null ? void 0 : payload.results) || [];
+      }
+    });
+  }
+  function onInput(e) {
+    const v = e.target.value;
+    query2.value = v;
+    if (searchTimer$1) clearTimeout(searchTimer$1);
+    if (!v.trim()) {
+      results.value = [];
+      searched.value = false;
+      return;
+    }
+    searchTimer$1 = setTimeout(() => doSearch2(v), 300);
+  }
+  function onKeyDown(e) {
+    if (e.key === "Enter") {
+      if (searchTimer$1) clearTimeout(searchTimer$1);
+      doSearch2(query2.value);
+    }
+  }
+  return /* @__PURE__ */ u("div", { className: "skills-section", children: [
+    /* @__PURE__ */ u("h3", { className: "skills-section-title", children: [
+      "ClawHub",
+      /* @__PURE__ */ u("span", { style: { fontSize: ".72rem", color: "var(--muted)", fontWeight: 400, marginLeft: "8px" }, children: "clawhub.ai — 52k+ community skills" })
+    ] }),
+    /* @__PURE__ */ u("div", { className: "skills-install-box", children: [
+      /* @__PURE__ */ u(
+        "input",
+        {
+          ref: inputRef,
+          type: "text",
+          placeholder: "Search ClawHub skills...",
+          className: "skills-install-input",
+          value: query2.value,
+          onInput,
+          onKeyDown
+        }
+      ),
+      /* @__PURE__ */ u(
+        "button",
+        {
+          className: "provider-btn",
+          disabled: searching.value || !query2.value.trim(),
+          onClick: () => doSearch2(query2.value),
+          children: searching.value ? "Searching…" : "Search"
+        }
+      )
+    ] }),
+    results.value.length > 0 && /* @__PURE__ */ u("div", { style: { display: "flex", flexDirection: "column", gap: "4px", marginTop: "8px" }, children: results.value.map((r2) => /* @__PURE__ */ u(ResultCard, { result: r2, onInstalled: onChanged }, r2.slug)) }),
+    searched.value && results.value.length === 0 && !searching.value && /* @__PURE__ */ u("div", { style: { fontSize: ".78rem", color: "var(--muted)", padding: "12px 0", textAlign: "center" }, children: "No skills found. Try a different search term." })
+  ] });
+}
 const repos = y([]);
 const enabledSkills = y([]);
 const loading$7 = y(false);
@@ -14539,7 +14711,6 @@ function InstallBox$1() {
   ] });
 }
 const featuredSkills = [
-  { repo: "openclaw/skills", desc: "Community skills from ClawdHub" },
   { repo: "anthropics/skills", desc: "Official Anthropic agent skills", autoTrust: true },
   { repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection", autoTrust: true },
   { repo: "vercel-labs/skills", desc: "Vercel skills toolkit", autoTrust: true },
@@ -15389,6 +15560,7 @@ const skillsTabs = g(() => {
   return [
     { id: "skills", label: "Skills", badge: enabledSkills.value.length || void 0 },
     { id: "categories", label: "Categories", badge: totalCats ? `${enabledCats}/${totalCats}` : void 0 },
+    { id: "clawhub", label: "ClawHub" },
     { id: "repositories", label: "Repositories", badge: repos.value.length || void 0 }
   ];
 });
@@ -15440,6 +15612,7 @@ function SkillsPageComponent() {
       /* @__PURE__ */ u(EnabledSkillsTable, {})
     ] }),
     activeTab$1.value === "categories" && /* @__PURE__ */ u(BundledCategoriesSection, {}),
+    activeTab$1.value === "clawhub" && /* @__PURE__ */ u(ClawHubSection, { onChanged: fetchAll }),
     activeTab$1.value === "repositories" && /* @__PURE__ */ u(S, { children: [
       /* @__PURE__ */ u(InstallBox$1, {}),
       /* @__PURE__ */ u(InstallProgressBar, {}),

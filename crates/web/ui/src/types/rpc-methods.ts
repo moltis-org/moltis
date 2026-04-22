@@ -154,6 +154,19 @@ export interface RpcMethodMap {
 	"skills.skill.disable": unknown;
 	"skills.bundled.categories": unknown;
 	"skills.bundled.toggle_category": unknown;
+	"skills.clawhub.search": {
+		results: Array<{
+			score: number;
+			slug: string;
+			displayName?: string;
+			summary?: string;
+			updatedAt?: string;
+			downloads?: number;
+			ownerHandle?: string;
+			verified?: boolean;
+		}>;
+	};
+	"skills.clawhub.install": { installed: Array<{ name: string; description?: string }> };
 	"skills.recipe": {
 		found: boolean;
 		recipe?: {

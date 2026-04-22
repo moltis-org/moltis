@@ -191,6 +191,7 @@ tokio-util   = "0.7"
 serde_yaml        = "0.9"
 tokio-tungstenite = "0.26"
 toml              = "0.8"
+zip               = { default-features = false, features = ["deflate"], version = "2" }
 toml_edit         = "0.22"
 # LLM provider crates (optional, behind feature flags)
 async-openai    = { features = ["chat-completion"], version = "0.32" }

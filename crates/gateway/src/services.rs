@@ -1184,6 +1184,43 @@ impl SkillsService for NoopSkillsService {
             None => Ok(serde_json::json!({ "found": false })),
         }
     }
+
+    async fn clawhub_search(&self, params: Value) -> ServiceResult {
+        let query = params
+            .get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'query' parameter".to_string())?;
+        let client = moltis_skills::clawhub::ClawHubClient::new();
+        let response = client.search(query).await.map_err(ServiceError::message)?;
+        Ok(serde_json::to_value(response).unwrap_or_default())
+    }
+
+    async fn clawhub_install(&self, params: Value) -> ServiceResult {
+        let slug = params
+            .get("slug")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'slug' parameter".to_string())?;
+        let install_dir =
+            moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
+        let skills = moltis_skills::clawhub::install_from_clawhub(slug, &install_dir)
+            .await
+            .map_err(ServiceError::message)?;
+        let installed: Vec<_> = skills
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "name": m.name,
+                    "description": m.description,
+                    "path": m.path.to_string_lossy(),
+                })
+            })
+            .collect();
+        security_audit(
+            "skills.clawhub.install",
+            serde_json::json!({ "slug": slug, "installed_count": installed.len() }),
+        );
+        Ok(serde_json::json!({ "installed": installed }))
+    }
 }
 
 fn local_repo_head_sha(repo_dir: &Path) -> Option<String> {

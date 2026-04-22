@@ -19,6 +19,7 @@ thiserror             = { workspace = true }
 tokio                 = { workspace = true }
 tracing               = { workspace = true }
 walkdir               = { workspace = true }
+zip                   = { workspace = true }
 
 [features]
 default        = []

@@ -23,6 +23,7 @@ import {
 	SkillSource,
 } from "../types/skill-source";
 import { ConfirmDialog, requestConfirm } from "../ui";
+import { ClawHubSection } from "./skills/ClawHubSection";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -304,7 +305,6 @@ interface FeaturedSkill {
 	autoTrust?: boolean;
 }
 const featuredSkills: FeaturedSkill[] = [
-	{ repo: "openclaw/skills", desc: "Community skills from ClawdHub" },
 	{ repo: "anthropics/skills", desc: "Official Anthropic agent skills", autoTrust: true },
 	{ repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection", autoTrust: true },
 	{ repo: "vercel-labs/skills", desc: "Vercel skills toolkit", autoTrust: true },
@@ -1189,6 +1189,7 @@ const skillsTabs = computed(() => {
 	return [
 		{ id: "skills", label: "Skills", badge: enabledSkills.value.length || undefined },
 		{ id: "categories", label: "Categories", badge: totalCats ? `${enabledCats}/${totalCats}` : undefined },
+		{ id: "clawhub", label: "ClawHub" },
 		{ id: "repositories", label: "Repositories", badge: repos.value.length || undefined },
 	];
 });
@@ -1244,6 +1245,7 @@ function SkillsPageComponent(): VNode {
 				</>
 			)}
 			{activeTab.value === "categories" && <BundledCategoriesSection />}
+			{activeTab.value === "clawhub" && <ClawHubSection onChanged={fetchAll} />}
 			{activeTab.value === "repositories" && (
 				<>
 					<InstallBox />
