@@ -134,7 +134,30 @@ fn test_docker_hardening_args_skips_sysfs_on_wsl() {
 #[test]
 fn test_is_wsl_returns_false_on_non_wsl() {
     // On macOS and standard Linux CI, is_wsl() must return false.
+    // Note: uses the OnceLock-cached value — this test assumes it does not
+    // run on an actual WSL2 host.
     assert!(!is_wsl());
+}
+
+#[test]
+fn test_detect_wsl_from_path_positive() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("proc_version");
+    std::fs::write(&path, "Linux version 5.15.167.4-microsoft-standard-WSL2").unwrap();
+    assert!(detect_wsl_from_path(path.to_str().unwrap()));
+}
+
+#[test]
+fn test_detect_wsl_from_path_negative() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("proc_version");
+    std::fs::write(&path, "Linux version 6.8.0-45-generic (buildd@lcy02-amd64)").unwrap();
+    assert!(!detect_wsl_from_path(path.to_str().unwrap()));
+}
+
+#[test]
+fn test_detect_wsl_from_path_missing_file() {
+    assert!(!detect_wsl_from_path("/nonexistent/path/proc/version"));
 }
 
 #[test]

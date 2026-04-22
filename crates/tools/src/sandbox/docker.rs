@@ -753,13 +753,22 @@ impl Sandbox for NoSandbox {
 pub(crate) fn is_wsl() -> bool {
     static WSL: OnceLock<bool> = OnceLock::new();
     *WSL.get_or_init(|| {
-        std::fs::read_to_string("/proc/version")
-            .map(|v| {
-                let lower = v.to_ascii_lowercase();
-                lower.contains("microsoft") || lower.contains("wsl")
-            })
-            .unwrap_or(false)
+        let detected = detect_wsl_from_path("/proc/version");
+        if detected {
+            warn!("WSL2 detected: sysfs hardware-identifier tmpfs overlays will be skipped");
+        }
+        detected
     })
+}
+
+/// Testable inner helper: reads the given path and checks for WSL markers.
+pub(crate) fn detect_wsl_from_path(path: &str) -> bool {
+    std::fs::read_to_string(path)
+        .map(|v| {
+            let lower = v.to_ascii_lowercase();
+            lower.contains("microsoft") || lower.contains("wsl")
+        })
+        .unwrap_or(false)
 }
 
 /// Return `true` when the installed Podman version supports `host-gateway`
