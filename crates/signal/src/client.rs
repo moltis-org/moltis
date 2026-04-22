@@ -10,7 +10,10 @@ use {
 
 #[derive(Clone, Debug)]
 pub struct SignalClient {
+    /// Short-lived RPC requests (connect 10s, overall 30s).
     http: Client,
+    /// Long-lived SSE stream (connect 10s, no overall timeout).
+    sse: Client,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +50,10 @@ impl SignalClient {
                 .timeout(Duration::from_secs(30))
                 .build()
                 .unwrap_or_default(),
+            sse: Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -81,7 +88,7 @@ impl SignalClient {
         if let Some(account) = account {
             url.query_pairs_mut().append_pair("account", account);
         }
-        self.http
+        self.sse
             .get(url)
             .header(reqwest::header::ACCEPT, "text/event-stream")
             .send()
