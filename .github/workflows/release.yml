@@ -897,7 +897,7 @@ jobs:
             -S apple-tool:,apple: \
             -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security list-keychain -d user -a -s "$KEYCHAIN_PATH"
 
       - name: Determine package version
         id: version
@@ -933,7 +933,7 @@ jobs:
             -configuration Release \
             -destination "platform=macOS" \
             -derivedDataPath "$DERIVED_DATA_DIR" \
-            $EXTRA_FLAGS \
+            "$EXTRA_FLAGS" \
             build
 
       - name: Package macOS app
