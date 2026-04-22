@@ -58,7 +58,7 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 | Auth/access | Pairing and local gateway controls | CLI and messaging gateway setup | **Password + Passkey + API keys + Vault** |
 | Voice I/O | Voice wake and talk modes | Voice memo transcription | **Built-in STT + TTS providers** |
 | MCP | Plugin/integration support | MCP integration | **stdio + HTTP/SSE** |
-| Skills | Bundled, managed, and workspace skills | Self-improving skills and Skills Hub support | **Bundled/workspace skills + OpenClaw import** |
+| Skills | Bundled, managed, and workspace skills | Self-improving skills and Skills Hub support | **Bundled/workspace skills + autonomous improvement + OpenClaw import** |
 | Memory/RAG | Plugin-backed memory and context engine | Agent-curated memory, session search, user modeling | **SQLite + FTS + vector memory** |
 
 \* LoC measured with `tokei`, excluding `node_modules`, generated build output, `dist`, and `target`.

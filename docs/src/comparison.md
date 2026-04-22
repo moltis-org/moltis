@@ -3,10 +3,14 @@
 How Moltis compares to the larger open-source personal agent projects: OpenClaw
 and Hermes Agent.
 
-> **Disclaimer:** This page is based on the local checkouts used while writing:
-> `~/code/openclaw`, `~/code/hermes-agent`, and this Moltis worktree. Projects
-> move quickly, so check each repository for current behavior before making a
-> deployment decision.
+> **Disclaimer:** This page is based on source snapshots captured while writing:
+> OpenClaw [`90eb5b0`](https://github.com/openclaw/openclaw/commit/90eb5b073fd2d7d8e94b19708e3baceeb8811ca8)
+> from 2026-04-01, Hermes Agent
+> [`9f22977`](https://github.com/NousResearch/hermes-agent/commit/9f22977fc0d2d6de5ff4d0a1a8e4d4ae3a00ea52)
+> from 2026-04-20, and Moltis
+> [`5d044c6`](https://github.com/moltis-org/moltis/commit/5d044c62fd9d19264db0fc5705065f633d10a657)
+> from 2026-04-22. Projects move quickly, so check each repository for current
+> behavior before making a deployment decision.
 
 ## At a Glance
 
@@ -21,7 +25,7 @@ and Hermes Agent.
 | Auth/access | Pairing and gateway controls | CLI and messaging gateway setup | **Password + Passkey + API keys + Vault** |
 | Voice I/O | Voice wake and talk modes | Voice memo transcription | **Built-in STT + TTS providers** |
 | MCP | Plugin/integration support | MCP integration | **stdio + HTTP/SSE** |
-| Skills | Bundled, managed, and workspace skills | Self-improving skills, Skills Hub support | **Bundled/workspace skills + OpenClaw import** |
+| Skills | Bundled, managed, and workspace skills | Self-improving skills, Skills Hub support | **Bundled/workspace skills + autonomous improvement + OpenClaw import** |
 | Memory/RAG | Plugin-backed memory and context engine | Agent-curated memory, session search, user modeling | **SQLite + FTS + vector memory** |
 
 \* LoC measured with `tokei`, excluding `node_modules`, generated build output,
@@ -46,12 +50,13 @@ acceptable.
 Hermes Agent is Python-first. Its README centers the agent around a terminal
 interface, a messaging gateway, a closed learning loop, self-improving skills,
 agent-curated memory, session search, user modeling, cron scheduling, and
-cloud/serverless execution backends. It also carries research-oriented pieces
-such as trajectory generation and RL environments.
+cloud/serverless execution backends. Moltis has autonomous skill improvement
+too, so Hermes' sharper distinction is its CLI/research loop and broad terminal
+backend set. It also carries research-oriented pieces such as trajectory
+generation and RL environments.
 
-Choose Hermes when the priority is an interactive CLI, autonomous skill
-improvement, research workflows, and flexible execution backends such as SSH,
-Docker, Daytona, Singularity, or Modal.
+Choose Hermes when the priority is an interactive CLI, research workflows, and
+flexible execution backends such as SSH, Docker, Daytona, Singularity, or Modal.
 
 ### Moltis, Rust-native persistent agent server
 
@@ -69,6 +74,7 @@ Key differences:
 - **Password, WebAuthn passkeys, scoped API keys, and vault-backed secret
   storage**
 - **Cross-session recall** without dumping raw history into every prompt
+- **Autonomous skill self-improvement** with `enable_self_improvement` on by default
 - **Automatic checkpoints** before built-in skill and memory mutations
 - **15 lifecycle hook events** with circuit breaker and dry-run mode
 - **Read-only OpenClaw import** for identity, providers, skills, memory,
@@ -113,8 +119,8 @@ device integrations, companion apps, voice wake/talk modes, and you are
 comfortable operating a Node.js-based platform.
 
 **Choose Hermes Agent if** you want a CLI-first agent with a learning loop,
-self-improving skills, strong memory/user modeling emphasis, research tooling,
-and flexible local/cloud terminal backends.
+strong memory/user modeling emphasis, research tooling, and flexible local/cloud
+terminal backends.
 
 **Choose Moltis if** you want:
 
@@ -122,6 +128,7 @@ and flexible local/cloud terminal backends.
 - A persistent self-hosted agent server with durable sessions
 - Sandboxed execution through Docker/Podman, Apple Container, or WASM
 - Password, passkey, scoped API key, and vault-backed authentication
+- Autonomous skill creation and updates
 - Voice I/O, browser automation, cron scheduling, and MCP support in one build
 - Embeddings-powered long-term memory with hybrid search
 - Read-only migration from OpenClaw
