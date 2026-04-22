@@ -19,7 +19,7 @@ use std::{collections::HashMap, path::Path};
 
 use tracing::{debug, warn};
 
-use crate::schema::{AgentIdentity, AgentPreset, PresetToolPolicy};
+use crate::schema::{AgentIdentity, AgentPreset, PresetToolPolicy, is_default_agent_preset};
 
 /// Frontmatter fields parsed from the YAML block.
 #[derive(Debug, Default, serde::Deserialize)]
@@ -120,14 +120,19 @@ pub fn discover_agent_defs() -> HashMap<String, AgentPreset> {
 
 /// Merge discovered agent definitions into the config's preset map.
 ///
-/// TOML presets take precedence — markdown defs are only inserted
-/// for names that don't already exist.
+/// TOML presets take precedence. Markdown defs replace built-in presets but
+/// are only inserted over user presets when the name does not already exist.
 pub fn merge_agent_defs(
     presets: &mut HashMap<String, AgentPreset>,
     defs: HashMap<String, AgentPreset>,
 ) {
     for (name, preset) in defs {
-        presets.entry(name).or_insert(preset);
+        let should_insert = presets
+            .get(&name)
+            .is_none_or(|existing| is_default_agent_preset(&name, existing));
+        if should_insert {
+            presets.insert(name, preset);
+        }
     }
 }
 
@@ -315,6 +320,30 @@ Search thoroughly.
         assert_eq!(presets["reviewer"].model.as_deref(), Some("opus"));
         // New def should be added.
         assert_eq!(presets["scout"].model.as_deref(), Some("sonnet"));
+    }
+
+    #[test]
+    fn test_merge_overrides_builtin_default() {
+        let mut presets = crate::schema::default_agent_presets();
+
+        let mut defs = HashMap::new();
+        defs.insert("research".to_string(), AgentPreset {
+            model: Some("sonnet".into()),
+            identity: AgentIdentity {
+                name: Some("Local Researcher".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        merge_agent_defs(&mut presets, defs);
+
+        assert_eq!(presets["research"].model.as_deref(), Some("sonnet"));
+        assert_eq!(
+            presets["research"].identity.name.as_deref(),
+            Some("Local Researcher")
+        );
+        assert!(presets.contains_key("coder"));
     }
 
     #[test]

@@ -284,8 +284,8 @@ User profile collected during onboarding.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `default_preset` | optional string | `null` | Default preset name used when `spawn_agent.preset` is omitted. Applies only to sub-agents. |
-| `presets` | map of `AgentPreset` | `{}` | Named spawn presets, keyed by name. |
+| `default_preset` | optional string | `"research"` | Default preset name used when `spawn_agent.preset` is omitted. Applies only to sub-agents. |
+| `presets` | map of `AgentPreset` | built-in presets | Named spawn presets, keyed by name. Built-ins: `research`, `coder`, `reviewer`, `qa`, `ux`, `docs`, `coordinator`. |
 
 
 ### `agents.presets.<name>` — AgentPreset
@@ -1094,4 +1094,3 @@ context_window = 1_000_000
 
 
 ---
-

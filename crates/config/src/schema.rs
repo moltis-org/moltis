@@ -48,7 +48,7 @@ pub enum ReasoningEffort {
 }
 
 /// Agent identity (name, emoji, theme).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentIdentity {
     pub name: Option<String>,

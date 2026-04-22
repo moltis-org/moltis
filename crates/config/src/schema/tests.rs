@@ -83,10 +83,31 @@ fn env_section_defaults_to_empty() {
 }
 
 #[test]
-fn agents_config_defaults_empty() {
+fn agents_config_defaults_include_builtin_presets() {
     let config: MoltisConfig = toml::from_str("").unwrap();
-    assert!(config.agents.default_preset.is_none());
-    assert!(config.agents.presets.is_empty());
+    assert_eq!(config.agents.default_preset.as_deref(), Some("research"));
+    for name in [
+        "research",
+        "coder",
+        "reviewer",
+        "qa",
+        "ux",
+        "docs",
+        "coordinator",
+    ] {
+        assert!(
+            config.agents.presets.contains_key(name),
+            "missing builtin preset {name}"
+        );
+    }
+    assert!(
+        config
+            .agents
+            .presets
+            .get("coordinator")
+            .is_some_and(|preset| preset.delegate_only),
+        "coordinator should be delegation-only"
+    );
 }
 
 #[test]
@@ -154,6 +175,44 @@ deny = ["exec"]
     assert_eq!(preset.identity.theme.as_deref(), Some("thorough"));
     assert_eq!(preset.max_iterations, Some(10));
     assert_eq!(preset.timeout_secs, Some(120));
+}
+
+#[test]
+fn agents_config_merges_builtin_presets_with_user_presets() {
+    let toml = r#"
+[agents]
+default_preset = "custom"
+
+[agents.presets.custom]
+system_prompt_suffix = "Custom work."
+
+[agents.presets.custom.identity]
+name = "Custom"
+
+[agents.presets.research]
+system_prompt_suffix = "User research override."
+
+[agents.presets.research.identity]
+name = "Scout"
+"#;
+    let config: MoltisConfig = toml::from_str(toml).unwrap();
+
+    assert_eq!(config.agents.default_preset.as_deref(), Some("custom"));
+    assert!(config.agents.presets.contains_key("coder"));
+    assert_eq!(
+        config
+            .agents
+            .presets
+            .get("custom")
+            .and_then(|preset| preset.identity.name.as_deref()),
+        Some("Custom")
+    );
+    let research = config.agents.presets.get("research").unwrap();
+    assert_eq!(research.identity.name.as_deref(), Some("Scout"));
+    assert_eq!(
+        research.system_prompt_suffix.as_deref(),
+        Some("User research override.")
+    );
 }
 
 #[test]
