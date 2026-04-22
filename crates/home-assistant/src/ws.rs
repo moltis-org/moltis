@@ -562,12 +562,12 @@ impl HaWebSocket {
     async fn dispatch_event(val: &Value, tx: &mpsc::Sender<HaEvent>) {
         let msg_type = val.get("type").and_then(|t| t.as_str());
 
-        #[cfg(feature = "metrics")]
-        counter!(ha_metrics::WS_EVENTS_RECEIVED_TOTAL, "type" => msg_type.unwrap_or("unknown").to_owned())
-            .increment(1);
-
         match msg_type {
             Some("event") => {
+                #[cfg(feature = "metrics")]
+                counter!(ha_metrics::WS_EVENTS_RECEIVED_TOTAL)
+                    .increment(1);
+
                 let event = val.get("event");
                 let event_type = event
                     .and_then(|e| e.get("event_type"))
