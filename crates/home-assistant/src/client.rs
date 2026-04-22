@@ -15,21 +15,24 @@ fn extract_domain(entity_id: &str) -> &str {
     entity_id.split('.').next().unwrap_or("homeassistant")
 }
 
-/// Check a response status and return an auth error for 401/403.
-pub(crate) fn check_auth_status(status: reqwest::StatusCode) -> Result<()> {
+/// Check response status — success is OK, 401/403 → Auth error, anything else → Connection error.
+pub(crate) fn check_status(status: reqwest::StatusCode) -> Result<()> {
+    if status.is_success() {
+        return Ok(());
+    }
     match status.as_u16() {
         401 => Err(Error::Auth(
             "invalid or expired access token (401)".to_owned(),
         )),
         403 => Err(Error::Auth("insufficient permissions (403)".to_owned())),
-        _ => Ok(()),
+        _ => Err(Error::Connection(format!("HA returned status {status}"))),
     }
 }
 
 /// REST API client for a single Home Assistant instance.
 pub struct HomeAssistantClient {
     pub(crate) base_url: String,
-    pub(crate) token: String,
+    pub(crate) token: secrecy::Secret<String>,
     pub(crate) http: Client,
 }
 
@@ -55,13 +58,13 @@ impl HomeAssistantClient {
 
         Ok(Self {
             base_url: url.trim_end_matches('/').to_owned(),
-            token: token.expose_secret().to_owned(),
+            token: token.clone(),
             http,
         })
     }
 
     pub(crate) fn auth_header(&self) -> (&str, String) {
-        ("Authorization", format!("Bearer {}", self.token))
+        ("Authorization", format!("Bearer {}", self.token.expose_secret()))
     }
 
     /// Check if the HA instance is reachable and the token is valid.
@@ -77,13 +80,7 @@ impl HomeAssistantClient {
             .send()
             .await?;
 
-        let status = resp.status();
-        if status.is_success() {
-            Ok(())
-        } else {
-            check_auth_status(status)?;
-            Err(Error::Connection(format!("HA returned status {status}")))
-        }
+        check_status(resp.status())
     }
 
     /// Fetch the HA instance configuration.
@@ -98,7 +95,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -114,7 +111,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -134,7 +131,7 @@ impl HomeAssistantClient {
         }
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from).map(Some)
     }
 
@@ -150,7 +147,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -351,14 +348,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(Error::ServiceCall(format!(
-                "set_state {entity_id} returned {status}: {text}"
-            )));
-        }
-
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -417,7 +407,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -451,7 +441,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -1069,7 +1059,7 @@ mod tests {
             .set_state("light.test", "on", None)
             .await
             .unwrap_err();
-        assert!(matches!(err, Error::ServiceCall(_)));
+        assert!(matches!(err, Error::Connection(_)));
     }
 
     // --- get_logbook ---
@@ -1181,27 +1171,27 @@ mod tests {
         assert_eq!(extract_domain("homeassistant.hello"), "homeassistant");
     }
 
-    // --- check_auth_status helper ---
+    // --- check_status helper ---
 
     #[test]
-    fn check_auth_status_ok() {
-        assert!(check_auth_status(reqwest::StatusCode::OK).is_ok());
-        assert!(check_auth_status(reqwest::StatusCode::NO_CONTENT).is_ok());
-        assert!(check_auth_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR).is_ok());
+    fn check_status_ok() {
+        assert!(check_status(reqwest::StatusCode::OK).is_ok());
+        assert!(check_status(reqwest::StatusCode::NO_CONTENT).is_ok());
+        assert!(check_status(reqwest::StatusCode::INTERNAL_SERVER_ERROR).is_err());
     }
 
     #[test]
-    fn check_auth_status_401() {
+    fn check_status_401() {
         assert!(matches!(
-            check_auth_status(reqwest::StatusCode::UNAUTHORIZED),
+            check_status(reqwest::StatusCode::UNAUTHORIZED),
             Err(Error::Auth(_))
         ));
     }
 
     #[test]
-    fn check_auth_status_403() {
+    fn check_status_403() {
         assert!(matches!(
-            check_auth_status(reqwest::StatusCode::FORBIDDEN),
+            check_status(reqwest::StatusCode::FORBIDDEN),
             Err(Error::Auth(_))
         ));
     }

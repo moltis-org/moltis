@@ -312,7 +312,16 @@ impl AgentTool for HomeAssistantTool {
                     .ok_or_else(|| anyhow::anyhow!("missing 'service' parameter"))?;
 
                 let area_id = params.get("area_id").and_then(|v| v.as_str());
-                let target = area_id.map(|a| Target::area(a));
+                let entity_id = params.get("entity_id").and_then(|v| v.as_str());
+                let mut target = Target::default();
+                if let Some(a) = area_id {
+                    target.area_id.push(a.to_owned());
+                }
+                if let Some(e) = entity_id {
+                    target.entity_id.push(e.to_owned());
+                }
+                let target =
+                    (!target.entity_id.is_empty() || !target.area_id.is_empty()).then_some(target);
 
                 let result = client
                     .call_service(

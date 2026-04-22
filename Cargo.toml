@@ -312,6 +312,7 @@ shell-words           = "1"
 tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"
+wiremock              = "0.6"
 wasmtime              = { features = ["component-model"], version = "36" }
 wasmtime-wasi         = "36"
 which                 = "8"

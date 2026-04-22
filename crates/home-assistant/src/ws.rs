@@ -32,6 +32,7 @@ use std::{
 
 use {
     futures_util::{SinkExt, StreamExt},
+    secrecy::ExposeSecret,
     serde_json::Value,
     tokio::{
         sync::{Mutex, mpsc, oneshot},
@@ -340,17 +341,17 @@ impl HaConnection {
 /// Use [`Self::subscribe`] to connect, authenticate, and obtain a [`HaConnection`].
 pub struct HaWebSocket {
     url: String,
-    token: String,
+    token: secrecy::Secret<String>,
     next_id: AtomicU64,
 }
 
 impl HaWebSocket {
     /// Create a new WebSocket client (does not connect yet).
     #[must_use]
-    pub fn new(url: &str, token: &str) -> Self {
+    pub fn new(url: &str, token: &secrecy::Secret<String>) -> Self {
         Self {
             url: url.to_owned(),
-            token: token.to_owned(),
+            token: token.clone(),
             next_id: AtomicU64::new(1),
         }
     }
@@ -426,7 +427,7 @@ impl HaWebSocket {
     async fn authenticate(
         write: &mut WriteHandle,
         read: &mut futures_util::stream::SplitStream<WsStream>,
-        token: &str,
+        token: &secrecy::Secret<String>,
     ) -> Result<()> {
         // Wait for auth_required
         match read.next().await {
@@ -447,7 +448,7 @@ impl HaWebSocket {
         // Send auth token
         let auth_msg = serde_json::json!({
             "type": "auth",
-            "access_token": token
+            "access_token": token.expose_secret()
         });
         let auth_str =
             serde_json::to_string(&auth_msg).map_err(|e| Error::WebSocket(e.to_string()))?;
@@ -602,7 +603,12 @@ impl HaWebSocket {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use {super::*, serde_json::json, tokio::net::TcpListener};
+    use {super::*, secrecy::Secret, serde_json::json, tokio::net::TcpListener};
+
+    /// Convenience for test token construction.
+    fn test_token(s: &str) -> Secret<String> {
+        Secret::new(s.to_owned())
+    }
 
     /// Start a minimal HA-compatible WS server on a random port.
     ///
@@ -716,7 +722,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_authenticates_successfully() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let result = ws.subscribe().await;
         assert!(result.is_ok());
@@ -725,7 +731,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_rejects_bad_auth() {
         let port = start_mock_ha_ws_auth_reject().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "bad-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("bad-token"));
 
         let result = ws.subscribe().await;
         assert!(result.is_err());
@@ -734,7 +740,7 @@ mod tests {
     #[tokio::test]
     async fn call_command_sends_and_receives_response() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let (id, result) = conn.call_command(json!({"type": "ping"})).await.unwrap();
@@ -747,7 +753,7 @@ mod tests {
     #[tokio::test]
     async fn call_command_rejects_non_object() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let result = conn.call_command(json!("not an object")).await;
@@ -757,7 +763,7 @@ mod tests {
     #[tokio::test]
     async fn call_command_returns_sent_id() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let (id1, _) = conn.call_command(json!({"type": "ping"})).await.unwrap();
@@ -770,7 +776,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_entities_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let sub_id = conn.subscribe_entities().await.unwrap();
@@ -780,7 +786,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_events_returns_id_and_unsubscribes() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let sub_id = conn.subscribe_events(Some("state_changed")).await.unwrap();
@@ -857,7 +863,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_entities_sends_subscribe_events_state_changed() {
         let (port, commands) = start_mock_ha_ws_recording().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         conn.subscribe_entities().await.unwrap();
@@ -935,7 +941,7 @@ mod tests {
     #[tokio::test]
     async fn ping_receives_pong() {
         let port = start_mock_ha_ws_pong().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let result = tokio::time::timeout(std::time::Duration::from_secs(2), conn.ping()).await;
@@ -946,7 +952,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_events_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let sub_id = conn.subscribe_events(Some("state_changed")).await;
@@ -956,7 +962,7 @@ mod tests {
     #[tokio::test]
     async fn call_service_sends_nested_target() {
         let (port, commands) = start_mock_ha_ws_recording().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let target = Target::entity("light.living_room");
@@ -980,7 +986,7 @@ mod tests {
 
     #[tokio::test]
     async fn new_generates_unique_ids() {
-        let ws = HaWebSocket::new("ws://localhost:1", "token");
+        let ws = HaWebSocket::new("ws://localhost:1", &test_token("token"));
         let id1 = ws.next_id.fetch_add(1, Ordering::Relaxed);
         let id2 = ws.next_id.fetch_add(1, Ordering::Relaxed);
         let id3 = ws.next_id.fetch_add(1, Ordering::Relaxed);
@@ -1107,7 +1113,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_trigger_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let sub_id = conn
@@ -1123,7 +1129,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_trigger_with_variables() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let sub_id = conn
@@ -1141,7 +1147,7 @@ mod tests {
     #[tokio::test]
     async fn set_supported_features_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let features = [("ha_version", 5u64)];
@@ -1154,7 +1160,7 @@ mod tests {
     #[tokio::test]
     async fn entity_registry_list_for_display_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let result = conn.entity_registry_list_for_display().await;
@@ -1166,7 +1172,7 @@ mod tests {
     #[tokio::test]
     async fn extract_from_target_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), &test_token("test-token"));
 
         let conn = ws.subscribe().await.unwrap();
         let target = Target::entity("light.living_room");

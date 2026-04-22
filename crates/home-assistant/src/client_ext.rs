@@ -5,7 +5,7 @@
 //! via an `impl` block in the same crate.
 
 use {
-    super::client::{HomeAssistantClient, check_auth_status},
+    super::client::{HomeAssistantClient, check_status},
     crate::error::{Error, Result},
 };
 
@@ -46,7 +46,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -64,7 +64,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -88,17 +88,11 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
-        match status.as_u16() {
-            200 => Ok(true),
-            404 => Ok(false),
-            _ => {
-                let text = resp.text().await.unwrap_or_default();
-                Err(Error::ServiceCall(format!(
-                    "delete_state {entity_id} returned {status}: {text}"
-                )))
-            },
+        if status.as_u16() == 404 {
+            return Ok(false);
         }
+        check_status(status)?;
+        Ok(true)
     }
 
     // ── History with query flags ─────────────────────────────────────
@@ -164,7 +158,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -184,7 +178,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -218,7 +212,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 
@@ -283,7 +277,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.text().await.map_err(Error::from)
     }
 
@@ -304,7 +298,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_auth_status(status)?;
+        check_status(status)?;
         resp.json().await.map_err(Error::from)
     }
 }
