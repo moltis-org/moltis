@@ -592,7 +592,8 @@ function ChannelTypeSelector({ onSelect, offered }) {
     ["discord", "icon-discord", "Discord"],
     ["slack", "icon-slack", "Slack"],
     ["matrix", "icon-matrix", "Matrix"],
-    ["nostr", "icon-nostr", "Nostr"]
+    ["nostr", "icon-nostr", "Nostr"],
+    ["signal", "icon-signal", "Signal"]
   ].filter(([type]) => offered.has(type));
   return /* @__PURE__ */ u("div", { className: "grid grid-cols-2 gap-3 md:grid-cols-3", "data-testid": "channel-type-selector", children: channelOptions.map(([type, iconClass, label]) => /* @__PURE__ */ u(
     "button",
@@ -615,6 +616,7 @@ function channelDisplayLabel(type) {
   if (type === "whatsapp") return "WhatsApp";
   if (type === "matrix") return "Matrix";
   if (type === "nostr") return "Nostr";
+  if (type === "signal") return "Signal";
   return "Telegram";
 }
 function ChannelSuccess({
@@ -1084,6 +1086,162 @@ function NostrForm({ onConnected, error, setError }) {
     /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
     error && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)]", children: error }),
     /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: saving, children: saving ? "Connecting…" : "Connect Nostr" })
+  ] });
+}
+function SignalForm({ onConnected, error, setError }) {
+  const [accountId, setAccountId] = d("");
+  const [account, setAccount] = d("");
+  const [httpUrl, setHttpUrl] = d("http://127.0.0.1:8080");
+  const [dmPolicy, setDmPolicy] = d("allowlist");
+  const [groupPolicy, setGroupPolicy] = d("disabled");
+  const [allowlist, setAllowlist] = d("");
+  const [groupAllowlist, setGroupAllowlist] = d("");
+  const [advancedConfig, setAdvancedConfig] = d("");
+  const [saving, setSaving] = d(false);
+  function splitLines(value) {
+    return value.trim().split(/\n/).map((s) => s.trim()).filter(Boolean);
+  }
+  function onSubmit(e) {
+    e.preventDefault();
+    if (!accountId.trim()) {
+      setError("Account ID is required.");
+      return;
+    }
+    if (!httpUrl.trim()) {
+      setError("signal-cli daemon URL is required.");
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfig);
+    if (!advancedPatch.ok) {
+      setError(advancedPatch.error);
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    const config = {
+      http_url: httpUrl.trim(),
+      dm_policy: dmPolicy,
+      allowlist: splitLines(allowlist),
+      group_policy: groupPolicy,
+      group_allowlist: splitLines(groupAllowlist),
+      mention_mode: "mention"
+    };
+    if (account.trim()) config.account = account.trim();
+    Object.assign(config, advancedPatch.value);
+    addChannel("signal", accountId.trim(), config).then((res) => {
+      setSaving(false);
+      if (res == null ? void 0 : res.ok) {
+        onConnected(accountId.trim(), "signal");
+      } else {
+        setError((res == null ? void 0 : res.error) && (res.error.message || res.error.detail) || "Failed to connect Signal.");
+      }
+    });
+  }
+  return /* @__PURE__ */ u("form", { onSubmit, className: "flex flex-col gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Connect a signal-cli daemon" }),
+      /* @__PURE__ */ u("span", { children: "1. Start signal-cli daemon with JSON-RPC HTTP enabled" }),
+      /* @__PURE__ */ u("span", { children: "2. Link or register the Signal account in signal-cli" }),
+      /* @__PURE__ */ u("span", { children: "3. Add trusted phone numbers or UUIDs to the allowlist" })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Account ID" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: accountId,
+          onInput: (e) => setAccountId(targetValue(e)),
+          placeholder: "e.g. personal-signal",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "signal_account_id",
+          autoFocus: true
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Signal Account" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: account,
+          onInput: (e) => setAccount(targetValue(e)),
+          placeholder: "+15551234567",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "signal_account"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "signal-cli Daemon URL" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "url",
+          className: "provider-key-input w-full",
+          value: httpUrl,
+          onInput: (e) => setHttpUrl(targetValue(e)),
+          placeholder: "http://127.0.0.1:8080",
+          name: "signal_http_url"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Policy" }),
+      /* @__PURE__ */ u("select", { className: "channel-select w-full", value: dmPolicy, onChange: (e) => setDmPolicy(targetValue(e)), children: [
+        /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+        /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+        /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+      ] })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Group Policy" }),
+      /* @__PURE__ */ u("select", { className: "channel-select w-full", value: groupPolicy, onChange: (e) => setGroupPolicy(targetValue(e)), children: [
+        /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" }),
+        /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+        /* @__PURE__ */ u("option", { value: "open", children: "Open (any group)" })
+      ] })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Allowlist" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: allowlist,
+          onInput: (e) => setAllowlist(targetValue(e)),
+          placeholder: "+15551234567\n550e8400-e29b-41d4-a716-446655440000",
+          name: "signal_allowlist"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Group Allowlist" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: groupAllowlist,
+          onInput: (e) => setGroupAllowlist(targetValue(e)),
+          placeholder: "base64-encoded Signal group ID",
+          name: "signal_group_allowlist"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
+    error && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)]", children: error }),
+    /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: saving, children: saving ? "Connecting…" : "Connect Signal" })
   ] });
 }
 function fetchRemoteAccessStatus(path, featureDisabledMessage) {
@@ -2432,6 +2590,7 @@ function ChannelStep({ onNext, onBack }) {
     phase === "form" && selectedType === "slack" && /* @__PURE__ */ u(SlackForm, { onConnected, error: channelError, setError: setChannelError }),
     phase === "form" && selectedType === "matrix" && /* @__PURE__ */ u(MatrixForm, { onConnected, error: channelError, setError: setChannelError }),
     phase === "form" && selectedType === "nostr" && /* @__PURE__ */ u(NostrForm, { onConnected, error: channelError, setError: setChannelError }),
+    phase === "form" && selectedType === "signal" && /* @__PURE__ */ u(SignalForm, { onConnected, error: channelError, setError: setChannelError }),
     phase === "success" && connectedType && /* @__PURE__ */ u(ChannelSuccess, { channelName: connectedName, channelType: connectedType, onAnother }),
     /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
       /* @__PURE__ */ u(

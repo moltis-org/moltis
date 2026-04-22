@@ -23,6 +23,7 @@ pub enum ChannelType {
     Slack,
     Matrix,
     Nostr,
+    Signal,
 }
 
 impl ChannelType {
@@ -36,6 +37,7 @@ impl ChannelType {
             Self::Slack => "slack",
             Self::Matrix => "matrix",
             Self::Nostr => "nostr",
+            Self::Signal => "signal",
         }
     }
 
@@ -49,6 +51,7 @@ impl ChannelType {
             Self::Slack => "Slack",
             Self::Matrix => "Matrix",
             Self::Nostr => "Nostr",
+            Self::Signal => "Signal",
         }
     }
 
@@ -63,6 +66,13 @@ impl ChannelType {
                     Some("group".to_string())
                 } else {
                     Some("private".to_string())
+                }
+            },
+            Self::Signal => {
+                if chat_id.starts_with("group:") {
+                    Some("group".to_string())
+                } else {
+                    Some("direct".to_string())
                 }
             },
             Self::Nostr => Some("dm".to_string()),
@@ -80,6 +90,7 @@ impl ChannelType {
             Self::Slack => &["bot_token", "app_token", "signing_secret"],
             Self::Matrix => &["access_token", "password"],
             Self::Nostr => &["secret_key"],
+            Self::Signal => &[],
         }
     }
 }
@@ -102,6 +113,7 @@ impl std::str::FromStr for ChannelType {
             "slack" => Ok(Self::Slack),
             "matrix" | "element" => Ok(Self::Matrix),
             "nostr" => Ok(Self::Nostr),
+            "signal" => Ok(Self::Signal),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),
@@ -119,6 +131,7 @@ impl ChannelType {
         Self::Slack,
         Self::Matrix,
         Self::Nostr,
+        Self::Signal,
     ];
 
     /// Returns the static descriptor for this channel type.
@@ -224,6 +237,22 @@ impl ChannelType {
             Self::Nostr => ChannelDescriptor {
                 channel_type: *self,
                 display_name: "Nostr",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: false,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: true,
+                    supports_reactions: false,
+                    supports_location: false,
+                },
+            },
+            Self::Signal => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Signal",
                 capabilities: ChannelCapabilities {
                     inbound_mode: InboundMode::GatewayLoop,
                     supports_outbound: true,

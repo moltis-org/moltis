@@ -73,6 +73,7 @@ export function ChannelTypeSelector({ onSelect, offered }: ChannelTypeSelectorPr
 			["slack", "icon-slack", "Slack"],
 			["matrix", "icon-matrix", "Matrix"],
 			["nostr", "icon-nostr", "Nostr"],
+			["signal", "icon-signal", "Signal"],
 		] as [string, string, string][]
 	).filter(([type]) => offered.has(type));
 
@@ -102,6 +103,7 @@ export function channelDisplayLabel(type: string): string {
 	if (type === "whatsapp") return "WhatsApp";
 	if (type === "matrix") return "Matrix";
 	if (type === "nostr") return "Nostr";
+	if (type === "signal") return "Signal";
 	return "Telegram";
 }
 
@@ -592,6 +594,166 @@ export function NostrForm({ onConnected, error, setError }: ChannelFormProps): V
 			{error && <div className="text-xs text-[var(--error)]">{error}</div>}
 			<button type="submit" className="provider-btn self-start" disabled={saving}>
 				{saving ? "Connecting\u2026" : "Connect Nostr"}
+			</button>
+		</form>
+	);
+}
+
+// ── Signal form ──────────────────────────────────────────────
+
+export function SignalForm({ onConnected, error, setError }: ChannelFormProps): VNode {
+	const [accountId, setAccountId] = useState("");
+	const [account, setAccount] = useState("");
+	const [httpUrl, setHttpUrl] = useState("http://127.0.0.1:8080");
+	const [dmPolicy, setDmPolicy] = useState("allowlist");
+	const [groupPolicy, setGroupPolicy] = useState("disabled");
+	const [allowlist, setAllowlist] = useState("");
+	const [groupAllowlist, setGroupAllowlist] = useState("");
+	const [advancedConfig, setAdvancedConfig] = useState("");
+	const [saving, setSaving] = useState(false);
+
+	function splitLines(value: string): string[] {
+		return value
+			.trim()
+			.split(/\n/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+	}
+
+	function onSubmit(e: Event): void {
+		e.preventDefault();
+		if (!accountId.trim()) {
+			setError("Account ID is required.");
+			return;
+		}
+		if (!httpUrl.trim()) {
+			setError("signal-cli daemon URL is required.");
+			return;
+		}
+		const advancedPatch = parseChannelConfigPatch(advancedConfig);
+		if (!advancedPatch.ok) {
+			setError(advancedPatch.error);
+			return;
+		}
+		setError(null);
+		setSaving(true);
+		const config: Record<string, unknown> = {
+			http_url: httpUrl.trim(),
+			dm_policy: dmPolicy,
+			allowlist: splitLines(allowlist),
+			group_policy: groupPolicy,
+			group_allowlist: splitLines(groupAllowlist),
+			mention_mode: "mention",
+		};
+		if (account.trim()) config.account = account.trim();
+		Object.assign(config, advancedPatch.value);
+		(
+			addChannel("signal", accountId.trim(), config) as Promise<{
+				ok?: boolean;
+				error?: { message?: string; detail?: string };
+			}>
+		).then((res) => {
+			setSaving(false);
+			if (res?.ok) {
+				onConnected(accountId.trim(), "signal");
+			} else {
+				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect Signal.");
+			}
+		});
+	}
+
+	return (
+		<form onSubmit={onSubmit} className="flex flex-col gap-3">
+			<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
+				<span className="font-medium text-[var(--text-strong)]">Connect a signal-cli daemon</span>
+				<span>1. Start signal-cli daemon with JSON-RPC HTTP enabled</span>
+				<span>2. Link or register the Signal account in signal-cli</span>
+				<span>3. Add trusted phone numbers or UUIDs to the allowlist</span>
+			</div>
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block">Account ID</label>
+				<input
+					type="text"
+					className="provider-key-input w-full"
+					value={accountId}
+					onInput={(e) => setAccountId(targetValue(e))}
+					placeholder="e.g. personal-signal"
+					autoComplete="off"
+					autoCapitalize="none"
+					autoCorrect="off"
+					spellcheck={false}
+					name="signal_account_id"
+					autoFocus
+				/>
+			</div>
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block">Signal Account</label>
+				<input
+					type="text"
+					className="provider-key-input w-full"
+					value={account}
+					onInput={(e) => setAccount(targetValue(e))}
+					placeholder="+15551234567"
+					autoComplete="off"
+					autoCapitalize="none"
+					autoCorrect="off"
+					spellcheck={false}
+					name="signal_account"
+				/>
+			</div>
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block">signal-cli Daemon URL</label>
+				<input
+					type="url"
+					className="provider-key-input w-full"
+					value={httpUrl}
+					onInput={(e) => setHttpUrl(targetValue(e))}
+					placeholder="http://127.0.0.1:8080"
+					name="signal_http_url"
+				/>
+			</div>
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block">DM Policy</label>
+				<select className="channel-select w-full" value={dmPolicy} onChange={(e) => setDmPolicy(targetValue(e))}>
+					<option value="allowlist">Allowlist only</option>
+					<option value="open">Open (anyone)</option>
+					<option value="disabled">Disabled</option>
+				</select>
+			</div>
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block">Group Policy</label>
+				<select className="channel-select w-full" value={groupPolicy} onChange={(e) => setGroupPolicy(targetValue(e))}>
+					<option value="disabled">Disabled</option>
+					<option value="allowlist">Allowlist only</option>
+					<option value="open">Open (any group)</option>
+				</select>
+			</div>
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block">DM Allowlist</label>
+				<textarea
+					className="provider-key-input w-full"
+					rows={2}
+					value={allowlist}
+					onInput={(e) => setAllowlist(targetValue(e))}
+					placeholder={"+15551234567\n550e8400-e29b-41d4-a716-446655440000"}
+					name="signal_allowlist"
+				/>
+			</div>
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block">Group Allowlist</label>
+				<textarea
+					className="provider-key-input w-full"
+					rows={2}
+					value={groupAllowlist}
+					onInput={(e) => setGroupAllowlist(targetValue(e))}
+					placeholder="base64-encoded Signal group ID"
+					name="signal_group_allowlist"
+				/>
+			</div>
+			<AdvancedConfigPatchField value={advancedConfig} onInput={setAdvancedConfig} />
+			{error && <div className="text-xs text-[var(--error)]">{error}</div>}
+			<button type="submit" className="provider-btn self-start" disabled={saving}>
+				{saving ? "Connecting\u2026" : "Connect Signal"}
 			</button>
 		</form>
 	);

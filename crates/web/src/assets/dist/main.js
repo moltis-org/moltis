@@ -7290,6 +7290,236 @@ function AddNostrModal() {
     }
   );
 }
+function AddSignalModal() {
+  const error2 = useSignal("");
+  const saving = useSignal(false);
+  const addModel = useSignal("");
+  const allowlistItems = useSignal([]);
+  const groupAllowlistItems = useSignal([]);
+  const accountIdDraft = useSignal("");
+  const accountDraft = useSignal("");
+  const httpUrlDraft = useSignal("http://127.0.0.1:8080");
+  const dmPolicy = useSignal("allowlist");
+  const groupPolicy = useSignal("disabled");
+  const mentionMode = useSignal("mention");
+  const advancedConfigPatch = useSignal("");
+  function reset() {
+    addModel.value = "";
+    allowlistItems.value = [];
+    groupAllowlistItems.value = [];
+    accountIdDraft.value = "";
+    accountDraft.value = "";
+    httpUrlDraft.value = "http://127.0.0.1:8080";
+    dmPolicy.value = "allowlist";
+    groupPolicy.value = "disabled";
+    mentionMode.value = "mention";
+    advancedConfigPatch.value = "";
+    error2.value = "";
+  }
+  function onSubmit(e) {
+    e.preventDefault();
+    const accountId = accountIdDraft.value.trim();
+    const account = accountDraft.value.trim();
+    const httpUrl = httpUrlDraft.value.trim();
+    if (!accountId) {
+      error2.value = "Account ID is required.";
+      return;
+    }
+    if (!httpUrl) {
+      error2.value = "signal-cli daemon URL is required.";
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
+    if (!advancedPatch.ok) {
+      error2.value = advancedPatch.error;
+      return;
+    }
+    error2.value = "";
+    saving.value = true;
+    const addConfig = {
+      http_url: httpUrl,
+      dm_policy: dmPolicy.value,
+      allowlist: allowlistItems.value,
+      group_policy: groupPolicy.value,
+      group_allowlist: groupAllowlistItems.value,
+      mention_mode: mentionMode.value
+    };
+    if (account) addConfig.account = account;
+    if (addModel.value) {
+      addConfig.model = addModel.value;
+      const found = models$1.value.find((x) => x.id === addModel.value);
+      if (found == null ? void 0 : found.provider) addConfig.model_provider = found.provider;
+    }
+    Object.assign(addConfig, advancedPatch.value);
+    addChannel(ChannelType.Signal, accountId, addConfig).then((res) => {
+      var _a2, _b2;
+      saving.value = false;
+      const r2 = res;
+      if (r2 == null ? void 0 : r2.ok) {
+        showAddSignal.value = false;
+        reset();
+        loadChannels();
+      } else {
+        error2.value = ((_a2 = r2 == null ? void 0 : r2.error) == null ? void 0 : _a2.message) || ((_b2 = r2 == null ? void 0 : r2.error) == null ? void 0 : _b2.detail) || "Failed to connect channel.";
+      }
+    });
+  }
+  return /* @__PURE__ */ u(
+    Modal,
+    {
+      show: showAddSignal.value,
+      onClose: () => {
+        showAddSignal.value = false;
+      },
+      title: "Connect Signal",
+      children: /* @__PURE__ */ u("div", { className: "channel-form", children: [
+        /* @__PURE__ */ u("div", { className: "channel-card", children: /* @__PURE__ */ u("div", { children: [
+          /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: "How to set up Signal" }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] channel-help", children: "1. Run signal-cli daemon with JSON-RPC HTTP enabled" }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "2. Link or register the Signal account in signal-cli" }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "3. Keep the daemon reachable from this Moltis process, usually on localhost" })
+        ] }) }),
+        /* @__PURE__ */ u(ConnectionModeHint, { type: ChannelType.Signal }),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Account ID" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            "data-field": "accountId",
+            type: "text",
+            placeholder: "e.g. personal-signal",
+            value: accountIdDraft.value,
+            onInput: (e) => {
+              accountIdDraft.value = targetValue(e);
+            },
+            className: "channel-input"
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Signal Account" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            "data-field": "account",
+            type: "text",
+            placeholder: "e.g. +15551234567",
+            value: accountDraft.value,
+            onInput: (e) => {
+              accountDraft.value = targetValue(e);
+            },
+            className: "channel-input",
+            autoComplete: "off"
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "signal-cli Daemon URL" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            "data-field": "httpUrl",
+            type: "url",
+            placeholder: "http://127.0.0.1:8080",
+            value: httpUrlDraft.value,
+            onInput: (e) => {
+              httpUrlDraft.value = targetValue(e);
+            },
+            className: "channel-input"
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "DM Policy" }),
+        /* @__PURE__ */ u(
+          "select",
+          {
+            "data-field": "dmPolicy",
+            className: "channel-select",
+            value: dmPolicy.value,
+            onChange: (e) => {
+              dmPolicy.value = targetValue(e);
+            },
+            children: [
+              /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+              /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+              /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Policy" }),
+        /* @__PURE__ */ u(
+          "select",
+          {
+            "data-field": "groupPolicy",
+            className: "channel-select",
+            value: groupPolicy.value,
+            onChange: (e) => {
+              groupPolicy.value = targetValue(e);
+            },
+            children: [
+              /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" }),
+              /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+              /* @__PURE__ */ u("option", { value: "open", children: "Open (any group)" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Mention Mode" }),
+        /* @__PURE__ */ u(
+          "select",
+          {
+            "data-field": "mentionMode",
+            className: "channel-select",
+            value: mentionMode.value,
+            onChange: (e) => {
+              mentionMode.value = targetValue(e);
+            },
+            children: [
+              /* @__PURE__ */ u("option", { value: "mention", children: "Must mention bot" }),
+              /* @__PURE__ */ u("option", { value: "always", children: "Always respond" }),
+              /* @__PURE__ */ u("option", { value: "none", children: "Do not respond in groups" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Default Model" }),
+        /* @__PURE__ */ u(
+          ModelSelect,
+          {
+            models: models$1.value,
+            value: addModel.value,
+            onChange: (v) => {
+              addModel.value = v;
+            }
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "DM Allowlist" }),
+        /* @__PURE__ */ u(
+          AllowlistInput,
+          {
+            value: allowlistItems.value,
+            onChange: (v) => {
+              allowlistItems.value = v;
+            }
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Allowlist" }),
+        /* @__PURE__ */ u(
+          AllowlistInput,
+          {
+            value: groupAllowlistItems.value,
+            onChange: (v) => {
+              groupAllowlistItems.value = v;
+            }
+          }
+        ),
+        /* @__PURE__ */ u(
+          AdvancedConfigPatchField,
+          {
+            value: advancedConfigPatch.value,
+            onInput: (value) => {
+              advancedConfigPatch.value = value;
+            }
+          }
+        ),
+        error2.value && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)] py-1", children: error2.value }),
+        /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onSubmit, disabled: saving.value, children: saving.value ? "Connecting…" : "Connect Signal" })
+      ] })
+    }
+  );
+}
 function AddSlackModal() {
   const error2 = useSignal("");
   const saving = useSignal(false);
@@ -8309,25 +8539,29 @@ function EditChannelModal() {
   const editMatrixOwnershipMode = useSignal("user_managed");
   const editMatrixOtpSelfApproval = useSignal(true);
   const editMatrixOtpCooldown = useSignal("300");
+  const editSignalAccount = useSignal("");
+  const editSignalHttpUrl = useSignal("http://127.0.0.1:8080");
   const editAdvancedConfigPatch = useSignal("");
   y$1(() => {
-    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     editModel.value = ((_a2 = ch == null ? void 0 : ch.config) == null ? void 0 : _a2.model) || "";
     allowlistItems.value = ((_b2 = ch == null ? void 0 : ch.config) == null ? void 0 : _b2.allowlist) || ((_c = ch == null ? void 0 : ch.config) == null ? void 0 : _c.user_allowlist) || ((_d = ch == null ? void 0 : ch.config) == null ? void 0 : _d.allowed_pubkeys) || [];
-    roomAllowlistItems.value = ((_e = ch == null ? void 0 : ch.config) == null ? void 0 : _e.room_allowlist) || [];
+    roomAllowlistItems.value = ((_e = ch == null ? void 0 : ch.config) == null ? void 0 : _e.room_allowlist) || ((_f = ch == null ? void 0 : ch.config) == null ? void 0 : _f.group_allowlist) || [];
     editCredential.value = "";
-    editWebhookSecret.value = ((_f = ch == null ? void 0 : ch.config) == null ? void 0 : _f.webhook_secret) || "";
-    editStreamMode.value = ((_g = ch == null ? void 0 : ch.config) == null ? void 0 : _g.stream_mode) || "edit_in_place";
-    editReplyStyle.value = ((_h = ch == null ? void 0 : ch.config) == null ? void 0 : _h.reply_style) || "top_level";
-    editWelcomeCard.value = ((_i = ch == null ? void 0 : ch.config) == null ? void 0 : _i.welcome_card) !== false;
-    editBotName.value = ((_j = ch == null ? void 0 : ch.config) == null ? void 0 : _j.bot_name) || "";
-    editMatrixAuthMode.value = ((_k = ch == null ? void 0 : ch.config) == null ? void 0 : _k.password) ? "password" : "access_token";
-    editMatrixDeviceDisplayName.value = ((_l = ch == null ? void 0 : ch.config) == null ? void 0 : _l.device_display_name) || "";
+    editWebhookSecret.value = ((_g = ch == null ? void 0 : ch.config) == null ? void 0 : _g.webhook_secret) || "";
+    editStreamMode.value = ((_h = ch == null ? void 0 : ch.config) == null ? void 0 : _h.stream_mode) || "edit_in_place";
+    editReplyStyle.value = ((_i = ch == null ? void 0 : ch.config) == null ? void 0 : _i.reply_style) || "top_level";
+    editWelcomeCard.value = ((_j = ch == null ? void 0 : ch.config) == null ? void 0 : _j.welcome_card) !== false;
+    editBotName.value = ((_k = ch == null ? void 0 : ch.config) == null ? void 0 : _k.bot_name) || "";
+    editMatrixAuthMode.value = ((_l = ch == null ? void 0 : ch.config) == null ? void 0 : _l.password) ? "password" : "access_token";
+    editMatrixDeviceDisplayName.value = ((_m = ch == null ? void 0 : ch.config) == null ? void 0 : _m.device_display_name) || "";
     editMatrixOwnershipMode.value = normalizeMatrixOwnershipMode(
-      ((_m = ch == null ? void 0 : ch.config) == null ? void 0 : _m.ownership_mode) || (((_n = ch == null ? void 0 : ch.config) == null ? void 0 : _n.password) ? "moltis_owned" : "user_managed")
+      ((_n = ch == null ? void 0 : ch.config) == null ? void 0 : _n.ownership_mode) || (((_o = ch == null ? void 0 : ch.config) == null ? void 0 : _o.password) ? "moltis_owned" : "user_managed")
     );
-    editMatrixOtpSelfApproval.value = ((_o = ch == null ? void 0 : ch.config) == null ? void 0 : _o.otp_self_approval) !== false;
-    editMatrixOtpCooldown.value = String(((_p = ch == null ? void 0 : ch.config) == null ? void 0 : _p.otp_cooldown_secs) || 300);
+    editMatrixOtpSelfApproval.value = ((_p = ch == null ? void 0 : ch.config) == null ? void 0 : _p.otp_self_approval) !== false;
+    editMatrixOtpCooldown.value = String(((_q = ch == null ? void 0 : ch.config) == null ? void 0 : _q.otp_cooldown_secs) || 300);
+    editSignalAccount.value = ((_r = ch == null ? void 0 : ch.config) == null ? void 0 : _r.account) || "";
+    editSignalHttpUrl.value = ((_s = ch == null ? void 0 : ch.config) == null ? void 0 : _s.http_url) || "http://127.0.0.1:8080";
     editAdvancedConfigPatch.value = "";
   }, [ch]);
   if (!ch) return null;
@@ -8339,6 +8573,7 @@ function EditChannelModal() {
   const isTelegram = chType === ChannelType.Telegram;
   const isMatrix = chType === ChannelType.Matrix;
   const isNostr = chType === ChannelType.Nostr;
+  const isSignal = chType === ChannelType.Signal;
   function addModelToConfig(config) {
     if (!editModel.value) return;
     config.model = editModel.value;
@@ -8359,6 +8594,9 @@ function EditChannelModal() {
       config.secret_key = editCredential.value || cfg.secret_key || "";
       const relaysVal = ((_a2 = form.querySelector("[data-field=relays]")) == null ? void 0 : _a2.value) || "";
       config.relays = relaysVal.split(",").map((r2) => r2.trim()).filter(Boolean);
+    } else if (isSignal) {
+      config.account = editSignalAccount.value.trim();
+      config.http_url = editSignalHttpUrl.value.trim() || "http://127.0.0.1:8080";
     } else if (isMatrix) {
       config.homeserver = ((_b2 = form.querySelector("[data-field=homeserver]")) == null ? void 0 : _b2.value) || cfg.homeserver || "";
       config.user_id = ((_c = form.querySelector("[data-field=userId]")) == null ? void 0 : _c.value) || cfg.user_id || "";
@@ -8375,7 +8613,7 @@ function EditChannelModal() {
     }
   }
   function buildUpdateConfig(form) {
-    var _a2, _b2, _c, _d;
+    var _a2, _b2, _c, _d, _e;
     const updateConfig = {};
     updateConfig.dm_policy = ((_a2 = form.querySelector("[data-field=dmPolicy]")) == null ? void 0 : _a2.value) || "open";
     updateConfig.allowlist = allowlistItems.value;
@@ -8392,8 +8630,17 @@ function EditChannelModal() {
       updateConfig.otp_self_approval = cfg.otp_self_approval !== false;
       updateConfig.otp_cooldown_secs = cfg.otp_cooldown_secs ?? 300;
     }
+    if (isSignal) {
+      updateConfig.group_policy = ((_d = form.querySelector("[data-field=groupPolicy]")) == null ? void 0 : _d.value) || cfg.group_policy || "disabled";
+      updateConfig.group_allowlist = roomAllowlistItems.value;
+      updateConfig.otp_self_approval = cfg.otp_self_approval !== false;
+      updateConfig.otp_cooldown_secs = cfg.otp_cooldown_secs ?? 300;
+      updateConfig.ignore_stories = cfg.ignore_stories !== false;
+      updateConfig.text_chunk_limit = cfg.text_chunk_limit || 4e3;
+      if (cfg.account_uuid) updateConfig.account_uuid = cfg.account_uuid;
+    }
     if (!(isWhatsApp || isNostr)) {
-      updateConfig.mention_mode = ((_d = form.querySelector("[data-field=mentionMode]")) == null ? void 0 : _d.value) || "mention";
+      updateConfig.mention_mode = ((_e = form.querySelector("[data-field=mentionMode]")) == null ? void 0 : _e.value) || "mention";
     }
     addChannelCredentials(updateConfig, form);
     addModelToConfig(updateConfig);
@@ -8583,6 +8830,38 @@ function EditChannelModal() {
                 type: "text",
                 className: "channel-input w-full",
                 defaultValue: (cfg.relays || []).join(", ")
+              }
+            )
+          ] })
+        ] }),
+        isSignal && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+            /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Signal Account" }),
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "text",
+                className: "channel-input w-full",
+                value: editSignalAccount.value,
+                onInput: (e) => {
+                  editSignalAccount.value = targetValue(e);
+                },
+                placeholder: "+15551234567"
+              }
+            )
+          ] }),
+          /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+            /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "signal-cli Daemon URL" }),
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "url",
+                className: "channel-input w-full",
+                value: editSignalHttpUrl.value,
+                onInput: (e) => {
+                  editSignalHttpUrl.value = targetValue(e);
+                },
+                placeholder: "http://127.0.0.1:8080"
               }
             )
           ] })
@@ -8777,6 +9056,22 @@ function EditChannelModal() {
             /* @__PURE__ */ u("option", { value: "off", children: "Do not auto-join" })
           ] })
         ] }),
+        isSignal && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Policy" }),
+          /* @__PURE__ */ u(
+            "select",
+            {
+              "data-field": "groupPolicy",
+              className: "channel-select",
+              value: cfg.group_policy || "disabled",
+              children: [
+                /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" }),
+                /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+                /* @__PURE__ */ u("option", { value: "open", children: "Open (any group)" })
+              ]
+            }
+          )
+        ] }),
         /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Default Model" }),
         /* @__PURE__ */ u(
           ModelSelect,
@@ -8807,6 +9102,18 @@ function EditChannelModal() {
             {
               value: roomAllowlistItems.value,
               preserveAt: true,
+              onChange: (v) => {
+                roomAllowlistItems.value = v;
+              }
+            }
+          )
+        ] }),
+        isSignal && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Allowlist" }),
+          /* @__PURE__ */ u(
+            AllowlistInput,
+            {
+              value: roomAllowlistItems.value,
               onChange: (v) => {
                 roomAllowlistItems.value = v;
               }
@@ -8850,6 +9157,7 @@ const showAddWhatsApp = y(false);
 const showAddSlack = y(false);
 const showAddMatrix = y(false);
 const showAddNostr = y(false);
+const showAddSignal = y(false);
 const editingChannel = y(null);
 const sendersAccount = y("");
 const waQrData = y(null);
@@ -8867,6 +9175,7 @@ function channelLabel(type) {
   if (t2 === "slack") return "Slack";
   if (t2 === "matrix") return "Matrix";
   if (t2 === "nostr") return "Nostr";
+  if (t2 === "signal") return "Signal";
   return "Telegram";
 }
 function channelDescriptor(type) {
@@ -9284,6 +9593,19 @@ function ConnectButtons() {
           " Connect Nostr"
         ]
       }
+    ),
+    offered.has("signal") && /* @__PURE__ */ u(
+      "button",
+      {
+        className: "provider-btn provider-btn-secondary inline-flex items-center gap-1.5",
+        onClick: () => {
+          if (connected$1.value) showAddSignal.value = true;
+        },
+        children: [
+          /* @__PURE__ */ u("span", { className: "icon icon-signal" }),
+          " Connect Signal"
+        ]
+      }
     )
   ] });
 }
@@ -9466,6 +9788,7 @@ function ChannelsPageComponent() {
     /* @__PURE__ */ u(AddSlackModal, {}),
     /* @__PURE__ */ u(AddMatrixModal, {}),
     /* @__PURE__ */ u(AddNostrModal, {}),
+    /* @__PURE__ */ u(AddSignalModal, {}),
     /* @__PURE__ */ u(AddWhatsAppModal, {}),
     /* @__PURE__ */ u(EditChannelModal, {}),
     /* @__PURE__ */ u(ConfirmDialog, {})
@@ -9482,6 +9805,7 @@ function initChannels(container) {
   showAddSlack.value = false;
   showAddMatrix.value = false;
   showAddNostr.value = false;
+  showAddSignal.value = false;
   showAddWhatsApp.value = false;
   editingChannel.value = null;
   sendersAccount.value = "";
@@ -9509,6 +9833,7 @@ const _channelsPage = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defin
   showAddDiscord,
   showAddMatrix,
   showAddNostr,
+  showAddSignal,
   showAddSlack,
   showAddTeams,
   showAddTelegram,
@@ -28246,9 +28571,11 @@ function OpenClawImportSection() {
   }
   const telegramAccounts = Number(scan.telegram_accounts) || 0;
   const discordAccounts = Number(scan.discord_accounts) || 0;
+  const signalAccounts = Number(scan.signal_accounts) || 0;
   const channelParts = [];
   if (telegramAccounts > 0) channelParts.push(`${telegramAccounts} Telegram account(s)`);
   if (discordAccounts > 0) channelParts.push(`${discordAccounts} Discord account(s)`);
+  if (signalAccounts > 0) channelParts.push(`${signalAccounts} Signal account(s)`);
   const channelDetail = channelParts.length > 0 ? channelParts.join(", ") : null;
   const unsupportedChannels = (scan.unsupported_channels || []).filter(
     (channel) => String(channel).toLowerCase() !== ChannelType.Discord

@@ -313,9 +313,6 @@ fn scan_unsupported_channels(home: &Path) -> Vec<String> {
     if config.channels.slack.is_some() {
         unsupported.push("slack".to_string());
     }
-    if config.channels.signal.is_some() {
-        unsupported.push("signal".to_string());
-    }
     if config.channels.imessage.is_some() {
         unsupported.push("imessage".to_string());
     }

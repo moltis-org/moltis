@@ -42,6 +42,7 @@ default-members = [
   "crates/secret-store",
   "crates/service-traits",
   "crates/sessions",
+  "crates/signal",
   "crates/skills",
   "crates/slack",
   "crates/swift-bridge",
@@ -100,6 +101,7 @@ members = [
   "crates/secret-store",
   "crates/service-traits",
   "crates/sessions",
+  "crates/signal",
   "crates/skills",
   "crates/slack",
   "crates/swift-bridge",
@@ -363,6 +365,7 @@ moltis-schema-export    = { path = "crates/schema-export" }
 moltis-secret-store     = { default-features = false, path = "crates/secret-store" }
 moltis-service-traits   = { path = "crates/service-traits" }
 moltis-sessions         = { path = "crates/sessions" }
+moltis-signal           = { path = "crates/signal" }
 moltis-skills           = { path = "crates/skills" }
 moltis-slack            = { path = "crates/slack" }
 moltis-swift-bridge     = { path = "crates/swift-bridge" }

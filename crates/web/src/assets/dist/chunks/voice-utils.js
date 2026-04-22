@@ -68,7 +68,8 @@ const ChannelType = {
   Discord: "discord",
   Slack: "slack",
   Matrix: "matrix",
-  Nostr: "nostr"
+  Nostr: "nostr",
+  Signal: "signal"
 };
 const MATRIX_DOCS_URL = "https://docs.moltis.org/matrix.html";
 const MATRIX_DEFAULT_HOMESERVER = "https://matrix.org";
