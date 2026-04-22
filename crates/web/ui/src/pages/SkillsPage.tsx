@@ -341,6 +341,7 @@ function orgAvatarUrl(repo: string): string {
 function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
 	const installing = useSignal(false);
 	const href = /^https?:\/\//.test(f.repo) ? f.repo : `https://github.com/${f.repo}`;
+	const isInstalled = repos.value.some((r) => r.source === f.repo);
 	return (
 		<div className="skills-featured-card">
 			<img
@@ -372,25 +373,27 @@ function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
 			</div>
 			<button
 				onClick={() => {
+					if (isInstalled) return;
 					installing.value = true;
 					doInstall(f.repo, f.autoTrust).then(() => {
 						installing.value = false;
 						if (f.hasRecipe) checkPostInstallRecipe(f.repo).catch(console.error);
 					});
 				}}
-				disabled={installing.value}
+				disabled={isInstalled || installing.value}
 				style={{
 					background: "var(--surface2)",
 					border: "1px solid var(--border)",
-					color: "var(--text)",
+					color: isInstalled ? "var(--success, #22c55e)" : "var(--text)",
 					borderRadius: "var(--radius-sm)",
 					fontSize: ".72rem",
 					padding: "4px 10px",
-					cursor: "pointer",
+					cursor: isInstalled ? "default" : "pointer",
 					whiteSpace: "nowrap",
+					opacity: isInstalled ? 0.8 : 1,
 				}}
 			>
-				{installing.value ? "Installing\u2026" : "Install"}
+				{isInstalled ? "Installed" : installing.value ? "Installing\u2026" : "Install"}
 			</button>
 		</div>
 	);
