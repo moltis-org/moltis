@@ -1,9 +1,13 @@
-use std::{path::PathBuf, sync::Mutex};
+use std::{collections::HashMap, path::PathBuf, sync::Mutex};
+
+use secrecy::ExposeSecret;
 
 use crate::{AgentIdentity, UserProfile, schema::MoltisConfig};
 
 use super::{
-    config_io::{apply_env_overrides_with, parse_config, parse_env_value, set_nested},
+    config_io::{
+        apply_env_overrides_with, parse_config, parse_env_value, resubstitute_config, set_nested,
+    },
     *,
 };
 
@@ -1080,4 +1084,171 @@ fn load_guidelines_md_for_agent_falls_back_to_root() {
     );
 
     clear_data_dir();
+}
+
+// ── GH-770: env variable resolution from [env] section and DB ────────
+
+/// GH-770: `${VAR}` in config sections should resolve against `[env]` values
+/// defined in the same TOML file.
+#[test]
+fn gh770_env_section_vars_resolve_in_config_placeholders() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("moltis.toml");
+    std::fs::write(
+        &path,
+        r#"
+[env]
+MY_API_KEY = "sk-test-from-env-section"
+
+[tools.web.search.perplexity]
+api_key = "${MY_API_KEY}"
+model = "sonar"
+"#,
+    )
+    .expect("write config");
+
+    let config = load_config(&path).expect("load config");
+    let api_key = config
+        .tools
+        .web
+        .search
+        .perplexity
+        .api_key
+        .as_ref()
+        .expect("api_key should be set")
+        .expose_secret();
+    assert_eq!(
+        api_key, "sk-test-from-env-section",
+        "api_key should be resolved from [env] section, not left as literal placeholder"
+    );
+}
+
+/// GH-770: When process env defines a variable that also appears in `[env]`,
+/// the process env value should win.  We test this via `substitute_env_with_overrides`
+/// directly because mutating process env is forbidden in this crate.
+#[test]
+fn gh770_process_env_takes_precedence_over_env_section() {
+    // HOME is reliably set on all CI and dev machines.
+    let home = std::env::var("HOME").unwrap_or_default();
+    if home.is_empty() {
+        return; // skip on machines where HOME is not set
+    }
+
+    let mut overrides = HashMap::new();
+    overrides.insert("HOME".to_string(), "from-toml-env".to_string());
+
+    // substitute_env_with_overrides should prefer process env.
+    let result = crate::env_subst::substitute_env_with_overrides("val=${HOME}", &overrides);
+    assert_eq!(
+        result,
+        format!("val={home}"),
+        "process env var should take precedence over override map"
+    );
+}
+
+/// GH-770: `resubstitute_config` resolves leftover `${VAR}` placeholders
+/// using a runtime override map (simulating DB env vars).
+#[test]
+fn gh770_resubstitute_config_resolves_db_env_vars() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("moltis.toml");
+    // Use a var name that definitely does not exist in the process env.
+    let var = "MOLTIS_GH770_ONLY_IN_DB_42";
+    std::fs::write(
+        &path,
+        format!(
+            r#"
+[tools.web.search.perplexity]
+api_key = "${{{var}}}"
+model = "sonar"
+"#
+        ),
+    )
+    .expect("write config");
+
+    let config = load_config(&path).expect("load config");
+    // Before resubstitution, the placeholder is still literal.
+    let api_key_before = config
+        .tools
+        .web
+        .search
+        .perplexity
+        .api_key
+        .as_ref()
+        .expect("api_key should be set")
+        .expose_secret()
+        .clone();
+    assert_eq!(
+        api_key_before,
+        format!("${{{var}}}"),
+        "placeholder should be unresolved before resubstitution"
+    );
+
+    // Simulate DB env vars becoming available.
+    let mut runtime_overrides = HashMap::new();
+    runtime_overrides.insert(var.to_string(), "sk-or-from-db".to_string());
+    let config = resubstitute_config(&config, &runtime_overrides).expect("resubstitute");
+
+    let api_key_after = config
+        .tools
+        .web
+        .search
+        .perplexity
+        .api_key
+        .as_ref()
+        .expect("api_key should be set")
+        .expose_secret();
+    assert_eq!(
+        api_key_after, "sk-or-from-db",
+        "placeholder should resolve against runtime override map after resubstitution"
+    );
+}
+
+/// GH-770: `resubstitute_config` preserves already-resolved values and
+/// only resolves remaining placeholders.
+#[test]
+fn gh770_resubstitute_preserves_resolved_values() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("moltis.toml");
+    let var = "MOLTIS_GH770_UNRESOLVABLE_43";
+    std::fs::write(
+        &path,
+        format!(
+            r#"
+[identity]
+name = "Rex"
+
+[tools.web.search.perplexity]
+api_key = "${{{var}}}"
+model = "sonar"
+"#
+        ),
+    )
+    .expect("write config");
+
+    let config = load_config(&path).expect("load config");
+    assert_eq!(config.identity.name.as_deref(), Some("Rex"));
+
+    let mut overrides = HashMap::new();
+    overrides.insert(var.to_string(), "resolved-later".to_string());
+    let config = resubstitute_config(&config, &overrides).expect("resubstitute");
+
+    // Existing values must survive the round-trip.
+    assert_eq!(
+        config.identity.name.as_deref(),
+        Some("Rex"),
+        "non-placeholder values must survive resubstitution"
+    );
+    assert_eq!(
+        config
+            .tools
+            .web
+            .search
+            .perplexity
+            .api_key
+            .as_ref()
+            .expect("api_key")
+            .expose_secret(),
+        "resolved-later"
+    );
 }

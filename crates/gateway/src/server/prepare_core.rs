@@ -468,6 +468,19 @@ pub async fn prepare_gateway_core(
             config_env_overrides.clone()
         },
     };
+
+    // GH-770: Re-resolve ${VAR} placeholders using DB-stored env vars.
+    // At initial config load, only process env vars were available.  Now
+    // that the credential store has been read, re-substitute so that TOML
+    // values like `api_key = "${OPENROUTER_API_KEY}"` resolve against UI
+    // env vars too.
+    config = moltis_config::resubstitute_config(&config, &runtime_env_overrides).unwrap_or_else(
+        |error| {
+            warn!(%error, "failed to resubstitute config with runtime env overrides");
+            config
+        },
+    );
+
     live_mcp
         .manager()
         .set_env_overrides(runtime_env_overrides.clone())

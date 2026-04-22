@@ -11,12 +11,27 @@ use {
 /// Load config from the given path (any supported format).
 ///
 /// After parsing, `MOLTIS_*` env vars are applied as overrides.
+///
+/// Uses a two-pass approach so that `[env]` section values are available
+/// for `${VAR}` substitution in other sections of the same config file.
 pub fn load_config(path: &Path) -> crate::Result<MoltisConfig> {
     let raw = std::fs::read_to_string(path).map_err(|source| {
         crate::Error::external(format!("failed to read {}", path.display()), source)
     })?;
-    let raw = substitute_env(&raw);
-    let config = parse_config(&raw, path)?;
+
+    // First pass: resolve process env vars, parse to extract [env] section.
+    let first_pass = substitute_env(&raw);
+    let preliminary: MoltisConfig = parse_config(&first_pass, path)?;
+
+    // Second pass: re-substitute using both process env and [env] values.
+    // This allows ${VAR} in other sections to reference [env]-defined vars.
+    let config = if preliminary.env.is_empty() {
+        preliminary
+    } else {
+        let second_pass = crate::env_subst::substitute_env_with_overrides(&raw, &preliminary.env);
+        parse_config(&second_pass, path)?
+    };
+
     Ok(apply_env_overrides(config))
 }
 
@@ -416,6 +431,24 @@ pub(super) fn apply_env_overrides_with(
             config
         },
     }
+}
+
+/// Re-resolve `${VAR}` placeholders in a loaded config using additional overrides.
+///
+/// Call this after runtime env vars (e.g. DB-stored UI variables) become
+/// available.  The config is serialized to TOML, placeholders are re-resolved
+/// using process env + the override map, and the result is deserialized back.
+///
+/// Lookup precedence: process env → `overrides` map.
+pub fn resubstitute_config(
+    config: &MoltisConfig,
+    overrides: &std::collections::HashMap<String, String>,
+) -> crate::Result<MoltisConfig> {
+    let toml_str = toml::to_string_pretty(config)
+        .map_err(|source| crate::Error::external("serialize config for resubstitution", source))?;
+    let substituted = crate::env_subst::substitute_env_with_overrides(&toml_str, overrides);
+    let reloaded = parse_config(&substituted, &std::path::PathBuf::from("resubstitute.toml"))?;
+    Ok(apply_env_overrides(reloaded))
 }
 
 /// Parse a string env value into a JSON value, trying bool and number first.
