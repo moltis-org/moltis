@@ -59,8 +59,8 @@ function readRequestJson(req) {
 		req.on("end", () => {
 			try {
 				resolve(raw ? JSON.parse(raw) : {});
-			} catch (error) {
-				reject(error);
+			} catch (_error) {
+				reject(new Error("invalid request json"));
 			}
 		});
 		req.on("error", reject);
@@ -203,8 +203,8 @@ async function startGeminiMockServer() {
 			}
 
 			writeSse(res, [finalTextEvent(), doneEvent(), "[DONE]"]);
-		} catch (error) {
-			writeJson(res, 500, { error: { message: error?.message || String(error) } });
+		} catch (_error) {
+			writeJson(res, 500, { error: { message: "mock server internal error" } });
 		}
 	});
 
