@@ -589,11 +589,11 @@ pub(crate) fn collapse_schema_unions_for_non_strict_tools(schema: &mut serde_jso
         return;
     };
 
-    let mut collapse_type_arrays = RecursiveTransform(CollapseTypeArrayTransform);
-    collapse_type_arrays.transform(&mut transformed);
-
     let mut collapse_composite_unions = RecursiveTransform(CollapseCompositeUnionTransform);
     collapse_composite_unions.transform(&mut transformed);
+
+    let mut prune_orphaned_required = RecursiveTransform(PruneOrphanedRequiredTransform);
+    prune_orphaned_required.transform(&mut transformed);
 
     *schema = transformed.to_value();
 }

@@ -230,6 +230,50 @@ fn to_openai_tools_collapses_union_types_without_strict_mode() {
 }
 
 #[test]
+fn to_openai_tools_prunes_orphans_after_non_strict_composite_collapse() {
+    let tools = vec![serde_json::json!({
+        "name": "composite",
+        "description": "Composite schema edge case",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "properties": {
+                        "y": { "type": "string" }
+                    },
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "x": { "type": "string" }
+                            },
+                            "required": ["x"]
+                        },
+                        { "type": "string" }
+                    ]
+                }
+            },
+            "required": ["config"]
+        }
+    })];
+
+    let converted = to_openai_tools(&tools, false);
+    assert_eq!(converted.len(), 1);
+
+    let params = &converted[0]["function"]["parameters"];
+    let config = &params["properties"]["config"];
+    let mut orphans = Vec::new();
+    find_required_orphans(params, "root", &mut orphans);
+    assert!(orphans.is_empty(), "found required orphans: {orphans:?}");
+    assert!(
+        config.get("required").is_none(),
+        "orphaned composite variant required entries should be pruned"
+    );
+    assert!(config["properties"].get("y").is_some());
+}
+
+#[test]
 fn to_openai_tools_preserves_nested_array_item_required_properties() {
     let tools = vec![serde_json::json!({
         "name": "MultiEdit",
