@@ -41,10 +41,6 @@ shows a TypeScript gateway with macOS, iOS, and Android companion surfaces,
 plus a large channel list, node tools, browser/canvas support, plugin
 extensions, onboarding, and managed/workspace skills.
 
-Choose OpenClaw when the priority is breadth: many channels, companion apps,
-voice wake/talk modes, a mature Claw-style ecosystem, and a Node.js runtime is
-acceptable.
-
 ### Hermes Agent, learning-loop CLI and gateway
 
 Hermes Agent is Python-first. Its README centers the agent around a terminal
@@ -54,9 +50,6 @@ cloud/serverless execution backends. Moltis has autonomous skill improvement
 too, so Hermes' sharper distinction is its CLI/research loop and broad terminal
 backend set. It also carries research-oriented pieces such as trajectory
 generation and RL environments.
-
-Choose Hermes when the priority is an interactive CLI, research workflows, and
-flexible execution backends such as SSH, Docker, Daytona, Singularity, or Modal.
 
 ### Moltis, Rust-native persistent agent server
 
@@ -111,27 +104,6 @@ safe Rust.
 \* These counts are intentionally limited to app/source directories and exclude
 dependency folders and build output. They are useful for spotting scale, not for
 ranking projects.
-
-## When to Choose What
-
-**Choose OpenClaw if** you want the broadest Claw ecosystem, many channel and
-device integrations, companion apps, voice wake/talk modes, and you are
-comfortable operating a Node.js-based platform.
-
-**Choose Hermes Agent if** you want a CLI-first agent with a learning loop,
-strong memory/user modeling emphasis, research tooling, and flexible local/cloud
-terminal backends.
-
-**Choose Moltis if** you want:
-
-- A single auditable Rust binary with built-in web UI
-- A persistent self-hosted agent server with durable sessions
-- Sandboxed execution through Docker/Podman, Apple Container, or WASM
-- Password, passkey, scoped API key, and vault-backed authentication
-- Autonomous skill creation and updates
-- Voice I/O, browser automation, cron scheduling, and MCP support in one build
-- Embeddings-powered long-term memory with hybrid search
-- Read-only migration from OpenClaw
 
 ## Links
 
