@@ -4,11 +4,32 @@ use std::time::Duration;
 
 use {reqwest::Client, secrecy::ExposeSecret};
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, histogram, home_assistant as ha_metrics};
+
 use crate::{
     config::HomeAssistantAccountConfig,
     error::{Error, Result},
     types::{EntityState, HaConfigResponse, ServiceDescription, Target},
 };
+
+/// Record a successful REST request duration and increment the request counter.
+#[cfg(feature = "metrics")]
+#[inline]
+pub(crate) fn record_rest_request(method: &str, endpoint: &str, start: std::time::Instant) {
+    histogram!(ha_metrics::REST_REQUEST_DURATION_SECONDS, "method" => method.to_owned(), "endpoint" => endpoint.to_owned())
+        .record(start.elapsed().as_secs_f64());
+    counter!(ha_metrics::REST_REQUESTS_TOTAL, "method" => method.to_owned(), "endpoint" => endpoint.to_owned())
+        .increment(1);
+}
+
+/// Record a failed REST request.
+#[cfg(feature = "metrics")]
+#[inline]
+pub(crate) fn record_rest_error(method: &str, endpoint: &str) {
+    counter!(ha_metrics::REST_ERRORS_TOTAL, "method" => method.to_owned(), "endpoint" => endpoint.to_owned())
+        .increment(1);
+}
 
 /// Extract the domain portion of an entity ID (part before the first `.`).
 fn extract_domain(entity_id: &str) -> &str {
@@ -72,6 +93,8 @@ impl HomeAssistantClient {
     /// Hits the authenticated `GET /api/config` endpoint.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn health_check(&self) -> Result<()> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -80,12 +103,17 @@ impl HomeAssistantClient {
             .send()
             .await?;
 
-        check_status(resp.status())
+        check_status(resp.status())?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "health_check", start);
+        Ok(())
     }
 
     /// Fetch the HA instance configuration.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_config(&self) -> Result<HaConfigResponse> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -96,12 +124,16 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "config", start);
         resp.json().await.map_err(Error::from)
     }
 
     /// Get all entity states.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_states(&self) -> Result<Vec<EntityState>> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -112,12 +144,16 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "states", start);
         resp.json().await.map_err(Error::from)
     }
 
     /// Get a single entity state. Returns `None` if entity not found (404).
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_state(&self, entity_id: &str) -> Result<Option<EntityState>> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -127,17 +163,23 @@ impl HomeAssistantClient {
             .await?;
 
         if resp.status().as_u16() == 404 {
+            #[cfg(feature = "metrics")]
+            record_rest_request("GET", "state", start);
             return Ok(None);
         }
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "state", start);
         resp.json().await.map_err(Error::from).map(Some)
     }
 
     /// Get all registered services.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_services(&self) -> Result<Vec<ServiceDescription>> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -148,6 +190,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "services", start);
         resp.json().await.map_err(Error::from)
     }
 
@@ -172,6 +216,8 @@ impl HomeAssistantClient {
         data: Option<serde_json::Value>,
         return_response: bool,
     ) -> Result<serde_json::Value> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
 
         let mut body = serde_json::Map::new();
@@ -221,6 +267,8 @@ impl HomeAssistantClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            #[cfg(feature = "metrics")]
+            record_rest_error("POST", "call_service");
             #[cfg(feature = "tracing")]
             tracing::warn!(
                 domain,
@@ -233,6 +281,8 @@ impl HomeAssistantClient {
             )));
         }
 
+        #[cfg(feature = "metrics")]
+        record_rest_request("POST", "call_service", start);
         resp.json().await.map_err(Error::from)
     }
 
@@ -288,6 +338,8 @@ impl HomeAssistantClient {
         event_type: &str,
         event_data: Option<serde_json::Value>,
     ) -> Result<()> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let body = event_data.unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
@@ -303,11 +355,15 @@ impl HomeAssistantClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            #[cfg(feature = "metrics")]
+            record_rest_error("POST", "fire_event");
             return Err(Error::Event(format!(
                 "fire_event {event_type} returned {status}: {text}"
             )));
         }
 
+        #[cfg(feature = "metrics")]
+        record_rest_request("POST", "fire_event", start);
         Ok(())
     }
 
@@ -327,6 +383,8 @@ impl HomeAssistantClient {
         state: &str,
         attributes: Option<serde_json::Value>,
     ) -> Result<EntityState> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
 
         let mut body = serde_json::Map::new();
@@ -349,6 +407,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("POST", "set_state", start);
         resp.json().await.map_err(Error::from)
     }
 
@@ -374,6 +434,8 @@ impl HomeAssistantClient {
         entity_id: Option<&str>,
         period: Option<u32>,
     ) -> Result<Vec<serde_json::Value>> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
 
         let url = if let Some(ts) = timestamp {
@@ -408,6 +470,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "logbook", start);
         resp.json().await.map_err(Error::from)
     }
 
@@ -422,6 +486,8 @@ impl HomeAssistantClient {
         start_time: &str,
         end_time: Option<&str>,
     ) -> Result<Vec<serde_json::Value>> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let mut url = format!(
             "{}/api/history/period/{}?filter_entity_id={}",
@@ -442,6 +508,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "history", start);
         resp.json().await.map_err(Error::from)
     }
 
@@ -451,6 +519,8 @@ impl HomeAssistantClient {
         tracing::instrument(skip_all, level = "debug", fields(entity_id))
     )]
     pub async fn camera_proxy(&self, entity_id: &str) -> Result<bytes::Bytes> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -462,11 +532,15 @@ impl HomeAssistantClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            #[cfg(feature = "metrics")]
+            record_rest_error("GET", "camera_proxy");
             return Err(Error::Camera(format!(
                 "camera_proxy {entity_id} returned {status}: {text}"
             )));
         }
 
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "camera_proxy", start);
         resp.bytes().await.map_err(Error::from)
     }
 }

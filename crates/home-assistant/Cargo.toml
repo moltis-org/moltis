@@ -12,6 +12,7 @@ bytes             = { workspace = true }
 futures-util      = { workspace = true }
 moltis-agents     = { workspace = true }
 moltis-config     = { workspace = true }
+moltis-metrics    = { optional = true, workspace = true }
 reqwest           = { workspace = true }
 secrecy           = { workspace = true }
 serde             = { workspace = true }
@@ -32,7 +33,7 @@ serde_json       = { workspace = true }
 
 [features]
 default = ["tracing"]
-# TODO: add metrics feature with counters/durations once instrumented
+metrics = ["dep:moltis-metrics"]
 tracing = []
 
 [lints]

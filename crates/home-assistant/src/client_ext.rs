@@ -9,6 +9,11 @@ use {
     crate::error::{Error, Result},
 };
 
+#[cfg(feature = "metrics")]
+use {
+    super::client::{record_rest_error, record_rest_request},
+};
+
 impl HomeAssistantClient {
     // ── Discovery / introspection ────────────────────────────────────
 
@@ -16,15 +21,22 @@ impl HomeAssistantClient {
     ///
     /// `GET /api/` — unauthenticated, returns `"API running."`.
     pub async fn ping(&self) -> Result<()> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let resp = self
             .http
             .get(format!("{}/api/", self.base_url))
             .send()
             .await?;
 
-        if resp.status().is_success() {
+        let ok = resp.status().is_success();
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "ping", start);
+        if ok {
             Ok(())
         } else {
+            #[cfg(feature = "metrics")]
+            record_rest_error("GET", "ping");
             Err(Error::Connection(format!(
                 "HA API ping returned {}",
                 resp.status()
@@ -37,6 +49,8 @@ impl HomeAssistantClient {
     /// `GET /api/components` — returns `Vec<String>` of component names.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_components(&self) -> Result<Vec<String>> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -47,6 +61,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "components", start);
         resp.json().await.map_err(Error::from)
     }
 
@@ -55,6 +71,8 @@ impl HomeAssistantClient {
     /// `GET /api/events` — returns `Vec<Value>` of `{event, listener_count}`.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_events(&self) -> Result<Vec<serde_json::Value>> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -65,6 +83,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "events", start);
         resp.json().await.map_err(Error::from)
     }
 
@@ -79,6 +99,8 @@ impl HomeAssistantClient {
         tracing::instrument(skip_all, level = "debug", fields(entity_id))
     )]
     pub async fn delete_state(&self, entity_id: &str) -> Result<bool> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -89,9 +111,13 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         if status.as_u16() == 404 {
+            #[cfg(feature = "metrics")]
+            record_rest_request("DELETE", "delete_state", start);
             return Ok(false);
         }
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("DELETE", "delete_state", start);
         Ok(true)
     }
 
@@ -118,6 +144,8 @@ impl HomeAssistantClient {
         no_attributes: Option<bool>,
         skip_initial_state: Option<bool>,
     ) -> Result<Vec<serde_json::Value>> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let mut url = format!(
             "{}/api/history/period/{}?filter_entity_id={}",
@@ -159,6 +187,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "history_with_flags", start);
         resp.json().await.map_err(Error::from)
     }
 
@@ -169,6 +199,8 @@ impl HomeAssistantClient {
     /// `GET /api/calendars` — returns `Vec<Value>` of `{name, entity_id}`.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_calendars(&self) -> Result<Vec<serde_json::Value>> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -179,6 +211,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "calendars", start);
         resp.json().await.map_err(Error::from)
     }
 
@@ -195,6 +229,8 @@ impl HomeAssistantClient {
         start: &str,
         end: &str,
     ) -> Result<Vec<serde_json::Value>> {
+        #[cfg(feature = "metrics")]
+        let metrics_start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let url = format!(
             "{}/api/calendars/{}?start={}&end={}",
@@ -213,6 +249,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "calendar_events", metrics_start);
         resp.json().await.map_err(Error::from)
     }
 
@@ -229,6 +267,8 @@ impl HomeAssistantClient {
         template: &str,
         variables: Option<serde_json::Value>,
     ) -> Result<String> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
 
         let mut body = serde_json::Map::new();
@@ -252,11 +292,15 @@ impl HomeAssistantClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
+            #[cfg(feature = "metrics")]
+            record_rest_error("POST", "render_template");
             return Err(Error::Client(format!(
                 "render_template returned {status}: {text}"
             )));
         }
 
+        #[cfg(feature = "metrics")]
+        record_rest_request("POST", "render_template", start);
         resp.text().await.map_err(Error::from)
     }
 
@@ -268,6 +312,8 @@ impl HomeAssistantClient {
     /// Returns the raw log file contents (gzipped response may need decompression).
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn get_error_log(&self) -> Result<String> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -278,6 +324,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("GET", "error_log", start);
         resp.text().await.map_err(Error::from)
     }
 
@@ -289,6 +337,8 @@ impl HomeAssistantClient {
     /// Returns `{result: "valid"|"invalid", errors: Option<String>, warnings: Option<String>}`.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug"))]
     pub async fn check_config(&self) -> Result<serde_json::Value> {
+        #[cfg(feature = "metrics")]
+        let start = std::time::Instant::now();
         let (_, auth) = self.auth_header();
         let resp = self
             .http
@@ -299,6 +349,8 @@ impl HomeAssistantClient {
 
         let status = resp.status();
         check_status(status)?;
+        #[cfg(feature = "metrics")]
+        record_rest_request("POST", "check_config", start);
         resp.json().await.map_err(Error::from)
     }
 }

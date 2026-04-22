@@ -41,6 +41,9 @@ use {
     tokio_tungstenite::tungstenite::Message,
 };
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, home_assistant as ha_metrics};
+
 use crate::{
     error::{Error, Result},
     types::{HaEvent, Target},
@@ -361,6 +364,9 @@ impl HaWebSocket {
     /// Returns a [`HaConnection`] for receiving events and sending commands.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "info"))]
     pub async fn subscribe(&self) -> Result<HaConnection> {
+        #[cfg(feature = "metrics")]
+        counter!(ha_metrics::WS_CONNECTIONS_TOTAL).increment(1);
+
         let (tx, events) = mpsc::channel(256);
 
         let (ws_stream, _) = tokio_tungstenite::connect_async(&self.url)
@@ -541,6 +547,8 @@ impl HaWebSocket {
                     Err(e) => {
                         #[cfg(feature = "tracing")]
                         tracing::warn!("HA WebSocket read error: {e}");
+                        #[cfg(feature = "metrics")]
+                        counter!(ha_metrics::WS_ERRORS_TOTAL).increment(1);
                         break;
                     },
                     _ => {},
@@ -553,6 +561,10 @@ impl HaWebSocket {
     /// Parse and dispatch an event message to the channel.
     async fn dispatch_event(val: &Value, tx: &mpsc::Sender<HaEvent>) {
         let msg_type = val.get("type").and_then(|t| t.as_str());
+
+        #[cfg(feature = "metrics")]
+        counter!(ha_metrics::WS_EVENTS_RECEIVED_TOTAL, "type" => msg_type.unwrap_or("unknown").to_owned())
+            .increment(1);
 
         match msg_type {
             Some("event") => {
