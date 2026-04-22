@@ -2,7 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use {
     moltis_protocol::{EventFrame, StateVersion, scopes},
-    tracing::{debug, warn},
+    tracing::{trace, warn},
 };
 
 use crate::state::GatewayState;
@@ -121,7 +121,7 @@ pub async fn broadcast(
     let required_scopes = guards.get(event);
 
     let inner = state.inner.read().await;
-    debug!(
+    trace!(
         event,
         seq,
         clients = inner.clients.len(),
