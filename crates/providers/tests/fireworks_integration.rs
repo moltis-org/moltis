@@ -39,12 +39,20 @@ fn api_key() -> Secret<String> {
 }
 
 fn make_provider(model: &str) -> OpenAiProvider {
-    OpenAiProvider::new_with_name(
+    let mut p = OpenAiProvider::new_with_name(
         api_key(),
         model.to_string(),
         FIREWORKS_BASE_URL.to_string(),
         "fireworks".to_string(),
-    )
+    );
+
+    // Mirror the registration overrides from `register_openai_compatible_providers`
+    // for Fireworks Fire Pass Kimi routers (issue #810).
+    if model.contains("/routers/") && model.contains("kimi") {
+        p = p.with_strict_tools(false).with_reasoning_content(true);
+    }
+
+    p
 }
 
 /// Tool schema in moltis-internal flat format.
