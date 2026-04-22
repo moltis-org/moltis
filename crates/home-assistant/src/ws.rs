@@ -237,6 +237,82 @@ impl HaConnection {
         // pong responses have no payload (result is null)
         Ok(())
     }
+
+    /// Subscribe to an automation trigger.
+    ///
+    /// Sends `subscribe_trigger` with a trigger configuration. HA will
+    /// fire event messages with `{variables, context}` whenever the
+    /// trigger conditions are met. Requires admin privileges.
+    ///
+    /// Returns the subscription ID for use with [`unsubscribe_events`].
+    pub async fn subscribe_trigger(
+        &self,
+        trigger: &Value,
+        variables: Option<&Value>,
+    ) -> Result<u64> {
+        let mut payload = serde_json::json!({
+            "type": "subscribe_trigger",
+            "trigger": trigger,
+        });
+        if let Some(vars) = variables {
+            payload
+                .as_object_mut()
+                .unwrap()
+                .insert("variables".to_owned(), vars.clone());
+        }
+
+        let _result = self.call_command(payload).await?;
+        let sub_id = self.next_id.load(Ordering::SeqCst).saturating_sub(1);
+        Ok(sub_id)
+    }
+
+    /// Notify HA which features this client supports.
+    ///
+    /// `supported_features` is a `Map<String, Value>` mapping feature names
+    /// to their version/capability bitmask. This is a client→server
+    /// protocol negotiation message.
+    pub async fn set_supported_features(
+        &self,
+        features: serde_json::Map<String, Value>,
+    ) -> Result<()> {
+        let payload = serde_json::json!({
+            "type": "supported_features",
+            "features": features,
+        });
+        self.call_command(payload).await?;
+        Ok(())
+    }
+
+    /// Fetch the entity registry entries for display.
+    ///
+    /// Sends `config/entity_registry/list_for_display`. Returns a result
+    /// containing `entity_categories` and `entities` arrays.
+    pub async fn entity_registry_list_for_display(&self) -> Result<Value> {
+        let payload = serde_json::json!({
+            "type": "config/entity_registry/list_for_display",
+        });
+        let result = self.call_command(payload).await?;
+        Ok(result)
+    }
+
+    /// Extract entity IDs, devices, areas, and missing references from a target.
+    ///
+    /// Sends `extract_from_target` with a target specification and optional
+    /// `expand_group` flag. Returns `{referenced_entities, referenced_devices,
+    /// referenced_areas, missing_devices, missing_areas, ...}`.
+    pub async fn extract_from_target(
+        &self,
+        target: &Target,
+        expand_group: bool,
+    ) -> Result<Value> {
+        let payload = serde_json::json!({
+            "type": "extract_from_target",
+            "target": serde_json::to_value(target)?,
+            "expand_group": expand_group,
+        });
+        let result = self.call_command(payload).await?;
+        Ok(result)
+    }
 }
 
 /// WebSocket client factory for Home Assistant real-time events and commands.
@@ -1054,5 +1130,93 @@ mod tests {
             // Pong should not produce any event
             assert!(rx.try_recv().is_err());
         });
+    }
+
+    // --- subscribe_trigger ---
+
+    #[tokio::test]
+    async fn subscribe_trigger_command() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let sub_id = conn
+            .subscribe_trigger(
+                &json!({"platform": "state", "entity_id": "binary_sensor.door"}),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(sub_id > 0);
+    }
+
+    #[tokio::test]
+    async fn subscribe_trigger_with_variables() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let sub_id = conn
+            .subscribe_trigger(
+                &json!({"platform": "numeric_state", "entity_id": "sensor.temp", "below": 10}),
+                Some(&json!({"threshold": 5})),
+            )
+            .await
+            .unwrap();
+        assert!(sub_id > 0);
+    }
+
+    // --- set_supported_features ---
+
+    #[tokio::test]
+    async fn set_supported_features_command() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let mut features = serde_json::Map::new();
+        features.insert("ha_version".to_owned(), Value::Number(5.into()));
+        let result = conn.set_supported_features(features).await;
+        assert!(result.is_ok());
+    }
+
+    // --- entity_registry_list_for_display ---
+
+    #[tokio::test]
+    async fn entity_registry_list_for_display_command() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let result = conn.entity_registry_list_for_display().await;
+        assert!(result.is_ok());
+    }
+
+    // --- extract_from_target ---
+
+    #[tokio::test]
+    async fn extract_from_target_command() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let target = Target::entity("light.living_room");
+        let result = conn.extract_from_target(&target, true).await;
+        assert!(result.is_ok());
     }
 }
