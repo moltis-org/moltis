@@ -1,15 +1,18 @@
 //! AgentTool implementation for Home Assistant operations.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use async_trait::async_trait;
-use moltis_agents::tool_registry::AgentTool;
-use serde_json::{Value, json};
+use {
+    async_trait::async_trait,
+    moltis_agents::tool_registry::AgentTool,
+    serde_json::{Value, json},
+};
 
-use crate::client::HomeAssistantClient;
-use crate::config::HomeAssistantConfig;
-use crate::types::{EntityState, Target};
+use crate::{
+    client::HomeAssistantClient,
+    config::HomeAssistantConfig,
+    types::{EntityState, Target},
+};
 
 /// Shared client handle behind an Arc.
 type SharedClient = Arc<HomeAssistantClient>;
@@ -37,10 +40,7 @@ impl HomeAssistantTool {
     }
 
     /// Resolve which instance to use and return its client.
-    async fn resolve_client(
-        &self,
-        instance: Option<&str>,
-    ) -> crate::error::Result<SharedClient> {
+    async fn resolve_client(&self, instance: Option<&str>) -> crate::error::Result<SharedClient> {
         let (name, account_config) = crate::config::resolve_instance(&self.config, instance)?;
 
         // Check cache
@@ -202,7 +202,10 @@ impl AgentTool for HomeAssistantTool {
         })
     }
 
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(operation)))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, level = "debug", fields(operation))
+    )]
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let operation = params
             .get("operation")
@@ -226,14 +229,12 @@ impl AgentTool for HomeAssistantTool {
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-                let filtered = Self::filter_entities(
-                    &states, domain, area_id, entity_id_prefix,
-                );
+                let filtered = Self::filter_entities(&states, domain, area_id, entity_id_prefix);
                 Ok(json!({
                     "count": filtered.len(),
                     "entities": filtered,
                 }))
-            }
+            },
 
             "get_state" => {
                 let entity_id = params
@@ -255,7 +256,7 @@ impl AgentTool for HomeAssistantTool {
                     })),
                     Err(e) => Err(anyhow::anyhow!("{e}")),
                 }
-            }
+            },
 
             "turn_on" => {
                 let entity_id = params
@@ -269,7 +270,7 @@ impl AgentTool for HomeAssistantTool {
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
                 Ok(json!({ "entity_id": entity_id, "action": "turn_on", "status": "ok" }))
-            }
+            },
 
             "turn_off" => {
                 let entity_id = params
@@ -283,7 +284,7 @@ impl AgentTool for HomeAssistantTool {
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
                 Ok(json!({ "entity_id": entity_id, "action": "turn_off", "status": "ok" }))
-            }
+            },
 
             "toggle" => {
                 let entity_id = params
@@ -297,7 +298,7 @@ impl AgentTool for HomeAssistantTool {
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
                 Ok(json!({ "entity_id": entity_id, "action": "toggle", "status": "ok" }))
-            }
+            },
 
             "call_service" => {
                 let domain = params
@@ -314,12 +315,18 @@ impl AgentTool for HomeAssistantTool {
                 let target = area_id.map(|a| Target::area(a));
 
                 let result = client
-                    .call_service(domain, service, target.as_ref(), params.get("data").cloned(), false)
+                    .call_service(
+                        domain,
+                        service,
+                        target.as_ref(),
+                        params.get("data").cloned(),
+                        false,
+                    )
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
                 Ok(result)
-            }
+            },
 
             "get_config" => {
                 let config = client
@@ -336,7 +343,7 @@ impl AgentTool for HomeAssistantTool {
                     "time_zone": config.time_zone,
                     "components": config.components,
                 }))
-            }
+            },
 
             "get_services" => {
                 let services = client
@@ -350,10 +357,7 @@ impl AgentTool for HomeAssistantTool {
                     let mut domain_services = serde_json::Map::new();
                     if let Some(obj) = svc.services.as_object() {
                         for (name, info) in obj {
-                            let desc = info
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
+                            let desc = info.get("name").and_then(|v| v.as_str()).unwrap_or("");
                             domain_services.insert(name.clone(), json!(desc));
                         }
                     }
@@ -364,7 +368,7 @@ impl AgentTool for HomeAssistantTool {
                     "count": services.len(),
                     "domains": summary,
                 }))
-            }
+            },
 
             "get_history" => {
                 let entity_id = params
@@ -385,7 +389,10 @@ impl AgentTool for HomeAssistantTool {
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
                 // HA returns Vec<Vec<StateChange>> — one inner array per entity.
-                let record_count: usize = history.iter().map(|arr| arr.as_array().map_or(0, Vec::len)).sum();
+                let record_count: usize = history
+                    .iter()
+                    .map(|arr| arr.as_array().map_or(0, Vec::len))
+                    .sum();
 
                 Ok(json!({
                     "entity_id": entity_id,
@@ -393,7 +400,7 @@ impl AgentTool for HomeAssistantTool {
                     "records": record_count,
                     "history": history,
                 }))
-            }
+            },
 
             "fire_event" => {
                 let event_type = params
@@ -410,7 +417,7 @@ impl AgentTool for HomeAssistantTool {
                     "event_type": event_type,
                     "status": "fired",
                 }))
-            }
+            },
 
             "health_check" => {
                 client
@@ -419,7 +426,7 @@ impl AgentTool for HomeAssistantTool {
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
                 Ok(json!({ "status": "ok" }))
-            }
+            },
 
             other => Err(anyhow::anyhow!("unknown operation: '{other}'")),
         }
@@ -433,19 +440,17 @@ impl AgentTool for HomeAssistantTool {
             .instances
             .iter()
             .filter(|(_, a)| a.url.is_some() && a.token.is_some())
-            .filter_map(|(name, account)| {
-                match HomeAssistantClient::new(account) {
-                    Ok(client) => {
-                        #[cfg(feature = "tracing")]
-                        tracing::info!(instance = %name, "HA client pre-connected");
-                        Some((name.clone(), Arc::new(client)))
-                    }
-                    Err(e) => {
-                        #[cfg(feature = "tracing")]
-                        tracing::warn!(instance = %name, error = %e, "HA client warmup failed");
-                        None
-                    }
-                }
+            .filter_map(|(name, account)| match HomeAssistantClient::new(account) {
+                Ok(client) => {
+                    #[cfg(feature = "tracing")]
+                    tracing::info!(instance = %name, "HA client pre-connected");
+                    Some((name.clone(), Arc::new(client)))
+                },
+                Err(e) => {
+                    #[cfg(feature = "tracing")]
+                    tracing::warn!(instance = %name, error = %e, "HA client warmup failed");
+                    None
+                },
             })
             .collect();
 
@@ -460,26 +465,27 @@ impl AgentTool for HomeAssistantTool {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
-    use crate::types::EntityState;
-    use moltis_config::HomeAssistantAccountConfig;
-    use serde_json::json;
-    use wiremock::{
-        Mock, MockServer, ResponseTemplate,
-        matchers::{method, path},
+    use {
+        super::*,
+        crate::types::EntityState,
+        moltis_config::HomeAssistantAccountConfig,
+        serde_json::json,
+        wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        },
     };
 
     fn make_tool(server: &MockServer) -> HomeAssistantTool {
         let mut config = HomeAssistantConfig::default();
         config.enabled = true;
-        config.instances.insert(
-            "home".to_owned(),
-            HomeAssistantAccountConfig {
+        config
+            .instances
+            .insert("home".to_owned(), HomeAssistantAccountConfig {
                 url: Some(server.uri()),
                 token: Some(secrecy::Secret::new("test-token".to_owned())),
                 timeout_seconds: 10,
-            },
-        );
+            });
         HomeAssistantTool::from_config(&config).unwrap()
     }
 
@@ -553,58 +559,53 @@ mod tests {
 
     #[test]
     fn filter_entities_no_filter() {
-        let states: Vec<EntityState> =
-            serde_json::from_value(state_list_json()).unwrap();
+        let states: Vec<EntityState> = serde_json::from_value(state_list_json()).unwrap();
         let result = HomeAssistantTool::filter_entities(&states, None, None, None);
         assert_eq!(result.len(), 4);
     }
 
     #[test]
     fn filter_entities_by_domain() {
-        let states: Vec<EntityState> =
-            serde_json::from_value(state_list_json()).unwrap();
+        let states: Vec<EntityState> = serde_json::from_value(state_list_json()).unwrap();
         let result = HomeAssistantTool::filter_entities(&states, Some("light"), None, None);
         assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn filter_entities_by_area() {
-        let states: Vec<EntityState> =
-            serde_json::from_value(state_list_json()).unwrap();
+        let states: Vec<EntityState> = serde_json::from_value(state_list_json()).unwrap();
         let result = HomeAssistantTool::filter_entities(&states, None, Some("living"), None);
         assert_eq!(result.len(), 1);
     }
 
     #[test]
     fn filter_entities_by_domain_and_area() {
-        let states: Vec<EntityState> =
-            serde_json::from_value(state_list_json()).unwrap();
-        let result = HomeAssistantTool::filter_entities(&states, Some("light"), Some("bedroom"), None);
+        let states: Vec<EntityState> = serde_json::from_value(state_list_json()).unwrap();
+        let result =
+            HomeAssistantTool::filter_entities(&states, Some("light"), Some("bedroom"), None);
         assert_eq!(result.len(), 1);
     }
 
     #[test]
     fn filter_entities_no_match() {
-        let states: Vec<EntityState> =
-            serde_json::from_value(state_list_json()).unwrap();
+        let states: Vec<EntityState> = serde_json::from_value(state_list_json()).unwrap();
         let result = HomeAssistantTool::filter_entities(&states, Some("climate"), None, None);
         assert!(result.is_empty());
     }
 
     #[test]
     fn filter_entities_by_entity_id_prefix() {
-        let states: Vec<EntityState> =
-            serde_json::from_value(state_list_json()).unwrap();
+        let states: Vec<EntityState> = serde_json::from_value(state_list_json()).unwrap();
         let result = HomeAssistantTool::filter_entities(&states, None, None, Some("light."));
         assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn filter_entities_by_prefix_and_domain() {
-        let states: Vec<EntityState> =
-            serde_json::from_value(state_list_json()).unwrap();
+        let states: Vec<EntityState> = serde_json::from_value(state_list_json()).unwrap();
         // prefix "sensor." + domain "sensor" — should match 1
-        let result = HomeAssistantTool::filter_entities(&states, Some("sensor"), None, Some("sensor."));
+        let result =
+            HomeAssistantTool::filter_entities(&states, Some("sensor"), None, Some("sensor."));
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["entity_id"], "sensor.temperature");
     }
@@ -976,7 +977,9 @@ mod tests {
     async fn execute_get_history() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/history/period/2026-04-20T00%3A00%3A00%2B00%3A00"))
+            .and(path(
+                "/api/history/period/2026-04-20T00%3A00%3A00%2B00%3A00",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([
                 [{
                     "entity_id": "sensor.temperature",

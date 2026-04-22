@@ -4,8 +4,10 @@
 //! CI limit. All methods are added directly to [`HomeAssistantClient`](super::client::HomeAssistantClient)
 //! via an `impl` block in the same crate.
 
-use super::client::{check_auth_status, HomeAssistantClient};
-use crate::error::{Error, Result};
+use {
+    super::client::{HomeAssistantClient, check_auth_status},
+    crate::error::{Error, Result},
+};
 
 impl HomeAssistantClient {
     // ── Discovery / introspection ────────────────────────────────────
@@ -80,10 +82,7 @@ impl HomeAssistantClient {
         let (_, auth) = self.auth_header();
         let resp = self
             .http
-            .delete(format!(
-                "{}/api/states/{entity_id}",
-                self.base_url
-            ))
+            .delete(format!("{}/api/states/{entity_id}", self.base_url))
             .header("Authorization", &auth)
             .send()
             .await?;
@@ -98,7 +97,7 @@ impl HomeAssistantClient {
                 Err(Error::ServiceCall(format!(
                     "delete_state {entity_id} returned {status}: {text}"
                 )))
-            }
+            },
         }
     }
 
@@ -133,17 +132,18 @@ impl HomeAssistantClient {
             urlencoding::encode(filter_entity_id),
         );
         if let Some(end) = end_time {
-            url.push_str(&format!(
-                "&end_time={}",
-                urlencoding::encode(end)
-            ));
+            url.push_str(&format!("&end_time={}", urlencoding::encode(end)));
         }
         // HA checks `query.get("significant_changes_only", "1") != "0"`
         // so we must send "0" or "1" (not "false"/"true").
         if let Some(v) = significant_changes_only {
             url.push_str(&format!(
                 "&significant_changes_only={}",
-                if v { "1" } else { "0" }
+                if v {
+                    "1"
+                } else {
+                    "0"
+                }
             ));
         }
         if minimal_response == Some(true) {
@@ -298,10 +298,7 @@ impl HomeAssistantClient {
         let (_, auth) = self.auth_header();
         let resp = self
             .http
-            .post(format!(
-                "{}/api/config/core/check_config",
-                self.base_url
-            ))
+            .post(format!("{}/api/config/core/check_config", self.base_url))
             .header("Authorization", &auth)
             .send()
             .await?;
@@ -315,12 +312,14 @@ impl HomeAssistantClient {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
-    use crate::config::HomeAssistantAccountConfig;
-    use serde_json::json;
-    use wiremock::{
-        Mock, MockServer, ResponseTemplate,
-        matchers::{method, path, query_param},
+    use {
+        super::*,
+        crate::config::HomeAssistantAccountConfig,
+        serde_json::json,
+        wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path, query_param},
+        },
     };
 
     fn test_account(url: &str) -> HomeAssistantAccountConfig {
@@ -460,7 +459,9 @@ mod tests {
     async fn get_history_with_flags_success() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00"))
+            .and(path(
+                "/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00",
+            ))
             .and(query_param("filter_entity_id", "sensor.temp"))
             .and(query_param("minimal_response", ""))
             .and(query_param("no_attributes", ""))
@@ -487,7 +488,9 @@ mod tests {
     async fn get_history_with_flags_significant_changes_sends_0_when_false() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00"))
+            .and(path(
+                "/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00",
+            ))
             .and(query_param("filter_entity_id", "sensor.temp"))
             .and(query_param("significant_changes_only", "0"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
@@ -513,7 +516,9 @@ mod tests {
     async fn get_history_with_flags_significant_changes_sends_1_when_true() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00"))
+            .and(path(
+                "/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00",
+            ))
             .and(query_param("filter_entity_id", "sensor.temp"))
             .and(query_param("significant_changes_only", "1"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
@@ -604,7 +609,11 @@ mod tests {
 
         let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
         let err = client
-            .get_calendar_events("calendar.personal", "2026-04-21T00:00:00", "2026-04-22T00:00:00")
+            .get_calendar_events(
+                "calendar.personal",
+                "2026-04-21T00:00:00",
+                "2026-04-22T00:00:00",
+            )
             .await
             .unwrap_err();
         assert!(format!("{err}").contains("403"));

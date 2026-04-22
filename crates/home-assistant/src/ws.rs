@@ -22,22 +22,31 @@
 //! }
 //! ```
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
-use futures_util::{SinkExt, StreamExt};
-use serde_json::Value;
-use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio::task::JoinHandle;
-use tokio_tungstenite::tungstenite::Message;
+use {
+    futures_util::{SinkExt, StreamExt},
+    serde_json::Value,
+    tokio::{
+        sync::{Mutex, mpsc, oneshot},
+        task::JoinHandle,
+    },
+    tokio_tungstenite::tungstenite::Message,
+};
 
-use crate::error::{Error, Result};
-use crate::types::{HaEvent, Target};
+use crate::{
+    error::{Error, Result},
+    types::{HaEvent, Target},
+};
 
-type WsStream = tokio_tungstenite::WebSocketStream<
-    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
->;
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 /// A pending WebSocket request awaiting a server response.
 type Pending = oneshot::Sender<Result<Value>>;
@@ -134,10 +143,8 @@ impl HaConnection {
                 // Clean up pending entry
                 let mut pending = self.pending.lock().await;
                 pending.remove(&id);
-                Err(Error::WebSocket(
-                    "command timed out after 30s".to_owned(),
-                ))
-            }
+                Err(Error::WebSocket("command timed out after 30s".to_owned()))
+            },
         }
     }
 
@@ -266,9 +273,7 @@ impl HaConnection {
             payload
                 .as_object_mut()
                 .ok_or_else(|| {
-                    Error::WebSocket(
-                        "subscribe_trigger payload is not a JSON object".to_owned(),
-                    )
+                    Error::WebSocket("subscribe_trigger payload is not a JSON object".to_owned())
                 })?
                 .insert("variables".to_owned(), vars.clone());
         }
@@ -283,11 +288,11 @@ impl HaConnection {
     /// HA validates the schema as `{str: int}` on the server side.
     ///
     /// This is a client-to-server protocol negotiation message.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, features), level = "debug"))]
-    pub async fn set_supported_features(
-        &self,
-        features: &[(impl AsRef<str>, u64)],
-    ) -> Result<()> {
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip(self, features), level = "debug")
+    )]
+    pub async fn set_supported_features(&self, features: &[(impl AsRef<str>, u64)]) -> Result<()> {
         let features_value: serde_json::Map<String, Value> = features
             .iter()
             .map(|(k, v)| (k.as_ref().to_owned(), Value::Number((*v).into())))
@@ -319,11 +324,7 @@ impl HaConnection {
     /// `expand_group` flag. Returns `{referenced_entities, referenced_devices,
     /// referenced_areas, missing_devices, missing_areas, ...}`.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
-    pub async fn extract_from_target(
-        &self,
-        target: &Target,
-        expand_group: bool,
-    ) -> Result<Value> {
+    pub async fn extract_from_target(&self, target: &Target, expand_group: bool) -> Result<Value> {
         let payload = serde_json::json!({
             "type": "extract_from_target",
             "target": serde_json::to_value(target)?,
@@ -369,8 +370,7 @@ impl HaWebSocket {
 
         Self::authenticate(&mut write, &mut read, &self.token).await?;
 
-        let pending: Arc<Mutex<HashMap<u64, Pending>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pending: Arc<Mutex<HashMap<u64, Pending>>> = Arc::new(Mutex::new(HashMap::new()));
 
         let write = Arc::new(Mutex::new(write));
         // Snapshot the factory counter and advance it so the next subscribe()
@@ -396,9 +396,8 @@ impl HaWebSocket {
     /// (connection closed).
     fn spawn_heartbeat(write: Arc<Mutex<WriteHandle>>) -> JoinHandle<()> {
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(
-                HEARTBEAT_INTERVAL_SECS,
-            ));
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(HEARTBEAT_INTERVAL_SECS));
             // Don't bombard if we fall behind
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -412,11 +411,7 @@ impl HaWebSocket {
                     break;
                 };
                 let mut w = write.lock().await;
-                if w
-                    .send(Message::Text(text.into()))
-                    .await
-                    .is_err()
-                {
+                if w.send(Message::Text(text.into())).await.is_err() {
                     break;
                 }
                 drop(w);
@@ -436,17 +431,15 @@ impl HaWebSocket {
         // Wait for auth_required
         match read.next().await {
             Some(Ok(Message::Text(text))) => {
-                let val: Value = serde_json::from_str(&text)
-                    .map_err(|e| Error::WebSocket(e.to_string()))?;
+                let val: Value =
+                    serde_json::from_str(&text).map_err(|e| Error::WebSocket(e.to_string()))?;
                 if val.get("type").and_then(|t| t.as_str()) != Some("auth_required") {
-                    return Err(Error::Auth(
-                        "expected auth_required message".to_owned(),
-                    ));
+                    return Err(Error::Auth("expected auth_required message".to_owned()));
                 }
-            }
+            },
             Some(Ok(_)) => {
                 return Err(Error::Auth("unexpected message type".to_owned()));
-            }
+            },
             Some(Err(e)) => return Err(Error::WebSocket(e.to_string())),
             None => return Err(Error::WebSocket("connection closed".to_owned())),
         }
@@ -456,8 +449,8 @@ impl HaWebSocket {
             "type": "auth",
             "access_token": token
         });
-        let auth_str = serde_json::to_string(&auth_msg)
-            .map_err(|e| Error::WebSocket(e.to_string()))?;
+        let auth_str =
+            serde_json::to_string(&auth_msg).map_err(|e| Error::WebSocket(e.to_string()))?;
         write
             .send(Message::Text(auth_str.into()))
             .await
@@ -466,8 +459,8 @@ impl HaWebSocket {
         // Wait for auth_ok
         match read.next().await {
             Some(Ok(Message::Text(text))) => {
-                let val: Value = serde_json::from_str(&text)
-                    .map_err(|e| Error::WebSocket(e.to_string()))?;
+                let val: Value =
+                    serde_json::from_str(&text).map_err(|e| Error::WebSocket(e.to_string()))?;
                 match val.get("type").and_then(|t| t.as_str()) {
                     Some("auth_ok") => Ok(()),
                     Some("auth_invalid") => Err(Error::Auth(
@@ -481,7 +474,7 @@ impl HaWebSocket {
                         other.unwrap_or("(null)")
                     ))),
                 }
-            }
+            },
             Some(Ok(_)) => Err(Error::Auth("unexpected message type".to_owned())),
             Some(Err(e)) => Err(Error::WebSocket(e.to_string())),
             None => Err(Error::WebSocket("connection closed during auth".to_owned())),
@@ -514,10 +507,9 @@ impl HaWebSocket {
                                 }
 
                                 let result = match val.get("success").and_then(|s| s.as_bool()) {
-                                    Some(true) => Ok(val
-                                        .get("result")
-                                        .cloned()
-                                        .unwrap_or(Value::Null)),
+                                    Some(true) => {
+                                        Ok(val.get("result").cloned().unwrap_or(Value::Null))
+                                    },
                                     Some(false) => Err(Error::WebSocket(format!(
                                         "command failed: {}",
                                         val.get("error")
@@ -530,7 +522,7 @@ impl HaWebSocket {
                                         drop(map);
                                         Self::dispatch_event(&val, &tx).await;
                                         continue;
-                                    }
+                                    },
                                 };
                                 let _ = sender.send(result);
                                 continue;
@@ -538,19 +530,19 @@ impl HaWebSocket {
                         }
 
                         Self::dispatch_event(&val, &tx).await;
-                    }
+                    },
                     Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => continue,
                     Ok(Message::Close(_)) => {
                         #[cfg(feature = "tracing")]
                         tracing::warn!("HA WebSocket closed by server");
                         break;
-                    }
+                    },
                     Err(e) => {
                         #[cfg(feature = "tracing")]
                         tracing::warn!("HA WebSocket read error: {e}");
                         break;
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
             let _ = tx.send(HaEvent::Disconnected).await;
@@ -576,12 +568,8 @@ impl HaWebSocket {
                             .and_then(|e| e.as_str())
                             .unwrap_or("unknown")
                             .to_owned();
-                        let old_state = data
-                            .and_then(|d| d.get("old_state"))
-                            .cloned();
-                        let new_state = data
-                            .and_then(|d| d.get("new_state"))
-                            .cloned();
+                        let old_state = data.and_then(|d| d.get("old_state")).cloned();
+                        let new_state = data.and_then(|d| d.get("new_state")).cloned();
 
                         let _ = tx
                             .send(HaEvent::StateChanged {
@@ -590,23 +578,23 @@ impl HaWebSocket {
                                 new_state,
                             })
                             .await;
-                    }
+                    },
                     Some("trigger") => {
                         let variables = event
                             .and_then(|e| e.get("variables"))
                             .cloned()
                             .unwrap_or(Value::Null);
                         let _ = tx.send(HaEvent::Trigger { variables }).await;
-                    }
+                    },
                     _ => {
                         let _ = tx.send(HaEvent::Raw(val.clone())).await;
-                    }
+                    },
                 }
-            }
-            Some("pong") => {}
+            },
+            Some("pong") => {},
             _ => {
                 let _ = tx.send(HaEvent::Raw(val.clone())).await;
-            }
+            },
         }
     }
 }
@@ -614,9 +602,7 @@ impl HaWebSocket {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
-    use serde_json::json;
-    use tokio::net::TcpListener;
+    use {super::*, serde_json::json, tokio::net::TcpListener};
 
     /// Start a minimal HA-compatible WS server on a random port.
     ///
@@ -644,8 +630,8 @@ mod tests {
                     // Wait for auth
                     match read.next().await {
                         Some(Ok(Message::Text(text))) => {
-                            let val: Value = serde_json::from_str(&text)
-                                .expect("mock WS auth message parse");
+                            let val: Value =
+                                serde_json::from_str(&text).expect("mock WS auth message parse");
                             if val.get("type").and_then(|t| t.as_str()) == Some("auth") {
                                 let auth_ok = json!({"type": "auth_ok", "ha_version": "2025.1"});
                                 write
@@ -653,14 +639,15 @@ mod tests {
                                     .await
                                     .expect("mock WS send auth_ok");
                             } else {
-                                let auth_invalid = json!({"type": "auth_invalid", "message": "bad token"});
+                                let auth_invalid =
+                                    json!({"type": "auth_invalid", "message": "bad token"});
                                 write
                                     .send(Message::Text(auth_invalid.to_string().into()))
                                     .await
                                     .expect("mock WS send auth_invalid");
                                 return;
                             }
-                        }
+                        },
                         _ => return,
                     }
 
@@ -668,8 +655,8 @@ mod tests {
                     while let Some(msg) = read.next().await {
                         match msg {
                             Ok(Message::Text(text)) => {
-                                let val: Value = serde_json::from_str(&text)
-                                    .expect("mock WS message parse");
+                                let val: Value =
+                                    serde_json::from_str(&text).expect("mock WS message parse");
                                 if let Some(id) = val.get("id") {
                                     let response = json!({
                                         "id": id,
@@ -684,12 +671,12 @@ mod tests {
                                     // No id — just echo
                                     let _ = write.send(Message::Text(text)).await;
                                 }
-                            }
+                            },
                             Ok(Message::Ping(data)) => {
                                 let _ = write.send(Message::Pong(data)).await;
-                            }
+                            },
                             Ok(Message::Close(_)) | Err(_) => break,
-                            _ => {}
+                            _ => {},
                         }
                     }
                 });
@@ -729,10 +716,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_authenticates_successfully() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let result = ws.subscribe().await;
         assert!(result.is_ok());
@@ -741,10 +725,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_rejects_bad_auth() {
         let port = start_mock_ha_ws_auth_reject().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "bad-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "bad-token");
 
         let result = ws.subscribe().await;
         assert!(result.is_err());
@@ -753,16 +734,10 @@ mod tests {
     #[tokio::test]
     async fn call_command_sends_and_receives_response() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
-        let (id, result) = conn
-            .call_command(json!({"type": "ping"}))
-            .await
-            .unwrap();
+        let (id, result) = conn.call_command(json!({"type": "ping"})).await.unwrap();
 
         // call_command returns the sent id and the "result" field on success
         assert!(id > 0);
@@ -772,10 +747,7 @@ mod tests {
     #[tokio::test]
     async fn call_command_rejects_non_object() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         let result = conn.call_command(json!("not an object")).await;
@@ -785,10 +757,7 @@ mod tests {
     #[tokio::test]
     async fn call_command_returns_sent_id() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         let (id1, _) = conn.call_command(json!({"type": "ping"})).await.unwrap();
@@ -801,10 +770,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_entities_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         let sub_id = conn.subscribe_entities().await.unwrap();
@@ -814,16 +780,10 @@ mod tests {
     #[tokio::test]
     async fn subscribe_events_returns_id_and_unsubscribes() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
-        let sub_id = conn
-            .subscribe_events(Some("state_changed"))
-            .await
-            .unwrap();
+        let sub_id = conn.subscribe_events(Some("state_changed")).await.unwrap();
         assert!(sub_id > 0);
 
         // Unsubscribe using the returned ID
@@ -855,28 +815,20 @@ mod tests {
                     match read.next().await {
                         Some(Ok(Message::Text(text))) => {
                             let val: Value = serde_json::from_str(&text).unwrap_or_default();
-                            if val
-                                .get("type")
-                                .and_then(|t| t.as_str())
-                                == Some("auth")
-                            {
+                            if val.get("type").and_then(|t| t.as_str()) == Some("auth") {
                                 let auth_ok = json!({"type": "auth_ok", "ha_version": "2025.1"});
-                                let _ = write
-                                    .send(Message::Text(auth_ok.to_string().into()))
-                                    .await;
+                                let _ = write.send(Message::Text(auth_ok.to_string().into())).await;
                             } else {
                                 return;
                             }
-                        }
+                        },
                         _ => return,
                     }
 
                     while let Some(msg) = read.next().await {
                         if let Ok(Message::Text(text)) = msg {
                             if let Ok(val) = serde_json::from_str::<Value>(&text) {
-                                if let Some(cmd_type) =
-                                    val.get("type").and_then(|t| t.as_str())
-                                {
+                                if let Some(cmd_type) = val.get("type").and_then(|t| t.as_str()) {
                                     cmd.lock().await.push(cmd_type.to_owned());
                                 }
                                 if let Some(id) = val.get("id") {
@@ -905,10 +857,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_entities_sends_subscribe_events_state_changed() {
         let (port, commands) = start_mock_ha_ws_recording().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         conn.subscribe_entities().await.unwrap();
@@ -943,13 +892,11 @@ mod tests {
                             let val: Value = serde_json::from_str(&text).unwrap_or_default();
                             if val.get("type").and_then(|t| t.as_str()) == Some("auth") {
                                 let auth_ok = json!({"type": "auth_ok", "ha_version": "2025.1"});
-                                let _ = write
-                                    .send(Message::Text(auth_ok.to_string().into()))
-                                    .await;
+                                let _ = write.send(Message::Text(auth_ok.to_string().into())).await;
                             } else {
                                 return;
                             }
-                        }
+                        },
                         _ => return,
                     }
 
@@ -973,9 +920,9 @@ mod tests {
                                         .send(Message::Text(response.to_string().into()))
                                         .await;
                                 }
-                            }
+                            },
                             Ok(Message::Close(_)) | Err(_) => break,
-                            _ => {}
+                            _ => {},
                         }
                     }
                 });
@@ -988,17 +935,10 @@ mod tests {
     #[tokio::test]
     async fn ping_receives_pong() {
         let port = start_mock_ha_ws_pong().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            conn.ping(),
-        )
-        .await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), conn.ping()).await;
         assert!(result.is_ok(), "ping() timed out — pong not received");
         assert!(result.unwrap().is_ok(), "ping() returned error");
     }
@@ -1006,10 +946,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_events_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         let sub_id = conn.subscribe_events(Some("state_changed")).await;
@@ -1019,10 +956,7 @@ mod tests {
     #[tokio::test]
     async fn call_service_sends_nested_target() {
         let (port, commands) = start_mock_ha_ws_recording().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         let target = Target::entity("light.living_room");
@@ -1078,11 +1012,15 @@ mod tests {
 
             let event = rx.recv().await.unwrap();
             match event {
-                HaEvent::StateChanged { entity_id, old_state, new_state } => {
+                HaEvent::StateChanged {
+                    entity_id,
+                    old_state,
+                    new_state,
+                } => {
                     assert_eq!(entity_id, "light.living_room");
                     assert_eq!(old_state.unwrap()["state"], "off");
                     assert_eq!(new_state.unwrap()["state"], "on");
-                }
+                },
                 other => panic!("expected StateChanged, got {other:?}"),
             }
         });
@@ -1110,7 +1048,7 @@ mod tests {
             match event {
                 HaEvent::Trigger { variables } => {
                     assert_eq!(variables["trigger_id"], "t1");
-                }
+                },
                 other => panic!("expected Trigger, got {other:?}"),
             }
         });
@@ -1145,11 +1083,7 @@ mod tests {
 
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
-            HaWebSocket::dispatch_event(
-                &json!({"type": "something_else", "data": 42}),
-                &tx,
-            )
-            .await;
+            HaWebSocket::dispatch_event(&json!({"type": "something_else", "data": 42}), &tx).await;
 
             let event = rx.recv().await.unwrap();
             assert!(matches!(event, HaEvent::Raw(_)));
@@ -1173,10 +1107,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_trigger_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         let sub_id = conn
@@ -1192,10 +1123,7 @@ mod tests {
     #[tokio::test]
     async fn subscribe_trigger_with_variables() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         let sub_id = conn
@@ -1213,10 +1141,7 @@ mod tests {
     #[tokio::test]
     async fn set_supported_features_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         let features = [("ha_version", 5u64)];
@@ -1229,10 +1154,7 @@ mod tests {
     #[tokio::test]
     async fn entity_registry_list_for_display_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         let result = conn.entity_registry_list_for_display().await;
@@ -1244,10 +1166,7 @@ mod tests {
     #[tokio::test]
     async fn extract_from_target_command() {
         let port = start_mock_ha_ws().await;
-        let ws = HaWebSocket::new(
-            &format!("ws://127.0.0.1:{port}"),
-            "test-token",
-        );
+        let ws = HaWebSocket::new(&format!("ws://127.0.0.1:{port}"), "test-token");
 
         let conn = ws.subscribe().await.unwrap();
         let target = Target::entity("light.living_room");

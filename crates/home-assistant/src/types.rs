@@ -37,10 +37,7 @@ impl EntityState {
     /// Get the entity domain (part before the first `.`).
     #[must_use]
     pub fn domain(&self) -> &str {
-        self.entity_id
-            .split('.')
-            .next()
-            .unwrap_or("unknown")
+        self.entity_id.split('.').next().unwrap_or("unknown")
     }
 }
 
@@ -120,9 +117,7 @@ pub enum HaEvent {
         new_state: Option<serde_json::Value>,
     },
     /// A trigger matched (automation-style).
-    Trigger {
-        variables: serde_json::Value,
-    },
+    Trigger { variables: serde_json::Value },
     /// Unstructured message from the server.
     Raw(serde_json::Value),
     /// WebSocket disconnected.
@@ -132,8 +127,7 @@ pub enum HaEvent {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
-    use serde_json::json;
+    use {super::*, serde_json::json};
 
     #[test]
     fn entity_domain_extraction() {

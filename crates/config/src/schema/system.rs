@@ -396,15 +396,13 @@ impl HomeAssistantConfig {
         &'a self,
         instance: Option<&'a str>,
     ) -> Option<(&'a str, &'a HomeAssistantAccountConfig)> {
-        let name = instance
-            .or(self.default_instance.as_deref())
-            .or_else(|| {
-                if self.instances.len() == 1 {
-                    self.instances.keys().next().map(String::as_str)
-                } else {
-                    None
-                }
-            })?;
+        let name = instance.or(self.default_instance.as_deref()).or_else(|| {
+            if self.instances.len() == 1 {
+                self.instances.keys().next().map(String::as_str)
+            } else {
+                None
+            }
+        })?;
 
         self.instances.get(name).map(|a| (name, a))
     }

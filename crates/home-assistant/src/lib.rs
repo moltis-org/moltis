@@ -11,6 +11,8 @@ pub mod tool;
 pub mod types;
 pub mod ws;
 
-pub use config::{HomeAssistantAccountConfig, HomeAssistantConfig};
-pub use error::Error;
-pub use ws::HaConnection;
+pub use {
+    config::{HomeAssistantAccountConfig, HomeAssistantConfig},
+    error::Error,
+    ws::HaConnection,
+};

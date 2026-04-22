@@ -2,12 +2,13 @@
 
 use std::time::Duration;
 
-use reqwest::Client;
-use secrecy::ExposeSecret;
+use {reqwest::Client, secrecy::ExposeSecret};
 
-use crate::config::HomeAssistantAccountConfig;
-use crate::error::{Error, Result};
-use crate::types::{EntityState, HaConfigResponse, ServiceDescription, Target};
+use crate::{
+    config::HomeAssistantAccountConfig,
+    error::{Error, Result},
+    types::{EntityState, HaConfigResponse, ServiceDescription, Target},
+};
 
 /// Extract the domain portion of an entity ID (part before the first `.`).
 fn extract_domain(entity_id: &str) -> &str {
@@ -17,7 +18,9 @@ fn extract_domain(entity_id: &str) -> &str {
 /// Check a response status and return an auth error for 401/403.
 pub(crate) fn check_auth_status(status: reqwest::StatusCode) -> Result<()> {
     match status.as_u16() {
-        401 => Err(Error::Auth("invalid or expired access token (401)".to_owned())),
+        401 => Err(Error::Auth(
+            "invalid or expired access token (401)".to_owned(),
+        )),
         403 => Err(Error::Auth("insufficient permissions (403)".to_owned())),
         _ => Ok(()),
     }
@@ -160,7 +163,10 @@ impl HomeAssistantClient {
     /// Set `return_response` to `true` for services that return data
     /// (e.g. `weather.get_forecasts`). The response will include
     /// `changed_states` and `service_response` fields.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(domain, service)))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, level = "debug", fields(domain, service))
+    )]
     pub async fn call_service(
         &self,
         domain: &str,
@@ -176,28 +182,16 @@ impl HomeAssistantClient {
             // HA REST API expects target fields flattened at top level, not nested
             // under a "target" key (that format is for WebSocket only).
             if !t.entity_id.is_empty() {
-                body.insert(
-                    "entity_id".to_owned(),
-                    serde_json::to_value(&t.entity_id)?,
-                );
+                body.insert("entity_id".to_owned(), serde_json::to_value(&t.entity_id)?);
             }
             if !t.device_id.is_empty() {
-                body.insert(
-                    "device_id".to_owned(),
-                    serde_json::to_value(&t.device_id)?,
-                );
+                body.insert("device_id".to_owned(), serde_json::to_value(&t.device_id)?);
             }
             if !t.area_id.is_empty() {
-                body.insert(
-                    "area_id".to_owned(),
-                    serde_json::to_value(&t.area_id)?,
-                );
+                body.insert("area_id".to_owned(), serde_json::to_value(&t.area_id)?);
             }
             if !t.label_id.is_empty() {
-                body.insert(
-                    "label_id".to_owned(),
-                    serde_json::to_value(&t.label_id)?,
-                );
+                body.insert("label_id".to_owned(), serde_json::to_value(&t.label_id)?);
             }
         }
         if let Some(d) = data {
@@ -213,10 +207,7 @@ impl HomeAssistantClient {
             }
         }
 
-        let mut url = format!(
-            "{}/api/services/{domain}/{service}",
-            self.base_url
-        );
+        let mut url = format!("{}/api/services/{domain}/{service}", self.base_url);
         if return_response {
             url.push_str("?return_response");
         }
@@ -249,7 +240,10 @@ impl HomeAssistantClient {
     }
 
     /// Turn an entity on.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, level = "debug", fields(entity_id))
+    )]
     pub async fn turn_on(&self, entity_id: &str) -> Result<()> {
         let domain = extract_domain(entity_id);
         let target = Target::entity(entity_id);
@@ -259,7 +253,10 @@ impl HomeAssistantClient {
     }
 
     /// Turn an entity off.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, level = "debug", fields(entity_id))
+    )]
     pub async fn turn_off(&self, entity_id: &str) -> Result<()> {
         let domain = extract_domain(entity_id);
         let target = Target::entity(entity_id);
@@ -269,7 +266,10 @@ impl HomeAssistantClient {
     }
 
     /// Toggle an entity.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, level = "debug", fields(entity_id))
+    )]
     pub async fn toggle(&self, entity_id: &str) -> Result<()> {
         let domain = extract_domain(entity_id);
         let target = Target::entity(entity_id);
@@ -282,7 +282,10 @@ impl HomeAssistantClient {
     ///
     /// The `event_data` value is sent as the raw JSON body per the HA REST API spec.
     /// Pass `None` to fire with no data payload.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(event_type)))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, level = "debug", fields(event_type))
+    )]
     pub async fn fire_event(
         &self,
         event_type: &str,
@@ -293,10 +296,7 @@ impl HomeAssistantClient {
 
         let resp = self
             .http
-            .post(format!(
-                "{}/api/events/{event_type}",
-                self.base_url
-            ))
+            .post(format!("{}/api/events/{event_type}", self.base_url))
             .header("Authorization", &auth)
             .header("Content-Type", "application/json")
             .json(&body)
@@ -320,7 +320,10 @@ impl HomeAssistantClient {
     /// `attributes`. Returns the new [`EntityState`] from the server.
     ///
     /// Requires admin privileges in Home Assistant.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, level = "debug", fields(entity_id))
+    )]
     pub async fn set_state(
         &self,
         entity_id: &str,
@@ -330,17 +333,17 @@ impl HomeAssistantClient {
         let (_, auth) = self.auth_header();
 
         let mut body = serde_json::Map::new();
-        body.insert("state".to_owned(), serde_json::Value::String(state.to_owned()));
+        body.insert(
+            "state".to_owned(),
+            serde_json::Value::String(state.to_owned()),
+        );
         if let Some(attrs) = attributes {
             body.insert("attributes".to_owned(), attrs);
         }
 
         let resp = self
             .http
-            .post(format!(
-                "{}/api/states/{entity_id}",
-                self.base_url
-            ))
+            .post(format!("{}/api/states/{entity_id}", self.base_url))
             .header("Authorization", &auth)
             .header("Content-Type", "application/json")
             .json(&body)
@@ -370,7 +373,10 @@ impl HomeAssistantClient {
     /// - `entity_id`: Optional entity to filter entries for.
     /// - `period`: Number of days to include (default 1). Ignored if
     ///   `end_time` is provided.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, level = "debug", fields(entity_id))
+    )]
     pub async fn get_logbook(
         &self,
         timestamp: Option<&str>,
@@ -381,11 +387,7 @@ impl HomeAssistantClient {
         let (_, auth) = self.auth_header();
 
         let url = if let Some(ts) = timestamp {
-            format!(
-                "{}/api/logbook/{}",
-                self.base_url,
-                urlencoding::encode(ts),
-            )
+            format!("{}/api/logbook/{}", self.base_url, urlencoding::encode(ts),)
         } else {
             format!("{}/api/logbook", self.base_url)
         };
@@ -454,15 +456,15 @@ impl HomeAssistantClient {
     }
 
     /// Fetch camera proxy image bytes for a camera entity.
-    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, level = "debug", fields(entity_id)))]
+    #[cfg_attr(
+        feature = "tracing",
+        tracing::instrument(skip_all, level = "debug", fields(entity_id))
+    )]
     pub async fn camera_proxy(&self, entity_id: &str) -> Result<bytes::Bytes> {
         let (_, auth) = self.auth_header();
         let resp = self
             .http
-            .get(format!(
-                "{}/api/camera_proxy/{entity_id}",
-                self.base_url
-            ))
+            .get(format!("{}/api/camera_proxy/{entity_id}", self.base_url))
             .header("Authorization", &auth)
             .send()
             .await?;
@@ -482,11 +484,13 @@ impl HomeAssistantClient {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
-    use serde_json::json;
-    use wiremock::{
-        Mock, MockServer, ResponseTemplate,
-        matchers::{header, method, path, query_param},
+    use {
+        super::*,
+        serde_json::json,
+        wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{header, method, path, query_param},
+        },
     };
 
     /// Custom wiremock matcher for query parameters that are flags (no value).
@@ -496,10 +500,7 @@ mod tests {
 
     impl wiremock::Match for QueryFlag {
         fn matches(&self, request: &wiremock::Request) -> bool {
-            request
-                .url
-                .query_pairs()
-                .any(|(k, _)| k == self.key)
+            request.url.query_pairs().any(|(k, _)| k == self.key)
         }
     }
 
@@ -773,7 +774,13 @@ mod tests {
     async fn call_service_rejects_non_object_data() {
         let client = HomeAssistantClient::new(&test_account("http://localhost:1")).unwrap();
         let err = client
-            .call_service("light", "turn_on", None, Some(json!("not an object")), false)
+            .call_service(
+                "light",
+                "turn_on",
+                None,
+                Some(json!("not an object")),
+                false,
+            )
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Client(_)));
@@ -785,8 +792,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/api/services/light/turn_on"))
             .respond_with(
-                ResponseTemplate::new(400)
-                    .set_body_json(json!({"error": "entity not found"})),
+                ResponseTemplate::new(400).set_body_json(json!({"error": "entity not found"})),
             )
             .mount(&server)
             .await;
@@ -804,7 +810,9 @@ mod tests {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/api/services/weather/get_forecasts"))
-            .and(QueryFlag { key: "return_response" })
+            .and(QueryFlag {
+                key: "return_response",
+            })
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "changed_states": [],
                 "service_response": {"forecast": []}
@@ -873,10 +881,12 @@ mod tests {
             .await;
 
         let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
-        assert!(client
-            .fire_event("custom_event", Some(json!({"key": "value"})))
-            .await
-            .is_ok());
+        assert!(
+            client
+                .fire_event("custom_event", Some(json!({"key": "value"})))
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -913,7 +923,9 @@ mod tests {
         let server = MockServer::start().await;
         // HA history API: GET /api/history/period/<start_time>?filter_entity_id=...
         Mock::given(method("GET"))
-            .and(path("/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00"))
+            .and(path(
+                "/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00",
+            ))
             .and(query_param("filter_entity_id", "sensor.temperature"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([{
                 "entity_id": "sensor.temperature",
@@ -938,7 +950,9 @@ mod tests {
     async fn get_history_with_end_time() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path("/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00"))
+            .and(path(
+                "/api/history/period/2026-01-01T00%3A00%3A00%2B00%3A00",
+            ))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
             .mount(&server)
             .await;
@@ -1051,7 +1065,10 @@ mod tests {
             .await;
 
         let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
-        let err = client.set_state("light.test", "on", None).await.unwrap_err();
+        let err = client
+            .set_state("light.test", "on", None)
+            .await
+            .unwrap_err();
         assert!(matches!(err, Error::ServiceCall(_)));
     }
 
@@ -1075,12 +1092,7 @@ mod tests {
 
         let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
         let entries = client
-            .get_logbook(
-                Some("2026-04-21T00:00:00"),
-                None,
-                None,
-                None,
-            )
+            .get_logbook(Some("2026-04-21T00:00:00"), None, None, None)
             .await
             .unwrap();
         assert_eq!(entries.len(), 1);
@@ -1121,10 +1133,7 @@ mod tests {
             .await;
 
         let client = HomeAssistantClient::new(&test_account(&server.uri())).unwrap();
-        let entries = client
-            .get_logbook(None, None, None, None)
-            .await
-            .unwrap();
+        let entries = client.get_logbook(None, None, None, None).await.unwrap();
         assert!(entries.is_empty());
     }
 

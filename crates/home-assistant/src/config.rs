@@ -12,38 +12,34 @@ pub fn resolve_instance<'a>(
     config: &'a HomeAssistantConfig,
     instance: Option<&'a str>,
 ) -> Result<(&'a str, &'a HomeAssistantAccountConfig)> {
-    config
-        .resolve_account(instance)
-        .ok_or_else(|| {
-            let names: Vec<&str> = config.instances.keys().map(String::as_str).collect();
-            Error::Config(format!(
-                "no HA instance specified and {} configured; \
+    config.resolve_account(instance).ok_or_else(|| {
+        let names: Vec<&str> = config.instances.keys().map(String::as_str).collect();
+        Error::Config(format!(
+            "no HA instance specified and {} configured; \
                  pass 'instance' or set home_assistant.default_instance",
-                match names.len() {
-                    0 => "none are".to_owned(),
-                    _ => format!("available: {}", names.join(", ")),
-                }
-            ))
-        })
+            match names.len() {
+                0 => "none are".to_owned(),
+                _ => format!("available: {}", names.join(", ")),
+            }
+        ))
+    })
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
-    use secrecy::Secret;
+    use {super::*, secrecy::Secret};
 
     fn make_config() -> HomeAssistantConfig {
         let mut config = HomeAssistantConfig::default();
         config.enabled = true;
-        config.instances.insert(
-            "home".to_owned(),
-            HomeAssistantAccountConfig {
+        config
+            .instances
+            .insert("home".to_owned(), HomeAssistantAccountConfig {
                 url: Some("http://localhost:8123".to_owned()),
                 token: Some(Secret::new("test-token".to_owned())),
                 timeout_seconds: 10,
-            },
-        );
+            });
         config
     }
 
@@ -79,14 +75,13 @@ mod tests {
     #[test]
     fn resolve_explicit_instance() {
         let mut config = make_config();
-        config.instances.insert(
-            "office".to_owned(),
-            HomeAssistantAccountConfig {
+        config
+            .instances
+            .insert("office".to_owned(), HomeAssistantAccountConfig {
                 url: Some("http://office:8123".to_owned()),
                 token: Some(Secret::new("office-token".to_owned())),
                 timeout_seconds: 10,
-            },
-        );
+            });
         let (name, _) = resolve_instance(&config, Some("office")).unwrap();
         assert_eq!(name, "office");
     }
@@ -94,14 +89,13 @@ mod tests {
     #[test]
     fn resolve_ambiguous_without_default() {
         let mut config = make_config();
-        config.instances.insert(
-            "office".to_owned(),
-            HomeAssistantAccountConfig {
+        config
+            .instances
+            .insert("office".to_owned(), HomeAssistantAccountConfig {
                 url: Some("http://office:8123".to_owned()),
                 token: Some(Secret::new("office-token".to_owned())),
                 timeout_seconds: 10,
-            },
-        );
+            });
         // Two instances, no default, no explicit choice → error
         let result = resolve_instance(&config, None);
         assert!(result.is_err());
@@ -113,14 +107,13 @@ mod tests {
     fn resolve_default_instance_overrides_ambiguous() {
         let mut config = make_config();
         config.default_instance = Some("office".to_owned());
-        config.instances.insert(
-            "office".to_owned(),
-            HomeAssistantAccountConfig {
+        config
+            .instances
+            .insert("office".to_owned(), HomeAssistantAccountConfig {
                 url: Some("http://office:8123".to_owned()),
                 token: Some(Secret::new("office-token".to_owned())),
                 timeout_seconds: 10,
-            },
-        );
+            });
         let (name, _) = resolve_instance(&config, None).unwrap();
         assert_eq!(name, "office");
     }
@@ -129,14 +122,13 @@ mod tests {
     fn resolve_explicit_overrides_default() {
         let mut config = make_config();
         config.default_instance = Some("home".to_owned());
-        config.instances.insert(
-            "office".to_owned(),
-            HomeAssistantAccountConfig {
+        config
+            .instances
+            .insert("office".to_owned(), HomeAssistantAccountConfig {
                 url: Some("http://office:8123".to_owned()),
                 token: Some(Secret::new("office-token".to_owned())),
                 timeout_seconds: 10,
-            },
-        );
+            });
         let (name, _) = resolve_instance(&config, Some("office")).unwrap();
         assert_eq!(name, "office");
     }
