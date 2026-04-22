@@ -6,7 +6,7 @@
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect, useState } from "preact/hooks";
-import { Loading } from "../components/forms";
+import { Loading, TabBar } from "../components/forms";
 import { EmojiPicker } from "../emoji-picker";
 import { refresh as refreshGon } from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
@@ -65,13 +65,6 @@ interface PresetCardProps {
 	preset: ConfigPreset;
 	creating: boolean;
 	onCreate: (preset: ConfigPreset) => void;
-}
-
-interface AgentConceptCardProps {
-	title: string;
-	badge: string;
-	description: string;
-	detail: string;
 }
 
 const WS_RETRY_LIMIT = 75;
@@ -460,49 +453,6 @@ function PresetCard({ preset, creating, onCreate }: PresetCardProps): VNode {
 	);
 }
 
-// ── Agent system overview ──────────────────────────────────
-
-function AgentConceptCard({ title, badge, description, detail }: AgentConceptCardProps): VNode {
-	return (
-		<div className="backend-card flex flex-col gap-2">
-			<div className="flex items-center justify-between gap-3">
-				<h3 className="text-sm font-medium text-[var(--text-strong)]">{title}</h3>
-				<span className="tier-badge">{badge}</span>
-			</div>
-			<p className="text-xs text-[var(--text)] leading-relaxed m-0">{description}</p>
-			<p className="text-xs text-[var(--muted)] leading-relaxed m-0">{detail}</p>
-		</div>
-	);
-}
-
-function AgentSystemOverview(): VNode {
-	return (
-		<section className="flex flex-col gap-2 max-w-[900px]" aria-label="Agent system overview">
-			<h3 className="text-xs font-medium text-[var(--muted)]">How Agent Types Fit Together</h3>
-			<div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
-				<AgentConceptCard
-					title="Chat Agents"
-					badge="identity"
-					description="Persistent personas you can select in chat."
-					detail="Each chat agent has its own memory, system prompt, sessions, and chat fallback setting."
-				/>
-				<AgentConceptCard
-					title="Delegated Sub-Agents"
-					badge="spawn"
-					description="Config roles available to spawn_agent immediately."
-					detail="They guide delegated work without creating chat history. Add one to chat when you want it as a full agent."
-				/>
-				<AgentConceptCard
-					title="Modes"
-					badge="coming"
-					description="Upcoming per-session overlays for how an agent should work right now."
-					detail="Modes will be for temporary workflows like Plan, Build, Review, or Concise, without changing identity."
-				/>
-			</div>
-		</section>
-	);
-}
-
 // ── Main page ───────────────────────────────────────────────
 
 function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
@@ -512,6 +462,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 	const [isLoading, setIsLoading] = useState(true);
 	const [editing, setEditing] = useState<null | "new" | AgentPersona>(null);
 	const [creatingPresetId, setCreatingPresetId] = useState<string | null>(null);
+	const [activeTab, setActiveTab] = useState("chat");
 	const [error, setError] = useState<string | null>(null);
 
 	function fetchAgents(): void {
@@ -656,23 +607,28 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<div className="flex items-center gap-3">
+			<div className="flex items-center gap-3 flex-wrap">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Agents</h2>
-				<button
-					type="button"
-					className="provider-btn"
-					style={{ fontSize: "0.75rem", padding: "4px 10px" }}
-					onClick={() => setEditing("new")}
-				>
-					New Agent
-				</button>
+				{activeTab === "chat" && (
+					<button
+						type="button"
+						className="provider-btn"
+						style={{ fontSize: "0.75rem", padding: "4px 10px" }}
+						onClick={() => setEditing("new")}
+					>
+						New Agent
+					</button>
+				)}
 			</div>
-			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
-				Create persistent chat identities, promote useful sub-agent presets, and understand where future session modes
-				will fit.
-			</p>
-
-			<AgentSystemOverview />
+			<TabBar
+				tabs={[
+					{ id: "chat", label: "Chat Agents", badge: agents.length || undefined },
+					{ id: "subagents", label: "Sub-Agents", badge: configPresets.length || undefined },
+					{ id: "modes", label: "Modes", badge: "soon" },
+				]}
+				active={activeTab}
+				onChange={setActiveTab}
+			/>
 
 			{error && (
 				<span className="text-xs" style={{ color: "var(--error)" }}>
@@ -680,37 +636,72 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 				</span>
 			)}
 
-			<div className="flex flex-col gap-2" style={{ maxWidth: "600px" }}>
-				{agents.map((agent) => (
-					<AgentCard
-						key={agent.id}
-						agent={agent}
-						defaultId={defaultId}
-						onEdit={(a) => setEditing(a)}
-						onDelete={onDelete}
-						onSetDefault={onSetDefault}
-					/>
-				))}
-			</div>
+			{activeTab === "chat" && (
+				<section className="flex flex-col gap-3 max-w-[600px]" aria-label="Chat Agents panel">
+					<div className="flex flex-col gap-1">
+						<h3 className="text-xs font-medium text-[var(--muted)]">Chat Agents</h3>
+						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
+							Persistent identities you can select in chat. Each chat agent has its own memory, system prompt, sessions,
+							and fallback setting.
+						</p>
+					</div>
+					<div className="flex flex-col gap-2">
+						{agents.map((agent) => (
+							<AgentCard
+								key={agent.id}
+								agent={agent}
+								defaultId={defaultId}
+								onEdit={(a) => setEditing(a)}
+								onDelete={onDelete}
+								onSetDefault={onSetDefault}
+							/>
+						))}
+					</div>
+				</section>
+			)}
 
-			{configPresets.length > 0 && (
-				<div className="flex flex-col gap-2 mt-2" style={{ maxWidth: "600px" }}>
+			{activeTab === "subagents" && (
+				<section className="flex flex-col gap-2 max-w-[600px]" aria-label="Sub-Agents panel">
 					<div className="flex flex-col gap-1">
 						<h3 className="text-xs font-medium text-[var(--muted)]">Sub-Agent Presets</h3>
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-							These config presets are already usable by spawn_agent for delegated work. Add one to chat only when you
-							want that preset to become a persistent chat agent with memory and sessions.
+							Config roles already usable by spawn_agent for delegated work. Add one to chat only when you want that
+							preset to become a persistent chat agent with memory and sessions.
 						</p>
 					</div>
-					{configPresets.map((preset) => (
-						<PresetCard
-							key={preset.id}
-							preset={preset}
-							creating={creatingPresetId === preset.id}
-							onCreate={onCreateFromPreset}
-						/>
-					))}
-				</div>
+					{configPresets.length > 0 ? (
+						configPresets.map((preset) => (
+							<PresetCard
+								key={preset.id}
+								preset={preset}
+								creating={creatingPresetId === preset.id}
+								onCreate={onCreateFromPreset}
+							/>
+						))
+					) : (
+						<div className="backend-card text-xs text-[var(--muted)]">
+							All configured sub-agent presets are already available as chat agents.
+						</div>
+					)}
+				</section>
+			)}
+
+			{activeTab === "modes" && (
+				<section className="flex flex-col gap-2 max-w-[600px]" aria-label="Modes panel">
+					<div className="backend-card flex flex-col gap-2">
+						<div className="flex items-center justify-between gap-3">
+							<h3 className="text-sm font-medium text-[var(--text-strong)]">Modes</h3>
+							<span className="tier-badge">coming</span>
+						</div>
+						<p className="text-xs text-[var(--text)] leading-relaxed" style={{ margin: 0 }}>
+							Modes will be temporary per-session overlays for how the selected agent should work right now.
+						</p>
+						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
+							They are meant for workflows like Plan, Build, Review, Research, or Concise without changing the agent's
+							persistent identity or memory.
+						</p>
+					</div>
+				</section>
 			)}
 		</div>
 	);

@@ -20795,50 +20795,6 @@ function PresetCard({ preset, creating, onCreate }) {
     )
   ] });
 }
-function AgentConceptCard({ title, badge, description, detail }) {
-  return /* @__PURE__ */ u("div", { className: "backend-card flex flex-col gap-2", children: [
-    /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-3", children: [
-      /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)]", children: title }),
-      /* @__PURE__ */ u("span", { className: "tier-badge", children: badge })
-    ] }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--text)] leading-relaxed m-0", children: description }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed m-0", children: detail })
-  ] });
-}
-function AgentSystemOverview() {
-  return /* @__PURE__ */ u("section", { className: "flex flex-col gap-2 max-w-[900px]", "aria-label": "Agent system overview", children: [
-    /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "How Agent Types Fit Together" }),
-    /* @__PURE__ */ u("div", { className: "grid grid-cols-1 lg:grid-cols-3 gap-2", children: [
-      /* @__PURE__ */ u(
-        AgentConceptCard,
-        {
-          title: "Chat Agents",
-          badge: "identity",
-          description: "Persistent personas you can select in chat.",
-          detail: "Each chat agent has its own memory, system prompt, sessions, and chat fallback setting."
-        }
-      ),
-      /* @__PURE__ */ u(
-        AgentConceptCard,
-        {
-          title: "Delegated Sub-Agents",
-          badge: "spawn",
-          description: "Config roles available to spawn_agent immediately.",
-          detail: "They guide delegated work without creating chat history. Add one to chat when you want it as a full agent."
-        }
-      ),
-      /* @__PURE__ */ u(
-        AgentConceptCard,
-        {
-          title: "Modes",
-          badge: "coming",
-          description: "Upcoming per-session overlays for how an agent should work right now.",
-          detail: "Modes will be for temporary workflows like Plan, Build, Review, or Concise, without changing identity."
-        }
-      )
-    ] })
-  ] });
-}
 function AgentsPageComponent({ subPath }) {
   const [agents, setAgents] = d([]);
   const [configPresets, setConfigPresets] = d([]);
@@ -20846,6 +20802,7 @@ function AgentsPageComponent({ subPath }) {
   const [isLoading, setIsLoading] = d(true);
   const [editing, setEditing] = d(null);
   const [creatingPresetId, setCreatingPresetId] = d(null);
+  const [activeTab2, setActiveTab] = d("chat");
   const [error2, setError] = d(null);
   function fetchAgents() {
     setIsLoading(true);
@@ -20972,9 +20929,9 @@ function AgentsPageComponent({ subPath }) {
     ) });
   }
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
-    /* @__PURE__ */ u("div", { className: "flex items-center gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "flex items-center gap-3 flex-wrap", children: [
       /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Agents" }),
-      /* @__PURE__ */ u(
+      activeTab2 === "chat" && /* @__PURE__ */ u(
         "button",
         {
           type: "button",
@@ -20985,26 +20942,42 @@ function AgentsPageComponent({ subPath }) {
         }
       )
     ] }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { maxWidth: "600px", margin: 0 }, children: "Create persistent chat identities, promote useful sub-agent presets, and understand where future session modes will fit." }),
-    /* @__PURE__ */ u(AgentSystemOverview, {}),
-    error2 && /* @__PURE__ */ u("span", { className: "text-xs", style: { color: "var(--error)" }, children: error2 }),
-    /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", style: { maxWidth: "600px" }, children: agents.map((agent) => /* @__PURE__ */ u(
-      AgentCard,
+    /* @__PURE__ */ u(
+      TabBar$1,
       {
-        agent,
-        defaultId,
-        onEdit: (a) => setEditing(a),
-        onDelete,
-        onSetDefault
-      },
-      agent.id
-    )) }),
-    configPresets.length > 0 && /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 mt-2", style: { maxWidth: "600px" }, children: [
+        tabs: [
+          { id: "chat", label: "Chat Agents", badge: agents.length || void 0 },
+          { id: "subagents", label: "Sub-Agents", badge: configPresets.length || void 0 },
+          { id: "modes", label: "Modes", badge: "soon" }
+        ],
+        active: activeTab2,
+        onChange: setActiveTab
+      }
+    ),
+    error2 && /* @__PURE__ */ u("span", { className: "text-xs", style: { color: "var(--error)" }, children: error2 }),
+    activeTab2 === "chat" && /* @__PURE__ */ u("section", { className: "flex flex-col gap-3 max-w-[600px]", "aria-label": "Chat Agents panel", children: [
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Chat Agents" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "Persistent identities you can select in chat. Each chat agent has its own memory, system prompt, sessions, and fallback setting." })
+      ] }),
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: agents.map((agent) => /* @__PURE__ */ u(
+        AgentCard,
+        {
+          agent,
+          defaultId,
+          onEdit: (a) => setEditing(a),
+          onDelete,
+          onSetDefault
+        },
+        agent.id
+      )) })
+    ] }),
+    activeTab2 === "subagents" && /* @__PURE__ */ u("section", { className: "flex flex-col gap-2 max-w-[600px]", "aria-label": "Sub-Agents panel", children: [
       /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
         /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Sub-Agent Presets" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "These config presets are already usable by spawn_agent for delegated work. Add one to chat only when you want that preset to become a persistent chat agent with memory and sessions." })
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "Config roles already usable by spawn_agent for delegated work. Add one to chat only when you want that preset to become a persistent chat agent with memory and sessions." })
       ] }),
-      configPresets.map((preset) => /* @__PURE__ */ u(
+      configPresets.length > 0 ? configPresets.map((preset) => /* @__PURE__ */ u(
         PresetCard,
         {
           preset,
@@ -21012,8 +20985,16 @@ function AgentsPageComponent({ subPath }) {
           onCreate: onCreateFromPreset
         },
         preset.id
-      ))
-    ] })
+      )) : /* @__PURE__ */ u("div", { className: "backend-card text-xs text-[var(--muted)]", children: "All configured sub-agent presets are already available as chat agents." })
+    ] }),
+    activeTab2 === "modes" && /* @__PURE__ */ u("section", { className: "flex flex-col gap-2 max-w-[600px]", "aria-label": "Modes panel", children: /* @__PURE__ */ u("div", { className: "backend-card flex flex-col gap-2", children: [
+      /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-3", children: [
+        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)]", children: "Modes" }),
+        /* @__PURE__ */ u("span", { className: "tier-badge", children: "coming" })
+      ] }),
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--text)] leading-relaxed", style: { margin: 0 }, children: "Modes will be temporary per-session overlays for how the selected agent should work right now." }),
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "They are meant for workflows like Plan, Build, Review, Research, or Concise without changing the agent's persistent identity or memory." })
+    ] }) })
   ] });
 }
 const hooks = y([]);
