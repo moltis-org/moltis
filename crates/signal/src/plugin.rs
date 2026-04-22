@@ -177,6 +177,11 @@ impl ChannelPlugin for SignalPlugin {
         })
     }
 
+    /// Update the in-memory config for a running account.
+    ///
+    /// Note: changing `http_url` takes effect only on the next SSE reconnect
+    /// cycle — the existing stream continues from the old daemon URL until it
+    /// drops naturally or errors out.
     fn update_account_config(&self, account_id: &str, config: Value) -> ChannelResult<()> {
         let new_config: SignalAccountConfig = serde_json::from_value(config).map_err(|e| {
             moltis_channels::Error::invalid_input(format!("invalid signal config: {e}"))

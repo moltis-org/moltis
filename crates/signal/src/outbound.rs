@@ -85,8 +85,13 @@ fn parse_target(raw: &str) -> ChannelResult<SignalTarget> {
         }
         return Ok(SignalTarget::Username(username.to_string()));
     }
-    if lower.starts_with("u:") {
-        return Ok(SignalTarget::Username(value.to_string()));
+    if let Some(username) = lower.starts_with("u:").then(|| value["u:".len()..].trim()) {
+        if username.is_empty() {
+            return Err(moltis_channels::Error::invalid_input(
+                "Signal username is required",
+            ));
+        }
+        return Ok(SignalTarget::Username(username.to_string()));
     }
     Ok(SignalTarget::Recipient(value.to_string()))
 }
@@ -242,7 +247,7 @@ mod tests {
         );
         assert_eq!(
             parse_target("u:alice.01").ok(),
-            Some(SignalTarget::Username("u:alice.01".to_string()))
+            Some(SignalTarget::Username("alice.01".to_string()))
         );
     }
 

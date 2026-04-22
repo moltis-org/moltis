@@ -4,6 +4,7 @@ use {
     reqwest::{Client, Response},
     serde::{Deserialize, Serialize, de::DeserializeOwned},
     serde_json::{Value, json},
+    std::time::Duration,
     uuid::Uuid,
 };
 
@@ -41,7 +42,11 @@ impl Default for SignalClient {
 impl SignalClient {
     pub fn new() -> Self {
         Self {
-            http: Client::new(),
+            http: Client::builder()
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(30))
+                .build()
+                .unwrap_or_default(),
         }
     }
 

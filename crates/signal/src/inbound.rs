@@ -199,7 +199,7 @@ fn extract_envelope(raw: &Value) -> Option<&Value> {
         }
         return params.get("result").and_then(|v| v.get("envelope"));
     }
-    raw.get("envelope").or(Some(raw))
+    raw.get("envelope")
 }
 
 fn string_field(value: &Value, field: &str) -> Option<String> {
