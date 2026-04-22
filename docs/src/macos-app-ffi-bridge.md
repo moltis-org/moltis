@@ -147,9 +147,7 @@ The bridge is already functional for core flows (version, chat, streaming, provi
 | `moltis_save_provider_config` | Save provider settings |
 | `moltis_start_httpd` | Start embedded HTTP server |
 | `moltis_stop_httpd` | Stop embedded HTTP server |
-| `moltis_httpd_status` | Get HTTP server status |
-| `moltis_httpd_status` | Query HTTP server state |
-| `moltis_peek_session` | Peek at session context |
+| `moltis_httpd_status` | Query HTTP server status |
 
 ### Sessions (`ffi_sessions`)
 
