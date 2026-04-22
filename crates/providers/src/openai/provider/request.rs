@@ -632,4 +632,110 @@ mod tests {
         let p = provider("kimi-k2.5", "moonshot", "https://api.moonshot.ai/v1");
         assert!(p.requires_reasoning_content_on_tool_messages());
     }
+
+    // ── Wire-format tests: verify serialized request body (issue #810) ──
+
+    /// Kimi router with strict_tools=false must NOT emit `"strict": true` in
+    /// the serialized tool schemas. This is the actual payload that caused the
+    /// 400 error in issue #810.
+    #[test]
+    fn kimi_router_tool_schema_omits_strict_field() {
+        use crate::openai_compat::to_openai_tools;
+
+        let p = provider(
+            "accounts/fireworks/routers/kimi-k2p5-turbo",
+            "fireworks",
+            "https://api.fireworks.ai/inference/v1",
+        )
+        .with_strict_tools(false);
+
+        let tools = vec![serde_json::json!({
+            "name": "get_weather",
+            "description": "Get weather",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": { "type": "string" }
+                },
+                "required": ["location"]
+            }
+        })];
+
+        let serialized = to_openai_tools(&tools, p.needs_strict_tools());
+        assert_eq!(serialized.len(), 1);
+
+        let strict_val = serialized[0]["function"]["strict"].as_bool();
+        assert_eq!(
+            strict_val,
+            Some(false),
+            "Kimi router tools must have strict=false, got: {:?}",
+            serialized[0]
+        );
+    }
+
+    /// Kimi router with reasoning_content=true must inject `reasoning_content`
+    /// into assistant messages that carry tool calls. Without this, the Kimi
+    /// backend rejects the multi-turn request.
+    #[test]
+    fn kimi_router_injects_reasoning_content_on_tool_call_messages() {
+        let p = provider(
+            "accounts/fireworks/routers/kimi-k2p5-turbo",
+            "fireworks",
+            "https://api.fireworks.ai/inference/v1",
+        )
+        .with_reasoning_content(true);
+
+        let messages = vec![
+            ChatMessage::user("What's the weather?"),
+            ChatMessage::assistant_with_tools(Some("thinking about weather".to_string()), vec![
+                moltis_agents::model::ToolCall {
+                    id: "call_123".to_string(),
+                    name: "get_weather".to_string(),
+                    arguments: serde_json::json!({"location": "Berlin"}),
+                    metadata: None,
+                },
+            ]),
+            ChatMessage::tool("call_123", r#"{"temperature": 20}"#),
+        ];
+
+        let serialized = p.serialize_messages_for_request(&messages);
+        assert_eq!(serialized.len(), 3);
+
+        let assistant_msg = &serialized[1];
+        assert_eq!(assistant_msg["role"], "assistant");
+        assert!(
+            assistant_msg.get("reasoning_content").is_some(),
+            "assistant tool-call message must have reasoning_content, got: {assistant_msg}"
+        );
+    }
+
+    /// Native Fireworks model (no overrides) must NOT inject reasoning_content.
+    #[test]
+    fn fireworks_native_model_no_reasoning_content_in_serialized_messages() {
+        let p = provider(
+            "accounts/fireworks/models/deepseek-v3p2",
+            "fireworks",
+            "https://api.fireworks.ai/inference/v1",
+        );
+
+        let messages = vec![
+            ChatMessage::user("What's the weather?"),
+            ChatMessage::assistant_with_tools(Some("let me check".to_string()), vec![
+                moltis_agents::model::ToolCall {
+                    id: "call_456".to_string(),
+                    name: "get_weather".to_string(),
+                    arguments: serde_json::json!({"location": "Paris"}),
+                    metadata: None,
+                },
+            ]),
+            ChatMessage::tool("call_456", r#"{"temperature": 15}"#),
+        ];
+
+        let serialized = p.serialize_messages_for_request(&messages);
+        let assistant_msg = &serialized[1];
+        assert!(
+            assistant_msg.get("reasoning_content").is_none(),
+            "native Fireworks model must NOT have reasoning_content, got: {assistant_msg}"
+        );
+    }
 }
