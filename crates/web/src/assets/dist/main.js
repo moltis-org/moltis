@@ -28942,13 +28942,19 @@ function RemoteAccessSection() {
       ] })
     ] });
   }
+  const [activeTab2, setActiveTab] = d("tailscale");
+  const tsBadge = tsLoading ? void 0 : (tsStatus == null ? void 0 : tsStatus.mode) && tsStatus.mode !== "off" ? tsStatus.mode : void 0;
+  const ngBadge = ngLoading ? void 0 : (ngStatus == null ? void 0 : ngStatus.enabled) ? "on" : void 0;
+  const tabs = [
+    { id: "tailscale", label: "Tailscale", badge: tsBadge },
+    { id: "ngrok", label: "ngrok", badge: ngBadge }
+  ];
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
     /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Remote Access" }),
     /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed max-w-[60rem]", style: { margin: 0 }, children: "Choose how moltis is exposed beyond localhost. Tailscale is the safer default for tailnet access and optional public Funnel, while ngrok gives you a managed public HTTPS URL for teams, demos, and shared endpoints." }),
-    /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
-      renderTailscaleCard(),
-      renderNgrokCard()
-    ] })
+    /* @__PURE__ */ u(TabBar$1, { tabs, active: activeTab2, onChange: setActiveTab }),
+    activeTab2 === "tailscale" && renderTailscaleCard(),
+    activeTab2 === "ngrok" && renderNgrokCard()
   ] });
 }
 function bufToB64(buf) {
