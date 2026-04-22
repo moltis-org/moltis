@@ -38,17 +38,25 @@ fn api_key() -> Secret<String> {
     Secret::new(key)
 }
 
+const FIREWORKS_PROVIDER_NAME: &str = "fireworks";
+
 fn make_provider(model: &str) -> OpenAiProvider {
+    make_named_provider(model, FIREWORKS_PROVIDER_NAME)
+}
+
+/// Build a provider with explicit name, applying the same overrides as
+/// `register_openai_compatible_providers` — all three production guards
+/// (`config_name == "fireworks"`, `/routers/`, `kimi`) are checked.
+fn make_named_provider(model: &str, provider_name: &str) -> OpenAiProvider {
     let mut p = OpenAiProvider::new_with_name(
         api_key(),
         model.to_string(),
         FIREWORKS_BASE_URL.to_string(),
-        "fireworks".to_string(),
+        provider_name.to_string(),
     );
 
-    // Mirror the registration overrides from `register_openai_compatible_providers`
-    // for Fireworks Fire Pass Kimi routers (issue #810).
-    if model.contains("/routers/") && model.contains("kimi") {
+    // Mirror `is_fireworks_kimi_router` from model_catalogs.rs (issue #810).
+    if provider_name == "fireworks" && model.contains("/routers/") && model.contains("kimi") {
         p = p.with_strict_tools(false).with_reasoning_content(true);
     }
 
