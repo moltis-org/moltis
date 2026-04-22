@@ -50,6 +50,31 @@ pub(crate) fn check_status(status: reqwest::StatusCode) -> Result<()> {
     }
 }
 
+/// Check response status and record a metrics error on failure.
+#[cfg(feature = "metrics")]
+#[inline]
+pub(crate) fn check_status_metrics(
+    status: reqwest::StatusCode,
+    method: &str,
+    endpoint: &str,
+) -> Result<()> {
+    if let Err(e) = check_status(status) {
+        record_rest_error(method, endpoint);
+        return Err(e);
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "metrics"))]
+#[inline]
+pub(crate) fn check_status_metrics(
+    status: reqwest::StatusCode,
+    _method: &str,
+    _endpoint: &str,
+) -> Result<()> {
+    check_status(status)
+}
+
 /// REST API client for a single Home Assistant instance.
 pub struct HomeAssistantClient {
     pub(crate) base_url: String,
@@ -103,7 +128,7 @@ impl HomeAssistantClient {
             .send()
             .await?;
 
-        check_status(resp.status())?;
+        check_status_metrics(resp.status(), "GET", "health_check")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "health_check", start);
         Ok(())
@@ -123,7 +148,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "config")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "config", start);
         resp.json().await.map_err(Error::from)
@@ -143,7 +168,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "states")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "states", start);
         resp.json().await.map_err(Error::from)
@@ -169,7 +194,7 @@ impl HomeAssistantClient {
         }
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "state")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "state", start);
         resp.json().await.map_err(Error::from).map(Some)
@@ -189,7 +214,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "services")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "services", start);
         resp.json().await.map_err(Error::from)
@@ -406,7 +431,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "POST", "set_state")?;
         #[cfg(feature = "metrics")]
         record_rest_request("POST", "set_state", start);
         resp.json().await.map_err(Error::from)
@@ -469,7 +494,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "logbook")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "logbook", start);
         resp.json().await.map_err(Error::from)
@@ -507,7 +532,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "history")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "history", start);
         resp.json().await.map_err(Error::from)

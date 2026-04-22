@@ -5,7 +5,7 @@
 //! via an `impl` block in the same crate.
 
 use {
-    super::client::{HomeAssistantClient, check_status},
+    super::client::{HomeAssistantClient, check_status_metrics},
     crate::error::{Error, Result},
 };
 
@@ -30,9 +30,9 @@ impl HomeAssistantClient {
             .await?;
 
         let ok = resp.status().is_success();
-        #[cfg(feature = "metrics")]
-        record_rest_request("GET", "ping", start);
         if ok {
+            #[cfg(feature = "metrics")]
+            record_rest_request("GET", "ping", start);
             Ok(())
         } else {
             #[cfg(feature = "metrics")]
@@ -60,7 +60,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "components")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "components", start);
         resp.json().await.map_err(Error::from)
@@ -82,7 +82,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "events")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "events", start);
         resp.json().await.map_err(Error::from)
@@ -115,7 +115,7 @@ impl HomeAssistantClient {
             record_rest_request("DELETE", "delete_state", start);
             return Ok(false);
         }
-        check_status(status)?;
+        check_status_metrics(status, "DELETE", "delete_state")?;
         #[cfg(feature = "metrics")]
         record_rest_request("DELETE", "delete_state", start);
         Ok(true)
@@ -186,7 +186,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "history_with_flags")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "history_with_flags", start);
         resp.json().await.map_err(Error::from)
@@ -210,7 +210,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "calendars")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "calendars", start);
         resp.json().await.map_err(Error::from)
@@ -248,7 +248,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "calendar_events")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "calendar_events", metrics_start);
         resp.json().await.map_err(Error::from)
@@ -323,7 +323,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "GET", "error_log")?;
         #[cfg(feature = "metrics")]
         record_rest_request("GET", "error_log", start);
         resp.text().await.map_err(Error::from)
@@ -348,7 +348,7 @@ impl HomeAssistantClient {
             .await?;
 
         let status = resp.status();
-        check_status(status)?;
+        check_status_metrics(status, "POST", "check_config")?;
         #[cfg(feature = "metrics")]
         record_rest_request("POST", "check_config", start);
         resp.json().await.map_err(Error::from)

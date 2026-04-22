@@ -312,13 +312,28 @@ impl AgentTool for HomeAssistantTool {
                     .ok_or_else(|| anyhow::anyhow!("missing 'service' parameter"))?;
 
                 let area_id = params.get("area_id").and_then(|v| v.as_str());
-                let entity_id = params.get("entity_id").and_then(|v| v.as_str());
+                let entity_id = params.get("entity_id");
                 let mut target = Target::default();
                 if let Some(a) = area_id {
                     target.area_id.push(a.to_owned());
                 }
                 if let Some(e) = entity_id {
-                    target.entity_id.push(e.to_owned());
+                    if let Some(s) = e.as_str() {
+                        // comma-separated: "light.bedroom,light.kitchen"
+                        for id in s.split(',') {
+                            let id = id.trim();
+                            if !id.is_empty() {
+                                target.entity_id.push(id.to_owned());
+                            }
+                        }
+                    } else if let Some(arr) = e.as_array() {
+                        // array form: ["light.bedroom", "light.kitchen"]
+                        for id in arr {
+                            if let Some(s) = id.as_str() {
+                                target.entity_id.push(s.to_owned());
+                            }
+                        }
+                    }
                 }
                 let target =
                     (!target.entity_id.is_empty() || !target.area_id.is_empty()).then_some(target);
