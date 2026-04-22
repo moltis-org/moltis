@@ -6400,6 +6400,30 @@ function updateNavCounts(counts) {
 }
 updateNavCounts(get("counts"));
 onChange("counts", updateNavCounts);
+function TabBar$1({ tabs, active, onChange: onChange2, className }) {
+  return /* @__PURE__ */ u("div", { className: className ?? "flex border-b border-[var(--border)] text-xs", role: "tablist", children: tabs.map((tab) => {
+    const isActive = tab.id === active;
+    const tabClass = [
+      "py-2 px-3 cursor-pointer bg-transparent border-b-2 transition-colors text-sm",
+      isActive ? "border-[var(--accent)] text-[var(--text)] font-medium" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"
+    ].join(" ");
+    return /* @__PURE__ */ u(
+      "button",
+      {
+        type: "button",
+        role: "tab",
+        "aria-selected": isActive,
+        className: tabClass,
+        onClick: () => onChange2(tab.id),
+        children: [
+          tab.label,
+          tab.badge != null && /* @__PURE__ */ u("span", { className: "ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]", children: tab.badge })
+        ]
+      },
+      tab.id
+    );
+  }) });
+}
 function AdvancedConfigPatchField({
   value,
   onInput,
@@ -9429,35 +9453,25 @@ function ChannelsPageComponent() {
       setChannelEventUnsub(null);
     };
   }, [connected$1.value]);
+  const channelsTabs = g(() => [
+    { id: "channels", label: "Channels", badge: channels.value.length || void 0 },
+    { id: "senders", label: "Senders", badge: senders.value.length || void 0 }
+  ]);
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
     /* @__PURE__ */ u("div", { className: "flex items-center gap-3 flex-wrap", children: [
       /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Channels" }),
-      /* @__PURE__ */ u("div", { style: { display: "flex", gap: "4px", marginLeft: "12px" }, children: [
-        /* @__PURE__ */ u(
-          "button",
-          {
-            className: "session-action-btn",
-            style: activeTab$2.value === "channels" ? { fontWeight: 600 } : void 0,
-            onClick: () => {
-              activeTab$2.value = "channels";
-            },
-            children: "Channels"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            className: "session-action-btn",
-            style: activeTab$2.value === "senders" ? { fontWeight: 600 } : void 0,
-            onClick: () => {
-              activeTab$2.value = "senders";
-            },
-            children: "Senders"
-          }
-        )
-      ] }),
       activeTab$2.value === "channels" && channels.value.length > 0 && /* @__PURE__ */ u(ConnectButtons, {})
     ] }),
+    /* @__PURE__ */ u(
+      TabBar$1,
+      {
+        tabs: channelsTabs.value,
+        active: activeTab$2.value,
+        onChange: (id) => {
+          activeTab$2.value = id;
+        }
+      }
+    ),
     activeTab$2.value === "channels" && /* @__PURE__ */ u(ChannelStorageNotice, {}),
     activeTab$2.value === "channels" ? /* @__PURE__ */ u(ChannelsTab, {}) : /* @__PURE__ */ u(SendersTab, {}),
     /* @__PURE__ */ u(AddTelegramModal, {}),
@@ -14355,30 +14369,6 @@ function teardownProjects() {
   _projectsContainer = null;
 }
 registerPage(routes.projects, initProjects, teardownProjects);
-function TabBar$1({ tabs, active, onChange: onChange2, className }) {
-  return /* @__PURE__ */ u("div", { className: className ?? "flex border-b border-[var(--border)] text-xs", role: "tablist", children: tabs.map((tab) => {
-    const isActive = tab.id === active;
-    const tabClass = [
-      "py-2 px-3 cursor-pointer bg-transparent border-b-2 transition-colors text-sm",
-      isActive ? "border-[var(--accent)] text-[var(--text)] font-medium" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"
-    ].join(" ");
-    return /* @__PURE__ */ u(
-      "button",
-      {
-        type: "button",
-        role: "tab",
-        "aria-selected": isActive,
-        className: tabClass,
-        onClick: () => onChange2(tab.id),
-        children: [
-          tab.label,
-          tab.badge != null && /* @__PURE__ */ u("span", { className: "ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]", children: tab.badge })
-        ]
-      },
-      tab.id
-    );
-  }) });
-}
 var SkillSource = /* @__PURE__ */ ((SkillSource2) => {
   SkillSource2["Project"] = "project";
   SkillSource2["Personal"] = "personal";

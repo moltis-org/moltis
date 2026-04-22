@@ -1,7 +1,7 @@
 // ── Channels page (Preact + Signals) ──────────────────────────
 
 import type { Signal } from "@preact/signals";
-import { signal, useSignal } from "@preact/signals";
+import { computed, signal, useSignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
@@ -12,6 +12,7 @@ import {
 	normalizeMatrixAuthMode,
 	normalizeMatrixOwnershipMode,
 } from "../channel-utils";
+import { TabBar } from "../components/forms/Tabs";
 import { onEvent } from "../events";
 import { get as getGon } from "../gon";
 import { sendRpc } from "../helpers";
@@ -894,32 +895,24 @@ function ChannelsPageComponent(): VNode {
 		};
 	}, [connected.value]);
 
+	const channelsTabs = computed(() => [
+		{ id: "channels", label: "Channels", badge: channels.value.length || undefined },
+		{ id: "senders", label: "Senders", badge: senders.value.length || undefined },
+	]);
+
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<div className="flex items-center gap-3 flex-wrap">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Channels</h2>
-				<div style={{ display: "flex", gap: "4px", marginLeft: "12px" }}>
-					<button
-						className="session-action-btn"
-						style={activeTab.value === "channels" ? { fontWeight: 600 } : undefined}
-						onClick={() => {
-							activeTab.value = "channels";
-						}}
-					>
-						Channels
-					</button>
-					<button
-						className="session-action-btn"
-						style={activeTab.value === "senders" ? { fontWeight: 600 } : undefined}
-						onClick={() => {
-							activeTab.value = "senders";
-						}}
-					>
-						Senders
-					</button>
-				</div>
 				{activeTab.value === "channels" && channels.value.length > 0 && <ConnectButtons />}
 			</div>
+			<TabBar
+				tabs={channelsTabs.value}
+				active={activeTab.value}
+				onChange={(id) => {
+					activeTab.value = id;
+				}}
+			/>
 			{activeTab.value === "channels" && <ChannelStorageNotice />}
 			{activeTab.value === "channels" ? <ChannelsTab /> : <SendersTab />}
 			<AddTelegramModal />
