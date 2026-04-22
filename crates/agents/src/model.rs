@@ -251,9 +251,14 @@ pub fn extract_tool_call_metadata(
     tc: &serde_json::Value,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     let obj = tc.as_object()?;
+    let nested = obj.get("metadata").and_then(serde_json::Value::as_object);
     let meta: serde_json::Map<_, _> = TOOL_CALL_METADATA_KEYS
         .iter()
-        .filter_map(|&k| obj.get(k).map(|v| (k.to_string(), v.clone())))
+        .filter_map(|&k| {
+            obj.get(k)
+                .or_else(|| nested.and_then(|metadata| metadata.get(k)))
+                .map(|v| (k.to_string(), v.clone()))
+        })
         .collect();
     if meta.is_empty() {
         None
@@ -1449,6 +1454,19 @@ mod tests {
             ChatMessage::Assistant { tool_calls, .. } => {
                 let meta = tool_calls[0].metadata.as_ref().expect("metadata present");
                 assert_eq!(meta["thought_signature"], "sig_abc");
+            },
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+        // Persisted sessions store provider fields under tool_calls[].metadata.
+        let persisted = vec![serde_json::json!({
+            "role": "assistant", "content": null,
+            "tool_calls": [{"id": "c1", "metadata": {"thought_signature": "sig_persisted"},
+                            "function": {"name": "exec", "arguments": "{}"}}]
+        })];
+        match &values_to_chat_messages(&persisted)[0] {
+            ChatMessage::Assistant { tool_calls, .. } => {
+                let meta = tool_calls[0].metadata.as_ref().expect("metadata present");
+                assert_eq!(meta["thought_signature"], "sig_persisted");
             },
             other => panic!("expected Assistant, got {other:?}"),
         }

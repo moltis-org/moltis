@@ -249,6 +249,7 @@ pub(crate) async fn run_with_tools(
     let event_forwarder = tokio::spawn(async move {
         // Track tool call arguments from ToolCallStart so they can be persisted in ToolCallEnd.
         let mut tool_args_map: HashMap<String, Value> = HashMap::new();
+        let mut tool_metadata_map: HashMap<String, serde_json::Map<String, Value>> = HashMap::new();
         // Track reasoning text that should be persisted with the first tool call after thinking.
         let mut tool_reasoning_map: HashMap<String, String> = HashMap::new();
         let mut latest_reasoning = String::new();
@@ -275,8 +276,12 @@ pub(crate) async fn run_with_tools(
                     id,
                     name,
                     arguments,
+                    metadata,
                 } => {
                     tool_args_map.insert(id.clone(), arguments.clone());
+                    if let Some(metadata) = metadata {
+                        tool_metadata_map.insert(id.clone(), metadata);
+                    }
 
                     // Track active tool call for chat.peek.
                     if let Some(ref map) = active_tool_calls {
@@ -616,11 +621,12 @@ pub(crate) async fn run_with_tools(
                             r
                         });
                         let tracked_reasoning = tool_reasoning_map.remove(&id);
+                        let tracked_metadata = tool_metadata_map.remove(&id);
                         let assistant_tool_call_msg = build_tool_call_assistant_message(
                             id.clone(),
                             name.clone(),
                             tracked_args.clone(),
-                            None,
+                            tracked_metadata,
                             seq,
                             Some(run_id.as_str()),
                         );
