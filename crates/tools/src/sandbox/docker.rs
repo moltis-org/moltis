@@ -2,7 +2,7 @@
 
 use {
     async_trait::async_trait,
-    std::collections::HashSet,
+    std::{collections::HashSet, sync::OnceLock},
     tokio::sync::Mutex,
     tracing::{debug, info, warn},
 };
@@ -198,7 +198,15 @@ impl DockerSandbox {
     /// `is_prebuilt` controls whether `--read-only` is applied: prebuilt images
     /// already have packages baked in so the root FS can be read-only, while
     /// non-prebuilt images need a writable root for `apt-get` provisioning.
-    pub(crate) fn hardening_args(is_prebuilt: bool, kind: BackendKind) -> Vec<String> {
+    ///
+    /// `skip_sysfs_mounts` suppresses sysfs tmpfs overlays.  This is needed on
+    /// WSL2 where the sysfs directories may not exist inside the container's
+    /// filesystem, causing Docker to fail with "mkdirat: read-only file system".
+    pub(crate) fn hardening_args(
+        is_prebuilt: bool,
+        kind: BackendKind,
+        skip_sysfs_mounts: bool,
+    ) -> Vec<String> {
         let mut args = vec![
             // --- Capability / privilege ---
             "--cap-drop".to_string(),
@@ -220,12 +228,16 @@ impl DockerSandbox {
         // (serial numbers, BIOS/UEFI data, disk models, LUKS UUIDs).
         // Empty read-only tmpfs overlays hide the underlying sysfs entries.
         //
-        // Podman is excluded: its OCI runtime performs "tmpcopyup" on sysfs
+        // Skipped for Podman: its OCI runtime performs "tmpcopyup" on sysfs
         // tmpfs mounts, copying directory contents into the tmpfs first.
         // With --cap-drop ALL some sysfs files are permission-denied even for
         // root, causing the mount (and container startup) to fail.  Podman
         // already masks /sys/firmware via its built-in OCI MaskedPaths.
-        if kind != BackendKind::Podman {
+        //
+        // Skipped on WSL2: the sysfs directories (/sys/class/dmi, etc.) may
+        // not exist inside the container's sysfs, so Docker cannot create
+        // tmpfs mountpoints on the read-only overlayfs.
+        if kind != BackendKind::Podman && !skip_sysfs_mounts {
             args.extend([
                 "--tmpfs".to_string(),
                 "/sys/firmware:ro,nosuid".to_string(),
@@ -429,7 +441,7 @@ impl Sandbox for DockerSandbox {
         }
 
         args.extend(self.resource_args());
-        args.extend(Self::hardening_args(is_prebuilt, self.kind));
+        args.extend(Self::hardening_args(is_prebuilt, self.kind, is_wsl()));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
 
@@ -732,6 +744,22 @@ impl Sandbox for NoSandbox {
     async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
         Ok(())
     }
+}
+
+/// Return `true` when running on Windows Subsystem for Linux (WSL).
+///
+/// WSL2 kernels identify themselves with "microsoft" or "WSL" in
+/// `/proc/version`.  The result is cached for the process lifetime.
+pub(crate) fn is_wsl() -> bool {
+    static WSL: OnceLock<bool> = OnceLock::new();
+    *WSL.get_or_init(|| {
+        std::fs::read_to_string("/proc/version")
+            .map(|v| {
+                let lower = v.to_ascii_lowercase();
+                lower.contains("microsoft") || lower.contains("wsl")
+            })
+            .unwrap_or(false)
+    })
 }
 
 /// Return `true` when the installed Podman version supports `host-gateway`
