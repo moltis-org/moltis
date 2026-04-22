@@ -887,7 +887,7 @@ pub(crate) async fn render_spa_template(
         "default-src 'self'; \
          script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'; \
          style-src 'self' 'unsafe-inline'; \
-         img-src 'self' data: blob:; \
+         img-src 'self' data: blob: https://avatars.githubusercontent.com; \
          media-src 'self' blob:; \
          font-src 'self'; \
          connect-src 'self' ws: wss:; \

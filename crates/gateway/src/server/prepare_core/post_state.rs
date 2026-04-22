@@ -9,7 +9,6 @@ use {
     tracing::{debug, info, warn},
 };
 
-#[cfg(feature = "wasm")]
 use secrecy::ExposeSecret;
 
 use {

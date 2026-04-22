@@ -14564,7 +14564,7 @@ async function checkPostInstallRecipe(source) {
 }
 function orgAvatarUrl(repo) {
   const owner = repo.split("/")[0];
-  return `https://github.com/${owner}.png?size=40`;
+  return `https://avatars.githubusercontent.com/${owner}?s=40`;
 }
 function FeaturedCard$1({ skill: f }) {
   const installing = useSignal(false);

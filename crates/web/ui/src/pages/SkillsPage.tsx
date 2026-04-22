@@ -331,9 +331,11 @@ async function checkPostInstallRecipe(source: string): Promise<void> {
 }
 
 /** Derive the GitHub avatar URL for an org/user from the repo identifier. */
+/** GitHub avatar CDN URL — uses avatars.githubusercontent.com directly to avoid
+ *  needing github.com in the CSP img-src directive. */
 function orgAvatarUrl(repo: string): string {
 	const owner = repo.split("/")[0];
-	return `https://github.com/${owner}.png?size=40`;
+	return `https://avatars.githubusercontent.com/${owner}?s=40`;
 }
 
 function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
