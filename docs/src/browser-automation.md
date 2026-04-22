@@ -279,7 +279,7 @@ local storage) is persisted across browser sessions. The profile is stored at
 ```toml
 [tools.browser]
 persist_profile = true          # default; set false to start fresh each time
-profile_dir = \"/custom/path\"   # optional override (implies persist_profile = true)
+profile_dir = "/custom/path"   # optional override (implies persist_profile = true)
 ```
 
 When `persist_profile = false`, each browser launch starts with a clean slate.
@@ -291,7 +291,7 @@ When connecting to a Browserless container, Moltis supports two API modes:
 
 ```toml
 [tools.browser]
-browserless_api_version = \"v1\"  # \"v1\" (default) or \"v2\"
+browserless_api_version = "v1"  # "v1" (default) or "v2"
 ```
 
 - **`v1`** (default): connects directly to the base websocket URL.

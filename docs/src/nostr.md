@@ -13,7 +13,7 @@ or server infrastructure is required.
 │              Nostr Relay Network                      │
 │   (relay.damus.io, nos.lol, relay.nostr.band, ...)   │
 └──────────────────┬───────────────────────────────────┘
-                   │  WebSocket subscription (kind:4)
+                   │  WebSocket subscription (kind:4, kind:1059)
                    ▼
 ┌──────────────────────────────────────────────────────┐
 │                moltis-nostr crate                     │
@@ -32,7 +32,7 @@ or server infrastructure is required.
 
 The bot connects **outward** to Nostr relays via WebSocket. No port forwarding,
 public domain, or TLS certificate is needed. Messages are end-to-end encrypted
-between the sender and the bot using NIP-04.
+between the sender and the bot using NIP-04, NIP-44, or NIP-59 Gift Wrap.
 
 ## Prerequisites
 

@@ -14,7 +14,7 @@ capabilities that control what features are available.
 | Microsoft Teams | Webhook | Yes | Streaming, interactive messages, threads, reactions |
 | WhatsApp | Gateway (WebSocket) | No | Streaming, voice ingest, OTP, pairing |
 | Slack | Socket Mode | No | Streaming, interactive messages, threads, reactions |
-| Nostr | Gateway (relay subscription) | No | OTP, encrypted DMs (NIP-04) |
+| Nostr | Gateway (relay subscription) | No | OTP, encrypted DMs (NIP-04/NIP-44/NIP-59 Gift Wrap) |
 
 ## Inbound Modes
 
