@@ -47,6 +47,8 @@
   - [`chat.compaction`](#chatcompaction)
   - [`agents`](#agents)
   - [`agents.presets.<name>`](#agentspresetsname)
+  - [`modes`](#modes)
+  - [`modes.presets.<name>`](#modespresetsname)
   - [`skills`](#skills)
 - **Tools — Execution**
   - [`tools.exec`](#toolsexec)
@@ -326,6 +328,23 @@ User profile collected during onboarding.
 |-----|------|---------|-------------|
 | `scope` | enum: `user`, `project`, `local` | `"user"` | Memory scope: `user` stores in `~/.moltis/agent-memory/<preset>/`, `project` in `.moltis/agent-memory/<preset>/`, `local` in `.moltis/agent-memory-local/<preset>/`. |
 | `max_lines` | integer | `200` | Maximum lines to load from `MEMORY.md`. |
+
+### `modes` — ModesConfig
+
+Modes are temporary per-session prompt overlays selected with `/mode`. They do
+not create chat agents, change memory, or affect `spawn_agent` presets.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `presets` | map of `ModePreset` | built-in presets | Named mode presets. Built-ins: `concise`, `technical`, `creative`, `teacher`, `plan`, `build`, `review`, `research`, `elevated`. |
+
+### `modes.presets.<name>` — ModePreset
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | optional string | `null` | Display name shown in the UI and `/mode` list. |
+| `description` | optional string | `null` | Short user-facing summary. |
+| `prompt` | string | `""` | Prompt overlay injected into the active session while this mode is selected. |
 
 
 ### `skills` — SkillsConfig

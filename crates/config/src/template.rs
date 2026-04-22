@@ -359,6 +359,24 @@ system_prompt_suffix = "Break broad work into independent subtasks, delegate onl
 max_iterations = 18
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SESSION MODES
+# ══════════════════════════════════════════════════════════════════════════════
+# Modes are temporary per-session prompt overlays selected with `/mode`.
+# They do not create chat agents, do not affect sub-agent presets, and do not
+# change an agent's identity or memory. Built-ins include concise, technical,
+# creative, teacher, plan, build, review, research, and elevated.
+#
+# [modes.presets.concise]
+# name = "Concise"
+# description = "short direct answers"
+# prompt = "Keep answers short, concrete, and caveat-light unless the user asks for detail."
+#
+# [modes.presets.incident]
+# name = "Incident"
+# description = "production incident response"
+# prompt = "Prioritize impact, timeline, mitigation, rollback, logs, and clear status updates."
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TOOLS
 # ══════════════════════════════════════════════════════════════════════════════
 

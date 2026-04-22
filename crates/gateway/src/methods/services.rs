@@ -423,11 +423,13 @@ mod admin;
 mod agents;
 mod channels;
 mod core;
+mod modes;
 mod sessions;
 mod system;
 
 pub(super) fn register(reg: &mut MethodRegistry) {
     agents::register(reg);
+    modes::register(reg);
     sessions::register(reg);
     channels::register(reg);
     core::register(reg);

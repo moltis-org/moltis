@@ -47,6 +47,13 @@ interface ConfigPreset {
 	toml?: string;
 }
 
+interface ModePreset {
+	id: string;
+	name: string;
+	description: string;
+	prompt: string;
+}
+
 interface AgentFormProps {
 	agent: AgentPersona | null;
 	onSave: () => void;
@@ -67,10 +74,39 @@ interface PresetCardProps {
 	onCreate: (preset: ConfigPreset) => void;
 }
 
+interface ModeCardProps {
+	mode: ModePreset;
+}
+
+interface UnknownRecord {
+	[key: string]: unknown;
+}
+
 const WS_RETRY_LIMIT = 75;
 const WS_RETRY_DELAY_MS = 200;
 
 let containerRef: HTMLElement | null = null;
+
+function isRecord(value: unknown): value is UnknownRecord {
+	return typeof value === "object" && value !== null;
+}
+
+function parseModePayload(value: unknown): ModePreset | null {
+	if (!isRecord(value)) return null;
+	const id = typeof value.id === "string" ? value.id : "";
+	if (!id) return null;
+	return {
+		id,
+		name: typeof value.name === "string" && value.name.trim() ? value.name : id,
+		description: typeof value.description === "string" ? value.description : "",
+		prompt: typeof value.prompt === "string" ? value.prompt : "",
+	};
+}
+
+function parseModesPayload(value: unknown): ModePreset[] {
+	if (!(isRecord(value) && Array.isArray(value.modes))) return [];
+	return value.modes.map(parseModePayload).filter((mode): mode is ModePreset => mode !== null);
+}
 
 export function initAgents(container: HTMLElement, subPath?: string | null): void {
 	containerRef = container;
@@ -453,11 +489,45 @@ function PresetCard({ preset, creating, onCreate }: PresetCardProps): VNode {
 	);
 }
 
+// ── Mode card ───────────────────────────────────────────────
+
+function ModeCard({ mode }: ModeCardProps): VNode {
+	const [expanded, setExpanded] = useState(false);
+	const title = mode.name || mode.id;
+	return (
+		<div className="backend-card">
+			<div className="flex items-center justify-between gap-3">
+				<div className="flex min-w-0 flex-col gap-1">
+					<div className="flex items-center gap-2">
+						<span className="text-sm font-medium text-[var(--text-strong)]">{title}</span>
+						<span className="tier-badge">{mode.id}</span>
+					</div>
+					{mode.description && <div className="text-xs text-[var(--muted)]">{mode.description}</div>}
+				</div>
+				<button
+					type="button"
+					className="provider-btn provider-btn-secondary"
+					style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+					onClick={() => setExpanded(!expanded)}
+				>
+					{expanded ? "Hide" : "View"}
+				</button>
+			</div>
+			{expanded && (
+				<pre className="text-xs mt-2 p-2 rounded bg-[var(--bg-offset)] font-mono whitespace-pre-wrap overflow-x-auto max-h-[200px] overflow-y-auto">
+					{mode.prompt}
+				</pre>
+			)}
+		</div>
+	);
+}
+
 // ── Main page ───────────────────────────────────────────────
 
 function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 	const [agents, setAgents] = useState<AgentPersona[]>([]);
 	const [configPresets, setConfigPresets] = useState<ConfigPreset[]>([]);
+	const [modes, setModes] = useState<ModePreset[]>([]);
 	const [defaultId, setDefaultId] = useState("main");
 	const [isLoading, setIsLoading] = useState(true);
 	const [editing, setEditing] = useState<null | "new" | AgentPersona>(null);
@@ -511,9 +581,30 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 		load();
 	}
 
+	function fetchModes(): void {
+		let attempts = 0;
+		function load(): void {
+			sendRpc("modes.list", {}).then((res) => {
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
+					attempts += 1;
+					window.setTimeout(load, WS_RETRY_DELAY_MS);
+					return;
+				}
+				if (res?.ok) {
+					setModes(parseModesPayload(res.payload));
+				}
+			});
+		}
+		load();
+	}
+
 	useEffect(() => {
 		fetchAgents();
 		fetchConfigPresets();
+		fetchModes();
 		// Auto-open create form when navigating to /settings/agents/new
 		if (subPath === "new") {
 			setEditing("new");
@@ -624,7 +715,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 				tabs={[
 					{ id: "chat", label: "Chat Agents", badge: agents.length || undefined },
 					{ id: "subagents", label: "Sub-Agents", badge: configPresets.length || undefined },
-					{ id: "modes", label: "Modes", badge: "soon" },
+					{ id: "modes", label: "Modes", badge: modes.length || undefined },
 				]}
 				active={activeTab}
 				onChange={setActiveTab}
@@ -688,19 +779,18 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 
 			{activeTab === "modes" && (
 				<section className="flex flex-col gap-2 max-w-[600px]" aria-label="Modes panel">
-					<div className="backend-card flex flex-col gap-2">
-						<div className="flex items-center justify-between gap-3">
-							<h3 className="text-sm font-medium text-[var(--text-strong)]">Modes</h3>
-							<span className="tier-badge">coming</span>
-						</div>
-						<p className="text-xs text-[var(--text)] leading-relaxed" style={{ margin: 0 }}>
-							Modes will be temporary per-session overlays for how the selected agent should work right now.
-						</p>
+					<div className="flex flex-col gap-1">
+						<h3 className="text-xs font-medium text-[var(--muted)]">Modes</h3>
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-							They are meant for workflows like Plan, Build, Review, Research, or Concise without changing the agent's
-							persistent identity or memory.
+							Temporary per-session prompt overlays. Use /mode in chat or any connected channel to switch how the
+							current agent should work without changing its identity, memory, or sub-agent presets.
 						</p>
 					</div>
+					{modes.length > 0 ? (
+						modes.map((mode) => <ModeCard key={mode.id} mode={mode} />)
+					) : (
+						<div className="backend-card text-xs text-[var(--muted)]">No modes are configured.</div>
+					)}
 				</section>
 			)}
 		</div>

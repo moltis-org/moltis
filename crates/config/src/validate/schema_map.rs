@@ -316,6 +316,14 @@ pub(super) fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let mode_preset = || {
+        Struct(HashMap::from([
+            ("name", Leaf),
+            ("description", Leaf),
+            ("prompt", Leaf),
+        ]))
+    };
+
     Struct(HashMap::from([
         (
             "server",
@@ -369,6 +377,10 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("default_preset", Leaf),
                 ("presets", Map(Box::new(agent_preset()))),
             ])),
+        ),
+        (
+            "modes",
+            Struct(HashMap::from([("presets", Map(Box::new(mode_preset())))])),
         ),
         ("tools", tools()),
         (

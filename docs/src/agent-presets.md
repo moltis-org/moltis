@@ -3,6 +3,9 @@
 Agent presets let `spawn_agent` run sub-agents with role-specific configuration.
 Use them to control model cost, tool access, session visibility, and behavior.
 
+They are different from [modes](modes.md): modes are temporary overlays for the
+current chat session, while agent presets configure delegated sub-agents.
+
 ## Built-In Presets
 
 Moltis ships with these presets on every install:

@@ -554,6 +554,14 @@ pub async fn prepare_gateway_core(
                         .set_project_id(&entry.key, entry.project_id.clone())
                         .await;
                 }
+                if entry.mode_id.is_some() {
+                    if let Err(e) = sqlite_meta
+                        .set_mode_id(&entry.key, entry.mode_id.as_deref())
+                        .await
+                    {
+                        tracing::warn!("failed to migrate session mode for {}: {e}", entry.key);
+                    }
+                }
             }
         }
         let bak = metadata_json_path.with_extension("json.bak");

@@ -5089,6 +5089,7 @@ const slashCommands = [
   { name: "clear", description: "Clear conversation history" },
   { name: "compact", description: "Summarize conversation to save tokens" },
   { name: "context", description: "Show session context and project info" },
+  { name: "mode", description: "Switch session mode" },
   { name: "sh", description: "Enter command mode (/sh off or Esc to exit)" }
 ];
 let slashMenuEl = null;
@@ -5226,6 +5227,85 @@ function setCommandMode(enabled) {
   setCommandModeEnabled(!!enabled);
   updateCommandInputUI();
 }
+function isRecord$1(value) {
+  return typeof value === "object" && value !== null;
+}
+function parseMode(value) {
+  if (!isRecord$1(value)) return null;
+  const id = typeof value.id === "string" ? value.id : "";
+  if (!id) return null;
+  return {
+    id,
+    name: typeof value.name === "string" && value.name.trim() ? value.name : id,
+    description: typeof value.description === "string" ? value.description : "",
+    prompt: typeof value.prompt === "string" ? value.prompt : ""
+  };
+}
+function parseModesListPayload(value) {
+  if (!(isRecord$1(value) && Array.isArray(value.modes))) return { modes: [] };
+  return { modes: value.modes.map(parseMode).filter((mode) => mode !== null) };
+}
+function formatModeList(modes) {
+  if (modes.length === 0) return "No modes are configured.";
+  const lines = modes.map((mode, index) => {
+    const description = mode.description ? ` - ${mode.description}` : "";
+    return `${index + 1}. ${mode.name} [${mode.id}]${description}`;
+  });
+  lines.push("", "Use `/mode N`, `/mode <id>`, or `/mode none`.");
+  return lines.join("\n");
+}
+function findMode(modes, args) {
+  const normalized = args.trim().toLowerCase();
+  const number = Number.parseInt(normalized, 10);
+  if (Number.isInteger(number) && number > 0 && String(number) === normalized) {
+    return modes[number - 1] || null;
+  }
+  return modes.find((mode) => mode.id.toLowerCase() === normalized || mode.name.toLowerCase() === normalized) || null;
+}
+function handleModeCommand(cmdArgs) {
+  const args = cmdArgs.trim();
+  chatAddMsg("system", "Loading modes...");
+  sendRpc("modes.list", {}).then((listRes) => {
+    var _a2, _b2;
+    if ((_a2 = chatMsgBox) == null ? void 0 : _a2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
+    if (!(listRes == null ? void 0 : listRes.ok)) {
+      chatAddMsg("error", ((_b2 = listRes == null ? void 0 : listRes.error) == null ? void 0 : _b2.message) || "Failed to load modes");
+      return;
+    }
+    const modes = parseModesListPayload(listRes.payload).modes;
+    if (!args) {
+      chatAddMsg("system", renderMarkdown(formatModeList(modes)), true);
+      return;
+    }
+    const normalized = args.toLowerCase();
+    if (["none", "off", "clear", "default", "reset"].includes(normalized)) {
+      sendRpc("modes.set_session", { session_key: activeSessionKey, mode_id: null }).then((setRes) => {
+        var _a3;
+        if (!(setRes == null ? void 0 : setRes.ok)) {
+          chatAddMsg("error", ((_a3 = setRes == null ? void 0 : setRes.error) == null ? void 0 : _a3.message) || "Failed to clear mode");
+          return;
+        }
+        fetchSessions();
+        chatAddMsg("system", renderMarkdown("**Mode:** cleared"), true);
+      });
+      return;
+    }
+    const selected = findMode(modes, args);
+    if (!selected) {
+      chatAddMsg("error", `Unknown mode: ${args}`);
+      return;
+    }
+    sendRpc("modes.set_session", { session_key: activeSessionKey, mode_id: selected.id }).then((setRes) => {
+      var _a3;
+      if (!(setRes == null ? void 0 : setRes.ok)) {
+        chatAddMsg("error", ((_a3 = setRes == null ? void 0 : setRes.error) == null ? void 0 : _a3.message) || "Failed to set mode");
+        return;
+      }
+      fetchSessions();
+      chatAddMsg("system", renderMarkdown(`**Mode:** ${selected.name}`), true);
+    });
+  });
+}
 function handleSlashCommand(cmdName, cmdArgs) {
   if (cmdName === "clear") {
     clearActiveSession();
@@ -5254,6 +5334,10 @@ function handleSlashCommand(cmdName, cmdArgs) {
         }
       } else chatAddMsg("error", ((_b2 = res.error) == null ? void 0 : _b2.message) || "Context failed");
     });
+    return;
+  }
+  if (cmdName === "mode") {
+    handleModeCommand(cmdArgs);
     return;
   }
   if (cmdName === "sh") {
@@ -20457,6 +20541,24 @@ registerPrefix(routes.monitoring, initMonitoring, teardownMonitoring);
 const WS_RETRY_LIMIT = 75;
 const WS_RETRY_DELAY_MS = 200;
 let containerRef$1 = null;
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function parseModePayload(value) {
+  if (!isRecord(value)) return null;
+  const id = typeof value.id === "string" ? value.id : "";
+  if (!id) return null;
+  return {
+    id,
+    name: typeof value.name === "string" && value.name.trim() ? value.name : id,
+    description: typeof value.description === "string" ? value.description : "",
+    prompt: typeof value.prompt === "string" ? value.prompt : ""
+  };
+}
+function parseModesPayload(value) {
+  if (!(isRecord(value) && Array.isArray(value.modes))) return [];
+  return value.modes.map(parseModePayload).filter((mode) => mode !== null);
+}
 function initAgents(container, subPath) {
   containerRef$1 = container;
   R(/* @__PURE__ */ u(AgentsPageComponent, { subPath: subPath || void 0 }), container);
@@ -20795,9 +20897,36 @@ function PresetCard({ preset, creating, onCreate }) {
     )
   ] });
 }
+function ModeCard({ mode }) {
+  const [expanded, setExpanded] = d(false);
+  const title = mode.name || mode.id;
+  return /* @__PURE__ */ u("div", { className: "backend-card", children: [
+    /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-3", children: [
+      /* @__PURE__ */ u("div", { className: "flex min-w-0 flex-col gap-1", children: [
+        /* @__PURE__ */ u("div", { className: "flex items-center gap-2", children: [
+          /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: title }),
+          /* @__PURE__ */ u("span", { className: "tier-badge", children: mode.id })
+        ] }),
+        mode.description && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: mode.description })
+      ] }),
+      /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "provider-btn provider-btn-secondary",
+          style: { fontSize: "0.7rem", padding: "3px 8px" },
+          onClick: () => setExpanded(!expanded),
+          children: expanded ? "Hide" : "View"
+        }
+      )
+    ] }),
+    expanded && /* @__PURE__ */ u("pre", { className: "text-xs mt-2 p-2 rounded bg-[var(--bg-offset)] font-mono whitespace-pre-wrap overflow-x-auto max-h-[200px] overflow-y-auto", children: mode.prompt })
+  ] });
+}
 function AgentsPageComponent({ subPath }) {
   const [agents, setAgents] = d([]);
   const [configPresets, setConfigPresets] = d([]);
+  const [modes, setModes] = d([]);
   const [defaultId, setDefaultId] = d("main");
   const [isLoading, setIsLoading] = d(true);
   const [editing, setEditing] = d(null);
@@ -20844,9 +20973,27 @@ function AgentsPageComponent({ subPath }) {
     }
     load();
   }
+  function fetchModes() {
+    let attempts = 0;
+    function load() {
+      sendRpc("modes.list", {}).then((res) => {
+        var _a2, _b2;
+        if ((((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.code) === "UNAVAILABLE" || ((_b2 = res == null ? void 0 : res.error) == null ? void 0 : _b2.message) === "WebSocket not connected") && attempts < WS_RETRY_LIMIT) {
+          attempts += 1;
+          window.setTimeout(load, WS_RETRY_DELAY_MS);
+          return;
+        }
+        if (res == null ? void 0 : res.ok) {
+          setModes(parseModesPayload(res.payload));
+        }
+      });
+    }
+    load();
+  }
   y$1(() => {
     fetchAgents();
     fetchConfigPresets();
+    fetchModes();
     if (subPath === "new") {
       setEditing("new");
     }
@@ -20948,7 +21095,7 @@ function AgentsPageComponent({ subPath }) {
         tabs: [
           { id: "chat", label: "Chat Agents", badge: agents.length || void 0 },
           { id: "subagents", label: "Sub-Agents", badge: configPresets.length || void 0 },
-          { id: "modes", label: "Modes", badge: "soon" }
+          { id: "modes", label: "Modes", badge: modes.length || void 0 }
         ],
         active: activeTab2,
         onChange: setActiveTab
@@ -20987,14 +21134,13 @@ function AgentsPageComponent({ subPath }) {
         preset.id
       )) : /* @__PURE__ */ u("div", { className: "backend-card text-xs text-[var(--muted)]", children: "All configured sub-agent presets are already available as chat agents." })
     ] }),
-    activeTab2 === "modes" && /* @__PURE__ */ u("section", { className: "flex flex-col gap-2 max-w-[600px]", "aria-label": "Modes panel", children: /* @__PURE__ */ u("div", { className: "backend-card flex flex-col gap-2", children: [
-      /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-3", children: [
-        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)]", children: "Modes" }),
-        /* @__PURE__ */ u("span", { className: "tier-badge", children: "coming" })
+    activeTab2 === "modes" && /* @__PURE__ */ u("section", { className: "flex flex-col gap-2 max-w-[600px]", "aria-label": "Modes panel", children: [
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Modes" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "Temporary per-session prompt overlays. Use /mode in chat or any connected channel to switch how the current agent should work without changing its identity, memory, or sub-agent presets." })
       ] }),
-      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--text)] leading-relaxed", style: { margin: 0 }, children: "Modes will be temporary per-session overlays for how the selected agent should work right now." }),
-      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "They are meant for workflows like Plan, Build, Review, Research, or Concise without changing the agent's persistent identity or memory." })
-    ] }) })
+      modes.length > 0 ? modes.map((mode) => /* @__PURE__ */ u(ModeCard, { mode }, mode.id)) : /* @__PURE__ */ u("div", { className: "backend-card text-xs text-[var(--muted)]", children: "No modes are configured." })
+    ] })
   ] });
 }
 const hooks = y([]);

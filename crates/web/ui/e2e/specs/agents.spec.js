@@ -95,7 +95,11 @@ test.describe("Agents settings page", () => {
 
 		await page.getByRole("tab", { name: /Modes/ }).click();
 		const modesPanel = page.getByLabel("Modes panel");
-		await expect(modesPanel.getByText("temporary per-session overlays", { exact: false })).toBeVisible();
+		await expect(modesPanel.getByText("Temporary per-session prompt overlays", { exact: false })).toBeVisible();
+		await expect(modesPanel.locator(".backend-card").filter({ hasText: "Concise" })).toBeVisible({
+			timeout: 10_000,
+		});
+		await expect(modesPanel.locator(".backend-card").filter({ hasText: "Review" })).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});

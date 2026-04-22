@@ -269,6 +269,7 @@ fn build_system_prompt_full(
     });
 
     append_identity_and_user_sections(&mut prompt, identity, user, soul_text);
+    append_mode_section(&mut prompt, runtime_context);
     append_boot_section(&mut prompt, boot_text);
     append_project_context(&mut prompt, project_context);
     append_runtime_section(&mut prompt, runtime_context, include_tools);
@@ -323,6 +324,25 @@ fn append_identity_and_user_sections(
     if identity.is_some() || user.is_some() {
         prompt.push('\n');
     }
+}
+
+fn append_mode_section(prompt: &mut String, runtime_context: Option<&PromptRuntimeContext>) {
+    let Some(mode) = runtime_context.and_then(|ctx| ctx.mode.as_ref()) else {
+        return;
+    };
+    let mode_prompt = mode.prompt.trim();
+    if mode_prompt.is_empty() {
+        return;
+    }
+
+    prompt.push_str("## Active Mode\n\n");
+    prompt.push_str("Mode: ");
+    prompt.push_str(&mode.name);
+    prompt.push_str(" (");
+    prompt.push_str(&mode.id);
+    prompt.push_str(")\n\n");
+    prompt.push_str(mode_prompt);
+    prompt.push_str("\n\n");
 }
 
 fn append_boot_section(prompt: &mut String, boot_text: Option<&str>) {

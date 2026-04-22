@@ -59,6 +59,7 @@ const READ_METHODS: &[&str] = &[
     "agents.files.list",
     #[cfg(feature = "agent")]
     "agents.files.get",
+    "modes.list",
     "agent.identity.get",
     "skills.list",
     "skills.status",
@@ -148,6 +149,7 @@ const WRITE_METHODS: &[&str] = &[
     "agents.identity.update_soul",
     #[cfg(feature = "agent")]
     "agents.files.set",
+    "modes.set_session",
     "wake",
     "talk.mode",
     "tts.enable",

@@ -321,6 +321,8 @@ impl SessionService for LiveSessionService {
                 "archived": e.archived,
                 "agent_id": agent_id,
                 "agentId": agent_id,
+                "mode_id": e.mode_id,
+                "modeId": e.mode_id,
                 "node_id": e.node_id,
                 "version": e.version,
             }));
@@ -396,6 +398,8 @@ impl SessionService for LiveSessionService {
                     "mcpDisabled": entry.mcp_disabled,
                     "agent_id": entry.agent_id,
                     "agentId": entry.agent_id,
+                    "mode_id": entry.mode_id,
+                    "modeId": entry.mode_id,
                     "node_id": entry.node_id,
                     "version": entry.version,
                 },
@@ -449,6 +453,8 @@ impl SessionService for LiveSessionService {
                 "mcpDisabled": entry.mcp_disabled,
                 "agent_id": entry.agent_id,
                 "agentId": entry.agent_id,
+                "mode_id": entry.mode_id,
+                "modeId": entry.mode_id,
                 "node_id": entry.node_id,
                 "version": entry.version,
             },
@@ -490,6 +496,13 @@ impl SessionService for LiveSessionService {
             self.metadata
                 .set_worktree_branch(key, worktree_branch)
                 .await;
+        }
+        if let Some(mode_id_opt) = p.mode_id {
+            let mode_id = mode_id_opt.filter(|s| !s.is_empty());
+            self.metadata
+                .set_mode_id(key, mode_id.as_deref())
+                .await
+                .map_err(|e| ServiceError::message(e.to_string()))?;
         }
         if let Some(sandbox_image_opt) = p.sandbox_image {
             let sandbox_image = sandbox_image_opt.filter(|s| !s.is_empty());
@@ -558,6 +571,8 @@ impl SessionService for LiveSessionService {
             "mcpDisabled": entry.mcp_disabled,
             "agent_id": entry.agent_id,
             "agentId": entry.agent_id,
+            "mode_id": entry.mode_id,
+            "modeId": entry.mode_id,
             "node_id": entry.node_id,
             "version": entry.version,
         }))

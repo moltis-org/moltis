@@ -206,6 +206,7 @@ The bot automatically registers native Discord slash commands when it connects:
 | `/model` | List or switch the AI model |
 | `/sessions` | List or switch chat sessions |
 | `/agent` | List or switch agents |
+| `/mode` | List or switch temporary session modes |
 | `/help` | Show available commands |
 
 Slash commands appear in Discord's command palette (type `/` in any channel where

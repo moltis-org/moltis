@@ -15,6 +15,8 @@ mod chat;
 mod hooks;
 #[path = "schema/memory.rs"]
 mod memory;
+#[path = "schema/modes.rs"]
+mod modes;
 #[path = "schema/providers.rs"]
 mod providers;
 #[path = "schema/runtime.rs"]
@@ -27,8 +29,8 @@ mod tools;
 mod voice;
 
 pub use {
-    agents::*, chat::*, hooks::*, memory::*, providers::*, runtime::*, system::*, tools::*,
-    voice::*,
+    agents::*, chat::*, hooks::*, memory::*, modes::*, providers::*, runtime::*, system::*,
+    tools::*, voice::*,
 };
 
 // ── Reasoning effort ──────────────────────────────────────────────────────
@@ -231,6 +233,7 @@ pub struct MoltisConfig {
     pub chat: ChatConfig,
     pub tools: ToolsConfig,
     pub agents: AgentsConfig,
+    pub modes: ModesConfig,
     pub skills: SkillsConfig,
     pub mcp: McpConfig,
     pub channels: ChannelsConfig,

@@ -4776,6 +4776,7 @@ class Session {
     __publicField(this, "parentSessionKey");
     __publicField(this, "forkPoint");
     __publicField(this, "agent_id");
+    __publicField(this, "mode_id");
     __publicField(this, "node_id");
     __publicField(this, "mcpDisabled");
     __publicField(this, "archived");
@@ -4811,6 +4812,7 @@ class Session {
     this.parentSessionKey = serverData.parentSessionKey || "";
     this.forkPoint = serverData.forkPoint != null ? serverData.forkPoint : null;
     this.agent_id = serverData.agent_id || "main";
+    this.mode_id = serverData.mode_id || "";
     this.node_id = serverData.node_id || null;
     this.mcpDisabled = serverData.mcpDisabled;
     this.archived = serverData.archived;
@@ -4857,6 +4859,7 @@ class Session {
     this.parentSessionKey = serverData.parentSessionKey || "";
     this.forkPoint = serverData.forkPoint != null ? serverData.forkPoint : null;
     this.agent_id = serverData.agent_id || "main";
+    this.mode_id = serverData.mode_id || "";
     this.node_id = serverData.node_id || null;
     this.mcpDisabled = serverData.mcpDisabled;
     this.archived = serverData.archived;
@@ -4910,6 +4913,7 @@ class Session {
       preview: this.preview,
       archived: this.archived,
       agent_id: this.agent_id,
+      mode_id: this.mode_id,
       node_id: this.node_id,
       version: this.version
     };

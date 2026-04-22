@@ -111,6 +111,57 @@ fn agents_config_defaults_include_builtin_presets() {
 }
 
 #[test]
+fn modes_config_defaults_include_builtin_presets() {
+    let config: MoltisConfig = toml::from_str("").unwrap();
+    for name in [
+        "concise",
+        "technical",
+        "creative",
+        "teacher",
+        "plan",
+        "build",
+        "review",
+        "research",
+        "elevated",
+    ] {
+        assert!(
+            config.modes.presets.contains_key(name),
+            "missing builtin mode {name}"
+        );
+    }
+}
+
+#[test]
+fn modes_config_parses_and_overrides_presets() {
+    let config: MoltisConfig = toml::from_str(
+        r#"
+[modes.presets.concise]
+name = "Tiny"
+description = "short replies"
+prompt = "Answer in one sentence."
+
+[modes.presets.custom]
+name = "Custom"
+description = "custom mode"
+prompt = "Use the custom overlay."
+"#,
+    )
+    .unwrap();
+
+    let concise = config.modes.get_preset("concise").unwrap();
+    assert_eq!(concise.name.as_deref(), Some("Tiny"));
+    assert_eq!(concise.prompt, "Answer in one sentence.");
+    assert!(config.modes.presets.contains_key("technical"));
+    assert_eq!(
+        config
+            .modes
+            .get_preset("custom")
+            .map(|mode| mode.prompt.as_str()),
+        Some("Use the custom overlay.")
+    );
+}
+
+#[test]
 fn mcp_config_defaults_request_timeout() {
     let config: MoltisConfig = toml::from_str("").unwrap();
     assert_eq!(config.mcp.request_timeout_secs, 30);
