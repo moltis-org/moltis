@@ -33,8 +33,10 @@ The agent can also fork programmatically using the `branch_session` tool:
 ```
 
 - **`label`** — label for the new session (required).
-- **`fork_point`** — the message index to fork at (0-based, exclusive;
-  messages 0..N are copied). If omitted, all messages are copied.
+- **`fork_point`** — the message index to fork at (0-based). Messages at
+  indices 0 through N-1 are copied; the message at index N becomes the
+  first new message in the forked session. If omitted, all messages are
+  copied.
 
 The tool returns `{ "key": "<session-key>", "forkPoint": N }`.
 
