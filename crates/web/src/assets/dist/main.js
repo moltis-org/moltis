@@ -3,7 +3,7 @@ var _a, _b;
 import { u, f as forceReconnect, c as connectWs, s as subscribeEvents, _ as _wsConnect } from "./chunks/ws-connect.js";
 import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as commandModeEnabled, e as sessionExecPromptSymbol, g as chatBatchLoading, h as sessionContextWindow, i as sessionToolsEnabled, j as sessionExecMode, k as sessionCurrentInputTokens, _ as __vitePreload, l as setUnseenErrors, m as setUnseenWarns, n as unseenErrors, o as unseenWarns, q as connected, r as sessionStore, t as sessions, v as activeSessionKey, w as lastHistoryIndex, x as setLastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeComboBtn, U as nodeDropdownList, V as nodeCombo, W as nodeDropdown, X as nodeComboLabel, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as j, a7 as setSessionSandboxEnabled, a8 as hostExecIsRoot, a9 as sandboxLabel, aa as sandboxToggleBtn, ab as sessionSandboxEnabled, ac as setSessionSandboxImage, ad as sandboxImageLabel, ae as sandboxInfo, af as sandboxImageDropdown, ag as sandboxImageBtn, ah as sessionSandboxImage, ai as projectStore, aj as setSessions, ak as insertSessionInOrder, al as Session, am as chatSeq, an as setSelectedModelId, ao as modelComboLabel, ap as setSessionSwitchInProgress, aq as setStreamEl, ar as setStreamText, as as setLastToolOutput, at as setVoicePending, au as setActiveSessionKey, av as y$1, aw as d, ax as A, ay as S, az as projectFilterId, aA as getById$1, aB as q, aC as warmAudioPlayback, aD as selectedModelId, aE as formatBytes$3, aF as setCommandModeEnabled, aG as chatHistory, aH as chatHistoryIdx, aI as setChatHistoryDraft, aJ as setChatHistoryIdx, aK as chatHistoryDraft, aL as setChatHistory, aM as R, aN as setChatMsgBox, aO as setChatInput, aP as setChatSendBtn, aQ as setModelCombo, aR as setModelComboBtn, aS as setModelComboLabel, aT as setModelDropdown, aU as setModelSearchInput, aV as setModelDropdownList, aW as setNodeCombo, aX as setNodeComboBtn, aY as setNodeComboLabel, aZ as setNodeDropdown, a_ as setNodeDropdownList, a$ as setSandboxToggleBtn, b0 as setSandboxLabel, b1 as setSandboxImageBtn, b2 as setSandboxImageLabel, b3 as setSandboxImageDropdown, b4 as models, b5 as chatSendBtn, b6 as setModels, b7 as modelComboBtn, b8 as modelSearchInput, b9 as modelDropdownList, ba as modelCombo, bb as modelDropdown, bc as setModelIdx, bd as modelIdx, be as REASONING_SEP, bf as models$1, bg as useSignal, bh as connected$1, bi as setCachedChannels, bj as setRefreshChannelsPage, bk as cachedChannels, bl as setChannelEventUnsub, bm as channelEventUnsub, bn as setProjects, bo as setProjectFilterId, bp as refreshProvidersPage, bq as modelVersionScore, br as streamEl, bs as renderMapPointGroups, bt as renderMapLinks, bu as lastToolOutput, bv as localizeStructuredError, bw as voicePending, bx as streamText, by as setSandboxInfo, bz as networkAuditEventHandler, bA as logsEventHandler, bB as setSubscribed, bC as projects$1, bD as sandboxInfo$1, bE as localizedApiErrorMessage, bF as setLogsEventHandler, bG as setNetworkAuditEventHandler, bH as setRefreshProvidersPage, bI as setLocale, bJ as esc, bK as projectStore$1, bL as _modelStore, bM as S$1, bN as _sessionStoreModule, bO as _i18n, bP as _helpers, bQ as initTheme, bR as injectMarkdownStyles, bS as init, bT as translateStaticElements, bU as setAll$1, bV as setAll$2, bW as select$1, bX as selectedModelId$1 } from "./chunks/theme.js";
 import { f as formatPageTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
-import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as buildTeamsEndpoint, s as generateWebhookSecretHex, u as defaultTeamsBaseUrl, T as TabBar$1, w as channelStorageNote, x as providerApiKeyHelp, y as validateProviderKey, z as completeProviderOAuth, A as startProviderOAuth, B as saveProviderKey, D as testModel, E as isModelServiceNotConfigured, F as isTimeoutError, G as humanizeProbeError, H as eventListeners, I as refresh, J as EmojiPicker, K as validateIdentityFields, L as updateIdentity, N as set, O as prepareCreationOptions, P as detectPasskeyName, Q as fetchVoiceProviders, R as fetchPhrase, S as testTts, U as decodeBase64Safe, V as transcribeAudio$1, W as toggleVoiceProvider, X as saveVoiceKey, Y as saveVoiceSettings, Z as gon, _ as _events } from "./chunks/voice-utils.js";
+import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as buildTeamsEndpoint, s as generateWebhookSecretHex, u as defaultTeamsBaseUrl, T as TabBar$1, w as channelStorageNote, x as providerApiKeyHelp, y as validateProviderKey, z as completeProviderOAuth, A as startProviderOAuth, B as saveProviderKey, D as testModel, E as isModelServiceNotConfigured, F as isTimeoutError, G as humanizeProbeError, H as eventListeners, I as refresh, J as isRepoSource, S as SkillSource, K as CATEGORY_META, L as categoryLabel, N as isDiscoveredSource, O as EmojiPicker, P as validateIdentityFields, Q as updateIdentity, R as set, U as prepareCreationOptions, V as detectPasskeyName, W as fetchVoiceProviders, X as fetchPhrase, Y as testTts, Z as decodeBase64Safe, _ as transcribeAudio$1, $ as toggleVoiceProvider, a0 as saveVoiceKey, a1 as saveVoiceSettings, a2 as gon, a3 as _events } from "./chunks/voice-utils.js";
 import "./chunks/time-format.js";
 const BYTE_UNITS = [
   "B",
@@ -14345,20 +14345,6 @@ function teardownProjects() {
   _projectsContainer = null;
 }
 registerPage(routes.projects, initProjects, teardownProjects);
-var SkillSource = /* @__PURE__ */ ((SkillSource2) => {
-  SkillSource2["Project"] = "project";
-  SkillSource2["Personal"] = "personal";
-  SkillSource2["Plugin"] = "plugin";
-  SkillSource2["Registry"] = "registry";
-  SkillSource2["Bundled"] = "bundled";
-  return SkillSource2;
-})(SkillSource || {});
-function isDiscoveredSource(source) {
-  return source === "personal" || source === "project";
-}
-function isRepoSource(source) {
-  return !!(source == null ? void 0 : source.includes("/"));
-}
 const repos = y([]);
 const enabledSkills = y([]);
 const loading$7 = y(false);
@@ -15044,30 +15030,6 @@ function RepoCard({ repo }) {
     ] })
   ] });
 }
-const CATEGORY_META = {
-  apple: { icon: "🍎", desc: "Apple ecosystem" },
-  audio: { icon: "🎵", desc: "Audio processing" },
-  "autonomous-ai-agents": { icon: "🤖", desc: "Multi-agent orchestration" },
-  creative: { icon: "🎨", desc: "Writing, art, content" },
-  "data-science": { icon: "📊", desc: "Data analysis" },
-  devops: { icon: "⚙️", desc: "Infrastructure, CI/CD" },
-  dogfood: { icon: "🐶", desc: "Internal tooling" },
-  email: { icon: "✉️", desc: "Email automation" },
-  gaming: { icon: "🎮", desc: "Game development" },
-  github: { icon: "🐙", desc: "GitHub workflows" },
-  media: { icon: "📷", desc: "Image and video" },
-  messaging: { icon: "💬", desc: "Chat platforms" },
-  mlops: { icon: "🧠", desc: "ML training and ops" },
-  "note-taking": { icon: "📝", desc: "Notes and knowledge" },
-  productivity: { icon: "⚡", desc: "Task management" },
-  research: { icon: "🔬", desc: "Academic research" },
-  "smart-home": { icon: "🏠", desc: "Home automation" },
-  "social-media": { icon: "📱", desc: "Social platforms" },
-  "software-development": { icon: "💻", desc: "Coding and dev tools" }
-};
-function categoryLabel(name) {
-  return name.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-}
 const bundledCategories = y([]);
 const bundledTotal = y(0);
 function fetchBundledCategories() {
@@ -15105,7 +15067,7 @@ function BundledCategoriesSection() {
   const enabledCount = cats.filter((c) => c.enabled).length;
   return /* @__PURE__ */ u("div", { className: "skills-section", children: [
     /* @__PURE__ */ u("div", { className: "flex items-center gap-3 mb-2", children: /* @__PURE__ */ u("h3", { className: "skills-section-title", style: { margin: 0 }, children: [
-      "Bundled Skill Categories",
+      t("skills:bundledTitle"),
       /* @__PURE__ */ u("span", { className: "ml-2 text-xs font-normal text-[var(--muted)]", children: [
         "(",
         enabledCount,
@@ -15114,7 +15076,7 @@ function BundledCategoriesSection() {
         " enabled)"
       ] })
     ] }) }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] mb-3", children: "Toggle categories of built-in skills. Disabled categories are excluded from the agent context." }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] mb-3", children: t("skills:bundledDescription") }),
     /* @__PURE__ */ u("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2", children: cats.map((cat) => {
       const meta = CATEGORY_META[cat.name];
       const icon = (meta == null ? void 0 : meta.icon) || "📦";

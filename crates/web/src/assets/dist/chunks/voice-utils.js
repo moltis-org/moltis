@@ -475,6 +475,41 @@ function saveProviderKey(providerName, apiKey, baseUrl, model) {
   const payload = buildSaveKeyPayload(providerName, apiKey, baseUrl, model);
   return sendRpc("providers.save_key", payload);
 }
+const SkillSource = {
+  Project: "project",
+  Personal: "personal",
+  Bundled: "bundled"
+};
+function isDiscoveredSource(source) {
+  return source === SkillSource.Personal || source === SkillSource.Project;
+}
+function isRepoSource(source) {
+  return !!(source == null ? void 0 : source.includes("/"));
+}
+const CATEGORY_META = {
+  apple: { icon: "🍎", desc: "Apple ecosystem (Shortcuts, HomeKit)" },
+  audio: { icon: "🎵", desc: "Audio processing and music" },
+  "autonomous-ai-agents": { icon: "🤖", desc: "Multi-agent orchestration" },
+  creative: { icon: "🎨", desc: "Writing, art, and content creation" },
+  "data-science": { icon: "📊", desc: "Data analysis and visualization" },
+  devops: { icon: "⚙️", desc: "Infrastructure, CI/CD, and deployment" },
+  dogfood: { icon: "🐶", desc: "Internal tooling and self-reference" },
+  email: { icon: "✉️", desc: "Email management and automation" },
+  gaming: { icon: "🎮", desc: "Game development and gaming tools" },
+  github: { icon: "🐙", desc: "GitHub workflows and integrations" },
+  media: { icon: "📷", desc: "Image, video, and media processing" },
+  messaging: { icon: "💬", desc: "Chat platforms and messaging" },
+  mlops: { icon: "🧠", desc: "ML training, fine-tuning, and deployment" },
+  "note-taking": { icon: "📝", desc: "Notes and knowledge management" },
+  productivity: { icon: "⚡", desc: "Task management and workflows" },
+  research: { icon: "🔬", desc: "Academic papers and web research" },
+  "smart-home": { icon: "🏠", desc: "Home automation and IoT" },
+  "social-media": { icon: "📱", desc: "Social platform integrations" },
+  "software-development": { icon: "💻", desc: "Coding, testing, and dev tools" }
+};
+function categoryLabel(name) {
+  return name.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
 const EMOJI_LIST = [
   "🐶",
   "🐱",
@@ -765,7 +800,7 @@ function decodeBase64Safe(input) {
   return bytes;
 }
 export {
-  VOICE_COUNTERPART_IDS as $,
+  toggleVoiceProvider as $,
   startProviderOAuth as A,
   saveProviderKey as B,
   ChannelType as C,
@@ -775,25 +810,30 @@ export {
   humanizeProbeError as G,
   eventListeners as H,
   refresh as I,
-  EmojiPicker as J,
-  validateIdentityFields as K,
-  updateIdentity as L,
+  isRepoSource as J,
+  CATEGORY_META as K,
+  categoryLabel as L,
   MATRIX_DEFAULT_HOMESERVER as M,
-  set as N,
-  prepareCreationOptions as O,
-  detectPasskeyName as P,
-  fetchVoiceProviders as Q,
-  fetchPhrase as R,
-  testTts as S,
+  isDiscoveredSource as N,
+  EmojiPicker as O,
+  validateIdentityFields as P,
+  updateIdentity as Q,
+  set as R,
+  SkillSource as S,
   TabBar as T,
-  decodeBase64Safe as U,
-  transcribeAudio as V,
-  toggleVoiceProvider as W,
-  saveVoiceKey as X,
-  saveVoiceSettings as Y,
-  gon$1 as Z,
-  _events as _,
+  prepareCreationOptions as U,
+  detectPasskeyName as V,
+  fetchVoiceProviders as W,
+  fetchPhrase as X,
+  testTts as Y,
+  decodeBase64Safe as Z,
+  transcribeAudio as _,
   onChange as a,
+  saveVoiceKey as a0,
+  saveVoiceSettings as a1,
+  gon$1 as a2,
+  _events as a3,
+  VOICE_COUNTERPART_IDS as a4,
   addChannel as b,
   MATRIX_ENCRYPTION_GUIDANCE as c,
   targetChecked as d,

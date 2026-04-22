@@ -9,11 +9,19 @@ import { useEffect, useRef } from "preact/hooks";
 import { TabBar } from "../components/forms/Tabs";
 import { onEvent } from "../events";
 import { sendRpc } from "../helpers";
+import { t } from "../i18n";
 import { updateNavCount } from "../nav-counts";
 import { registerPage } from "../router";
 import { routes } from "../routes";
 import * as S from "../state";
-import { isDiscoveredSource, isRepoSource, SkillSource } from "../types/skill-source";
+import {
+	type BundledCategory,
+	CATEGORY_META,
+	categoryLabel,
+	isDiscoveredSource,
+	isRepoSource,
+	SkillSource,
+} from "../types/skill-source";
 import { ConfirmDialog, requestConfirm } from "../ui";
 
 // ── Types ────────────────────────────────────────────────────
@@ -788,43 +796,6 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 	);
 }
 
-// ── Category display names ──────────────────────────────────
-
-const CATEGORY_META: Record<string, { icon: string; desc: string }> = {
-	apple: { icon: "\uD83C\uDF4E", desc: "Apple ecosystem" },
-	audio: { icon: "\uD83C\uDFB5", desc: "Audio processing" },
-	"autonomous-ai-agents": { icon: "\uD83E\uDD16", desc: "Multi-agent orchestration" },
-	creative: { icon: "\uD83C\uDFA8", desc: "Writing, art, content" },
-	"data-science": { icon: "\uD83D\uDCCA", desc: "Data analysis" },
-	devops: { icon: "\u2699\uFE0F", desc: "Infrastructure, CI/CD" },
-	dogfood: { icon: "\uD83D\uDC36", desc: "Internal tooling" },
-	email: { icon: "\u2709\uFE0F", desc: "Email automation" },
-	gaming: { icon: "\uD83C\uDFAE", desc: "Game development" },
-	github: { icon: "\uD83D\uDC19", desc: "GitHub workflows" },
-	media: { icon: "\uD83D\uDCF7", desc: "Image and video" },
-	messaging: { icon: "\uD83D\uDCAC", desc: "Chat platforms" },
-	mlops: { icon: "\uD83E\uDDE0", desc: "ML training and ops" },
-	"note-taking": { icon: "\uD83D\uDCDD", desc: "Notes and knowledge" },
-	productivity: { icon: "\u26A1", desc: "Task management" },
-	research: { icon: "\uD83D\uDD2C", desc: "Academic research" },
-	"smart-home": { icon: "\uD83C\uDFE0", desc: "Home automation" },
-	"social-media": { icon: "\uD83D\uDCF1", desc: "Social platforms" },
-	"software-development": { icon: "\uD83D\uDCBB", desc: "Coding and dev tools" },
-};
-
-function categoryLabel(name: string): string {
-	return name
-		.split("-")
-		.map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-		.join(" ");
-}
-
-interface BundledCategory {
-	name: string;
-	count: number;
-	enabled: boolean;
-}
-
 const bundledCategories = signal<BundledCategory[]>([]);
 const bundledTotal = signal(0);
 
@@ -871,15 +842,13 @@ function BundledCategoriesSection(): VNode {
 		<div className="skills-section">
 			<div className="flex items-center gap-3 mb-2">
 				<h3 className="skills-section-title" style={{ margin: 0 }}>
-					Bundled Skill Categories
+					{t("skills:bundledTitle")}
 					<span className="ml-2 text-xs font-normal text-[var(--muted)]">
 						({enabledCount}/{cats.length} enabled)
 					</span>
 				</h3>
 			</div>
-			<p className="text-xs text-[var(--muted)] mb-3">
-				Toggle categories of built-in skills. Disabled categories are excluded from the agent context.
-			</p>
+			<p className="text-xs text-[var(--muted)] mb-3">{t("skills:bundledDescription")}</p>
 			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
 				{cats.map((cat) => {
 					const meta = CATEGORY_META[cat.name];

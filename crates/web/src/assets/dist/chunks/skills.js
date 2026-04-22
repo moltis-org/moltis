@@ -89,6 +89,9 @@ const skills = {
   securitySandbox: "With sandbox mode enabled (Docker, Apple Container, or cgroup), command execution is isolated and the damage a malicious skill can do is significantly limited.",
   dismiss: "Dismiss",
   disableAllThirdParty: "Disable all third-party skills",
+  // ── Bundled categories ──────────────────────────────────
+  bundledTitle: "Bundled Skill Categories",
+  bundledDescription: "Toggle categories of built-in skills. Disabled categories are excluded from the agent context.",
   // ── Featured skill descriptions ─────────────────────────
   featuredOpenClaw: "Community skills from ClawdHub",
   featuredAnthropic: "Official Anthropic agent skills",

@@ -174,6 +174,13 @@ const onboarding = {
     connecting: "连接中…",
     connectBot: "连接机器人"
   },
+  // ── Skills step ──────────────────────────────────────────
+  skills: {
+    title: "内置技能",
+    description: "Moltis 附带了许多领域的技能。禁用不需要的类别以保持代理专注。您可以稍后在设置中更改。",
+    enableAll: "全部启用",
+    disableAll: "全部禁用"
+  },
   // ── Summary step ─────────────────────────────────────────
   summary: {
     loadingSummary: "加载总结中…",

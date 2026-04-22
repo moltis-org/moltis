@@ -184,6 +184,15 @@ export default {
 		connectBot: "Connect Bot",
 	},
 
+	// ── Skills step ──────────────────────────────────────────
+	skills: {
+		title: "Skills inclus",
+		description:
+			"Moltis inclut des compétences dans de nombreux domaines. Désactivez les catégories dont vous n'avez pas besoin pour garder l'agent concentré. Vous pouvez modifier cela plus tard dans les Paramètres.",
+		enableAll: "Tout activer",
+		disableAll: "Tout désactiver",
+	},
+
 	// ── Summary step ─────────────────────────────────────────
 	summary: {
 		loadingSummary: "Loading summary\u2026",

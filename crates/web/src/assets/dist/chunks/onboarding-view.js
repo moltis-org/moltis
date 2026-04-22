@@ -1,6 +1,6 @@
 import { c as connectWs, s as subscribeEvents, u } from "./ws-connect.js";
 import { Z as t, aw as d, av as y, ax as A, b as sendRpc, ay as S, bq as modelVersionScore, v as activeSessionKey, aM as R } from "./theme.js";
-import { H as eventListeners, t as targetValue, O as prepareCreationOptions, P as detectPasskeyName, w as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, T as TabBar, g as get, u as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, s as generateWebhookSecretHex, r as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, I as refresh, J as EmojiPicker, K as validateIdentityFields, L as updateIdentity, z as completeProviderOAuth, B as saveProviderKey, y as validateProviderKey, x as providerApiKeyHelp, D as testModel, E as isModelServiceNotConfigured, G as humanizeProbeError, A as startProviderOAuth, Q as fetchVoiceProviders, W as toggleVoiceProvider, X as saveVoiceKey, Y as saveVoiceSettings, $ as VOICE_COUNTERPART_IDS, R as fetchPhrase, S as testTts, U as decodeBase64Safe, V as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
+import { H as eventListeners, t as targetValue, U as prepareCreationOptions, V as detectPasskeyName, w as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, T as TabBar, g as get, u as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, s as generateWebhookSecretHex, r as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, I as refresh, O as EmojiPicker, P as validateIdentityFields, Q as updateIdentity, z as completeProviderOAuth, B as saveProviderKey, y as validateProviderKey, x as providerApiKeyHelp, D as testModel, E as isModelServiceNotConfigured, G as humanizeProbeError, A as startProviderOAuth, K as CATEGORY_META, L as categoryLabel, W as fetchVoiceProviders, $ as toggleVoiceProvider, a0 as saveVoiceKey, a1 as saveVoiceSettings, a4 as VOICE_COUNTERPART_IDS, X as fetchPhrase, Y as testTts, Z as decodeBase64Safe, _ as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
 var WsEventName = /* @__PURE__ */ ((WsEventName2) => {
   WsEventName2["Chat"] = "chat";
   WsEventName2["Error"] = "error";
@@ -3834,35 +3834,11 @@ function ProviderStep({ onNext, onBack }) {
     ] })
   ] });
 }
-const CATEGORY_META = {
-  apple: { icon: "🍎", desc: "Apple ecosystem (Shortcuts, HomeKit)" },
-  audio: { icon: "🎵", desc: "Audio processing and music" },
-  "autonomous-ai-agents": { icon: "🤖", desc: "Multi-agent orchestration" },
-  creative: { icon: "🎨", desc: "Writing, art, and content creation" },
-  "data-science": { icon: "📊", desc: "Data analysis and visualization" },
-  devops: { icon: "⚙️", desc: "Infrastructure, CI/CD, and deployment" },
-  dogfood: { icon: "🐶", desc: "Internal tooling and self-reference" },
-  email: { icon: "✉️", desc: "Email management and automation" },
-  gaming: { icon: "🎮", desc: "Game development and gaming tools" },
-  github: { icon: "🐙", desc: "GitHub workflows and integrations" },
-  media: { icon: "📷", desc: "Image, video, and media processing" },
-  messaging: { icon: "💬", desc: "Chat platforms and messaging" },
-  mlops: { icon: "🧠", desc: "ML training, fine-tuning, and deployment" },
-  "note-taking": { icon: "📝", desc: "Notes and knowledge management" },
-  productivity: { icon: "⚡", desc: "Task management and workflows" },
-  research: { icon: "🔬", desc: "Academic papers and web research" },
-  "smart-home": { icon: "🏠", desc: "Home automation and IoT" },
-  "social-media": { icon: "📱", desc: "Social platform integrations" },
-  "software-development": { icon: "💻", desc: "Coding, testing, and dev tools" }
-};
-function categoryLabel(name) {
-  return name.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-}
 function SkillsStep({ onNext, onBack }) {
   const [categories, setCategories] = d([]);
   const [totalSkills, setTotalSkills] = d(0);
   const [loading, setLoading] = d(true);
-  const [toggling, setToggling] = d(null);
+  const [busy, setBusy] = d(false);
   y(() => {
     sendRpc("skills.bundled.categories", {}).then((res) => {
       if (res == null ? void 0 : res.ok) {
@@ -3874,32 +3850,33 @@ function SkillsStep({ onNext, onBack }) {
     });
   }, []);
   function toggle(cat) {
-    if (toggling) return;
+    if (busy) return;
     const newEnabled = !cat.enabled;
-    setToggling(cat.name);
+    setBusy(true);
     sendRpc("skills.bundled.toggle_category", { category: cat.name, enabled: newEnabled }).then((res) => {
-      setToggling(null);
+      setBusy(false);
       if (res == null ? void 0 : res.ok) {
         setCategories((prev) => prev.map((c) => c.name === cat.name ? { ...c, enabled: newEnabled } : c));
       }
     });
   }
-  function enableAll() {
-    const disabled = categories.filter((c) => !c.enabled);
-    if (!disabled.length) return;
+  function bulkToggle(enabled) {
+    const targets = categories.filter((c) => c.enabled !== enabled);
+    if (!targets.length || busy) return;
+    setBusy(true);
     Promise.all(
-      disabled.map((c) => sendRpc("skills.bundled.toggle_category", { category: c.name, enabled: true }))
-    ).then(() => {
-      setCategories((prev) => prev.map((c) => ({ ...c, enabled: true })));
-    });
-  }
-  function disableAll() {
-    const enabled = categories.filter((c) => c.enabled);
-    if (!enabled.length) return;
-    Promise.all(
-      enabled.map((c) => sendRpc("skills.bundled.toggle_category", { category: c.name, enabled: false }))
-    ).then(() => {
-      setCategories((prev) => prev.map((c) => ({ ...c, enabled: false })));
+      targets.map(
+        (c) => sendRpc("skills.bundled.toggle_category", { category: c.name, enabled }).then((res) => ({
+          name: c.name,
+          ok: !!(res == null ? void 0 : res.ok)
+        }))
+      )
+    ).then((results) => {
+      setBusy(false);
+      const succeeded = new Set(results.filter((r) => r.ok).map((r) => r.name));
+      if (succeeded.size > 0) {
+        setCategories((prev) => prev.map((c) => succeeded.has(c.name) ? { ...c, enabled } : c));
+      }
     });
   }
   const enabledCount = categories.filter((c) => c.enabled).length;
@@ -3928,7 +3905,8 @@ function SkillsStep({ onNext, onBack }) {
             {
               type: "button",
               className: "text-xs text-[var(--accent)] hover:underline cursor-pointer bg-transparent border-none p-0",
-              onClick: enableAll,
+              disabled: busy,
+              onClick: () => bulkToggle(true),
               children: t("onboarding:skills.enableAll")
             }
           ),
@@ -3938,7 +3916,8 @@ function SkillsStep({ onNext, onBack }) {
             {
               type: "button",
               className: "text-xs text-[var(--accent)] hover:underline cursor-pointer bg-transparent border-none p-0",
-              onClick: disableAll,
+              disabled: busy,
+              onClick: () => bulkToggle(false),
               children: t("onboarding:skills.disableAll")
             }
           )
@@ -3953,7 +3932,7 @@ function SkillsStep({ onNext, onBack }) {
           {
             type: "button",
             onClick: () => toggle(cat),
-            disabled: toggling === cat.name,
+            disabled: busy,
             className: `flex items-start gap-3 p-3 rounded-md border text-left cursor-pointer transition-colors ${cat.enabled ? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]" : "border-[var(--border)] bg-[var(--surface)] opacity-60"}`,
             children: [
               /* @__PURE__ */ u("span", { className: "text-lg shrink-0 mt-0.5", children: icon }),

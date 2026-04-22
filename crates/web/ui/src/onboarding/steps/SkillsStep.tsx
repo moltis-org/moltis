@@ -7,45 +7,7 @@ import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { sendRpc } from "../../helpers";
 import { t } from "../../i18n";
-
-// ── Types ───────────────────────────────────────────────────
-
-interface BundledCategory {
-	name: string;
-	count: number;
-	enabled: boolean;
-}
-
-// ── Category display names and descriptions ─────────────────
-
-const CATEGORY_META: Record<string, { icon: string; desc: string }> = {
-	apple: { icon: "\uD83C\uDF4E", desc: "Apple ecosystem (Shortcuts, HomeKit)" },
-	audio: { icon: "\uD83C\uDFB5", desc: "Audio processing and music" },
-	"autonomous-ai-agents": { icon: "\uD83E\uDD16", desc: "Multi-agent orchestration" },
-	creative: { icon: "\uD83C\uDFA8", desc: "Writing, art, and content creation" },
-	"data-science": { icon: "\uD83D\uDCCA", desc: "Data analysis and visualization" },
-	devops: { icon: "\u2699\uFE0F", desc: "Infrastructure, CI/CD, and deployment" },
-	dogfood: { icon: "\uD83D\uDC36", desc: "Internal tooling and self-reference" },
-	email: { icon: "\u2709\uFE0F", desc: "Email management and automation" },
-	gaming: { icon: "\uD83C\uDFAE", desc: "Game development and gaming tools" },
-	github: { icon: "\uD83D\uDC19", desc: "GitHub workflows and integrations" },
-	media: { icon: "\uD83D\uDCF7", desc: "Image, video, and media processing" },
-	messaging: { icon: "\uD83D\uDCAC", desc: "Chat platforms and messaging" },
-	mlops: { icon: "\uD83E\uDDE0", desc: "ML training, fine-tuning, and deployment" },
-	"note-taking": { icon: "\uD83D\uDCDD", desc: "Notes and knowledge management" },
-	productivity: { icon: "\u26A1", desc: "Task management and workflows" },
-	research: { icon: "\uD83D\uDD2C", desc: "Academic papers and web research" },
-	"smart-home": { icon: "\uD83C\uDFE0", desc: "Home automation and IoT" },
-	"social-media": { icon: "\uD83D\uDCF1", desc: "Social platform integrations" },
-	"software-development": { icon: "\uD83D\uDCBB", desc: "Coding, testing, and dev tools" },
-};
-
-function categoryLabel(name: string): string {
-	return name
-		.split("-")
-		.map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-		.join(" ");
-}
+import { type BundledCategory, CATEGORY_META, categoryLabel } from "../../types/skill-source";
 
 // ── SkillsStep ──────────────────────────────────────────────
 
@@ -53,7 +15,7 @@ export function SkillsStep({ onNext, onBack }: { onNext: () => void; onBack?: ((
 	const [categories, setCategories] = useState<BundledCategory[]>([]);
 	const [totalSkills, setTotalSkills] = useState(0);
 	const [loading, setLoading] = useState(true);
-	const [toggling, setToggling] = useState<string | null>(null);
+	const [busy, setBusy] = useState(false);
 
 	useEffect(() => {
 		sendRpc("skills.bundled.categories", {}).then((res) => {
@@ -67,34 +29,34 @@ export function SkillsStep({ onNext, onBack }: { onNext: () => void; onBack?: ((
 	}, []);
 
 	function toggle(cat: BundledCategory): void {
-		if (toggling) return;
+		if (busy) return;
 		const newEnabled = !cat.enabled;
-		setToggling(cat.name);
+		setBusy(true);
 		sendRpc("skills.bundled.toggle_category", { category: cat.name, enabled: newEnabled }).then((res) => {
-			setToggling(null);
+			setBusy(false);
 			if (res?.ok) {
 				setCategories((prev) => prev.map((c) => (c.name === cat.name ? { ...c, enabled: newEnabled } : c)));
 			}
 		});
 	}
 
-	function enableAll(): void {
-		const disabled = categories.filter((c) => !c.enabled);
-		if (!disabled.length) return;
+	function bulkToggle(enabled: boolean): void {
+		const targets = categories.filter((c) => c.enabled !== enabled);
+		if (!targets.length || busy) return;
+		setBusy(true);
 		Promise.all(
-			disabled.map((c) => sendRpc("skills.bundled.toggle_category", { category: c.name, enabled: true })),
-		).then(() => {
-			setCategories((prev) => prev.map((c) => ({ ...c, enabled: true })));
-		});
-	}
-
-	function disableAll(): void {
-		const enabled = categories.filter((c) => c.enabled);
-		if (!enabled.length) return;
-		Promise.all(
-			enabled.map((c) => sendRpc("skills.bundled.toggle_category", { category: c.name, enabled: false })),
-		).then(() => {
-			setCategories((prev) => prev.map((c) => ({ ...c, enabled: false })));
+			targets.map((c) =>
+				sendRpc("skills.bundled.toggle_category", { category: c.name, enabled }).then((res) => ({
+					name: c.name,
+					ok: !!res?.ok,
+				})),
+			),
+		).then((results) => {
+			setBusy(false);
+			const succeeded = new Set(results.filter((r) => r.ok).map((r) => r.name));
+			if (succeeded.size > 0) {
+				setCategories((prev) => prev.map((c) => (succeeded.has(c.name) ? { ...c, enabled } : c)));
+			}
 		});
 	}
 
@@ -121,7 +83,8 @@ export function SkillsStep({ onNext, onBack }: { onNext: () => void; onBack?: ((
 							<button
 								type="button"
 								className="text-xs text-[var(--accent)] hover:underline cursor-pointer bg-transparent border-none p-0"
-								onClick={enableAll}
+								disabled={busy}
+								onClick={() => bulkToggle(true)}
 							>
 								{t("onboarding:skills.enableAll")}
 							</button>
@@ -129,7 +92,8 @@ export function SkillsStep({ onNext, onBack }: { onNext: () => void; onBack?: ((
 							<button
 								type="button"
 								className="text-xs text-[var(--accent)] hover:underline cursor-pointer bg-transparent border-none p-0"
-								onClick={disableAll}
+								disabled={busy}
+								onClick={() => bulkToggle(false)}
 							>
 								{t("onboarding:skills.disableAll")}
 							</button>
@@ -146,7 +110,7 @@ export function SkillsStep({ onNext, onBack }: { onNext: () => void; onBack?: ((
 									key={cat.name}
 									type="button"
 									onClick={() => toggle(cat)}
-									disabled={toggling === cat.name}
+									disabled={busy}
 									className={`flex items-start gap-3 p-3 rounded-md border text-left cursor-pointer transition-colors ${
 										cat.enabled
 											? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]"
