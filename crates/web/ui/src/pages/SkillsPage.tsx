@@ -12,6 +12,7 @@ import { updateNavCount } from "../nav-counts";
 import { registerPage } from "../router";
 import { routes } from "../routes";
 import * as S from "../state";
+import { isDiscoveredSource, isRepoSource, SkillSource } from "../types/skill-source";
 import { ConfirmDialog, requestConfirm } from "../ui";
 
 // ── Types ────────────────────────────────────────────────────
@@ -482,7 +483,7 @@ function SkillDetailPanel({
 		}
 	}, [d?.body_html]);
 	if (!d) return null;
-	const isDisc = d.source === "personal" || d.source === "project";
+	const isDisc = isDiscoveredSource(d.source);
 	function doToggle(): void {
 		actionBusy.value = true;
 		sendRpc(d.enabled ? "skills.skill.disable" : "skills.skill.enable", { source: repoSource, skill: d.name }).then(
@@ -824,6 +825,133 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 	);
 }
 
+// ── Category display names ──────────────────────────────────
+
+const CATEGORY_META: Record<string, { icon: string; desc: string }> = {
+	apple: { icon: "\uD83C\uDF4E", desc: "Apple ecosystem" },
+	audio: { icon: "\uD83C\uDFB5", desc: "Audio processing" },
+	"autonomous-ai-agents": { icon: "\uD83E\uDD16", desc: "Multi-agent orchestration" },
+	creative: { icon: "\uD83C\uDFA8", desc: "Writing, art, content" },
+	"data-science": { icon: "\uD83D\uDCCA", desc: "Data analysis" },
+	devops: { icon: "\u2699\uFE0F", desc: "Infrastructure, CI/CD" },
+	dogfood: { icon: "\uD83D\uDC36", desc: "Internal tooling" },
+	email: { icon: "\u2709\uFE0F", desc: "Email automation" },
+	gaming: { icon: "\uD83C\uDFAE", desc: "Game development" },
+	github: { icon: "\uD83D\uDC19", desc: "GitHub workflows" },
+	media: { icon: "\uD83D\uDCF7", desc: "Image and video" },
+	messaging: { icon: "\uD83D\uDCAC", desc: "Chat platforms" },
+	mlops: { icon: "\uD83E\uDDE0", desc: "ML training and ops" },
+	"note-taking": { icon: "\uD83D\uDCDD", desc: "Notes and knowledge" },
+	productivity: { icon: "\u26A1", desc: "Task management" },
+	research: { icon: "\uD83D\uDD2C", desc: "Academic research" },
+	"smart-home": { icon: "\uD83C\uDFE0", desc: "Home automation" },
+	"social-media": { icon: "\uD83D\uDCF1", desc: "Social platforms" },
+	"software-development": { icon: "\uD83D\uDCBB", desc: "Coding and dev tools" },
+};
+
+function categoryLabel(name: string): string {
+	return name
+		.split("-")
+		.map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+		.join(" ");
+}
+
+interface BundledCategory {
+	name: string;
+	count: number;
+	enabled: boolean;
+}
+
+const bundledCategories = signal<BundledCategory[]>([]);
+const bundledTotal = signal(0);
+
+function fetchBundledCategories(): void {
+	sendRpc("skills.bundled.categories", {}).then((res) => {
+		if (res?.ok) {
+			const payload = res.payload as { categories?: BundledCategory[]; total_skills?: number };
+			bundledCategories.value = payload.categories || [];
+			bundledTotal.value = payload.total_skills || 0;
+		}
+	});
+}
+
+function BundledCategoriesSection(): VNode {
+	const cats = bundledCategories.value;
+	const toggling = useSignal<string | null>(null);
+
+	useEffect(() => {
+		fetchBundledCategories();
+	}, []);
+
+	if (!cats.length) return <></>;
+
+	function toggle(cat: BundledCategory): void {
+		if (toggling.value) return;
+		const newEnabled = !cat.enabled;
+		toggling.value = cat.name;
+		sendRpc("skills.bundled.toggle_category", { category: cat.name, enabled: newEnabled }).then((res) => {
+			toggling.value = null;
+			if (res?.ok) {
+				bundledCategories.value = bundledCategories.value.map((c) =>
+					c.name === cat.name ? { ...c, enabled: newEnabled } : c,
+				);
+				fetchAll();
+			} else {
+				showToast(`Failed: ${res?.error || "unknown"}`, "error");
+			}
+		});
+	}
+
+	const enabledCount = cats.filter((c) => c.enabled).length;
+
+	return (
+		<div className="skills-section">
+			<div className="flex items-center gap-3 mb-2">
+				<h3 className="skills-section-title" style={{ margin: 0 }}>
+					Bundled Skill Categories
+					<span className="ml-2 text-xs font-normal text-[var(--muted)]">
+						({enabledCount}/{cats.length} enabled)
+					</span>
+				</h3>
+			</div>
+			<p className="text-xs text-[var(--muted)] mb-3">
+				Toggle categories of built-in skills. Disabled categories are excluded from the agent context.
+			</p>
+			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+				{cats.map((cat) => {
+					const meta = CATEGORY_META[cat.name];
+					const icon = meta?.icon || "\uD83D\uDCE6";
+					return (
+						<button
+							key={cat.name}
+							type="button"
+							onClick={() => toggle(cat)}
+							disabled={toggling.value === cat.name}
+							className={`flex items-center gap-2 px-3 py-2 rounded-md border text-left cursor-pointer transition-colors ${
+								cat.enabled
+									? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]"
+									: "border-[var(--border)] bg-[var(--surface)] opacity-60"
+							}`}
+						>
+							<span className="text-base shrink-0">{icon}</span>
+							<div className="flex-1 min-w-0">
+								<span className="text-xs font-medium text-[var(--text-strong)]">{categoryLabel(cat.name)}</span>
+								<span className="text-xs text-[var(--muted)] ml-1">({cat.count})</span>
+								{meta?.desc && <div className="text-xs text-[var(--muted)] truncate">{meta.desc}</div>}
+							</div>
+							{cat.enabled ? (
+								<span className="icon icon-check-circle text-[var(--accent)] shrink-0" />
+							) : (
+								<span className="w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block shrink-0" />
+							)}
+						</button>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
 function ReposSection(): VNode {
 	return (
 		<div className="skills-section">
@@ -870,7 +998,7 @@ function EnabledSkillsTable(): VNode | null {
 	});
 
 	function isDisc(sk: SkillSummary): boolean {
-		return sk.source === "personal" || sk.source === "project";
+		return isDiscoveredSource(sk.source);
 	}
 	function doDisable(sk: SkillSummary): void {
 		pending.value = sk.name;
@@ -1027,10 +1155,10 @@ function EnabledSkillsTable(): VNode | null {
 										</td>
 										<td style={{ padding: "8px 12px" }}>{sk.description || "\u2014"}</td>
 										<td style={{ padding: "8px 12px" }}>
-											<span className={sk.source?.includes("/") ? "tier-badge" : "recommended-badge"}>{sk.source}</span>
+											<span className={isRepoSource(sk.source) ? "tier-badge" : "recommended-badge"}>{sk.source}</span>
 										</td>
 										<td style={{ padding: "8px 12px", textAlign: "right" }}>
-											{sk.source !== "bundled" && (
+											{sk.source !== SkillSource.Bundled && (
 												<button
 													disabled={(isDisc(sk) && sk.protected === true) || pending.value === sk.name}
 													className={
@@ -1112,6 +1240,7 @@ function SkillsPageComponent(): VNode {
 				</a>
 			</p>
 			<SecurityWarning />
+			<BundledCategoriesSection />
 			<InstallBox />
 			<BundleTransferBox />
 			<InstallProgressBar />

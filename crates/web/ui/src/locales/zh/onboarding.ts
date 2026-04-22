@@ -7,6 +7,7 @@ export default {
 		identity: "身份",
 		llm: "大语言模型",
 		voice: "语音",
+		skills: "技能",
 		remoteAccess: "远程访问",
 		channel: "频道",
 		summary: "总结",

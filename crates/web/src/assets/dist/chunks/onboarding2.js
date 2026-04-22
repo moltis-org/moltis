@@ -5,6 +5,7 @@ const onboarding = {
     identity: "Identity",
     llm: "LLM",
     voice: "Voice",
+    skills: "Skills",
     remoteAccess: "Accès distant",
     channel: "Channel",
     summary: "Summary"

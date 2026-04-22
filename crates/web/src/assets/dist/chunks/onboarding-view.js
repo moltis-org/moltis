@@ -3818,6 +3818,154 @@ function ProviderStep({ onNext, onBack }) {
     ] })
   ] });
 }
+const CATEGORY_META = {
+  apple: { icon: "🍎", desc: "Apple ecosystem (Shortcuts, HomeKit)" },
+  audio: { icon: "🎵", desc: "Audio processing and music" },
+  "autonomous-ai-agents": { icon: "🤖", desc: "Multi-agent orchestration" },
+  creative: { icon: "🎨", desc: "Writing, art, and content creation" },
+  "data-science": { icon: "📊", desc: "Data analysis and visualization" },
+  devops: { icon: "⚙️", desc: "Infrastructure, CI/CD, and deployment" },
+  dogfood: { icon: "🐶", desc: "Internal tooling and self-reference" },
+  email: { icon: "✉️", desc: "Email management and automation" },
+  gaming: { icon: "🎮", desc: "Game development and gaming tools" },
+  github: { icon: "🐙", desc: "GitHub workflows and integrations" },
+  media: { icon: "📷", desc: "Image, video, and media processing" },
+  messaging: { icon: "💬", desc: "Chat platforms and messaging" },
+  mlops: { icon: "🧠", desc: "ML training, fine-tuning, and deployment" },
+  "note-taking": { icon: "📝", desc: "Notes and knowledge management" },
+  productivity: { icon: "⚡", desc: "Task management and workflows" },
+  research: { icon: "🔬", desc: "Academic papers and web research" },
+  "smart-home": { icon: "🏠", desc: "Home automation and IoT" },
+  "social-media": { icon: "📱", desc: "Social platform integrations" },
+  "software-development": { icon: "💻", desc: "Coding, testing, and dev tools" }
+};
+function categoryLabel(name) {
+  return name.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+function SkillsStep({ onNext, onBack }) {
+  const [categories, setCategories] = d([]);
+  const [totalSkills, setTotalSkills] = d(0);
+  const [loading, setLoading] = d(true);
+  const [toggling, setToggling] = d(null);
+  y(() => {
+    sendRpc("skills.bundled.categories", {}).then((res) => {
+      if (res == null ? void 0 : res.ok) {
+        const payload = res.payload;
+        setCategories(payload.categories || []);
+        setTotalSkills(payload.total_skills || 0);
+      }
+      setLoading(false);
+    });
+  }, []);
+  function toggle(cat) {
+    if (toggling) return;
+    const newEnabled = !cat.enabled;
+    setToggling(cat.name);
+    sendRpc("skills.bundled.toggle_category", { category: cat.name, enabled: newEnabled }).then((res) => {
+      setToggling(null);
+      if (res == null ? void 0 : res.ok) {
+        setCategories((prev) => prev.map((c) => c.name === cat.name ? { ...c, enabled: newEnabled } : c));
+      }
+    });
+  }
+  function enableAll() {
+    const disabled = categories.filter((c) => !c.enabled);
+    if (!disabled.length) return;
+    Promise.all(
+      disabled.map((c) => sendRpc("skills.bundled.toggle_category", { category: c.name, enabled: true }))
+    ).then(() => {
+      setCategories((prev) => prev.map((c) => ({ ...c, enabled: true })));
+    });
+  }
+  function disableAll() {
+    const enabled = categories.filter((c) => c.enabled);
+    if (!enabled.length) return;
+    Promise.all(
+      enabled.map((c) => sendRpc("skills.bundled.toggle_category", { category: c.name, enabled: false }))
+    ).then(() => {
+      setCategories((prev) => prev.map((c) => ({ ...c, enabled: false })));
+    });
+  }
+  const enabledCount = categories.filter((c) => c.enabled).length;
+  const enabledSkillCount = categories.filter((c) => c.enabled).reduce((sum, c) => sum + c.count, 0);
+  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+    /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: t("onboarding:skills.title") }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: t("onboarding:skills.description") }),
+    loading ? /* @__PURE__ */ u("div", { className: "flex items-center justify-center gap-2 py-8", children: [
+      /* @__PURE__ */ u("div", { className: "inline-block w-5 h-5 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin" }),
+      /* @__PURE__ */ u("span", { className: "text-sm text-[var(--muted)]", children: t("common:status.loading") })
+    ] }) : /* @__PURE__ */ u(S, { children: [
+      /* @__PURE__ */ u("div", { className: "flex items-center justify-between", children: [
+        /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: [
+          enabledCount,
+          " of ",
+          categories.length,
+          " categories (",
+          enabledSkillCount,
+          " of ",
+          totalSkills,
+          " skills)"
+        ] }),
+        /* @__PURE__ */ u("div", { className: "flex gap-2", children: [
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "text-xs text-[var(--accent)] hover:underline cursor-pointer bg-transparent border-none p-0",
+              onClick: enableAll,
+              children: t("onboarding:skills.enableAll")
+            }
+          ),
+          /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: "/" }),
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "text-xs text-[var(--accent)] hover:underline cursor-pointer bg-transparent border-none p-0",
+              onClick: disableAll,
+              children: t("onboarding:skills.disableAll")
+            }
+          )
+        ] })
+      ] }),
+      /* @__PURE__ */ u("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2", children: categories.map((cat) => {
+        const meta = CATEGORY_META[cat.name];
+        const icon = (meta == null ? void 0 : meta.icon) || "📦";
+        const desc = (meta == null ? void 0 : meta.desc) || "";
+        return /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            onClick: () => toggle(cat),
+            disabled: toggling === cat.name,
+            className: `flex items-start gap-3 p-3 rounded-md border text-left cursor-pointer transition-colors ${cat.enabled ? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]" : "border-[var(--border)] bg-[var(--surface)] opacity-60"}`,
+            children: [
+              /* @__PURE__ */ u("span", { className: "text-lg shrink-0 mt-0.5", children: icon }),
+              /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+                /* @__PURE__ */ u("div", { className: "flex items-center gap-2", children: [
+                  /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: categoryLabel(cat.name) }),
+                  /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: [
+                    "(",
+                    cat.count,
+                    ")"
+                  ] })
+                ] }),
+                desc && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: desc })
+              ] }),
+              /* @__PURE__ */ u("div", { className: "shrink-0 mt-1", children: cat.enabled ? /* @__PURE__ */ u("span", { className: "icon icon-check-circle text-[var(--accent)]" }) : /* @__PURE__ */ u("span", { className: "w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block" }) })
+            ]
+          },
+          cat.name
+        );
+      }) })
+    ] }),
+    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
+      onBack && /* @__PURE__ */ u("button", { type: "button", className: "provider-btn provider-btn-secondary", onClick: onBack, children: t("common:actions.back") }),
+      /* @__PURE__ */ u("div", { className: "flex-1" }),
+      /* @__PURE__ */ u("button", { type: "button", className: "provider-btn", onClick: onNext, children: t("common:actions.continue") })
+    ] })
+  ] });
+}
 const WS_RETRY_LIMIT = 75;
 const WS_RETRY_DELAY_MS = 200;
 function OnboardingVoiceRow({
@@ -4418,13 +4566,13 @@ function SummaryStep({ onBack, onFinish }) {
   y(() => {
     let cancelled = false;
     async function load() {
-      var _a2;
+      var _a2, _b2, _c2;
       await refresh();
       const identity = get("identity");
       const mem = get("mem");
       const update = get("update");
       const voiceEnabled = get("voice_enabled") === true;
-      const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes] = await Promise.all([
+      const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes, skillsRes] = await Promise.all([
         sendRpc("providers.available", {}).catch(() => null),
         fetchChannelStatus().catch(() => null),
         fetch("/api/tailscale/status").then(
@@ -4435,19 +4583,29 @@ function SummaryStep({ onBack, onFinish }) {
           "/api/bootstrap?include_channels=false&include_sessions=false&include_models=false&include_projects=false&include_counts=false&include_identity=false"
         ).then(
           (r) => r.ok ? r.json() : null
-        ).catch(() => null)
+        ).catch(() => null),
+        sendRpc("skills.bundled.categories", {}).catch(() => null)
       ]);
       if (cancelled) return;
+      const skillsCats = (skillsRes == null ? void 0 : skillsRes.ok) ? ((_a2 = skillsRes.payload) == null ? void 0 : _a2.categories) || [] : [];
+      const skillsTotal = (skillsRes == null ? void 0 : skillsRes.ok) ? ((_b2 = skillsRes.payload) == null ? void 0 : _b2.total_skills) || 0 : 0;
+      const skillsEnabledCats = skillsCats.filter((c) => c.enabled);
       setData({
         identity,
         mem,
         update,
         voiceEnabled,
         providers: (providersRes == null ? void 0 : providersRes.ok) ? providersRes.payload || [] : [],
-        channels: (channelsRes == null ? void 0 : channelsRes.ok) ? ((_a2 = channelsRes.payload) == null ? void 0 : _a2.channels) || [] : [],
+        channels: (channelsRes == null ? void 0 : channelsRes.ok) ? ((_c2 = channelsRes.payload) == null ? void 0 : _c2.channels) || [] : [],
         tailscale: tailscaleRes,
         voice: (voiceRes == null ? void 0 : voiceRes.ok) ? voiceRes.payload || { tts: [], stt: [] } : null,
-        sandbox: (bootstrapRes == null ? void 0 : bootstrapRes.sandbox) || null
+        sandbox: (bootstrapRes == null ? void 0 : bootstrapRes.sandbox) || null,
+        skills: skillsCats.length ? {
+          enabledCategories: skillsEnabledCats.length,
+          totalCategories: skillsCats.length,
+          enabledSkills: skillsEnabledCats.reduce((sum, c) => sum + c.count, 0),
+          totalSkills: skillsTotal
+        } : null
       });
       setLoading(false);
     }
@@ -4514,6 +4672,18 @@ function SummaryStep({ onBack, onFinish }) {
           }) }) : /* @__PURE__ */ u(S, { children: "No channels configured" })
         }
       ),
+      data.skills && /* @__PURE__ */ u(SummaryRow, { icon: data.skills.enabledCategories > 0 ? /* @__PURE__ */ u(CheckIcon, {}) : /* @__PURE__ */ u(InfoIcon, {}), label: "Skills", children: [
+        /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: data.skills.enabledSkills }),
+        " skills enabled across",
+        " ",
+        /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: [
+          data.skills.enabledCategories,
+          "/",
+          data.skills.totalCategories
+        ] }),
+        " ",
+        "categories"
+      ] }),
       /* @__PURE__ */ u(
         SummaryRow,
         {
@@ -4660,6 +4830,7 @@ function OnboardingPage() {
   allLabels.push(t("onboarding:steps.llm"));
   if (voiceAvailable) allLabels.push(t("onboarding:steps.voice"));
   allLabels.push(
+    t("onboarding:steps.skills"),
     t("onboarding:steps.remoteAccess"),
     t("onboarding:steps.channel"),
     t("onboarding:steps.identity"),
@@ -4671,6 +4842,7 @@ function OnboardingPage() {
   const importStep = openclawDetected ? nextIdx++ : -1;
   const llmStep = nextIdx++;
   const voiceStep = voiceAvailable ? nextIdx++ : -1;
+  const skillsStep = nextIdx++;
   const remoteAccessStep = nextIdx++;
   const channelStep = nextIdx++;
   const identityStep = nextIdx++;
@@ -4696,6 +4868,7 @@ function OnboardingPage() {
       step === importStep && /* @__PURE__ */ u(OpenClawImportStep, { onNext: goNext, onBack: authNeeded ? goBack : null }),
       step === llmStep && /* @__PURE__ */ u(ProviderStep, { onNext: goNext, onBack: authNeeded || openclawDetected ? goBack : null }),
       step === voiceStep && /* @__PURE__ */ u(VoiceStep, { onNext: goNext, onBack: goBack }),
+      step === skillsStep && /* @__PURE__ */ u(SkillsStep, { onNext: goNext, onBack: goBack }),
       step === remoteAccessStep && /* @__PURE__ */ u(RemoteAccessStep, { onNext: goNext, onBack: goBack }),
       step === channelStep && /* @__PURE__ */ u(ChannelStep, { onNext: goNext, onBack: goBack }),
       step === identityStep && /* @__PURE__ */ u(IdentityStep, { onNext: goNext, onBack: goBack }),

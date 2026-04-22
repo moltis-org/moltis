@@ -14355,6 +14355,20 @@ function teardownProjects() {
   _projectsContainer = null;
 }
 registerPage(routes.projects, initProjects, teardownProjects);
+var SkillSource = /* @__PURE__ */ ((SkillSource2) => {
+  SkillSource2["Project"] = "project";
+  SkillSource2["Personal"] = "personal";
+  SkillSource2["Plugin"] = "plugin";
+  SkillSource2["Registry"] = "registry";
+  SkillSource2["Bundled"] = "bundled";
+  return SkillSource2;
+})(SkillSource || {});
+function isDiscoveredSource(source) {
+  return source === "personal" || source === "project";
+}
+function isRepoSource(source) {
+  return !!(source == null ? void 0 : source.includes("/"));
+}
 const repos = y([]);
 const enabledSkills = y([]);
 const loading$7 = y(false);
@@ -14741,7 +14755,7 @@ function SkillDetailPanel({
     }
   }, [d2 == null ? void 0 : d2.body_html]);
   if (!d2) return null;
-  const isDisc = d2.source === "personal" || d2.source === "project";
+  const isDisc = isDiscoveredSource(d2.source);
   function doToggle() {
     actionBusy.value = true;
     sendRpc(d2.enabled ? "skills.skill.disable" : "skills.skill.enable", { source: repoSource, skill: d2.name }).then(
@@ -15078,6 +15092,106 @@ function RepoCard({ repo }) {
     ] })
   ] });
 }
+const CATEGORY_META = {
+  apple: { icon: "🍎", desc: "Apple ecosystem" },
+  audio: { icon: "🎵", desc: "Audio processing" },
+  "autonomous-ai-agents": { icon: "🤖", desc: "Multi-agent orchestration" },
+  creative: { icon: "🎨", desc: "Writing, art, content" },
+  "data-science": { icon: "📊", desc: "Data analysis" },
+  devops: { icon: "⚙️", desc: "Infrastructure, CI/CD" },
+  dogfood: { icon: "🐶", desc: "Internal tooling" },
+  email: { icon: "✉️", desc: "Email automation" },
+  gaming: { icon: "🎮", desc: "Game development" },
+  github: { icon: "🐙", desc: "GitHub workflows" },
+  media: { icon: "📷", desc: "Image and video" },
+  messaging: { icon: "💬", desc: "Chat platforms" },
+  mlops: { icon: "🧠", desc: "ML training and ops" },
+  "note-taking": { icon: "📝", desc: "Notes and knowledge" },
+  productivity: { icon: "⚡", desc: "Task management" },
+  research: { icon: "🔬", desc: "Academic research" },
+  "smart-home": { icon: "🏠", desc: "Home automation" },
+  "social-media": { icon: "📱", desc: "Social platforms" },
+  "software-development": { icon: "💻", desc: "Coding and dev tools" }
+};
+function categoryLabel(name) {
+  return name.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+const bundledCategories = y([]);
+const bundledTotal = y(0);
+function fetchBundledCategories() {
+  sendRpc("skills.bundled.categories", {}).then((res) => {
+    if (res == null ? void 0 : res.ok) {
+      const payload = res.payload;
+      bundledCategories.value = payload.categories || [];
+      bundledTotal.value = payload.total_skills || 0;
+    }
+  });
+}
+function BundledCategoriesSection() {
+  const cats = bundledCategories.value;
+  const toggling = useSignal(null);
+  y$1(() => {
+    fetchBundledCategories();
+  }, []);
+  if (!cats.length) return /* @__PURE__ */ u(S, {});
+  function toggle(cat) {
+    if (toggling.value) return;
+    const newEnabled = !cat.enabled;
+    toggling.value = cat.name;
+    sendRpc("skills.bundled.toggle_category", { category: cat.name, enabled: newEnabled }).then((res) => {
+      toggling.value = null;
+      if (res == null ? void 0 : res.ok) {
+        bundledCategories.value = bundledCategories.value.map(
+          (c) => c.name === cat.name ? { ...c, enabled: newEnabled } : c
+        );
+        fetchAll();
+      } else {
+        showToast$3(`Failed: ${(res == null ? void 0 : res.error) || "unknown"}`, "error");
+      }
+    });
+  }
+  const enabledCount = cats.filter((c) => c.enabled).length;
+  return /* @__PURE__ */ u("div", { className: "skills-section", children: [
+    /* @__PURE__ */ u("div", { className: "flex items-center gap-3 mb-2", children: /* @__PURE__ */ u("h3", { className: "skills-section-title", style: { margin: 0 }, children: [
+      "Bundled Skill Categories",
+      /* @__PURE__ */ u("span", { className: "ml-2 text-xs font-normal text-[var(--muted)]", children: [
+        "(",
+        enabledCount,
+        "/",
+        cats.length,
+        " enabled)"
+      ] })
+    ] }) }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] mb-3", children: "Toggle categories of built-in skills. Disabled categories are excluded from the agent context." }),
+    /* @__PURE__ */ u("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2", children: cats.map((cat) => {
+      const meta = CATEGORY_META[cat.name];
+      const icon = (meta == null ? void 0 : meta.icon) || "📦";
+      return /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          onClick: () => toggle(cat),
+          disabled: toggling.value === cat.name,
+          className: `flex items-center gap-2 px-3 py-2 rounded-md border text-left cursor-pointer transition-colors ${cat.enabled ? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]" : "border-[var(--border)] bg-[var(--surface)] opacity-60"}`,
+          children: [
+            /* @__PURE__ */ u("span", { className: "text-base shrink-0", children: icon }),
+            /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+              /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: categoryLabel(cat.name) }),
+              /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)] ml-1", children: [
+                "(",
+                cat.count,
+                ")"
+              ] }),
+              (meta == null ? void 0 : meta.desc) && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] truncate", children: meta.desc })
+            ] }),
+            cat.enabled ? /* @__PURE__ */ u("span", { className: "icon icon-check-circle text-[var(--accent)] shrink-0" }) : /* @__PURE__ */ u("span", { className: "w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block shrink-0" })
+          ]
+        },
+        cat.name
+      );
+    }) })
+  ] });
+}
 function ReposSection() {
   var _a2;
   return /* @__PURE__ */ u("div", { className: "skills-section", children: [
@@ -15113,7 +15227,7 @@ function EnabledSkillsTable() {
     return true;
   });
   function isDisc(sk) {
-    return sk.source === "personal" || sk.source === "project";
+    return isDiscoveredSource(sk.source);
   }
   function doDisable(sk) {
     pending.value = sk.name;
@@ -15259,7 +15373,7 @@ function EnabledSkillsTable() {
         /* @__PURE__ */ u("th", {})
       ] }) }),
       /* @__PURE__ */ u("tbody", { children: filtered.map((sk) => {
-        var _a2, _b2;
+        var _a2;
         const isActive = ((_a2 = activeDetail.value) == null ? void 0 : _a2.name) === sk.name;
         return /* @__PURE__ */ u(S, { children: [
           /* @__PURE__ */ u(
@@ -15288,8 +15402,8 @@ function EnabledSkillsTable() {
                   }
                 ),
                 /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: sk.description || "—" }),
-                /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: /* @__PURE__ */ u("span", { className: ((_b2 = sk.source) == null ? void 0 : _b2.includes("/")) ? "tier-badge" : "recommended-badge", children: sk.source }) }),
-                /* @__PURE__ */ u("td", { style: { padding: "8px 12px", textAlign: "right" }, children: sk.source !== "bundled" && /* @__PURE__ */ u(
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: /* @__PURE__ */ u("span", { className: isRepoSource(sk.source) ? "tier-badge" : "recommended-badge", children: sk.source }) }),
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px", textAlign: "right" }, children: sk.source !== SkillSource.Bundled && /* @__PURE__ */ u(
                   "button",
                   {
                     disabled: isDisc(sk) && sk.protected === true || pending.value === sk.name,
@@ -15314,10 +15428,10 @@ function EnabledSkillsTable() {
                 activeDetail.value = null;
               },
               onReload: () => {
-                var _a3, _b3;
+                var _a3, _b2;
                 return loadDetail({
                   name: (_a3 = activeDetail.value) == null ? void 0 : _a3.name,
-                  source: (_b3 = activeDetail.value) == null ? void 0 : _b3.source
+                  source: (_b2 = activeDetail.value) == null ? void 0 : _b2.source
                 });
               }
             }
@@ -15360,6 +15474,7 @@ function SkillsPageComponent() {
       )
     ] }),
     /* @__PURE__ */ u(SecurityWarning, {}),
+    /* @__PURE__ */ u(BundledCategoriesSection, {}),
     /* @__PURE__ */ u(InstallBox$1, {}),
     /* @__PURE__ */ u(BundleTransferBox, {}),
     /* @__PURE__ */ u(InstallProgressBar, {}),
