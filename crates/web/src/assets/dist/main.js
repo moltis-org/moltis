@@ -30471,12 +30471,6 @@ function ToolsSection() {
   const sandbox = data.sandbox || {};
   const tools = Array.isArray(data.tools) ? data.tools : [];
   const toolGroups = groupToolsForOverview(tools);
-  const skills = Array.isArray(data.skills) ? data.skills : [];
-  const pluginCount = skills.filter((entry) => (entry == null ? void 0 : entry.source) === "plugin").length;
-  const personalSkillCount = skills.length - pluginCount;
-  const mcpServers = Array.isArray(data.mcpServers) ? data.mcpServers : [];
-  const runningMcpServers = mcpServers.filter((entry) => (entry == null ? void 0 : entry.state) === "running");
-  const runningMcpToolCount = runningMcpServers.reduce((sum, entry) => sum + (Number(entry == null ? void 0 : entry.tool_count) || 0), 0);
   const remoteExecInventory = summarizeRemoteExecInventory(nodeInventory);
   const routeDetails = [];
   routeDetails.push(execution.mode === "sandbox" ? "sandboxed commands" : "host commands");
@@ -30579,23 +30573,6 @@ function ToolsSection() {
         ] })
       ] }),
       /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)]", children: "MCP" }),
-        /* @__PURE__ */ u("div", { className: "mt-2 flex items-center gap-2 flex-wrap", children: [
-          /* @__PURE__ */ u(
-            "span",
-            {
-              className: `provider-item-badge ${data.supportsTools === false || data.mcpDisabled ? "warning" : runningMcpServers.length > 0 ? "configured" : "muted"}`,
-              children: data.supportsTools === false ? "Unavailable" : data.mcpDisabled ? "Off for session" : runningMcpServers.length > 0 ? "Active" : "No running servers"
-            }
-          ),
-          /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text)]", children: pluralizeToolsCount(runningMcpToolCount, "MCP tool") })
-        ] }),
-        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-2 leading-relaxed", children: [
-          pluralizeToolsCount(runningMcpServers.length, "running server"),
-          data.mcpDisabled ? ", disabled explicitly for this session." : "."
-        ] })
-      ] }),
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
         /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)]", children: "Execution Routes" }),
         /* @__PURE__ */ u("div", { className: "mt-2 text-sm font-medium text-[var(--text)]", children: routeDetails.join(" · ") }),
         /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-2 leading-relaxed", children: [
@@ -30616,66 +30593,30 @@ function ToolsSection() {
       ] }),
       " and refresh this page."
     ] }) }) : null,
-    /* @__PURE__ */ u("div", { className: "grid gap-4 md:grid-cols-2 max-w-[1100px]", children: [
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-          /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "Registered Tools" }),
-          /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: tools.length })
-        ] }),
-        toolGroups.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-3", children: toolGroups.map((group) => /* @__PURE__ */ u("div", { children: [
-          /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)] mb-2", children: [
-            group.label,
-            " ",
-            "·",
-            " ",
-            group.tools.length
-          ] }),
-          /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: group.tools.map((tool) => {
-            var _a2;
-            return /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
-              /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-                /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)] break-words", children: tool.name }),
-                ((_a2 = tool.name) == null ? void 0 : _a2.startsWith("mcp__")) ? /* @__PURE__ */ u("span", { className: "provider-item-badge configured", children: "MCP" }) : null
-              ] }),
-              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: tool.description || "No description provided." })
-            ] }, tool.name);
-          }) })
-        ] }, group.label)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No tools are currently exposed to this session." })
+    /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4 max-w-[1100px]", children: [
+      /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
+        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "Registered Tools" }),
+        /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: tools.length })
       ] }),
-      /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
-        /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-          /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "Skills & Plugins" }),
-            /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: skills.length })
-          ] }),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3 leading-relaxed", children: [
-            pluralizeToolsCount(personalSkillCount, "skill"),
-            ", ",
-            pluralizeToolsCount(pluginCount, "plugin"),
-            "."
-          ] }),
-          skills.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-2", children: skills.map((entry) => /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
-            /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-              /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)]", children: entry.name }),
-              /* @__PURE__ */ u("span", { className: `provider-item-badge ${entry.source === "plugin" ? "configured" : "muted"}`, children: entry.source === "plugin" ? "Plugin" : "Skill" })
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: entry.description || "No description provided." })
-          ] }, entry.name)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No skills or plugins enabled." })
+      toolGroups.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-3", children: toolGroups.map((group) => /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)] mb-2", children: [
+          group.label,
+          " ",
+          "·",
+          " ",
+          group.tools.length
         ] }),
-        /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-          /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "MCP Servers" }),
-            /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: mcpServers.length })
-          ] }),
-          mcpServers.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-2", children: mcpServers.map((entry) => /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
+        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: group.tools.map((tool) => {
+          var _a2;
+          return /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
             /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-              /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)]", children: entry.name }),
-              /* @__PURE__ */ u("span", { className: `provider-item-badge ${entry.state === "running" ? "configured" : "warning"}`, children: entry.state || "unknown" })
+              /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)] break-words", children: tool.name }),
+              ((_a2 = tool.name) == null ? void 0 : _a2.startsWith("mcp__")) ? /* @__PURE__ */ u("span", { className: "provider-item-badge configured", children: "MCP" }) : null
             ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: pluralizeToolsCount(Number(entry.tool_count) || 0, "tool") })
-          ] }, entry.name)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No MCP servers configured." })
-        ] })
-      ] })
+            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: tool.description || "No description provided." })
+          ] }, tool.name);
+        }) })
+      ] }, group.label)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No tools are currently exposed to this session." })
     ] })
   ] });
 }
