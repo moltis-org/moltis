@@ -223,6 +223,25 @@ fn is_self_sender(sender: &str, envelope: &Value, cfg: &SignalAccountConfig) -> 
     account_matches || uuid_matches
 }
 
+/// Convert a UTF-16 code-unit offset to a UTF-8 byte offset within `text`.
+fn utf16_to_utf8_offset(text: &str, utf16_offset: usize) -> Option<usize> {
+    let mut utf16_pos = 0;
+    for (byte_pos, ch) in text.char_indices() {
+        if utf16_pos == utf16_offset {
+            return Some(byte_pos);
+        }
+        utf16_pos += ch.len_utf16();
+        if utf16_pos > utf16_offset {
+            return None; // offset falls inside a surrogate pair
+        }
+    }
+    // offset at the very end of the string
+    if utf16_pos == utf16_offset {
+        return Some(text.len());
+    }
+    None
+}
+
 fn render_mentions(mut text: String, mentions: Option<&Value>) -> String {
     let Some(mentions) = mentions.and_then(Value::as_array) else {
         return text;
@@ -231,25 +250,25 @@ fn render_mentions(mut text: String, mentions: Option<&Value>) -> String {
         return text;
     }
 
+    // Signal provides mention positions as UTF-16 code-unit indices.
+    // Convert to UTF-8 byte offsets for Rust string operations.
     let mut replacements: Vec<(usize, usize, String)> = mentions
         .iter()
         .filter_map(|mention| {
-            let start = mention.get("start")?.as_u64()? as usize;
-            let length = mention.get("length").and_then(Value::as_u64).unwrap_or(1) as usize;
+            let utf16_start = mention.get("start")?.as_u64()? as usize;
+            let utf16_len = mention.get("length").and_then(Value::as_u64).unwrap_or(1) as usize;
+            let byte_start = utf16_to_utf8_offset(&text, utf16_start)?;
+            let byte_end = utf16_to_utf8_offset(&text, utf16_start + utf16_len)?;
             let identifier = string_field(mention, "number")
                 .or_else(|| string_field(mention, "uuid"))
                 .unwrap_or_else(|| "user".to_string());
-            Some((start, length, format!("@{identifier}")))
+            Some((byte_start, byte_end - byte_start, format!("@{identifier}")))
         })
         .collect();
     replacements.sort_by(|a, b| b.0.cmp(&a.0));
 
     for (start, length, replacement) in replacements {
-        if start <= text.len()
-            && start + length <= text.len()
-            && text.is_char_boundary(start)
-            && text.is_char_boundary(start + length)
-        {
+        if start + length <= text.len() {
             text.replace_range(start..start + length, &replacement);
         }
     }
@@ -303,11 +322,19 @@ fn group_access_allowed(
                 .account_uuid
                 .as_deref()
                 .is_some_and(|uuid| text.contains(uuid));
-            account_mentioned
-                || uuid_mentioned
-                || mentions
-                    .and_then(Value::as_array)
-                    .is_some_and(|v| !v.is_empty())
+            let bot_mentioned_in_array = mentions.and_then(Value::as_array).is_some_and(|arr| {
+                arr.iter().any(|m| {
+                    let num = string_field(m, "number");
+                    let uuid = string_field(m, "uuid");
+                    let matches_account = cfg.account().is_some_and(|a| num.as_deref() == Some(a));
+                    let matches_uuid = cfg
+                        .account_uuid
+                        .as_deref()
+                        .is_some_and(|u| uuid.as_deref() == Some(u));
+                    matches_account || matches_uuid
+                })
+            });
+            account_mentioned || uuid_mentioned || bot_mentioned_in_array
         },
     }
 }
@@ -522,5 +549,61 @@ mod tests {
             None,
             &cfg
         ));
+    }
+
+    #[test]
+    fn group_mention_mode_rejects_non_bot_mentions() {
+        let cfg = SignalAccountConfig {
+            group_policy: GroupPolicy::Open,
+            mention_mode: MentionMode::Mention,
+            account: Some("+15551234567".to_string()),
+            account_uuid: Some("bot-uuid".to_string()),
+            ..Default::default()
+        };
+        // A mention of someone else should not trigger the bot.
+        let mentions = serde_json::json!([
+            {"start": 0, "length": 1, "number": "+19998887777", "uuid": "other-uuid"}
+        ]);
+        assert!(!crate::inbound::group_access_allowed(
+            Some("group-id"),
+            "hello",
+            Some(&mentions),
+            &cfg
+        ));
+        // A mention of the bot's UUID should trigger.
+        let bot_mention = serde_json::json!([
+            {"start": 0, "length": 1, "uuid": "bot-uuid"}
+        ]);
+        assert!(crate::inbound::group_access_allowed(
+            Some("group-id"),
+            "hello",
+            Some(&bot_mention),
+            &cfg
+        ));
+    }
+
+    #[test]
+    fn render_mentions_handles_utf16_offsets() {
+        // "Hey 😀 \u{FFFC}" — emoji is 2 UTF-16 code units, 4 UTF-8 bytes.
+        // UTF-16 positions: H=0, e=1, y=2, ' '=3, 😀=4-5, ' '=6, \u{FFFC}=7
+        let text = "Hey \u{1F600} \u{FFFC}".to_string();
+        let mentions = serde_json::json!([
+            {"start": 7, "length": 1, "number": "+15551234567"}
+        ]);
+        let result = crate::inbound::render_mentions(text, Some(&mentions));
+        assert_eq!(result, "Hey \u{1F600} @+15551234567");
+    }
+
+    #[test]
+    fn utf16_to_utf8_offset_basic() {
+        // ASCII only
+        assert_eq!(crate::inbound::utf16_to_utf8_offset("hello", 0), Some(0));
+        assert_eq!(crate::inbound::utf16_to_utf8_offset("hello", 5), Some(5));
+        // With emoji (U+1F600 = 2 UTF-16 units, 4 UTF-8 bytes)
+        let s = "a\u{1F600}b";
+        assert_eq!(crate::inbound::utf16_to_utf8_offset(s, 0), Some(0)); // 'a'
+        assert_eq!(crate::inbound::utf16_to_utf8_offset(s, 1), Some(1)); // start of emoji
+        assert_eq!(crate::inbound::utf16_to_utf8_offset(s, 2), None); // inside surrogate pair
+        assert_eq!(crate::inbound::utf16_to_utf8_offset(s, 3), Some(5)); // 'b'
     }
 }
