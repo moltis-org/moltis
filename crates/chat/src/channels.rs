@@ -18,6 +18,7 @@ use crate::{
 ///
 /// Must match the frontend `sessionPath()` in `router.ts`:
 /// `/chats/${key.replace(/:/g, "/")}`.
+#[cfg(any(feature = "push-notifications", test))]
 pub(crate) fn push_notification_url(session_key: &str) -> String {
     format!("/chats/{}", session_key.replace(':', "/"))
 }
