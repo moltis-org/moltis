@@ -1249,3 +1249,45 @@ model = "sonar"
         "placeholder should resolve after resubstitution"
     );
 }
+
+/// GH-770: Override values containing quotes or backslashes must not break
+/// resubstitution (no TOML injection via textual round-trip).
+#[test]
+fn gh770_resubstitute_handles_special_chars_in_values() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("moltis.toml");
+    let var = "MOLTIS_GH770_SPECIAL_CHARS";
+    std::fs::write(
+        &path,
+        format!(
+            r#"
+[tools.web.search.perplexity]
+api_key = "${{{var}}}"
+model = "sonar"
+"#
+        ),
+    )
+    .expect("write config");
+
+    let config = load_config(&path).expect("load config");
+
+    // Value with double-quote and backslash — would break TOML text substitution.
+    let tricky_value = r#"sk-pass"word\with\special"chars"#;
+    let mut overrides = HashMap::new();
+    overrides.insert(var.to_string(), tricky_value.to_string());
+
+    let config = resubstitute_config(&config, &overrides)
+        .expect("resubstitute must not fail on special chars");
+    let key = config
+        .tools
+        .web
+        .search
+        .perplexity
+        .api_key
+        .as_ref()
+        .expect("api_key should be set");
+    assert!(
+        key.expose_secret() == tricky_value,
+        "value with quotes/backslashes must survive resubstitution intact"
+    );
+}

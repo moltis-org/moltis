@@ -436,19 +436,45 @@ pub(super) fn apply_env_overrides_with(
 /// Re-resolve `${VAR}` placeholders in a loaded config using additional overrides.
 ///
 /// Call this after runtime env vars (e.g. DB-stored UI variables) become
-/// available.  The config is serialized to TOML, placeholders are re-resolved
-/// using process env + the override map, and the result is deserialized back.
+/// available.  Substitution happens at the JSON value level (not textual
+/// TOML), so override values that contain quotes or backslashes are safe.
 ///
 /// Lookup precedence: process env → `overrides` map.
 pub fn resubstitute_config(
     config: &MoltisConfig,
     overrides: &std::collections::HashMap<String, String>,
 ) -> crate::Result<MoltisConfig> {
-    let toml_str = toml::to_string_pretty(config)
+    let mut json = serde_json::to_value(config)
         .map_err(|source| crate::Error::external("serialize config for resubstitution", source))?;
-    let substituted = crate::env_subst::substitute_env_with_overrides(&toml_str, overrides);
-    let reloaded = parse_config(&substituted, &std::path::PathBuf::from("resubstitute.toml"))?;
+    resolve_placeholders_in_value(&mut json, overrides);
+    let reloaded: MoltisConfig = serde_json::from_value(json).map_err(|source| {
+        crate::Error::external("deserialize config after resubstitution", source)
+    })?;
     Ok(apply_env_overrides(reloaded))
+}
+
+/// Recursively walk a JSON value tree and resolve `${VAR}` placeholders in
+/// string values using process env + the overrides map.
+fn resolve_placeholders_in_value(
+    value: &mut serde_json::Value,
+    overrides: &std::collections::HashMap<String, String>,
+) {
+    match value {
+        serde_json::Value::String(s) if s.contains("${") => {
+            *s = crate::env_subst::substitute_env_with_overrides(s, overrides);
+        },
+        serde_json::Value::Object(map) => {
+            for v in map.values_mut() {
+                resolve_placeholders_in_value(v, overrides);
+            }
+        },
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                resolve_placeholders_in_value(v, overrides);
+            }
+        },
+        _ => {},
+    }
 }
 
 /// Parse a string env value into a JSON value, trying bool and number first.
