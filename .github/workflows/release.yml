@@ -872,6 +872,33 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
+      - name: Import Apple certificate
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERTIFICATE_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
       - name: Determine package version
         id: version
         run: |
@@ -892,13 +919,21 @@ jobs:
       - name: Build macOS app
         env:
           DERIVED_DATA_DIR: apps/macos/.derivedData-ci
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          if [[ "$RELEASE_DRY_RUN" == "true" ]]; then
+            EXTRA_FLAGS="CODE_SIGNING_ALLOWED=NO"
+          else
+            EXTRA_FLAGS="CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Developer ID Application\" DEVELOPMENT_TEAM=\"${APPLE_TEAM_ID}\" OTHER_CODE_SIGN_FLAGS=\"--options runtime\""
+          fi
+
           xcodebuild \
             -project apps/macos/Moltis.xcodeproj \
             -scheme Moltis \
             -configuration Release \
             -destination "platform=macOS" \
             -derivedDataPath "$DERIVED_DATA_DIR" \
+            $EXTRA_FLAGS \
             build
 
       - name: Package macOS app
@@ -910,6 +945,28 @@ jobs:
             echo "expected app bundle not found at $APP_PATH" >&2
             exit 1
           fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "moltis-${VERSION}-macos.app.zip"
+
+      - name: Notarize macOS app
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "moltis-${VERSION}-macos.app.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          # Staple the notarization ticket to the app bundle
+          APP_PATH="apps/macos/.derivedData-ci/Build/Products/Release/Moltis.app"
+          xcrun stapler staple "$APP_PATH"
+
+          # Re-package with the stapled ticket
+          rm "moltis-${VERSION}-macos.app.zip"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "moltis-${VERSION}-macos.app.zip"
 
       - name: Sign with Sigstore and generate checksums
@@ -929,6 +986,14 @@ jobs:
             *.app.zip.sha512
             *.app.zip.sig
             *.app.zip.crt
+
+      - name: Clean up keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH"
+          fi
 
   build-windows-exe:
     needs: [clippy, test, e2e]

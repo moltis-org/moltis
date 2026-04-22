@@ -28,6 +28,8 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
+    entitlements:
+      path: Moltis.entitlements
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: org.moltis.app
@@ -52,6 +54,10 @@ targets:
           - "IOKit"
           - "-framework"
           - "CoreServices"
+      Release:
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Developer ID Application"
     scheme:
       testTargets:
         - MoltisTests
