@@ -14413,17 +14413,25 @@ function fetchAll() {
     loading$7.value = false;
   });
 }
-function doInstall(source) {
+function doInstall(source, autoTrust = false) {
   if (!(source && connected)) {
     if (!connected) showToast$3("Not connected to gateway.", "error");
     return Promise.resolve();
   }
   const opId = `skills-install-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const pid = startInstallProgress(source, opId);
-  return sendRpc("skills.install", { source, op_id: opId }).then((res) => {
+  return sendRpc("skills.install", { source, op_id: opId }).then(async (res) => {
     if (res == null ? void 0 : res.ok) {
       const p = res.payload || {};
-      showToast$3(`Installed ${source} (${(p.installed || []).length} skills)`, "success");
+      const installed = p.installed || [];
+      showToast$3(`Installed ${source} (${installed.length} skills)`, "success");
+      if (autoTrust && installed.length > 0) {
+        for (const skill of installed) {
+          if (!skill.name) continue;
+          await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
+          await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
+        }
+      }
       fetchAll();
       stopInstallProgress(pid);
     } else {
@@ -14576,7 +14584,12 @@ const featuredSkills = [
   { repo: "anthropics/skills", desc: "Official Anthropic agent skills" },
   { repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection" },
   { repo: "vercel-labs/skills", desc: "Vercel skills toolkit" },
-  { repo: "garrytan/gbrain", desc: "Knowledge graph with hybrid search for agent memory", hasRecipe: true }
+  {
+    repo: "garrytan/gbrain",
+    desc: "Knowledge graph with hybrid search for agent memory",
+    hasRecipe: true,
+    autoTrust: true
+  }
 ];
 async function checkPostInstallRecipe(source) {
   const res = await sendRpc("skills.recipe", { source });
@@ -14590,11 +14603,28 @@ async function checkPostInstallRecipe(source) {
     "success"
   );
 }
+function orgAvatarUrl(repo) {
+  const owner = repo.split("/")[0];
+  return `https://github.com/${owner}.png?size=40`;
+}
 function FeaturedCard$1({ skill: f }) {
   const installing = useSignal(false);
   const href = /^https?:\/\//.test(f.repo) ? f.repo : `https://github.com/${f.repo}`;
   return /* @__PURE__ */ u("div", { className: "skills-featured-card", children: [
-    /* @__PURE__ */ u("div", { children: [
+    /* @__PURE__ */ u(
+      "img",
+      {
+        src: orgAvatarUrl(f.repo),
+        alt: "",
+        style: {
+          width: "24px",
+          height: "24px",
+          borderRadius: "var(--radius-sm)",
+          flexShrink: 0
+        }
+      }
+    ),
+    /* @__PURE__ */ u("div", { style: { flex: 1, minWidth: 0 }, children: [
       /* @__PURE__ */ u(
         "a",
         {
@@ -14618,7 +14648,7 @@ function FeaturedCard$1({ skill: f }) {
       {
         onClick: () => {
           installing.value = true;
-          doInstall(f.repo).then(() => {
+          doInstall(f.repo, f.autoTrust).then(() => {
             installing.value = false;
             if (f.hasRecipe) checkPostInstallRecipe(f.repo).catch(console.error);
           });
@@ -14888,6 +14918,14 @@ function RepoCard({ repo }) {
     /* @__PURE__ */ u("div", { className: "skills-repo-header", onClick: toggle, children: [
       /* @__PURE__ */ u("div", { style: { display: "flex", alignItems: "center", gap: "8px" }, children: [
         /* @__PURE__ */ u("span", { style: { fontSize: ".65rem", color: "var(--muted)", transform: expanded.value ? "rotate(90deg)" : "" }, children: "▶" }),
+        !isOrphan && /* @__PURE__ */ u(
+          "img",
+          {
+            src: orgAvatarUrl(repo.source),
+            alt: "",
+            style: { width: "20px", height: "20px", borderRadius: "var(--radius-sm)" }
+          }
+        ),
         href ? /* @__PURE__ */ u(
           "a",
           {

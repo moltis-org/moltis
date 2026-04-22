@@ -161,17 +161,27 @@ function fetchAll(): void {
 		});
 }
 
-function doInstall(source: string): Promise<void> {
+function doInstall(source: string, autoTrust = false): Promise<void> {
 	if (!(source && S.connected)) {
 		if (!S.connected) showToast("Not connected to gateway.", "error");
 		return Promise.resolve();
 	}
 	const opId = `skills-install-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 	const pid = startInstallProgress(source, opId);
-	return sendRpc("skills.install", { source, op_id: opId }).then((res) => {
+	return sendRpc("skills.install", { source, op_id: opId }).then(async (res) => {
 		if (res?.ok) {
 			const p = (res.payload || {}) as Record<string, unknown[]>;
-			showToast(`Installed ${source} (${(p.installed || []).length} skills)`, "success");
+			const installed = (p.installed || []) as Array<{ name?: string }>;
+			showToast(`Installed ${source} (${installed.length} skills)`, "success");
+
+			if (autoTrust && installed.length > 0) {
+				for (const skill of installed) {
+					if (!skill.name) continue;
+					await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
+					await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
+				}
+			}
+
 			fetchAll();
 			stopInstallProgress(pid, true);
 		} else {
@@ -331,13 +341,20 @@ interface FeaturedSkill {
 	repo: string;
 	desc: string;
 	hasRecipe?: boolean;
+	/** When true, all skills in this repo are auto-trusted and enabled on install. */
+	autoTrust?: boolean;
 }
 const featuredSkills: FeaturedSkill[] = [
 	{ repo: "openclaw/skills", desc: "Community skills from ClawdHub" },
 	{ repo: "anthropics/skills", desc: "Official Anthropic agent skills" },
 	{ repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection" },
 	{ repo: "vercel-labs/skills", desc: "Vercel skills toolkit" },
-	{ repo: "garrytan/gbrain", desc: "Knowledge graph with hybrid search for agent memory", hasRecipe: true },
+	{
+		repo: "garrytan/gbrain",
+		desc: "Knowledge graph with hybrid search for agent memory",
+		hasRecipe: true,
+		autoTrust: true,
+	},
 ];
 
 /** After installing a repo with a recipe, fetch and display the post-install instructions. */
@@ -354,12 +371,28 @@ async function checkPostInstallRecipe(source: string): Promise<void> {
 	);
 }
 
+/** Derive the GitHub avatar URL for an org/user from the repo identifier. */
+function orgAvatarUrl(repo: string): string {
+	const owner = repo.split("/")[0];
+	return `https://github.com/${owner}.png?size=40`;
+}
+
 function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
 	const installing = useSignal(false);
 	const href = /^https?:\/\//.test(f.repo) ? f.repo : `https://github.com/${f.repo}`;
 	return (
 		<div className="skills-featured-card">
-			<div>
+			<img
+				src={orgAvatarUrl(f.repo)}
+				alt=""
+				style={{
+					width: "24px",
+					height: "24px",
+					borderRadius: "var(--radius-sm)",
+					flexShrink: 0,
+				}}
+			/>
+			<div style={{ flex: 1, minWidth: 0 }}>
 				<a
 					href={href}
 					target="_blank"
@@ -379,7 +412,7 @@ function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
 			<button
 				onClick={() => {
 					installing.value = true;
-					doInstall(f.repo).then(() => {
+					doInstall(f.repo, f.autoTrust).then(() => {
 						installing.value = false;
 						if (f.hasRecipe) checkPostInstallRecipe(f.repo).catch(console.error);
 					});
@@ -651,6 +684,13 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 					<span style={{ fontSize: ".65rem", color: "var(--muted)", transform: expanded.value ? "rotate(90deg)" : "" }}>
 						{"\u25B6"}
 					</span>
+					{!isOrphan && (
+						<img
+							src={orgAvatarUrl(repo.source)}
+							alt=""
+							style={{ width: "20px", height: "20px", borderRadius: "var(--radius-sm)" }}
+						/>
+					)}
 					{href ? (
 						<a
 							href={href}
