@@ -922,9 +922,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           if [[ "$RELEASE_DRY_RUN" == "true" ]]; then
-            EXTRA_FLAGS="CODE_SIGNING_ALLOWED=NO"
+            EXTRA_FLAGS=(CODE_SIGNING_ALLOWED=NO)
           else
-            EXTRA_FLAGS="CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Developer ID Application\" DEVELOPMENT_TEAM=\"${APPLE_TEAM_ID}\" OTHER_CODE_SIGN_FLAGS=\"--options runtime\""
+            EXTRA_FLAGS=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" OTHER_CODE_SIGN_FLAGS="--options runtime")
           fi
 
           xcodebuild \
@@ -933,7 +933,7 @@ jobs:
             -configuration Release \
             -destination "platform=macOS" \
             -derivedDataPath "$DERIVED_DATA_DIR" \
-            "$EXTRA_FLAGS" \
+            "${EXTRA_FLAGS[@]}" \
             build
 
       - name: Package macOS app
