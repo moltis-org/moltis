@@ -454,7 +454,7 @@ mod tests {
         // All skills should come from one of our vetted sources.
         for source in &sources {
             assert!(
-                source == "hermes-agent" || source == "openclaw",
+                source == "hermes-agent" || source == "openclaw" || source == "moltis",
                 "unexpected origin source: '{}'",
                 source
             );
