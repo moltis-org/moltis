@@ -226,6 +226,30 @@ function buildTeamsEndpoint(baseUrl, accountId, webhookSecret) {
   if (!(normalizedBase && account && secret)) return "";
   return `${normalizedBase}/api/channels/msteams/${encodeURIComponent(account)}/webhook?secret=${encodeURIComponent(secret)}`;
 }
+function TabBar({ tabs, active, onChange: onChange2, className }) {
+  return /* @__PURE__ */ u("div", { className: className ?? "flex border-b border-[var(--border)] text-xs", role: "tablist", children: tabs.map((tab) => {
+    const isActive = tab.id === active;
+    const tabClass = [
+      "py-2 px-3 cursor-pointer bg-transparent border-b-2 transition-colors text-sm",
+      isActive ? "border-[var(--accent)] text-[var(--text)] font-medium" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"
+    ].join(" ");
+    return /* @__PURE__ */ u(
+      "button",
+      {
+        type: "button",
+        role: "tab",
+        "aria-selected": isActive,
+        className: tabClass,
+        onClick: () => onChange2(tab.id),
+        children: [
+          tab.label,
+          tab.badge != null && /* @__PURE__ */ u("span", { className: "ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]", children: tab.badge })
+        ]
+      },
+      tab.id
+    );
+  }) });
+}
 function targetValue(e) {
   return e.target.value;
 }
@@ -741,6 +765,7 @@ function decodeBase64Safe(input) {
   return bytes;
 }
 export {
+  VOICE_COUNTERPART_IDS as $,
   startProviderOAuth as A,
   saveProviderKey as B,
   ChannelType as C,
@@ -760,13 +785,13 @@ export {
   fetchVoiceProviders as Q,
   fetchPhrase as R,
   testTts as S,
-  decodeBase64Safe as T,
-  transcribeAudio as U,
-  toggleVoiceProvider as V,
-  saveVoiceKey as W,
-  saveVoiceSettings as X,
-  gon$1 as Y,
-  VOICE_COUNTERPART_IDS as Z,
+  TabBar as T,
+  decodeBase64Safe as U,
+  transcribeAudio as V,
+  toggleVoiceProvider as W,
+  saveVoiceKey as X,
+  saveVoiceSettings as Y,
+  gon$1 as Z,
   _events as _,
   onChange as a,
   addChannel as b,

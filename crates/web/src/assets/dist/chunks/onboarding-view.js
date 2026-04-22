@@ -1,6 +1,6 @@
 import { c as connectWs, s as subscribeEvents, u } from "./ws-connect.js";
 import { Z as t, aw as d, av as y, ax as A, b as sendRpc, ay as S, bq as modelVersionScore, v as activeSessionKey, aM as R } from "./theme.js";
-import { H as eventListeners, t as targetValue, O as prepareCreationOptions, P as detectPasskeyName, w as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, g as get, u as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, s as generateWebhookSecretHex, r as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, I as refresh, J as EmojiPicker, K as validateIdentityFields, L as updateIdentity, z as completeProviderOAuth, B as saveProviderKey, y as validateProviderKey, x as providerApiKeyHelp, D as testModel, E as isModelServiceNotConfigured, G as humanizeProbeError, A as startProviderOAuth, Q as fetchVoiceProviders, V as toggleVoiceProvider, W as saveVoiceKey, X as saveVoiceSettings, Z as VOICE_COUNTERPART_IDS, R as fetchPhrase, S as testTts, T as decodeBase64Safe, U as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
+import { H as eventListeners, t as targetValue, O as prepareCreationOptions, P as detectPasskeyName, w as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, T as TabBar, g as get, u as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, s as generateWebhookSecretHex, r as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, I as refresh, J as EmojiPicker, K as validateIdentityFields, L as updateIdentity, z as completeProviderOAuth, B as saveProviderKey, y as validateProviderKey, x as providerApiKeyHelp, D as testModel, E as isModelServiceNotConfigured, G as humanizeProbeError, A as startProviderOAuth, Q as fetchVoiceProviders, W as toggleVoiceProvider, X as saveVoiceKey, Y as saveVoiceSettings, $ as VOICE_COUNTERPART_IDS, R as fetchPhrase, S as testTts, U as decodeBase64Safe, V as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
 var WsEventName = /* @__PURE__ */ ((WsEventName2) => {
   WsEventName2["Chat"] = "chat";
   WsEventName2["Error"] = "error";
@@ -1111,6 +1111,7 @@ function preferredPublicBaseUrl({
   return "";
 }
 function RemoteAccessStep({ onNext, onBack }) {
+  const [remoteTab, setRemoteTab] = d("tailscale");
   const [authReady, setAuthReady] = d(false);
   const [tsStatus, setTsStatus] = d(null);
   const [tsError, setTsError] = d(null);
@@ -1254,11 +1255,23 @@ function RemoteAccessStep({ onNext, onBack }) {
       /* @__PURE__ */ u("a", { href: activePublicUrl, target: "_blank", rel: "noopener", className: "text-[var(--accent)] underline break-all", children: activePublicUrl }),
       /* @__PURE__ */ u("span", { children: "The Teams webhook step will prefill this URL." })
     ] }) : /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)]", children: "Teams webhooks need a public URL. If you skip this step, you can still configure remote access later in Settings." }),
-    /* @__PURE__ */ u("section", { className: "rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-col gap-4", children: [
-      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
-        /* @__PURE__ */ u("h3", { className: "text-base font-medium text-[var(--text-strong)]", children: "Tailscale Funnel" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public HTTPS through Tailscale. Tailscale Serve is tailnet-only, so Teams webhooks need Funnel instead." })
-      ] }),
+    /* @__PURE__ */ u(
+      TabBar,
+      {
+        tabs: [
+          {
+            id: "tailscale",
+            label: "Tailscale",
+            badge: tsLoading ? void 0 : tailscaleFunnelEnabled ? "funnel" : void 0
+          },
+          { id: "ngrok", label: "ngrok", badge: ngLoading ? void 0 : ngForm.enabled ? "on" : void 0 }
+        ],
+        active: remoteTab,
+        onChange: setRemoteTab
+      }
+    ),
+    remoteTab === "tailscale" && /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public HTTPS through Tailscale. Tailscale Serve is tailnet-only, so Teams webhooks need Funnel instead." }),
       tsLoading ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Loading Tailscale status…" }) : /* @__PURE__ */ u("div", { className: "text-sm text-[var(--text-strong)]", children: [
         "Tailscale Funnel is ",
         tailscaleFunnelEnabled ? "enabled" : "disabled",
@@ -1305,11 +1318,8 @@ function RemoteAccessStep({ onNext, onBack }) {
         }
       )
     ] }),
-    /* @__PURE__ */ u("section", { className: "rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-col gap-4", children: [
-      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
-        /* @__PURE__ */ u("h3", { className: "text-base font-medium text-[var(--text-strong)]", children: "ngrok" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public HTTPS without installing an external binary. This is useful for demos, shared testing, and Teams." })
-      ] }),
+    remoteTab === "ngrok" && /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public HTTPS without installing an external binary. This is useful for demos, shared testing, and Teams." }),
       ngLoading ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Loading ngrok status…" }) : /* @__PURE__ */ u("div", { className: "text-sm text-[var(--text-strong)]", children: [
         "ngrok is ",
         ngForm.enabled ? "enabled" : "disabled",
