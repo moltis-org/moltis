@@ -348,7 +348,10 @@ async function checkPostInstallRecipe(source: string): Promise<void> {
 	if (!payload?.found) return;
 	const recipe = payload.recipe as { title?: string; instructions?: string } | undefined;
 	if (!recipe?.instructions) return;
-	showToast(`${recipe.title || "Setup"}: post-install recipe available. Check the chat to run it.`, "success");
+	showToast(
+		`${recipe.title || "Setup available"} \u2014 ask the agent: \u201Crun the ${source.split("/").pop() || source} setup recipe\u201D`,
+		"success",
+	);
 }
 
 function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
@@ -378,7 +381,7 @@ function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
 					installing.value = true;
 					doInstall(f.repo).then(() => {
 						installing.value = false;
-						if (f.hasRecipe) checkPostInstallRecipe(f.repo);
+						if (f.hasRecipe) checkPostInstallRecipe(f.repo).catch(console.error);
 					});
 				}}
 				disabled={installing.value}

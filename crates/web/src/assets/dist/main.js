@@ -14585,7 +14585,10 @@ async function checkPostInstallRecipe(source) {
   if (!(payload == null ? void 0 : payload.found)) return;
   const recipe = payload.recipe;
   if (!(recipe == null ? void 0 : recipe.instructions)) return;
-  showToast$3(`${recipe.title || "Setup"}: post-install recipe available. Check the chat to run it.`, "success");
+  showToast$3(
+    `${recipe.title || "Setup available"} — ask the agent: “run the ${source.split("/").pop() || source} setup recipe”`,
+    "success"
+  );
 }
 function FeaturedCard$1({ skill: f }) {
   const installing = useSignal(false);
@@ -14617,7 +14620,7 @@ function FeaturedCard$1({ skill: f }) {
           installing.value = true;
           doInstall(f.repo).then(() => {
             installing.value = false;
-            if (f.hasRecipe) checkPostInstallRecipe(f.repo);
+            if (f.hasRecipe) checkPostInstallRecipe(f.repo).catch(console.error);
           });
         },
         disabled: installing.value,

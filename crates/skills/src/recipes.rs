@@ -86,12 +86,14 @@ pub fn has_recipe(source: &str) -> bool {
 
 fn normalise_source(source: &str) -> String {
     let trimmed = source.trim();
-    trimmed
+    let stripped = trimmed
         .strip_prefix("https://github.com/")
         .or_else(|| trimmed.strip_prefix("http://github.com/"))
         .unwrap_or(trimmed)
-        .trim_end_matches('/')
-        .trim_end_matches(".git")
+        .trim_end_matches('/');
+    stripped
+        .strip_suffix(".git")
+        .unwrap_or(stripped)
         .to_lowercase()
 }
 
