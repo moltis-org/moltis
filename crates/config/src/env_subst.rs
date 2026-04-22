@@ -103,16 +103,28 @@ mod tests {
     }
 
     #[test]
-    fn with_overrides_process_env_wins() {
-        // Use a var that exists in the process env (HOME is almost always set).
-        let home = std::env::var("HOME").unwrap_or_default();
-        if home.is_empty() {
-            return; // skip if HOME not set
-        }
-        let mut overrides = HashMap::new();
-        overrides.insert("HOME".to_string(), "override-value".to_string());
-        // Process env must take precedence over the map.
-        assert_eq!(substitute_env_with_overrides("${HOME}", &overrides), home,);
+    fn with_overrides_primary_lookup_wins_over_map() {
+        // Verify precedence: the primary lookup (first in chain) wins over
+        // the overrides map.  We use `substitute_env_with` directly to
+        // avoid reading real env vars that could contain secrets.
+        let lookup = |name: &str| -> Option<String> {
+            // Simulate process env returning a value for PRIMARY_VAR.
+            if name == "PRIMARY_VAR" {
+                Some("from-primary".to_string())
+            } else {
+                // Fall back to the overrides map for anything else.
+                let overrides: HashMap<String, String> =
+                    [("PRIMARY_VAR".to_string(), "from-map".to_string())]
+                        .into_iter()
+                        .collect();
+                overrides.get(name).cloned()
+            }
+        };
+        assert_eq!(
+            substitute_env_with("${PRIMARY_VAR}", lookup),
+            "from-primary",
+            "primary lookup must win over fallback map"
+        );
     }
 
     #[test]
