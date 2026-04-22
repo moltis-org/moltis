@@ -20691,6 +20691,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
         isMain ? /* @__PURE__ */ u(
           "button",
           {
+            type: "button",
             className: "provider-btn provider-btn-secondary",
             style: { fontSize: "0.7rem", padding: "3px 8px" },
             onClick: () => navigate(settingsPath("identity")),
@@ -20700,6 +20701,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
           /* @__PURE__ */ u(
             "button",
             {
+              type: "button",
               className: "provider-btn provider-btn-secondary",
               style: { fontSize: "0.7rem", padding: "3px 8px" },
               onClick: () => onEdit(agent),
@@ -20709,6 +20711,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
           /* @__PURE__ */ u(
             "button",
             {
+              type: "button",
               className: "provider-btn provider-btn-danger",
               style: { fontSize: "0.7rem", padding: "3px 8px" },
               onClick: () => onDelete(agent),
@@ -20719,6 +20722,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
         !isDefault && /* @__PURE__ */ u(
           "button",
           {
+            type: "button",
             className: "provider-btn provider-btn-secondary",
             style: { fontSize: "0.7rem", padding: "3px 8px" },
             onClick: () => onSetDefault(agent),
@@ -20739,7 +20743,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
     }) })
   ] });
 }
-function PresetCard({ preset }) {
+function PresetCard({ preset, creating, onCreate }) {
   const [expanded, setExpanded] = d(false);
   return /* @__PURE__ */ u("div", { className: "backend-card", style: { opacity: 0.7 }, children: [
     /* @__PURE__ */ u("div", { className: "flex items-center justify-between", children: [
@@ -20749,15 +20753,29 @@ function PresetCard({ preset }) {
         /* @__PURE__ */ u("span", { className: "tier-badge", children: "config" }),
         preset.model && /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: preset.model })
       ] }),
-      /* @__PURE__ */ u(
-        "button",
-        {
-          className: "provider-btn provider-btn-secondary",
-          style: { fontSize: "0.7rem", padding: "3px 8px" },
-          onClick: () => setExpanded(!expanded),
-          children: expanded ? "Hide" : "View"
-        }
-      )
+      /* @__PURE__ */ u("div", { className: "flex gap-2", children: [
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn",
+            style: { fontSize: "0.7rem", padding: "3px 8px" },
+            disabled: creating,
+            onClick: () => onCreate(preset),
+            children: creating ? "Creating..." : "Use"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-secondary",
+            style: { fontSize: "0.7rem", padding: "3px 8px" },
+            onClick: () => setExpanded(!expanded),
+            children: expanded ? "Hide" : "View"
+          }
+        )
+      ] })
     ] }),
     preset.theme && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: preset.theme }),
     expanded && preset.toml && /* @__PURE__ */ u(
@@ -20783,6 +20801,7 @@ function AgentsPageComponent({ subPath }) {
   const [defaultId, setDefaultId] = d("main");
   const [isLoading, setIsLoading] = d(true);
   const [editing, setEditing] = d(null);
+  const [creatingPresetId, setCreatingPresetId] = d(null);
   const [error2, setError] = d(null);
   function fetchAgents() {
     setIsLoading(true);
@@ -20808,12 +20827,21 @@ function AgentsPageComponent({ subPath }) {
     load();
   }
   function fetchConfigPresets() {
-    sendRpc("agents.presets_list", {}).then((res) => {
-      var _a2;
-      if ((res == null ? void 0 : res.ok) && ((_a2 = res.payload) == null ? void 0 : _a2.presets)) {
-        setConfigPresets(res.payload.presets);
-      }
-    });
+    let attempts = 0;
+    function load() {
+      sendRpc("agents.presets_list", {}).then((res) => {
+        var _a2, _b2, _c;
+        if ((((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.code) === "UNAVAILABLE" || ((_b2 = res == null ? void 0 : res.error) == null ? void 0 : _b2.message) === "WebSocket not connected") && attempts < WS_RETRY_LIMIT) {
+          attempts += 1;
+          window.setTimeout(load, WS_RETRY_DELAY_MS);
+          return;
+        }
+        if ((res == null ? void 0 : res.ok) && ((_c = res.payload) == null ? void 0 : _c.presets)) {
+          setConfigPresets(res.payload.presets);
+        }
+      });
+    }
+    load();
   }
   y$1(() => {
     fetchAgents();
@@ -20851,6 +20879,37 @@ function AgentsPageComponent({ subPath }) {
       }
     });
   }
+  function onCreateFromPreset(preset) {
+    setError(null);
+    setCreatingPresetId(preset.id);
+    sendRpc("agents.create", {
+      id: preset.id,
+      name: preset.name || preset.id,
+      emoji: preset.emoji || null,
+      theme: preset.theme || null
+    }).then((createRes) => {
+      var _a2, _b2;
+      if (!(createRes == null ? void 0 : createRes.ok)) {
+        setCreatingPresetId(null);
+        setError(((_a2 = createRes == null ? void 0 : createRes.error) == null ? void 0 : _a2.message) || "Failed to create agent from preset");
+        return;
+      }
+      const promptSuffix = (_b2 = preset.system_prompt_suffix) == null ? void 0 : _b2.trim();
+      const afterSoul = promptSuffix ? sendRpc("agents.identity.update_soul", { agent_id: preset.id, soul: promptSuffix }) : Promise.resolve({ ok: true, payload: void 0, error: void 0 });
+      afterSoul.then((soulRes) => {
+        var _a3;
+        setCreatingPresetId(null);
+        if (!(soulRes == null ? void 0 : soulRes.ok)) {
+          setError(((_a3 = soulRes == null ? void 0 : soulRes.error) == null ? void 0 : _a3.message) || "Created agent, but failed to copy preset prompt");
+          return;
+        }
+        refresh();
+        fetchSessions();
+        fetchAgents();
+        fetchConfigPresets();
+      });
+    });
+  }
   if (isLoading) {
     return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: /* @__PURE__ */ u(Loading, {}) });
   }
@@ -20874,6 +20933,7 @@ function AgentsPageComponent({ subPath }) {
       /* @__PURE__ */ u(
         "button",
         {
+          type: "button",
           className: "provider-btn",
           style: { fontSize: "0.75rem", padding: "4px 10px" },
           onClick: () => setEditing("new"),
@@ -20896,7 +20956,15 @@ function AgentsPageComponent({ subPath }) {
     )) }),
     configPresets.length > 0 && /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 mt-2", style: { maxWidth: "600px" }, children: [
       /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Config-only Presets" }),
-      configPresets.map((preset) => /* @__PURE__ */ u(PresetCard, { preset }, preset.id))
+      configPresets.map((preset) => /* @__PURE__ */ u(
+        PresetCard,
+        {
+          preset,
+          creating: creatingPresetId === preset.id,
+          onCreate: onCreateFromPreset
+        },
+        preset.id
+      ))
     ] })
   ] });
 }

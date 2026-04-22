@@ -14,6 +14,7 @@ import { navigate } from "../router";
 import { settingsPath } from "../routes";
 import { fetchSessions } from "../sessions";
 import { targetValue } from "../typed-events";
+import type { RpcResponse } from "../types";
 import { confirmDialog } from "../ui";
 
 // ── Types ───────────────────────────────────────────────────
@@ -42,6 +43,7 @@ interface ConfigPreset {
 	emoji?: string;
 	theme?: string;
 	model?: string;
+	system_prompt_suffix?: string;
 	toml?: string;
 }
 
@@ -61,6 +63,8 @@ interface AgentCardProps {
 
 interface PresetCardProps {
 	preset: ConfigPreset;
+	creating: boolean;
+	onCreate: (preset: ConfigPreset) => void;
 }
 
 const WS_RETRY_LIMIT = 75;
@@ -339,6 +343,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCa
 				<div className="flex gap-2">
 					{isMain ? (
 						<button
+							type="button"
 							className="provider-btn provider-btn-secondary"
 							style={{ fontSize: "0.7rem", padding: "3px 8px" }}
 							onClick={() => navigate(settingsPath("identity"))}
@@ -348,6 +353,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCa
 					) : (
 						<>
 							<button
+								type="button"
 								className="provider-btn provider-btn-secondary"
 								style={{ fontSize: "0.7rem", padding: "3px 8px" }}
 								onClick={() => onEdit(agent)}
@@ -355,6 +361,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCa
 								Edit
 							</button>
 							<button
+								type="button"
 								className="provider-btn provider-btn-danger"
 								style={{ fontSize: "0.7rem", padding: "3px 8px" }}
 								onClick={() => onDelete(agent)}
@@ -365,6 +372,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCa
 					)}
 					{!isDefault && (
 						<button
+							type="button"
 							className="provider-btn provider-btn-secondary"
 							style={{ fontSize: "0.7rem", padding: "3px 8px" }}
 							onClick={() => onSetDefault(agent)}
@@ -392,9 +400,9 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCa
 	);
 }
 
-// ── Config-only preset card (read-only) ─────────────────────
+// ── Config-only preset card ─────────────────────────────────
 
-function PresetCard({ preset }: PresetCardProps): VNode {
+function PresetCard({ preset, creating, onCreate }: PresetCardProps): VNode {
 	const [expanded, setExpanded] = useState(false);
 	return (
 		<div className="backend-card" style={{ opacity: 0.7 }}>
@@ -405,13 +413,25 @@ function PresetCard({ preset }: PresetCardProps): VNode {
 					<span className="tier-badge">config</span>
 					{preset.model && <span className="text-xs text-[var(--muted)]">{preset.model}</span>}
 				</div>
-				<button
-					className="provider-btn provider-btn-secondary"
-					style={{ fontSize: "0.7rem", padding: "3px 8px" }}
-					onClick={() => setExpanded(!expanded)}
-				>
-					{expanded ? "Hide" : "View"}
-				</button>
+				<div className="flex gap-2">
+					<button
+						type="button"
+						className="provider-btn"
+						style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+						disabled={creating}
+						onClick={() => onCreate(preset)}
+					>
+						{creating ? "Creating..." : "Use"}
+					</button>
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+						onClick={() => setExpanded(!expanded)}
+					>
+						{expanded ? "Hide" : "View"}
+					</button>
+				</div>
 			</div>
 			{preset.theme && <div className="text-xs text-[var(--muted)] mt-1">{preset.theme}</div>}
 			{expanded && preset.toml && (
@@ -441,6 +461,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 	const [defaultId, setDefaultId] = useState("main");
 	const [isLoading, setIsLoading] = useState(true);
 	const [editing, setEditing] = useState<null | "new" | AgentPersona>(null);
+	const [creatingPresetId, setCreatingPresetId] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
 	function fetchAgents(): void {
@@ -470,11 +491,23 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 	}
 
 	function fetchConfigPresets(): void {
-		sendRpc("agents.presets_list", {}).then((res) => {
-			if (res?.ok && (res.payload as { presets?: ConfigPreset[] })?.presets) {
-				setConfigPresets((res.payload as { presets: ConfigPreset[] }).presets);
-			}
-		});
+		let attempts = 0;
+		function load(): void {
+			sendRpc("agents.presets_list", {}).then((res) => {
+				if (
+					(res?.error?.code === "UNAVAILABLE" || res?.error?.message === "WebSocket not connected") &&
+					attempts < WS_RETRY_LIMIT
+				) {
+					attempts += 1;
+					window.setTimeout(load, WS_RETRY_DELAY_MS);
+					return;
+				}
+				if (res?.ok && (res.payload as { presets?: ConfigPreset[] })?.presets) {
+					setConfigPresets((res.payload as { presets: ConfigPreset[] }).presets);
+				}
+			});
+		}
+		load();
 	}
 
 	useEffect(() => {
@@ -515,6 +548,38 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 		});
 	}
 
+	function onCreateFromPreset(preset: ConfigPreset): void {
+		setError(null);
+		setCreatingPresetId(preset.id);
+		sendRpc("agents.create", {
+			id: preset.id,
+			name: preset.name || preset.id,
+			emoji: preset.emoji || null,
+			theme: preset.theme || null,
+		}).then((createRes) => {
+			if (!createRes?.ok) {
+				setCreatingPresetId(null);
+				setError(createRes?.error?.message || "Failed to create agent from preset");
+				return;
+			}
+			const promptSuffix = preset.system_prompt_suffix?.trim();
+			const afterSoul: Promise<RpcResponse> = promptSuffix
+				? sendRpc("agents.identity.update_soul", { agent_id: preset.id, soul: promptSuffix })
+				: Promise.resolve({ ok: true, payload: undefined, error: undefined });
+			afterSoul.then((soulRes) => {
+				setCreatingPresetId(null);
+				if (!soulRes?.ok) {
+					setError(soulRes?.error?.message || "Created agent, but failed to copy preset prompt");
+					return;
+				}
+				refreshGon();
+				fetchSessions();
+				fetchAgents();
+				fetchConfigPresets();
+			});
+		});
+	}
+
 	if (isLoading) {
 		return (
 			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
@@ -544,6 +609,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 			<div className="flex items-center gap-3">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Agents</h2>
 				<button
+					type="button"
 					className="provider-btn"
 					style={{ fontSize: "0.75rem", padding: "4px 10px" }}
 					onClick={() => setEditing("new")}
@@ -579,7 +645,12 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 				<div className="flex flex-col gap-2 mt-2" style={{ maxWidth: "600px" }}>
 					<h3 className="text-xs font-medium text-[var(--muted)]">Config-only Presets</h3>
 					{configPresets.map((preset) => (
-						<PresetCard key={preset.id} preset={preset} />
+						<PresetCard
+							key={preset.id}
+							preset={preset}
+							creating={creatingPresetId === preset.id}
+							onCreate={onCreateFromPreset}
+						/>
 					))}
 				</div>
 			)}
