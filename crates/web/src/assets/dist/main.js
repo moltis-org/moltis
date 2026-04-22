@@ -14440,19 +14440,6 @@ function doInstall(source, autoTrust = false) {
     }
   });
 }
-function doImportBundle(path) {
-  if (!(path && connected)) {
-    if (!connected) showToast$3("Not connected.", "error");
-    return Promise.resolve();
-  }
-  return sendRpc("skills.repos.import", { path }).then((res) => {
-    if (res == null ? void 0 : res.ok) {
-      const p = res.payload || {};
-      showToast$3(`Imported ${p.repo_name || "bundle"} (${p.skill_count || 0} skills)`, "success");
-      fetchAll();
-    } else showToast$3(`Failed: ${(res == null ? void 0 : res.error) || "unknown"}`, "error");
-  });
-}
 function doExportBundle(source, path) {
   if (!(source && connected)) return Promise.resolve();
   const params = { source };
@@ -14551,39 +14538,11 @@ function InstallBox$1() {
     /* @__PURE__ */ u("button", { className: "provider-btn", onClick: go, disabled: installing.value, children: installing.value ? "Installing…" : "Install" })
   ] });
 }
-function BundleTransferBox() {
-  const ref = A(null);
-  const importing = useSignal(false);
-  function go() {
-    var _a2;
-    const p = (_a2 = ref.current) == null ? void 0 : _a2.value.trim();
-    if (!p) return;
-    importing.value = true;
-    doImportBundle(p).finally(() => {
-      importing.value = false;
-    });
-  }
-  return /* @__PURE__ */ u("div", { className: "skills-install-box", children: [
-    /* @__PURE__ */ u(
-      "input",
-      {
-        ref,
-        type: "text",
-        placeholder: "/path/to/skill-bundle.tar.gz",
-        className: "skills-install-input",
-        onKeyDown: (e) => {
-          if (e.key === "Enter") go();
-        }
-      }
-    ),
-    /* @__PURE__ */ u("button", { className: "provider-btn provider-btn-secondary", onClick: go, disabled: importing.value, children: importing.value ? "Importing…" : "Import Bundle" })
-  ] });
-}
 const featuredSkills = [
   { repo: "openclaw/skills", desc: "Community skills from ClawdHub" },
-  { repo: "anthropics/skills", desc: "Official Anthropic agent skills" },
-  { repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection" },
-  { repo: "vercel-labs/skills", desc: "Vercel skills toolkit" },
+  { repo: "anthropics/skills", desc: "Official Anthropic agent skills", autoTrust: true },
+  { repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection", autoTrust: true },
+  { repo: "vercel-labs/skills", desc: "Vercel skills toolkit", autoTrust: true },
   {
     repo: "garrytan/gbrain",
     desc: "Knowledge graph with hybrid search for agent memory",
@@ -14959,7 +14918,20 @@ function RepoCard({ repo }) {
           "/",
           repo.skill_count,
           " enabled"
-        ] })
+        ] }),
+        repo.trusted_count != null && repo.skill_count > 0 && /* @__PURE__ */ u(
+          "span",
+          {
+            style: {
+              fontSize: ".68rem",
+              padding: "1px 5px",
+              borderRadius: "var(--radius-sm)",
+              background: repo.trusted_count === repo.skill_count ? "var(--success-bg, rgba(34,197,94,.12))" : "var(--warning-bg, rgba(234,179,8,.12))",
+              color: repo.trusted_count === repo.skill_count ? "var(--success, #22c55e)" : "var(--warning, #eab308)"
+            },
+            children: repo.trusted_count === repo.skill_count ? "trusted" : `${repo.trusted_count}/${repo.skill_count} trusted`
+          }
+        )
       ] }),
       /* @__PURE__ */ u("div", { style: { display: "flex", gap: "6px" }, children: [
         !isOrphan && /* @__PURE__ */ u(
@@ -15467,7 +15439,6 @@ function SkillsPageComponent() {
     activeTab$1.value === "categories" && /* @__PURE__ */ u(BundledCategoriesSection, {}),
     activeTab$1.value === "repositories" && /* @__PURE__ */ u(S, { children: [
       /* @__PURE__ */ u(InstallBox$1, {}),
-      /* @__PURE__ */ u(BundleTransferBox, {}),
       /* @__PURE__ */ u(InstallProgressBar, {}),
       /* @__PURE__ */ u(FeaturedSection$1, {}),
       /* @__PURE__ */ u(ReposSection, {})

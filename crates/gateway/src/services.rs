@@ -316,6 +316,7 @@ impl SkillsService for NoopSkillsService {
             .iter()
             .map(|repo| {
                 let enabled = repo.skills.iter().filter(|s| s.enabled).count();
+                let trusted = repo.skills.iter().filter(|s| s.trusted).count();
                 // Re-detect format for repos that predate the formats module
                 let format = if repo.format == moltis_skills::formats::PluginFormat::Skill {
                     let repo_dir = install_dir.join(&repo.repo_name);
@@ -335,6 +336,7 @@ impl SkillsService for NoopSkillsService {
                     "format": format,
                     "skill_count": repo.skills.len(),
                     "enabled_count": enabled,
+                    "trusted_count": trusted,
                 })
             })
             .collect();

@@ -63,6 +63,7 @@ interface RepoSummary {
 	source: string;
 	skill_count: number;
 	enabled_count: number;
+	trusted_count?: number;
 	commit_sha?: string;
 	quarantined?: boolean;
 	drifted?: boolean;
@@ -190,19 +191,6 @@ function doInstall(source: string, autoTrust = false): Promise<void> {
 		}
 	});
 }
-function doImportBundle(path: string): Promise<void> {
-	if (!(path && S.connected)) {
-		if (!S.connected) showToast("Not connected.", "error");
-		return Promise.resolve();
-	}
-	return sendRpc("skills.repos.import", { path }).then((res) => {
-		if (res?.ok) {
-			const p = (res.payload || {}) as Record<string, unknown>;
-			showToast(`Imported ${p.repo_name || "bundle"} (${p.skill_count || 0} skills)`, "success");
-			fetchAll();
-		} else showToast(`Failed: ${res?.error || "unknown"}`, "error");
-	});
-}
 function doExportBundle(source: string, path: string | null): Promise<void> {
 	if (!(source && S.connected)) return Promise.resolve();
 	const params: Record<string, string> = { source };
@@ -308,35 +296,6 @@ function InstallBox(): VNode {
 		</div>
 	);
 }
-function BundleTransferBox(): VNode {
-	const ref = useRef<HTMLInputElement>(null);
-	const importing = useSignal(false);
-	function go(): void {
-		const p = ref.current?.value.trim();
-		if (!p) return;
-		importing.value = true;
-		doImportBundle(p).finally(() => {
-			importing.value = false;
-		});
-	}
-	return (
-		<div className="skills-install-box">
-			<input
-				ref={ref}
-				type="text"
-				placeholder="/path/to/skill-bundle.tar.gz"
-				className="skills-install-input"
-				onKeyDown={(e) => {
-					if ((e as KeyboardEvent).key === "Enter") go();
-				}}
-			/>
-			<button className="provider-btn provider-btn-secondary" onClick={go} disabled={importing.value}>
-				{importing.value ? "Importing\u2026" : "Import Bundle"}
-			</button>
-		</div>
-	);
-}
-
 interface FeaturedSkill {
 	repo: string;
 	desc: string;
@@ -346,9 +305,9 @@ interface FeaturedSkill {
 }
 const featuredSkills: FeaturedSkill[] = [
 	{ repo: "openclaw/skills", desc: "Community skills from ClawdHub" },
-	{ repo: "anthropics/skills", desc: "Official Anthropic agent skills" },
-	{ repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection" },
-	{ repo: "vercel-labs/skills", desc: "Vercel skills toolkit" },
+	{ repo: "anthropics/skills", desc: "Official Anthropic agent skills", autoTrust: true },
+	{ repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection", autoTrust: true },
+	{ repo: "vercel-labs/skills", desc: "Vercel skills toolkit", autoTrust: true },
 	{
 		repo: "garrytan/gbrain",
 		desc: "Knowledge graph with hybrid search for agent memory",
@@ -722,6 +681,24 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 					<span style={{ fontSize: ".72rem", color: "var(--muted)" }}>
 						{repo.enabled_count}/{repo.skill_count} enabled
 					</span>
+					{repo.trusted_count != null && repo.skill_count > 0 && (
+						<span
+							style={{
+								fontSize: ".68rem",
+								padding: "1px 5px",
+								borderRadius: "var(--radius-sm)",
+								background:
+									repo.trusted_count === repo.skill_count
+										? "var(--success-bg, rgba(34,197,94,.12))"
+										: "var(--warning-bg, rgba(234,179,8,.12))",
+								color: repo.trusted_count === repo.skill_count ? "var(--success, #22c55e)" : "var(--warning, #eab308)",
+							}}
+						>
+							{repo.trusted_count === repo.skill_count
+								? "trusted"
+								: `${repo.trusted_count}/${repo.skill_count} trusted`}
+						</span>
+					)}
 				</div>
 				<div style={{ display: "flex", gap: "6px" }}>
 					{!isOrphan && (
@@ -1265,7 +1242,6 @@ function SkillsPageComponent(): VNode {
 			{activeTab.value === "repositories" && (
 				<>
 					<InstallBox />
-					<BundleTransferBox />
 					<InstallProgressBar />
 					<FeaturedSection />
 					<ReposSection />
