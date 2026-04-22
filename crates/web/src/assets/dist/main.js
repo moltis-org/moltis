@@ -8842,7 +8842,7 @@ function prefetchChannels() {
   });
 }
 const senders = y([]);
-const activeTab$1 = y("channels");
+const activeTab$2 = y("channels");
 const showAddTelegram = y(false);
 const showAddTeams = y(false);
 const showAddDiscord = y(false);
@@ -9412,7 +9412,7 @@ function handleChannelEvent(_payload) {
     loadChannels();
   }
   const selected = parseSenderSelectionKey(sendersAccount.value || "");
-  if (activeTab$1.value === "senders" && selected.account_id === p.account_id && selected.type === channelType(p.channel_type) && (p.kind === "inbound_message" || p.kind === "otp_challenge" || p.kind === "otp_resolved")) {
+  if (activeTab$2.value === "senders" && selected.account_id === p.account_id && selected.type === channelType(p.channel_type) && (p.kind === "inbound_message" || p.kind === "otp_challenge" || p.kind === "otp_resolved")) {
     loadSenders();
   }
 }
@@ -9437,9 +9437,9 @@ function ChannelsPageComponent() {
           "button",
           {
             className: "session-action-btn",
-            style: activeTab$1.value === "channels" ? { fontWeight: 600 } : void 0,
+            style: activeTab$2.value === "channels" ? { fontWeight: 600 } : void 0,
             onClick: () => {
-              activeTab$1.value = "channels";
+              activeTab$2.value = "channels";
             },
             children: "Channels"
           }
@@ -9448,18 +9448,18 @@ function ChannelsPageComponent() {
           "button",
           {
             className: "session-action-btn",
-            style: activeTab$1.value === "senders" ? { fontWeight: 600 } : void 0,
+            style: activeTab$2.value === "senders" ? { fontWeight: 600 } : void 0,
             onClick: () => {
-              activeTab$1.value = "senders";
+              activeTab$2.value = "senders";
             },
             children: "Senders"
           }
         )
       ] }),
-      activeTab$1.value === "channels" && channels.value.length > 0 && /* @__PURE__ */ u(ConnectButtons, {})
+      activeTab$2.value === "channels" && channels.value.length > 0 && /* @__PURE__ */ u(ConnectButtons, {})
     ] }),
-    activeTab$1.value === "channels" && /* @__PURE__ */ u(ChannelStorageNotice, {}),
-    activeTab$1.value === "channels" ? /* @__PURE__ */ u(ChannelsTab, {}) : /* @__PURE__ */ u(SendersTab, {}),
+    activeTab$2.value === "channels" && /* @__PURE__ */ u(ChannelStorageNotice, {}),
+    activeTab$2.value === "channels" ? /* @__PURE__ */ u(ChannelsTab, {}) : /* @__PURE__ */ u(SendersTab, {}),
     /* @__PURE__ */ u(AddTelegramModal, {}),
     /* @__PURE__ */ u(AddTeamsModal, {}),
     /* @__PURE__ */ u(AddDiscordModal, {}),
@@ -9475,7 +9475,7 @@ let _channelsContainer = null;
 function initChannels(container) {
   _channelsContainer = container;
   container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
-  activeTab$1.value = "channels";
+  activeTab$2.value = "channels";
   showAddTelegram.value = false;
   showAddTeams.value = false;
   showAddDiscord.value = false;
@@ -14355,6 +14355,30 @@ function teardownProjects() {
   _projectsContainer = null;
 }
 registerPage(routes.projects, initProjects, teardownProjects);
+function TabBar$1({ tabs, active, onChange: onChange2, className }) {
+  return /* @__PURE__ */ u("div", { className: className ?? "flex border-b border-[var(--border)] text-xs", role: "tablist", children: tabs.map((tab) => {
+    const isActive = tab.id === active;
+    const tabClass = [
+      "py-2 px-3 cursor-pointer bg-transparent border-b-2 transition-colors text-sm",
+      isActive ? "border-[var(--accent)] text-[var(--text)] font-medium" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"
+    ].join(" ");
+    return /* @__PURE__ */ u(
+      "button",
+      {
+        type: "button",
+        role: "tab",
+        "aria-selected": isActive,
+        className: tabClass,
+        onClick: () => onChange2(tab.id),
+        children: [
+          tab.label,
+          tab.badge != null && /* @__PURE__ */ u("span", { className: "ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]", children: tab.badge })
+        ]
+      },
+      tab.id
+    );
+  }) });
+}
 var SkillSource = /* @__PURE__ */ ((SkillSource2) => {
   SkillSource2["Project"] = "project";
   SkillSource2["Personal"] = "personal";
@@ -14537,44 +14561,6 @@ function InstallProgressBar() {
     },
     p.id
   )) });
-}
-function SecurityWarning() {
-  const dismissed = useSignal(!!localStorage.getItem("moltis-skills-warning-dismissed"));
-  if (dismissed.value) return null;
-  return /* @__PURE__ */ u("div", { className: "skills-warn", children: [
-    /* @__PURE__ */ u("div", { className: "skills-warn-title", children: [
-      "⚠️",
-      " Skills run code on your machine"
-    ] }),
-    /* @__PURE__ */ u("div", { children: [
-      "Skills are community-authored instructions the agent follows ",
-      /* @__PURE__ */ u("strong", { children: "with your full system privileges" }),
-      "."
-    ] }),
-    /* @__PURE__ */ u("div", { style: { marginTop: "6px", color: "var(--success, #4a4)" }, children: "With sandbox mode enabled, execution is isolated." }),
-    /* @__PURE__ */ u("div", { style: { display: "flex", gap: "8px", marginTop: "8px" }, children: [
-      /* @__PURE__ */ u(
-        "button",
-        {
-          onClick: () => {
-            localStorage.setItem("moltis-skills-warning-dismissed", "1");
-            dismissed.value = true;
-          },
-          style: {
-            background: "none",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius-sm)",
-            fontSize: ".72rem",
-            padding: "3px 10px",
-            cursor: "pointer",
-            color: "var(--muted)"
-          },
-          children: "Dismiss"
-        }
-      ),
-      /* @__PURE__ */ u("button", { className: "provider-btn provider-btn-danger provider-btn-sm", onClick: emergencyDisableAllSkills, children: "Disable all" })
-    ] })
-  ] });
 }
 function InstallBox$1() {
   const ref = A(null);
@@ -15441,6 +15427,12 @@ function EnabledSkillsTable() {
     ] }) })
   ] });
 }
+const activeTab$1 = y("skills");
+const SKILLS_TABS = [
+  { id: "skills", label: "Skills" },
+  { id: "categories", label: "Categories" },
+  { id: "repositories", label: "Repositories" }
+];
 function SkillsPageComponent() {
   y$1(() => {
     ensurePrefetch().then(() => fetchAll());
@@ -15473,15 +15465,21 @@ function SkillsPageComponent() {
         }
       )
     ] }),
-    /* @__PURE__ */ u(SecurityWarning, {}),
-    /* @__PURE__ */ u(BundledCategoriesSection, {}),
-    /* @__PURE__ */ u(InstallBox$1, {}),
-    /* @__PURE__ */ u(BundleTransferBox, {}),
-    /* @__PURE__ */ u(InstallProgressBar, {}),
-    /* @__PURE__ */ u(FeaturedSection$1, {}),
-    /* @__PURE__ */ u(ReposSection, {}),
-    loading$7.value && !enabledSkills.value.length && !repos.value.length && /* @__PURE__ */ u("div", { style: { padding: "24px", textAlign: "center", color: "var(--muted)" }, children: "Loading skills..." }),
-    /* @__PURE__ */ u(EnabledSkillsTable, {})
+    /* @__PURE__ */ u(TabBar$1, { tabs: SKILLS_TABS, active: activeTab$1.value, onChange: (id) => {
+      activeTab$1.value = id;
+    } }),
+    activeTab$1.value === "skills" && /* @__PURE__ */ u(S, { children: [
+      loading$7.value && !enabledSkills.value.length && /* @__PURE__ */ u("div", { style: { padding: "24px", textAlign: "center", color: "var(--muted)" }, children: "Loading skills..." }),
+      /* @__PURE__ */ u(EnabledSkillsTable, {})
+    ] }),
+    activeTab$1.value === "categories" && /* @__PURE__ */ u(BundledCategoriesSection, {}),
+    activeTab$1.value === "repositories" && /* @__PURE__ */ u(S, { children: [
+      /* @__PURE__ */ u(InstallBox$1, {}),
+      /* @__PURE__ */ u(BundleTransferBox, {}),
+      /* @__PURE__ */ u(InstallProgressBar, {}),
+      /* @__PURE__ */ u(FeaturedSection$1, {}),
+      /* @__PURE__ */ u(ReposSection, {})
+    ] })
   ] });
 }
 let _skillsContainer = null;
@@ -19891,30 +19889,6 @@ function StatusMessage({ error: error2, success, className }) {
   const color = error2 ? "var(--error)" : "var(--accent)";
   const text = error2 ?? success;
   return /* @__PURE__ */ u("div", { className: className ?? "text-xs mt-2", style: { color }, children: text });
-}
-function TabBar$1({ tabs, active, onChange: onChange2, className }) {
-  return /* @__PURE__ */ u("div", { className: className ?? "flex border-b border-[var(--border)] text-xs", role: "tablist", children: tabs.map((tab) => {
-    const isActive = tab.id === active;
-    const tabClass = [
-      "py-2 px-3 cursor-pointer bg-transparent border-b-2 transition-colors text-sm",
-      isActive ? "border-[var(--accent)] text-[var(--text)] font-medium" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"
-    ].join(" ");
-    return /* @__PURE__ */ u(
-      "button",
-      {
-        type: "button",
-        role: "tab",
-        "aria-selected": isActive,
-        className: tabClass,
-        onClick: () => onChange2(tab.id),
-        children: [
-          tab.label,
-          tab.badge != null && /* @__PURE__ */ u("span", { className: "ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]", children: tab.badge })
-        ]
-      },
-      tab.id
-    );
-  }) });
 }
 const metricsData = y(null);
 const historyPoints = y([]);

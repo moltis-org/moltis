@@ -6,6 +6,7 @@ import { computed, signal, useSignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
+import { TabBar } from "../components/forms/Tabs";
 import { onEvent } from "../events";
 import { sendRpc } from "../helpers";
 import { updateNavCount } from "../nav-counts";
@@ -256,44 +257,6 @@ function InstallProgressBar(): VNode | null {
 					<div style={{ marginTop: "3px" }}>This may take a while.</div>
 				</div>
 			))}
-		</div>
-	);
-}
-
-function SecurityWarning(): VNode | null {
-	const dismissed = useSignal(!!localStorage.getItem("moltis-skills-warning-dismissed"));
-	if (dismissed.value) return null;
-	return (
-		<div className="skills-warn">
-			<div className="skills-warn-title">{"\u26a0\ufe0f"} Skills run code on your machine</div>
-			<div>
-				Skills are community-authored instructions the agent follows <strong>with your full system privileges</strong>.
-			</div>
-			<div style={{ marginTop: "6px", color: "var(--success, #4a4)" }}>
-				With sandbox mode enabled, execution is isolated.
-			</div>
-			<div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-				<button
-					onClick={() => {
-						localStorage.setItem("moltis-skills-warning-dismissed", "1");
-						dismissed.value = true;
-					}}
-					style={{
-						background: "none",
-						border: "1px solid var(--border)",
-						borderRadius: "var(--radius-sm)",
-						fontSize: ".72rem",
-						padding: "3px 10px",
-						cursor: "pointer",
-						color: "var(--muted)",
-					}}
-				>
-					Dismiss
-				</button>
-				<button className="provider-btn provider-btn-danger provider-btn-sm" onClick={emergencyDisableAllSkills}>
-					Disable all
-				</button>
-			</div>
 		</div>
 	);
 }
@@ -1205,6 +1168,14 @@ function EnabledSkillsTable(): VNode | null {
 	);
 }
 
+const activeTab = signal("skills");
+
+const SKILLS_TABS = [
+	{ id: "skills", label: "Skills" },
+	{ id: "categories", label: "Categories" },
+	{ id: "repositories", label: "Repositories" },
+];
+
 function SkillsPageComponent(): VNode {
 	useEffect(() => {
 		ensurePrefetch().then(() => fetchAll());
@@ -1239,17 +1210,25 @@ function SkillsPageComponent(): VNode {
 					How to write a skill?
 				</a>
 			</p>
-			<SecurityWarning />
-			<BundledCategoriesSection />
-			<InstallBox />
-			<BundleTransferBox />
-			<InstallProgressBar />
-			<FeaturedSection />
-			<ReposSection />
-			{loading.value && !enabledSkills.value.length && !repos.value.length && (
-				<div style={{ padding: "24px", textAlign: "center", color: "var(--muted)" }}>Loading skills...</div>
+			<TabBar tabs={SKILLS_TABS} active={activeTab.value} onChange={(id) => { activeTab.value = id; }} />
+			{activeTab.value === "skills" && (
+				<>
+					{loading.value && !enabledSkills.value.length && (
+						<div style={{ padding: "24px", textAlign: "center", color: "var(--muted)" }}>Loading skills...</div>
+					)}
+					<EnabledSkillsTable />
+				</>
 			)}
-			<EnabledSkillsTable />
+			{activeTab.value === "categories" && <BundledCategoriesSection />}
+			{activeTab.value === "repositories" && (
+				<>
+					<InstallBox />
+					<BundleTransferBox />
+					<InstallProgressBar />
+					<FeaturedSection />
+					<ReposSection />
+				</>
+			)}
 		</div>
 	);
 }
