@@ -90,8 +90,12 @@ impl HaConnection {
     /// The `command` must be a JSON object with at least a `type` field
     /// (e.g. `call_service`, `subscribe_events`, `get_states`).
     /// An `id` field is automatically added for request-response tracking.
+    ///
+    /// Returns the command `id` that was sent alongside the response payload.
+    /// Use the returned `id` when the caller needs the subscription/command
+    /// identifier (e.g. for [`subscribe_events`], [`subscribe_trigger`]).
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
-    pub async fn call_command(&self, command: Value) -> Result<Value> {
+    pub async fn call_command(&self, command: Value) -> Result<(u64, Value)> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
 
         let mut msg = command;
@@ -122,7 +126,7 @@ impl HaConnection {
 
         // Wait for response with timeout
         match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
-            Ok(Ok(result)) => result,
+            Ok(Ok(result)) => result.map(|v| (id, v)),
             Ok(Err(_)) => Err(Error::WebSocket(
                 "response channel closed unexpectedly".to_owned(),
             )),
@@ -168,10 +172,7 @@ impl HaConnection {
             payload.insert("event_type".to_owned(), Value::String(et.to_owned()));
         }
 
-        let _result = self.call_command(Value::Object(payload)).await?;
-        // The subscription ID is the `id` we sent. Extract it from the
-        // internal counter: we just incremented, so subtract 1.
-        let sub_id = self.next_id.load(Ordering::SeqCst).saturating_sub(1);
+        let (sub_id, _result) = self.call_command(Value::Object(payload)).await?;
         Ok(sub_id)
     }
 
@@ -209,19 +210,25 @@ impl HaConnection {
 
         if let Some(t) = target {
             // WS format: target is a nested object
-            let obj = payload.as_object_mut().unwrap();
+            let obj = payload.as_object_mut().ok_or_else(|| {
+                Error::WebSocket("call_service payload is not a JSON object".to_owned())
+            })?;
             obj.insert("target".to_owned(), serde_json::to_value(t)?);
         }
         if let Some(d) = service_data {
-            let obj = payload.as_object_mut().unwrap();
+            let obj = payload.as_object_mut().ok_or_else(|| {
+                Error::WebSocket("call_service payload is not a JSON object".to_owned())
+            })?;
             obj.insert("service_data".to_owned(), d);
         }
         if return_response {
-            let obj = payload.as_object_mut().unwrap();
+            let obj = payload.as_object_mut().ok_or_else(|| {
+                Error::WebSocket("call_service payload is not a JSON object".to_owned())
+            })?;
             obj.insert("return_response".to_owned(), Value::Bool(true));
         }
 
-        let result = self.call_command(payload).await?;
+        let (_id, result) = self.call_command(payload).await?;
         Ok(result)
     }
 
@@ -231,7 +238,7 @@ impl HaConnection {
     /// `"type": "ping"` and waits for `"type": "pong"`.
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
     pub async fn ping(&self) -> Result<()> {
-        let _result = self
+        let (_id, _result) = self
             .call_command(serde_json::json!({"type": "ping"}))
             .await?;
         // pong responses have no payload (result is null)
@@ -245,6 +252,7 @@ impl HaConnection {
     /// trigger conditions are met. Requires admin privileges.
     ///
     /// Returns the subscription ID for use with [`unsubscribe_events`].
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
     pub async fn subscribe_trigger(
         &self,
         trigger: &Value,
@@ -257,27 +265,36 @@ impl HaConnection {
         if let Some(vars) = variables {
             payload
                 .as_object_mut()
-                .unwrap()
+                .ok_or_else(|| {
+                    Error::WebSocket(
+                        "subscribe_trigger payload is not a JSON object".to_owned(),
+                    )
+                })?
                 .insert("variables".to_owned(), vars.clone());
         }
 
-        let _result = self.call_command(payload).await?;
-        let sub_id = self.next_id.load(Ordering::SeqCst).saturating_sub(1);
+        let (sub_id, _result) = self.call_command(payload).await?;
         Ok(sub_id)
     }
 
     /// Notify HA which features this client supports.
     ///
-    /// `supported_features` is a `Map<String, Value>` mapping feature names
-    /// to their version/capability bitmask. This is a client→server
-    /// protocol negotiation message.
+    /// Accepts key-value pairs of feature name and bitmask version.
+    /// HA validates the schema as `{str: int}` on the server side.
+    ///
+    /// This is a client-to-server protocol negotiation message.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, features), level = "debug"))]
     pub async fn set_supported_features(
         &self,
-        features: serde_json::Map<String, Value>,
+        features: &[(impl AsRef<str>, u64)],
     ) -> Result<()> {
+        let features_value: serde_json::Map<String, Value> = features
+            .iter()
+            .map(|(k, v)| (k.as_ref().to_owned(), Value::Number((*v).into())))
+            .collect();
         let payload = serde_json::json!({
             "type": "supported_features",
-            "features": features,
+            "features": features_value,
         });
         self.call_command(payload).await?;
         Ok(())
@@ -287,11 +304,12 @@ impl HaConnection {
     ///
     /// Sends `config/entity_registry/list_for_display`. Returns a result
     /// containing `entity_categories` and `entities` arrays.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
     pub async fn entity_registry_list_for_display(&self) -> Result<Value> {
         let payload = serde_json::json!({
             "type": "config/entity_registry/list_for_display",
         });
-        let result = self.call_command(payload).await?;
+        let (_id, result) = self.call_command(payload).await?;
         Ok(result)
     }
 
@@ -300,6 +318,7 @@ impl HaConnection {
     /// Sends `extract_from_target` with a target specification and optional
     /// `expand_group` flag. Returns `{referenced_entities, referenced_devices,
     /// referenced_areas, missing_devices, missing_areas, ...}`.
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip(self), level = "debug"))]
     pub async fn extract_from_target(
         &self,
         target: &Target,
@@ -310,7 +329,7 @@ impl HaConnection {
             "target": serde_json::to_value(target)?,
             "expand_group": expand_group,
         });
-        let result = self.call_command(payload).await?;
+        let (_id, result) = self.call_command(payload).await?;
         Ok(result)
     }
 }
@@ -740,12 +759,13 @@ mod tests {
         );
 
         let conn = ws.subscribe().await.unwrap();
-        let result = conn
+        let (id, result) = conn
             .call_command(json!({"type": "ping"}))
             .await
             .unwrap();
 
-        // call_command returns the "result" field on success
+        // call_command returns the sent id and the "result" field on success
+        assert!(id > 0);
         assert!(result.is_null());
     }
 
@@ -760,6 +780,22 @@ mod tests {
         let conn = ws.subscribe().await.unwrap();
         let result = conn.call_command(json!("not an object")).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn call_command_returns_sent_id() {
+        let port = start_mock_ha_ws().await;
+        let ws = HaWebSocket::new(
+            &format!("ws://127.0.0.1:{port}"),
+            "test-token",
+        );
+
+        let conn = ws.subscribe().await.unwrap();
+        let (id1, _) = conn.call_command(json!({"type": "ping"})).await.unwrap();
+        let (id2, _) = conn.call_command(json!({"type": "ping"})).await.unwrap();
+
+        // IDs must be monotonically increasing
+        assert!(id2 > id1);
     }
 
     #[tokio::test]
@@ -1183,9 +1219,8 @@ mod tests {
         );
 
         let conn = ws.subscribe().await.unwrap();
-        let mut features = serde_json::Map::new();
-        features.insert("ha_version".to_owned(), Value::Number(5.into()));
-        let result = conn.set_supported_features(features).await;
+        let features = [("ha_version", 5u64)];
+        let result = conn.set_supported_features(&features).await;
         assert!(result.is_ok());
     }
 

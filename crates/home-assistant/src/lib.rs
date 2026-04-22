@@ -4,6 +4,7 @@
 //! instances, plus an [`AgentTool`] implementation for LLM-driven automation.
 
 pub mod client;
+pub mod client_ext;
 pub mod config;
 pub mod error;
 pub mod tool;
