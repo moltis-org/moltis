@@ -1170,15 +1170,20 @@ function EnabledSkillsTable(): VNode | null {
 
 const activeTab = signal("skills");
 
-const SKILLS_TABS = [
-	{ id: "skills", label: "Skills" },
-	{ id: "categories", label: "Categories" },
-	{ id: "repositories", label: "Repositories" },
-];
+const skillsTabs = computed(() => {
+	const enabledCats = bundledCategories.value.filter((c) => c.enabled).length;
+	const totalCats = bundledCategories.value.length;
+	return [
+		{ id: "skills", label: "Skills", badge: enabledSkills.value.length || undefined },
+		{ id: "categories", label: "Categories", badge: totalCats ? `${enabledCats}/${totalCats}` : undefined },
+		{ id: "repositories", label: "Repositories", badge: repos.value.length || undefined },
+	];
+});
 
 function SkillsPageComponent(): VNode {
 	useEffect(() => {
 		ensurePrefetch().then(() => fetchAll());
+		fetchBundledCategories();
 		const off = onEvent("skills.install.progress", (p: unknown) => {
 			const d = p as Record<string, string>;
 			if (!d?.op_id) return;
@@ -1210,7 +1215,13 @@ function SkillsPageComponent(): VNode {
 					How to write a skill?
 				</a>
 			</p>
-			<TabBar tabs={SKILLS_TABS} active={activeTab.value} onChange={(id) => { activeTab.value = id; }} />
+			<TabBar
+				tabs={skillsTabs.value}
+				active={activeTab.value}
+				onChange={(id) => {
+					activeTab.value = id;
+				}}
+			/>
 			{activeTab.value === "skills" && (
 				<>
 					{loading.value && !enabledSkills.value.length && (

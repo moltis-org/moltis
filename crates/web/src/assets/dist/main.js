@@ -15428,14 +15428,19 @@ function EnabledSkillsTable() {
   ] });
 }
 const activeTab$1 = y("skills");
-const SKILLS_TABS = [
-  { id: "skills", label: "Skills" },
-  { id: "categories", label: "Categories" },
-  { id: "repositories", label: "Repositories" }
-];
+const skillsTabs = g(() => {
+  const enabledCats = bundledCategories.value.filter((c) => c.enabled).length;
+  const totalCats = bundledCategories.value.length;
+  return [
+    { id: "skills", label: "Skills", badge: enabledSkills.value.length || void 0 },
+    { id: "categories", label: "Categories", badge: totalCats ? `${enabledCats}/${totalCats}` : void 0 },
+    { id: "repositories", label: "Repositories", badge: repos.value.length || void 0 }
+  ];
+});
 function SkillsPageComponent() {
   y$1(() => {
     ensurePrefetch().then(() => fetchAll());
+    fetchBundledCategories();
     const off2 = onEvent("skills.install.progress", (p) => {
       const d2 = p;
       if (!(d2 == null ? void 0 : d2.op_id)) return;
@@ -15465,9 +15470,16 @@ function SkillsPageComponent() {
         }
       )
     ] }),
-    /* @__PURE__ */ u(TabBar$1, { tabs: SKILLS_TABS, active: activeTab$1.value, onChange: (id) => {
-      activeTab$1.value = id;
-    } }),
+    /* @__PURE__ */ u(
+      TabBar$1,
+      {
+        tabs: skillsTabs.value,
+        active: activeTab$1.value,
+        onChange: (id) => {
+          activeTab$1.value = id;
+        }
+      }
+    ),
     activeTab$1.value === "skills" && /* @__PURE__ */ u(S, { children: [
       loading$7.value && !enabledSkills.value.length && /* @__PURE__ */ u("div", { style: { padding: "24px", textAlign: "center", color: "var(--muted)" }, children: "Loading skills..." }),
       /* @__PURE__ */ u(EnabledSkillsTable, {})
