@@ -30083,310 +30083,302 @@ function SshSection() {
       rerender$1();
     }).catch((error2) => setError(error2.message));
   }
+  const [sshTab, setSshTab] = d("keys");
+  const sshTabs = [
+    { id: "keys", label: "Deploy Keys", badge: keys.length || void 0 },
+    { id: "targets", label: "Targets", badge: targets.length || void 0 }
+  ];
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
     /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "SSH" }),
-    /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[760px]", children: [
-      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 mb-1.5 leading-relaxed", children: [
-        "Manage outbound SSH keys and named remote exec targets. Generated deploy keys use",
-        " ",
-        /* @__PURE__ */ u("strong", { className: "text-[var(--text)]", children: "Ed25519" }),
-        ", the private half stays inside Moltis, and the public half is shown so you can install it in ",
-        /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "authorized_keys" }),
-        "."
-      ] }),
-      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 leading-relaxed", children: [
-        "Current auth path:",
-        /* @__PURE__ */ u("strong", { className: "text-[var(--text)]", children: vaultStatus === "unsealed" ? " vault-backed managed keys are available" : vaultStatus === "sealed" ? " vault is locked, managed keys cannot be used until unlocked" : " system OpenSSH remains available, managed keys stay plaintext until the vault is enabled" })
-      ] })
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed max-w-[760px]", style: { margin: 0 }, children: [
+      "Manage outbound SSH keys and named remote exec targets. Current auth path:",
+      /* @__PURE__ */ u("strong", { className: "text-[var(--text)]", children: vaultStatus === "unsealed" ? " vault-backed managed keys are available" : vaultStatus === "sealed" ? " vault is locked, managed keys cannot be used until unlocked" : " system OpenSSH remains available, managed keys stay plaintext until the vault is enabled" })
     ] }),
     sshMsg ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--accent)]", children: sshMsg }) : null,
     sshErr ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)]", children: sshErr }) : null,
-    /* @__PURE__ */ u("div", { className: "grid gap-4 lg:grid-cols-2 max-w-[1100px]", children: [
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0 mb-2", children: "Deploy Keys" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 mb-3", children: "Generate a new keypair for a host, or import an existing private key. Passphrase-protected imports are decrypted once and then stored under Moltis control." }),
-        /* @__PURE__ */ u("div", { className: "mb-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-xs text-[var(--muted)] leading-relaxed", children: [
-          "Recommended flow: generate one deploy key per remote host, copy the public key below, add it to that host's ",
-          /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "~/.ssh/authorized_keys" }),
-          ", then pin the host key with",
-          /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "ssh-keyscan -H host" }),
-          " when creating the target."
-        ] }),
-        /* @__PURE__ */ u("form", { onSubmit: onGenerateKey, className: "flex flex-col gap-2 mb-4", children: [
-          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Generate deploy key" }),
-          /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u(
-              "input",
-              {
-                className: "provider-key-input flex-1 min-w-[180px]",
-                type: "text",
-                value: generateName,
-                onInput: (e) => setGenerateName(targetValue(e)),
-                placeholder: "production-box"
-              }
-            ),
-            /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: busyAction === "generate-key", children: busyAction === "generate-key" ? "Generating…" : "Generate" })
-          ] })
-        ] }),
-        /* @__PURE__ */ u("form", { onSubmit: onImportKey, className: "flex flex-col gap-2", children: [
-          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Import private key" }),
-          /* @__PURE__ */ u(
-            "input",
-            {
-              className: "provider-key-input",
-              type: "text",
-              value: importName,
-              onInput: (e) => setImportName(targetValue(e)),
-              placeholder: "existing-deploy-key"
-            }
-          ),
-          /* @__PURE__ */ u(
-            "textarea",
-            {
-              className: "provider-key-input min-h-[140px] font-mono text-xs",
-              value: importPrivateKey,
-              onInput: (e) => setImportPrivateKey(targetValue(e)),
-              placeholder: "-----BEGIN OPENSSH PRIVATE KEY-----"
-            }
-          ),
-          /* @__PURE__ */ u(
-            "input",
-            {
-              className: "provider-key-input",
-              type: "password",
-              value: importPassphrase,
-              onInput: (e) => setImportPassphrase(targetValue(e)),
-              placeholder: "Optional import passphrase"
-            }
-          ),
-          /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: busyAction === "import-key", children: busyAction === "import-key" ? "Importing…" : "Import Key" })
-        ] }),
-        /* @__PURE__ */ u("div", { className: "mt-4 flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading keys..." }) : keys.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No managed SSH keys yet." }) : keys.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item items-start gap-4", children: [
-          /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
-            /* @__PURE__ */ u("div", { className: "provider-item-name", children: entry.name }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all mt-1", children: [
-              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Fingerprint (SHA256):" }),
-              " ",
-              entry.fingerprint
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: [
-              entry.encrypted ? "Encrypted in vault" : "Stored plaintext until the vault is available",
-              (entry.target_count ?? 0) > 0 ? `, used by ${entry.target_count} target${entry.target_count === 1 ? "" : "s"}` : ""
-            ] }),
-            /* @__PURE__ */ u("pre", { className: "mt-3 whitespace-pre-wrap break-all rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-[11px] leading-relaxed text-[var(--muted)]", children: entry.public_key })
-          ] }),
-          /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 shrink-0 self-start", children: [
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onCopyPublicKey(entry),
-                children: copiedKeyId === entry.id ? "Copied" : "Copy Public Key"
-              }
-            ),
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-danger",
-                onClick: () => onDeleteKey(entry.id),
-                disabled: busyAction === `delete-key:${entry.id}` || (entry.target_count ?? 0) > 0,
-                children: busyAction === `delete-key:${entry.id}` ? "Deleting…" : "Delete"
-              }
-            )
-          ] })
-        ] }, entry.id)) })
+    /* @__PURE__ */ u(TabBar$1, { tabs: sshTabs, active: sshTab, onChange: setSshTab }),
+    sshTab === "keys" && /* @__PURE__ */ u("div", { className: "flex flex-col gap-4 max-w-[760px]", children: [
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0", children: "Generate a new keypair for a host, or import an existing private key. Passphrase-protected imports are decrypted once and then stored under Moltis control." }),
+      /* @__PURE__ */ u("div", { className: "mb-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-xs text-[var(--muted)] leading-relaxed", children: [
+        "Recommended flow: generate one deploy key per remote host, copy the public key below, add it to that host's ",
+        /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "~/.ssh/authorized_keys" }),
+        ", then pin the host key with",
+        /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "ssh-keyscan -H host" }),
+        " when creating the target."
       ] }),
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0 mb-2", children: "SSH Targets" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 mb-3", children: "Add named hosts for remote execution. Targets can use your system OpenSSH setup or one of the managed keys above." }),
-        /* @__PURE__ */ u("form", { onSubmit: onCreateTarget, className: "flex flex-col gap-2 mb-4", children: [
+      /* @__PURE__ */ u("form", { onSubmit: onGenerateKey, className: "flex flex-col gap-2 mb-4", children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Generate deploy key" }),
+        /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
           /* @__PURE__ */ u(
             "input",
             {
-              className: "provider-key-input",
+              className: "provider-key-input flex-1 min-w-[180px]",
               type: "text",
-              value: targetLabel,
-              onInput: (e) => setTargetLabel(targetValue(e)),
-              placeholder: "prod-box"
+              value: generateName,
+              onInput: (e) => setGenerateName(targetValue(e)),
+              placeholder: "production-box"
             }
           ),
-          /* @__PURE__ */ u(
-            "input",
-            {
-              className: "provider-key-input",
-              type: "text",
-              value: targetHost,
-              onInput: (e) => setTargetHost(targetValue(e)),
-              placeholder: "deploy@example.com"
-            }
-          ),
-          /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u(
-              "input",
-              {
-                className: "provider-key-input w-[120px]",
-                type: "number",
-                min: 1,
-                max: 65535,
-                value: targetPort,
-                onInput: (e) => setTargetPort(targetValue(e)),
-                placeholder: "22"
-              }
-            ),
-            /* @__PURE__ */ u(
-              "select",
-              {
-                className: "provider-key-input flex-1 min-w-[180px]",
-                value: targetAuthMode,
-                onInput: (e) => setTargetAuthMode(targetValue(e)),
-                children: [
-                  /* @__PURE__ */ u("option", { value: "managed", children: "Managed key" }),
-                  /* @__PURE__ */ u("option", { value: "system", children: "System OpenSSH" })
-                ]
-              }
-            )
+          /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: busyAction === "generate-key", children: busyAction === "generate-key" ? "Generating…" : "Generate" })
+        ] })
+      ] }),
+      /* @__PURE__ */ u("form", { onSubmit: onImportKey, className: "flex flex-col gap-2", children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Import private key" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "text",
+            value: importName,
+            onInput: (e) => setImportName(targetValue(e)),
+            placeholder: "existing-deploy-key"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "textarea",
+          {
+            className: "provider-key-input min-h-[140px] font-mono text-xs",
+            value: importPrivateKey,
+            onInput: (e) => setImportPrivateKey(targetValue(e)),
+            placeholder: "-----BEGIN OPENSSH PRIVATE KEY-----"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "password",
+            value: importPassphrase,
+            onInput: (e) => setImportPassphrase(targetValue(e)),
+            placeholder: "Optional import passphrase"
+          }
+        ),
+        /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: busyAction === "import-key", children: busyAction === "import-key" ? "Importing…" : "Import Key" })
+      ] }),
+      /* @__PURE__ */ u("div", { className: "mt-4 flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading keys..." }) : keys.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No managed SSH keys yet." }) : keys.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item items-start gap-4", children: [
+        /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+          /* @__PURE__ */ u("div", { className: "provider-item-name", children: entry.name }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all mt-1", children: [
+            /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Fingerprint (SHA256):" }),
+            " ",
+            entry.fingerprint
           ] }),
-          /* @__PURE__ */ u(
-            "textarea",
-            {
-              className: "provider-key-input min-h-[96px] font-mono text-xs",
-              value: targetKnownHost,
-              onInput: (e) => setTargetKnownHost(targetValue(e)),
-              placeholder: "Optional known_hosts line from ssh-keyscan -H host"
-            }
-          ),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
-            "If you paste a ",
-            /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "known_hosts" }),
-            " line here, Moltis will use strict host-key checking for this target instead of trusting your global SSH config."
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: [
+            entry.encrypted ? "Encrypted in vault" : "Stored plaintext until the vault is available",
+            (entry.target_count ?? 0) > 0 ? `, used by ${entry.target_count} target${entry.target_count === 1 ? "" : "s"}` : ""
           ] }),
+          /* @__PURE__ */ u("pre", { className: "mt-3 whitespace-pre-wrap break-all rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-[11px] leading-relaxed text-[var(--muted)]", children: entry.public_key })
+        ] }),
+        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 shrink-0 self-start", children: [
           /* @__PURE__ */ u(
             "button",
             {
               type: "button",
-              className: "provider-btn provider-btn-secondary self-start",
-              onClick: onScanCreateTargetHost,
-              disabled: busyAction === "scan-create-target",
-              children: busyAction === "scan-create-target" ? "Scanning…" : "Scan Host Key"
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onCopyPublicKey(entry),
+              children: copiedKeyId === entry.id ? "Copied" : "Copy Public Key"
             }
           ),
-          targetAuthMode === "managed" ? /* @__PURE__ */ u(
-            "select",
-            {
-              className: "provider-key-input",
-              value: targetKeyId,
-              onInput: (e) => setTargetKeyId(targetValue(e)),
-              children: [
-                /* @__PURE__ */ u("option", { value: "", children: "Choose a managed key" }),
-                keys.map((entry) => /* @__PURE__ */ u("option", { value: entry.id, children: entry.name }, entry.id))
-              ]
-            }
-          ) : null,
-          targetAuthMode === "managed" && keys.length === 0 ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Generate or import a deploy key first. Moltis cannot connect with a managed target until a private key exists." }) : null,
-          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] flex items-center gap-2", children: [
-            /* @__PURE__ */ u(
-              "input",
-              {
-                type: "checkbox",
-                checked: targetIsDefault,
-                onInput: (e) => setTargetIsDefault(targetChecked(e))
-              }
-            ),
-            "Set as default remote SSH target"
-          ] }),
           /* @__PURE__ */ u(
             "button",
             {
-              type: "submit",
-              className: "provider-btn self-start",
-              disabled: busyAction === "create-target" || targetAuthMode === "managed" && keys.length === 0,
-              children: busyAction === "create-target" ? "Saving…" : "Add Target"
+              type: "button",
+              className: "provider-btn provider-btn-danger",
+              onClick: () => onDeleteKey(entry.id),
+              disabled: busyAction === `delete-key:${entry.id}` || (entry.target_count ?? 0) > 0,
+              children: busyAction === `delete-key:${entry.id}` ? "Deleting…" : "Delete"
+            }
+          )
+        ] })
+      ] }, entry.id)) })
+    ] }),
+    sshTab === "targets" && /* @__PURE__ */ u("div", { className: "flex flex-col gap-4 max-w-[760px]", children: [
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0", children: "Add named hosts for remote execution. Targets can use your system OpenSSH setup or one of the managed keys." }),
+      /* @__PURE__ */ u("form", { onSubmit: onCreateTarget, className: "flex flex-col gap-2 mb-4", children: [
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "text",
+            value: targetLabel,
+            onInput: (e) => setTargetLabel(targetValue(e)),
+            placeholder: "prod-box"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "text",
+            value: targetHost,
+            onInput: (e) => setTargetHost(targetValue(e)),
+            placeholder: "deploy@example.com"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
+          /* @__PURE__ */ u(
+            "input",
+            {
+              className: "provider-key-input w-[120px]",
+              type: "number",
+              min: 1,
+              max: 65535,
+              value: targetPort,
+              onInput: (e) => setTargetPort(targetValue(e)),
+              placeholder: "22"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "select",
+            {
+              className: "provider-key-input flex-1 min-w-[180px]",
+              value: targetAuthMode,
+              onInput: (e) => setTargetAuthMode(targetValue(e)),
+              children: [
+                /* @__PURE__ */ u("option", { value: "managed", children: "Managed key" }),
+                /* @__PURE__ */ u("option", { value: "system", children: "System OpenSSH" })
+              ]
             }
           )
         ] }),
-        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading targets..." }) : targets.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No SSH targets configured." }) : targets.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item", children: [
-          /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
-            /* @__PURE__ */ u("div", { className: "provider-item-name flex items-center gap-2 flex-wrap", children: [
-              /* @__PURE__ */ u("span", { children: entry.label }),
-              entry.is_default ? /* @__PURE__ */ u(Badge, { label: "Default", variant: "configured" }) : null,
-              /* @__PURE__ */ u(Badge, { label: entry.auth_mode === "managed" ? "Managed key" : "System SSH" }),
-              entry.known_host ? /* @__PURE__ */ u(Badge, { label: "Host pinned", variant: "configured" }) : /* @__PURE__ */ u(Badge, { label: "Uses global known_hosts", variant: "warning" })
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all", children: [
-              entry.target,
-              entry.port ? `:${entry.port}` : ""
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: entry.key_name ? `Key: ${entry.key_name}` : "Uses your local ssh config / agent" }),
-            testResults[entry.id] ? /* @__PURE__ */ u("div", { className: "mt-1", children: [
-              /* @__PURE__ */ u(
-                "div",
-                {
-                  className: `text-xs ${testResults[entry.id].reachable ? "text-[var(--accent)]" : "text-[var(--error)]"}`,
-                  children: testResults[entry.id].reachable ? "Reachable" : "Unreachable"
-                }
-              ),
-              testResults[entry.id].failure_hint ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--text-muted)] mt-1", children: [
-                "Hint: ",
-                testResults[entry.id].failure_hint
-              ] }) : null
-            ] }) : null
+        /* @__PURE__ */ u(
+          "textarea",
+          {
+            className: "provider-key-input min-h-[96px] font-mono text-xs",
+            value: targetKnownHost,
+            onInput: (e) => setTargetKnownHost(targetValue(e)),
+            placeholder: "Optional known_hosts line from ssh-keyscan -H host"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
+          "If you paste a ",
+          /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "known_hosts" }),
+          " line here, Moltis will use strict host-key checking for this target instead of trusting your global SSH config."
+        ] }),
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-secondary self-start",
+            onClick: onScanCreateTargetHost,
+            disabled: busyAction === "scan-create-target",
+            children: busyAction === "scan-create-target" ? "Scanning…" : "Scan Host Key"
+          }
+        ),
+        targetAuthMode === "managed" ? /* @__PURE__ */ u(
+          "select",
+          {
+            className: "provider-key-input",
+            value: targetKeyId,
+            onInput: (e) => setTargetKeyId(targetValue(e)),
+            children: [
+              /* @__PURE__ */ u("option", { value: "", children: "Choose a managed key" }),
+              keys.map((entry) => /* @__PURE__ */ u("option", { value: entry.id, children: entry.name }, entry.id))
+            ]
+          }
+        ) : null,
+        targetAuthMode === "managed" && keys.length === 0 ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Generate or import a deploy key first. Moltis cannot connect with a managed target until a private key exists." }) : null,
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] flex items-center gap-2", children: [
+          /* @__PURE__ */ u(
+            "input",
+            {
+              type: "checkbox",
+              checked: targetIsDefault,
+              onInput: (e) => setTargetIsDefault(targetChecked(e))
+            }
+          ),
+          "Set as default remote SSH target"
+        ] }),
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "submit",
+            className: "provider-btn self-start",
+            disabled: busyAction === "create-target" || targetAuthMode === "managed" && keys.length === 0,
+            children: busyAction === "create-target" ? "Saving…" : "Add Target"
+          }
+        )
+      ] }),
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading targets..." }) : targets.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No SSH targets configured." }) : targets.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item", children: [
+        /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+          /* @__PURE__ */ u("div", { className: "provider-item-name flex items-center gap-2 flex-wrap", children: [
+            /* @__PURE__ */ u("span", { children: entry.label }),
+            entry.is_default ? /* @__PURE__ */ u(Badge, { label: "Default", variant: "configured" }) : null,
+            /* @__PURE__ */ u(Badge, { label: entry.auth_mode === "managed" ? "Managed key" : "System SSH" }),
+            entry.known_host ? /* @__PURE__ */ u(Badge, { label: "Host pinned", variant: "configured" }) : /* @__PURE__ */ u(Badge, { label: "Uses global known_hosts", variant: "warning" })
           ] }),
-          /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: [
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all", children: [
+            entry.target,
+            entry.port ? `:${entry.port}` : ""
+          ] }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: entry.key_name ? `Key: ${entry.key_name}` : "Uses your local ssh config / agent" }),
+          testResults[entry.id] ? /* @__PURE__ */ u("div", { className: "mt-1", children: [
             /* @__PURE__ */ u(
-              "button",
+              "div",
               {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onTestTarget(entry.id),
-                disabled: busyAction === `test-target:${entry.id}`,
-                children: busyAction === `test-target:${entry.id}` ? "Testing…" : "Test"
+                className: `text-xs ${testResults[entry.id].reachable ? "text-[var(--accent)]" : "text-[var(--error)]"}`,
+                children: testResults[entry.id].reachable ? "Reachable" : "Unreachable"
               }
             ),
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onScanAndPinTarget(entry),
-                disabled: busyAction === `pin-target:${entry.id}`,
-                children: busyAction === `pin-target:${entry.id}` ? "Scanning…" : entry.known_host ? "Refresh Pin" : "Scan & Pin"
-              }
-            ),
-            entry.known_host ? /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onClearTargetPin(entry),
-                disabled: busyAction === `clear-pin:${entry.id}`,
-                children: busyAction === `clear-pin:${entry.id}` ? "Clearing…" : "Clear Pin"
-              }
-            ) : null,
-            entry.is_default ? null : /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onSetDefaultTarget(entry.id),
-                disabled: busyAction === `default-target:${entry.id}`,
-                children: "Make Default"
-              }
-            ),
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-danger",
-                onClick: () => onDeleteTarget(entry.id),
-                disabled: busyAction === `delete-target:${entry.id}`,
-                children: busyAction === `delete-target:${entry.id}` ? "Deleting…" : "Delete"
-              }
-            )
-          ] })
-        ] }, entry.id)) })
-      ] })
+            testResults[entry.id].failure_hint ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--text-muted)] mt-1", children: [
+              "Hint: ",
+              testResults[entry.id].failure_hint
+            ] }) : null
+          ] }) : null
+        ] }),
+        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: [
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onTestTarget(entry.id),
+              disabled: busyAction === `test-target:${entry.id}`,
+              children: busyAction === `test-target:${entry.id}` ? "Testing…" : "Test"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onScanAndPinTarget(entry),
+              disabled: busyAction === `pin-target:${entry.id}`,
+              children: busyAction === `pin-target:${entry.id}` ? "Scanning…" : entry.known_host ? "Refresh Pin" : "Scan & Pin"
+            }
+          ),
+          entry.known_host ? /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onClearTargetPin(entry),
+              disabled: busyAction === `clear-pin:${entry.id}`,
+              children: busyAction === `clear-pin:${entry.id}` ? "Clearing…" : "Clear Pin"
+            }
+          ) : null,
+          entry.is_default ? null : /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onSetDefaultTarget(entry.id),
+              disabled: busyAction === `default-target:${entry.id}`,
+              children: "Make Default"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-danger",
+              onClick: () => onDeleteTarget(entry.id),
+              disabled: busyAction === `delete-target:${entry.id}`,
+              children: busyAction === `delete-target:${entry.id}` ? "Deleting…" : "Delete"
+            }
+          )
+        ] })
+      ] }, entry.id)) })
     ] })
   ] });
 }
@@ -30499,56 +30491,6 @@ function ToolsSection() {
           children: loadingTools ? "Refreshing…" : "Refresh"
         }
       )
-    ] }),
-    /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[1100px]", children: [
-      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Use this as the operator view of what the model can currently reach. For setup changes, jump straight to the relevant control surface." }),
-      /* @__PURE__ */ u("div", { className: "mt-3 flex gap-2 flex-wrap", children: [
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("providers")),
-            children: "LLMs"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("mcp")),
-            children: "MCP"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("skills")),
-            children: "Skills"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("nodes")),
-            children: "Nodes"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("ssh")),
-            children: "SSH"
-          }
-        )
-      ] })
     ] }),
     toolsErr ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)] max-w-[1100px]", children: toolsErr }) : null,
     /* @__PURE__ */ u("div", { className: "grid gap-4 md:grid-cols-2 max-w-[1100px]", children: [

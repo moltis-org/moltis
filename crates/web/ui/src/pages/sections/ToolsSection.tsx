@@ -3,8 +3,6 @@
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { sendRpc } from "../../helpers";
-import { navigate } from "../../router";
-import { settingsPath } from "../../routes";
 import type { RpcResponse } from "./_shared";
 
 interface ToolEntry {
@@ -163,50 +161,6 @@ export function ToolsSection(): VNode {
 				>
 					{loadingTools ? "Refreshing\u2026" : "Refresh"}
 				</button>
-			</div>
-
-			<div className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[1100px]">
-				<div className="text-xs text-[var(--muted)] leading-relaxed">
-					Use this as the operator view of what the model can currently reach. For setup changes, jump straight to the
-					relevant control surface.
-				</div>
-				<div className="mt-3 flex gap-2 flex-wrap">
-					<button
-						type="button"
-						className="provider-btn provider-btn-secondary"
-						onClick={() => navigate(settingsPath("providers"))}
-					>
-						LLMs
-					</button>
-					<button
-						type="button"
-						className="provider-btn provider-btn-secondary"
-						onClick={() => navigate(settingsPath("mcp"))}
-					>
-						MCP
-					</button>
-					<button
-						type="button"
-						className="provider-btn provider-btn-secondary"
-						onClick={() => navigate(settingsPath("skills"))}
-					>
-						Skills
-					</button>
-					<button
-						type="button"
-						className="provider-btn provider-btn-secondary"
-						onClick={() => navigate(settingsPath("nodes"))}
-					>
-						Nodes
-					</button>
-					<button
-						type="button"
-						className="provider-btn provider-btn-secondary"
-						onClick={() => navigate(settingsPath("ssh"))}
-					>
-						SSH
-					</button>
-				</div>
 			</div>
 
 			{toolsErr ? <div className="text-xs text-[var(--error)] max-w-[1100px]">{toolsErr}</div> : null}
