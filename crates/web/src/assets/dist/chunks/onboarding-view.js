@@ -2567,6 +2567,15 @@ function IdentityStep({ onNext, onBack }) {
 }
 const WS_RETRY_LIMIT$2 = 75;
 const WS_RETRY_DELAY_MS$2 = 200;
+const IMPORT_CATEGORY_ICONS = {
+  identity: "👤",
+  providers: "🔑",
+  skills: "✨",
+  memory: "🧠",
+  channels: "💬",
+  sessions: "💾",
+  workspace_files: "📁"
+};
 function OpenClawImportStep({ onNext, onBack }) {
   var _a, _b, _c, _d, _e;
   const [loading, setLoading] = d(true);
@@ -2767,31 +2776,28 @@ function OpenClawImportStep({ onNext, onBack }) {
       " for a full import including identity, memory, and skills."
     ] }) : null,
     error ? /* @__PURE__ */ u(ErrorPanel, { message: error }) : null,
-    /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", style: "max-width:400px;", children: categories.map((cat) => /* @__PURE__ */ u(
-      "label",
-      {
-        className: `flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}`,
-        children: [
-          /* @__PURE__ */ u(
-            "input",
-            {
-              type: "checkbox",
-              checked: selection[cat.key] && cat.available,
-              disabled: !cat.available || importing,
-              onChange: () => toggleCategory(cat.key)
-            }
-          ),
-          /* @__PURE__ */ u("span", { children: cat.label }),
-          cat.detail && cat.available ? /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: [
-            "(",
-            cat.detail,
-            ")"
-          ] }) : null,
-          cat.available ? null : /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: "(not found)" })
-        ]
-      },
-      cat.key
-    )) }),
+    /* @__PURE__ */ u("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2", children: categories.map((cat) => {
+      const checked = selection[cat.key] && cat.available;
+      return /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          onClick: () => cat.available && !importing && toggleCategory(cat.key),
+          disabled: !cat.available || importing,
+          className: `flex items-center gap-3 p-3 rounded-md border text-left cursor-pointer transition-colors ${cat.available ? checked ? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]" : "border-[var(--border)] bg-[var(--surface)] opacity-60" : "border-[var(--border)] bg-[var(--surface)] opacity-40 cursor-not-allowed"}`,
+          children: [
+            /* @__PURE__ */ u("span", { className: "text-lg shrink-0", children: IMPORT_CATEGORY_ICONS[cat.key] || "📦" }),
+            /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+              /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: cat.label }),
+              cat.detail && cat.available ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: cat.detail }) : null,
+              cat.available ? null : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: "not found" })
+            ] }),
+            /* @__PURE__ */ u("div", { className: "shrink-0", children: checked ? /* @__PURE__ */ u("span", { className: "icon icon-check-circle text-[var(--accent)]" }) : /* @__PURE__ */ u("span", { className: "w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block" }) })
+          ]
+        },
+        cat.key
+      );
+    }) }),
     (((_d = scan.agents) == null ? void 0 : _d.length) ?? 0) > 1 ? /* @__PURE__ */ u(
       "div",
       {

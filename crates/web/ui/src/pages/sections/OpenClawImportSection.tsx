@@ -44,6 +44,15 @@ interface ImportSelection {
 	[key: string]: boolean;
 }
 
+const IMPORT_CATEGORY_ICONS: Record<string, string> = {
+	identity: "\uD83D\uDC64",
+	providers: "\uD83D\uDD11",
+	skills: "\u2728",
+	memory: "\uD83E\uDDE0",
+	channels: "\uD83D\uDCAC",
+	sessions: "\uD83D\uDCBE",
+};
+
 export function OpenClawImportSection(): VNode {
 	const [importLoading, setImportLoading] = useState(true);
 	const [scan, setScan] = useState<ScanResult | null>(null);
@@ -213,23 +222,41 @@ export function OpenClawImportSection(): VNode {
 					</button>
 				</div>
 			) : (
-				<div className="flex flex-col gap-2" style={{ maxWidth: "400px" }}>
-					{categories.map((cat) => (
-						<label
-							key={cat.key}
-							className={`flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}`}
-						>
-							<input
-								type="checkbox"
-								checked={selection[cat.key] && cat.available}
+				<div className="grid grid-cols-1 sm:grid-cols-2 gap-2" style={{ maxWidth: "600px" }}>
+					{categories.map((cat) => {
+						const checked = selection[cat.key] && cat.available;
+						return (
+							<button
+								key={cat.key}
+								type="button"
+								onClick={() => cat.available && !importing && toggleCategory(cat.key)}
 								disabled={!cat.available || importing}
-								onChange={() => toggleCategory(cat.key)}
-							/>
-							<span>{cat.label}</span>
-							{cat.detail && cat.available ? <span className="text-xs text-[var(--muted)]">({cat.detail})</span> : null}
-							{cat.available ? null : <span className="text-xs text-[var(--muted)]">(not found)</span>}
-						</label>
-					))}
+								className={`flex items-center gap-3 p-3 rounded-md border text-left cursor-pointer transition-colors ${
+									cat.available
+										? checked
+											? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]"
+											: "border-[var(--border)] bg-[var(--surface)] opacity-60"
+										: "border-[var(--border)] bg-[var(--surface)] opacity-40 cursor-not-allowed"
+								}`}
+							>
+								<span className="text-lg shrink-0">{IMPORT_CATEGORY_ICONS[cat.key] || "\uD83D\uDCE6"}</span>
+								<div className="flex-1 min-w-0">
+									<span className="text-sm font-medium text-[var(--text-strong)]">{cat.label}</span>
+									{cat.detail && cat.available ? (
+										<div className="text-xs text-[var(--muted)] mt-0.5">{cat.detail}</div>
+									) : null}
+									{cat.available ? null : <div className="text-xs text-[var(--muted)] mt-0.5">not found</div>}
+								</div>
+								<div className="shrink-0">
+									{checked ? (
+										<span className="icon icon-check-circle text-[var(--accent)]" />
+									) : (
+										<span className="w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block" />
+									)}
+								</div>
+							</button>
+						);
+					})}
 				</div>
 			)}
 			{!done && unsupportedChannels.length > 0 ? (
