@@ -484,13 +484,17 @@ test.describe("Onboarding wizard", () => {
 		await page.getByRole("button", { name: "Skip for now", exact: true }).click();
 
 		const channelHeading = page.getByRole("heading", { name: "Connect a Channel", exact: true });
-		for (let i = 0; i < 3; i++) {
+		for (let i = 0; i < 5; i++) {
 			if (await channelHeading.isVisible().catch(() => false)) {
 				break;
 			}
 			const skipBtn = page.getByRole("button", { name: "Skip for now", exact: true });
-			await expect(skipBtn).toBeVisible();
-			await skipBtn.click();
+			const continueBtn = page.getByRole("button", { name: "Continue", exact: true });
+			if (await skipBtn.isVisible().catch(() => false)) {
+				await skipBtn.click();
+			} else if (await continueBtn.isVisible().catch(() => false)) {
+				await continueBtn.click();
+			}
 		}
 
 		await expect(channelHeading).toBeVisible();

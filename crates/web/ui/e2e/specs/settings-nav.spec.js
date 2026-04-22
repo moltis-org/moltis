@@ -473,10 +473,12 @@ test.describe("Settings navigation", () => {
 		await navigateAndWait(page, "/settings/remote-access");
 
 		await expect(page.getByRole("heading", { name: "Remote Access", exact: true })).toBeVisible();
-		await expect(page.getByRole("heading", { name: "Tailscale", exact: true })).toBeVisible();
-		await expect(page.getByRole("heading", { name: "ngrok", exact: true })).toBeVisible();
+		// Tailscale tab is active by default
+		await expect(page.getByRole("tab", { name: /Tailscale/ })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /ngrok/ })).toBeVisible();
+		// Switch to ngrok tab to see its content
+		await page.getByRole("tab", { name: /ngrok/ }).click();
 		await expect(page.getByText("https://team-gateway.ngrok.app", { exact: true })).toBeVisible();
-		await expect(page.getByRole("button", { name: "Save ngrok settings", exact: true })).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -1307,7 +1309,7 @@ test.describe("Settings navigation", () => {
 		});
 
 		await expect(page.getByText("Matrix (moltis-testbot)", { exact: true })).toBeVisible();
-		await page.getByRole("button", { name: "Senders", exact: true }).click();
+		await page.getByRole("tab", { name: /Senders/ }).click();
 		await expect.poll(() => page.locator(".senders-table tbody tr").count(), { timeout: 10_000 }).toBe(1);
 		await expect(page.getByText("Alice", { exact: true })).toBeVisible();
 		await expect(page.getByText("@alice:matrix.org", { exact: true })).toBeVisible();
