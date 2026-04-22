@@ -20762,7 +20762,7 @@ function PresetCard({ preset, creating, onCreate }) {
             style: { fontSize: "0.7rem", padding: "3px 8px" },
             disabled: creating,
             onClick: () => onCreate(preset),
-            children: creating ? "Creating..." : "Use"
+            children: creating ? "Adding..." : "Add to Chat"
           }
         ),
         /* @__PURE__ */ u(
@@ -20955,7 +20955,10 @@ function AgentsPageComponent({ subPath }) {
       agent.id
     )) }),
     configPresets.length > 0 && /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 mt-2", style: { maxWidth: "600px" }, children: [
-      /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Config-only Presets" }),
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Sub-Agent Presets" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "These config presets are available to the spawn_agent tool immediately. Add one to chat to create a regular agent with its own persona, memory, and sessions." })
+      ] }),
       configPresets.map((preset) => /* @__PURE__ */ u(
         PresetCard,
         {

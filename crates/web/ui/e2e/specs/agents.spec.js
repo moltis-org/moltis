@@ -131,12 +131,13 @@ test.describe("Agents settings page", () => {
 		await navigateAndWait(page, "/settings/agents");
 		await waitForWsConnected(page);
 
-		await expect(page.getByRole("heading", { name: "Config-only Presets", exact: true })).toBeVisible({
+		await expect(page.getByRole("heading", { name: "Sub-Agent Presets", exact: true })).toBeVisible({
 			timeout: 10_000,
 		});
+		await expect(page.getByText("available to the spawn_agent tool immediately", { exact: false })).toBeVisible();
 		const presetCard = page.locator(".backend-card").filter({ hasText: "Coder" }).filter({ hasText: "config" }).first();
 		await expect(presetCard).toBeVisible({ timeout: 10_000 });
-		await presetCard.getByRole("button", { name: "Use", exact: true }).click();
+		await presetCard.getByRole("button", { name: "Add to Chat", exact: true }).click();
 
 		const agentCard = page
 			.locator(".backend-card")

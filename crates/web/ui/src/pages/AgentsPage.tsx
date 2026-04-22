@@ -421,7 +421,7 @@ function PresetCard({ preset, creating, onCreate }: PresetCardProps): VNode {
 						disabled={creating}
 						onClick={() => onCreate(preset)}
 					>
-						{creating ? "Creating..." : "Use"}
+						{creating ? "Adding..." : "Add to Chat"}
 					</button>
 					<button
 						type="button"
@@ -643,7 +643,13 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 
 			{configPresets.length > 0 && (
 				<div className="flex flex-col gap-2 mt-2" style={{ maxWidth: "600px" }}>
-					<h3 className="text-xs font-medium text-[var(--muted)]">Config-only Presets</h3>
+					<div className="flex flex-col gap-1">
+						<h3 className="text-xs font-medium text-[var(--muted)]">Sub-Agent Presets</h3>
+						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
+							These config presets are available to the spawn_agent tool immediately. Add one to chat to create a
+							regular agent with its own persona, memory, and sessions.
+						</p>
+					</div>
 					{configPresets.map((preset) => (
 						<PresetCard
 							key={preset.id}
