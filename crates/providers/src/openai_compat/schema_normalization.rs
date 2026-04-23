@@ -294,6 +294,23 @@ impl Transform for CollapseCompositeUnionTransform {
             if variants.is_empty() {
                 obj.remove("allOf");
             } else {
+                // Warn when variants carry conflicting `type` values — the
+                // first-wins merge silently drops later types, which can
+                // produce semantically impossible schemas (e.g. type:"string"
+                // with properties). True allOf with conflicting types is
+                // itself invalid JSON Schema, but logging helps debug
+                // provider rejections.
+                let types: Vec<&str> = variants
+                    .iter()
+                    .filter_map(|v| v.get("type").and_then(|t| t.as_str()))
+                    .collect();
+                if types.len() > 1 && types.windows(2).any(|w| w[0] != w[1]) {
+                    debug!(
+                        ?types,
+                        "allOf variants have conflicting types; first-wins merge may produce an inconsistent schema"
+                    );
+                }
+
                 let taken = std::mem::take(variants);
                 obj.remove("allOf");
                 for variant in taken {

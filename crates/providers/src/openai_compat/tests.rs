@@ -14,6 +14,10 @@ fn assert_no_orphaned_required(schema: &serde_json::Value, path: &str) {
         return;
     };
 
+    // Only check entries that are verifiably absent from the properties map.
+    // `required` without `properties` is valid JSON Schema (e.g. with
+    // `additionalProperties` or `patternProperties`), so skip the check
+    // when no `properties` map exists.
     if let (Some(required), Some(props)) = (
         obj.get("required").and_then(|v| v.as_array()),
         obj.get("properties").and_then(|v| v.as_object()),
@@ -27,10 +31,6 @@ fn assert_no_orphaned_required(schema: &serde_json::Value, path: &str) {
                 );
             }
         }
-    } else if let Some(required) = obj.get("required").and_then(|v| v.as_array())
-        && !required.is_empty()
-    {
-        panic!("required array at {path} has entries {required:?} but no properties object");
     }
 
     // Recurse into properties
