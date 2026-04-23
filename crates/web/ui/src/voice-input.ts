@@ -1,7 +1,7 @@
 // ── Voice input module ───────────────────────────────────────
 // Handles microphone recording and speech-to-text transcription.
 
-import { chatAddMsg } from "./chat-ui";
+import { chatAddMsg, smartScrollToBottom } from "./chat-ui";
 import * as gon from "./gon";
 import { renderAudioPlayer, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers";
 import { t } from "./i18n";
@@ -288,7 +288,7 @@ async function transcribeAudio(): Promise<void> {
 	if (S.chatMsgBox) {
 		transcribingEl = createTranscribingIndicator(t("chat:voiceTranscribingMessage"), false);
 		(S.chatMsgBox as HTMLElement).appendChild(transcribingEl);
-		(S.chatMsgBox as HTMLElement).scrollTop = (S.chatMsgBox as HTMLElement).scrollHeight;
+		smartScrollToBottom();
 	}
 
 	try {

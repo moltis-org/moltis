@@ -6,6 +6,7 @@ import {
 	appendReasoningDisclosure,
 	chatAddMsg,
 	removeThinking,
+	smartScrollToBottom,
 	stripChannelPrefix,
 } from "../chat-ui";
 import {
@@ -219,7 +220,7 @@ export function handleToolCallStartDom(p: ChatPayload, eventSession: string): vo
 		pendingToolCallEnds.delete(endKey);
 		completeToolCard(card, pendingEnd as ChatPayload, eventSession);
 	}
-	if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	smartScrollToBottom();
 }
 
 // ── Channel user message rendering ────────────────────────────
@@ -383,5 +384,5 @@ export function renderAbortedPartialInDom(
 		},
 		eventSession,
 	);
-	if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	smartScrollToBottom();
 }

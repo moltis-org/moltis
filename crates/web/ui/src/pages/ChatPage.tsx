@@ -10,7 +10,7 @@
 
 import { effect } from "@preact/signals";
 import { render } from "preact";
-import { chatAddMsg } from "../chat-ui";
+import { chatAddMsg, hideNewContentIndicator, isChatAtBottom, smartScrollToBottom } from "../chat-ui";
 import { SessionHeader } from "../components/SessionHeader";
 import { formatTokens, sendRpc } from "../helpers";
 import { initMediaDrop, teardownMediaDrop } from "../media-drop";
@@ -219,7 +219,7 @@ export function renderCompactCard(data: CompactCardData): void {
 		card.appendChild(hintSec);
 	}
 	S.chatMsgBox.appendChild(card);
-	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	smartScrollToBottom();
 }
 
 // ── Debug / full context panels ──────────────────────────────
@@ -592,7 +592,7 @@ export function showModelNotice(model: ModelNotice): void {
 	const providerEl = card.querySelector("[data-provider]");
 	if (providerEl) providerEl.textContent = model.provider || "local";
 	S.chatMsgBox.appendChild(card);
-	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	smartScrollToBottom();
 }
 
 // ── Chat copy handler ───────────────────────────────────────
@@ -888,6 +888,8 @@ const chatPageHTML =
 
 import { updateCommandInputUI } from "../chat-ui";
 
+let chatScrollHandler: (() => void) | null = null;
+
 registerPrefix(
 	routes.chats!,
 	function initChat(container: HTMLElement, sessionKeyFromUrl?: string | null) {
@@ -927,11 +929,23 @@ registerPrefix(
 		startInitialChatSession(sessionKey);
 		bindChatComposer();
 		S.chatMsgBox?.addEventListener("copy", handleChatCopy);
+
+		// Smart auto-scroll: detect when user scrolls back to bottom
+		chatScrollHandler = () => {
+			if (isChatAtBottom()) hideNewContentIndicator();
+		};
+		S.chatMsgBox?.addEventListener("scroll", chatScrollHandler, { passive: true });
+
 		initVoiceInput(S.$("micBtn") as HTMLButtonElement | null);
 		initializeChatMediaDrop();
 		S.chatInput?.focus();
 	},
 	function teardownChat() {
+		if (chatScrollHandler) {
+			S.chatMsgBox?.removeEventListener("scroll", chatScrollHandler);
+			chatScrollHandler = null;
+		}
+		S.chatMsgBox?.removeEventListener("copy", handleChatCopy);
 		teardownVoiceInput();
 		teardownMediaDrop();
 		unbindReasoningToggle();

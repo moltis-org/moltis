@@ -1,4 +1,4 @@
-import { b as sendRpc } from "./theme.js";
+import { d as sendRpc } from "./theme.js";
 import { e as els, s as showApiKeyForm, a as showOAuthFlow, b as showLocalModelFlow, c as showCustomProviderForm } from "../main.js";
 import "./ws-connect.js";
 import "./branding.js";
