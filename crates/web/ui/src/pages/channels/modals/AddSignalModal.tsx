@@ -3,7 +3,7 @@
 import { useSignal } from "@preact/signals";
 import type { VNode } from "preact";
 
-import { addChannel, parseChannelConfigPatch } from "../../../channel-utils";
+import { addChannel, deriveSignalAccountId, parseChannelConfigPatch } from "../../../channel-utils";
 import { models as modelsSig } from "../../../stores/model-store";
 import { targetValue } from "../../../typed-events";
 import { ChannelType } from "../../../types";
@@ -17,7 +17,6 @@ export function AddSignalModal(): VNode {
 	const addModel = useSignal("");
 	const allowlistItems = useSignal<string[]>([]);
 	const groupAllowlistItems = useSignal<string[]>([]);
-	const accountIdDraft = useSignal("");
 	const accountDraft = useSignal("");
 	const httpUrlDraft = useSignal("http://127.0.0.1:8080");
 	const dmPolicy = useSignal("allowlist");
@@ -29,7 +28,6 @@ export function AddSignalModal(): VNode {
 		addModel.value = "";
 		allowlistItems.value = [];
 		groupAllowlistItems.value = [];
-		accountIdDraft.value = "";
 		accountDraft.value = "";
 		httpUrlDraft.value = "http://127.0.0.1:8080";
 		dmPolicy.value = "allowlist";
@@ -41,11 +39,10 @@ export function AddSignalModal(): VNode {
 
 	function onSubmit(e: Event): void {
 		e.preventDefault();
-		const accountId = accountIdDraft.value.trim();
 		const account = accountDraft.value.trim();
 		const httpUrl = httpUrlDraft.value.trim();
-		if (!accountId) {
-			error.value = "Account ID is required.";
+		if (!account) {
+			error.value = "Signal account (phone number) is required.";
 			return;
 		}
 		if (!httpUrl) {
@@ -67,7 +64,8 @@ export function AddSignalModal(): VNode {
 			group_allowlist: groupAllowlistItems.value,
 			mention_mode: mentionMode.value,
 		};
-		if (account) addConfig.account = account;
+		addConfig.account = account;
+		const accountId = deriveSignalAccountId(account);
 		if (addModel.value) {
 			addConfig.model = addModel.value;
 			const found = modelsSig.value.find((x) => x.id === addModel.value);
@@ -98,29 +96,20 @@ export function AddSignalModal(): VNode {
 			<div className="channel-form">
 				<div className="channel-card">
 					<div>
-						<span className="text-xs font-medium text-[var(--text-strong)]">How to set up Signal</span>
+						<span className="text-xs font-medium text-[var(--text-strong)]">Requires signal-cli</span>
 						<div className="text-xs text-[var(--muted)] channel-help">
-							1. Run signal-cli daemon with JSON-RPC HTTP enabled
+							Signal integration requires a running signal-cli daemon with JSON-RPC HTTP enabled.
 						</div>
-						<div className="text-xs text-[var(--muted)]">2. Link or register the Signal account in signal-cli</div>
 						<div className="text-xs text-[var(--muted)]">
-							3. Keep the daemon reachable from this Moltis process, usually on localhost
+							Install signal-cli, register or link your Signal account, then start the daemon:
 						</div>
+						<code className="text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-1 block">
+							signal-cli daemon --http localhost:8080
+						</code>
 					</div>
 				</div>
 				<ConnectionModeHint type={ChannelType.Signal} />
-				<label className="text-xs text-[var(--muted)]">Account ID</label>
-				<input
-					data-field="accountId"
-					type="text"
-					placeholder="e.g. personal-signal"
-					value={accountIdDraft.value}
-					onInput={(e) => {
-						accountIdDraft.value = targetValue(e);
-					}}
-					className="channel-input"
-				/>
-				<label className="text-xs text-[var(--muted)]">Signal Account</label>
+				<label className="text-xs text-[var(--muted)]">Signal Account (phone number)</label>
 				<input
 					data-field="account"
 					type="text"

@@ -5,7 +5,13 @@
 
 import type { VNode } from "preact";
 import { useState } from "preact/hooks";
-import { addChannel, channelStorageNote, parseChannelConfigPatch, validateChannelFields } from "../../channel-utils";
+import {
+	addChannel,
+	channelStorageNote,
+	deriveSignalAccountId,
+	parseChannelConfigPatch,
+	validateChannelFields,
+} from "../../channel-utils";
 import { targetValue } from "../../typed-events";
 import { ErrorPanel } from "../shared";
 
@@ -602,7 +608,6 @@ export function NostrForm({ onConnected, error, setError }: ChannelFormProps): V
 // ── Signal form ──────────────────────────────────────────────
 
 export function SignalForm({ onConnected, error, setError }: ChannelFormProps): VNode {
-	const [accountId, setAccountId] = useState("");
 	const [account, setAccount] = useState("");
 	const [httpUrl, setHttpUrl] = useState("http://127.0.0.1:8080");
 	const [dmPolicy, setDmPolicy] = useState("allowlist");
@@ -622,8 +627,8 @@ export function SignalForm({ onConnected, error, setError }: ChannelFormProps): 
 
 	function onSubmit(e: Event): void {
 		e.preventDefault();
-		if (!accountId.trim()) {
-			setError("Account ID is required.");
+		if (!account.trim()) {
+			setError("Signal account (phone number) is required.");
 			return;
 		}
 		if (!httpUrl.trim()) {
@@ -637,6 +642,7 @@ export function SignalForm({ onConnected, error, setError }: ChannelFormProps): 
 		}
 		setError(null);
 		setSaving(true);
+		const accountId = deriveSignalAccountId(account);
 		const config: Record<string, unknown> = {
 			http_url: httpUrl.trim(),
 			dm_policy: dmPolicy,
@@ -644,18 +650,18 @@ export function SignalForm({ onConnected, error, setError }: ChannelFormProps): 
 			group_policy: groupPolicy,
 			group_allowlist: splitLines(groupAllowlist),
 			mention_mode: "mention",
+			account: account.trim(),
 		};
-		if (account.trim()) config.account = account.trim();
 		Object.assign(config, advancedPatch.value);
 		(
-			addChannel("signal", accountId.trim(), config) as Promise<{
+			addChannel("signal", accountId, config) as Promise<{
 				ok?: boolean;
 				error?: { message?: string; detail?: string };
 			}>
 		).then((res) => {
 			setSaving(false);
 			if (res?.ok) {
-				onConnected(accountId.trim(), "signal");
+				onConnected(accountId, "signal");
 			} else {
 				setError((res?.error && (res.error.message || res.error.detail)) || "Failed to connect Signal.");
 			}
@@ -665,29 +671,15 @@ export function SignalForm({ onConnected, error, setError }: ChannelFormProps): 
 	return (
 		<form onSubmit={onSubmit} className="flex flex-col gap-3">
 			<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
-				<span className="font-medium text-[var(--text-strong)]">Connect a signal-cli daemon</span>
-				<span>1. Start signal-cli daemon with JSON-RPC HTTP enabled</span>
-				<span>2. Link or register the Signal account in signal-cli</span>
-				<span>3. Add trusted phone numbers or UUIDs to the allowlist</span>
+				<span className="font-medium text-[var(--text-strong)]">Requires signal-cli</span>
+				<span>Signal integration requires a running signal-cli daemon with JSON-RPC HTTP enabled.</span>
+				<span>Install signal-cli, register or link your Signal account, then start the daemon:</span>
+				<code className="text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-0.5">
+					signal-cli daemon --http localhost:8080
+				</code>
 			</div>
 			<div>
-				<label className="text-xs text-[var(--muted)] mb-1 block">Account ID</label>
-				<input
-					type="text"
-					className="provider-key-input w-full"
-					value={accountId}
-					onInput={(e) => setAccountId(targetValue(e))}
-					placeholder="e.g. personal-signal"
-					autoComplete="off"
-					autoCapitalize="none"
-					autoCorrect="off"
-					spellcheck={false}
-					name="signal_account_id"
-					autoFocus
-				/>
-			</div>
-			<div>
-				<label className="text-xs text-[var(--muted)] mb-1 block">Signal Account</label>
+				<label className="text-xs text-[var(--muted)] mb-1 block">Signal Account (phone number)</label>
 				<input
 					type="text"
 					className="provider-key-input w-full"

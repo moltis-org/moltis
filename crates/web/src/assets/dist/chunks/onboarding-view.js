@@ -1,6 +1,6 @@
 import { c as connectWs, s as subscribeEvents, u } from "./ws-connect.js";
 import { Z as t, aw as d, av as y, ax as A, b as sendRpc, ay as S, bq as modelVersionScore, v as activeSessionKey, aM as R } from "./theme.js";
-import { H as eventListeners, t as targetValue, U as prepareCreationOptions, V as detectPasskeyName, w as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, T as TabBar, g as get, u as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, s as generateWebhookSecretHex, r as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, I as refresh, O as EmojiPicker, P as validateIdentityFields, Q as updateIdentity, z as completeProviderOAuth, B as saveProviderKey, y as validateProviderKey, x as providerApiKeyHelp, D as testModel, E as isModelServiceNotConfigured, G as humanizeProbeError, A as startProviderOAuth, K as CATEGORY_META, L as categoryLabel, W as fetchVoiceProviders, $ as toggleVoiceProvider, a0 as saveVoiceKey, a1 as saveVoiceSettings, a4 as VOICE_COUNTERPART_IDS, X as fetchPhrase, Y as testTts, Z as decodeBase64Safe, _ as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
+import { I as eventListeners, t as targetValue, V as prepareCreationOptions, W as detectPasskeyName, x as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, r as deriveSignalAccountId, T as TabBar, g as get, w as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, u as generateWebhookSecretHex, s as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, J as refresh, P as EmojiPicker, Q as validateIdentityFields, R as updateIdentity, A as completeProviderOAuth, D as saveProviderKey, z as validateProviderKey, y as providerApiKeyHelp, E as testModel, F as isModelServiceNotConfigured, H as humanizeProbeError, B as startProviderOAuth, L as CATEGORY_META, N as categoryLabel, X as fetchVoiceProviders, a0 as toggleVoiceProvider, a1 as saveVoiceKey, a2 as saveVoiceSettings, a5 as VOICE_COUNTERPART_IDS, Y as fetchPhrase, Z as testTts, _ as decodeBase64Safe, $ as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
 var WsEventName = /* @__PURE__ */ ((WsEventName2) => {
   WsEventName2["Chat"] = "chat";
   WsEventName2["Error"] = "error";
@@ -1089,7 +1089,6 @@ function NostrForm({ onConnected, error, setError }) {
   ] });
 }
 function SignalForm({ onConnected, error, setError }) {
-  const [accountId, setAccountId] = d("");
   const [account, setAccount] = d("");
   const [httpUrl, setHttpUrl] = d("http://127.0.0.1:8080");
   const [dmPolicy, setDmPolicy] = d("allowlist");
@@ -1103,8 +1102,8 @@ function SignalForm({ onConnected, error, setError }) {
   }
   function onSubmit(e) {
     e.preventDefault();
-    if (!accountId.trim()) {
-      setError("Account ID is required.");
+    if (!account.trim()) {
+      setError("Signal account (phone number) is required.");
       return;
     }
     if (!httpUrl.trim()) {
@@ -1118,20 +1117,21 @@ function SignalForm({ onConnected, error, setError }) {
     }
     setError(null);
     setSaving(true);
+    const accountId = deriveSignalAccountId(account);
     const config = {
       http_url: httpUrl.trim(),
       dm_policy: dmPolicy,
       allowlist: splitLines(allowlist),
       group_policy: groupPolicy,
       group_allowlist: splitLines(groupAllowlist),
-      mention_mode: "mention"
+      mention_mode: "mention",
+      account: account.trim()
     };
-    if (account.trim()) config.account = account.trim();
     Object.assign(config, advancedPatch.value);
-    addChannel("signal", accountId.trim(), config).then((res) => {
+    addChannel("signal", accountId, config).then((res) => {
       setSaving(false);
       if (res == null ? void 0 : res.ok) {
-        onConnected(accountId.trim(), "signal");
+        onConnected(accountId, "signal");
       } else {
         setError((res == null ? void 0 : res.error) && (res.error.message || res.error.detail) || "Failed to connect Signal.");
       }
@@ -1139,32 +1139,13 @@ function SignalForm({ onConnected, error, setError }) {
   }
   return /* @__PURE__ */ u("form", { onSubmit, className: "flex flex-col gap-3", children: [
     /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
-      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Connect a signal-cli daemon" }),
-      /* @__PURE__ */ u("span", { children: "1. Start signal-cli daemon with JSON-RPC HTTP enabled" }),
-      /* @__PURE__ */ u("span", { children: "2. Link or register the Signal account in signal-cli" }),
-      /* @__PURE__ */ u("span", { children: "3. Add trusted phone numbers or UUIDs to the allowlist" })
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Requires signal-cli" }),
+      /* @__PURE__ */ u("span", { children: "Signal integration requires a running signal-cli daemon with JSON-RPC HTTP enabled." }),
+      /* @__PURE__ */ u("span", { children: "Install signal-cli, register or link your Signal account, then start the daemon:" }),
+      /* @__PURE__ */ u("code", { className: "text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-0.5", children: "signal-cli daemon --http localhost:8080" })
     ] }),
     /* @__PURE__ */ u("div", { children: [
-      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Account ID" }),
-      /* @__PURE__ */ u(
-        "input",
-        {
-          type: "text",
-          className: "provider-key-input w-full",
-          value: accountId,
-          onInput: (e) => setAccountId(targetValue(e)),
-          placeholder: "e.g. personal-signal",
-          autoComplete: "off",
-          autoCapitalize: "none",
-          autoCorrect: "off",
-          spellcheck: false,
-          name: "signal_account_id",
-          autoFocus: true
-        }
-      )
-    ] }),
-    /* @__PURE__ */ u("div", { children: [
-      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Signal Account" }),
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Signal Account (phone number)" }),
       /* @__PURE__ */ u(
         "input",
         {

@@ -3,7 +3,7 @@ var _a, _b;
 import { u, f as forceReconnect, c as connectWs, s as subscribeEvents, _ as _wsConnect } from "./chunks/ws-connect.js";
 import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as commandModeEnabled, e as sessionExecPromptSymbol, g as chatBatchLoading, h as sessionContextWindow, i as sessionToolsEnabled, j as sessionExecMode, k as sessionCurrentInputTokens, _ as __vitePreload, l as setUnseenErrors, m as setUnseenWarns, n as unseenErrors, o as unseenWarns, q as connected, r as sessionStore, t as sessions, v as activeSessionKey, w as lastHistoryIndex, x as setLastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeComboBtn, U as nodeDropdownList, V as nodeCombo, W as nodeDropdown, X as nodeComboLabel, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as j, a7 as setSessionSandboxEnabled, a8 as hostExecIsRoot, a9 as sandboxLabel, aa as sandboxToggleBtn, ab as sessionSandboxEnabled, ac as setSessionSandboxImage, ad as sandboxImageLabel, ae as sandboxInfo, af as sandboxImageDropdown, ag as sandboxImageBtn, ah as sessionSandboxImage, ai as projectStore, aj as setSessions, ak as insertSessionInOrder, al as Session, am as chatSeq, an as setSelectedModelId, ao as modelComboLabel, ap as setSessionSwitchInProgress, aq as setStreamEl, ar as setStreamText, as as setLastToolOutput, at as setVoicePending, au as setActiveSessionKey, av as y$1, aw as d, ax as A, ay as S, az as projectFilterId, aA as getById$1, aB as q, aC as warmAudioPlayback, aD as selectedModelId, aE as formatBytes$3, aF as setCommandModeEnabled, aG as chatHistory, aH as chatHistoryIdx, aI as setChatHistoryDraft, aJ as setChatHistoryIdx, aK as chatHistoryDraft, aL as setChatHistory, aM as R, aN as setChatMsgBox, aO as setChatInput, aP as setChatSendBtn, aQ as setModelCombo, aR as setModelComboBtn, aS as setModelComboLabel, aT as setModelDropdown, aU as setModelSearchInput, aV as setModelDropdownList, aW as setNodeCombo, aX as setNodeComboBtn, aY as setNodeComboLabel, aZ as setNodeDropdown, a_ as setNodeDropdownList, a$ as setSandboxToggleBtn, b0 as setSandboxLabel, b1 as setSandboxImageBtn, b2 as setSandboxImageLabel, b3 as setSandboxImageDropdown, b4 as models, b5 as chatSendBtn, b6 as setModels, b7 as modelComboBtn, b8 as modelSearchInput, b9 as modelDropdownList, ba as modelCombo, bb as modelDropdown, bc as setModelIdx, bd as modelIdx, be as REASONING_SEP, bf as models$1, bg as useSignal, bh as connected$1, bi as setCachedChannels, bj as setRefreshChannelsPage, bk as cachedChannels, bl as setChannelEventUnsub, bm as channelEventUnsub, bn as setProjects, bo as setProjectFilterId, bp as refreshProvidersPage, bq as modelVersionScore, br as streamEl, bs as renderMapPointGroups, bt as renderMapLinks, bu as lastToolOutput, bv as localizeStructuredError, bw as voicePending, bx as streamText, by as setSandboxInfo, bz as networkAuditEventHandler, bA as logsEventHandler, bB as setSubscribed, bC as projects$1, bD as sandboxInfo$1, bE as localizedApiErrorMessage, bF as setLogsEventHandler, bG as setNetworkAuditEventHandler, bH as setRefreshProvidersPage, bI as setLocale, bJ as esc, bK as projectStore$1, bL as _modelStore, bM as S$1, bN as _sessionStoreModule, bO as _i18n, bP as _helpers, bQ as initTheme, bR as injectMarkdownStyles, bS as init, bT as translateStaticElements, bU as setAll$1, bV as setAll$2, bW as select$1, bX as selectedModelId$1 } from "./chunks/theme.js";
 import { f as formatPageTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
-import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as buildTeamsEndpoint, s as generateWebhookSecretHex, u as defaultTeamsBaseUrl, T as TabBar$1, w as channelStorageNote, x as providerApiKeyHelp, y as validateProviderKey, z as completeProviderOAuth, A as startProviderOAuth, B as saveProviderKey, D as testModel, E as isModelServiceNotConfigured, F as isTimeoutError, G as humanizeProbeError, H as eventListeners, I as refresh, J as isRepoSource, S as SkillSource, K as CATEGORY_META, L as categoryLabel, N as isDiscoveredSource, O as EmojiPicker, P as validateIdentityFields, Q as updateIdentity, R as set, U as prepareCreationOptions, V as detectPasskeyName, W as fetchVoiceProviders, X as fetchPhrase, Y as testTts, Z as decodeBase64Safe, _ as transcribeAudio$1, $ as toggleVoiceProvider, a0 as saveVoiceKey, a1 as saveVoiceSettings, a2 as gon, a3 as _events } from "./chunks/voice-utils.js";
+import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as deriveSignalAccountId, s as buildTeamsEndpoint, u as generateWebhookSecretHex, w as defaultTeamsBaseUrl, T as TabBar$1, x as channelStorageNote, y as providerApiKeyHelp, z as validateProviderKey, A as completeProviderOAuth, B as startProviderOAuth, D as saveProviderKey, E as testModel, F as isModelServiceNotConfigured, G as isTimeoutError, H as humanizeProbeError, I as eventListeners, J as refresh, K as isRepoSource, S as SkillSource, L as CATEGORY_META, N as categoryLabel, O as isDiscoveredSource, P as EmojiPicker, Q as validateIdentityFields, R as updateIdentity, U as set, V as prepareCreationOptions, W as detectPasskeyName, X as fetchVoiceProviders, Y as fetchPhrase, Z as testTts, _ as decodeBase64Safe, $ as transcribeAudio$1, a0 as toggleVoiceProvider, a1 as saveVoiceKey, a2 as saveVoiceSettings, a3 as gon, a4 as _events } from "./chunks/voice-utils.js";
 import "./chunks/time-format.js";
 const BYTE_UNITS = [
   "B",
@@ -7296,7 +7296,6 @@ function AddSignalModal() {
   const addModel = useSignal("");
   const allowlistItems = useSignal([]);
   const groupAllowlistItems = useSignal([]);
-  const accountIdDraft = useSignal("");
   const accountDraft = useSignal("");
   const httpUrlDraft = useSignal("http://127.0.0.1:8080");
   const dmPolicy = useSignal("allowlist");
@@ -7307,7 +7306,6 @@ function AddSignalModal() {
     addModel.value = "";
     allowlistItems.value = [];
     groupAllowlistItems.value = [];
-    accountIdDraft.value = "";
     accountDraft.value = "";
     httpUrlDraft.value = "http://127.0.0.1:8080";
     dmPolicy.value = "allowlist";
@@ -7318,11 +7316,10 @@ function AddSignalModal() {
   }
   function onSubmit(e) {
     e.preventDefault();
-    const accountId = accountIdDraft.value.trim();
     const account = accountDraft.value.trim();
     const httpUrl = httpUrlDraft.value.trim();
-    if (!accountId) {
-      error2.value = "Account ID is required.";
+    if (!account) {
+      error2.value = "Signal account (phone number) is required.";
       return;
     }
     if (!httpUrl) {
@@ -7344,7 +7341,8 @@ function AddSignalModal() {
       group_allowlist: groupAllowlistItems.value,
       mention_mode: mentionMode.value
     };
-    if (account) addConfig.account = account;
+    addConfig.account = account;
+    const accountId = deriveSignalAccountId(account);
     if (addModel.value) {
       addConfig.model = addModel.value;
       const found = models$1.value.find((x) => x.id === addModel.value);
@@ -7374,27 +7372,13 @@ function AddSignalModal() {
       title: "Connect Signal",
       children: /* @__PURE__ */ u("div", { className: "channel-form", children: [
         /* @__PURE__ */ u("div", { className: "channel-card", children: /* @__PURE__ */ u("div", { children: [
-          /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: "How to set up Signal" }),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] channel-help", children: "1. Run signal-cli daemon with JSON-RPC HTTP enabled" }),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "2. Link or register the Signal account in signal-cli" }),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "3. Keep the daemon reachable from this Moltis process, usually on localhost" })
+          /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: "Requires signal-cli" }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] channel-help", children: "Signal integration requires a running signal-cli daemon with JSON-RPC HTTP enabled." }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Install signal-cli, register or link your Signal account, then start the daemon:" }),
+          /* @__PURE__ */ u("code", { className: "text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-1 block", children: "signal-cli daemon --http localhost:8080" })
         ] }) }),
         /* @__PURE__ */ u(ConnectionModeHint, { type: ChannelType.Signal }),
-        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Account ID" }),
-        /* @__PURE__ */ u(
-          "input",
-          {
-            "data-field": "accountId",
-            type: "text",
-            placeholder: "e.g. personal-signal",
-            value: accountIdDraft.value,
-            onInput: (e) => {
-              accountIdDraft.value = targetValue(e);
-            },
-            className: "channel-input"
-          }
-        ),
-        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Signal Account" }),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Signal Account (phone number)" }),
         /* @__PURE__ */ u(
           "input",
           {
