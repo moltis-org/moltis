@@ -160,10 +160,11 @@ export interface RpcMethodMap {
 			slug: string;
 			displayName?: string;
 			summary?: string;
-			updatedAt?: string;
+			updatedAt?: number;
+			version?: string;
 			downloads?: number;
 			ownerHandle?: string;
-			verified?: boolean;
+			stars?: number;
 		}>;
 	};
 	"skills.clawhub.install": { installed: Array<{ name: string; description?: string }> };

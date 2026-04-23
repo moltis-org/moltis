@@ -11,10 +11,12 @@ interface ClawHubResult {
 	slug: string;
 	displayName?: string;
 	summary?: string;
-	updatedAt?: string;
+	updatedAt?: number;
+	version?: string;
 	downloads?: number;
 	ownerHandle?: string;
-	verified?: boolean;
+	ownerImage?: string;
+	stars?: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -67,19 +69,6 @@ function ResultCard({ result, onInstalled }: { result: ClawHubResult; onInstalle
 					{result.slug !== result.displayName && (
 						<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>{result.slug}</span>
 					)}
-					{result.verified && (
-						<span
-							style={{
-								fontSize: ".62rem",
-								padding: "1px 4px",
-								borderRadius: "var(--radius-sm)",
-								background: "var(--success-bg, rgba(34,197,94,.12))",
-								color: "var(--success, #22c55e)",
-							}}
-						>
-							verified
-						</span>
-					)}
 					{result.ownerHandle && (
 						<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>by {result.ownerHandle}</span>
 					)}
@@ -87,6 +76,9 @@ function ResultCard({ result, onInstalled }: { result: ClawHubResult; onInstalle
 						<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>
 							{result.downloads.toLocaleString()} downloads
 						</span>
+					)}
+					{result.stars != null && result.stars > 0 && (
+						<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>{result.stars} stars</span>
 					)}
 				</div>
 				{result.summary && (

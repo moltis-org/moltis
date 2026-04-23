@@ -14386,19 +14386,6 @@ function ResultCard({ result, onInstalled }) {
           }
         ),
         result.slug !== result.displayName && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: result.slug }),
-        result.verified && /* @__PURE__ */ u(
-          "span",
-          {
-            style: {
-              fontSize: ".62rem",
-              padding: "1px 4px",
-              borderRadius: "var(--radius-sm)",
-              background: "var(--success-bg, rgba(34,197,94,.12))",
-              color: "var(--success, #22c55e)"
-            },
-            children: "verified"
-          }
-        ),
         result.ownerHandle && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: [
           "by ",
           result.ownerHandle
@@ -14406,6 +14393,10 @@ function ResultCard({ result, onInstalled }) {
         result.downloads != null && result.downloads > 0 && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: [
           result.downloads.toLocaleString(),
           " downloads"
+        ] }),
+        result.stars != null && result.stars > 0 && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: [
+          result.stars,
+          " stars"
         ] })
       ] }),
       result.summary && /* @__PURE__ */ u(

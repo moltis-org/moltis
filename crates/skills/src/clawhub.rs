@@ -34,14 +34,11 @@ pub struct SearchResult {
     pub display_name: Option<String>,
     #[serde(default)]
     pub summary: Option<String>,
+    /// Millisecond timestamp.
     #[serde(default)]
-    pub updated_at: Option<String>,
+    pub updated_at: Option<u64>,
     #[serde(default)]
-    pub downloads: Option<u64>,
-    #[serde(default)]
-    pub owner_handle: Option<String>,
-    #[serde(default)]
-    pub verified: Option<bool>,
+    pub version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +49,8 @@ pub struct SkillInfoResponse {
     pub latest_version: Option<VersionInfo>,
     #[serde(default)]
     pub owner: Option<OwnerInfo>,
+    #[serde(default)]
+    pub moderation: Option<ModerationInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,8 +62,6 @@ pub struct SkillInfo {
     #[serde(default)]
     pub summary: Option<String>,
     #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
     pub stats: Option<SkillStats>,
 }
 
@@ -74,7 +71,9 @@ pub struct SkillStats {
     #[serde(default)]
     pub downloads: u64,
     #[serde(default)]
-    pub installs: u64,
+    pub installs_all_time: u64,
+    #[serde(default)]
+    pub stars: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +82,8 @@ pub struct VersionInfo {
     pub version: String,
     #[serde(default)]
     pub changelog: Option<String>,
+    #[serde(default)]
+    pub license: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,22 +91,19 @@ pub struct VersionInfo {
 pub struct OwnerInfo {
     #[serde(default)]
     pub handle: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub image: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct VersionDetailResponse {
-    pub files: Vec<FileEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileEntry {
-    pub path: String,
+pub struct ModerationInfo {
     #[serde(default)]
-    pub size: u64,
+    pub is_suspicious: Option<bool>,
     #[serde(default)]
-    pub sha256: Option<String>,
+    pub verdict: Option<String>,
 }
 
 // ── Client ──────────────────────────────────────────────────────────────────
@@ -171,30 +169,6 @@ impl ClawHubClient {
         resp.json().await.map_err(Into::into)
     }
 
-    /// List files in a specific version of a skill.
-    pub async fn version_files(&self, slug: &str, version: &str) -> Result<Vec<FileEntry>> {
-        let url = format!(
-            "{}/api/v1/skills/{}/versions/{}",
-            self.base_url, slug, version
-        );
-        let resp = self
-            .client
-            .get(&url)
-            .header("User-Agent", USER_AGENT)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            return Err(Error::Install(format!(
-                "ClawHub version files failed for '{slug}@{version}': HTTP {}",
-                resp.status()
-            )));
-        }
-
-        let detail: VersionDetailResponse = resp.json().await?;
-        Ok(detail.files)
-    }
-
     /// Download a skill as a zip archive.
     pub async fn download_zip(&self, slug: &str, version: &str) -> Result<Vec<u8>> {
         let url = format!("{}/api/v1/download", self.base_url);
@@ -215,6 +189,47 @@ impl ClawHubClient {
 
         let bytes = resp.bytes().await?;
         Ok(bytes.to_vec())
+    }
+}
+
+// ── Enriched search results ─────────────────────────────────────────────────
+
+/// Enriched search result with additional metadata from skill info lookups.
+/// This is what we return to the frontend.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrichedSearchResult {
+    pub score: f64,
+    pub slug: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub downloads: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_handle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_image: Option<String>,
+    #[serde(default)]
+    pub stars: u64,
+}
+
+impl From<SearchResult> for EnrichedSearchResult {
+    fn from(r: SearchResult) -> Self {
+        Self {
+            score: r.score,
+            slug: r.slug,
+            display_name: r.display_name,
+            summary: r.summary,
+            version: r.version,
+            downloads: 0,
+            owner_handle: None,
+            owner_image: None,
+            stars: 0,
+        }
     }
 }
 
@@ -304,53 +319,6 @@ pub async fn install_from_clawhub(slug: &str, install_dir: &Path) -> Result<Vec<
     Ok(vec![metadata])
 }
 
-/// Extract a zip archive into a target directory with security checks.
-fn extract_zip(zip_bytes: &[u8], target: &Path) -> Result<()> {
-    use std::io::Read;
-
-    let reader = std::io::Cursor::new(zip_bytes);
-    let mut archive = zip::ZipArchive::new(reader)
-        .map_err(|e| Error::Install(format!("invalid zip archive: {e}")))?;
-
-    let canonical_target = std::fs::canonicalize(target)?;
-
-    for i in 0..archive.len() {
-        let mut file = archive
-            .by_index(i)
-            .map_err(|e| Error::Install(format!("zip entry error: {e}")))?;
-
-        let raw_name = file.name().to_string();
-
-        // Security: reject symlinks, absolute paths, path traversal.
-        if raw_name.contains("..") || raw_name.starts_with('/') {
-            tracing::warn!(path = %raw_name, "skipping unsafe zip entry");
-            continue;
-        }
-
-        // Strip leading directory if all entries share a common prefix
-        // (common for GitHub-style archives: `slug-version/...`).
-        let dest = target.join(&raw_name);
-
-        if file.is_dir() {
-            std::fs::create_dir_all(&dest)?;
-            continue;
-        }
-
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-            let canonical_parent = std::fs::canonicalize(parent)?;
-            if !canonical_parent.starts_with(&canonical_target) {
-                return Err(Error::Install("zip entry escaped install directory".into()));
-            }
-        }
-
-        let mut buf = Vec::with_capacity(file.size() as usize);
-        file.read_to_end(&mut buf)?;
-        std::fs::write(&dest, &buf)?;
-    }
-    Ok(())
-}
-
 /// Build the manifest source key for a ClawHub skill.
 pub fn clawhub_source_key(slug: &str) -> String {
     format!("clawhub:{slug}")
@@ -377,6 +345,51 @@ fn validate_slug(slug: &str) -> Result<()> {
             "invalid ClawHub slug: '{slug}' (only alphanumeric, hyphens, underscores allowed)"
         )))
     }
+}
+
+/// Extract a zip archive into a target directory with security checks.
+fn extract_zip(zip_bytes: &[u8], target: &Path) -> Result<()> {
+    use std::io::Read;
+
+    let reader = std::io::Cursor::new(zip_bytes);
+    let mut archive = zip::ZipArchive::new(reader)
+        .map_err(|e| Error::Install(format!("invalid zip archive: {e}")))?;
+
+    let canonical_target = std::fs::canonicalize(target)?;
+
+    for i in 0..archive.len() {
+        let mut file = archive
+            .by_index(i)
+            .map_err(|e| Error::Install(format!("zip entry error: {e}")))?;
+
+        let raw_name = file.name().to_string();
+
+        // Security: reject symlinks, absolute paths, path traversal.
+        if raw_name.contains("..") || raw_name.starts_with('/') {
+            tracing::warn!(path = %raw_name, "skipping unsafe zip entry");
+            continue;
+        }
+
+        let dest = target.join(&raw_name);
+
+        if file.is_dir() {
+            std::fs::create_dir_all(&dest)?;
+            continue;
+        }
+
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+            let canonical_parent = std::fs::canonicalize(parent)?;
+            if !canonical_parent.starts_with(&canonical_target) {
+                return Err(Error::Install("zip entry escaped install directory".into()));
+            }
+        }
+
+        let mut buf = Vec::with_capacity(file.size() as usize);
+        file.read_to_end(&mut buf)?;
+        std::fs::write(&dest, &buf)?;
+    }
+    Ok(())
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
@@ -413,21 +426,96 @@ mod tests {
         assert!(validate_slug("foo/bar").is_err());
     }
 
+    /// Test with the actual JSON shape returned by the ClawHub /api/v1/search endpoint.
     #[test]
-    fn search_response_deserialises() {
-        let json = r#"{"results":[{"score":0.95,"slug":"arxiv","displayName":"Arxiv","summary":"Search papers","updatedAt":"2026-01-01"}]}"#;
+    fn search_response_deserialises_real_format() {
+        let json = r#"{"results":[{"score":3.54,"slug":"csv-handler","displayName":"Csv Handler","summary":"Handle CSV files","version":null,"updatedAt":1772056835938}]}"#;
         let resp: SearchResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.results.len(), 1);
-        assert_eq!(resp.results[0].slug, "arxiv");
-        assert_eq!(resp.results[0].display_name.as_deref(), Some("Arxiv"));
+        assert_eq!(resp.results[0].slug, "csv-handler");
+        assert_eq!(resp.results[0].display_name.as_deref(), Some("Csv Handler"));
+        assert_eq!(resp.results[0].updated_at, Some(1772056835938));
+        assert!(resp.results[0].version.is_none());
+    }
+
+    /// Test with the actual JSON shape returned by the ClawHub /api/v1/skills/<slug> endpoint.
+    #[test]
+    fn skill_info_response_deserialises_real_format() {
+        let json = r#"{
+            "skill": {
+                "slug": "csv-handler",
+                "displayName": "Csv Handler",
+                "summary": "Handle CSV files",
+                "stats": { "downloads": 2185, "installsAllTime": 12, "stars": 3, "comments": 0, "versions": 2 }
+            },
+            "latestVersion": { "version": "2.1.0", "changelog": "Added features", "license": null },
+            "owner": { "handle": "datadrivenconstruction", "displayName": "datadrivenconstruction", "image": "https://avatars.githubusercontent.com/u/94158709?v=4" },
+            "moderation": null
+        }"#;
+        let resp: SkillInfoResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.skill.slug, "csv-handler");
+        assert_eq!(resp.skill.stats.as_ref().unwrap().downloads, 2185);
+        assert_eq!(resp.skill.stats.as_ref().unwrap().stars, 3);
+        assert_eq!(resp.latest_version.as_ref().unwrap().version, "2.1.0");
+        assert_eq!(
+            resp.owner.as_ref().unwrap().handle.as_deref(),
+            Some("datadrivenconstruction")
+        );
+        assert!(resp.moderation.is_none());
     }
 
     #[test]
-    fn skill_info_response_deserialises() {
-        let json = r#"{"skill":{"slug":"arxiv","displayName":"Arxiv","summary":"Search","tags":["research"],"stats":{"downloads":100,"installs":50}},"latestVersion":{"version":"1.0.0"},"owner":{"handle":"alice"}}"#;
-        let resp: SkillInfoResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.skill.slug, "arxiv");
-        assert_eq!(resp.latest_version.unwrap().version, "1.0.0");
-        assert_eq!(resp.owner.unwrap().handle.as_deref(), Some("alice"));
+    fn enriched_result_from_search_result() {
+        let sr = SearchResult {
+            score: 3.5,
+            slug: "test".into(),
+            display_name: Some("Test Skill".into()),
+            summary: Some("A test".into()),
+            updated_at: Some(1234567890000),
+            version: None,
+        };
+        let enriched: EnrichedSearchResult = sr.into();
+        assert_eq!(enriched.slug, "test");
+        assert_eq!(enriched.downloads, 0);
+        assert!(enriched.owner_handle.is_none());
+    }
+
+    /// Integration test: hit the real ClawHub search API.
+    #[tokio::test]
+    async fn live_search_returns_results() {
+        let client = ClawHubClient::new();
+        let resp = client.search("csv").await;
+        match resp {
+            Ok(r) => {
+                assert!(
+                    !r.results.is_empty(),
+                    "search for 'csv' should return results"
+                );
+                let first = &r.results[0];
+                assert!(!first.slug.is_empty());
+                assert!(first.display_name.is_some());
+            },
+            Err(e) => {
+                // Network errors are ok in CI (no internet), but print for debugging.
+                eprintln!("live search test skipped (network error): {e}");
+            },
+        }
+    }
+
+    /// Integration test: hit the real ClawHub skill info API.
+    #[tokio::test]
+    async fn live_skill_info_returns_metadata() {
+        let client = ClawHubClient::new();
+        let resp = client.skill_info("csv-handler").await;
+        match resp {
+            Ok(info) => {
+                assert_eq!(info.skill.slug, "csv-handler");
+                assert!(info.latest_version.is_some());
+                assert!(info.owner.is_some());
+            },
+            Err(e) => {
+                eprintln!("live skill_info test skipped (network error): {e}");
+            },
+        }
     }
 }
