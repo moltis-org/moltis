@@ -3,8 +3,67 @@ use moltis_agents::model::StreamEvent;
 use super::{
     SseLineResult, StreamingToolState, parse_responses_completion, parse_tool_calls,
     process_openai_sse_line, sanitize_schema_for_openai_compat,
+    schema_normalization::collapse_schema_unions_for_non_strict_tools,
     strict_mode::patch_schema_for_strict_mode, to_openai_tools, to_responses_api_tools,
 };
+
+/// Recursively assert that every `required` entry has a corresponding key in
+/// `properties`. Panics with `path` context on the first orphaned entry.
+fn assert_no_orphaned_required(schema: &serde_json::Value, path: &str) {
+    let Some(obj) = schema.as_object() else {
+        return;
+    };
+
+    if let (Some(required), Some(props)) = (
+        obj.get("required").and_then(|v| v.as_array()),
+        obj.get("properties").and_then(|v| v.as_object()),
+    ) {
+        for entry in required {
+            if let Some(name) = entry.as_str() {
+                assert!(
+                    props.contains_key(name),
+                    "orphaned required entry \"{name}\" at {path} — not in properties {:?}",
+                    props.keys().collect::<Vec<_>>()
+                );
+            }
+        }
+    } else if let Some(required) = obj.get("required").and_then(|v| v.as_array())
+        && !required.is_empty()
+    {
+        panic!("required array at {path} has entries {required:?} but no properties object");
+    }
+
+    // Recurse into properties
+    if let Some(props) = obj.get("properties").and_then(|v| v.as_object()) {
+        for (key, value) in props {
+            assert_no_orphaned_required(value, &format!("{path}.properties.{key}"));
+        }
+    }
+    // Recurse into items
+    if let Some(items) = obj.get("items") {
+        if items.is_object() {
+            assert_no_orphaned_required(items, &format!("{path}.items"));
+        } else if let Some(arr) = items.as_array() {
+            for (i, item) in arr.iter().enumerate() {
+                assert_no_orphaned_required(item, &format!("{path}.items[{i}]"));
+            }
+        }
+    }
+    // Recurse into anyOf/oneOf/allOf
+    for keyword in ["anyOf", "oneOf", "allOf"] {
+        if let Some(variants) = obj.get(keyword).and_then(|v| v.as_array()) {
+            for (i, variant) in variants.iter().enumerate() {
+                assert_no_orphaned_required(variant, &format!("{path}.{keyword}[{i}]"));
+            }
+        }
+    }
+    // Recurse into additionalProperties
+    if let Some(ap) = obj.get("additionalProperties")
+        && ap.is_object()
+    {
+        assert_no_orphaned_required(ap, &format!("{path}.additionalProperties"));
+    }
+}
 
 #[test]
 fn parse_tool_calls_preserves_native_falsy_types() {
@@ -1192,4 +1251,250 @@ fn strict_mode_nullable_enum_only_schema_includes_null() {
         time_enum.iter().any(|v| v.is_null()),
         "enum-only schema should include null, got: {time_enum:?}"
     );
+}
+
+/// Issue #849: cron-style schemas with union type arrays (`["object",
+/// "string", "integer"]`) trigger `lower_type_array_to_any_of` in
+/// `json_schema_ast`, which copies ALL context keys (including `properties`
+/// and `required`) to every branch. After `CollapseCompositeUnionTransform`
+/// picks the object variant, the shallow `merge_schema_object` may drop
+/// variant `properties` when the parent already has a `properties` key,
+/// leaving orphaned `required` entries that Gemini rejects with "property is
+/// not defined".
+#[test]
+fn non_strict_cron_tool_schema_no_orphaned_required() {
+    let time_field = |description: &str| {
+        serde_json::json!({
+            "type": ["integer", "string"],
+            "description": description
+        })
+    };
+    let tools = vec![serde_json::json!({
+        "name": "cron",
+        "description": "Manage scheduled tasks",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["status", "list", "add", "update", "remove", "run", "runs"],
+                    "description": "The action to perform"
+                },
+                "job": {
+                    "type": "object",
+                    "description": "Job specification",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "schedule": {
+                            "type": ["object", "string", "integer"],
+                            "description": "Schedule specification",
+                            "properties": {
+                                "kind": { "type": "string", "enum": ["at", "every", "cron"] },
+                                "delay_ms": time_field("Milliseconds from now"),
+                                "at_ms": time_field("Absolute epoch milliseconds"),
+                                "every_ms": time_field("Recurring interval"),
+                                "anchor_ms": time_field("Optional anchor"),
+                                "expr": { "type": "string", "description": "Cron expression" },
+                                "tz": { "type": "string", "description": "Timezone" }
+                            },
+                            "required": ["kind"]
+                        },
+                        "payload": {
+                            "type": ["object", "string"],
+                            "description": "What to do",
+                            "properties": {
+                                "kind": { "type": "string", "enum": ["systemEvent", "agentTurn"] },
+                                "text": { "type": "string" },
+                                "message": { "type": "string" },
+                                "model": { "type": "string" },
+                                "timeout_secs": { "type": ["integer", "string"] },
+                                "deliver": { "type": "boolean" },
+                                "channel": { "type": "string" },
+                                "to": { "type": "string" }
+                            },
+                            "required": ["kind"]
+                        },
+                        "sessionTarget": { "type": "string", "enum": ["main", "isolated"] },
+                        "deleteAfterRun": { "type": "boolean" },
+                        "enabled": { "type": "boolean" }
+                    },
+                    "required": ["name", "schedule", "payload"]
+                },
+                "id": { "type": "string" },
+                "force": { "type": "boolean" },
+                "limit": { "type": "integer" }
+            },
+            "required": ["action"]
+        }
+    })];
+
+    let converted = to_openai_tools(&tools, false);
+    assert_eq!(converted.len(), 1, "should have 1 tool");
+    let params = &converted[0]["function"]["parameters"];
+
+    // No array-form types should survive
+    let serialized = params.to_string();
+    assert!(
+        !serialized.contains("[\"integer\""),
+        "no array-form types should remain: {serialized}"
+    );
+    assert!(
+        !serialized.contains("[\"object\""),
+        "no array-form types should remain: {serialized}"
+    );
+    assert!(
+        !serialized.contains("[\"string\""),
+        "no array-form types should remain: {serialized}"
+    );
+
+    // Recursively validate: no required entry references a missing property
+    assert_no_orphaned_required(params, "parameters");
+}
+
+/// Issue #849: MultiEdit tool has nested required inside array `items`.
+/// Verify the nested required entries survive sanitization correctly.
+#[test]
+fn non_strict_multi_edit_schema_no_orphaned_required() {
+    let tools = vec![serde_json::json!({
+        "name": "MultiEdit",
+        "description": "Apply multiple sequential edits",
+        "parameters": {
+            "type": "object",
+            "required": ["file_path", "edits"],
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute path to the file"
+                },
+                "edits": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "required": ["old_string", "new_string"],
+                        "properties": {
+                            "old_string": { "type": "string" },
+                            "new_string": { "type": "string" },
+                            "replace_all": { "type": "boolean", "default": false }
+                        }
+                    }
+                }
+            }
+        }
+    })];
+
+    let converted = to_openai_tools(&tools, false);
+    let params = &converted[0]["function"]["parameters"];
+
+    // Recursively validate
+    assert_no_orphaned_required(params, "parameters");
+
+    // Items-level required should be intact
+    let items_required = params["properties"]["edits"]["items"]["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("items.required should exist"));
+    let names: Vec<&str> = items_required.iter().filter_map(|v| v.as_str()).collect();
+    assert!(names.contains(&"old_string"));
+    assert!(names.contains(&"new_string"));
+}
+
+/// Issue #849: after `CollapseCompositeUnionTransform` merges a selected
+/// `anyOf` variant into a parent that already has `properties`, the shallow
+/// `merge_schema_object` drops the variant's `properties` (parent-key-wins).
+/// If the variant's `required` is merged (parent had none), it references
+/// the variant's dropped properties — creating orphaned entries.
+/// `PruneOrphanedRequiredTransform` must clean these up.
+#[test]
+fn non_strict_anyof_merge_deep_merges_variant_properties() {
+    // Parent has `properties: {mode}`, variant has `properties: {target, count}`
+    // and `required: [target, count]`. Deep merge should preserve ALL properties:
+    // parent's `mode` AND variant's `target` + `count`.
+    let mut schema = serde_json::json!({
+        "type": "object",
+        "description": "A tool with union parameters",
+        "properties": {
+            "mode": { "type": "string" }
+        },
+        "anyOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "target": { "type": "string" },
+                    "count": { "type": "integer" }
+                },
+                "required": ["target", "count"]
+            },
+            {
+                "type": "string"
+            }
+        ]
+    });
+
+    sanitize_schema_for_openai_compat(&mut schema);
+    collapse_schema_unions_for_non_strict_tools(&mut schema);
+
+    assert_no_orphaned_required(&schema, "root");
+
+    // Deep merge should have preserved ALL properties from both parent and variant
+    let props = schema["properties"]
+        .as_object()
+        .unwrap_or_else(|| panic!("should have properties"));
+    assert!(props.contains_key("mode"), "parent property should survive");
+    assert!(
+        props.contains_key("target"),
+        "variant property 'target' should be deep-merged"
+    );
+    assert!(
+        props.contains_key("count"),
+        "variant property 'count' should be deep-merged"
+    );
+
+    // Variant's required entries should also be present (since their
+    // properties were deep-merged and now exist)
+    let required = schema["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("should have required"));
+    let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+    assert!(names.contains(&"target"), "target should be in required");
+    assert!(names.contains(&"count"), "count should be in required");
+}
+
+/// Issue #849: `allOf` produced by `json_schema_ast` when a type array
+/// coexists with an existing `anyOf` should be collapsed. Multi-variant
+/// `allOf` that survives transforms is mis-converted by OpenRouter's Gemini
+/// translation.
+#[test]
+fn non_strict_allof_collapsed_and_merged() {
+    let mut schema = serde_json::json!({
+        "allOf": [
+            {
+                "properties": {
+                    "kind": { "type": "string", "enum": ["at", "every"] }
+                },
+                "required": ["kind"],
+                "anyOf": [
+                    { "properties": { "delay_ms": { "type": "integer" } } },
+                    { "properties": { "every_ms": { "type": "integer" } } }
+                ]
+            },
+            {
+                "anyOf": [
+                    { "type": "object", "properties": { "kind": { "type": "string" } }, "required": ["kind"] },
+                    { "type": "string" }
+                ]
+            }
+        ]
+    });
+
+    sanitize_schema_for_openai_compat(&mut schema);
+    collapse_schema_unions_for_non_strict_tools(&mut schema);
+
+    // allOf should be fully collapsed
+    assert!(
+        schema.get("allOf").is_none(),
+        "allOf should be collapsed, got: {}",
+        serde_json::to_string_pretty(&schema).unwrap_or_default()
+    );
+
+    assert_no_orphaned_required(&schema, "root");
 }

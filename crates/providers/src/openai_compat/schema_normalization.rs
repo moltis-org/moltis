@@ -149,12 +149,50 @@ fn merge_schema_object(
     obj: &mut serde_json::Map<String, serde_json::Value>,
     variant: serde_json::Value,
 ) {
-    if let serde_json::Value::Object(inner) = variant {
-        for (key, value) in inner {
-            // Parent-key wins: if a key is already present (e.g. `description`
-            // from the surrounding schema), keep it and use the selected
-            // variant only for missing structural keys.
-            obj.entry(key).or_insert(value);
+    let serde_json::Value::Object(inner) = variant else {
+        return;
+    };
+    for (key, value) in inner {
+        match key.as_str() {
+            // Deep-merge `properties`: variant properties that are absent in
+            // the parent are added rather than silently dropped. Without this,
+            // a shallow `or_insert` on the `properties` key discards the
+            // entire variant property map when the parent already has one,
+            // creating orphaned `required` entries (#849).
+            "properties" => {
+                if let (Some(parent_props), Some(variant_props)) = (
+                    obj.get_mut("properties").and_then(|v| v.as_object_mut()),
+                    value.as_object(),
+                ) {
+                    for (prop_key, prop_value) in variant_props {
+                        parent_props.entry(prop_key).or_insert(prop_value.clone());
+                    }
+                } else {
+                    obj.entry(key).or_insert(value);
+                }
+            },
+            // Union `required` arrays: concatenate and deduplicate instead of
+            // discarding the variant's array when the parent already has one.
+            "required" => {
+                if let (Some(parent_req), Some(variant_req)) = (
+                    obj.get_mut("required").and_then(|v| v.as_array_mut()),
+                    value.as_array(),
+                ) {
+                    for entry in variant_req {
+                        if !parent_req.contains(entry) {
+                            parent_req.push(entry.clone());
+                        }
+                    }
+                } else {
+                    obj.entry(key).or_insert(value);
+                }
+            },
+            // Everything else: parent-key wins. If a key is already present
+            // (e.g. `description`), keep it and use the variant only for
+            // missing structural keys.
+            _ => {
+                obj.entry(key).or_insert(value);
+            },
         }
     }
 }
@@ -212,8 +250,17 @@ fn preferred_union_variant_index(variants: &[serde_json::Value]) -> Option<usize
         .or_else(|| (!variants.is_empty()).then_some(0))
 }
 
-/// Collapse `anyOf`/`oneOf` unions to a single schema for providers that
-/// cannot represent JSON Schema unions in tool parameters.
+/// Collapse `anyOf`/`oneOf`/`allOf` unions to a single schema for providers
+/// that cannot represent JSON Schema unions in tool parameters.
+///
+/// `anyOf` / `oneOf` — picks the best variant (prefers object > array >
+/// first non-null) and merges it into the parent.
+///
+/// `allOf` — merges ALL variants into the parent because `allOf` semantics
+/// require satisfying every variant simultaneously. Without this,
+/// multi-variant `allOf` (produced by `json_schema_ast` when a type array
+/// coexists with an existing `anyOf`) survives all transforms and
+/// OpenRouter's Gemini translation can mis-convert it (#849).
 #[derive(Debug, Clone, Default)]
 struct CollapseCompositeUnionTransform;
 
@@ -238,6 +285,20 @@ impl Transform for CollapseCompositeUnionTransform {
                 let selected = variants.remove(index);
                 obj.remove(keyword);
                 merge_schema_object(obj, selected);
+            }
+        }
+
+        // allOf: merge ALL variants (intersection semantics).
+        if let Some(variants) = obj.get_mut("allOf").and_then(|v| v.as_array_mut()) {
+            variants.retain(|v| !v.as_object().is_some_and(|o| o.is_empty()));
+            if variants.is_empty() {
+                obj.remove("allOf");
+            } else {
+                let taken = std::mem::take(variants);
+                obj.remove("allOf");
+                for variant in taken {
+                    merge_schema_object(obj, variant);
+                }
             }
         }
     }
