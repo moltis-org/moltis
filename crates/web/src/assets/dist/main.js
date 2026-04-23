@@ -14362,22 +14362,74 @@ function fmtNumber(n) {
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
   return n.toString();
 }
+function SecurityScanPanel({ scan }) {
+  var _a2, _b2;
+  if (!scan) return null;
+  const isClean = scan.status === "clean";
+  const bg = isClean ? "var(--success-bg, rgba(34,197,94,.08))" : "var(--warning-bg, rgba(234,179,8,.12))";
+  const vt = (_a2 = scan.scanners) == null ? void 0 : _a2.vt;
+  const llm = (_b2 = scan.scanners) == null ? void 0 : _b2.llm;
+  return /* @__PURE__ */ u(
+    "div",
+    {
+      style: {
+        marginTop: "8px",
+        padding: "8px 10px",
+        borderRadius: "var(--radius-sm)",
+        background: bg,
+        fontSize: ".72rem"
+      },
+      children: [
+        /* @__PURE__ */ u("div", { style: { fontWeight: 600, marginBottom: "4px" }, children: [
+          "Security Scan: ",
+          isClean ? "Clean" : scan.status || "Unknown",
+          scan.hasWarnings && /* @__PURE__ */ u("span", { style: { color: "var(--warning, #eab308)", marginLeft: "6px" }, children: "(has warnings)" })
+        ] }),
+        vt && /* @__PURE__ */ u("div", { style: { display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }, children: [
+          /* @__PURE__ */ u("span", { style: { fontWeight: 500 }, children: "VirusTotal:" }),
+          /* @__PURE__ */ u("span", { style: { color: vt.verdict === "benign" ? "var(--success, #22c55e)" : "var(--warning, #eab308)" }, children: vt.verdict || "unknown" }),
+          scan.virustotalUrl && /* @__PURE__ */ u(
+            "a",
+            {
+              href: scan.virustotalUrl,
+              target: "_blank",
+              rel: "noopener noreferrer",
+              style: { color: "var(--accent)", fontSize: ".68rem" },
+              children: "view report"
+            }
+          )
+        ] }),
+        llm && /* @__PURE__ */ u("div", { style: { display: "flex", alignItems: "center", gap: "6px" }, children: [
+          /* @__PURE__ */ u("span", { style: { fontWeight: 500 }, children: "AI Analysis:" }),
+          /* @__PURE__ */ u("span", { style: { color: llm.verdict === "benign" ? "var(--success, #22c55e)" : "var(--warning, #eab308)" }, children: llm.verdict || "unknown" })
+        ] })
+      ]
+    }
+  );
+}
 function DetailPanel({
   slug,
   onClose,
   onInstalled
 }) {
   const info = useSignal(null);
+  const scan = useSignal(null);
   const loading2 = useSignal(true);
   const error2 = useSignal(null);
   const installing = useSignal(false);
   const installed = useSignal(false);
   if (loading2.value && !info.value && !error2.value) {
-    sendRpc("skills.clawhub.info", { slug }).then((res) => {
-      loading2.value = false;
-      if (res == null ? void 0 : res.ok) info.value = res.payload;
-      else error2.value = String((res == null ? void 0 : res.error) || "Failed to load skill info");
-    });
+    Promise.all([sendRpc("skills.clawhub.info", { slug }), sendRpc("skills.clawhub.scan", { slug })]).then(
+      ([infoRes, scanRes]) => {
+        loading2.value = false;
+        if (infoRes == null ? void 0 : infoRes.ok) info.value = infoRes.payload;
+        else error2.value = String((infoRes == null ? void 0 : infoRes.error) || "Failed to load skill info");
+        if (scanRes == null ? void 0 : scanRes.ok) {
+          const p = scanRes.payload;
+          if (p == null ? void 0 : p.security) scan.value = p.security;
+        }
+      }
+    );
   }
   async function doInstall2() {
     installing.value = true;
@@ -14401,7 +14453,6 @@ function DetailPanel({
   const stats = s == null ? void 0 : s.stats;
   const owner = d2 == null ? void 0 : d2.owner;
   const ver = d2 == null ? void 0 : d2.latestVersion;
-  const mod_ = d2 == null ? void 0 : d2.moderation;
   return /* @__PURE__ */ u(
     "div",
     {
@@ -14476,23 +14527,7 @@ function DetailPanel({
                 ]
               }
             ),
-            mod_ !== void 0 && /* @__PURE__ */ u(
-              "div",
-              {
-                style: {
-                  marginTop: "8px",
-                  padding: "6px 8px",
-                  borderRadius: "var(--radius-sm)",
-                  background: (mod_ == null ? void 0 : mod_.isSuspicious) ? "var(--warning-bg, rgba(234,179,8,.12))" : "var(--success-bg, rgba(34,197,94,.08))",
-                  fontSize: ".72rem"
-                },
-                children: [
-                  /* @__PURE__ */ u("strong", { children: "Security Scan:" }),
-                  " ",
-                  mod_ === null ? "Not yet scanned" : mod_.isSuspicious ? `Suspicious — ${mod_.verdict || "review recommended"}` : mod_.verdict || "Benign"
-                ]
-              }
-            ),
+            /* @__PURE__ */ u(SecurityScanPanel, { scan: scan.value }),
             (ver == null ? void 0 : ver.changelog) && /* @__PURE__ */ u("div", { style: { marginTop: "8px" }, children: [
               /* @__PURE__ */ u(
                 "div",

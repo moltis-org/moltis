@@ -168,6 +168,7 @@ export interface RpcMethodMap {
 		}>;
 	};
 	"skills.clawhub.info": unknown;
+	"skills.clawhub.scan": unknown;
 	"skills.clawhub.install": { installed: Array<{ name: string; description?: string }> };
 	"skills.recipe": {
 		found: boolean;

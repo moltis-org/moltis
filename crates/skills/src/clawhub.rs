@@ -108,6 +108,49 @@ pub struct ModerationInfo {
 
 // ── Client ──────────────────────────────────────────────────────────────────
 
+// ── Scan response types ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanResponse {
+    #[serde(default)]
+    pub security: Option<SecurityInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecurityInfo {
+    /// Overall status: `"clean"`, `"suspicious"`, `"malicious"`, etc.
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub has_warnings: bool,
+    #[serde(default)]
+    pub virustotal_url: Option<String>,
+    #[serde(default)]
+    pub scanners: Option<ScannerResults>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScannerResults {
+    #[serde(default)]
+    pub vt: Option<ScannerEntry>,
+    #[serde(default)]
+    pub llm: Option<ScannerEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScannerEntry {
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub verdict: Option<String>,
+    #[serde(default)]
+    pub analysis: Option<String>,
+}
+
 /// Maximum retries for rate-limited (429) responses.
 const MAX_RETRIES: u32 = 3;
 /// Base delay for exponential backoff (seconds).
@@ -195,6 +238,22 @@ impl ClawHubClient {
         if !resp.status().is_success() {
             return Err(Error::Install(format!(
                 "ClawHub skill info failed for '{}': HTTP {}",
+                slug,
+                resp.status()
+            )));
+        }
+
+        resp.json().await.map_err(Into::into)
+    }
+
+    /// Get security scan results for a skill.
+    pub async fn scan(&self, slug: &str) -> Result<ScanResponse> {
+        let url = format!("{}/api/v1/skills/{}/scan", self.base_url, slug);
+        let resp = self.get_with_retry(&url, &[]).await?;
+
+        if !resp.status().is_success() {
+            return Err(Error::Install(format!(
+                "ClawHub scan failed for '{}': HTTP {}",
                 slug,
                 resp.status()
             )));
@@ -528,6 +587,28 @@ mod tests {
             Err(e) => {
                 // Network errors are ok in CI (no internet), but print for debugging.
                 eprintln!("live search test skipped (network error): {e}");
+            },
+        }
+    }
+
+    /// Integration test: hit the real ClawHub scan API.
+    #[tokio::test]
+    async fn live_scan_returns_security_data() {
+        let client = ClawHubClient::new();
+        let resp = client.scan("csv-handler").await;
+        match resp {
+            Ok(scan) => {
+                let sec = scan.security.expect("should have security data");
+                assert!(
+                    sec.status.is_some(),
+                    "scan should have a status (clean/suspicious)"
+                );
+                assert!(sec.scanners.is_some(), "scan should have scanner results");
+                let scanners = sec.scanners.unwrap();
+                assert!(scanners.vt.is_some(), "should have VirusTotal results");
+            },
+            Err(e) => {
+                eprintln!("live scan test skipped (network error): {e}");
             },
         }
     }

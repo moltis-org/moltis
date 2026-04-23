@@ -68,6 +68,7 @@ const READ_METHODS: &[&str] = &[
     "skills.recipe",
     "skills.clawhub.search",
     "skills.clawhub.info",
+    "skills.clawhub.scan",
     "skills.bundled.categories",
     "voicewake.get",
     "sessions.list",

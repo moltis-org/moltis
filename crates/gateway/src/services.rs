@@ -1235,6 +1235,16 @@ impl SkillsService for NoopSkillsService {
         Ok(serde_json::json!({ "results": enriched }))
     }
 
+    async fn clawhub_scan(&self, params: Value) -> ServiceResult {
+        let slug = params
+            .get("slug")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'slug' parameter".to_string())?;
+        let client = moltis_skills::clawhub::ClawHubClient::new();
+        let scan = client.scan(slug).await.map_err(ServiceError::message)?;
+        Ok(serde_json::to_value(scan).unwrap_or_default())
+    }
+
     async fn clawhub_info(&self, params: Value) -> ServiceResult {
         let slug = params
             .get("slug")

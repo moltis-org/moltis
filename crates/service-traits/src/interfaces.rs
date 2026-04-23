@@ -614,6 +614,7 @@ pub trait SkillsService: Send + Sync {
     async fn clawhub_search(&self, params: Value) -> ServiceResult;
     async fn clawhub_install(&self, params: Value) -> ServiceResult;
     async fn clawhub_info(&self, params: Value) -> ServiceResult;
+    async fn clawhub_scan(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopSkillsStub;
@@ -726,6 +727,10 @@ impl SkillsService for NoopSkillsStub {
 
     async fn clawhub_info(&self, _params: Value) -> ServiceResult {
         Ok(serde_json::json!({ "found": false }))
+    }
+
+    async fn clawhub_scan(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "security": null }))
     }
 }
 

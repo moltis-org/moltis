@@ -19,6 +19,16 @@ interface ClawHubResult {
 	stars?: number;
 }
 
+interface ScanData {
+	status?: string;
+	hasWarnings?: boolean;
+	virustotalUrl?: string;
+	scanners?: {
+		vt?: { verdict?: string; analysis?: string };
+		llm?: { verdict?: string; analysis?: string };
+	};
+}
+
 interface ClawHubSkillInfo {
 	skill: {
 		slug: string;
@@ -53,6 +63,62 @@ function fmtNumber(n: number): string {
 	return n.toString();
 }
 
+// ── Security scan panel ──────────────────────────────────────
+
+function SecurityScanPanel({ scan }: { scan: ScanData | null }): VNode | null {
+	if (!scan) return null;
+
+	const isClean = scan.status === "clean";
+	const bg = isClean ? "var(--success-bg, rgba(34,197,94,.08))" : "var(--warning-bg, rgba(234,179,8,.12))";
+	const vt = scan.scanners?.vt;
+	const llm = scan.scanners?.llm;
+
+	return (
+		<div
+			style={{
+				marginTop: "8px",
+				padding: "8px 10px",
+				borderRadius: "var(--radius-sm)",
+				background: bg,
+				fontSize: ".72rem",
+			}}
+		>
+			<div style={{ fontWeight: 600, marginBottom: "4px" }}>
+				Security Scan: {isClean ? "Clean" : scan.status || "Unknown"}
+				{scan.hasWarnings && (
+					<span style={{ color: "var(--warning, #eab308)", marginLeft: "6px" }}>(has warnings)</span>
+				)}
+			</div>
+			{vt && (
+				<div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+					<span style={{ fontWeight: 500 }}>VirusTotal:</span>
+					<span style={{ color: vt.verdict === "benign" ? "var(--success, #22c55e)" : "var(--warning, #eab308)" }}>
+						{vt.verdict || "unknown"}
+					</span>
+					{scan.virustotalUrl && (
+						<a
+							href={scan.virustotalUrl}
+							target="_blank"
+							rel="noopener noreferrer"
+							style={{ color: "var(--accent)", fontSize: ".68rem" }}
+						>
+							view report
+						</a>
+					)}
+				</div>
+			)}
+			{llm && (
+				<div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+					<span style={{ fontWeight: 500 }}>AI Analysis:</span>
+					<span style={{ color: llm.verdict === "benign" ? "var(--success, #22c55e)" : "var(--warning, #eab308)" }}>
+						{llm.verdict || "unknown"}
+					</span>
+				</div>
+			)}
+		</div>
+	);
+}
+
 // ── Detail panel ─────────────────────────────────────────────
 
 function DetailPanel({
@@ -65,18 +131,25 @@ function DetailPanel({
 	onInstalled: () => void;
 }): VNode {
 	const info = useSignal<ClawHubSkillInfo | null>(null);
+	const scan = useSignal<ScanData | null>(null);
 	const loading = useSignal(true);
 	const error = useSignal<string | null>(null);
 	const installing = useSignal(false);
 	const installed = useSignal(false);
 
-	// Fetch on mount.
+	// Fetch info + scan in parallel on mount.
 	if (loading.value && !info.value && !error.value) {
-		sendRpc("skills.clawhub.info", { slug }).then((res) => {
-			loading.value = false;
-			if (res?.ok) info.value = res.payload as ClawHubSkillInfo;
-			else error.value = String(res?.error || "Failed to load skill info");
-		});
+		Promise.all([sendRpc("skills.clawhub.info", { slug }), sendRpc("skills.clawhub.scan", { slug })]).then(
+			([infoRes, scanRes]) => {
+				loading.value = false;
+				if (infoRes?.ok) info.value = infoRes.payload as ClawHubSkillInfo;
+				else error.value = String(infoRes?.error || "Failed to load skill info");
+				if (scanRes?.ok) {
+					const p = scanRes.payload as { security?: ScanData } | undefined;
+					if (p?.security) scan.value = p.security;
+				}
+			},
+		);
 	}
 
 	async function doInstall(): Promise<void> {
@@ -102,7 +175,6 @@ function DetailPanel({
 	const stats = s?.stats;
 	const owner = d?.owner;
 	const ver = d?.latestVersion;
-	const mod_ = d?.moderation;
 
 	return (
 		<div
@@ -166,27 +238,8 @@ function DetailPanel({
 								)}
 							</div>
 
-							{/* Security / moderation */}
-							{mod_ !== undefined && (
-								<div
-									style={{
-										marginTop: "8px",
-										padding: "6px 8px",
-										borderRadius: "var(--radius-sm)",
-										background: mod_?.isSuspicious
-											? "var(--warning-bg, rgba(234,179,8,.12))"
-											: "var(--success-bg, rgba(34,197,94,.08))",
-										fontSize: ".72rem",
-									}}
-								>
-									<strong>Security Scan:</strong>{" "}
-									{mod_ === null
-										? "Not yet scanned"
-										: mod_.isSuspicious
-											? `Suspicious \u2014 ${mod_.verdict || "review recommended"}`
-											: mod_.verdict || "Benign"}
-								</div>
-							)}
+							{/* Security scan */}
+							<SecurityScanPanel scan={scan.value} />
 
 							{/* Changelog */}
 							{ver?.changelog && (
