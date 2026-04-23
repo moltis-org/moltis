@@ -120,15 +120,14 @@ async fn synthesize_custom_voice_from_catalog() {
 
 #[tokio::test]
 #[ignore]
-async fn synthesize_with_default_voice_from_config() {
-    // Simulates the path taken when the user saves a custom voice in the
-    // settings UI and then clicks "Test". The test button calls tts.convert
-    // without a voiceId, so the provider falls back to its default_voice_id.
-    let custom_voice_id = "21m00Tcm4TlvDq8ikWAM"; // Rachel for now
+async fn synthesize_falls_back_to_configured_default_voice() {
+    // Verifies the voice_id: None → default_voice_id fallback path used by
+    // the UI "Test" button (tts.convert is called without a voiceId param).
+    let configured_voice_id = "21m00Tcm4TlvDq8ikWAM"; // Rachel (premade)
 
     let provider = ElevenLabsTts::with_defaults(
         Some(api_key()),
-        Some(custom_voice_id.into()),
+        Some(configured_voice_id.into()),
         Some("eleven_flash_v2_5".into()),
     );
 

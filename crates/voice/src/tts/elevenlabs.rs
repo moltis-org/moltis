@@ -31,6 +31,7 @@ pub struct ElevenLabsTts {
     api_key: Option<Secret<String>>,
     default_voice_id: String,
     default_model: String,
+    #[cfg(test)]
     base_url: String,
 }
 
@@ -59,6 +60,7 @@ impl ElevenLabsTts {
             api_key,
             default_voice_id: DEFAULT_VOICE_ID.into(),
             default_model: DEFAULT_MODEL.into(),
+            #[cfg(test)]
             base_url: API_BASE.into(),
         }
     }
@@ -75,6 +77,7 @@ impl ElevenLabsTts {
             api_key,
             default_voice_id: voice_id.unwrap_or_else(|| DEFAULT_VOICE_ID.into()),
             default_model: model.unwrap_or_else(|| DEFAULT_MODEL.into()),
+            #[cfg(test)]
             base_url: API_BASE.into(),
         }
     }
@@ -85,6 +88,19 @@ impl ElevenLabsTts {
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
+    }
+
+    /// The API base URL. In production this is the constant `API_BASE`;
+    /// in tests the field can be overridden via [`Self::with_base_url`].
+    fn api_base(&self) -> &str {
+        #[cfg(test)]
+        {
+            &self.base_url
+        }
+        #[cfg(not(test))]
+        {
+            API_BASE
+        }
     }
 
     /// Get the API key, returning an error if not configured.
@@ -129,7 +145,7 @@ impl TtsProvider for ElevenLabsTts {
 
         let response = self
             .client
-            .get(format!("{}/voices", self.base_url))
+            .get(format!("{}/voices", self.api_base()))
             .header("xi-api-key", api_key.expose_secret())
             .send()
             .await
@@ -195,7 +211,7 @@ impl TtsProvider for ElevenLabsTts {
         let output_format = Self::output_format_param(request.output_format);
         let url = format!(
             "{}/text-to-speech/{voice_id}?output_format={output_format}&optimize_streaming_latency=2",
-            self.base_url
+            self.api_base()
         );
 
         debug!(url = %url, "ElevenLabs TTS API call");
