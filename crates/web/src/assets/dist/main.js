@@ -9863,6 +9863,9 @@ function fetchProjects() {
     renderProjectSelect();
     renderSessionProjectSelect();
     updateNavCount("projects", projects2.length);
+    if (projectCombo) {
+      projectCombo.classList.toggle("hidden", projects2.length === 0);
+    }
   });
 }
 function selectFilter(id) {
