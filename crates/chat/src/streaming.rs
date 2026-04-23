@@ -199,17 +199,20 @@ pub(crate) async fn run_streaming(
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
     let system_prompt = apply_voice_reply_suffix(system_prompt, desired_reply_medium);
 
+    // Fold datetime into the user message content so the message array before
+    // it stays positionally stable, preserving KV cache prefix matching for
+    // local LLMs (llama.cpp, Ollama, LM Studio) and prompt-cache hits for
+    // cloud providers.
+    let effective_user_content =
+        moltis_agents::prompt::prepend_datetime_to_user_content(user_content, runtime_context)
+            .unwrap_or_else(|| user_content.clone());
+
     let mut messages: Vec<ChatMessage> = Vec::new();
     messages.push(ChatMessage::system(system_prompt));
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
     messages.extend(values_to_chat_messages(history_raw));
-    // Inject datetime as a trailing system message so the main system prompt
-    // stays byte-identical between turns (KV cache / prompt cache locality).
-    if let Some(datetime_msg) = moltis_agents::prompt::runtime_datetime_message(runtime_context) {
-        messages.push(ChatMessage::system(&datetime_msg));
-    }
     messages.push(ChatMessage::User {
-        content: user_content.clone(),
+        content: effective_user_content,
         name: sender_name,
     });
 
