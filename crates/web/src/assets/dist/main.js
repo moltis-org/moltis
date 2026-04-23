@@ -14382,8 +14382,8 @@ function SecurityScanPanel({ scan }) {
       children: [
         /* @__PURE__ */ u("div", { style: { fontWeight: 600, marginBottom: "4px" }, children: [
           "Security Scan: ",
-          isClean ? "Clean" : scan.status || "Unknown",
-          scan.hasWarnings && /* @__PURE__ */ u("span", { style: { color: "var(--warning, #eab308)", marginLeft: "6px" }, children: "(has warnings)" })
+          isClean ? "Benign" : scan.status || "Unknown",
+          !isClean && scan.hasWarnings && /* @__PURE__ */ u("span", { style: { color: "var(--warning, #eab308)", marginLeft: "6px" }, children: "(has warnings)" })
         ] }),
         vt && /* @__PURE__ */ u("div", { style: { display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }, children: [
           /* @__PURE__ */ u("span", { style: { fontWeight: 500 }, children: "VirusTotal:" }),

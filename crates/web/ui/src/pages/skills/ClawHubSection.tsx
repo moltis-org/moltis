@@ -84,8 +84,8 @@ function SecurityScanPanel({ scan }: { scan: ScanData | null }): VNode | null {
 			}}
 		>
 			<div style={{ fontWeight: 600, marginBottom: "4px" }}>
-				Security Scan: {isClean ? "Clean" : scan.status || "Unknown"}
-				{scan.hasWarnings && (
+				Security Scan: {isClean ? "Benign" : scan.status || "Unknown"}
+				{!isClean && scan.hasWarnings && (
 					<span style={{ color: "var(--warning, #eab308)", marginLeft: "6px" }}>(has warnings)</span>
 				)}
 			</div>
