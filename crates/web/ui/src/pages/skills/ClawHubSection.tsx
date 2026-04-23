@@ -1,7 +1,7 @@
 // ── ClawHub skill search, detail, and install ────────────────
 import { useSignal } from "@preact/signals";
 import type { VNode } from "preact";
-import { useRef } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 import { sendRpc } from "../../helpers";
 
 // ── Types ────────────────────────────────────────────────────
@@ -137,8 +137,11 @@ function DetailPanel({
 	const installing = useSignal(false);
 	const installed = useSignal(false);
 
-	// Fetch info + scan in parallel on mount.
-	if (loading.value && !info.value && !error.value) {
+	// Fetch info + scan in parallel on mount (once only).
+	const fetched = useRef(false);
+	useEffect(() => {
+		if (fetched.current) return;
+		fetched.current = true;
 		Promise.all([sendRpc("skills.clawhub.info", { slug }), sendRpc("skills.clawhub.scan", { slug })]).then(
 			([infoRes, scanRes]) => {
 				loading.value = false;
@@ -150,7 +153,7 @@ function DetailPanel({
 				}
 			},
 		);
-	}
+	}, [slug]);
 
 	async function doInstall(): Promise<void> {
 		installing.value = true;

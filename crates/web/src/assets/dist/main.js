@@ -14731,7 +14731,10 @@ function DetailPanel({
   const error2 = useSignal(null);
   const installing = useSignal(false);
   const installed = useSignal(false);
-  if (loading2.value && !info.value && !error2.value) {
+  const fetched = A(false);
+  y$1(() => {
+    if (fetched.current) return;
+    fetched.current = true;
     Promise.all([sendRpc("skills.clawhub.info", { slug }), sendRpc("skills.clawhub.scan", { slug })]).then(
       ([infoRes, scanRes]) => {
         loading2.value = false;
@@ -14743,7 +14746,7 @@ function DetailPanel({
         }
       }
     );
-  }
+  }, [slug]);
   async function doInstall2() {
     installing.value = true;
     const res = await sendRpc("skills.clawhub.install", { slug });
