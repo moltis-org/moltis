@@ -3,7 +3,7 @@ var _a, _b;
 import { u, f as forceReconnect, c as connectWs, s as subscribeEvents, _ as _wsConnect } from "./chunks/ws-connect.js";
 import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as commandModeEnabled, e as sessionExecPromptSymbol, g as chatBatchLoading, h as sessionContextWindow, i as sessionToolsEnabled, j as sessionExecMode, k as sessionCurrentInputTokens, _ as __vitePreload, l as setUnseenErrors, m as setUnseenWarns, n as unseenErrors, o as unseenWarns, q as connected, r as sessionStore, t as sessions, v as activeSessionKey, w as lastHistoryIndex, x as setLastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeComboBtn, U as nodeDropdownList, V as nodeCombo, W as nodeDropdown, X as nodeComboLabel, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as j, a7 as setSessionSandboxEnabled, a8 as hostExecIsRoot, a9 as sandboxLabel, aa as sandboxToggleBtn, ab as sessionSandboxEnabled, ac as setSessionSandboxImage, ad as sandboxImageLabel, ae as sandboxInfo, af as sandboxImageDropdown, ag as sandboxImageBtn, ah as sessionSandboxImage, ai as projectStore, aj as setSessions, ak as insertSessionInOrder, al as Session, am as chatSeq, an as setSelectedModelId, ao as modelComboLabel, ap as setSessionSwitchInProgress, aq as setStreamEl, ar as setStreamText, as as setLastToolOutput, at as setVoicePending, au as setActiveSessionKey, av as y$1, aw as d, ax as A, ay as S, az as projectFilterId, aA as getById$1, aB as q, aC as warmAudioPlayback, aD as selectedModelId, aE as formatBytes$3, aF as setCommandModeEnabled, aG as chatHistory, aH as chatHistoryIdx, aI as setChatHistoryDraft, aJ as setChatHistoryIdx, aK as chatHistoryDraft, aL as setChatHistory, aM as R, aN as setChatMsgBox, aO as setChatInput, aP as setChatSendBtn, aQ as setModelCombo, aR as setModelComboBtn, aS as setModelComboLabel, aT as setModelDropdown, aU as setModelSearchInput, aV as setModelDropdownList, aW as setNodeCombo, aX as setNodeComboBtn, aY as setNodeComboLabel, aZ as setNodeDropdown, a_ as setNodeDropdownList, a$ as setSandboxToggleBtn, b0 as setSandboxLabel, b1 as setSandboxImageBtn, b2 as setSandboxImageLabel, b3 as setSandboxImageDropdown, b4 as models, b5 as chatSendBtn, b6 as setModels, b7 as modelComboBtn, b8 as modelSearchInput, b9 as modelDropdownList, ba as modelCombo, bb as modelDropdown, bc as setModelIdx, bd as modelIdx, be as REASONING_SEP, bf as models$1, bg as useSignal, bh as connected$1, bi as setCachedChannels, bj as setRefreshChannelsPage, bk as cachedChannels, bl as setChannelEventUnsub, bm as channelEventUnsub, bn as setProjects, bo as setProjectFilterId, bp as refreshProvidersPage, bq as modelVersionScore, br as streamEl, bs as renderMapPointGroups, bt as renderMapLinks, bu as lastToolOutput, bv as localizeStructuredError, bw as voicePending, bx as streamText, by as setSandboxInfo, bz as networkAuditEventHandler, bA as logsEventHandler, bB as setSubscribed, bC as projects$1, bD as sandboxInfo$1, bE as localizedApiErrorMessage, bF as setLogsEventHandler, bG as setNetworkAuditEventHandler, bH as setRefreshProvidersPage, bI as setLocale, bJ as esc, bK as projectStore$1, bL as _modelStore, bM as S$1, bN as _sessionStoreModule, bO as _i18n, bP as _helpers, bQ as initTheme, bR as injectMarkdownStyles, bS as init, bT as translateStaticElements, bU as setAll$1, bV as setAll$2, bW as select$1, bX as selectedModelId$1 } from "./chunks/theme.js";
 import { f as formatPageTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
-import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as buildTeamsEndpoint, s as generateWebhookSecretHex, u as defaultTeamsBaseUrl, T as TabBar$1, w as channelStorageNote, x as providerApiKeyHelp, y as validateProviderKey, z as completeProviderOAuth, A as startProviderOAuth, B as saveProviderKey, D as testModel, E as isModelServiceNotConfigured, F as isTimeoutError, G as humanizeProbeError, H as eventListeners, I as refresh, J as isRepoSource, S as SkillSource, K as CATEGORY_META, L as categoryLabel, N as isDiscoveredSource, O as EmojiPicker, P as validateIdentityFields, Q as updateIdentity, R as set, U as prepareCreationOptions, V as detectPasskeyName, W as fetchVoiceProviders, X as fetchPhrase, Y as testTts, Z as decodeBase64Safe, _ as transcribeAudio$1, $ as toggleVoiceProvider, a0 as saveVoiceKey, a1 as saveVoiceSettings, a2 as gon, a3 as _events } from "./chunks/voice-utils.js";
+import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as deriveSignalAccountId, s as buildTeamsEndpoint, u as generateWebhookSecretHex, w as defaultTeamsBaseUrl, T as TabBar$1, x as channelStorageNote, y as providerApiKeyHelp, z as validateProviderKey, A as completeProviderOAuth, B as startProviderOAuth, D as saveProviderKey, E as testModel, F as isModelServiceNotConfigured, G as isTimeoutError, H as humanizeProbeError, I as eventListeners, J as refresh, K as isRepoSource, S as SkillSource, L as CATEGORY_META, N as categoryLabel, O as isDiscoveredSource, P as EmojiPicker, Q as validateIdentityFields, R as updateIdentity, U as set, V as prepareCreationOptions, W as detectPasskeyName, X as fetchVoiceProviders, Y as fetchPhrase, Z as testTts, _ as decodeBase64Safe, $ as transcribeAudio$1, a0 as toggleVoiceProvider, a1 as saveVoiceKey, a2 as saveVoiceSettings, a3 as gon, a4 as _events } from "./chunks/voice-utils.js";
 import "./chunks/time-format.js";
 const BYTE_UNITS = [
   "B",
@@ -7290,6 +7290,223 @@ function AddNostrModal() {
     }
   );
 }
+function AddSignalModal() {
+  const error2 = useSignal("");
+  const saving = useSignal(false);
+  const addModel = useSignal("");
+  const allowlistItems = useSignal([]);
+  const groupAllowlistItems = useSignal([]);
+  const accountDraft = useSignal("");
+  const httpUrlDraft = useSignal("http://127.0.0.1:8080");
+  const dmPolicy = useSignal("allowlist");
+  const groupPolicy = useSignal("disabled");
+  const mentionMode = useSignal("mention");
+  const advancedConfigPatch = useSignal("");
+  function reset() {
+    addModel.value = "";
+    allowlistItems.value = [];
+    groupAllowlistItems.value = [];
+    accountDraft.value = "";
+    httpUrlDraft.value = "http://127.0.0.1:8080";
+    dmPolicy.value = "allowlist";
+    groupPolicy.value = "disabled";
+    mentionMode.value = "mention";
+    advancedConfigPatch.value = "";
+    error2.value = "";
+  }
+  function onSubmit(e) {
+    e.preventDefault();
+    const account = accountDraft.value.trim();
+    const httpUrl = httpUrlDraft.value.trim();
+    if (!account) {
+      error2.value = "Signal account (phone number) is required.";
+      return;
+    }
+    if (!httpUrl) {
+      error2.value = "signal-cli daemon URL is required.";
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
+    if (!advancedPatch.ok) {
+      error2.value = advancedPatch.error;
+      return;
+    }
+    error2.value = "";
+    saving.value = true;
+    const addConfig = {
+      http_url: httpUrl,
+      dm_policy: dmPolicy.value,
+      allowlist: allowlistItems.value,
+      group_policy: groupPolicy.value,
+      group_allowlist: groupAllowlistItems.value,
+      mention_mode: mentionMode.value
+    };
+    addConfig.account = account;
+    const accountId = deriveSignalAccountId(account);
+    if (addModel.value) {
+      addConfig.model = addModel.value;
+      const found = models$1.value.find((x) => x.id === addModel.value);
+      if (found == null ? void 0 : found.provider) addConfig.model_provider = found.provider;
+    }
+    Object.assign(addConfig, advancedPatch.value);
+    addChannel(ChannelType.Signal, accountId, addConfig).then((res) => {
+      var _a2, _b2;
+      saving.value = false;
+      const r2 = res;
+      if (r2 == null ? void 0 : r2.ok) {
+        showAddSignal.value = false;
+        reset();
+        loadChannels();
+      } else {
+        error2.value = ((_a2 = r2 == null ? void 0 : r2.error) == null ? void 0 : _a2.message) || ((_b2 = r2 == null ? void 0 : r2.error) == null ? void 0 : _b2.detail) || "Failed to connect channel.";
+      }
+    });
+  }
+  return /* @__PURE__ */ u(
+    Modal,
+    {
+      show: showAddSignal.value,
+      onClose: () => {
+        showAddSignal.value = false;
+      },
+      title: "Connect Signal",
+      children: /* @__PURE__ */ u("div", { className: "channel-form", children: [
+        /* @__PURE__ */ u("div", { className: "channel-card", children: /* @__PURE__ */ u("div", { children: [
+          /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: "Requires signal-cli" }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] channel-help", children: [
+            "Signal integration requires a running ",
+            /* @__PURE__ */ u("a", { href: "https://github.com/AsamK/signal-cli", target: "_blank", rel: "noopener noreferrer", className: "underline text-[var(--text-strong)]", children: "signal-cli" }),
+            " daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:"
+          ] }),
+          /* @__PURE__ */ u("code", { className: "text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-1 block", children: "signal-cli daemon --http localhost:8080" })
+        ] }) }),
+        /* @__PURE__ */ u(ConnectionModeHint, { type: ChannelType.Signal }),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Signal Account (phone number)" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            "data-field": "account",
+            type: "text",
+            placeholder: "e.g. +15551234567",
+            value: accountDraft.value,
+            onInput: (e) => {
+              accountDraft.value = targetValue(e);
+            },
+            className: "channel-input",
+            autoComplete: "off"
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "signal-cli Daemon URL" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            "data-field": "httpUrl",
+            type: "url",
+            placeholder: "http://127.0.0.1:8080",
+            value: httpUrlDraft.value,
+            onInput: (e) => {
+              httpUrlDraft.value = targetValue(e);
+            },
+            className: "channel-input"
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "DM Policy" }),
+        /* @__PURE__ */ u(
+          "select",
+          {
+            "data-field": "dmPolicy",
+            className: "channel-select",
+            value: dmPolicy.value,
+            onChange: (e) => {
+              dmPolicy.value = targetValue(e);
+            },
+            children: [
+              /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+              /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+              /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Policy" }),
+        /* @__PURE__ */ u(
+          "select",
+          {
+            "data-field": "groupPolicy",
+            className: "channel-select",
+            value: groupPolicy.value,
+            onChange: (e) => {
+              groupPolicy.value = targetValue(e);
+            },
+            children: [
+              /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" }),
+              /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+              /* @__PURE__ */ u("option", { value: "open", children: "Open (any group)" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Mention Mode" }),
+        /* @__PURE__ */ u(
+          "select",
+          {
+            "data-field": "mentionMode",
+            className: "channel-select",
+            value: mentionMode.value,
+            onChange: (e) => {
+              mentionMode.value = targetValue(e);
+            },
+            children: [
+              /* @__PURE__ */ u("option", { value: "mention", children: "Must mention bot" }),
+              /* @__PURE__ */ u("option", { value: "always", children: "Always respond" }),
+              /* @__PURE__ */ u("option", { value: "none", children: "Do not respond in groups" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Default Model" }),
+        /* @__PURE__ */ u(
+          ModelSelect,
+          {
+            models: models$1.value,
+            value: addModel.value,
+            onChange: (v) => {
+              addModel.value = v;
+            }
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "DM Allowlist" }),
+        /* @__PURE__ */ u(
+          AllowlistInput,
+          {
+            value: allowlistItems.value,
+            onChange: (v) => {
+              allowlistItems.value = v;
+            }
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Allowlist" }),
+        /* @__PURE__ */ u(
+          AllowlistInput,
+          {
+            value: groupAllowlistItems.value,
+            onChange: (v) => {
+              groupAllowlistItems.value = v;
+            }
+          }
+        ),
+        /* @__PURE__ */ u(
+          AdvancedConfigPatchField,
+          {
+            value: advancedConfigPatch.value,
+            onInput: (value) => {
+              advancedConfigPatch.value = value;
+            }
+          }
+        ),
+        error2.value && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)] py-1", children: error2.value }),
+        /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onSubmit, disabled: saving.value, children: saving.value ? "Connecting…" : "Connect Signal" })
+      ] })
+    }
+  );
+}
 function AddSlackModal() {
   const error2 = useSignal("");
   const saving = useSignal(false);
@@ -8309,25 +8526,29 @@ function EditChannelModal() {
   const editMatrixOwnershipMode = useSignal("user_managed");
   const editMatrixOtpSelfApproval = useSignal(true);
   const editMatrixOtpCooldown = useSignal("300");
+  const editSignalAccount = useSignal("");
+  const editSignalHttpUrl = useSignal("http://127.0.0.1:8080");
   const editAdvancedConfigPatch = useSignal("");
   y$1(() => {
-    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     editModel.value = ((_a2 = ch == null ? void 0 : ch.config) == null ? void 0 : _a2.model) || "";
     allowlistItems.value = ((_b2 = ch == null ? void 0 : ch.config) == null ? void 0 : _b2.allowlist) || ((_c = ch == null ? void 0 : ch.config) == null ? void 0 : _c.user_allowlist) || ((_d = ch == null ? void 0 : ch.config) == null ? void 0 : _d.allowed_pubkeys) || [];
-    roomAllowlistItems.value = ((_e = ch == null ? void 0 : ch.config) == null ? void 0 : _e.room_allowlist) || [];
+    roomAllowlistItems.value = ((_e = ch == null ? void 0 : ch.config) == null ? void 0 : _e.room_allowlist) || ((_f = ch == null ? void 0 : ch.config) == null ? void 0 : _f.group_allowlist) || [];
     editCredential.value = "";
-    editWebhookSecret.value = ((_f = ch == null ? void 0 : ch.config) == null ? void 0 : _f.webhook_secret) || "";
-    editStreamMode.value = ((_g = ch == null ? void 0 : ch.config) == null ? void 0 : _g.stream_mode) || "edit_in_place";
-    editReplyStyle.value = ((_h = ch == null ? void 0 : ch.config) == null ? void 0 : _h.reply_style) || "top_level";
-    editWelcomeCard.value = ((_i = ch == null ? void 0 : ch.config) == null ? void 0 : _i.welcome_card) !== false;
-    editBotName.value = ((_j = ch == null ? void 0 : ch.config) == null ? void 0 : _j.bot_name) || "";
-    editMatrixAuthMode.value = ((_k = ch == null ? void 0 : ch.config) == null ? void 0 : _k.password) ? "password" : "access_token";
-    editMatrixDeviceDisplayName.value = ((_l = ch == null ? void 0 : ch.config) == null ? void 0 : _l.device_display_name) || "";
+    editWebhookSecret.value = ((_g = ch == null ? void 0 : ch.config) == null ? void 0 : _g.webhook_secret) || "";
+    editStreamMode.value = ((_h = ch == null ? void 0 : ch.config) == null ? void 0 : _h.stream_mode) || "edit_in_place";
+    editReplyStyle.value = ((_i = ch == null ? void 0 : ch.config) == null ? void 0 : _i.reply_style) || "top_level";
+    editWelcomeCard.value = ((_j = ch == null ? void 0 : ch.config) == null ? void 0 : _j.welcome_card) !== false;
+    editBotName.value = ((_k = ch == null ? void 0 : ch.config) == null ? void 0 : _k.bot_name) || "";
+    editMatrixAuthMode.value = ((_l = ch == null ? void 0 : ch.config) == null ? void 0 : _l.password) ? "password" : "access_token";
+    editMatrixDeviceDisplayName.value = ((_m = ch == null ? void 0 : ch.config) == null ? void 0 : _m.device_display_name) || "";
     editMatrixOwnershipMode.value = normalizeMatrixOwnershipMode(
-      ((_m = ch == null ? void 0 : ch.config) == null ? void 0 : _m.ownership_mode) || (((_n = ch == null ? void 0 : ch.config) == null ? void 0 : _n.password) ? "moltis_owned" : "user_managed")
+      ((_n = ch == null ? void 0 : ch.config) == null ? void 0 : _n.ownership_mode) || (((_o = ch == null ? void 0 : ch.config) == null ? void 0 : _o.password) ? "moltis_owned" : "user_managed")
     );
-    editMatrixOtpSelfApproval.value = ((_o = ch == null ? void 0 : ch.config) == null ? void 0 : _o.otp_self_approval) !== false;
-    editMatrixOtpCooldown.value = String(((_p = ch == null ? void 0 : ch.config) == null ? void 0 : _p.otp_cooldown_secs) || 300);
+    editMatrixOtpSelfApproval.value = ((_p = ch == null ? void 0 : ch.config) == null ? void 0 : _p.otp_self_approval) !== false;
+    editMatrixOtpCooldown.value = String(((_q = ch == null ? void 0 : ch.config) == null ? void 0 : _q.otp_cooldown_secs) || 300);
+    editSignalAccount.value = ((_r = ch == null ? void 0 : ch.config) == null ? void 0 : _r.account) || "";
+    editSignalHttpUrl.value = ((_s = ch == null ? void 0 : ch.config) == null ? void 0 : _s.http_url) || "http://127.0.0.1:8080";
     editAdvancedConfigPatch.value = "";
   }, [ch]);
   if (!ch) return null;
@@ -8339,6 +8560,7 @@ function EditChannelModal() {
   const isTelegram = chType === ChannelType.Telegram;
   const isMatrix = chType === ChannelType.Matrix;
   const isNostr = chType === ChannelType.Nostr;
+  const isSignal = chType === ChannelType.Signal;
   function addModelToConfig(config) {
     if (!editModel.value) return;
     config.model = editModel.value;
@@ -8359,6 +8581,9 @@ function EditChannelModal() {
       config.secret_key = editCredential.value || cfg.secret_key || "";
       const relaysVal = ((_a2 = form.querySelector("[data-field=relays]")) == null ? void 0 : _a2.value) || "";
       config.relays = relaysVal.split(",").map((r2) => r2.trim()).filter(Boolean);
+    } else if (isSignal) {
+      config.account = editSignalAccount.value.trim();
+      config.http_url = editSignalHttpUrl.value.trim() || "http://127.0.0.1:8080";
     } else if (isMatrix) {
       config.homeserver = ((_b2 = form.querySelector("[data-field=homeserver]")) == null ? void 0 : _b2.value) || cfg.homeserver || "";
       config.user_id = ((_c = form.querySelector("[data-field=userId]")) == null ? void 0 : _c.value) || cfg.user_id || "";
@@ -8375,9 +8600,10 @@ function EditChannelModal() {
     }
   }
   function buildUpdateConfig(form) {
-    var _a2, _b2, _c, _d;
+    var _a2, _b2, _c, _d, _e;
     const updateConfig = {};
-    updateConfig.dm_policy = ((_a2 = form.querySelector("[data-field=dmPolicy]")) == null ? void 0 : _a2.value) || "open";
+    const dmFallback = isWhatsApp ? "open" : "allowlist";
+    updateConfig.dm_policy = ((_a2 = form.querySelector("[data-field=dmPolicy]")) == null ? void 0 : _a2.value) || dmFallback;
     updateConfig.allowlist = allowlistItems.value;
     if (isMatrix) {
       updateConfig.user_allowlist = allowlistItems.value;
@@ -8392,8 +8618,17 @@ function EditChannelModal() {
       updateConfig.otp_self_approval = cfg.otp_self_approval !== false;
       updateConfig.otp_cooldown_secs = cfg.otp_cooldown_secs ?? 300;
     }
+    if (isSignal) {
+      updateConfig.group_policy = ((_d = form.querySelector("[data-field=groupPolicy]")) == null ? void 0 : _d.value) || cfg.group_policy || "disabled";
+      updateConfig.group_allowlist = roomAllowlistItems.value;
+      updateConfig.otp_self_approval = cfg.otp_self_approval !== false;
+      updateConfig.otp_cooldown_secs = cfg.otp_cooldown_secs ?? 300;
+      updateConfig.ignore_stories = cfg.ignore_stories !== false;
+      updateConfig.text_chunk_limit = cfg.text_chunk_limit || 4e3;
+      if (cfg.account_uuid) updateConfig.account_uuid = cfg.account_uuid;
+    }
     if (!(isWhatsApp || isNostr)) {
-      updateConfig.mention_mode = ((_d = form.querySelector("[data-field=mentionMode]")) == null ? void 0 : _d.value) || "mention";
+      updateConfig.mention_mode = ((_e = form.querySelector("[data-field=mentionMode]")) == null ? void 0 : _e.value) || "mention";
     }
     addChannelCredentials(updateConfig, form);
     addModelToConfig(updateConfig);
@@ -8583,6 +8818,38 @@ function EditChannelModal() {
                 type: "text",
                 className: "channel-input w-full",
                 defaultValue: (cfg.relays || []).join(", ")
+              }
+            )
+          ] })
+        ] }),
+        isSignal && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+            /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Signal Account" }),
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "text",
+                className: "channel-input w-full",
+                value: editSignalAccount.value,
+                onInput: (e) => {
+                  editSignalAccount.value = targetValue(e);
+                },
+                placeholder: "+15551234567"
+              }
+            )
+          ] }),
+          /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+            /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "signal-cli Daemon URL" }),
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "url",
+                className: "channel-input w-full",
+                value: editSignalHttpUrl.value,
+                onInput: (e) => {
+                  editSignalHttpUrl.value = targetValue(e);
+                },
+                placeholder: "http://127.0.0.1:8080"
               }
             )
           ] })
@@ -8777,6 +9044,22 @@ function EditChannelModal() {
             /* @__PURE__ */ u("option", { value: "off", children: "Do not auto-join" })
           ] })
         ] }),
+        isSignal && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Policy" }),
+          /* @__PURE__ */ u(
+            "select",
+            {
+              "data-field": "groupPolicy",
+              className: "channel-select",
+              value: cfg.group_policy || "disabled",
+              children: [
+                /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" }),
+                /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+                /* @__PURE__ */ u("option", { value: "open", children: "Open (any group)" })
+              ]
+            }
+          )
+        ] }),
         /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Default Model" }),
         /* @__PURE__ */ u(
           ModelSelect,
@@ -8807,6 +9090,18 @@ function EditChannelModal() {
             {
               value: roomAllowlistItems.value,
               preserveAt: true,
+              onChange: (v) => {
+                roomAllowlistItems.value = v;
+              }
+            }
+          )
+        ] }),
+        isSignal && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Allowlist" }),
+          /* @__PURE__ */ u(
+            AllowlistInput,
+            {
+              value: roomAllowlistItems.value,
               onChange: (v) => {
                 roomAllowlistItems.value = v;
               }
@@ -8850,6 +9145,7 @@ const showAddWhatsApp = y(false);
 const showAddSlack = y(false);
 const showAddMatrix = y(false);
 const showAddNostr = y(false);
+const showAddSignal = y(false);
 const editingChannel = y(null);
 const sendersAccount = y("");
 const waQrData = y(null);
@@ -8867,6 +9163,7 @@ function channelLabel(type) {
   if (t2 === "slack") return "Slack";
   if (t2 === "matrix") return "Matrix";
   if (t2 === "nostr") return "Nostr";
+  if (t2 === "signal") return "Signal";
   return "Telegram";
 }
 function channelDescriptor(type) {
@@ -9284,6 +9581,19 @@ function ConnectButtons() {
           " Connect Nostr"
         ]
       }
+    ),
+    offered.has("signal") && /* @__PURE__ */ u(
+      "button",
+      {
+        className: "provider-btn provider-btn-secondary inline-flex items-center gap-1.5",
+        onClick: () => {
+          if (connected$1.value) showAddSignal.value = true;
+        },
+        children: [
+          /* @__PURE__ */ u("span", { className: "icon icon-signal" }),
+          " Connect Signal"
+        ]
+      }
     )
   ] });
 }
@@ -9456,6 +9766,7 @@ function ChannelsPageComponent() {
     /* @__PURE__ */ u(AddSlackModal, {}),
     /* @__PURE__ */ u(AddMatrixModal, {}),
     /* @__PURE__ */ u(AddNostrModal, {}),
+    /* @__PURE__ */ u(AddSignalModal, {}),
     /* @__PURE__ */ u(AddWhatsAppModal, {}),
     /* @__PURE__ */ u(EditChannelModal, {}),
     /* @__PURE__ */ u(ConfirmDialog, {})
@@ -9472,6 +9783,7 @@ function initChannels(container) {
   showAddSlack.value = false;
   showAddMatrix.value = false;
   showAddNostr.value = false;
+  showAddSignal.value = false;
   showAddWhatsApp.value = false;
   editingChannel.value = null;
   sendersAccount.value = "";
@@ -9499,6 +9811,7 @@ const _channelsPage = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defin
   showAddDiscord,
   showAddMatrix,
   showAddNostr,
+  showAddSignal,
   showAddSlack,
   showAddTeams,
   showAddTelegram,
@@ -23326,6 +23639,7 @@ function ServerCard({ server }) {
   const expanded = useSignal(false);
   const tools = useSignal(null);
   const toggling = useSignal(false);
+  const authing = useSignal(false);
   const editing = useSignal(false);
   const editTransport = useSignal("stdio");
   const editCmd = useSignal("");
@@ -23365,6 +23679,19 @@ function ServerCard({ server }) {
     await sendRpc("mcp.restart", { name: server.name });
     showToast$1(`Restarted "${server.name}"`, "success");
     await refreshServers();
+  }
+  async function reauth(e) {
+    var _a2;
+    e.stopPropagation();
+    authing.value = true;
+    const res = await sendRpc("mcp.reauth", { name: server.name, redirectUri: oauthCallbackUrl() });
+    if (res == null ? void 0 : res.ok) {
+      const p = res.payload;
+      showToast$1(`OAuth started for "${server.name}"`, "success");
+      if (p == null ? void 0 : p.authUrl) window.open(p.authUrl, "_blank", "noopener,noreferrer");
+    } else showToast$1(`Re-auth failed: ${((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "unknown"}`, "error");
+    await refreshServers();
+    authing.value = false;
   }
   function startEdit(e) {
     e.stopPropagation();
@@ -23440,6 +23767,7 @@ function ServerCard({ server }) {
       });
     });
   }
+  const needsReauth = server.auth_state === "awaiting_browser" || server.auth_state === "failed";
   const displayName = server.display_name || server.name;
   const showTechnical = server.display_name && server.display_name !== server.name;
   const currentSafeUrl = typeof server.url === "string" ? server.url.trim() : "";
@@ -23463,9 +23791,11 @@ function ServerCard({ server }) {
           server.tool_count,
           " tool",
           server.tool_count !== 1 ? "s" : ""
-        ] })
+        ] }),
+        needsReauth && /* @__PURE__ */ u("span", { className: "text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--error)] text-white font-medium", children: server.auth_state === "failed" ? "Auth failed" : "OAuth required" })
       ] }),
       /* @__PURE__ */ u("div", { className: "flex items-center gap-1.5", children: [
+        needsReauth && /* @__PURE__ */ u("button", { onClick: reauth, disabled: authing.value, className: "provider-btn provider-btn-sm", children: authing.value ? "…" : "Re-auth" }),
         /* @__PURE__ */ u("button", { onClick: startEdit, className: "provider-btn provider-btn-secondary provider-btn-sm", children: "Edit" }),
         /* @__PURE__ */ u(
           "button",
@@ -28750,9 +29080,11 @@ function OpenClawImportSection() {
   }
   const telegramAccounts = Number(scan.telegram_accounts) || 0;
   const discordAccounts = Number(scan.discord_accounts) || 0;
+  const signalAccounts = Number(scan.signal_accounts) || 0;
   const channelParts = [];
   if (telegramAccounts > 0) channelParts.push(`${telegramAccounts} Telegram account(s)`);
   if (discordAccounts > 0) channelParts.push(`${discordAccounts} Discord account(s)`);
+  if (signalAccounts > 0) channelParts.push(`${signalAccounts} Signal account(s)`);
   const channelDetail = channelParts.length > 0 ? channelParts.join(", ") : null;
   const unsupportedChannels = (scan.unsupported_channels || []).filter(
     (channel) => String(channel).toLowerCase() !== ChannelType.Discord

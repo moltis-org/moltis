@@ -651,6 +651,7 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 	const expanded = useSignal(false);
 	const tools = useSignal<McpTool[] | null>(null);
 	const toggling = useSignal(false);
+	const authing = useSignal(false);
 	const editing = useSignal(false);
 	const editTransport = useSignal("stdio");
 	const editCmd = useSignal("");
@@ -690,6 +691,18 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 		await sendRpc("mcp.restart", { name: server.name });
 		showToast(`Restarted "${server.name}"`, "success");
 		await refreshServers();
+	}
+	async function reauth(e: Event): Promise<void> {
+		e.stopPropagation();
+		authing.value = true;
+		const res = await sendRpc("mcp.reauth", { name: server.name, redirectUri: oauthCallbackUrl() });
+		if (res?.ok) {
+			const p = res.payload as Record<string, unknown>;
+			showToast(`OAuth started for "${server.name}"`, "success");
+			if (p?.authUrl) window.open(p.authUrl as string, "_blank", "noopener,noreferrer");
+		} else showToast(`Re-auth failed: ${res?.error?.message || "unknown"}`, "error");
+		await refreshServers();
+		authing.value = false;
 	}
 	function startEdit(e: Event): void {
 		e.stopPropagation();
@@ -767,6 +780,7 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 		});
 	}
 
+	const needsReauth = server.auth_state === "awaiting_browser" || server.auth_state === "failed";
 	const displayName = server.display_name || server.name;
 	const showTechnical = server.display_name && server.display_name !== server.name;
 	const currentSafeUrl = typeof server.url === "string" ? server.url.trim() : "";
@@ -797,8 +811,18 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 					<span className="text-xs text-[var(--muted)]">
 						{server.tool_count} tool{server.tool_count !== 1 ? "s" : ""}
 					</span>
+					{needsReauth && (
+						<span className="text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--error)] text-white font-medium">
+							{server.auth_state === "failed" ? "Auth failed" : "OAuth required"}
+						</span>
+					)}
 				</div>
 				<div className="flex items-center gap-1.5">
+					{needsReauth && (
+						<button onClick={reauth} disabled={authing.value} className="provider-btn provider-btn-sm">
+							{authing.value ? "\u2026" : "Re-auth"}
+						</button>
+					)}
 					<button onClick={startEdit} className="provider-btn provider-btn-secondary provider-btn-sm">
 						Edit
 					</button>

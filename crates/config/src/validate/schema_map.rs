@@ -417,6 +417,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                     ("slack", Map(Box::new(channel_account()))),
                     ("matrix", Map(Box::new(channel_account()))),
                     ("nostr", Map(Box::new(channel_account()))),
+                    ("signal", Map(Box::new(channel_account()))),
                 ]),
             }
         }),

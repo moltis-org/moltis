@@ -25,7 +25,7 @@ Moltis recently hit [the front page of Hacker News](https://news.ycombinator.com
 
 **Your hardware** — Runs on a Mac Mini, a Raspberry Pi, or any server you own. One Rust binary, no Node.js, no npm, no runtime.
 
-**Full-featured** — Voice, memory, cross-session recall, automatic edit checkpoints, scheduling, Telegram, Discord, browser automation, MCP servers, SSH or node-backed remote exec, managed deploy keys with host pinning in the web UI, a live Settings → Tools inventory, Cursor-compatible project context, and context-file threat scanning — all built-in. No plugin marketplace to get supply-chain attacked through.
+**Full-featured** — Voice, memory, cross-session recall, automatic edit checkpoints, scheduling, Telegram, Signal, Discord, browser automation, MCP servers, SSH or node-backed remote exec, managed deploy keys with host pinning in the web UI, a live Settings → Tools inventory, Cursor-compatible project context, and context-file threat scanning — all built-in. No plugin marketplace to get supply-chain attacked through.
 
 **Auditable** — The agent runner and model interface fit in ~7.5K lines, with providers in ~19K more. The Rust workspace is ~270K lines across 59 modular crates you can audit independently, with 470+ Rust files containing tests. Unsafe code is isolated to FFI and precompiled runtime boundaries, not the core agent loop.
 
@@ -90,7 +90,7 @@ Current Rust workspace: ~270K LoC across 59 crates. The table below groups the m
 
 | Category | Crates | Combined LoC |
 |----------|--------|-------------|
-| Channels | `moltis-telegram`, `moltis-whatsapp`, `moltis-discord`, `moltis-msteams`, `moltis-matrix`, `moltis-slack`, `moltis-nostr`, `moltis-channels` | 34.0K |
+| Channels | `moltis-telegram`, `moltis-whatsapp`, `moltis-signal`, `moltis-discord`, `moltis-msteams`, `moltis-matrix`, `moltis-slack`, `moltis-nostr`, `moltis-channels` | 34.0K |
 | Web and APIs | `moltis-web`, `moltis-graphql`, `moltis-webhooks` | 10.8K |
 | Extensibility | `moltis-mcp`, `moltis-mcp-agent-bridge`, `moltis-skills`, `moltis-plugins` | 11.5K |
 | Memory and context | `moltis-memory`, `moltis-qmd`, `moltis-code-index`, `moltis-projects` | 11.7K |
@@ -121,7 +121,7 @@ Verify releases with `gh attestation verify <artifact> -R moltis-org/moltis` or 
 ## Features
 
 - **AI Gateway** — Multi-provider LLM support (OpenAI Codex, GitHub Copilot, Local), streaming responses, agent loop with sub-agent delegation, parallel tool execution
-- **Communication** — Web UI, Telegram, Microsoft Teams, Discord, API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
+- **Communication** — Web UI, Telegram, Signal, Microsoft Teams, Discord, API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
 - **Memory & Recall** — Per-agent memory workspaces, embeddings-powered long-term memory, hybrid vector + full-text search, session persistence with auto-compaction, cross-session recall, Cursor-compatible project context, context-file safety scanning
 - **Safer Agent Editing** — Automatic checkpoints before built-in skill and memory mutations, restore tooling, session branching
 - **Extensibility** — MCP servers (stdio + HTTP/SSE), skill system, 15 lifecycle hook events with circuit breaker, destructive command guard

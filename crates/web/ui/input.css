@@ -1895,6 +1895,10 @@
     -webkit-mask-image: url("./icons/masks/nostr.svg");
     mask-image: url("./icons/masks/nostr.svg");
   }
+  .icon-signal {
+    -webkit-mask-image: url("./icons/masks/signal.svg");
+    mask-image: url("./icons/masks/signal.svg");
+  }
   .icon-cron {
     -webkit-mask-image: url("./icons/masks/mask-47feaf85cf1fb335.svg");
     mask-image: url("./icons/masks/mask-47feaf85cf1fb335.svg");

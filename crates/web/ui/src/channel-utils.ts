@@ -160,6 +160,20 @@ export function deriveMatrixAccountId(options: DeriveMatrixAccountIdOptions = {}
 }
 
 /**
+ * Generate a local Signal account identifier for Moltis.
+ * Derive from the phone number when present, otherwise use a random suffix.
+ */
+export function deriveSignalAccountId(account?: string): string {
+	const slug = String(account || "")
+		.trim()
+		.replace(/^\+/, "")
+		.replace(/[^a-z0-9]+/gi, "-")
+		.replace(/^-|-$/g, "");
+	if (slug) return `signal-${slug}`.slice(0, 80);
+	return `signal-${randomSuffix(6)}`;
+}
+
+/**
  * Normalize Matrix OTP cooldown input to a positive integer.
  */
 export function normalizeMatrixOtpCooldown(value: string | number | null | undefined, fallback: number = 300): number {

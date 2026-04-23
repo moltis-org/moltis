@@ -68,7 +68,8 @@ const ChannelType = {
   Discord: "discord",
   Slack: "slack",
   Matrix: "matrix",
-  Nostr: "nostr"
+  Nostr: "nostr",
+  Signal: "signal"
 };
 const MATRIX_DOCS_URL = "https://docs.moltis.org/matrix.html";
 const MATRIX_DEFAULT_HOMESERVER = "https://matrix.org";
@@ -162,6 +163,11 @@ function deriveMatrixAccountId(options = {}) {
   const hostSlug = slugifyMatrixAccountPart(matrixHomeserverHost(options.homeserver));
   const base = hostSlug || "matrix";
   return `${base}-${randomSuffix(6)}`.slice(0, 80);
+}
+function deriveSignalAccountId(account) {
+  const slug = String(account || "").trim().replace(/^\+/, "").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+  if (slug) return `signal-${slug}`.slice(0, 80);
+  return `signal-${randomSuffix(6)}`;
 }
 function normalizeMatrixOtpCooldown(value, fallback = 300) {
   const parsed = Number.parseInt(String(value || ""), 10);
@@ -800,40 +806,41 @@ function decodeBase64Safe(input) {
   return bytes;
 }
 export {
-  toggleVoiceProvider as $,
-  startProviderOAuth as A,
-  saveProviderKey as B,
+  transcribeAudio as $,
+  completeProviderOAuth as A,
+  startProviderOAuth as B,
   ChannelType as C,
-  testModel as D,
-  isModelServiceNotConfigured as E,
-  isTimeoutError as F,
-  humanizeProbeError as G,
-  eventListeners as H,
-  refresh as I,
-  isRepoSource as J,
-  CATEGORY_META as K,
-  categoryLabel as L,
+  saveProviderKey as D,
+  testModel as E,
+  isModelServiceNotConfigured as F,
+  isTimeoutError as G,
+  humanizeProbeError as H,
+  eventListeners as I,
+  refresh as J,
+  isRepoSource as K,
+  CATEGORY_META as L,
   MATRIX_DEFAULT_HOMESERVER as M,
-  isDiscoveredSource as N,
-  EmojiPicker as O,
-  validateIdentityFields as P,
-  updateIdentity as Q,
-  set as R,
+  categoryLabel as N,
+  isDiscoveredSource as O,
+  EmojiPicker as P,
+  validateIdentityFields as Q,
+  updateIdentity as R,
   SkillSource as S,
   TabBar as T,
-  prepareCreationOptions as U,
-  detectPasskeyName as V,
-  fetchVoiceProviders as W,
-  fetchPhrase as X,
-  testTts as Y,
-  decodeBase64Safe as Z,
-  transcribeAudio as _,
+  set as U,
+  prepareCreationOptions as V,
+  detectPasskeyName as W,
+  fetchVoiceProviders as X,
+  fetchPhrase as Y,
+  testTts as Z,
+  decodeBase64Safe as _,
   onChange as a,
-  saveVoiceKey as a0,
-  saveVoiceSettings as a1,
-  gon$1 as a2,
-  _events as a3,
-  VOICE_COUNTERPART_IDS as a4,
+  toggleVoiceProvider as a0,
+  saveVoiceKey as a1,
+  saveVoiceSettings as a2,
+  gon$1 as a3,
+  _events as a4,
+  VOICE_COUNTERPART_IDS as a5,
   addChannel as b,
   MATRIX_ENCRYPTION_GUIDANCE as c,
   targetChecked as d,
@@ -850,13 +857,13 @@ export {
   onEvent as o,
   parseChannelConfigPatch as p,
   fetchChannelStatus as q,
-  buildTeamsEndpoint as r,
-  generateWebhookSecretHex as s,
+  deriveSignalAccountId as r,
+  buildTeamsEndpoint as s,
   targetValue as t,
-  defaultTeamsBaseUrl as u,
+  generateWebhookSecretHex as u,
   validateChannelFields as v,
-  channelStorageNote as w,
-  providerApiKeyHelp as x,
-  validateProviderKey as y,
-  completeProviderOAuth as z
+  defaultTeamsBaseUrl as w,
+  channelStorageNote as x,
+  providerApiKeyHelp as y,
+  validateProviderKey as z
 };

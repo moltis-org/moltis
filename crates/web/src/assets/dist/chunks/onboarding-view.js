@@ -1,6 +1,6 @@
 import { c as connectWs, s as subscribeEvents, u } from "./ws-connect.js";
 import { Z as t, aw as d, av as y, ax as A, b as sendRpc, ay as S, bq as modelVersionScore, v as activeSessionKey, aM as R } from "./theme.js";
-import { H as eventListeners, t as targetValue, U as prepareCreationOptions, V as detectPasskeyName, w as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, T as TabBar, g as get, u as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, s as generateWebhookSecretHex, r as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, I as refresh, O as EmojiPicker, P as validateIdentityFields, Q as updateIdentity, z as completeProviderOAuth, B as saveProviderKey, y as validateProviderKey, x as providerApiKeyHelp, D as testModel, E as isModelServiceNotConfigured, G as humanizeProbeError, A as startProviderOAuth, K as CATEGORY_META, L as categoryLabel, W as fetchVoiceProviders, $ as toggleVoiceProvider, a0 as saveVoiceKey, a1 as saveVoiceSettings, a4 as VOICE_COUNTERPART_IDS, X as fetchPhrase, Y as testTts, Z as decodeBase64Safe, _ as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
+import { I as eventListeners, t as targetValue, V as prepareCreationOptions, W as detectPasskeyName, x as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, r as deriveSignalAccountId, T as TabBar, g as get, w as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, u as generateWebhookSecretHex, s as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, J as refresh, P as EmojiPicker, Q as validateIdentityFields, R as updateIdentity, A as completeProviderOAuth, D as saveProviderKey, z as validateProviderKey, y as providerApiKeyHelp, E as testModel, F as isModelServiceNotConfigured, H as humanizeProbeError, B as startProviderOAuth, L as CATEGORY_META, N as categoryLabel, X as fetchVoiceProviders, a0 as toggleVoiceProvider, a1 as saveVoiceKey, a2 as saveVoiceSettings, a5 as VOICE_COUNTERPART_IDS, Y as fetchPhrase, Z as testTts, _ as decodeBase64Safe, $ as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
 var WsEventName = /* @__PURE__ */ ((WsEventName2) => {
   WsEventName2["Chat"] = "chat";
   WsEventName2["Error"] = "error";
@@ -592,7 +592,8 @@ function ChannelTypeSelector({ onSelect, offered }) {
     ["discord", "icon-discord", "Discord"],
     ["slack", "icon-slack", "Slack"],
     ["matrix", "icon-matrix", "Matrix"],
-    ["nostr", "icon-nostr", "Nostr"]
+    ["nostr", "icon-nostr", "Nostr"],
+    ["signal", "icon-signal", "Signal"]
   ].filter(([type]) => offered.has(type));
   return /* @__PURE__ */ u("div", { className: "grid grid-cols-2 gap-3 md:grid-cols-3", "data-testid": "channel-type-selector", children: channelOptions.map(([type, iconClass, label]) => /* @__PURE__ */ u(
     "button",
@@ -615,6 +616,7 @@ function channelDisplayLabel(type) {
   if (type === "whatsapp") return "WhatsApp";
   if (type === "matrix") return "Matrix";
   if (type === "nostr") return "Nostr";
+  if (type === "signal") return "Signal";
   return "Telegram";
 }
 function ChannelSuccess({
@@ -1084,6 +1086,146 @@ function NostrForm({ onConnected, error, setError }) {
     /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
     error && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)]", children: error }),
     /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: saving, children: saving ? "Connecting…" : "Connect Nostr" })
+  ] });
+}
+function SignalForm({ onConnected, error, setError }) {
+  const [account, setAccount] = d("");
+  const [httpUrl, setHttpUrl] = d("http://127.0.0.1:8080");
+  const [dmPolicy, setDmPolicy] = d("allowlist");
+  const [groupPolicy, setGroupPolicy] = d("disabled");
+  const [allowlist, setAllowlist] = d("");
+  const [groupAllowlist, setGroupAllowlist] = d("");
+  const [advancedConfig, setAdvancedConfig] = d("");
+  const [saving, setSaving] = d(false);
+  function splitLines(value) {
+    return value.trim().split(/\n/).map((s) => s.trim()).filter(Boolean);
+  }
+  function onSubmit(e) {
+    e.preventDefault();
+    if (!account.trim()) {
+      setError("Signal account (phone number) is required.");
+      return;
+    }
+    if (!httpUrl.trim()) {
+      setError("signal-cli daemon URL is required.");
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfig);
+    if (!advancedPatch.ok) {
+      setError(advancedPatch.error);
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    const accountId = deriveSignalAccountId(account);
+    const config = {
+      http_url: httpUrl.trim(),
+      dm_policy: dmPolicy,
+      allowlist: splitLines(allowlist),
+      group_policy: groupPolicy,
+      group_allowlist: splitLines(groupAllowlist),
+      mention_mode: "mention",
+      account: account.trim()
+    };
+    Object.assign(config, advancedPatch.value);
+    addChannel("signal", accountId, config).then((res) => {
+      setSaving(false);
+      if (res == null ? void 0 : res.ok) {
+        onConnected(accountId, "signal");
+      } else {
+        setError((res == null ? void 0 : res.error) && (res.error.message || res.error.detail) || "Failed to connect Signal.");
+      }
+    });
+  }
+  return /* @__PURE__ */ u("form", { onSubmit, className: "flex flex-col gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
+      /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Requires signal-cli" }),
+      /* @__PURE__ */ u("span", { children: [
+        "Signal integration requires a running ",
+        /* @__PURE__ */ u("a", { href: "https://github.com/AsamK/signal-cli", target: "_blank", rel: "noopener noreferrer", className: "underline text-[var(--text-strong)]", children: "signal-cli" }),
+        " daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:"
+      ] }),
+      /* @__PURE__ */ u("code", { className: "text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-0.5", children: "signal-cli daemon --http localhost:8080" })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Signal Account (phone number)" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          className: "provider-key-input w-full",
+          value: account,
+          onInput: (e) => setAccount(targetValue(e)),
+          placeholder: "+15551234567",
+          autoComplete: "off",
+          autoCapitalize: "none",
+          autoCorrect: "off",
+          spellcheck: false,
+          name: "signal_account"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "signal-cli Daemon URL" }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "url",
+          className: "provider-key-input w-full",
+          value: httpUrl,
+          onInput: (e) => setHttpUrl(targetValue(e)),
+          placeholder: "http://127.0.0.1:8080",
+          name: "signal_http_url"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Policy" }),
+      /* @__PURE__ */ u("select", { className: "channel-select w-full", value: dmPolicy, onChange: (e) => setDmPolicy(targetValue(e)), children: [
+        /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+        /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+        /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+      ] })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Group Policy" }),
+      /* @__PURE__ */ u("select", { className: "channel-select w-full", value: groupPolicy, onChange: (e) => setGroupPolicy(targetValue(e)), children: [
+        /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" }),
+        /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+        /* @__PURE__ */ u("option", { value: "open", children: "Open (any group)" })
+      ] })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "DM Allowlist" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: allowlist,
+          onInput: (e) => setAllowlist(targetValue(e)),
+          placeholder: "+15551234567\n550e8400-e29b-41d4-a716-446655440000",
+          name: "signal_allowlist"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Group Allowlist" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: groupAllowlist,
+          onInput: (e) => setGroupAllowlist(targetValue(e)),
+          placeholder: "base64-encoded Signal group ID",
+          name: "signal_group_allowlist"
+        }
+      )
+    ] }),
+    /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
+    error && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)]", children: error }),
+    /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: saving, children: saving ? "Connecting…" : "Connect Signal" })
   ] });
 }
 function fetchRemoteAccessStatus(path, featureDisabledMessage) {
@@ -2442,6 +2584,7 @@ function ChannelStep({ onNext, onBack }) {
     phase === "form" && selectedType === "slack" && /* @__PURE__ */ u(SlackForm, { onConnected, error: channelError, setError: setChannelError }),
     phase === "form" && selectedType === "matrix" && /* @__PURE__ */ u(MatrixForm, { onConnected, error: channelError, setError: setChannelError }),
     phase === "form" && selectedType === "nostr" && /* @__PURE__ */ u(NostrForm, { onConnected, error: channelError, setError: setChannelError }),
+    phase === "form" && selectedType === "signal" && /* @__PURE__ */ u(SignalForm, { onConnected, error: channelError, setError: setChannelError }),
     phase === "success" && connectedType && /* @__PURE__ */ u(ChannelSuccess, { channelName: connectedName, channelType: connectedType, onAnother }),
     /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
       /* @__PURE__ */ u(

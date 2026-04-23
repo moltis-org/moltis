@@ -861,6 +861,9 @@
   .bg-\[var\(--surface-alt\)\] {
     background-color: var(--surface-alt);
   }
+  .bg-\[var\(--surface1\)\] {
+    background-color: var(--surface1);
+  }
   .bg-\[var\(--surface2\)\] {
     background-color: var(--surface2);
   }
@@ -3317,6 +3320,10 @@
   .icon-nostr {
     -webkit-mask-image: url("./icons/masks/nostr.svg");
     mask-image: url("./icons/masks/nostr.svg");
+  }
+  .icon-signal {
+    -webkit-mask-image: url("./icons/masks/signal.svg");
+    mask-image: url("./icons/masks/signal.svg");
   }
   .icon-cron {
     -webkit-mask-image: url("./icons/masks/mask-47feaf85cf1fb335.svg");
