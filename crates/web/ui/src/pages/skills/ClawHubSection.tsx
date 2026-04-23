@@ -1,4 +1,4 @@
-// ── ClawHub skill search and install ─────────────────────────
+// ── ClawHub skill search, detail, and install ────────────────
 import { useSignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useRef } from "preact/hooks";
@@ -13,113 +13,300 @@ interface ClawHubResult {
 	summary?: string;
 	updatedAt?: number;
 	version?: string;
-	downloads?: number;
-	ownerHandle?: string;
-	ownerImage?: string;
-	stars?: number;
+}
+
+interface ClawHubSkillInfo {
+	skill: {
+		slug: string;
+		displayName?: string;
+		summary?: string;
+		stats?: { downloads?: number; installsAllTime?: number; stars?: number };
+	};
+	latestVersion?: { version: string; changelog?: string; license?: string };
+	owner?: { handle?: string; displayName?: string; image?: string };
+	moderation?: { isSuspicious?: boolean; verdict?: string } | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────
 
 let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
-// ── Components ───────────────────────────────────────────────
+function relativeTime(ms: number): string {
+	const diff = Date.now() - ms;
+	const mins = Math.floor(diff / 60000);
+	if (mins < 60) return `${mins}m ago`;
+	const hours = Math.floor(mins / 60);
+	if (hours < 24) return `${hours}h ago`;
+	const days = Math.floor(hours / 24);
+	if (days < 30) return `${days}d ago`;
+	const months = Math.floor(days / 30);
+	if (months < 12) return `${months}mo ago`;
+	return `${Math.floor(months / 12)}y ago`;
+}
 
-function ResultCard({ result, onInstalled }: { result: ClawHubResult; onInstalled: () => void }): VNode {
+function fmtNumber(n: number): string {
+	if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+	return n.toString();
+}
+
+// ── Detail panel ─────────────────────────────────────────────
+
+function DetailPanel({ slug, onClose }: { slug: string; onClose: () => void }): VNode {
+	const info = useSignal<ClawHubSkillInfo | null>(null);
+	const loading = useSignal(true);
+	const error = useSignal<string | null>(null);
 	const installing = useSignal(false);
 	const installed = useSignal(false);
-	const error = useSignal<string | null>(null);
+
+	// Fetch on mount.
+	if (loading.value && !info.value && !error.value) {
+		sendRpc("skills.clawhub.info", { slug }).then((res) => {
+			loading.value = false;
+			if (res?.ok) info.value = res.payload as ClawHubSkillInfo;
+			else error.value = String(res?.error || "Failed to load skill info");
+		});
+	}
 
 	async function doInstall(): Promise<void> {
 		installing.value = true;
-		error.value = null;
-		const res = await sendRpc("skills.clawhub.install", { slug: result.slug });
+		const res = await sendRpc("skills.clawhub.install", { slug });
 		installing.value = false;
 		if (res?.ok) {
 			installed.value = true;
-			// Auto-trust and enable the installed skill.
 			const payload = res.payload as { installed?: Array<{ name?: string }> } | undefined;
 			const skills = payload?.installed || [];
-			const source = `clawhub:${result.slug}`;
+			const source = `clawhub:${slug}`;
 			for (const skill of skills) {
 				if (!skill.name) continue;
 				await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
 				await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
 			}
-			onInstalled();
-		} else {
-			error.value = String(res?.error || "Install failed");
 		}
 	}
 
+	const d = info.value;
+	const s = d?.skill;
+	const stats = s?.stats;
+	const owner = d?.owner;
+	const ver = d?.latestVersion;
+	const mod_ = d?.moderation;
+
 	return (
-		<div className="skills-featured-card">
-			<div style={{ flex: 1, minWidth: 0 }}>
-				<div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-					<span
-						style={{
-							fontFamily: "var(--font-mono)",
-							fontSize: ".82rem",
-							fontWeight: 500,
-							color: "var(--text-strong)",
-						}}
-					>
-						{result.displayName || result.slug}
-					</span>
-					{result.slug !== result.displayName && (
-						<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>{result.slug}</span>
-					)}
-					{result.ownerHandle && (
-						<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>by {result.ownerHandle}</span>
-					)}
-					{result.downloads != null && result.downloads > 0 && (
-						<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>
-							{result.downloads.toLocaleString()} downloads
-						</span>
-					)}
-					{result.stars != null && result.stars > 0 && (
-						<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>{result.stars} stars</span>
+		<div
+			style={{
+				border: "1px solid var(--border)",
+				borderRadius: "var(--radius-sm)",
+				background: "var(--surface)",
+				padding: "12px 14px",
+				marginTop: "8px",
+			}}
+		>
+			<div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+				<div style={{ flex: 1, minWidth: 0 }}>
+					{loading.value && <div style={{ color: "var(--muted)", fontSize: ".78rem" }}>Loading...</div>}
+					{error.value && <div style={{ color: "var(--danger, #ef4444)", fontSize: ".78rem" }}>{error.value}</div>}
+					{s && (
+						<>
+							<div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+								{owner?.image && (
+									<img src={owner.image} alt="" style={{ width: "28px", height: "28px", borderRadius: "50%" }} />
+								)}
+								<div>
+									{owner?.handle && (
+										<span style={{ fontSize: ".72rem", color: "var(--muted)" }}>@{owner.handle} / </span>
+									)}
+									<span
+										style={{
+											fontSize: ".92rem",
+											fontWeight: 600,
+											color: "var(--text-strong)",
+										}}
+									>
+										{s.displayName || s.slug}
+									</span>
+									{ver && (
+										<span
+											style={{
+												fontSize: ".68rem",
+												padding: "1px 5px",
+												marginLeft: "6px",
+												borderRadius: "var(--radius-sm)",
+												background: "var(--surface2)",
+												color: "var(--muted)",
+											}}
+										>
+											v{ver.version}
+										</span>
+									)}
+								</div>
+							</div>
+							{s.summary && <p style={{ fontSize: ".78rem", color: "var(--muted)", margin: "6px 0" }}>{s.summary}</p>}
+
+							{/* Stats row */}
+							<div
+								style={{ display: "flex", gap: "10px", fontSize: ".72rem", color: "var(--muted)", marginTop: "6px" }}
+							>
+								{stats?.stars != null && stats.stars > 0 && <span>&#11088; {stats.stars}</span>}
+								{stats?.downloads != null && stats.downloads > 0 && <span>{fmtNumber(stats.downloads)} downloads</span>}
+								{stats?.installsAllTime != null && stats.installsAllTime > 0 && (
+									<span>{stats.installsAllTime} installs</span>
+								)}
+							</div>
+
+							{/* Security / moderation */}
+							{mod_ !== undefined && (
+								<div
+									style={{
+										marginTop: "8px",
+										padding: "6px 8px",
+										borderRadius: "var(--radius-sm)",
+										background: mod_?.isSuspicious
+											? "var(--warning-bg, rgba(234,179,8,.12))"
+											: "var(--success-bg, rgba(34,197,94,.08))",
+										fontSize: ".72rem",
+									}}
+								>
+									<strong>Security Scan:</strong>{" "}
+									{mod_ === null
+										? "Not yet scanned"
+										: mod_.isSuspicious
+											? `Suspicious \u2014 ${mod_.verdict || "review recommended"}`
+											: mod_.verdict || "Benign"}
+								</div>
+							)}
+
+							{/* Changelog */}
+							{ver?.changelog && (
+								<div style={{ marginTop: "8px" }}>
+									<div
+										style={{ fontSize: ".72rem", fontWeight: 600, color: "var(--text-strong)", marginBottom: "2px" }}
+									>
+										Changelog (v{ver.version})
+									</div>
+									<div
+										style={{
+											fontSize: ".72rem",
+											color: "var(--muted)",
+											whiteSpace: "pre-wrap",
+											maxHeight: "100px",
+											overflow: "auto",
+										}}
+									>
+										{ver.changelog}
+									</div>
+								</div>
+							)}
+
+							{ver?.license && (
+								<div style={{ marginTop: "4px", fontSize: ".68rem", color: "var(--muted)" }}>
+									License: {ver.license}
+								</div>
+							)}
+						</>
 					)}
 				</div>
-				{result.summary && (
-					<div
-						style={{
-							fontSize: ".75rem",
-							color: "var(--muted)",
-							overflow: "hidden",
-							textOverflow: "ellipsis",
-							whiteSpace: "nowrap",
+				<div style={{ display: "flex", flexDirection: "column", gap: "4px", marginLeft: "12px", flexShrink: 0 }}>
+					<button
+						onClick={() => {
+							if (!(installed.value || installing.value)) doInstall().catch(console.error);
 						}}
+						disabled={installed.value || installing.value || loading.value}
+						className="provider-btn provider-btn-sm"
+						style={{ minWidth: "80px" }}
 					>
-						{result.summary}
-					</div>
-				)}
-				{error.value && (
-					<div style={{ fontSize: ".72rem", color: "var(--danger, #ef4444)", marginTop: "2px" }}>{error.value}</div>
-				)}
+						{installed.value ? "Installed" : installing.value ? "Installing\u2026" : "Install"}
+					</button>
+					<button
+						onClick={onClose}
+						className="provider-btn provider-btn-sm provider-btn-secondary"
+						style={{ minWidth: "80px" }}
+					>
+						Close
+					</button>
+					<a
+						href={`https://clawhub.ai/${owner?.handle || "_"}/${slug}`}
+						target="_blank"
+						rel="noopener noreferrer"
+						className="provider-btn provider-btn-sm provider-btn-secondary"
+						style={{ minWidth: "80px", textAlign: "center", textDecoration: "none", display: "block" }}
+					>
+						ClawHub
+					</a>
+				</div>
 			</div>
-			<button
-				onClick={() => {
-					if (!(installed.value || installing.value)) doInstall().catch(console.error);
-				}}
-				disabled={installed.value || installing.value}
-				style={{
-					background: "var(--surface2)",
-					border: "1px solid var(--border)",
-					color: installed.value ? "var(--success, #22c55e)" : "var(--text)",
-					borderRadius: "var(--radius-sm)",
-					fontSize: ".72rem",
-					padding: "4px 10px",
-					cursor: installed.value ? "default" : "pointer",
-					whiteSpace: "nowrap",
-					opacity: installed.value ? 0.8 : 1,
-				}}
-			>
-				{installed.value ? "Installed" : installing.value ? "Installing\u2026" : "Install"}
-			</button>
 		</div>
 	);
 }
+
+// ── Result card ──────────────────────────────────────────────
+
+function ResultCard({ result, onInstalled }: { result: ClawHubResult; onInstalled: () => void }): VNode {
+	const expanded = useSignal(false);
+
+	return (
+		<div>
+			<div
+				className="skills-featured-card"
+				onClick={() => {
+					expanded.value = !expanded.value;
+				}}
+				style={{ cursor: "pointer" }}
+			>
+				<div style={{ flex: 1, minWidth: 0 }}>
+					<div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+						<span
+							style={{
+								fontFamily: "var(--font-mono)",
+								fontSize: ".82rem",
+								fontWeight: 500,
+								color: "var(--text-strong)",
+							}}
+						>
+							{result.displayName || result.slug}
+						</span>
+						<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>{result.slug}</span>
+						{result.updatedAt && (
+							<span style={{ fontSize: ".65rem", color: "var(--muted)" }}>{relativeTime(result.updatedAt)}</span>
+						)}
+					</div>
+					{result.summary && (
+						<div
+							style={{
+								fontSize: ".75rem",
+								color: "var(--muted)",
+								overflow: "hidden",
+								textOverflow: "ellipsis",
+								whiteSpace: "nowrap",
+							}}
+						>
+							{result.summary}
+						</div>
+					)}
+				</div>
+				<span
+					style={{
+						fontSize: ".68rem",
+						color: "var(--accent)",
+						whiteSpace: "nowrap",
+					}}
+				>
+					{expanded.value ? "Close" : "View"}
+				</span>
+			</div>
+			{expanded.value && (
+				<DetailPanel
+					slug={result.slug}
+					onClose={() => {
+						expanded.value = false;
+						onInstalled();
+					}}
+				/>
+			)}
+		</div>
+	);
+}
+
+// ── Main section ─────────────────────────────────────────────
 
 export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode {
 	const query = useSignal("");
@@ -168,15 +355,25 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 		<div className="skills-section">
 			<h3 className="skills-section-title">
 				ClawHub
-				<span style={{ fontSize: ".72rem", color: "var(--muted)", fontWeight: 400, marginLeft: "8px" }}>
-					clawhub.ai — 52k+ community skills
+				<span
+					style={{
+						fontSize: ".72rem",
+						color: "var(--muted)",
+						fontWeight: 400,
+						marginLeft: "8px",
+					}}
+				>
+					52k+ community skills from{" "}
+					<a href="https://clawhub.ai" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
+						clawhub.ai
+					</a>
 				</span>
 			</h3>
 			<div className="skills-install-box">
 				<input
 					ref={inputRef}
 					type="text"
-					placeholder="Search ClawHub skills..."
+					placeholder="Search ClawHub skills (e.g. csv, weather, github)..."
 					className="skills-install-input"
 					value={query.value}
 					onInput={onInput}
@@ -198,7 +395,14 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 				</div>
 			)}
 			{searched.value && results.value.length === 0 && !searching.value && (
-				<div style={{ fontSize: ".78rem", color: "var(--muted)", padding: "12px 0", textAlign: "center" }}>
+				<div
+					style={{
+						fontSize: ".78rem",
+						color: "var(--muted)",
+						padding: "12px 0",
+						textAlign: "center",
+					}}
+				>
 					No skills found. Try a different search term.
 				</div>
 			)}

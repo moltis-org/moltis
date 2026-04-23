@@ -613,6 +613,7 @@ pub trait SkillsService: Send + Sync {
     async fn recipe(&self, params: Value) -> ServiceResult;
     async fn clawhub_search(&self, params: Value) -> ServiceResult;
     async fn clawhub_install(&self, params: Value) -> ServiceResult;
+    async fn clawhub_info(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopSkillsStub;
@@ -721,6 +722,10 @@ impl SkillsService for NoopSkillsStub {
 
     async fn clawhub_install(&self, _params: Value) -> ServiceResult {
         Err("skills service not configured".into())
+    }
+
+    async fn clawhub_info(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "found": false }))
     }
 }
 

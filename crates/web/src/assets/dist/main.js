@@ -14346,93 +14346,283 @@ function teardownProjects() {
 }
 registerPage(routes.projects, initProjects, teardownProjects);
 let searchTimer$1 = null;
-function ResultCard({ result, onInstalled }) {
+function relativeTime(ms) {
+  const diff = Date.now() - ms;
+  const mins = Math.floor(diff / 6e4);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days2 = Math.floor(hours / 24);
+  if (days2 < 30) return `${days2}d ago`;
+  const months2 = Math.floor(days2 / 30);
+  if (months2 < 12) return `${months2}mo ago`;
+  return `${Math.floor(months2 / 12)}y ago`;
+}
+function fmtNumber(n) {
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return n.toString();
+}
+function DetailPanel({ slug, onClose }) {
+  const info = useSignal(null);
+  const loading2 = useSignal(true);
+  const error2 = useSignal(null);
   const installing = useSignal(false);
   const installed = useSignal(false);
-  const error2 = useSignal(null);
+  if (loading2.value && !info.value && !error2.value) {
+    sendRpc("skills.clawhub.info", { slug }).then((res) => {
+      loading2.value = false;
+      if (res == null ? void 0 : res.ok) info.value = res.payload;
+      else error2.value = String((res == null ? void 0 : res.error) || "Failed to load skill info");
+    });
+  }
   async function doInstall2() {
     installing.value = true;
-    error2.value = null;
-    const res = await sendRpc("skills.clawhub.install", { slug: result.slug });
+    const res = await sendRpc("skills.clawhub.install", { slug });
     installing.value = false;
     if (res == null ? void 0 : res.ok) {
       installed.value = true;
       const payload = res.payload;
       const skills = (payload == null ? void 0 : payload.installed) || [];
-      const source = `clawhub:${result.slug}`;
+      const source = `clawhub:${slug}`;
       for (const skill of skills) {
         if (!skill.name) continue;
         await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
         await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
       }
-      onInstalled();
-    } else {
-      error2.value = String((res == null ? void 0 : res.error) || "Install failed");
     }
   }
-  return /* @__PURE__ */ u("div", { className: "skills-featured-card", children: [
-    /* @__PURE__ */ u("div", { style: { flex: 1, minWidth: 0 }, children: [
-      /* @__PURE__ */ u("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }, children: [
-        /* @__PURE__ */ u(
-          "span",
-          {
-            style: {
-              fontFamily: "var(--font-mono)",
-              fontSize: ".82rem",
-              fontWeight: 500,
-              color: "var(--text-strong)"
-            },
-            children: result.displayName || result.slug
-          }
-        ),
-        result.slug !== result.displayName && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: result.slug }),
-        result.ownerHandle && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: [
-          "by ",
-          result.ownerHandle
+  const d2 = info.value;
+  const s = d2 == null ? void 0 : d2.skill;
+  const stats = s == null ? void 0 : s.stats;
+  const owner = d2 == null ? void 0 : d2.owner;
+  const ver = d2 == null ? void 0 : d2.latestVersion;
+  const mod_ = d2 == null ? void 0 : d2.moderation;
+  return /* @__PURE__ */ u(
+    "div",
+    {
+      style: {
+        border: "1px solid var(--border)",
+        borderRadius: "var(--radius-sm)",
+        background: "var(--surface)",
+        padding: "12px 14px",
+        marginTop: "8px"
+      },
+      children: /* @__PURE__ */ u("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" }, children: [
+        /* @__PURE__ */ u("div", { style: { flex: 1, minWidth: 0 }, children: [
+          loading2.value && /* @__PURE__ */ u("div", { style: { color: "var(--muted)", fontSize: ".78rem" }, children: "Loading..." }),
+          error2.value && /* @__PURE__ */ u("div", { style: { color: "var(--danger, #ef4444)", fontSize: ".78rem" }, children: error2.value }),
+          s && /* @__PURE__ */ u(S, { children: [
+            /* @__PURE__ */ u("div", { style: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }, children: [
+              (owner == null ? void 0 : owner.image) && /* @__PURE__ */ u("img", { src: owner.image, alt: "", style: { width: "28px", height: "28px", borderRadius: "50%" } }),
+              /* @__PURE__ */ u("div", { children: [
+                (owner == null ? void 0 : owner.handle) && /* @__PURE__ */ u("span", { style: { fontSize: ".72rem", color: "var(--muted)" }, children: [
+                  "@",
+                  owner.handle,
+                  " / "
+                ] }),
+                /* @__PURE__ */ u(
+                  "span",
+                  {
+                    style: {
+                      fontSize: ".92rem",
+                      fontWeight: 600,
+                      color: "var(--text-strong)"
+                    },
+                    children: s.displayName || s.slug
+                  }
+                ),
+                ver && /* @__PURE__ */ u(
+                  "span",
+                  {
+                    style: {
+                      fontSize: ".68rem",
+                      padding: "1px 5px",
+                      marginLeft: "6px",
+                      borderRadius: "var(--radius-sm)",
+                      background: "var(--surface2)",
+                      color: "var(--muted)"
+                    },
+                    children: [
+                      "v",
+                      ver.version
+                    ]
+                  }
+                )
+              ] })
+            ] }),
+            s.summary && /* @__PURE__ */ u("p", { style: { fontSize: ".78rem", color: "var(--muted)", margin: "6px 0" }, children: s.summary }),
+            /* @__PURE__ */ u(
+              "div",
+              {
+                style: { display: "flex", gap: "10px", fontSize: ".72rem", color: "var(--muted)", marginTop: "6px" },
+                children: [
+                  (stats == null ? void 0 : stats.stars) != null && stats.stars > 0 && /* @__PURE__ */ u("span", { children: [
+                    "⭐ ",
+                    stats.stars
+                  ] }),
+                  (stats == null ? void 0 : stats.downloads) != null && stats.downloads > 0 && /* @__PURE__ */ u("span", { children: [
+                    fmtNumber(stats.downloads),
+                    " downloads"
+                  ] }),
+                  (stats == null ? void 0 : stats.installsAllTime) != null && stats.installsAllTime > 0 && /* @__PURE__ */ u("span", { children: [
+                    stats.installsAllTime,
+                    " installs"
+                  ] })
+                ]
+              }
+            ),
+            mod_ !== void 0 && /* @__PURE__ */ u(
+              "div",
+              {
+                style: {
+                  marginTop: "8px",
+                  padding: "6px 8px",
+                  borderRadius: "var(--radius-sm)",
+                  background: (mod_ == null ? void 0 : mod_.isSuspicious) ? "var(--warning-bg, rgba(234,179,8,.12))" : "var(--success-bg, rgba(34,197,94,.08))",
+                  fontSize: ".72rem"
+                },
+                children: [
+                  /* @__PURE__ */ u("strong", { children: "Security Scan:" }),
+                  " ",
+                  mod_ === null ? "Not yet scanned" : mod_.isSuspicious ? `Suspicious — ${mod_.verdict || "review recommended"}` : mod_.verdict || "Benign"
+                ]
+              }
+            ),
+            (ver == null ? void 0 : ver.changelog) && /* @__PURE__ */ u("div", { style: { marginTop: "8px" }, children: [
+              /* @__PURE__ */ u(
+                "div",
+                {
+                  style: { fontSize: ".72rem", fontWeight: 600, color: "var(--text-strong)", marginBottom: "2px" },
+                  children: [
+                    "Changelog (v",
+                    ver.version,
+                    ")"
+                  ]
+                }
+              ),
+              /* @__PURE__ */ u(
+                "div",
+                {
+                  style: {
+                    fontSize: ".72rem",
+                    color: "var(--muted)",
+                    whiteSpace: "pre-wrap",
+                    maxHeight: "100px",
+                    overflow: "auto"
+                  },
+                  children: ver.changelog
+                }
+              )
+            ] }),
+            (ver == null ? void 0 : ver.license) && /* @__PURE__ */ u("div", { style: { marginTop: "4px", fontSize: ".68rem", color: "var(--muted)" }, children: [
+              "License: ",
+              ver.license
+            ] })
+          ] })
         ] }),
-        result.downloads != null && result.downloads > 0 && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: [
-          result.downloads.toLocaleString(),
-          " downloads"
-        ] }),
-        result.stars != null && result.stars > 0 && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: [
-          result.stars,
-          " stars"
+        /* @__PURE__ */ u("div", { style: { display: "flex", flexDirection: "column", gap: "4px", marginLeft: "12px", flexShrink: 0 }, children: [
+          /* @__PURE__ */ u(
+            "button",
+            {
+              onClick: () => {
+                if (!(installed.value || installing.value)) doInstall2().catch(console.error);
+              },
+              disabled: installed.value || installing.value || loading2.value,
+              className: "provider-btn provider-btn-sm",
+              style: { minWidth: "80px" },
+              children: installed.value ? "Installed" : installing.value ? "Installing…" : "Install"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "button",
+            {
+              onClick: onClose,
+              className: "provider-btn provider-btn-sm provider-btn-secondary",
+              style: { minWidth: "80px" },
+              children: "Close"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "a",
+            {
+              href: `https://clawhub.ai/${(owner == null ? void 0 : owner.handle) || "_"}/${slug}`,
+              target: "_blank",
+              rel: "noopener noreferrer",
+              className: "provider-btn provider-btn-sm provider-btn-secondary",
+              style: { minWidth: "80px", textAlign: "center", textDecoration: "none", display: "block" },
+              children: "ClawHub"
+            }
+          )
         ] })
-      ] }),
-      result.summary && /* @__PURE__ */ u(
-        "div",
-        {
-          style: {
-            fontSize: ".75rem",
-            color: "var(--muted)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap"
-          },
-          children: result.summary
-        }
-      ),
-      error2.value && /* @__PURE__ */ u("div", { style: { fontSize: ".72rem", color: "var(--danger, #ef4444)", marginTop: "2px" }, children: error2.value })
-    ] }),
+      ] })
+    }
+  );
+}
+function ResultCard({ result, onInstalled }) {
+  const expanded = useSignal(false);
+  return /* @__PURE__ */ u("div", { children: [
     /* @__PURE__ */ u(
-      "button",
+      "div",
       {
+        className: "skills-featured-card",
         onClick: () => {
-          if (!(installed.value || installing.value)) doInstall2().catch(console.error);
+          expanded.value = !expanded.value;
         },
-        disabled: installed.value || installing.value,
-        style: {
-          background: "var(--surface2)",
-          border: "1px solid var(--border)",
-          color: installed.value ? "var(--success, #22c55e)" : "var(--text)",
-          borderRadius: "var(--radius-sm)",
-          fontSize: ".72rem",
-          padding: "4px 10px",
-          cursor: installed.value ? "default" : "pointer",
-          whiteSpace: "nowrap",
-          opacity: installed.value ? 0.8 : 1
-        },
-        children: installed.value ? "Installed" : installing.value ? "Installing…" : "Install"
+        style: { cursor: "pointer" },
+        children: [
+          /* @__PURE__ */ u("div", { style: { flex: 1, minWidth: 0 }, children: [
+            /* @__PURE__ */ u("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }, children: [
+              /* @__PURE__ */ u(
+                "span",
+                {
+                  style: {
+                    fontFamily: "var(--font-mono)",
+                    fontSize: ".82rem",
+                    fontWeight: 500,
+                    color: "var(--text-strong)"
+                  },
+                  children: result.displayName || result.slug
+                }
+              ),
+              /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: result.slug }),
+              result.updatedAt && /* @__PURE__ */ u("span", { style: { fontSize: ".65rem", color: "var(--muted)" }, children: relativeTime(result.updatedAt) })
+            ] }),
+            result.summary && /* @__PURE__ */ u(
+              "div",
+              {
+                style: {
+                  fontSize: ".75rem",
+                  color: "var(--muted)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap"
+                },
+                children: result.summary
+              }
+            )
+          ] }),
+          /* @__PURE__ */ u(
+            "span",
+            {
+              style: {
+                fontSize: ".68rem",
+                color: "var(--accent)",
+                whiteSpace: "nowrap"
+              },
+              children: expanded.value ? "Close" : "View"
+            }
+          )
+        ]
+      }
+    ),
+    expanded.value && /* @__PURE__ */ u(
+      DetailPanel,
+      {
+        slug: result.slug,
+        onClose: () => {
+          expanded.value = false;
+          onInstalled();
+        }
       }
     )
   ] });
@@ -14479,7 +14669,22 @@ function ClawHubSection({ onChanged }) {
   return /* @__PURE__ */ u("div", { className: "skills-section", children: [
     /* @__PURE__ */ u("h3", { className: "skills-section-title", children: [
       "ClawHub",
-      /* @__PURE__ */ u("span", { style: { fontSize: ".72rem", color: "var(--muted)", fontWeight: 400, marginLeft: "8px" }, children: "clawhub.ai — 52k+ community skills" })
+      /* @__PURE__ */ u(
+        "span",
+        {
+          style: {
+            fontSize: ".72rem",
+            color: "var(--muted)",
+            fontWeight: 400,
+            marginLeft: "8px"
+          },
+          children: [
+            "52k+ community skills from",
+            " ",
+            /* @__PURE__ */ u("a", { href: "https://clawhub.ai", target: "_blank", rel: "noopener noreferrer", style: { color: "var(--accent)" }, children: "clawhub.ai" })
+          ]
+        }
+      )
     ] }),
     /* @__PURE__ */ u("div", { className: "skills-install-box", children: [
       /* @__PURE__ */ u(
@@ -14487,7 +14692,7 @@ function ClawHubSection({ onChanged }) {
         {
           ref: inputRef,
           type: "text",
-          placeholder: "Search ClawHub skills...",
+          placeholder: "Search ClawHub skills (e.g. csv, weather, github)...",
           className: "skills-install-input",
           value: query2.value,
           onInput,
@@ -14505,7 +14710,18 @@ function ClawHubSection({ onChanged }) {
       )
     ] }),
     results.value.length > 0 && /* @__PURE__ */ u("div", { style: { display: "flex", flexDirection: "column", gap: "4px", marginTop: "8px" }, children: results.value.map((r2) => /* @__PURE__ */ u(ResultCard, { result: r2, onInstalled: onChanged }, r2.slug)) }),
-    searched.value && results.value.length === 0 && !searching.value && /* @__PURE__ */ u("div", { style: { fontSize: ".78rem", color: "var(--muted)", padding: "12px 0", textAlign: "center" }, children: "No skills found. Try a different search term." })
+    searched.value && results.value.length === 0 && !searching.value && /* @__PURE__ */ u(
+      "div",
+      {
+        style: {
+          fontSize: ".78rem",
+          color: "var(--muted)",
+          padding: "12px 0",
+          textAlign: "center"
+        },
+        children: "No skills found. Try a different search term."
+      }
+    )
   ] });
 }
 const repos = y([]);

@@ -1195,6 +1195,19 @@ impl SkillsService for NoopSkillsService {
         Ok(serde_json::to_value(response).unwrap_or_default())
     }
 
+    async fn clawhub_info(&self, params: Value) -> ServiceResult {
+        let slug = params
+            .get("slug")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'slug' parameter".to_string())?;
+        let client = moltis_skills::clawhub::ClawHubClient::new();
+        let info = client
+            .skill_info(slug)
+            .await
+            .map_err(ServiceError::message)?;
+        Ok(serde_json::to_value(info).unwrap_or_default())
+    }
+
     async fn clawhub_install(&self, params: Value) -> ServiceResult {
         let slug = params
             .get("slug")
