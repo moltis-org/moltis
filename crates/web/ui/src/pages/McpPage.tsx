@@ -651,6 +651,7 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 	const expanded = useSignal(false);
 	const tools = useSignal<McpTool[] | null>(null);
 	const toggling = useSignal(false);
+	const authing = useSignal(false);
 	const editing = useSignal(false);
 	const editTransport = useSignal("stdio");
 	const editCmd = useSignal("");
@@ -693,6 +694,7 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 	}
 	async function reauth(e: Event): Promise<void> {
 		e.stopPropagation();
+		authing.value = true;
 		const res = await sendRpc("mcp.reauth", { name: server.name, redirectUri: oauthCallbackUrl() });
 		if (res?.ok) {
 			const p = res.payload as Record<string, unknown>;
@@ -700,6 +702,7 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 			if (p?.authUrl) window.open(p.authUrl as string, "_blank", "noopener,noreferrer");
 		} else showToast(`Re-auth failed: ${res?.error?.message || "unknown"}`, "error");
 		await refreshServers();
+		authing.value = false;
 	}
 	function startEdit(e: Event): void {
 		e.stopPropagation();
@@ -816,8 +819,8 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 				</div>
 				<div className="flex items-center gap-1.5">
 					{needsReauth && (
-						<button onClick={reauth} className="provider-btn provider-btn-sm">
-							Re-auth
+						<button onClick={reauth} disabled={authing.value} className="provider-btn provider-btn-sm">
+							{authing.value ? "\u2026" : "Re-auth"}
 						</button>
 					)}
 					<button onClick={startEdit} className="provider-btn provider-btn-secondary provider-btn-sm">
