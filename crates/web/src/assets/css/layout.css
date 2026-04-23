@@ -117,6 +117,9 @@
 
 /* ── Model Dropdown ── */
 
+/* Toolbar needs a stacking context so dropdowns render above the messages grid row. */
+.chat-toolbar { position: relative; z-index: 30; }
+
 .model-combo { position: relative; }
 .model-combo.hidden { display: none; }
 

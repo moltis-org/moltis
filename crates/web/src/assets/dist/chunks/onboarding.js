@@ -5,6 +5,7 @@ const onboarding = {
     identity: "Identity",
     llm: "LLM",
     voice: "Voice",
+    skills: "Skills",
     remoteAccess: "Remote",
     channel: "Channel",
     summary: "Summary"
@@ -172,6 +173,13 @@ const onboarding = {
     usernameHint: "One username per line, without the @ sign. These users can DM your bot.",
     connecting: "Connecting…",
     connectBot: "Connect Bot"
+  },
+  // ── Skills step ──────────────────────────────────────────
+  skills: {
+    title: "Bundled Skills",
+    description: "Moltis ships with skills across many domains. Disable categories you don't need to keep the agent focused. You can change this later in Settings.",
+    enableAll: "Enable all",
+    disableAll: "Disable all"
   },
   // ── Summary step ─────────────────────────────────────────
   summary: {

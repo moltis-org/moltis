@@ -5,6 +5,7 @@ const onboarding = {
     identity: "身份",
     llm: "大语言模型",
     voice: "语音",
+    skills: "技能",
     remoteAccess: "远程访问",
     channel: "频道",
     summary: "总结"
@@ -172,6 +173,13 @@ const onboarding = {
     usernameHint: "每行一个用户名，不带 @ 符号。这些用户可以私信你的机器人。",
     connecting: "连接中…",
     connectBot: "连接机器人"
+  },
+  // ── Skills step ──────────────────────────────────────────
+  skills: {
+    title: "内置技能",
+    description: "Moltis 附带了许多领域的技能。禁用不需要的类别以保持代理专注。您可以稍后在设置中更改。",
+    enableAll: "全部启用",
+    disableAll: "全部禁用"
   },
   // ── Summary step ─────────────────────────────────────────
   summary: {

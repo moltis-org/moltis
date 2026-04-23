@@ -1,6 +1,6 @@
 import { c as connectWs, s as subscribeEvents, u } from "./ws-connect.js";
 import { Z as t, aw as d, av as y, ax as A, b as sendRpc, ay as S, bq as modelVersionScore, v as activeSessionKey, aM as R } from "./theme.js";
-import { H as eventListeners, t as targetValue, O as prepareCreationOptions, P as detectPasskeyName, w as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, g as get, u as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, s as generateWebhookSecretHex, r as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, I as refresh, J as EmojiPicker, K as validateIdentityFields, L as updateIdentity, z as completeProviderOAuth, B as saveProviderKey, y as validateProviderKey, x as providerApiKeyHelp, D as testModel, E as isModelServiceNotConfigured, G as humanizeProbeError, A as startProviderOAuth, Q as fetchVoiceProviders, V as toggleVoiceProvider, W as saveVoiceKey, X as saveVoiceSettings, Z as VOICE_COUNTERPART_IDS, R as fetchPhrase, S as testTts, T as decodeBase64Safe, U as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
+import { H as eventListeners, t as targetValue, U as prepareCreationOptions, V as detectPasskeyName, w as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, T as TabBar, g as get, u as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, s as generateWebhookSecretHex, r as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, I as refresh, O as EmojiPicker, P as validateIdentityFields, Q as updateIdentity, z as completeProviderOAuth, B as saveProviderKey, y as validateProviderKey, x as providerApiKeyHelp, D as testModel, E as isModelServiceNotConfigured, G as humanizeProbeError, A as startProviderOAuth, K as CATEGORY_META, L as categoryLabel, W as fetchVoiceProviders, $ as toggleVoiceProvider, a0 as saveVoiceKey, a1 as saveVoiceSettings, a4 as VOICE_COUNTERPART_IDS, X as fetchPhrase, Y as testTts, Z as decodeBase64Safe, _ as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
 var WsEventName = /* @__PURE__ */ ((WsEventName2) => {
   WsEventName2["Chat"] = "chat";
   WsEventName2["Error"] = "error";
@@ -1269,6 +1269,7 @@ function preferredPublicBaseUrl({
   return "";
 }
 function RemoteAccessStep({ onNext, onBack }) {
+  const [remoteTab, setRemoteTab] = d("tailscale");
   const [authReady, setAuthReady] = d(false);
   const [tsStatus, setTsStatus] = d(null);
   const [tsError, setTsError] = d(null);
@@ -1412,11 +1413,23 @@ function RemoteAccessStep({ onNext, onBack }) {
       /* @__PURE__ */ u("a", { href: activePublicUrl, target: "_blank", rel: "noopener", className: "text-[var(--accent)] underline break-all", children: activePublicUrl }),
       /* @__PURE__ */ u("span", { children: "The Teams webhook step will prefill this URL." })
     ] }) : /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)]", children: "Teams webhooks need a public URL. If you skip this step, you can still configure remote access later in Settings." }),
-    /* @__PURE__ */ u("section", { className: "rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-col gap-4", children: [
-      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
-        /* @__PURE__ */ u("h3", { className: "text-base font-medium text-[var(--text-strong)]", children: "Tailscale Funnel" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public HTTPS through Tailscale. Tailscale Serve is tailnet-only, so Teams webhooks need Funnel instead." })
-      ] }),
+    /* @__PURE__ */ u(
+      TabBar,
+      {
+        tabs: [
+          {
+            id: "tailscale",
+            label: "Tailscale",
+            badge: tsLoading ? void 0 : tailscaleFunnelEnabled ? "funnel" : void 0
+          },
+          { id: "ngrok", label: "ngrok", badge: ngLoading ? void 0 : ngForm.enabled ? "on" : void 0 }
+        ],
+        active: remoteTab,
+        onChange: setRemoteTab
+      }
+    ),
+    remoteTab === "tailscale" && /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public HTTPS through Tailscale. Tailscale Serve is tailnet-only, so Teams webhooks need Funnel instead." }),
       tsLoading ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Loading Tailscale status…" }) : /* @__PURE__ */ u("div", { className: "text-sm text-[var(--text-strong)]", children: [
         "Tailscale Funnel is ",
         tailscaleFunnelEnabled ? "enabled" : "disabled",
@@ -1463,11 +1476,8 @@ function RemoteAccessStep({ onNext, onBack }) {
         }
       )
     ] }),
-    /* @__PURE__ */ u("section", { className: "rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-col gap-4", children: [
-      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
-        /* @__PURE__ */ u("h3", { className: "text-base font-medium text-[var(--text-strong)]", children: "ngrok" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public HTTPS without installing an external binary. This is useful for demos, shared testing, and Teams." })
-      ] }),
+    remoteTab === "ngrok" && /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Public HTTPS without installing an external binary. This is useful for demos, shared testing, and Teams." }),
       ngLoading ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Loading ngrok status…" }) : /* @__PURE__ */ u("div", { className: "text-sm text-[var(--text-strong)]", children: [
         "ngrok is ",
         ngForm.enabled ? "enabled" : "disabled",
@@ -2726,6 +2736,15 @@ function IdentityStep({ onNext, onBack }) {
 }
 const WS_RETRY_LIMIT$2 = 75;
 const WS_RETRY_DELAY_MS$2 = 200;
+const IMPORT_CATEGORY_ICONS = {
+  identity: "👤",
+  providers: "🔑",
+  skills: "✨",
+  memory: "🧠",
+  channels: "💬",
+  sessions: "💾",
+  workspace_files: "📁"
+};
 function OpenClawImportStep({ onNext, onBack }) {
   var _a, _b, _c, _d, _e;
   const [loading, setLoading] = d(true);
@@ -2926,31 +2945,28 @@ function OpenClawImportStep({ onNext, onBack }) {
       " for a full import including identity, memory, and skills."
     ] }) : null,
     error ? /* @__PURE__ */ u(ErrorPanel, { message: error }) : null,
-    /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", style: "max-width:400px;", children: categories.map((cat) => /* @__PURE__ */ u(
-      "label",
-      {
-        className: `flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}`,
-        children: [
-          /* @__PURE__ */ u(
-            "input",
-            {
-              type: "checkbox",
-              checked: selection[cat.key] && cat.available,
-              disabled: !cat.available || importing,
-              onChange: () => toggleCategory(cat.key)
-            }
-          ),
-          /* @__PURE__ */ u("span", { children: cat.label }),
-          cat.detail && cat.available ? /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: [
-            "(",
-            cat.detail,
-            ")"
-          ] }) : null,
-          cat.available ? null : /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: "(not found)" })
-        ]
-      },
-      cat.key
-    )) }),
+    /* @__PURE__ */ u("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2", children: categories.map((cat) => {
+      const checked = selection[cat.key] && cat.available;
+      return /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          onClick: () => cat.available && !importing && toggleCategory(cat.key),
+          disabled: !cat.available || importing,
+          className: `flex items-center gap-3 p-3 rounded-md border text-left cursor-pointer transition-colors ${cat.available ? checked ? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]" : "border-[var(--border)] bg-[var(--surface)] opacity-60" : "border-[var(--border)] bg-[var(--surface)] opacity-40 cursor-not-allowed"}`,
+          children: [
+            /* @__PURE__ */ u("span", { className: "text-lg shrink-0", children: IMPORT_CATEGORY_ICONS[cat.key] || "📦" }),
+            /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+              /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: cat.label }),
+              cat.detail && cat.available ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: cat.detail }) : null,
+              cat.available ? null : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: "not found" })
+            ] }),
+            /* @__PURE__ */ u("div", { className: "shrink-0", children: checked ? /* @__PURE__ */ u("span", { className: "icon icon-check-circle text-[var(--accent)]" }) : /* @__PURE__ */ u("span", { className: "w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block" }) })
+          ]
+        },
+        cat.key
+      );
+    }) }),
     (((_d = scan.agents) == null ? void 0 : _d.length) ?? 0) > 1 ? /* @__PURE__ */ u(
       "div",
       {
@@ -3977,6 +3993,133 @@ function ProviderStep({ onNext, onBack }) {
     ] })
   ] });
 }
+function SkillsStep({ onNext, onBack }) {
+  const [categories, setCategories] = d([]);
+  const [totalSkills, setTotalSkills] = d(0);
+  const [loading, setLoading] = d(true);
+  const [busy, setBusy] = d(false);
+  y(() => {
+    sendRpc("skills.bundled.categories", {}).then((res) => {
+      if (res == null ? void 0 : res.ok) {
+        const payload = res.payload;
+        setCategories(payload.categories || []);
+        setTotalSkills(payload.total_skills || 0);
+      }
+      setLoading(false);
+    });
+  }, []);
+  function toggle(cat) {
+    if (busy) return;
+    const newEnabled = !cat.enabled;
+    setBusy(true);
+    sendRpc("skills.bundled.toggle_category", { category: cat.name, enabled: newEnabled }).then((res) => {
+      setBusy(false);
+      if (res == null ? void 0 : res.ok) {
+        setCategories((prev) => prev.map((c) => c.name === cat.name ? { ...c, enabled: newEnabled } : c));
+      }
+    });
+  }
+  function bulkToggle(enabled) {
+    const targets = categories.filter((c) => c.enabled !== enabled);
+    if (!targets.length || busy) return;
+    setBusy(true);
+    Promise.all(
+      targets.map(
+        (c) => sendRpc("skills.bundled.toggle_category", { category: c.name, enabled }).then((res) => ({
+          name: c.name,
+          ok: !!(res == null ? void 0 : res.ok)
+        }))
+      )
+    ).then((results) => {
+      setBusy(false);
+      const succeeded = new Set(results.filter((r) => r.ok).map((r) => r.name));
+      if (succeeded.size > 0) {
+        setCategories((prev) => prev.map((c) => succeeded.has(c.name) ? { ...c, enabled } : c));
+      }
+    });
+  }
+  const enabledCount = categories.filter((c) => c.enabled).length;
+  const enabledSkillCount = categories.filter((c) => c.enabled).reduce((sum, c) => sum + c.count, 0);
+  return /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
+    /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: t("onboarding:skills.title") }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: t("onboarding:skills.description") }),
+    loading ? /* @__PURE__ */ u("div", { className: "flex items-center justify-center gap-2 py-8", children: [
+      /* @__PURE__ */ u("div", { className: "inline-block w-5 h-5 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin" }),
+      /* @__PURE__ */ u("span", { className: "text-sm text-[var(--muted)]", children: t("common:status.loading") })
+    ] }) : /* @__PURE__ */ u(S, { children: [
+      /* @__PURE__ */ u("div", { className: "flex items-center justify-between", children: [
+        /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: [
+          enabledCount,
+          " of ",
+          categories.length,
+          " categories (",
+          enabledSkillCount,
+          " of ",
+          totalSkills,
+          " skills)"
+        ] }),
+        /* @__PURE__ */ u("div", { className: "flex gap-2", children: [
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "text-xs text-[var(--accent)] hover:underline cursor-pointer bg-transparent border-none p-0",
+              disabled: busy,
+              onClick: () => bulkToggle(true),
+              children: t("onboarding:skills.enableAll")
+            }
+          ),
+          /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: "/" }),
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "text-xs text-[var(--accent)] hover:underline cursor-pointer bg-transparent border-none p-0",
+              disabled: busy,
+              onClick: () => bulkToggle(false),
+              children: t("onboarding:skills.disableAll")
+            }
+          )
+        ] })
+      ] }),
+      /* @__PURE__ */ u("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2", children: categories.map((cat) => {
+        const meta = CATEGORY_META[cat.name];
+        const icon = (meta == null ? void 0 : meta.icon) || "📦";
+        const desc = (meta == null ? void 0 : meta.desc) || "";
+        return /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            onClick: () => toggle(cat),
+            disabled: busy,
+            className: `flex items-start gap-3 p-3 rounded-md border text-left cursor-pointer transition-colors ${cat.enabled ? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]" : "border-[var(--border)] bg-[var(--surface)] opacity-60"}`,
+            children: [
+              /* @__PURE__ */ u("span", { className: "text-lg shrink-0 mt-0.5", children: icon }),
+              /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+                /* @__PURE__ */ u("div", { className: "flex items-center gap-2", children: [
+                  /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: categoryLabel(cat.name) }),
+                  /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: [
+                    "(",
+                    cat.count,
+                    ")"
+                  ] })
+                ] }),
+                desc && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: desc })
+              ] }),
+              /* @__PURE__ */ u("div", { className: "shrink-0 mt-1", children: cat.enabled ? /* @__PURE__ */ u("span", { className: "icon icon-check-circle text-[var(--accent)]" }) : /* @__PURE__ */ u("span", { className: "w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block" }) })
+            ]
+          },
+          cat.name
+        );
+      }) })
+    ] }),
+    /* @__PURE__ */ u("div", { className: "flex flex-wrap items-center gap-3 mt-1", children: [
+      onBack && /* @__PURE__ */ u("button", { type: "button", className: "provider-btn provider-btn-secondary", onClick: onBack, children: t("common:actions.back") }),
+      /* @__PURE__ */ u("div", { className: "flex-1" }),
+      /* @__PURE__ */ u("button", { type: "button", className: "provider-btn", onClick: onNext, children: t("common:actions.continue") })
+    ] })
+  ] });
+}
 const WS_RETRY_LIMIT = 75;
 const WS_RETRY_DELAY_MS = 200;
 function OnboardingVoiceRow({
@@ -4577,13 +4720,13 @@ function SummaryStep({ onBack, onFinish }) {
   y(() => {
     let cancelled = false;
     async function load() {
-      var _a2;
+      var _a2, _b2, _c2;
       await refresh();
       const identity = get("identity");
       const mem = get("mem");
       const update = get("update");
       const voiceEnabled = get("voice_enabled") === true;
-      const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes] = await Promise.all([
+      const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes, skillsRes] = await Promise.all([
         sendRpc("providers.available", {}).catch(() => null),
         fetchChannelStatus().catch(() => null),
         fetch("/api/tailscale/status").then(
@@ -4594,19 +4737,29 @@ function SummaryStep({ onBack, onFinish }) {
           "/api/bootstrap?include_channels=false&include_sessions=false&include_models=false&include_projects=false&include_counts=false&include_identity=false"
         ).then(
           (r) => r.ok ? r.json() : null
-        ).catch(() => null)
+        ).catch(() => null),
+        sendRpc("skills.bundled.categories", {}).catch(() => null)
       ]);
       if (cancelled) return;
+      const skillsCats = (skillsRes == null ? void 0 : skillsRes.ok) ? ((_a2 = skillsRes.payload) == null ? void 0 : _a2.categories) || [] : [];
+      const skillsTotal = (skillsRes == null ? void 0 : skillsRes.ok) ? ((_b2 = skillsRes.payload) == null ? void 0 : _b2.total_skills) || 0 : 0;
+      const skillsEnabledCats = skillsCats.filter((c) => c.enabled);
       setData({
         identity,
         mem,
         update,
         voiceEnabled,
         providers: (providersRes == null ? void 0 : providersRes.ok) ? providersRes.payload || [] : [],
-        channels: (channelsRes == null ? void 0 : channelsRes.ok) ? ((_a2 = channelsRes.payload) == null ? void 0 : _a2.channels) || [] : [],
+        channels: (channelsRes == null ? void 0 : channelsRes.ok) ? ((_c2 = channelsRes.payload) == null ? void 0 : _c2.channels) || [] : [],
         tailscale: tailscaleRes,
         voice: (voiceRes == null ? void 0 : voiceRes.ok) ? voiceRes.payload || { tts: [], stt: [] } : null,
-        sandbox: (bootstrapRes == null ? void 0 : bootstrapRes.sandbox) || null
+        sandbox: (bootstrapRes == null ? void 0 : bootstrapRes.sandbox) || null,
+        skills: skillsCats.length ? {
+          enabledCategories: skillsEnabledCats.length,
+          totalCategories: skillsCats.length,
+          enabledSkills: skillsEnabledCats.reduce((sum, c) => sum + c.count, 0),
+          totalSkills: skillsTotal
+        } : null
       });
       setLoading(false);
     }
@@ -4673,6 +4826,18 @@ function SummaryStep({ onBack, onFinish }) {
           }) }) : /* @__PURE__ */ u(S, { children: "No channels configured" })
         }
       ),
+      data.skills && /* @__PURE__ */ u(SummaryRow, { icon: data.skills.enabledCategories > 0 ? /* @__PURE__ */ u(CheckIcon, {}) : /* @__PURE__ */ u(InfoIcon, {}), label: "Skills", children: [
+        /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: data.skills.enabledSkills }),
+        " skills enabled across",
+        " ",
+        /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text)]", children: [
+          data.skills.enabledCategories,
+          "/",
+          data.skills.totalCategories
+        ] }),
+        " ",
+        "categories"
+      ] }),
       /* @__PURE__ */ u(
         SummaryRow,
         {
@@ -4819,6 +4984,7 @@ function OnboardingPage() {
   allLabels.push(t("onboarding:steps.llm"));
   if (voiceAvailable) allLabels.push(t("onboarding:steps.voice"));
   allLabels.push(
+    t("onboarding:steps.skills"),
     t("onboarding:steps.remoteAccess"),
     t("onboarding:steps.channel"),
     t("onboarding:steps.identity"),
@@ -4830,6 +4996,7 @@ function OnboardingPage() {
   const importStep = openclawDetected ? nextIdx++ : -1;
   const llmStep = nextIdx++;
   const voiceStep = voiceAvailable ? nextIdx++ : -1;
+  const skillsStep = nextIdx++;
   const remoteAccessStep = nextIdx++;
   const channelStep = nextIdx++;
   const identityStep = nextIdx++;
@@ -4855,6 +5022,7 @@ function OnboardingPage() {
       step === importStep && /* @__PURE__ */ u(OpenClawImportStep, { onNext: goNext, onBack: authNeeded ? goBack : null }),
       step === llmStep && /* @__PURE__ */ u(ProviderStep, { onNext: goNext, onBack: authNeeded || openclawDetected ? goBack : null }),
       step === voiceStep && /* @__PURE__ */ u(VoiceStep, { onNext: goNext, onBack: goBack }),
+      step === skillsStep && /* @__PURE__ */ u(SkillsStep, { onNext: goNext, onBack: goBack }),
       step === remoteAccessStep && /* @__PURE__ */ u(RemoteAccessStep, { onNext: goNext, onBack: goBack }),
       step === channelStep && /* @__PURE__ */ u(ChannelStep, { onNext: goNext, onBack: goBack }),
       step === identityStep && /* @__PURE__ */ u(IdentityStep, { onNext: goNext, onBack: goBack }),

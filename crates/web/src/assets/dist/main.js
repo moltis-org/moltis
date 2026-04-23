@@ -3,7 +3,7 @@ var _a, _b;
 import { u, f as forceReconnect, c as connectWs, s as subscribeEvents, _ as _wsConnect } from "./chunks/ws-connect.js";
 import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as commandModeEnabled, e as sessionExecPromptSymbol, g as chatBatchLoading, h as sessionContextWindow, i as sessionToolsEnabled, j as sessionExecMode, k as sessionCurrentInputTokens, _ as __vitePreload, l as setUnseenErrors, m as setUnseenWarns, n as unseenErrors, o as unseenWarns, q as connected, r as sessionStore, t as sessions, v as activeSessionKey, w as lastHistoryIndex, x as setLastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeComboBtn, U as nodeDropdownList, V as nodeCombo, W as nodeDropdown, X as nodeComboLabel, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as j, a7 as setSessionSandboxEnabled, a8 as hostExecIsRoot, a9 as sandboxLabel, aa as sandboxToggleBtn, ab as sessionSandboxEnabled, ac as setSessionSandboxImage, ad as sandboxImageLabel, ae as sandboxInfo, af as sandboxImageDropdown, ag as sandboxImageBtn, ah as sessionSandboxImage, ai as projectStore, aj as setSessions, ak as insertSessionInOrder, al as Session, am as chatSeq, an as setSelectedModelId, ao as modelComboLabel, ap as setSessionSwitchInProgress, aq as setStreamEl, ar as setStreamText, as as setLastToolOutput, at as setVoicePending, au as setActiveSessionKey, av as y$1, aw as d, ax as A, ay as S, az as projectFilterId, aA as getById$1, aB as q, aC as warmAudioPlayback, aD as selectedModelId, aE as formatBytes$3, aF as setCommandModeEnabled, aG as chatHistory, aH as chatHistoryIdx, aI as setChatHistoryDraft, aJ as setChatHistoryIdx, aK as chatHistoryDraft, aL as setChatHistory, aM as R, aN as setChatMsgBox, aO as setChatInput, aP as setChatSendBtn, aQ as setModelCombo, aR as setModelComboBtn, aS as setModelComboLabel, aT as setModelDropdown, aU as setModelSearchInput, aV as setModelDropdownList, aW as setNodeCombo, aX as setNodeComboBtn, aY as setNodeComboLabel, aZ as setNodeDropdown, a_ as setNodeDropdownList, a$ as setSandboxToggleBtn, b0 as setSandboxLabel, b1 as setSandboxImageBtn, b2 as setSandboxImageLabel, b3 as setSandboxImageDropdown, b4 as models, b5 as chatSendBtn, b6 as setModels, b7 as modelComboBtn, b8 as modelSearchInput, b9 as modelDropdownList, ba as modelCombo, bb as modelDropdown, bc as setModelIdx, bd as modelIdx, be as REASONING_SEP, bf as models$1, bg as useSignal, bh as connected$1, bi as setCachedChannels, bj as setRefreshChannelsPage, bk as cachedChannels, bl as setChannelEventUnsub, bm as channelEventUnsub, bn as setProjects, bo as setProjectFilterId, bp as refreshProvidersPage, bq as modelVersionScore, br as streamEl, bs as renderMapPointGroups, bt as renderMapLinks, bu as lastToolOutput, bv as localizeStructuredError, bw as voicePending, bx as streamText, by as setSandboxInfo, bz as networkAuditEventHandler, bA as logsEventHandler, bB as setSubscribed, bC as projects$1, bD as sandboxInfo$1, bE as localizedApiErrorMessage, bF as setLogsEventHandler, bG as setNetworkAuditEventHandler, bH as setRefreshProvidersPage, bI as setLocale, bJ as esc, bK as projectStore$1, bL as _modelStore, bM as S$1, bN as _sessionStoreModule, bO as _i18n, bP as _helpers, bQ as initTheme, bR as injectMarkdownStyles, bS as init, bT as translateStaticElements, bU as setAll$1, bV as setAll$2, bW as select$1, bX as selectedModelId$1 } from "./chunks/theme.js";
 import { f as formatPageTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
-import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as buildTeamsEndpoint, s as generateWebhookSecretHex, u as defaultTeamsBaseUrl, w as channelStorageNote, x as providerApiKeyHelp, y as validateProviderKey, z as completeProviderOAuth, A as startProviderOAuth, B as saveProviderKey, D as testModel, E as isModelServiceNotConfigured, F as isTimeoutError, G as humanizeProbeError, H as eventListeners, I as refresh, J as EmojiPicker, K as validateIdentityFields, L as updateIdentity, N as set, O as prepareCreationOptions, P as detectPasskeyName, Q as fetchVoiceProviders, R as fetchPhrase, S as testTts, T as decodeBase64Safe, U as transcribeAudio$1, V as toggleVoiceProvider, W as saveVoiceKey, X as saveVoiceSettings, Y as gon, _ as _events } from "./chunks/voice-utils.js";
+import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as buildTeamsEndpoint, s as generateWebhookSecretHex, u as defaultTeamsBaseUrl, T as TabBar$1, w as channelStorageNote, x as providerApiKeyHelp, y as validateProviderKey, z as completeProviderOAuth, A as startProviderOAuth, B as saveProviderKey, D as testModel, E as isModelServiceNotConfigured, F as isTimeoutError, G as humanizeProbeError, H as eventListeners, I as refresh, J as isRepoSource, S as SkillSource, K as CATEGORY_META, L as categoryLabel, N as isDiscoveredSource, O as EmojiPicker, P as validateIdentityFields, Q as updateIdentity, R as set, U as prepareCreationOptions, V as detectPasskeyName, W as fetchVoiceProviders, X as fetchPhrase, Y as testTts, Z as decodeBase64Safe, _ as transcribeAudio$1, $ as toggleVoiceProvider, a0 as saveVoiceKey, a1 as saveVoiceSettings, a2 as gon, a3 as _events } from "./chunks/voice-utils.js";
 import "./chunks/time-format.js";
 const BYTE_UNITS = [
   "B",
@@ -9150,7 +9150,7 @@ function prefetchChannels() {
   });
 }
 const senders = y([]);
-const activeTab$1 = y("channels");
+const activeTab$2 = y("channels");
 const showAddTelegram = y(false);
 const showAddTeams = y(false);
 const showAddDiscord = y(false);
@@ -9735,7 +9735,7 @@ function handleChannelEvent(_payload) {
     loadChannels();
   }
   const selected = parseSenderSelectionKey(sendersAccount.value || "");
-  if (activeTab$1.value === "senders" && selected.account_id === p.account_id && selected.type === channelType(p.channel_type) && (p.kind === "inbound_message" || p.kind === "otp_challenge" || p.kind === "otp_resolved")) {
+  if (activeTab$2.value === "senders" && selected.account_id === p.account_id && selected.type === channelType(p.channel_type) && (p.kind === "inbound_message" || p.kind === "otp_challenge" || p.kind === "otp_resolved")) {
     loadSenders();
   }
 }
@@ -9752,37 +9752,27 @@ function ChannelsPageComponent() {
       setChannelEventUnsub(null);
     };
   }, [connected$1.value]);
+  const channelsTabs = g(() => [
+    { id: "channels", label: "Channels", badge: channels.value.length || void 0 },
+    { id: "senders", label: "Senders", badge: senders.value.length || void 0 }
+  ]);
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
     /* @__PURE__ */ u("div", { className: "flex items-center gap-3 flex-wrap", children: [
       /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Channels" }),
-      /* @__PURE__ */ u("div", { style: { display: "flex", gap: "4px", marginLeft: "12px" }, children: [
-        /* @__PURE__ */ u(
-          "button",
-          {
-            className: "session-action-btn",
-            style: activeTab$1.value === "channels" ? { fontWeight: 600 } : void 0,
-            onClick: () => {
-              activeTab$1.value = "channels";
-            },
-            children: "Channels"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            className: "session-action-btn",
-            style: activeTab$1.value === "senders" ? { fontWeight: 600 } : void 0,
-            onClick: () => {
-              activeTab$1.value = "senders";
-            },
-            children: "Senders"
-          }
-        )
-      ] }),
-      activeTab$1.value === "channels" && channels.value.length > 0 && /* @__PURE__ */ u(ConnectButtons, {})
+      activeTab$2.value === "channels" && channels.value.length > 0 && /* @__PURE__ */ u(ConnectButtons, {})
     ] }),
-    activeTab$1.value === "channels" && /* @__PURE__ */ u(ChannelStorageNotice, {}),
-    activeTab$1.value === "channels" ? /* @__PURE__ */ u(ChannelsTab, {}) : /* @__PURE__ */ u(SendersTab, {}),
+    /* @__PURE__ */ u(
+      TabBar$1,
+      {
+        tabs: channelsTabs.value,
+        active: activeTab$2.value,
+        onChange: (id) => {
+          activeTab$2.value = id;
+        }
+      }
+    ),
+    activeTab$2.value === "channels" && /* @__PURE__ */ u(ChannelStorageNotice, {}),
+    activeTab$2.value === "channels" ? /* @__PURE__ */ u(ChannelsTab, {}) : /* @__PURE__ */ u(SendersTab, {}),
     /* @__PURE__ */ u(AddTelegramModal, {}),
     /* @__PURE__ */ u(AddTeamsModal, {}),
     /* @__PURE__ */ u(AddDiscordModal, {}),
@@ -9799,7 +9789,7 @@ let _channelsContainer = null;
 function initChannels(container) {
   _channelsContainer = container;
   container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
-  activeTab$1.value = "channels";
+  activeTab$2.value = "channels";
   showAddTelegram.value = false;
   showAddTeams.value = false;
   showAddDiscord.value = false;
@@ -14850,44 +14840,6 @@ function InstallProgressBar() {
     p.id
   )) });
 }
-function SecurityWarning() {
-  const dismissed = useSignal(!!localStorage.getItem("moltis-skills-warning-dismissed"));
-  if (dismissed.value) return null;
-  return /* @__PURE__ */ u("div", { className: "skills-warn", children: [
-    /* @__PURE__ */ u("div", { className: "skills-warn-title", children: [
-      "⚠️",
-      " Skills run code on your machine"
-    ] }),
-    /* @__PURE__ */ u("div", { children: [
-      "Skills are community-authored instructions the agent follows ",
-      /* @__PURE__ */ u("strong", { children: "with your full system privileges" }),
-      "."
-    ] }),
-    /* @__PURE__ */ u("div", { style: { marginTop: "6px", color: "var(--success, #4a4)" }, children: "With sandbox mode enabled, execution is isolated." }),
-    /* @__PURE__ */ u("div", { style: { display: "flex", gap: "8px", marginTop: "8px" }, children: [
-      /* @__PURE__ */ u(
-        "button",
-        {
-          onClick: () => {
-            localStorage.setItem("moltis-skills-warning-dismissed", "1");
-            dismissed.value = true;
-          },
-          style: {
-            background: "none",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius-sm)",
-            fontSize: ".72rem",
-            padding: "3px 10px",
-            cursor: "pointer",
-            color: "var(--muted)"
-          },
-          children: "Dismiss"
-        }
-      ),
-      /* @__PURE__ */ u("button", { className: "provider-btn provider-btn-danger provider-btn-sm", onClick: emergencyDisableAllSkills, children: "Disable all" })
-    ] })
-  ] });
-}
 function InstallBox$1() {
   const ref = A(null);
   const installing = useSignal(false);
@@ -15067,7 +15019,7 @@ function SkillDetailPanel({
     }
   }, [d2 == null ? void 0 : d2.body_html]);
   if (!d2) return null;
-  const isDisc = d2.source === "personal" || d2.source === "project";
+  const isDisc = isDiscoveredSource(d2.source);
   function doToggle() {
     actionBusy.value = true;
     sendRpc(d2.enabled ? "skills.skill.disable" : "skills.skill.enable", { source: repoSource, skill: d2.name }).then(
@@ -15404,6 +15356,82 @@ function RepoCard({ repo }) {
     ] })
   ] });
 }
+const bundledCategories = y([]);
+const bundledTotal = y(0);
+function fetchBundledCategories() {
+  sendRpc("skills.bundled.categories", {}).then((res) => {
+    if (res == null ? void 0 : res.ok) {
+      const payload = res.payload;
+      bundledCategories.value = payload.categories || [];
+      bundledTotal.value = payload.total_skills || 0;
+    }
+  });
+}
+function BundledCategoriesSection() {
+  const cats = bundledCategories.value;
+  const toggling = useSignal(null);
+  y$1(() => {
+    fetchBundledCategories();
+  }, []);
+  if (!cats.length) return /* @__PURE__ */ u(S, {});
+  function toggle(cat) {
+    if (toggling.value) return;
+    const newEnabled = !cat.enabled;
+    toggling.value = cat.name;
+    sendRpc("skills.bundled.toggle_category", { category: cat.name, enabled: newEnabled }).then((res) => {
+      toggling.value = null;
+      if (res == null ? void 0 : res.ok) {
+        bundledCategories.value = bundledCategories.value.map(
+          (c) => c.name === cat.name ? { ...c, enabled: newEnabled } : c
+        );
+        fetchAll();
+      } else {
+        showToast$3(`Failed: ${(res == null ? void 0 : res.error) || "unknown"}`, "error");
+      }
+    });
+  }
+  const enabledCount = cats.filter((c) => c.enabled).length;
+  return /* @__PURE__ */ u("div", { className: "skills-section", children: [
+    /* @__PURE__ */ u("div", { className: "flex items-center gap-3 mb-2", children: /* @__PURE__ */ u("h3", { className: "skills-section-title", style: { margin: 0 }, children: [
+      t("skills:bundledTitle"),
+      /* @__PURE__ */ u("span", { className: "ml-2 text-xs font-normal text-[var(--muted)]", children: [
+        "(",
+        enabledCount,
+        "/",
+        cats.length,
+        " enabled)"
+      ] })
+    ] }) }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] mb-3", children: t("skills:bundledDescription") }),
+    /* @__PURE__ */ u("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2", children: cats.map((cat) => {
+      const meta = CATEGORY_META[cat.name];
+      const icon = (meta == null ? void 0 : meta.icon) || "📦";
+      return /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          onClick: () => toggle(cat),
+          disabled: toggling.value === cat.name,
+          className: `flex items-center gap-2 px-3 py-2 rounded-md border text-left cursor-pointer transition-colors ${cat.enabled ? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]" : "border-[var(--border)] bg-[var(--surface)] opacity-60"}`,
+          children: [
+            /* @__PURE__ */ u("span", { className: "text-base shrink-0", children: icon }),
+            /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+              /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: categoryLabel(cat.name) }),
+              /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)] ml-1", children: [
+                "(",
+                cat.count,
+                ")"
+              ] }),
+              (meta == null ? void 0 : meta.desc) && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] truncate", children: meta.desc })
+            ] }),
+            cat.enabled ? /* @__PURE__ */ u("span", { className: "icon icon-check-circle text-[var(--accent)] shrink-0" }) : /* @__PURE__ */ u("span", { className: "w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block shrink-0" })
+          ]
+        },
+        cat.name
+      );
+    }) })
+  ] });
+}
 function ReposSection() {
   var _a2;
   return /* @__PURE__ */ u("div", { className: "skills-section", children: [
@@ -15439,7 +15467,7 @@ function EnabledSkillsTable() {
     return true;
   });
   function isDisc(sk) {
-    return sk.source === "personal" || sk.source === "project";
+    return isDiscoveredSource(sk.source);
   }
   function doDisable(sk) {
     pending.value = sk.name;
@@ -15585,7 +15613,7 @@ function EnabledSkillsTable() {
         /* @__PURE__ */ u("th", {})
       ] }) }),
       /* @__PURE__ */ u("tbody", { children: filtered.map((sk) => {
-        var _a2, _b2;
+        var _a2;
         const isActive = ((_a2 = activeDetail.value) == null ? void 0 : _a2.name) === sk.name;
         return /* @__PURE__ */ u(S, { children: [
           /* @__PURE__ */ u(
@@ -15614,8 +15642,8 @@ function EnabledSkillsTable() {
                   }
                 ),
                 /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: sk.description || "—" }),
-                /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: /* @__PURE__ */ u("span", { className: ((_b2 = sk.source) == null ? void 0 : _b2.includes("/")) ? "tier-badge" : "recommended-badge", children: sk.source }) }),
-                /* @__PURE__ */ u("td", { style: { padding: "8px 12px", textAlign: "right" }, children: sk.source !== "bundled" && /* @__PURE__ */ u(
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: /* @__PURE__ */ u("span", { className: isRepoSource(sk.source) ? "tier-badge" : "recommended-badge", children: sk.source }) }),
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px", textAlign: "right" }, children: sk.source !== SkillSource.Bundled && /* @__PURE__ */ u(
                   "button",
                   {
                     disabled: isDisc(sk) && sk.protected === true || pending.value === sk.name,
@@ -15640,10 +15668,10 @@ function EnabledSkillsTable() {
                 activeDetail.value = null;
               },
               onReload: () => {
-                var _a3, _b3;
+                var _a3, _b2;
                 return loadDetail({
                   name: (_a3 = activeDetail.value) == null ? void 0 : _a3.name,
-                  source: (_b3 = activeDetail.value) == null ? void 0 : _b3.source
+                  source: (_b2 = activeDetail.value) == null ? void 0 : _b2.source
                 });
               }
             }
@@ -15653,9 +15681,20 @@ function EnabledSkillsTable() {
     ] }) })
   ] });
 }
+const activeTab$1 = y("skills");
+const skillsTabs = g(() => {
+  const enabledCats = bundledCategories.value.filter((c) => c.enabled).length;
+  const totalCats = bundledCategories.value.length;
+  return [
+    { id: "skills", label: "Skills", badge: enabledSkills.value.length || void 0 },
+    { id: "categories", label: "Categories", badge: totalCats ? `${enabledCats}/${totalCats}` : void 0 },
+    { id: "repositories", label: "Repositories", badge: repos.value.length || void 0 }
+  ];
+});
 function SkillsPageComponent() {
   y$1(() => {
     ensurePrefetch().then(() => fetchAll());
+    fetchBundledCategories();
     const off2 = onEvent("skills.install.progress", (p) => {
       const d2 = p;
       if (!(d2 == null ? void 0 : d2.op_id)) return;
@@ -15685,14 +15724,28 @@ function SkillsPageComponent() {
         }
       )
     ] }),
-    /* @__PURE__ */ u(SecurityWarning, {}),
-    /* @__PURE__ */ u(InstallBox$1, {}),
-    /* @__PURE__ */ u(BundleTransferBox, {}),
-    /* @__PURE__ */ u(InstallProgressBar, {}),
-    /* @__PURE__ */ u(FeaturedSection$1, {}),
-    /* @__PURE__ */ u(ReposSection, {}),
-    loading$7.value && !enabledSkills.value.length && !repos.value.length && /* @__PURE__ */ u("div", { style: { padding: "24px", textAlign: "center", color: "var(--muted)" }, children: "Loading skills..." }),
-    /* @__PURE__ */ u(EnabledSkillsTable, {})
+    /* @__PURE__ */ u(
+      TabBar$1,
+      {
+        tabs: skillsTabs.value,
+        active: activeTab$1.value,
+        onChange: (id) => {
+          activeTab$1.value = id;
+        }
+      }
+    ),
+    activeTab$1.value === "skills" && /* @__PURE__ */ u(S, { children: [
+      loading$7.value && !enabledSkills.value.length && /* @__PURE__ */ u("div", { style: { padding: "24px", textAlign: "center", color: "var(--muted)" }, children: "Loading skills..." }),
+      /* @__PURE__ */ u(EnabledSkillsTable, {})
+    ] }),
+    activeTab$1.value === "categories" && /* @__PURE__ */ u(BundledCategoriesSection, {}),
+    activeTab$1.value === "repositories" && /* @__PURE__ */ u(S, { children: [
+      /* @__PURE__ */ u(InstallBox$1, {}),
+      /* @__PURE__ */ u(BundleTransferBox, {}),
+      /* @__PURE__ */ u(InstallProgressBar, {}),
+      /* @__PURE__ */ u(FeaturedSection$1, {}),
+      /* @__PURE__ */ u(ReposSection, {})
+    ] })
   ] });
 }
 let _skillsContainer = null;
@@ -20102,30 +20155,6 @@ function StatusMessage({ error: error2, success, className }) {
   const color = error2 ? "var(--error)" : "var(--accent)";
   const text = error2 ?? success;
   return /* @__PURE__ */ u("div", { className: className ?? "text-xs mt-2", style: { color }, children: text });
-}
-function TabBar$1({ tabs, active, onChange: onChange2, className }) {
-  return /* @__PURE__ */ u("div", { className: className ?? "flex border-b border-[var(--border)] text-xs", role: "tablist", children: tabs.map((tab) => {
-    const isActive = tab.id === active;
-    const tabClass = [
-      "py-2 px-3 cursor-pointer bg-transparent border-b-2 transition-colors text-sm",
-      isActive ? "border-[var(--accent)] text-[var(--text)] font-medium" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"
-    ].join(" ");
-    return /* @__PURE__ */ u(
-      "button",
-      {
-        type: "button",
-        role: "tab",
-        "aria-selected": isActive,
-        className: tabClass,
-        onClick: () => onChange2(tab.id),
-        children: [
-          tab.label,
-          tab.badge != null && /* @__PURE__ */ u("span", { className: "ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]", children: tab.badge })
-        ]
-      },
-      tab.id
-    );
-  }) });
 }
 const metricsData = y(null);
 const historyPoints = y([]);
@@ -28505,6 +28534,14 @@ function NotificationsSection() {
     ] })
   ] });
 }
+const IMPORT_CATEGORY_ICONS = {
+  identity: "👤",
+  providers: "🔑",
+  skills: "✨",
+  memory: "🧠",
+  channels: "💬",
+  sessions: "💾"
+};
 function OpenClawImportSection() {
   const [importLoading, setImportLoading] = d(true);
   const [scan, setScan] = d(null);
@@ -28663,31 +28700,28 @@ function OpenClawImportSection() {
           children: "Import Again"
         }
       )
-    ] }) : /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", style: { maxWidth: "400px" }, children: categories.map((cat) => /* @__PURE__ */ u(
-      "label",
-      {
-        className: `flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}`,
-        children: [
-          /* @__PURE__ */ u(
-            "input",
-            {
-              type: "checkbox",
-              checked: selection[cat.key] && cat.available,
-              disabled: !cat.available || importing,
-              onChange: () => toggleCategory(cat.key)
-            }
-          ),
-          /* @__PURE__ */ u("span", { children: cat.label }),
-          cat.detail && cat.available ? /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: [
-            "(",
-            cat.detail,
-            ")"
-          ] }) : null,
-          cat.available ? null : /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: "(not found)" })
-        ]
-      },
-      cat.key
-    )) }),
+    ] }) : /* @__PURE__ */ u("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2", style: { maxWidth: "600px" }, children: categories.map((cat) => {
+      const checked = selection[cat.key] && cat.available;
+      return /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          onClick: () => cat.available && !importing && toggleCategory(cat.key),
+          disabled: !cat.available || importing,
+          className: `flex items-center gap-3 p-3 rounded-md border text-left cursor-pointer transition-colors ${cat.available ? checked ? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]" : "border-[var(--border)] bg-[var(--surface)] opacity-60" : "border-[var(--border)] bg-[var(--surface)] opacity-40 cursor-not-allowed"}`,
+          children: [
+            /* @__PURE__ */ u("span", { className: "text-lg shrink-0", children: IMPORT_CATEGORY_ICONS[cat.key] || "📦" }),
+            /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+              /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: cat.label }),
+              cat.detail && cat.available ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: cat.detail }) : null,
+              cat.available ? null : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: "not found" })
+            ] }),
+            /* @__PURE__ */ u("div", { className: "shrink-0", children: checked ? /* @__PURE__ */ u("span", { className: "icon icon-check-circle text-[var(--accent)]" }) : /* @__PURE__ */ u("span", { className: "w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block" }) })
+          ]
+        },
+        cat.key
+      );
+    }) }),
     !done && unsupportedChannels.length > 0 ? /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", style: { maxWidth: "600px" }, children: [
       "Unsupported channels (coming soon): ",
       unsupportedChannels.join(", ")
@@ -29169,13 +29203,19 @@ function RemoteAccessSection() {
       ] })
     ] });
   }
+  const [activeTab2, setActiveTab] = d("tailscale");
+  const tsBadge = tsLoading ? void 0 : (tsStatus == null ? void 0 : tsStatus.mode) && tsStatus.mode !== "off" ? tsStatus.mode : void 0;
+  const ngBadge = ngLoading ? void 0 : (ngStatus == null ? void 0 : ngStatus.enabled) ? "on" : void 0;
+  const tabs = [
+    { id: "tailscale", label: "Tailscale", badge: tsBadge },
+    { id: "ngrok", label: "ngrok", badge: ngBadge }
+  ];
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
     /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Remote Access" }),
     /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed max-w-[60rem]", style: { margin: 0 }, children: "Choose how moltis is exposed beyond localhost. Tailscale is the safer default for tailnet access and optional public Funnel, while ngrok gives you a managed public HTTPS URL for teams, demos, and shared endpoints." }),
-    /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
-      renderTailscaleCard(),
-      renderNgrokCard()
-    ] })
+    /* @__PURE__ */ u(TabBar$1, { tabs, active: activeTab2, onChange: setActiveTab }),
+    activeTab2 === "tailscale" && renderTailscaleCard(),
+    activeTab2 === "ngrok" && renderNgrokCard()
   ] });
 }
 function bufToB64(buf) {
@@ -30314,310 +30354,302 @@ function SshSection() {
       rerender$1();
     }).catch((error2) => setError(error2.message));
   }
+  const [sshTab, setSshTab] = d("keys");
+  const sshTabs = [
+    { id: "keys", label: "Deploy Keys", badge: keys.length || void 0 },
+    { id: "targets", label: "Targets", badge: targets.length || void 0 }
+  ];
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
     /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "SSH" }),
-    /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[760px]", children: [
-      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 mb-1.5 leading-relaxed", children: [
-        "Manage outbound SSH keys and named remote exec targets. Generated deploy keys use",
-        " ",
-        /* @__PURE__ */ u("strong", { className: "text-[var(--text)]", children: "Ed25519" }),
-        ", the private half stays inside Moltis, and the public half is shown so you can install it in ",
-        /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "authorized_keys" }),
-        "."
-      ] }),
-      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 leading-relaxed", children: [
-        "Current auth path:",
-        /* @__PURE__ */ u("strong", { className: "text-[var(--text)]", children: vaultStatus === "unsealed" ? " vault-backed managed keys are available" : vaultStatus === "sealed" ? " vault is locked, managed keys cannot be used until unlocked" : " system OpenSSH remains available, managed keys stay plaintext until the vault is enabled" })
-      ] })
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed max-w-[760px]", style: { margin: 0 }, children: [
+      "Manage outbound SSH keys and named remote exec targets. Current auth path:",
+      /* @__PURE__ */ u("strong", { className: "text-[var(--text)]", children: vaultStatus === "unsealed" ? " vault-backed managed keys are available" : vaultStatus === "sealed" ? " vault is locked, managed keys cannot be used until unlocked" : " system OpenSSH remains available, managed keys stay plaintext until the vault is enabled" })
     ] }),
     sshMsg ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--accent)]", children: sshMsg }) : null,
     sshErr ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)]", children: sshErr }) : null,
-    /* @__PURE__ */ u("div", { className: "grid gap-4 lg:grid-cols-2 max-w-[1100px]", children: [
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0 mb-2", children: "Deploy Keys" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 mb-3", children: "Generate a new keypair for a host, or import an existing private key. Passphrase-protected imports are decrypted once and then stored under Moltis control." }),
-        /* @__PURE__ */ u("div", { className: "mb-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-xs text-[var(--muted)] leading-relaxed", children: [
-          "Recommended flow: generate one deploy key per remote host, copy the public key below, add it to that host's ",
-          /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "~/.ssh/authorized_keys" }),
-          ", then pin the host key with",
-          /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "ssh-keyscan -H host" }),
-          " when creating the target."
-        ] }),
-        /* @__PURE__ */ u("form", { onSubmit: onGenerateKey, className: "flex flex-col gap-2 mb-4", children: [
-          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Generate deploy key" }),
-          /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u(
-              "input",
-              {
-                className: "provider-key-input flex-1 min-w-[180px]",
-                type: "text",
-                value: generateName,
-                onInput: (e) => setGenerateName(targetValue(e)),
-                placeholder: "production-box"
-              }
-            ),
-            /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: busyAction === "generate-key", children: busyAction === "generate-key" ? "Generating…" : "Generate" })
-          ] })
-        ] }),
-        /* @__PURE__ */ u("form", { onSubmit: onImportKey, className: "flex flex-col gap-2", children: [
-          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Import private key" }),
-          /* @__PURE__ */ u(
-            "input",
-            {
-              className: "provider-key-input",
-              type: "text",
-              value: importName,
-              onInput: (e) => setImportName(targetValue(e)),
-              placeholder: "existing-deploy-key"
-            }
-          ),
-          /* @__PURE__ */ u(
-            "textarea",
-            {
-              className: "provider-key-input min-h-[140px] font-mono text-xs",
-              value: importPrivateKey,
-              onInput: (e) => setImportPrivateKey(targetValue(e)),
-              placeholder: "-----BEGIN OPENSSH PRIVATE KEY-----"
-            }
-          ),
-          /* @__PURE__ */ u(
-            "input",
-            {
-              className: "provider-key-input",
-              type: "password",
-              value: importPassphrase,
-              onInput: (e) => setImportPassphrase(targetValue(e)),
-              placeholder: "Optional import passphrase"
-            }
-          ),
-          /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: busyAction === "import-key", children: busyAction === "import-key" ? "Importing…" : "Import Key" })
-        ] }),
-        /* @__PURE__ */ u("div", { className: "mt-4 flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading keys..." }) : keys.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No managed SSH keys yet." }) : keys.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item items-start gap-4", children: [
-          /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
-            /* @__PURE__ */ u("div", { className: "provider-item-name", children: entry.name }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all mt-1", children: [
-              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Fingerprint (SHA256):" }),
-              " ",
-              entry.fingerprint
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: [
-              entry.encrypted ? "Encrypted in vault" : "Stored plaintext until the vault is available",
-              (entry.target_count ?? 0) > 0 ? `, used by ${entry.target_count} target${entry.target_count === 1 ? "" : "s"}` : ""
-            ] }),
-            /* @__PURE__ */ u("pre", { className: "mt-3 whitespace-pre-wrap break-all rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-[11px] leading-relaxed text-[var(--muted)]", children: entry.public_key })
-          ] }),
-          /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 shrink-0 self-start", children: [
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onCopyPublicKey(entry),
-                children: copiedKeyId === entry.id ? "Copied" : "Copy Public Key"
-              }
-            ),
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-danger",
-                onClick: () => onDeleteKey(entry.id),
-                disabled: busyAction === `delete-key:${entry.id}` || (entry.target_count ?? 0) > 0,
-                children: busyAction === `delete-key:${entry.id}` ? "Deleting…" : "Delete"
-              }
-            )
-          ] })
-        ] }, entry.id)) })
+    /* @__PURE__ */ u(TabBar$1, { tabs: sshTabs, active: sshTab, onChange: setSshTab }),
+    sshTab === "keys" && /* @__PURE__ */ u("div", { className: "flex flex-col gap-4 max-w-[760px]", children: [
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0", children: "Generate a new keypair for a host, or import an existing private key. Passphrase-protected imports are decrypted once and then stored under Moltis control." }),
+      /* @__PURE__ */ u("div", { className: "mb-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-xs text-[var(--muted)] leading-relaxed", children: [
+        "Recommended flow: generate one deploy key per remote host, copy the public key below, add it to that host's ",
+        /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "~/.ssh/authorized_keys" }),
+        ", then pin the host key with",
+        /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "ssh-keyscan -H host" }),
+        " when creating the target."
       ] }),
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0 mb-2", children: "SSH Targets" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 mb-3", children: "Add named hosts for remote execution. Targets can use your system OpenSSH setup or one of the managed keys above." }),
-        /* @__PURE__ */ u("form", { onSubmit: onCreateTarget, className: "flex flex-col gap-2 mb-4", children: [
+      /* @__PURE__ */ u("form", { onSubmit: onGenerateKey, className: "flex flex-col gap-2 mb-4", children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Generate deploy key" }),
+        /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
           /* @__PURE__ */ u(
             "input",
             {
-              className: "provider-key-input",
+              className: "provider-key-input flex-1 min-w-[180px]",
               type: "text",
-              value: targetLabel,
-              onInput: (e) => setTargetLabel(targetValue(e)),
-              placeholder: "prod-box"
+              value: generateName,
+              onInput: (e) => setGenerateName(targetValue(e)),
+              placeholder: "production-box"
             }
           ),
-          /* @__PURE__ */ u(
-            "input",
-            {
-              className: "provider-key-input",
-              type: "text",
-              value: targetHost,
-              onInput: (e) => setTargetHost(targetValue(e)),
-              placeholder: "deploy@example.com"
-            }
-          ),
-          /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u(
-              "input",
-              {
-                className: "provider-key-input w-[120px]",
-                type: "number",
-                min: 1,
-                max: 65535,
-                value: targetPort,
-                onInput: (e) => setTargetPort(targetValue(e)),
-                placeholder: "22"
-              }
-            ),
-            /* @__PURE__ */ u(
-              "select",
-              {
-                className: "provider-key-input flex-1 min-w-[180px]",
-                value: targetAuthMode,
-                onInput: (e) => setTargetAuthMode(targetValue(e)),
-                children: [
-                  /* @__PURE__ */ u("option", { value: "managed", children: "Managed key" }),
-                  /* @__PURE__ */ u("option", { value: "system", children: "System OpenSSH" })
-                ]
-              }
-            )
+          /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: busyAction === "generate-key", children: busyAction === "generate-key" ? "Generating…" : "Generate" })
+        ] })
+      ] }),
+      /* @__PURE__ */ u("form", { onSubmit: onImportKey, className: "flex flex-col gap-2", children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Import private key" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "text",
+            value: importName,
+            onInput: (e) => setImportName(targetValue(e)),
+            placeholder: "existing-deploy-key"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "textarea",
+          {
+            className: "provider-key-input min-h-[140px] font-mono text-xs",
+            value: importPrivateKey,
+            onInput: (e) => setImportPrivateKey(targetValue(e)),
+            placeholder: "-----BEGIN OPENSSH PRIVATE KEY-----"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "password",
+            value: importPassphrase,
+            onInput: (e) => setImportPassphrase(targetValue(e)),
+            placeholder: "Optional import passphrase"
+          }
+        ),
+        /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: busyAction === "import-key", children: busyAction === "import-key" ? "Importing…" : "Import Key" })
+      ] }),
+      /* @__PURE__ */ u("div", { className: "mt-4 flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading keys..." }) : keys.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No managed SSH keys yet." }) : keys.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item items-start gap-4", children: [
+        /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+          /* @__PURE__ */ u("div", { className: "provider-item-name", children: entry.name }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all mt-1", children: [
+            /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Fingerprint (SHA256):" }),
+            " ",
+            entry.fingerprint
           ] }),
-          /* @__PURE__ */ u(
-            "textarea",
-            {
-              className: "provider-key-input min-h-[96px] font-mono text-xs",
-              value: targetKnownHost,
-              onInput: (e) => setTargetKnownHost(targetValue(e)),
-              placeholder: "Optional known_hosts line from ssh-keyscan -H host"
-            }
-          ),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
-            "If you paste a ",
-            /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "known_hosts" }),
-            " line here, Moltis will use strict host-key checking for this target instead of trusting your global SSH config."
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: [
+            entry.encrypted ? "Encrypted in vault" : "Stored plaintext until the vault is available",
+            (entry.target_count ?? 0) > 0 ? `, used by ${entry.target_count} target${entry.target_count === 1 ? "" : "s"}` : ""
           ] }),
+          /* @__PURE__ */ u("pre", { className: "mt-3 whitespace-pre-wrap break-all rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-[11px] leading-relaxed text-[var(--muted)]", children: entry.public_key })
+        ] }),
+        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 shrink-0 self-start", children: [
           /* @__PURE__ */ u(
             "button",
             {
               type: "button",
-              className: "provider-btn provider-btn-secondary self-start",
-              onClick: onScanCreateTargetHost,
-              disabled: busyAction === "scan-create-target",
-              children: busyAction === "scan-create-target" ? "Scanning…" : "Scan Host Key"
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onCopyPublicKey(entry),
+              children: copiedKeyId === entry.id ? "Copied" : "Copy Public Key"
             }
           ),
-          targetAuthMode === "managed" ? /* @__PURE__ */ u(
-            "select",
-            {
-              className: "provider-key-input",
-              value: targetKeyId,
-              onInput: (e) => setTargetKeyId(targetValue(e)),
-              children: [
-                /* @__PURE__ */ u("option", { value: "", children: "Choose a managed key" }),
-                keys.map((entry) => /* @__PURE__ */ u("option", { value: entry.id, children: entry.name }, entry.id))
-              ]
-            }
-          ) : null,
-          targetAuthMode === "managed" && keys.length === 0 ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Generate or import a deploy key first. Moltis cannot connect with a managed target until a private key exists." }) : null,
-          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] flex items-center gap-2", children: [
-            /* @__PURE__ */ u(
-              "input",
-              {
-                type: "checkbox",
-                checked: targetIsDefault,
-                onInput: (e) => setTargetIsDefault(targetChecked(e))
-              }
-            ),
-            "Set as default remote SSH target"
-          ] }),
           /* @__PURE__ */ u(
             "button",
             {
-              type: "submit",
-              className: "provider-btn self-start",
-              disabled: busyAction === "create-target" || targetAuthMode === "managed" && keys.length === 0,
-              children: busyAction === "create-target" ? "Saving…" : "Add Target"
+              type: "button",
+              className: "provider-btn provider-btn-danger",
+              onClick: () => onDeleteKey(entry.id),
+              disabled: busyAction === `delete-key:${entry.id}` || (entry.target_count ?? 0) > 0,
+              children: busyAction === `delete-key:${entry.id}` ? "Deleting…" : "Delete"
+            }
+          )
+        ] })
+      ] }, entry.id)) })
+    ] }),
+    sshTab === "targets" && /* @__PURE__ */ u("div", { className: "flex flex-col gap-4 max-w-[760px]", children: [
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0", children: "Add named hosts for remote execution. Targets can use your system OpenSSH setup or one of the managed keys." }),
+      /* @__PURE__ */ u("form", { onSubmit: onCreateTarget, className: "flex flex-col gap-2 mb-4", children: [
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "text",
+            value: targetLabel,
+            onInput: (e) => setTargetLabel(targetValue(e)),
+            placeholder: "prod-box"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "text",
+            value: targetHost,
+            onInput: (e) => setTargetHost(targetValue(e)),
+            placeholder: "deploy@example.com"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
+          /* @__PURE__ */ u(
+            "input",
+            {
+              className: "provider-key-input w-[120px]",
+              type: "number",
+              min: 1,
+              max: 65535,
+              value: targetPort,
+              onInput: (e) => setTargetPort(targetValue(e)),
+              placeholder: "22"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "select",
+            {
+              className: "provider-key-input flex-1 min-w-[180px]",
+              value: targetAuthMode,
+              onInput: (e) => setTargetAuthMode(targetValue(e)),
+              children: [
+                /* @__PURE__ */ u("option", { value: "managed", children: "Managed key" }),
+                /* @__PURE__ */ u("option", { value: "system", children: "System OpenSSH" })
+              ]
             }
           )
         ] }),
-        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading targets..." }) : targets.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No SSH targets configured." }) : targets.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item", children: [
-          /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
-            /* @__PURE__ */ u("div", { className: "provider-item-name flex items-center gap-2 flex-wrap", children: [
-              /* @__PURE__ */ u("span", { children: entry.label }),
-              entry.is_default ? /* @__PURE__ */ u(Badge, { label: "Default", variant: "configured" }) : null,
-              /* @__PURE__ */ u(Badge, { label: entry.auth_mode === "managed" ? "Managed key" : "System SSH" }),
-              entry.known_host ? /* @__PURE__ */ u(Badge, { label: "Host pinned", variant: "configured" }) : /* @__PURE__ */ u(Badge, { label: "Uses global known_hosts", variant: "warning" })
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all", children: [
-              entry.target,
-              entry.port ? `:${entry.port}` : ""
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: entry.key_name ? `Key: ${entry.key_name}` : "Uses your local ssh config / agent" }),
-            testResults[entry.id] ? /* @__PURE__ */ u("div", { className: "mt-1", children: [
-              /* @__PURE__ */ u(
-                "div",
-                {
-                  className: `text-xs ${testResults[entry.id].reachable ? "text-[var(--accent)]" : "text-[var(--error)]"}`,
-                  children: testResults[entry.id].reachable ? "Reachable" : "Unreachable"
-                }
-              ),
-              testResults[entry.id].failure_hint ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--text-muted)] mt-1", children: [
-                "Hint: ",
-                testResults[entry.id].failure_hint
-              ] }) : null
-            ] }) : null
+        /* @__PURE__ */ u(
+          "textarea",
+          {
+            className: "provider-key-input min-h-[96px] font-mono text-xs",
+            value: targetKnownHost,
+            onInput: (e) => setTargetKnownHost(targetValue(e)),
+            placeholder: "Optional known_hosts line from ssh-keyscan -H host"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
+          "If you paste a ",
+          /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "known_hosts" }),
+          " line here, Moltis will use strict host-key checking for this target instead of trusting your global SSH config."
+        ] }),
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-secondary self-start",
+            onClick: onScanCreateTargetHost,
+            disabled: busyAction === "scan-create-target",
+            children: busyAction === "scan-create-target" ? "Scanning…" : "Scan Host Key"
+          }
+        ),
+        targetAuthMode === "managed" ? /* @__PURE__ */ u(
+          "select",
+          {
+            className: "provider-key-input",
+            value: targetKeyId,
+            onInput: (e) => setTargetKeyId(targetValue(e)),
+            children: [
+              /* @__PURE__ */ u("option", { value: "", children: "Choose a managed key" }),
+              keys.map((entry) => /* @__PURE__ */ u("option", { value: entry.id, children: entry.name }, entry.id))
+            ]
+          }
+        ) : null,
+        targetAuthMode === "managed" && keys.length === 0 ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Generate or import a deploy key first. Moltis cannot connect with a managed target until a private key exists." }) : null,
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] flex items-center gap-2", children: [
+          /* @__PURE__ */ u(
+            "input",
+            {
+              type: "checkbox",
+              checked: targetIsDefault,
+              onInput: (e) => setTargetIsDefault(targetChecked(e))
+            }
+          ),
+          "Set as default remote SSH target"
+        ] }),
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "submit",
+            className: "provider-btn self-start",
+            disabled: busyAction === "create-target" || targetAuthMode === "managed" && keys.length === 0,
+            children: busyAction === "create-target" ? "Saving…" : "Add Target"
+          }
+        )
+      ] }),
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading targets..." }) : targets.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No SSH targets configured." }) : targets.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item", children: [
+        /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+          /* @__PURE__ */ u("div", { className: "provider-item-name flex items-center gap-2 flex-wrap", children: [
+            /* @__PURE__ */ u("span", { children: entry.label }),
+            entry.is_default ? /* @__PURE__ */ u(Badge, { label: "Default", variant: "configured" }) : null,
+            /* @__PURE__ */ u(Badge, { label: entry.auth_mode === "managed" ? "Managed key" : "System SSH" }),
+            entry.known_host ? /* @__PURE__ */ u(Badge, { label: "Host pinned", variant: "configured" }) : /* @__PURE__ */ u(Badge, { label: "Uses global known_hosts", variant: "warning" })
           ] }),
-          /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: [
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all", children: [
+            entry.target,
+            entry.port ? `:${entry.port}` : ""
+          ] }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: entry.key_name ? `Key: ${entry.key_name}` : "Uses your local ssh config / agent" }),
+          testResults[entry.id] ? /* @__PURE__ */ u("div", { className: "mt-1", children: [
             /* @__PURE__ */ u(
-              "button",
+              "div",
               {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onTestTarget(entry.id),
-                disabled: busyAction === `test-target:${entry.id}`,
-                children: busyAction === `test-target:${entry.id}` ? "Testing…" : "Test"
+                className: `text-xs ${testResults[entry.id].reachable ? "text-[var(--accent)]" : "text-[var(--error)]"}`,
+                children: testResults[entry.id].reachable ? "Reachable" : "Unreachable"
               }
             ),
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onScanAndPinTarget(entry),
-                disabled: busyAction === `pin-target:${entry.id}`,
-                children: busyAction === `pin-target:${entry.id}` ? "Scanning…" : entry.known_host ? "Refresh Pin" : "Scan & Pin"
-              }
-            ),
-            entry.known_host ? /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onClearTargetPin(entry),
-                disabled: busyAction === `clear-pin:${entry.id}`,
-                children: busyAction === `clear-pin:${entry.id}` ? "Clearing…" : "Clear Pin"
-              }
-            ) : null,
-            entry.is_default ? null : /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onSetDefaultTarget(entry.id),
-                disabled: busyAction === `default-target:${entry.id}`,
-                children: "Make Default"
-              }
-            ),
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-danger",
-                onClick: () => onDeleteTarget(entry.id),
-                disabled: busyAction === `delete-target:${entry.id}`,
-                children: busyAction === `delete-target:${entry.id}` ? "Deleting…" : "Delete"
-              }
-            )
-          ] })
-        ] }, entry.id)) })
-      ] })
+            testResults[entry.id].failure_hint ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--text-muted)] mt-1", children: [
+              "Hint: ",
+              testResults[entry.id].failure_hint
+            ] }) : null
+          ] }) : null
+        ] }),
+        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: [
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onTestTarget(entry.id),
+              disabled: busyAction === `test-target:${entry.id}`,
+              children: busyAction === `test-target:${entry.id}` ? "Testing…" : "Test"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onScanAndPinTarget(entry),
+              disabled: busyAction === `pin-target:${entry.id}`,
+              children: busyAction === `pin-target:${entry.id}` ? "Scanning…" : entry.known_host ? "Refresh Pin" : "Scan & Pin"
+            }
+          ),
+          entry.known_host ? /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onClearTargetPin(entry),
+              disabled: busyAction === `clear-pin:${entry.id}`,
+              children: busyAction === `clear-pin:${entry.id}` ? "Clearing…" : "Clear Pin"
+            }
+          ) : null,
+          entry.is_default ? null : /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onSetDefaultTarget(entry.id),
+              disabled: busyAction === `default-target:${entry.id}`,
+              children: "Make Default"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-danger",
+              onClick: () => onDeleteTarget(entry.id),
+              disabled: busyAction === `delete-target:${entry.id}`,
+              children: busyAction === `delete-target:${entry.id}` ? "Deleting…" : "Delete"
+            }
+          )
+        ] })
+      ] }, entry.id)) })
     ] })
   ] });
 }
@@ -30702,12 +30734,6 @@ function ToolsSection() {
   const sandbox = data.sandbox || {};
   const tools = Array.isArray(data.tools) ? data.tools : [];
   const toolGroups = groupToolsForOverview(tools);
-  const skills = Array.isArray(data.skills) ? data.skills : [];
-  const pluginCount = skills.filter((entry) => (entry == null ? void 0 : entry.source) === "plugin").length;
-  const personalSkillCount = skills.length - pluginCount;
-  const mcpServers = Array.isArray(data.mcpServers) ? data.mcpServers : [];
-  const runningMcpServers = mcpServers.filter((entry) => (entry == null ? void 0 : entry.state) === "running");
-  const runningMcpToolCount = runningMcpServers.reduce((sum, entry) => sum + (Number(entry == null ? void 0 : entry.tool_count) || 0), 0);
   const remoteExecInventory = summarizeRemoteExecInventory(nodeInventory);
   const routeDetails = [];
   routeDetails.push(execution.mode === "sandbox" ? "sandboxed commands" : "host commands");
@@ -30737,56 +30763,6 @@ function ToolsSection() {
         }
       )
     ] }),
-    /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[1100px]", children: [
-      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Use this as the operator view of what the model can currently reach. For setup changes, jump straight to the relevant control surface." }),
-      /* @__PURE__ */ u("div", { className: "mt-3 flex gap-2 flex-wrap", children: [
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("providers")),
-            children: "LLMs"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("mcp")),
-            children: "MCP"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("skills")),
-            children: "Skills"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("nodes")),
-            children: "Nodes"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("ssh")),
-            children: "SSH"
-          }
-        )
-      ] })
-    ] }),
     toolsErr ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)] max-w-[1100px]", children: toolsErr }) : null,
     /* @__PURE__ */ u("div", { className: "grid gap-4 md:grid-cols-2 max-w-[1100px]", children: [
       /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
@@ -30810,23 +30786,6 @@ function ToolsSection() {
         ] })
       ] }),
       /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)]", children: "MCP" }),
-        /* @__PURE__ */ u("div", { className: "mt-2 flex items-center gap-2 flex-wrap", children: [
-          /* @__PURE__ */ u(
-            "span",
-            {
-              className: `provider-item-badge ${data.supportsTools === false || data.mcpDisabled ? "warning" : runningMcpServers.length > 0 ? "configured" : "muted"}`,
-              children: data.supportsTools === false ? "Unavailable" : data.mcpDisabled ? "Off for session" : runningMcpServers.length > 0 ? "Active" : "No running servers"
-            }
-          ),
-          /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text)]", children: pluralizeToolsCount(runningMcpToolCount, "MCP tool") })
-        ] }),
-        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-2 leading-relaxed", children: [
-          pluralizeToolsCount(runningMcpServers.length, "running server"),
-          data.mcpDisabled ? ", disabled explicitly for this session." : "."
-        ] })
-      ] }),
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
         /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)]", children: "Execution Routes" }),
         /* @__PURE__ */ u("div", { className: "mt-2 text-sm font-medium text-[var(--text)]", children: routeDetails.join(" · ") }),
         /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-2 leading-relaxed", children: [
@@ -30847,66 +30806,30 @@ function ToolsSection() {
       ] }),
       " and refresh this page."
     ] }) }) : null,
-    /* @__PURE__ */ u("div", { className: "grid gap-4 md:grid-cols-2 max-w-[1100px]", children: [
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-          /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "Registered Tools" }),
-          /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: tools.length })
-        ] }),
-        toolGroups.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-3", children: toolGroups.map((group) => /* @__PURE__ */ u("div", { children: [
-          /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)] mb-2", children: [
-            group.label,
-            " ",
-            "·",
-            " ",
-            group.tools.length
-          ] }),
-          /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: group.tools.map((tool) => {
-            var _a2;
-            return /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
-              /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-                /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)] break-words", children: tool.name }),
-                ((_a2 = tool.name) == null ? void 0 : _a2.startsWith("mcp__")) ? /* @__PURE__ */ u("span", { className: "provider-item-badge configured", children: "MCP" }) : null
-              ] }),
-              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: tool.description || "No description provided." })
-            ] }, tool.name);
-          }) })
-        ] }, group.label)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No tools are currently exposed to this session." })
+    /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4 max-w-[1100px]", children: [
+      /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
+        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "Registered Tools" }),
+        /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: tools.length })
       ] }),
-      /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
-        /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-          /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "Skills & Plugins" }),
-            /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: skills.length })
-          ] }),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3 leading-relaxed", children: [
-            pluralizeToolsCount(personalSkillCount, "skill"),
-            ", ",
-            pluralizeToolsCount(pluginCount, "plugin"),
-            "."
-          ] }),
-          skills.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-2", children: skills.map((entry) => /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
-            /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-              /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)]", children: entry.name }),
-              /* @__PURE__ */ u("span", { className: `provider-item-badge ${entry.source === "plugin" ? "configured" : "muted"}`, children: entry.source === "plugin" ? "Plugin" : "Skill" })
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: entry.description || "No description provided." })
-          ] }, entry.name)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No skills or plugins enabled." })
+      toolGroups.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-3", children: toolGroups.map((group) => /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)] mb-2", children: [
+          group.label,
+          " ",
+          "·",
+          " ",
+          group.tools.length
         ] }),
-        /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-          /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "MCP Servers" }),
-            /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: mcpServers.length })
-          ] }),
-          mcpServers.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-2", children: mcpServers.map((entry) => /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
+        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: group.tools.map((tool) => {
+          var _a2;
+          return /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
             /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-              /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)]", children: entry.name }),
-              /* @__PURE__ */ u("span", { className: `provider-item-badge ${entry.state === "running" ? "configured" : "warning"}`, children: entry.state || "unknown" })
+              /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)] break-words", children: tool.name }),
+              ((_a2 = tool.name) == null ? void 0 : _a2.startsWith("mcp__")) ? /* @__PURE__ */ u("span", { className: "provider-item-badge configured", children: "MCP" }) : null
             ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: pluralizeToolsCount(Number(entry.tool_count) || 0, "tool") })
-          ] }, entry.name)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No MCP servers configured." })
-        ] })
-      ] })
+            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: tool.description || "No description provided." })
+          ] }, tool.name);
+        }) })
+      ] }, group.label)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No tools are currently exposed to this session." })
     ] })
   ] });
 }

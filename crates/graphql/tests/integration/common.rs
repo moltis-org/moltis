@@ -456,6 +456,14 @@ impl moltis_service_traits::SkillsService for MockSkills {
     async fn skill_save(&self, p: Value) -> ServiceResult {
         self.0.call("skills.skill.save", p)
     }
+
+    async fn bundled_categories(&self) -> ServiceResult {
+        self.0.call("skills.bundled.categories", json!({}))
+    }
+
+    async fn bundled_toggle_category(&self, p: Value) -> ServiceResult {
+        self.0.call("skills.bundled.toggle_category", p)
+    }
 }
 
 #[async_trait::async_trait]

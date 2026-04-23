@@ -686,6 +686,75 @@ impl SkillsService for NoopSkillsService {
         set_skill_trusted(&params, true)
     }
 
+    /// List bundled skill categories with skill counts and enabled state.
+    async fn bundled_categories(&self) -> ServiceResult {
+        #[cfg(feature = "bundled-skills")]
+        {
+            let store = moltis_skills::bundled::BundledSkillStore::new();
+            let skills = store.discover();
+            let config = moltis_config::discover_and_load();
+            let disabled = &config.skills.disabled_bundled_categories;
+
+            let mut cats: std::collections::BTreeMap<String, u32> =
+                std::collections::BTreeMap::new();
+            for s in &skills {
+                if let Some(cat) = &s.category {
+                    *cats.entry(cat.clone()).or_insert(0) += 1;
+                }
+            }
+
+            let categories: Vec<Value> = cats
+                .into_iter()
+                .map(|(name, count)| {
+                    let enabled = !disabled.iter().any(|d| d == &name);
+                    serde_json::json!({ "name": name, "count": count, "enabled": enabled })
+                })
+                .collect();
+
+            Ok(serde_json::json!({ "categories": categories, "total_skills": skills.len() }))
+        }
+        #[cfg(not(feature = "bundled-skills"))]
+        {
+            Ok(serde_json::json!({ "categories": [], "total_skills": 0 }))
+        }
+    }
+
+    /// Toggle a bundled skill category on or off.
+    async fn bundled_toggle_category(&self, params: Value) -> ServiceResult {
+        let category = params
+            .get("category")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'category' parameter".to_string())?;
+        let enabled = params
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .ok_or_else(|| "missing 'enabled' parameter".to_string())?;
+
+        let category = category.to_string();
+        let cat_clone = category.clone();
+
+        if let Err(e) = moltis_config::update_config(|cfg| {
+            if enabled {
+                cfg.skills
+                    .disabled_bundled_categories
+                    .retain(|c| c != &cat_clone);
+            } else if !cfg
+                .skills
+                .disabled_bundled_categories
+                .iter()
+                .any(|c| c == &cat_clone)
+            {
+                cfg.skills
+                    .disabled_bundled_categories
+                    .push(cat_clone.clone());
+            }
+        }) {
+            return Err(format!("failed to save config: {e}").into());
+        }
+
+        Ok(serde_json::json!({ "category": category, "enabled": enabled }))
+    }
+
     async fn skill_detail(&self, params: Value) -> ServiceResult {
         use moltis_skills::requirements::check_requirements;
 

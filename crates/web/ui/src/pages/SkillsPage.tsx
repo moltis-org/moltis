@@ -6,12 +6,22 @@ import { computed, signal, useSignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
+import { TabBar } from "../components/forms/Tabs";
 import { onEvent } from "../events";
 import { sendRpc } from "../helpers";
+import { t } from "../i18n";
 import { updateNavCount } from "../nav-counts";
 import { registerPage } from "../router";
 import { routes } from "../routes";
 import * as S from "../state";
+import {
+	type BundledCategory,
+	CATEGORY_META,
+	categoryLabel,
+	isDiscoveredSource,
+	isRepoSource,
+	SkillSource,
+} from "../types/skill-source";
 import { ConfirmDialog, requestConfirm } from "../ui";
 
 // ── Types ────────────────────────────────────────────────────
@@ -259,44 +269,6 @@ function InstallProgressBar(): VNode | null {
 	);
 }
 
-function SecurityWarning(): VNode | null {
-	const dismissed = useSignal(!!localStorage.getItem("moltis-skills-warning-dismissed"));
-	if (dismissed.value) return null;
-	return (
-		<div className="skills-warn">
-			<div className="skills-warn-title">{"\u26a0\ufe0f"} Skills run code on your machine</div>
-			<div>
-				Skills are community-authored instructions the agent follows <strong>with your full system privileges</strong>.
-			</div>
-			<div style={{ marginTop: "6px", color: "var(--success, #4a4)" }}>
-				With sandbox mode enabled, execution is isolated.
-			</div>
-			<div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-				<button
-					onClick={() => {
-						localStorage.setItem("moltis-skills-warning-dismissed", "1");
-						dismissed.value = true;
-					}}
-					style={{
-						background: "none",
-						border: "1px solid var(--border)",
-						borderRadius: "var(--radius-sm)",
-						fontSize: ".72rem",
-						padding: "3px 10px",
-						cursor: "pointer",
-						color: "var(--muted)",
-					}}
-				>
-					Dismiss
-				</button>
-				<button className="provider-btn provider-btn-danger provider-btn-sm" onClick={emergencyDisableAllSkills}>
-					Disable all
-				</button>
-			</div>
-		</div>
-	);
-}
-
 function InstallBox(): VNode {
 	const ref = useRef<HTMLInputElement>(null);
 	const installing = useSignal(false);
@@ -482,7 +454,7 @@ function SkillDetailPanel({
 		}
 	}, [d?.body_html]);
 	if (!d) return null;
-	const isDisc = d.source === "personal" || d.source === "project";
+	const isDisc = isDiscoveredSource(d.source);
 	function doToggle(): void {
 		actionBusy.value = true;
 		sendRpc(d.enabled ? "skills.skill.disable" : "skills.skill.enable", { source: repoSource, skill: d.name }).then(
@@ -824,6 +796,94 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 	);
 }
 
+const bundledCategories = signal<BundledCategory[]>([]);
+const bundledTotal = signal(0);
+
+function fetchBundledCategories(): void {
+	sendRpc("skills.bundled.categories", {}).then((res) => {
+		if (res?.ok) {
+			const payload = res.payload as { categories?: BundledCategory[]; total_skills?: number };
+			bundledCategories.value = payload.categories || [];
+			bundledTotal.value = payload.total_skills || 0;
+		}
+	});
+}
+
+function BundledCategoriesSection(): VNode {
+	const cats = bundledCategories.value;
+	const toggling = useSignal<string | null>(null);
+
+	useEffect(() => {
+		fetchBundledCategories();
+	}, []);
+
+	if (!cats.length) return <></>;
+
+	function toggle(cat: BundledCategory): void {
+		if (toggling.value) return;
+		const newEnabled = !cat.enabled;
+		toggling.value = cat.name;
+		sendRpc("skills.bundled.toggle_category", { category: cat.name, enabled: newEnabled }).then((res) => {
+			toggling.value = null;
+			if (res?.ok) {
+				bundledCategories.value = bundledCategories.value.map((c) =>
+					c.name === cat.name ? { ...c, enabled: newEnabled } : c,
+				);
+				fetchAll();
+			} else {
+				showToast(`Failed: ${res?.error || "unknown"}`, "error");
+			}
+		});
+	}
+
+	const enabledCount = cats.filter((c) => c.enabled).length;
+
+	return (
+		<div className="skills-section">
+			<div className="flex items-center gap-3 mb-2">
+				<h3 className="skills-section-title" style={{ margin: 0 }}>
+					{t("skills:bundledTitle")}
+					<span className="ml-2 text-xs font-normal text-[var(--muted)]">
+						({enabledCount}/{cats.length} enabled)
+					</span>
+				</h3>
+			</div>
+			<p className="text-xs text-[var(--muted)] mb-3">{t("skills:bundledDescription")}</p>
+			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+				{cats.map((cat) => {
+					const meta = CATEGORY_META[cat.name];
+					const icon = meta?.icon || "\uD83D\uDCE6";
+					return (
+						<button
+							key={cat.name}
+							type="button"
+							onClick={() => toggle(cat)}
+							disabled={toggling.value === cat.name}
+							className={`flex items-center gap-2 px-3 py-2 rounded-md border text-left cursor-pointer transition-colors ${
+								cat.enabled
+									? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]"
+									: "border-[var(--border)] bg-[var(--surface)] opacity-60"
+							}`}
+						>
+							<span className="text-base shrink-0">{icon}</span>
+							<div className="flex-1 min-w-0">
+								<span className="text-xs font-medium text-[var(--text-strong)]">{categoryLabel(cat.name)}</span>
+								<span className="text-xs text-[var(--muted)] ml-1">({cat.count})</span>
+								{meta?.desc && <div className="text-xs text-[var(--muted)] truncate">{meta.desc}</div>}
+							</div>
+							{cat.enabled ? (
+								<span className="icon icon-check-circle text-[var(--accent)] shrink-0" />
+							) : (
+								<span className="w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block shrink-0" />
+							)}
+						</button>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
 function ReposSection(): VNode {
 	return (
 		<div className="skills-section">
@@ -870,7 +930,7 @@ function EnabledSkillsTable(): VNode | null {
 	});
 
 	function isDisc(sk: SkillSummary): boolean {
-		return sk.source === "personal" || sk.source === "project";
+		return isDiscoveredSource(sk.source);
 	}
 	function doDisable(sk: SkillSummary): void {
 		pending.value = sk.name;
@@ -1027,10 +1087,10 @@ function EnabledSkillsTable(): VNode | null {
 										</td>
 										<td style={{ padding: "8px 12px" }}>{sk.description || "\u2014"}</td>
 										<td style={{ padding: "8px 12px" }}>
-											<span className={sk.source?.includes("/") ? "tier-badge" : "recommended-badge"}>{sk.source}</span>
+											<span className={isRepoSource(sk.source) ? "tier-badge" : "recommended-badge"}>{sk.source}</span>
 										</td>
 										<td style={{ padding: "8px 12px", textAlign: "right" }}>
-											{sk.source !== "bundled" && (
+											{sk.source !== SkillSource.Bundled && (
 												<button
 													disabled={(isDisc(sk) && sk.protected === true) || pending.value === sk.name}
 													className={
@@ -1077,9 +1137,22 @@ function EnabledSkillsTable(): VNode | null {
 	);
 }
 
+const activeTab = signal("skills");
+
+const skillsTabs = computed(() => {
+	const enabledCats = bundledCategories.value.filter((c) => c.enabled).length;
+	const totalCats = bundledCategories.value.length;
+	return [
+		{ id: "skills", label: "Skills", badge: enabledSkills.value.length || undefined },
+		{ id: "categories", label: "Categories", badge: totalCats ? `${enabledCats}/${totalCats}` : undefined },
+		{ id: "repositories", label: "Repositories", badge: repos.value.length || undefined },
+	];
+});
+
 function SkillsPageComponent(): VNode {
 	useEffect(() => {
 		ensurePrefetch().then(() => fetchAll());
+		fetchBundledCategories();
 		const off = onEvent("skills.install.progress", (p: unknown) => {
 			const d = p as Record<string, string>;
 			if (!d?.op_id) return;
@@ -1111,16 +1184,31 @@ function SkillsPageComponent(): VNode {
 					How to write a skill?
 				</a>
 			</p>
-			<SecurityWarning />
-			<InstallBox />
-			<BundleTransferBox />
-			<InstallProgressBar />
-			<FeaturedSection />
-			<ReposSection />
-			{loading.value && !enabledSkills.value.length && !repos.value.length && (
-				<div style={{ padding: "24px", textAlign: "center", color: "var(--muted)" }}>Loading skills...</div>
+			<TabBar
+				tabs={skillsTabs.value}
+				active={activeTab.value}
+				onChange={(id) => {
+					activeTab.value = id;
+				}}
+			/>
+			{activeTab.value === "skills" && (
+				<>
+					{loading.value && !enabledSkills.value.length && (
+						<div style={{ padding: "24px", textAlign: "center", color: "var(--muted)" }}>Loading skills...</div>
+					)}
+					<EnabledSkillsTable />
+				</>
 			)}
-			<EnabledSkillsTable />
+			{activeTab.value === "categories" && <BundledCategoriesSection />}
+			{activeTab.value === "repositories" && (
+				<>
+					<InstallBox />
+					<BundleTransferBox />
+					<InstallProgressBar />
+					<FeaturedSection />
+					<ReposSection />
+				</>
+			)}
 		</div>
 	);
 }

@@ -325,11 +325,30 @@ pub(crate) fn session_token_usage_from_messages(messages: &[Value]) -> SessionTo
 mod tests {
     use {
         super::{
-            ReplyMedium, UsageSnapshot, build_assistant_turn_output, build_chat_final_broadcast,
-            session_token_usage_from_messages,
+            ReplyMedium, UsageSnapshot, assistant_message_is_visible, build_assistant_turn_output,
+            build_chat_final_broadcast, session_token_usage_from_messages,
         },
         moltis_agents::model::Usage,
     };
+
+    #[test]
+    fn assistant_message_with_tool_calls_is_visible() {
+        let msg = serde_json::json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "exec", "arguments": "{}"}}]
+        });
+        assert!(assistant_message_is_visible(&msg));
+    }
+
+    #[test]
+    fn empty_assistant_message_without_tool_calls_is_hidden() {
+        let msg = serde_json::json!({
+            "role": "assistant",
+            "content": "",
+        });
+        assert!(!assistant_message_is_visible(&msg));
+    }
 
     #[test]
     fn session_token_usage_tracks_cached_tokens() {
@@ -445,6 +464,15 @@ mod tests {
 #[must_use]
 pub(crate) fn assistant_message_is_visible(message: &Value) -> bool {
     if message.get("role").and_then(Value::as_str) != Some("assistant") {
+        return true;
+    }
+
+    // Keep assistant messages that carry tool calls (even with empty content).
+    if message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|arr| !arr.is_empty())
+    {
         return true;
     }
 

@@ -81,6 +81,11 @@ pub struct SkillsConfig {
     /// and update skills after complex tasks. Default: true.
     #[serde(default = "default_true")]
     pub enable_self_improvement: bool,
+    /// Bundled skill categories that the user has explicitly disabled.
+    /// Category names correspond to the top-level directory names under
+    /// `crates/skills/src/assets/` (e.g. `"gaming"`, `"social-media"`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_bundled_categories: Vec<String>,
 }
 
 impl Default for SkillsConfig {
@@ -91,6 +96,7 @@ impl Default for SkillsConfig {
             auto_load: Vec::new(),
             enable_agent_sidecar_files: false,
             enable_self_improvement: true,
+            disabled_bundled_categories: Vec::new(),
         }
     }
 }

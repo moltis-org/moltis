@@ -379,6 +379,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("auto_load", Leaf),
                 ("enable_agent_sidecar_files", Leaf),
                 ("enable_self_improvement", Leaf),
+                ("disabled_bundled_categories", Leaf),
             ])),
         ),
         (

@@ -206,6 +206,21 @@ fn find_skill_dir_fs(dir: &Path, name: &str) -> Option<PathBuf> {
 
 // ── Embedded (release mode) ─────────────────────────────────────────────────
 
+/// Find a file by name among the *direct* files of an embedded directory.
+///
+/// `include_dir` stores file paths relative to the root of the `include_dir!`
+/// tree, not relative to the containing `Dir`. So `dir.get_file("SKILL.md")`
+/// fails on subdirectories because it compares `"SKILL.md"` against full paths
+/// like `"research/arxiv/SKILL.md"`. This helper matches on the file-name
+/// component instead.
+fn dir_file_by_name<'a>(
+    dir: &'a include_dir::Dir<'static>,
+    name: &str,
+) -> Option<&'a include_dir::File<'static>> {
+    dir.files()
+        .find(|f| f.path().file_name().and_then(|n| n.to_str()) == Some(name))
+}
+
 /// Recursively walk the embedded `include_dir!` tree for SKILL.md files.
 fn discover_from_embedded() -> Vec<SkillMetadata> {
     let mut skills = Vec::new();
@@ -218,7 +233,7 @@ fn discover_from_embedded_recursive(
     skills: &mut Vec<SkillMetadata>,
 ) {
     for sub_dir in dir.dirs() {
-        if let Some(skill_md) = sub_dir.get_file("SKILL.md") {
+        if let Some(skill_md) = dir_file_by_name(sub_dir, "SKILL.md") {
             let Ok(content) = std::str::from_utf8(skill_md.contents()) else {
                 continue;
             };
@@ -254,7 +269,7 @@ fn discover_from_embedded_recursive(
 /// Read SKILL.md body from the embedded directory.
 fn read_skill_body_embedded(name: &str) -> Option<String> {
     let skill_dir = find_skill_dir_embedded(name)?;
-    let skill_md = skill_dir.get_file("SKILL.md")?;
+    let skill_md = dir_file_by_name(skill_dir, "SKILL.md")?;
     let content = std::str::from_utf8(skill_md.contents()).ok()?;
     let synthetic_path =
         PathBuf::from("__bundled__").join(skill_dir.path().to_string_lossy().as_ref());
@@ -264,7 +279,12 @@ fn read_skill_body_embedded(name: &str) -> Option<String> {
 
 fn read_sidecar_embedded(name: &str, rel_path: &str) -> Option<(Vec<u8>, bool)> {
     let skill_dir = find_skill_dir_embedded(name)?;
-    let file = skill_dir.get_file(rel_path)?;
+    // Sidecar paths like "references/foo.md" — match by the full relative tail.
+    let file = skill_dir.files().find(|f| {
+        f.path()
+            .strip_prefix(skill_dir.path())
+            .is_ok_and(|rel| rel == Path::new(rel_path))
+    })?;
     let bytes = file.contents().to_vec();
     let is_utf8 = std::str::from_utf8(&bytes).is_ok();
     Some((bytes, is_utf8))
@@ -276,7 +296,9 @@ fn list_sidecars_embedded(name: &str) -> Vec<(String, u64)> {
     };
     let mut out = Vec::new();
     for sub in crate::SIDECAR_SUBDIRS {
-        let Some(sub_dir) = skill_dir.get_dir(sub) else {
+        // Use get_dir with the full path since include_dir stores full paths.
+        let sub_path = skill_dir.path().join(sub);
+        let Some(sub_dir) = skill_dir.dirs().find(|d| d.path() == sub_path) else {
             continue;
         };
         for file in sub_dir.files() {
@@ -307,7 +329,7 @@ fn find_skill_dir_embedded_recursive(
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        if dir_name == name && sub_dir.get_file("SKILL.md").is_some() {
+        if dir_name == name && dir_file_by_name(sub_dir, "SKILL.md").is_some() {
             return Some(sub_dir);
         }
         if let Some(found) = find_skill_dir_embedded_recursive(sub_dir, name) {
@@ -326,6 +348,41 @@ mod tests {
 
     fn store() -> BundledSkillStore {
         BundledSkillStore::new()
+    }
+
+    // ── Embedded assets ─────────────────────────────────────────────────
+
+    #[test]
+    fn embedded_assets_have_skills() {
+        // Verify the include_dir! embedded data has skills, independent of
+        // the filesystem fallback. This catches build issues where the
+        // embedded assets are silently empty at runtime.
+        let skills = discover_from_embedded();
+        assert!(
+            skills.len() >= 90,
+            "expected ≥90 embedded skills, got {}",
+            skills.len()
+        );
+        for skill in &skills {
+            assert!(
+                skill.category.is_some(),
+                "embedded skill '{}' has no category",
+                skill.name
+            );
+        }
+    }
+
+    #[test]
+    fn embedded_skill_body_is_readable() {
+        let skills = discover_from_embedded();
+        assert!(!skills.is_empty(), "no embedded skills to test");
+        let first = &skills[0];
+        let body = read_skill_body_embedded(&first.name);
+        assert!(
+            body.is_some(),
+            "embedded skill '{}' body not readable via embedded path",
+            first.name
+        );
     }
 
     // ── Discovery ───────────────────────────────────────────────────────

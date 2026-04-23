@@ -22,6 +22,8 @@ test.describe("SSH settings", () => {
 		const publicKey = await page.locator("pre").first().textContent();
 		expect(publicKey).toContain("ssh-ed25519 ");
 
+		// Switch to Targets tab to add a target
+		await page.getByRole("tab", { name: /Targets/ }).click();
 		await page.getByPlaceholder("prod-box").fill(targetLabel);
 		await page.getByPlaceholder("deploy@example.com").fill("deploy@example.com");
 		await page.locator("select").nth(0).selectOption("managed");
