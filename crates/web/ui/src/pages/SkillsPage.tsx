@@ -388,10 +388,14 @@ function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
 				onClick={() => {
 					if (isInstalled) return;
 					installing.value = true;
-					doInstall(f.repo, f.autoTrust).then(() => {
-						installing.value = false;
-						if (f.hasRecipe) checkPostInstallRecipe(f.repo).catch(console.error);
-					});
+					doInstall(f.repo, f.autoTrust)
+						.then(() => {
+							if (f.hasRecipe) checkPostInstallRecipe(f.repo).catch(console.error);
+						})
+						.catch((err) => console.error("install failed", err))
+						.finally(() => {
+							installing.value = false;
+						});
 				}}
 				disabled={isInstalled || installing.value}
 				style={{
