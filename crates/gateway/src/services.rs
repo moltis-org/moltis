@@ -311,9 +311,11 @@ impl SkillsService for NoopSkillsService {
             store.save(&manifest).map_err(ServiceError::message)?;
         }
 
+        // Filter out ClawHub individual skills — they show in the Skills tab, not Repositories.
         let repos: Vec<_> = manifest
             .repos
             .iter()
+            .filter(|repo| !moltis_skills::clawhub::is_clawhub_source(&repo.source))
             .map(|repo| {
                 let enabled = repo.skills.iter().filter(|s| s.enabled).count();
                 let trusted = repo.skills.iter().filter(|s| s.trusted).count();
@@ -388,6 +390,7 @@ impl SkillsService for NoopSkillsService {
         let repos: Vec<_> = manifest
             .repos
             .iter()
+            .filter(|repo| !moltis_skills::clawhub::is_clawhub_source(&repo.source))
             .map(|repo| {
                 let repo_dir = install_dir.join(&repo.repo_name);
                 // Re-detect format for repos that predate the formats module

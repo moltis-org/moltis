@@ -334,8 +334,21 @@ async function checkPostInstallRecipe(source: string): Promise<void> {
 /** GitHub avatar URL — github.com/{owner}.png redirects to the correct avatar
  *  for both users and organizations. CSP img-src allows both domains. */
 function orgAvatarUrl(repo: string): string {
+	if (repo.startsWith("clawhub:")) {
+		return "https://clawhub.ai/favicon.ico";
+	}
 	const owner = repo.split("/")[0];
 	return `https://github.com/${owner}.png?size=40`;
+}
+
+/** Build the correct external link for a repo source. */
+function repoHref(source: string): string | null {
+	if (source.startsWith("clawhub:")) {
+		const slug = source.slice("clawhub:".length);
+		return `https://clawhub.ai/skills/${slug}`;
+	}
+	if (/^https?:\/\//.test(source)) return source;
+	return `https://github.com/${source}`;
 }
 
 function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
@@ -602,7 +615,7 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 	const unquarantiningRepo = useSignal(false);
 	const isOrphan = repo.orphaned === true;
 	const sourceLabel = isOrphan ? repo.repo_name : repo.source;
-	const href = isOrphan ? null : /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
+	const href = isOrphan ? null : repoHref(repo.source);
 	function toggle(): void {
 		const w = !expanded.value;
 		expanded.value = w;

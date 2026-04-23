@@ -14990,8 +14990,19 @@ async function checkPostInstallRecipe(source) {
   );
 }
 function orgAvatarUrl(repo) {
+  if (repo.startsWith("clawhub:")) {
+    return "https://clawhub.ai/favicon.ico";
+  }
   const owner = repo.split("/")[0];
   return `https://github.com/${owner}.png?size=40`;
+}
+function repoHref(source) {
+  if (source.startsWith("clawhub:")) {
+    const slug = source.slice("clawhub:".length);
+    return `https://clawhub.ai/skills/${slug}`;
+  }
+  if (/^https?:\/\//.test(source)) return source;
+  return `https://github.com/${source}`;
 }
 function FeaturedCard$1({ skill: f }) {
   const installing = useSignal(false);
@@ -15264,7 +15275,7 @@ function RepoCard({ repo }) {
   const unquarantiningRepo = useSignal(false);
   const isOrphan = repo.orphaned === true;
   const sourceLabel = isOrphan ? repo.repo_name : repo.source;
-  const href = isOrphan ? null : /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
+  const href = isOrphan ? null : repoHref(repo.source);
   function toggle() {
     const w = !expanded.value;
     expanded.value = w;
