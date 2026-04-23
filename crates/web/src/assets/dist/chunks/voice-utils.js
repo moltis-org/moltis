@@ -1,4 +1,4 @@
-import { b as sendRpc, aw as d, ax as A, av as y } from "./theme.js";
+import { b as sendRpc, ax as d, ay as A, aw as y } from "./theme.js";
 import { u } from "./ws-connect.js";
 const gon = window.__MOLTIS__ || {};
 const listeners = {};
