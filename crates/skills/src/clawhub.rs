@@ -418,7 +418,7 @@ pub fn is_clawhub_source(source: &str) -> bool {
     source.starts_with("clawhub:")
 }
 
-fn validate_slug(slug: &str) -> Result<()> {
+pub fn validate_slug(slug: &str) -> Result<()> {
     if slug.is_empty() || slug.len() > 128 {
         return Err(Error::Install(
             "invalid ClawHub slug: empty or too long".into(),

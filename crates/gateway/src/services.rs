@@ -1243,6 +1243,7 @@ impl SkillsService for NoopSkillsService {
             .get("slug")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'slug' parameter".to_string())?;
+        moltis_skills::clawhub::validate_slug(slug).map_err(ServiceError::message)?;
         let client = moltis_skills::clawhub::ClawHubClient::new();
         let scan = client.scan(slug).await.map_err(ServiceError::message)?;
         Ok(serde_json::to_value(scan).unwrap_or_default())
@@ -1253,6 +1254,7 @@ impl SkillsService for NoopSkillsService {
             .get("slug")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'slug' parameter".to_string())?;
+        moltis_skills::clawhub::validate_slug(slug).map_err(ServiceError::message)?;
         let client = moltis_skills::clawhub::ClawHubClient::new();
         let info = client
             .skill_info(slug)
