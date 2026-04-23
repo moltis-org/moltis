@@ -55,7 +55,15 @@ function fmtNumber(n: number): string {
 
 // ── Detail panel ─────────────────────────────────────────────
 
-function DetailPanel({ slug, onClose }: { slug: string; onClose: () => void }): VNode {
+function DetailPanel({
+	slug,
+	onClose,
+	onInstalled,
+}: {
+	slug: string;
+	onClose: () => void;
+	onInstalled: () => void;
+}): VNode {
 	const info = useSignal<ClawHubSkillInfo | null>(null);
 	const loading = useSignal(true);
 	const error = useSignal<string | null>(null);
@@ -85,6 +93,7 @@ function DetailPanel({ slug, onClose }: { slug: string; onClose: () => void }): 
 				await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
 				await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
 			}
+			onInstalled();
 		}
 	}
 
@@ -308,9 +317,9 @@ function ResultCard({ result, onInstalled }: { result: ClawHubResult; onInstalle
 			{expanded.value && (
 				<DetailPanel
 					slug={result.slug}
+					onInstalled={onInstalled}
 					onClose={() => {
 						expanded.value = false;
-						onInstalled();
 					}}
 				/>
 			)}

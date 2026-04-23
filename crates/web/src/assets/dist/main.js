@@ -14362,7 +14362,11 @@ function fmtNumber(n) {
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
   return n.toString();
 }
-function DetailPanel({ slug, onClose }) {
+function DetailPanel({
+  slug,
+  onClose,
+  onInstalled
+}) {
   const info = useSignal(null);
   const loading2 = useSignal(true);
   const error2 = useSignal(null);
@@ -14389,6 +14393,7 @@ function DetailPanel({ slug, onClose }) {
         await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
         await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
       }
+      onInstalled();
     }
   }
   const d2 = info.value;
@@ -14628,9 +14633,9 @@ function ResultCard({ result, onInstalled }) {
       DetailPanel,
       {
         slug: result.slug,
+        onInstalled,
         onClose: () => {
           expanded.value = false;
-          onInstalled();
         }
       }
     )
