@@ -763,17 +763,23 @@ pub(crate) fn sysfs_paths_to_mask() -> Vec<&'static str> {
 }
 
 /// Testable inner helper: probes each `SYSFS_MASK_PATHS` entry and returns
-/// only those that exist.  If `sysfs_root` itself doesn't exist (macOS),
-/// all paths are returned — Docker Desktop's VM will have them.
+/// only those that exist under `sysfs_root`.  If `sysfs_root` itself doesn't
+/// exist (macOS), all paths are returned — Docker Desktop's VM will have them.
 pub(crate) fn sysfs_paths_to_mask_from(sysfs_root: &str) -> Vec<&'static str> {
-    if !std::path::Path::new(sysfs_root).exists() {
+    let root = std::path::Path::new(sysfs_root);
+    if !root.exists() {
         // Non-Linux host (macOS): Docker runs in a VM with full sysfs.
         return SYSFS_MASK_PATHS.to_vec();
     }
     SYSFS_MASK_PATHS
         .iter()
         .copied()
-        .filter(|p| std::path::Path::new(p).exists())
+        .filter(|p| {
+            // Strip the canonical "/sys/" prefix so the path is relative,
+            // then probe under the supplied root (real or test tempdir).
+            let rel = p.strip_prefix("/sys/").unwrap_or(p);
+            root.join(rel).exists()
+        })
         .collect()
 }
 

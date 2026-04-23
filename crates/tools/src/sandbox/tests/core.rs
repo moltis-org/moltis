@@ -131,15 +131,8 @@ fn test_sysfs_paths_to_mask_filters_missing_paths() {
     std::fs::create_dir_all(sysfs_root.join("class/block")).unwrap();
 
     let paths = sysfs_paths_to_mask_from(sysfs_root.to_str().unwrap());
-    // Only the paths that exist under the real /sys are returned.
-    // Since we're checking absolute paths (/sys/firmware etc.) against the
-    // real filesystem, and tempdir isn't at /sys, none will match — this
-    // tests that the function correctly filters based on path existence.
-    // On a real system, the function checks /sys/firmware etc. directly.
-    assert!(
-        paths.is_empty(),
-        "paths under tempdir cannot match absolute /sys/* paths"
-    );
+    // Only the two paths that exist under the tempdir sysfs root are returned.
+    assert_eq!(paths, vec!["/sys/firmware", "/sys/class/block"]);
 }
 
 #[test]
