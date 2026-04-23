@@ -142,8 +142,8 @@ function DetailPanel({
 	useEffect(() => {
 		if (fetched.current) return;
 		fetched.current = true;
-		Promise.all([sendRpc("skills.clawhub.info", { slug }), sendRpc("skills.clawhub.scan", { slug })]).then(
-			([infoRes, scanRes]) => {
+		Promise.all([sendRpc("skills.clawhub.info", { slug }), sendRpc("skills.clawhub.scan", { slug })])
+			.then(([infoRes, scanRes]) => {
 				loading.value = false;
 				if (infoRes?.ok) info.value = infoRes.payload as ClawHubSkillInfo;
 				else error.value = String(infoRes?.error || "Failed to load skill info");
@@ -151,30 +151,38 @@ function DetailPanel({
 					const p = scanRes.payload as { security?: ScanData } | undefined;
 					if (p?.security) scan.value = p.security;
 				}
-			},
-		);
+			})
+			.catch(() => {
+				loading.value = false;
+				error.value = "Failed to load skill info";
+			});
 	}, [slug]);
 
 	async function doInstall(): Promise<void> {
 		installing.value = true;
-		const res = await sendRpc("skills.clawhub.install", { slug });
-		installing.value = false;
-		if (res?.ok) {
-			installed.value = true;
-			const payload = res.payload as { installed?: Array<{ name?: string }> } | undefined;
-			const skills = payload?.installed || [];
-			const source = `clawhub:${slug}`;
-			let trustFailed = 0;
-			for (const skill of skills) {
-				if (!skill.name) continue;
-				const trustRes = await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
-				const enableRes = await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
-				if (!(trustRes?.ok && enableRes?.ok)) trustFailed++;
+		try {
+			const res = await sendRpc("skills.clawhub.install", { slug });
+			if (res?.ok) {
+				installed.value = true;
+				const payload = res.payload as { installed?: Array<{ name?: string }> } | undefined;
+				const skills = payload?.installed || [];
+				const source = `clawhub:${slug}`;
+				let trustFailed = 0;
+				for (const skill of skills) {
+					if (!skill.name) continue;
+					const trustRes = await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
+					const enableRes = await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
+					if (!(trustRes?.ok && enableRes?.ok)) trustFailed++;
+				}
+				if (trustFailed > 0) {
+					error.value = `${trustFailed} skill(s) could not be auto-trusted. Enable manually in Skills tab.`;
+				}
+				onInstalled();
+			} else {
+				error.value = String(res?.error || "Install failed");
 			}
-			if (trustFailed > 0) {
-				error.value = `${trustFailed} skill(s) could not be auto-trusted. Enable manually in Skills tab.`;
-			}
-			onInstalled();
+		} finally {
+			installing.value = false;
 		}
 	}
 
@@ -404,14 +412,18 @@ export function ClawHubSection({ onChanged }: { onChanged: () => void }): VNode 
 			return;
 		}
 		searching.value = true;
-		sendRpc("skills.clawhub.search", { query: q.trim() }).then((res) => {
-			searching.value = false;
-			searched.value = true;
-			if (res?.ok) {
-				const payload = res.payload as { results?: ClawHubResult[] } | undefined;
-				results.value = payload?.results || [];
-			}
-		});
+		sendRpc("skills.clawhub.search", { query: q.trim() })
+			.then((res) => {
+				searching.value = false;
+				searched.value = true;
+				if (res?.ok) {
+					const payload = res.payload as { results?: ClawHubResult[] } | undefined;
+					results.value = payload?.results || [];
+				}
+			})
+			.catch(() => {
+				searching.value = false;
+			});
 	}
 
 	function onInput(e: Event): void {
