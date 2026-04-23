@@ -1140,7 +1140,22 @@ function SignalForm({ onConnected, error, setError }) {
   return /* @__PURE__ */ u("form", { onSubmit, className: "flex flex-col gap-3", children: [
     /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
       /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Requires signal-cli" }),
-      /* @__PURE__ */ u("span", { children: "Signal integration requires a running signal-cli daemon with JSON-RPC HTTP enabled." }),
+      /* @__PURE__ */ u("span", { children: [
+        "Signal integration requires a running",
+        " ",
+        /* @__PURE__ */ u(
+          "a",
+          {
+            href: "https://github.com/AsamK/signal-cli",
+            target: "_blank",
+            rel: "noopener noreferrer",
+            className: "underline text-[var(--text-strong)]",
+            children: "signal-cli"
+          }
+        ),
+        " ",
+        "daemon with JSON-RPC HTTP enabled."
+      ] }),
       /* @__PURE__ */ u("span", { children: "Install signal-cli, register or link your Signal account, then start the daemon:" }),
       /* @__PURE__ */ u("code", { className: "text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-0.5", children: "signal-cli daemon --http localhost:8080" })
     ] }),
