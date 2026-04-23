@@ -1320,6 +1320,13 @@ fn test_prepend_datetime_to_multimodal_content() {
                 ContentPart::Text(t) => assert_eq!(t, "Describe this image"),
                 _ => panic!("expected original Text part second"),
             }
+            match &parts[2] {
+                ContentPart::Image { media_type, data } => {
+                    assert_eq!(media_type, "image/png");
+                    assert_eq!(data, "base64data");
+                },
+                _ => panic!("expected Image part third"),
+            }
         },
         UserContent::Text(_) => panic!("expected Multimodal variant"),
     }
