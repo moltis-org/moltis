@@ -14572,6 +14572,11 @@ function ResultCard({ result, onInstalled }) {
         children: [
           /* @__PURE__ */ u("div", { style: { flex: 1, minWidth: 0 }, children: [
             /* @__PURE__ */ u("div", { style: { display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }, children: [
+              result.ownerHandle && /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: [
+                "@",
+                result.ownerHandle,
+                " /"
+              ] }),
               /* @__PURE__ */ u(
                 "span",
                 {
@@ -14584,8 +14589,12 @@ function ResultCard({ result, onInstalled }) {
                   children: result.displayName || result.slug
                 }
               ),
-              /* @__PURE__ */ u("span", { style: { fontSize: ".68rem", color: "var(--muted)" }, children: result.slug }),
-              result.updatedAt && /* @__PURE__ */ u("span", { style: { fontSize: ".65rem", color: "var(--muted)" }, children: relativeTime(result.updatedAt) })
+              result.updatedAt && /* @__PURE__ */ u("span", { style: { fontSize: ".65rem", color: "var(--muted)" }, children: relativeTime(result.updatedAt) }),
+              result.stars != null && result.stars > 0 && /* @__PURE__ */ u("span", { style: { fontSize: ".65rem", color: "var(--muted)" }, children: [
+                "⭐ ",
+                result.stars
+              ] }),
+              result.downloads != null && result.downloads > 0 && /* @__PURE__ */ u("span", { style: { fontSize: ".65rem", color: "var(--muted)" }, children: fmtNumber(result.downloads) })
             ] }),
             result.summary && /* @__PURE__ */ u(
               "div",

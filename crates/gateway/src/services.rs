@@ -1186,13 +1186,47 @@ impl SkillsService for NoopSkillsService {
     }
 
     async fn clawhub_search(&self, params: Value) -> ServiceResult {
+        use moltis_skills::clawhub::EnrichedSearchResult;
+
         let query = params
             .get("query")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'query' parameter".to_string())?;
         let client = moltis_skills::clawhub::ClawHubClient::new();
         let response = client.search(query).await.map_err(ServiceError::message)?;
-        Ok(serde_json::to_value(response).unwrap_or_default())
+
+        // Enrich results with stats from skill info (parallel fetches).
+        let futs: Vec<_> = response
+            .results
+            .iter()
+            .map(|r| {
+                let slug = r.slug.clone();
+                let client = moltis_skills::clawhub::ClawHubClient::new();
+                async move { (slug.clone(), client.skill_info(&slug).await.ok()) }
+            })
+            .collect();
+        let infos = futures::future::join_all(futs).await;
+
+        let enriched: Vec<EnrichedSearchResult> = response
+            .results
+            .into_iter()
+            .map(|r| {
+                let mut e = EnrichedSearchResult::from(r.clone());
+                if let Some((_, Some(info))) = infos.iter().find(|(s, _)| *s == r.slug) {
+                    if let Some(stats) = &info.skill.stats {
+                        e.downloads = stats.downloads;
+                        e.stars = stats.stars;
+                    }
+                    if let Some(owner) = &info.owner {
+                        e.owner_handle = owner.handle.clone();
+                        e.owner_image = owner.image.clone();
+                    }
+                }
+                e
+            })
+            .collect();
+
+        Ok(serde_json::json!({ "results": enriched }))
     }
 
     async fn clawhub_info(&self, params: Value) -> ServiceResult {

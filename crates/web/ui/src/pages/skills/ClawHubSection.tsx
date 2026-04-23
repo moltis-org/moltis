@@ -13,6 +13,10 @@ interface ClawHubResult {
 	summary?: string;
 	updatedAt?: number;
 	version?: string;
+	downloads?: number;
+	ownerHandle?: string;
+	ownerImage?: string;
+	stars?: number;
 }
 
 interface ClawHubSkillInfo {
@@ -254,6 +258,9 @@ function ResultCard({ result, onInstalled }: { result: ClawHubResult; onInstalle
 			>
 				<div style={{ flex: 1, minWidth: 0 }}>
 					<div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+						{result.ownerHandle && (
+							<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>@{result.ownerHandle} /</span>
+						)}
 						<span
 							style={{
 								fontFamily: "var(--font-mono)",
@@ -264,9 +271,14 @@ function ResultCard({ result, onInstalled }: { result: ClawHubResult; onInstalle
 						>
 							{result.displayName || result.slug}
 						</span>
-						<span style={{ fontSize: ".68rem", color: "var(--muted)" }}>{result.slug}</span>
 						{result.updatedAt && (
 							<span style={{ fontSize: ".65rem", color: "var(--muted)" }}>{relativeTime(result.updatedAt)}</span>
+						)}
+						{result.stars != null && result.stars > 0 && (
+							<span style={{ fontSize: ".65rem", color: "var(--muted)" }}>&#11088; {result.stars}</span>
+						)}
+						{result.downloads != null && result.downloads > 0 && (
+							<span style={{ fontSize: ".65rem", color: "var(--muted)" }}>{fmtNumber(result.downloads)}</span>
 						)}
 					</div>
 					{result.summary && (
