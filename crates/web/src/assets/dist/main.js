@@ -14753,10 +14753,15 @@ function DetailPanel({
       const payload = res.payload;
       const skills = (payload == null ? void 0 : payload.installed) || [];
       const source = `clawhub:${slug}`;
+      let trustFailed = 0;
       for (const skill of skills) {
         if (!skill.name) continue;
-        await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
-        await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
+        const trustRes = await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
+        const enableRes = await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
+        if (!((trustRes == null ? void 0 : trustRes.ok) && (enableRes == null ? void 0 : enableRes.ok))) trustFailed++;
+      }
+      if (trustFailed > 0) {
+        error2.value = `${trustFailed} skill(s) could not be auto-trusted. Enable manually in Skills tab.`;
       }
       onInstalled();
     }
@@ -15167,10 +15172,15 @@ function doInstall(source, autoTrust = false) {
       const installed = p.installed || [];
       showToast$3(`Installed ${source} (${installed.length} skills)`, "success");
       if (autoTrust && installed.length > 0) {
+        let trustFailed = 0;
         for (const skill of installed) {
           if (!skill.name) continue;
-          await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
-          await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
+          const trustRes = await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
+          const enableRes = await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
+          if (!((trustRes == null ? void 0 : trustRes.ok) && (enableRes == null ? void 0 : enableRes.ok))) trustFailed++;
+        }
+        if (trustFailed > 0) {
+          showToast$3(`${trustFailed} skill(s) could not be auto-trusted. Enable them manually in Skills.`, "error");
         }
       }
       fetchAll();

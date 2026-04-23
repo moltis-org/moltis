@@ -177,10 +177,15 @@ function doInstall(source: string, autoTrust = false): Promise<void> {
 			showToast(`Installed ${source} (${installed.length} skills)`, "success");
 
 			if (autoTrust && installed.length > 0) {
+				let trustFailed = 0;
 				for (const skill of installed) {
 					if (!skill.name) continue;
-					await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
-					await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
+					const trustRes = await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
+					const enableRes = await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
+					if (!(trustRes?.ok && enableRes?.ok)) trustFailed++;
+				}
+				if (trustFailed > 0) {
+					showToast(`${trustFailed} skill(s) could not be auto-trusted. Enable them manually in Skills.`, "error");
 				}
 			}
 
