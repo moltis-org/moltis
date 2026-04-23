@@ -1195,14 +1195,20 @@ impl SkillsService for NoopSkillsService {
         let client = moltis_skills::clawhub::ClawHubClient::new();
         let response = client.search(query).await.map_err(ServiceError::message)?;
 
-        // Enrich results with stats from skill info (parallel fetches).
+        // Enrich results with stats from skill info. Use a semaphore to limit
+        // concurrent requests (avoid hitting ClawHub's 180 req/min rate limit).
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(5));
         let futs: Vec<_> = response
             .results
             .iter()
             .map(|r| {
                 let slug = r.slug.clone();
                 let client = moltis_skills::clawhub::ClawHubClient::new();
-                async move { (slug.clone(), client.skill_info(&slug).await.ok()) }
+                let sem = Arc::clone(&semaphore);
+                async move {
+                    let _permit = sem.acquire().await;
+                    (slug.clone(), client.skill_info(&slug).await.ok())
+                }
             })
             .collect();
         let infos = futures::future::join_all(futs).await;

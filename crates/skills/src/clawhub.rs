@@ -108,6 +108,11 @@ pub struct ModerationInfo {
 
 // ── Client ──────────────────────────────────────────────────────────────────
 
+/// Maximum retries for rate-limited (429) responses.
+const MAX_RETRIES: u32 = 3;
+/// Base delay for exponential backoff (seconds).
+const BACKOFF_BASE_SECS: u64 = 2;
+
 pub struct ClawHubClient {
     client: reqwest::Client,
     base_url: String,
@@ -127,16 +132,50 @@ impl ClawHubClient {
         }
     }
 
+    /// Send a GET request with retry on 429 (rate limit) using exponential backoff.
+    ///
+    /// Respects the `retry-after` header when present, otherwise uses exponential
+    /// backoff: 2s, 4s, 8s.
+    async fn get_with_retry(&self, url: &str, query: &[(&str, &str)]) -> Result<reqwest::Response> {
+        let mut attempt = 0;
+        loop {
+            let resp = self
+                .client
+                .get(url)
+                .query(query)
+                .header("User-Agent", USER_AGENT)
+                .send()
+                .await?;
+
+            if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                attempt += 1;
+                if attempt > MAX_RETRIES {
+                    return Err(Error::Install(format!(
+                        "ClawHub rate limit exceeded after {MAX_RETRIES} retries"
+                    )));
+                }
+
+                // Use retry-after header if present, otherwise exponential backoff.
+                let wait_secs = resp
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(BACKOFF_BASE_SECS.pow(attempt));
+
+                tracing::debug!(attempt, wait_secs, "ClawHub rate limited (429), retrying");
+                tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+                continue;
+            }
+
+            return Ok(resp);
+        }
+    }
+
     /// Search for skills on ClawHub.
     pub async fn search(&self, query: &str) -> Result<SearchResponse> {
         let url = format!("{}/api/v1/search", self.base_url);
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[("q", query)])
-            .header("User-Agent", USER_AGENT)
-            .send()
-            .await?;
+        let resp = self.get_with_retry(&url, &[("q", query)]).await?;
 
         if !resp.status().is_success() {
             return Err(Error::Install(format!(
@@ -151,12 +190,7 @@ impl ClawHubClient {
     /// Get metadata for a specific skill.
     pub async fn skill_info(&self, slug: &str) -> Result<SkillInfoResponse> {
         let url = format!("{}/api/v1/skills/{}", self.base_url, slug);
-        let resp = self
-            .client
-            .get(&url)
-            .header("User-Agent", USER_AGENT)
-            .send()
-            .await?;
+        let resp = self.get_with_retry(&url, &[]).await?;
 
         if !resp.status().is_success() {
             return Err(Error::Install(format!(
@@ -173,11 +207,7 @@ impl ClawHubClient {
     pub async fn download_zip(&self, slug: &str, version: &str) -> Result<Vec<u8>> {
         let url = format!("{}/api/v1/download", self.base_url);
         let resp = self
-            .client
-            .get(&url)
-            .query(&[("slug", slug), ("version", version)])
-            .header("User-Agent", USER_AGENT)
-            .send()
+            .get_with_retry(&url, &[("slug", slug), ("version", version)])
             .await?;
 
         if !resp.status().is_success() {
