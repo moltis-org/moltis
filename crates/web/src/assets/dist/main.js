@@ -7374,22 +7374,10 @@ function AddSignalModal() {
         /* @__PURE__ */ u("div", { className: "channel-card", children: /* @__PURE__ */ u("div", { children: [
           /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: "Requires signal-cli" }),
           /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] channel-help", children: [
-            "Signal integration requires a running",
-            " ",
-            /* @__PURE__ */ u(
-              "a",
-              {
-                href: "https://github.com/AsamK/signal-cli",
-                target: "_blank",
-                rel: "noopener noreferrer",
-                className: "underline text-[var(--text-strong)]",
-                children: "signal-cli"
-              }
-            ),
-            " ",
-            "daemon with JSON-RPC HTTP enabled."
+            "Signal integration requires a running ",
+            /* @__PURE__ */ u("a", { href: "https://github.com/AsamK/signal-cli", target: "_blank", rel: "noopener noreferrer", className: "underline text-[var(--text-strong)]", children: "signal-cli" }),
+            " daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:"
           ] }),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Install signal-cli, register or link your Signal account, then start the daemon:" }),
           /* @__PURE__ */ u("code", { className: "text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-1 block", children: "signal-cli daemon --http localhost:8080" })
         ] }) }),
         /* @__PURE__ */ u(ConnectionModeHint, { type: ChannelType.Signal }),
