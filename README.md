@@ -27,7 +27,7 @@ Moltis recently hit [the front page of Hacker News](https://news.ycombinator.com
 
 **Full-featured** — Voice, memory, cross-session recall, automatic edit checkpoints, scheduling, Telegram, Discord, browser automation, MCP servers, SSH or node-backed remote exec, managed deploy keys with host pinning in the web UI, a live Settings → Tools inventory, Cursor-compatible project context, and context-file threat scanning — all built-in. No plugin marketplace to get supply-chain attacked through.
 
-**Auditable** — The agent loop + provider model fits in ~5K lines. The core (excluding the optional web UI) is ~196K lines across 46 modular crates you can audit independently, with 3,100+ tests and zero `unsafe` code\*.
+**Auditable** — The agent runner and model interface fit in ~7.5K lines, with providers in ~19K more. The Rust workspace is ~270K lines across 59 modular crates you can audit independently, with 470+ Rust files containing tests. Unsafe code is isolated to FFI and precompiled runtime boundaries, not the core agent loop.
 
 ## Installation
 
@@ -47,69 +47,66 @@ cargo install moltis --git https://github.com/moltis-org/moltis
 
 ## Comparison
 
-| | OpenClaw | PicoClaw | NanoClaw | ZeroClaw | **Moltis** |
-|---|---|---|---|---|---|
-| Language | TypeScript | Go | TypeScript | Rust | **Rust** |
-| Agent loop | ~430K LoC | Small | ~500 LoC | ~3.4K LoC | **~5K LoC** (`runner.rs` + `model.rs`) |
-| Full codebase | — | — | — | 1,000+ tests | **~124K LoC** (2,300+ tests) |
-| Runtime | Node.js + npm | Single binary | Node.js | Single binary (3.4 MB) | **Single binary (44 MB)** |
-| Sandbox | App-level | — | Docker | Docker | **Docker + Apple Container** |
-| Memory safety | GC | GC | GC | Ownership | **Ownership, zero `unsafe`\*** |
-| Auth | Basic | API keys | None | Token + OAuth | **Password + Passkey + API keys + Vault** |
-| Voice I/O | Plugin | — | — | — | **Built-in (15+ providers)** |
-| MCP | Yes | — | — | — | **Yes (stdio + HTTP/SSE)** |
-| Hooks | Yes (limited) | — | — | — | **15 event types** |
-| Skills | Yes (store) | Yes | Yes | Yes | **Yes (+ OpenClaw Store)** |
-| Memory/RAG | Plugin | — | Per-group | SQLite + FTS | **SQLite + FTS + vector** |
+| | OpenClaw | Hermes Agent | **Moltis** |
+|---|---|---|---|
+| Primary stack | TypeScript + Swift/Kotlin companion apps | Python + TypeScript TUI/web surfaces | **Rust** |
+| Runtime | Node.js + npm/pnpm/bun | Python + uv/pip, optional Node UI pieces | **Single Rust binary** |
+| Local checkout size\* | ~1.1M app LoC | ~152K app LoC | **~270K Rust LoC** |
+| Architecture | Broad gateway, channel, node, and app ecosystem | CLI/gateway agent with learning loop and research tooling | **Persistent personal agent server with modular crates** |
+| Crates/modules | npm packages, extensions, apps | Python packages, plugins, tools, TUI | **59 Rust workspace crates** |
+| Sandbox/backends | App-level permissions, browser/node tools | Local, Docker, SSH, Daytona, Singularity, Modal | **Docker/Podman + Apple Container + WASM** |
+| Auth/access | Pairing and local gateway controls | CLI and messaging gateway setup | **Password + Passkey + API keys + Vault** |
+| Voice I/O | Voice wake and talk modes | Voice memo transcription | **Built-in STT + TTS providers** |
+| MCP | Plugin/integration support | MCP integration | **stdio + HTTP/SSE** |
+| Skills | Bundled, managed, and workspace skills | Self-improving skills and Skills Hub support | **Bundled/workspace skills + autonomous improvement + OpenClaw import** |
+| Memory/RAG | Plugin-backed memory and context engine | Agent-curated memory, session search, user modeling | **SQLite + FTS + vector memory** |
 
-\* `unsafe` is denied workspace-wide. The only exceptions are opt-in FFI wrappers behind the `local-embeddings` feature flag, not part of the core.
+\* LoC measured with `tokei`, excluding `node_modules`, generated build output, `dist`, and `target`.
 
-> [Full comparison with benchmarks →](https://docs.moltis.org/comparison.html)
+> [Full comparison in the docs →](https://docs.moltis.org/comparison.html)
 
 ## Architecture — Crate Map
 
-**Core** (always compiled):
+Current Rust workspace: ~270K LoC across 59 crates. The table below groups the main crates by role so the architecture stays scannable.
+
+**Core runtime**:
 
 | Crate | LoC | Role |
 |-------|-----|------|
-| `moltis` (cli) | 4.0K | Entry point, CLI commands |
-| `moltis-agents` | 9.6K | Agent loop, streaming, prompt assembly |
-| `moltis-providers` | 17.6K | LLM provider implementations |
-| `moltis-gateway` | 36.1K | HTTP/WS server, RPC, auth |
-| `moltis-chat` | 11.5K | Chat engine, agent orchestration |
-| `moltis-tools` | 21.9K | Tool execution, sandbox |
-| `moltis-config` | 7.0K | Configuration, validation |
-| `moltis-sessions` | 3.8K | Session persistence |
-| `moltis-plugins` | 1.9K | Hook dispatch, plugin formats |
-| `moltis-service-traits` | 1.3K | Shared service interfaces |
-| `moltis-common` | 1.1K | Shared utilities |
-| `moltis-protocol` | 0.8K | Wire protocol types |
+| `moltis-gateway` | 37.4K | HTTP/WS server, RPC, auth, startup wiring |
+| `moltis-tools` | 37.0K | Tool execution, sandboxing, WASM tools |
+| `moltis-providers` | 18.9K | LLM provider implementations |
+| `moltis-agents` | 14.5K | Agent loop, streaming, prompt assembly |
+| `moltis-chat` | 14.2K | Chat engine, agent orchestration |
+| `moltis-config` | 10.3K | Configuration, validation |
+| `moltis-httpd` | 9.9K | HTTP server primitives and middleware |
+| `moltis` (CLI) | 4.7K | Entry point, CLI commands |
+| `moltis-sessions` | 3.5K | Session persistence |
+| `moltis-common` | 1.5K | Shared utilities |
+| `moltis-service-traits` | 1.2K | Shared service interfaces |
+| `moltis-protocol` | 0.7K | Wire protocol types |
 
-**Optional** (feature-gated or additive):
+**Feature and integration crates**:
 
 | Category | Crates | Combined LoC |
 |----------|--------|-------------|
-| Web UI | `moltis-web` | 4.5K |
-| GraphQL | `moltis-graphql` | 4.8K |
-| Voice | `moltis-voice` | 6.0K |
-| Memory | `moltis-memory`, `moltis-qmd` | 5.9K |
-| Channels | `moltis-telegram`, `moltis-whatsapp`, `moltis-discord`, `moltis-msteams`, `moltis-channels` | 14.9K |
-| Browser | `moltis-browser` | 5.1K |
-| Scheduling | `moltis-cron`, `moltis-caldav` | 5.2K |
-| Extensibility | `moltis-mcp`, `moltis-skills`, `moltis-wasm-tools` | 9.1K |
-| Auth & Security | `moltis-auth`, `moltis-oauth`, `moltis-onboarding`, `moltis-vault` | 6.6K |
-| Networking | `moltis-network-filter`, `moltis-tls`, `moltis-tailscale` | 3.5K |
-| Provider setup | `moltis-provider-setup` | 4.3K |
-| Import | `moltis-openclaw-import` | 7.6K |
-| Apple native | `moltis-swift-bridge` | 2.1K |
-| Metrics | `moltis-metrics` | 1.7K |
-| Other | `moltis-projects`, `moltis-media`, `moltis-routing`, `moltis-canvas`, `moltis-auto-reply`, `moltis-schema-export`, `moltis-benchmarks` | 2.5K |
+| Channels | `moltis-telegram`, `moltis-whatsapp`, `moltis-discord`, `moltis-msteams`, `moltis-matrix`, `moltis-slack`, `moltis-nostr`, `moltis-channels` | 34.0K |
+| Web and APIs | `moltis-web`, `moltis-graphql`, `moltis-webhooks` | 10.8K |
+| Extensibility | `moltis-mcp`, `moltis-mcp-agent-bridge`, `moltis-skills`, `moltis-plugins` | 11.5K |
+| Memory and context | `moltis-memory`, `moltis-qmd`, `moltis-code-index`, `moltis-projects` | 11.7K |
+| Voice and browser | `moltis-voice`, `moltis-browser` | 9.2K |
+| Auth and security | `moltis-auth`, `moltis-oauth`, `moltis-vault`, `moltis-secret-store`, `moltis-network-filter`, `moltis-tls` | 8.5K |
+| Scheduling and automation | `moltis-cron`, `moltis-caldav`, `moltis-auto-reply` | 4.7K |
+| Setup and import | `moltis-provider-setup`, `moltis-openclaw-import`, `moltis-onboarding` | 11.7K |
+| Native and node hosts | `moltis-swift-bridge`, `moltis-node-host`, `moltis-courier` | 5.7K |
+| WASM tools | `moltis-wasm-precompile`, `moltis-wasm-calc`, `moltis-wasm-web-fetch`, `moltis-wasm-web-search` | 1.4K |
+| Supporting crates | `moltis-media`, `moltis-metrics`, `moltis-tailscale`, `moltis-routing`, `moltis-canvas`, `moltis-schema-export`, `benchmarks` | 2.1K |
 
 Use `--no-default-features --features lightweight` for constrained devices (Raspberry Pi, etc.).
 
 ## Security
 
-- **Zero `unsafe` code\*** — denied workspace-wide; only opt-in FFI behind `local-embeddings` flag
+- **Small unsafe surface** — core agent/gateway code stays safe Rust; unsafe is isolated to Swift FFI, local model wrappers, and precompiled WASM boundaries
 - **Sandboxed execution** — Docker + Apple Container, per-session isolation
 - **Secret handling** — `secrecy::Secret`, zeroed on drop, redacted from tool output
 - **Authentication** — password + passkey (WebAuthn), rate-limited, per-IP throttle

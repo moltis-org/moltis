@@ -164,17 +164,31 @@ jobs:
 
   test:
     needs: [fmt, biome]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
+    container:
+      image: nvidia/cuda:12.4.1-devel-ubuntu22.04
+    env:
+      LD_LIBRARY_PATH: /usr/local/cuda/compat:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
     name: Test
     permissions:
       contents: read
     steps:
+      - name: Install git for proper clone (CUDA image has none)
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+      - name: Mark workspace safe for gix (container uid mismatch)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Dry-run short-circuit
         if: ${{ env.RELEASE_DRY_RUN == 'true' }}
         run: echo "Dry run enabled, skipping unit test job"
+      - name: Clean up corrupted cargo config
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: rm -f ~/.cargo/config.toml
+      - name: Install build dependencies
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: bash ./scripts/install-linux-build-deps.sh
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
@@ -193,13 +207,27 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           tool: cargo-nextest
+      - name: Initialize git repo in llama-cpp source to satisfy cmake
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: |
+          cargo fetch --locked
+          LLAMA_SRC=$(find ~/.cargo/registry/src -name "llama-cpp-sys-2-*" -type d 2>/dev/null | head -1)
+          if [ -n "$LLAMA_SRC" ] && [ ! -d "$LLAMA_SRC/.git" ]; then
+            cd "$LLAMA_SRC"
+            git init
+            git config user.email "ci@example.com"
+            git config user.name "CI"
+            git add -A
+            git commit -m "init" --allow-empty
+            git tag v0.0.0
+          fi
       - name: Build Tailwind CSS
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
           cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
-        run: cargo nextest run --profile ci
+        run: cargo nextest run --all-features --profile ci
 
   e2e:
     name: E2E Tests
