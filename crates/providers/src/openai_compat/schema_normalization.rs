@@ -430,12 +430,38 @@ impl Transform for RestoreEnumTypeTransform {
         // Only restore when all non-null values share a single type.
         if types.len() == 1 {
             let inferred_type = types.into_iter().next().unwrap_or_default();
+
+            // Check for redundant boolean enum BEFORE mutating obj.
+            // `json_schema_ast` converts `"type": "boolean"` →
+            // `"enum": [false, true]` which adds no constraint beyond the
+            // restored type. Leaving this redundant enum causes
+            // `make_nullable` in strict mode to append `null` to the enum
+            // array, which Fireworks AI rejects with "could not translate
+            // the enum None" (#848).
+            let strip_redundant_enum =
+                inferred_type == "boolean" && is_complete_boolean_enum(values);
+
             obj.insert(
                 "type".to_string(),
                 serde_json::Value::String(inferred_type.to_string()),
             );
+
+            if strip_redundant_enum {
+                obj.remove("enum");
+            }
         }
     }
+}
+
+/// Whether an enum array is exactly `[false, true]` (in any order, ignoring
+/// nulls). This is the complete boolean domain produced by `json_schema_ast`'s
+/// `lower_boolean_and_null_types` canonicalization and adds no constraint when
+/// the type is already `"boolean"`.
+fn is_complete_boolean_enum(values: &[serde_json::Value]) -> bool {
+    let non_null: Vec<_> = values.iter().filter(|v| !v.is_null()).collect();
+    non_null.len() == 2
+        && non_null.iter().any(|v| v.as_bool() == Some(false))
+        && non_null.iter().any(|v| v.as_bool() == Some(true))
 }
 
 /// Remove empty `{}` (the JSON Schema "true" schema) from `anyOf`/`oneOf`

@@ -1031,14 +1031,13 @@ fn sanitize_draft07_nested_definitions_schema_canonicalized() {
     // `name` property type preserved.
     assert_eq!(schema["properties"]["name"]["type"], "string");
 
-    // Canonicalization lowers `type: "boolean"` → `enum: [false, true]`.
-    // If this enum is present, canonicalization ran (not the fallback path
-    // that would emit a WARN log).
-    let verbose_enum = schema["properties"]["verbose"]["enum"].as_array();
-    assert!(
-        verbose_enum.is_some(),
-        "boolean property should have enum after canonicalization (proves no WARN fallback), got: {}",
-        schema["properties"]["verbose"]
+    // Canonicalization lowers `type: "boolean"` → `enum: [false, true]`,
+    // then `RestoreEnumTypeTransform` restores `type: "boolean"` and strips
+    // the redundant enum (#848). The `$schema` stripping above already
+    // proves canonicalization ran; verify the type is correctly preserved.
+    assert_eq!(
+        schema["properties"]["verbose"]["type"], "boolean",
+        "boolean type must be restored after canonicalization"
     );
 }
 
@@ -1060,24 +1059,24 @@ fn sanitize_draft07_schema_uses_canonicalization_not_fallback() {
 
     sanitize_schema_for_openai_compat(&mut schema);
 
+    // `$schema` is stripped during canonicalization — its absence proves
+    // we used the real canonicalization path, not the raw-input fallback.
+    assert!(
+        schema.get("$schema").is_none(),
+        "$schema should be stripped (proves canonicalization ran)"
+    );
     // Canonicalization lowers `type: "boolean"` → `enum: [false, true]`,
-    // then `RestoreEnumTypeTransform` re-adds `type: "boolean"`. The
-    // presence of `enum` proves canonicalization ran (the fallback path
-    // would leave `type: "boolean"` unchanged without an `enum`).
+    // then `RestoreEnumTypeTransform` re-adds `type: "boolean"` and strips
+    // the redundant enum (#848). The type should be preserved.
     assert_eq!(
         schema["properties"]["verbose"]["type"], "boolean",
         "type must be restored after canonicalization"
     );
-    let Some(verbose_enum) = schema["properties"]["verbose"]["enum"].as_array() else {
-        panic!(
-            "boolean property should have enum after canonicalization (proves non-fallback path), got: {}",
-            schema["properties"]["verbose"]
-        );
-    };
-    assert_eq!(
-        verbose_enum.len(),
-        2,
-        "boolean enum should have [false, true]"
+    // The redundant `[false, true]` enum is stripped to prevent Fireworks
+    // from receiving `null` in enum arrays during strict-mode nullability.
+    assert!(
+        schema["properties"]["verbose"].get("enum").is_none(),
+        "redundant boolean enum should be stripped (#848)"
     );
 }
 
@@ -1497,4 +1496,99 @@ fn non_strict_allof_collapsed_and_merged() {
     );
 
     assert_no_orphaned_required(&schema, "root");
+}
+
+/// Issue #848: `json_schema_ast` canonicalization converts `"type": "boolean"`
+/// to `"enum": [false, true]`. `RestoreEnumTypeTransform` restores
+/// `"type": "boolean"` but leaves the redundant `enum`. Then strict mode's
+/// `make_nullable` appends `null` to the enum: `[false, true, null]`.
+/// Fireworks AI rejects this with "could not translate the enum None."
+///
+/// The fix: `RestoreEnumTypeTransform` strips redundant `[false, true]` enum
+/// arrays when `type: "boolean"` is restored, preventing `null` from being
+/// added to a boolean enum.
+#[test]
+fn strict_mode_boolean_property_no_null_in_enum() {
+    let tools = vec![serde_json::json!({
+        "name": "test_tool",
+        "description": "Test",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string" },
+                "verbose": { "type": "boolean" },
+                "dry_run": { "type": "boolean", "default": false }
+            },
+            "required": ["query"]
+        }
+    })];
+
+    // strict=true (Fireworks path)
+    let converted = to_openai_tools(&tools, true);
+    let params = &converted[0]["function"]["parameters"];
+    let serialized = params.to_string();
+
+    // Boolean properties should NOT have enum arrays containing null.
+    // They should use type-nullability only: "type": ["boolean", "null"]
+    for prop_name in ["verbose", "dry_run"] {
+        let prop = &params["properties"][prop_name];
+
+        // Should NOT have an enum with null
+        if let Some(enum_arr) = prop.get("enum").and_then(|v| v.as_array()) {
+            assert!(
+                !enum_arr.iter().any(|v| v.is_null()),
+                "{prop_name} should not have null in enum: {enum_arr:?} \
+                 (full schema: {serialized})"
+            );
+        }
+
+        // Should be nullable via type
+        let ty = prop.get("type");
+        assert!(
+            ty.is_some(),
+            "{prop_name} should have a type field: {}",
+            serde_json::to_string_pretty(prop).unwrap_or_default()
+        );
+    }
+}
+
+/// Issue #848: enum-only schemas with only `null` values (from
+/// `json_schema_ast`'s `lower_boolean_and_null_types` converting
+/// `"type": "null"` → `"enum": [null]`) should not reach Fireworks.
+/// After `RestoreEnumTypeTransform`, such schemas keep `"enum": [null]`
+/// without a type — verify they don't appear in strict-mode output.
+#[test]
+fn sanitize_strips_redundant_boolean_enum() {
+    let mut schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "flag": { "type": "boolean" },
+            "mode": { "type": "string", "enum": ["fast", "slow"] }
+        },
+        "required": ["flag"]
+    });
+
+    sanitize_schema_for_openai_compat(&mut schema);
+
+    // After canonicalization + restore, `flag` should have type: "boolean"
+    // WITHOUT a redundant enum: [false, true].
+    let flag = &schema["properties"]["flag"];
+    assert_eq!(
+        flag.get("type").and_then(|v| v.as_str()),
+        Some("boolean"),
+        "flag should have type boolean"
+    );
+    assert!(
+        flag.get("enum").is_none(),
+        "flag should not have redundant boolean enum, got: {}",
+        serde_json::to_string_pretty(flag).unwrap_or_default()
+    );
+
+    // `mode` should keep its enum (it's a real constraint, not a
+    // canonicalization artifact).
+    let mode = &schema["properties"]["mode"];
+    assert!(
+        mode.get("enum").is_some(),
+        "mode should keep its string enum"
+    );
 }
