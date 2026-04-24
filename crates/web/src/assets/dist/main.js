@@ -32621,6 +32621,9 @@ function fetchBootstrap() {
       setProjects(bootProjects);
       renderProjectSelect();
       renderSessionProjectSelect();
+      if (projectCombo) {
+        projectCombo.classList.toggle("hidden", bootProjects.length === 0);
+      }
     }
     setSandboxInfo(boot.sandbox || null);
     updateSandboxUI(sessionSandboxEnabled);
