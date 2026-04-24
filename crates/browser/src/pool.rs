@@ -737,35 +737,73 @@ impl BrowserPool {
     }
 
     /// Launch an Obscura headless browser as a sidecar process and connect via CDP.
+    ///
+    /// Uses a retry loop to handle TOCTOU races on port selection: if a
+    /// picked port is stolen between bind-to-0 and `obscura serve`, we
+    /// try again with a fresh port (up to [`OBSCURA_PORT_RETRIES`] times).
     async fn launch_obscura_browser(&self, session_id: &str) -> Result<BrowserInstance, Error> {
         let obscura_path = crate::detect::detect_obscura(self.config.obscura_path.as_deref())
             .ok_or_else(|| {
                 Error::LaunchFailed(
                     "Obscura binary not found. Install it from \
-                     https://github.com/nicholasgasior/obscura or set \
+                     https://github.com/h4ckf0r0day/obscura or set \
                      [tools.browser] obscura_path in config."
                         .to_string(),
                 )
             })?;
 
-        // Pick a random port for the CDP server.
-        let port = pick_available_port().ok_or_else(|| {
-            Error::LaunchFailed("no available TCP port for Obscura CDP server".to_string())
-        })?;
+        let mut last_error = String::new();
 
-        info!(
-            session_id,
-            port,
-            path = %obscura_path.display(),
-            "launching Obscura sidecar"
-        );
+        for attempt in 0..OBSCURA_PORT_RETRIES {
+            // Pick a random port for the CDP server.
+            let port = pick_available_port().ok_or_else(|| {
+                Error::LaunchFailed("no available TCP port for Obscura CDP server".to_string())
+            })?;
 
-        let mut child = tokio::process::Command::new(&obscura_path)
+            info!(
+                session_id,
+                port,
+                attempt,
+                path = %obscura_path.display(),
+                "launching Obscura sidecar"
+            );
+
+            match self
+                .try_launch_obscura(session_id, &obscura_path, port)
+                .await
+            {
+                Ok(instance) => return Ok(instance),
+                Err(e) => {
+                    warn!(
+                        session_id,
+                        port,
+                        attempt,
+                        error = %e,
+                        "Obscura launch attempt failed, retrying with new port"
+                    );
+                    last_error = e.to_string();
+                },
+            }
+        }
+
+        Err(Error::LaunchFailed(format!(
+            "Obscura failed to start after {OBSCURA_PORT_RETRIES} attempts: {last_error}"
+        )))
+    }
+
+    /// Single attempt to spawn Obscura on a given port and connect via CDP.
+    async fn try_launch_obscura(
+        &self,
+        session_id: &str,
+        obscura_path: &std::path::Path,
+        port: u16,
+    ) -> Result<BrowserInstance, Error> {
+        let mut child = tokio::process::Command::new(obscura_path)
             .arg("serve")
             .arg("--port")
             .arg(port.to_string())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| {
@@ -783,8 +821,12 @@ impl BrowserPool {
         loop {
             // Check that the child hasn't exited.
             if let Ok(Some(status)) = child.try_wait() {
+                let stderr = drain_child_stderr(&mut child).await;
+                if !stderr.is_empty() {
+                    warn!(session_id, port, stderr, "Obscura stderr before exit");
+                }
                 return Err(Error::LaunchFailed(format!(
-                    "Obscura exited immediately with status {status}"
+                    "Obscura exited immediately with status {status}: {stderr}"
                 )));
             }
 
@@ -800,11 +842,14 @@ impl BrowserPool {
             }
 
             if Instant::now() >= deadline {
-                // Kill the child so it doesn't leak.
+                let stderr = drain_child_stderr(&mut child).await;
+                if !stderr.is_empty() {
+                    warn!(session_id, port, stderr, "Obscura stderr at timeout");
+                }
                 let _ = child.kill().await;
-                return Err(Error::LaunchFailed(
-                    "Obscura CDP server did not become ready within 10 seconds".to_string(),
-                ));
+                return Err(Error::LaunchFailed(format!(
+                    "Obscura CDP server did not become ready within 10 seconds: {stderr}"
+                )));
             }
 
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -861,12 +906,28 @@ impl BrowserPool {
     }
 }
 
+/// Maximum number of port-selection retries when launching Obscura.
+const OBSCURA_PORT_RETRIES: usize = 3;
+
 /// Find an available TCP port by binding to port 0.
 fn pick_available_port() -> Option<u16> {
     std::net::TcpListener::bind("127.0.0.1:0")
         .ok()
         .and_then(|l| l.local_addr().ok())
         .map(|a| a.port())
+}
+
+/// Read whatever stderr the child has produced so far (non-blocking).
+async fn drain_child_stderr(child: &mut tokio::process::Child) -> String {
+    use tokio::io::AsyncReadExt;
+
+    let Some(stderr) = child.stderr.as_mut() else {
+        return String::new();
+    };
+    let mut buf = Vec::with_capacity(4096);
+    // Use a short timeout so we don't block if the pipe is empty.
+    let _ = tokio::time::timeout(Duration::from_millis(100), stderr.read_to_end(&mut buf)).await;
+    String::from_utf8_lossy(&buf).trim().to_string()
 }
 
 impl Drop for BrowserPool {
