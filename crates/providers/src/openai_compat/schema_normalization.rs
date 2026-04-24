@@ -704,10 +704,13 @@ pub fn strip_null_from_typed_enums(schema: &mut serde_json::Value) {
     };
 
     // Only strip null from enum when type already communicates nullability.
-    let type_includes_null = obj
-        .get("type")
-        .and_then(|ty| ty.as_array())
-        .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some("null")));
+    let type_includes_null = match obj.get("type") {
+        Some(serde_json::Value::Array(arr)) => {
+            arr.iter().any(|v| v.as_str() == Some("null"))
+        },
+        Some(serde_json::Value::String(s)) => s == "null",
+        _ => false,
+    };
 
     if type_includes_null
         && let Some(enum_values) = obj.get_mut("enum").and_then(|v| v.as_array_mut())

@@ -136,7 +136,7 @@ impl OpenAiProvider {
     /// but the redundant null is removed from enum arrays (issue #848).
     fn rejects_null_in_enums(&self) -> bool {
         self.provider_name.eq_ignore_ascii_case("fireworks")
-            || self.base_url.contains("fireworks.ai")
+            || self.base_url.to_ascii_lowercase().contains("fireworks.ai")
     }
 
     /// Convert raw tool schemas into the provider-compatible Chat
