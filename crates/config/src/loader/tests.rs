@@ -6,17 +6,20 @@ use crate::{AgentIdentity, UserProfile, schema::MoltisConfig};
 
 use super::{
     config_io::{
-        apply_env_overrides_with, parse_config, parse_env_value, resubstitute_config, set_nested,
+        apply_env_overrides_with, parse_config, parse_env_value, resubstitute_config,
+        save_user_config_to_path, set_nested, strip_default_values,
     },
     *,
 };
 
-struct TestDataDirState {
-    _data_dir: Option<PathBuf>,
+struct TestDirState {
+    _path: Option<PathBuf>,
 }
 
-static DATA_DIR_TEST_LOCK: Mutex<TestDataDirState> =
-    Mutex::new(TestDataDirState { _data_dir: None });
+static DATA_DIR_TEST_LOCK: Mutex<TestDirState> = Mutex::new(TestDirState { _path: None });
+
+/// Lock guarding tests that modify `CONFIG_DIR_OVERRIDE` to prevent races.
+static CONFIG_DIR_TEST_LOCK: Mutex<TestDirState> = Mutex::new(TestDirState { _path: None });
 
 #[test]
 fn parse_env_value_bool() {
@@ -208,33 +211,21 @@ fn write_default_config_writes_template_to_requested_path() {
         raw.contains("port = 23456"),
         "generated template should include selected server port"
     );
+    // The override-only template has most settings commented out.
+    // Port is the only active value (installation-specific).
     assert!(
-        raw.contains("message_queue_mode = \"followup\""),
-        "generated template should set followup queue mode by default"
+        raw.contains("# message_queue_mode"),
+        "generated template should document queue mode as commented example"
     );
     assert!(
-        raw.contains("\"followup\" - Queue messages, replay one-by-one after run"),
-        "generated template should document the followup queue option"
-    );
-    assert!(
-        raw.contains("\"collect\"  - Buffer messages, concatenate as single message"),
-        "generated template should document the collect queue option"
-    );
-    assert!(
-        raw.contains("\"tmux\""),
-        "generated template should include tmux in sandbox packages"
+        raw.contains("YOUR overrides only"),
+        "generated template should explain it is override-only"
     );
 
     let parsed: MoltisConfig = parse_config(&raw, &path).expect("parse generated config");
-    assert!(
-        parsed
-            .tools
-            .exec
-            .sandbox
-            .packages
-            .iter()
-            .any(|pkg| pkg == "tmux"),
-        "parsed config should include tmux in sandbox packages"
+    assert_eq!(
+        parsed.server.port, 23456,
+        "parsed config should have the correct port"
     );
 }
 
@@ -253,7 +244,7 @@ fn write_default_config_does_not_overwrite_existing_file() {
 }
 
 #[test]
-fn save_config_to_path_preserves_provider_and_voice_comment_blocks() {
+fn save_config_to_path_preserves_comment_blocks() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("moltis.toml");
     std::fs::write(&path, crate::template::default_config_template(18789)).expect("write template");
@@ -265,9 +256,8 @@ fn save_config_to_path_preserves_provider_and_voice_comment_blocks() {
     save_config_to_path(&path, &config).expect("save config");
 
     let saved = std::fs::read_to_string(&path).expect("read saved config");
+    // The override-only template has provider docs as comments.
     assert!(saved.contains("# All available providers:"));
-    assert!(saved.contains("# All available TTS providers:"));
-    assert!(saved.contains("# All available STT providers:"));
     assert!(saved.contains("disabled = true"));
     assert!(saved.contains("http_request_logs = true"));
 }
@@ -1289,5 +1279,279 @@ model = "sonar"
     assert!(
         key.expose_secret() == tricky_value,
         "value with quotes/backslashes must survive resubstitution intact"
+    );
+}
+
+// ── Layered config tests ─────────────────────────────────────────────
+
+#[test]
+fn defaults_toml_is_generated_and_parseable() {
+    let content = crate::defaults::generate_defaults_toml().expect("generate defaults");
+    assert!(
+        content.contains("MOLTIS-MANAGED DEFAULTS"),
+        "defaults.toml should contain ownership header"
+    );
+    let config: MoltisConfig =
+        toml::from_str(&content).expect("defaults.toml should parse as valid MoltisConfig");
+    // Verify it matches the built-in defaults.
+    assert_eq!(config.tools.agent_timeout_secs, 600);
+    assert_eq!(config.tools.agent_max_iterations, 25);
+    assert!(config.tls.enabled);
+}
+
+#[test]
+fn defaults_toml_written_and_loaded_from_disk() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = crate::defaults::write_defaults_toml(dir.path()).expect("write defaults.toml");
+    assert!(path.exists());
+
+    let config = crate::defaults::load_defaults(dir.path());
+    assert_eq!(config.tools.agent_timeout_secs, 600);
+    assert!(config.tls.enabled);
+}
+
+#[test]
+fn merge_defaults_with_user_overrides() {
+    let defaults = crate::defaults::generate_defaults_toml().expect("generate defaults");
+    // User only overrides agent_timeout_secs.
+    let user = r#"
+[tools]
+agent_timeout_secs = 120
+"#;
+    let path = std::path::PathBuf::from("test.toml");
+    let config =
+        crate::defaults::merge_defaults_with_user_toml(&defaults, user, &path).expect("merge");
+
+    // User override applied.
+    assert_eq!(config.tools.agent_timeout_secs, 120);
+    // Defaults preserved.
+    assert_eq!(config.tools.agent_max_iterations, 25);
+    assert!(config.tls.enabled);
+    assert!(!config.auth.disabled);
+}
+
+#[test]
+fn merge_preserves_user_only_keys() {
+    let defaults = crate::defaults::generate_defaults_toml().expect("generate defaults");
+    // User adds a custom provider entry (not in defaults).
+    let user = r#"
+[identity]
+name = "Rex"
+"#;
+    let path = std::path::PathBuf::from("test.toml");
+    let config =
+        crate::defaults::merge_defaults_with_user_toml(&defaults, user, &path).expect("merge");
+
+    assert_eq!(config.identity.name.as_deref(), Some("Rex"));
+    // Defaults still present.
+    assert!(config.tls.enabled);
+}
+
+#[test]
+fn save_user_config_does_not_materialize_defaults() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("moltis.toml");
+
+    // Start with a minimal user config.
+    std::fs::write(&path, "[server]\nport = 12345\n").expect("write seed");
+
+    let raw = std::fs::read_to_string(&path).expect("read seed");
+    let mut config: MoltisConfig = parse_config(&raw, &path).expect("parse");
+    // Make one change.
+    config.auth.disabled = true;
+
+    save_user_config_to_path(&path, &config).expect("save user config");
+
+    let saved = std::fs::read_to_string(&path).expect("read saved");
+
+    // User override should be present.
+    assert!(
+        saved.contains("disabled = true"),
+        "user override should be saved"
+    );
+    // Built-in defaults should NOT be materialized.
+    assert!(
+        !saved.contains("agent_timeout_secs"),
+        "defaults should not be materialized into user config"
+    );
+    assert!(
+        !saved.contains("agent_max_iterations"),
+        "defaults should not be materialized into user config"
+    );
+    assert!(
+        !saved.contains("mode = \"deterministic\""),
+        "compaction mode default should not be materialized"
+    );
+}
+
+#[test]
+fn update_config_preserves_override_boundary() {
+    let _guard = CONFIG_DIR_TEST_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("moltis.toml");
+
+    // Seed a minimal user config.
+    std::fs::write(
+        &config_path,
+        "[server]\nport = 54321\n\n[auth]\ndisabled = true\n",
+    )
+    .expect("write seed");
+
+    set_config_dir(dir.path().to_path_buf());
+
+    // Simulate an update_config call that changes only one field.
+    let result_path = update_config(|cfg| {
+        cfg.server.http_request_logs = true;
+    })
+    .expect("update_config");
+
+    let saved = std::fs::read_to_string(&result_path).expect("read saved");
+
+    // User changes present.
+    assert!(saved.contains("http_request_logs = true"));
+    assert!(saved.contains("disabled = true"));
+    assert!(saved.contains("port = 54321"));
+
+    // Defaults NOT materialized.
+    assert!(
+        !saved.contains("agent_timeout_secs"),
+        "update_config should not materialize defaults"
+    );
+
+    clear_config_dir();
+}
+
+#[test]
+fn layered_load_user_override_wins_over_defaults() {
+    let _guard = CONFIG_DIR_TEST_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("moltis.toml");
+
+    // Write defaults.toml first.
+    crate::defaults::write_defaults_toml(dir.path()).expect("write defaults");
+
+    // Write user config with an override.
+    std::fs::write(
+        &config_path,
+        "[server]\nport = 11111\n\n[tools]\nagent_timeout_secs = 999\n",
+    )
+    .expect("write user config");
+
+    set_config_dir(dir.path().to_path_buf());
+
+    let config = discover_and_load();
+    // User override wins.
+    assert_eq!(config.tools.agent_timeout_secs, 999);
+    // Defaults inherited.
+    assert_eq!(config.tools.agent_max_iterations, 25);
+    assert!(config.tls.enabled);
+
+    clear_config_dir();
+}
+
+#[test]
+fn upgrade_adds_new_defaults_automatically() {
+    let _guard = CONFIG_DIR_TEST_LOCK.lock().unwrap();
+    // Simulate: defaults.toml has new settings that weren't in the old version.
+    // User config only has port. After layered load, new defaults should appear.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("moltis.toml");
+
+    // Write a minimal user config (no tools section).
+    std::fs::write(&config_path, "[server]\nport = 22222\n").expect("write user config");
+
+    // Write defaults.toml.
+    crate::defaults::write_defaults_toml(dir.path()).expect("write defaults");
+
+    set_config_dir(dir.path().to_path_buf());
+
+    let config = discover_and_load();
+    // Defaults should be inherited even though user didn't specify them.
+    assert_eq!(config.tools.agent_timeout_secs, 600);
+    assert_eq!(config.tools.agent_max_iterations, 25);
+    assert!(config.heartbeat.enabled);
+
+    clear_config_dir();
+}
+
+#[test]
+fn user_override_survives_defaults_refresh() {
+    let _guard = CONFIG_DIR_TEST_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("moltis.toml");
+
+    // User overrides timeout.
+    std::fs::write(
+        &config_path,
+        "[server]\nport = 33333\n\n[tools]\nagent_timeout_secs = 42\n",
+    )
+    .expect("write user config");
+
+    set_config_dir(dir.path().to_path_buf());
+
+    // First load (writes defaults.toml).
+    let config1 = discover_and_load();
+    assert_eq!(config1.tools.agent_timeout_secs, 42);
+
+    // Simulate upgrade by refreshing defaults.toml again.
+    crate::defaults::write_defaults_toml(dir.path()).expect("refresh defaults");
+
+    // Reload — user override must survive.
+    let config2 = discover_and_load();
+    assert_eq!(
+        config2.tools.agent_timeout_secs, 42,
+        "user override must survive defaults refresh"
+    );
+
+    clear_config_dir();
+}
+
+#[test]
+fn strip_default_values_removes_matching_defaults() {
+    let effective = r#"
+[server]
+port = 18789
+bind = "127.0.0.1"
+
+[auth]
+disabled = true
+
+[tools]
+agent_timeout_secs = 600
+"#;
+    let defaults = r#"
+[server]
+port = 0
+bind = "127.0.0.1"
+
+[auth]
+disabled = false
+
+[tools]
+agent_timeout_secs = 600
+"#;
+
+    let mut eff_doc = effective.parse::<toml_edit::DocumentMut>().unwrap();
+    let def_doc = defaults.parse::<toml_edit::DocumentMut>().unwrap();
+
+    strip_default_values(eff_doc.as_table_mut(), def_doc.as_table());
+    let result = eff_doc.to_string();
+
+    // port differs → kept
+    assert!(
+        result.contains("port = 18789"),
+        "different value should be kept"
+    );
+    // bind matches default → stripped
+    assert!(!result.contains("bind"), "default value should be stripped");
+    // auth.disabled differs → kept
+    assert!(
+        result.contains("disabled = true"),
+        "different value should be kept"
+    );
+    // agent_timeout_secs matches default → stripped
+    assert!(
+        !result.contains("agent_timeout_secs"),
+        "default value should be stripped"
     );
 }
