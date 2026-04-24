@@ -610,7 +610,13 @@ fn read_bundled(
         response.insert("allowed_tools".into(), json!(meta.allowed_tools));
     }
     if !linked.is_empty() {
-        let hint = if skill_dir.is_some() {
+        let has_scripts = skill_dir.is_some()
+            && linked.iter().any(|v| {
+                v.get("path")
+                    .and_then(|p| p.as_str())
+                    .is_some_and(|p| p.starts_with("scripts/"))
+            });
+        let hint = if has_scripts {
             "This skill includes executable scripts. Use the `skill_dir` path \
              to resolve script references in the body. To view a linked file, \
              call read_skill again with file_path set to one of the paths in \
