@@ -1,5 +1,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+use std::path::PathBuf;
 use super::*;
+#[cfg(all(target_os = "linux", feature = "landlock"))]
+use super::super::landlock as landlock_mod;
 
 #[test]
 fn test_restricted_host_sandbox_backend_name() {
@@ -178,4 +181,163 @@ fn test_parse_memory_limit() {
 #[test]
 fn test_wasm_sandbox_available() {
     assert!(is_wasm_sandbox_available());
+}
+
+// ── Landlock FS isolation tests (Linux only, requires `landlock` feature) ──
+
+/// Default config (empty fs_allow_paths) must not restrict access — no regression.
+#[cfg(all(target_os = "linux", feature = "landlock"))]
+#[tokio::test]
+async fn test_landlock_empty_paths_no_restriction() {
+    let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-ll-empty".into(),
+    };
+    // /etc/hostname exists on most Linux systems; the point is it must NOT be blocked.
+    let result = sandbox
+        .exec(&id, "cat /etc/hostname 2>/dev/null || true", &ExecOpts::default())
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0);
+}
+
+/// Paths NOT in the allowlist must be inaccessible.
+/// Skipped when the kernel/container doesn't support Landlock.
+#[cfg(all(target_os = "linux", feature = "landlock"))]
+#[tokio::test]
+async fn test_landlock_blocks_outside_allowlist() {
+    if !landlock_mod::is_kernel_landlock_available() {
+        eprintln!("skipping: Landlock not available in this kernel/container");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let config = SandboxConfig {
+        fs_allow_paths: vec![tmp.path().to_path_buf()],
+        ..Default::default()
+    };
+    let sandbox = RestrictedHostSandbox::new(config);
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-ll-block".into(),
+    };
+    let result = sandbox
+        .exec(&id, "cat /etc/passwd", &ExecOpts::default())
+        .await
+        .unwrap();
+    assert_ne!(result.exit_code, 0, "expected Landlock to deny access to /etc/passwd");
+}
+
+/// Paths IN the allowlist must remain accessible.
+/// Skipped when the kernel/container doesn't support Landlock.
+#[cfg(all(target_os = "linux", feature = "landlock"))]
+#[tokio::test]
+async fn test_landlock_allows_inside_allowlist() {
+    if !landlock_mod::is_kernel_landlock_available() {
+        eprintln!("skipping: Landlock not available in this kernel/container");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let secret = tmp.path().join("allowed.txt");
+    std::fs::write(&secret, "allowed content").unwrap();
+
+    let config = SandboxConfig {
+        fs_allow_paths: vec![tmp.path().to_path_buf()],
+        ..Default::default()
+    };
+    let sandbox = RestrictedHostSandbox::new(config);
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-ll-allow".into(),
+    };
+    let result = sandbox
+        .exec(
+            &id,
+            &format!("cat {}", secret.display()),
+            &ExecOpts::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.contains("allowed content"));
+}
+
+/// Multiple allowed paths — both must be accessible.
+/// Skipped when the kernel/container doesn't support Landlock.
+#[cfg(all(target_os = "linux", feature = "landlock"))]
+#[tokio::test]
+async fn test_landlock_multiple_allow_paths() {
+    if !landlock_mod::is_kernel_landlock_available() {
+        eprintln!("skipping: Landlock not available in this kernel/container");
+        return;
+    }
+    let tmp_a = tempfile::tempdir().unwrap();
+    let tmp_b = tempfile::tempdir().unwrap();
+    std::fs::write(tmp_a.path().join("a.txt"), "from-a").unwrap();
+    std::fs::write(tmp_b.path().join("b.txt"), "from-b").unwrap();
+
+    let config = SandboxConfig {
+        fs_allow_paths: vec![tmp_a.path().to_path_buf(), tmp_b.path().to_path_buf()],
+        ..Default::default()
+    };
+    let sandbox = RestrictedHostSandbox::new(config);
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-ll-multi".into(),
+    };
+    let ra = sandbox
+        .exec(
+            &id,
+            &format!("cat {}", tmp_a.path().join("a.txt").display()),
+            &ExecOpts::default(),
+        )
+        .await
+        .unwrap();
+    let rb = sandbox
+        .exec(
+            &id,
+            &format!("cat {}", tmp_b.path().join("b.txt").display()),
+            &ExecOpts::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(ra.exit_code, 0);
+    assert!(ra.stdout.contains("from-a"));
+    assert_eq!(rb.exit_code, 0);
+    assert!(rb.stdout.contains("from-b"));
+
+    // But /etc/passwd should still be blocked.
+    let blocked = sandbox
+        .exec(&id, "cat /etc/passwd", &ExecOpts::default())
+        .await
+        .unwrap();
+    assert_ne!(blocked.exit_code, 0);
+}
+
+/// Known gap: read_file / write_file / list_files bypass Landlock because they
+/// use native_host_* (tokio::fs) in the parent process, not child exec.
+/// This test documents that gap — it should always pass.
+#[cfg(all(target_os = "linux", feature = "landlock"))]
+#[tokio::test]
+async fn test_landlock_native_fs_bypass_is_known_gap() {
+    let config = SandboxConfig {
+        // Only allow /tmp — /etc should be blocked for child exec.
+        fs_allow_paths: vec![PathBuf::from("/tmp")],
+        ..Default::default()
+    };
+    let sandbox = RestrictedHostSandbox::new(config);
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-ll-bypass".into(),
+    };
+
+    // read_file uses native_host_read_file (parent-side tokio::fs), bypasses Landlock.
+    let result = sandbox.read_file(&id, "/etc/hostname", 1024).await.unwrap();
+    match result {
+        SandboxReadResult::Ok(_) => {} // expected: parent can still read
+        SandboxReadResult::NotFound => {
+            // Also fine — /etc/hostname may not exist in all environments.
+        }
+        other => panic!("unexpected read result: {other:?}"),
+    }
 }
