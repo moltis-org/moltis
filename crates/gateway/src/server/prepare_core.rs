@@ -815,6 +815,9 @@ pub async fn prepare_gateway_core(
         window_ms: config.cron.rate_limit_window_secs * 1000,
     };
 
+    let wake_cooldown_ms = moltis_cron::parse::parse_duration_ms(&config.heartbeat.wake_cooldown)
+        .unwrap_or(5 * 60 * 1000);
+
     let cron_store_for_pruning = Arc::clone(&cron_store);
     let cron_service = moltis_cron::service::CronService::with_events_queue(
         cron_store,
@@ -822,6 +825,7 @@ pub async fn prepare_gateway_core(
         on_agent_turn,
         Some(on_cron_notify),
         rate_limit_config,
+        wake_cooldown_ms,
         events_queue,
     );
 

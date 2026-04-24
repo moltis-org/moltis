@@ -535,6 +535,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("to", Leaf),
                 ("sandbox_enabled", Leaf),
                 ("sandbox_image", Leaf),
+                ("wake_cooldown", Leaf),
             ])),
         ),
         (

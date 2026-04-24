@@ -182,6 +182,10 @@ pub struct HeartbeatConfig {
     pub sandbox_enabled: bool,
     /// Override sandbox image for heartbeat. If `None`, uses the default image.
     pub sandbox_image: Option<String>,
+    /// Minimum duration between exec-triggered heartbeat wakes (e.g. "5m", "0").
+    /// Prevents exec-completion callbacks from re-waking the heartbeat in a tight loop.
+    /// Defaults to "5m". Set to "0" to disable.
+    pub wake_cooldown: String,
 }
 
 impl Default for HeartbeatConfig {
@@ -198,6 +202,7 @@ impl Default for HeartbeatConfig {
             to: None,
             sandbox_enabled: true,
             sandbox_image: None,
+            wake_cooldown: "5m".into(),
         }
     }
 }

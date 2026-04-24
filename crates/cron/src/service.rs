@@ -166,6 +166,7 @@ impl CronService {
             on_agent_turn,
             None,
             RateLimitConfig::default(),
+            DEFAULT_WAKE_COOLDOWN_MS,
         )
     }
 
@@ -182,6 +183,7 @@ impl CronService {
             on_agent_turn,
             Some(on_notify),
             RateLimitConfig::default(),
+            DEFAULT_WAKE_COOLDOWN_MS,
         )
     }
 
@@ -192,6 +194,7 @@ impl CronService {
         on_agent_turn: AgentTurnFn,
         on_notify: Option<NotifyFn>,
         rate_limit_config: RateLimitConfig,
+        wake_cooldown_ms: u64,
     ) -> Arc<Self> {
         Self::with_events_queue(
             store,
@@ -199,6 +202,7 @@ impl CronService {
             on_agent_turn,
             on_notify,
             rate_limit_config,
+            wake_cooldown_ms,
             SystemEventsQueue::new(),
         )
     }
@@ -213,6 +217,7 @@ impl CronService {
         on_agent_turn: AgentTurnFn,
         on_notify: Option<NotifyFn>,
         rate_limit_config: RateLimitConfig,
+        wake_cooldown_ms: u64,
         events_queue: Arc<SystemEventsQueue>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -226,7 +231,7 @@ impl CronService {
             on_notify,
             rate_limiter: Mutex::new(RateLimiter::new(rate_limit_config)),
             events_queue,
-            wake_cooldown_ms: DEFAULT_WAKE_COOLDOWN_MS,
+            wake_cooldown_ms,
         })
     }
 

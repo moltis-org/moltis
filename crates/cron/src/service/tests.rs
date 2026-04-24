@@ -381,6 +381,7 @@ async fn test_rate_limiting() {
             max_per_window: 3,
             window_ms: 60_000,
         },
+        DEFAULT_WAKE_COOLDOWN_MS,
     );
 
     let create_job = || CronJobCreate {
@@ -435,6 +436,7 @@ async fn test_rate_limiting_skips_system_jobs() {
             max_per_window: 1,
             window_ms: 60_000,
         },
+        DEFAULT_WAKE_COOLDOWN_MS,
     );
 
     let create_system_job = || CronJobCreate {
