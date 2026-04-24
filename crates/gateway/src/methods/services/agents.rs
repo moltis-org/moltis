@@ -600,10 +600,25 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         Some(preset) => toml::to_string_pretty(preset).unwrap_or_default(),
                         None => String::new(),
                     };
+                    let default_presets = moltis_config::MoltisConfig::default().agents.presets;
+                    let source = if default_presets.contains_key(&id) {
+                        let eff = toml::to_string(&config.agents.presets[&id]).unwrap_or_default();
+                        let def = toml::to_string(&default_presets[&id]).unwrap_or_default();
+                        if eff == def {
+                            "built_in"
+                        } else {
+                            "user_override"
+                        }
+                    } else if toml_str.is_empty() {
+                        "none"
+                    } else {
+                        "custom"
+                    };
                     Ok(serde_json::json!({
                         "id": id,
                         "toml": toml_str,
                         "exists": !toml_str.is_empty(),
+                        "source": source,
                     }))
                 })
             }),
@@ -693,6 +708,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             std::collections::HashSet::new()
                         };
 
+                    let default_presets = moltis_config::MoltisConfig::default().agents.presets;
                     let config_only: Vec<serde_json::Value> = config
                         .agents
                         .presets
@@ -700,6 +716,18 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .filter(|(name, _)| !persona_ids.contains(*name))
                         .map(|(name, preset)| {
                             let toml_str = toml::to_string_pretty(preset).unwrap_or_default();
+                            let provenance = if default_presets.contains_key(name) {
+                                let eff = toml::to_string(preset).unwrap_or_default();
+                                let def =
+                                    toml::to_string(&default_presets[name]).unwrap_or_default();
+                                if eff == def {
+                                    "built_in"
+                                } else {
+                                    "user_override"
+                                }
+                            } else {
+                                "custom"
+                            };
                             serde_json::json!({
                                 "id": name,
                                 "name": preset.identity.name.as_deref().unwrap_or(name),
@@ -708,6 +736,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "model": preset.model,
                                 "toml": toml_str,
                                 "source": "config",
+                                "provenance": provenance,
                             })
                         })
                         .collect();

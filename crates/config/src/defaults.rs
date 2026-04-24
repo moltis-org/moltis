@@ -123,6 +123,117 @@ fn apply_user_overrides(defaults: &mut toml_edit::Table, user: &toml_edit::Table
     }
 }
 
+// ── Provenance ───────────────────────────────────────────────────────
+
+/// Where a config value came from in the layered config model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfigSource {
+    /// Shipped built-in default (from `MoltisConfig::default()`).
+    BuiltIn,
+    /// User override (from `moltis.toml`).
+    UserOverride,
+    /// Custom value not present in defaults (user-added).
+    Custom,
+}
+
+/// Provenance information for an agent preset.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PresetProvenance {
+    /// The preset ID.
+    pub id: String,
+    /// Where this preset comes from.
+    pub source: ConfigSource,
+}
+
+/// Compute provenance for all agent presets in the effective config.
+///
+/// Compares the effective config's presets against the built-in defaults
+/// to determine which are built-in, overridden, or custom.
+pub fn compute_preset_provenance(effective: &crate::schema::AgentsConfig) -> Vec<PresetProvenance> {
+    let defaults = MoltisConfig::default();
+    let default_presets = &defaults.agents.presets;
+
+    effective
+        .presets
+        .keys()
+        .map(|id| {
+            let source = if default_presets.contains_key(id) {
+                // Present in defaults — is the effective version identical?
+                let eff_toml = toml::to_string(&effective.presets[id]).unwrap_or_default();
+                let def_toml = toml::to_string(&default_presets[id]).unwrap_or_default();
+                if eff_toml == def_toml {
+                    ConfigSource::BuiltIn
+                } else {
+                    ConfigSource::UserOverride
+                }
+            } else {
+                ConfigSource::Custom
+            };
+            PresetProvenance {
+                id: id.clone(),
+                source,
+            }
+        })
+        .collect()
+}
+
+/// Check which keys in the user TOML file shadow built-in defaults.
+///
+/// Returns a list of dotted-path keys that exist in both the user config
+/// and the built-in defaults.  Useful for diagnostics.
+pub fn find_shadowed_defaults(user_toml: &str) -> Vec<String> {
+    let Ok(user_doc) = user_toml.parse::<toml_edit::DocumentMut>() else {
+        return Vec::new();
+    };
+    let Ok(defaults_toml) = generate_defaults_toml() else {
+        return Vec::new();
+    };
+    let Ok(defaults_doc) = defaults_toml.parse::<toml_edit::DocumentMut>() else {
+        return Vec::new();
+    };
+
+    let mut shadowed = Vec::new();
+    collect_shadowed_keys(
+        user_doc.as_table(),
+        defaults_doc.as_table(),
+        &mut String::new(),
+        &mut shadowed,
+    );
+    shadowed
+}
+
+fn collect_shadowed_keys(
+    user: &toml_edit::Table,
+    defaults: &toml_edit::Table,
+    prefix: &mut String,
+    out: &mut Vec<String>,
+) {
+    for (key, user_item) in user.iter() {
+        let path = if prefix.is_empty() {
+            key.to_string()
+        } else {
+            format!("{prefix}.{key}")
+        };
+
+        let Some(def_item) = defaults.get(key) else {
+            continue; // Not in defaults — custom key, not a shadow
+        };
+
+        match (user_item, def_item) {
+            (toml_edit::Item::Table(u), toml_edit::Item::Table(d)) => {
+                collect_shadowed_keys(u, d, &mut path.clone(), out);
+            },
+            (toml_edit::Item::Value(_), toml_edit::Item::Value(_)) => {
+                out.push(path);
+            },
+            _ => {
+                out.push(path);
+            },
+        }
+    }
+}
+
 const DEFAULTS_HEADER: &str = "\
 # ┌─────────────────────────────────────────────────────────────────────┐
 # │  MOLTIS-MANAGED DEFAULTS — DO NOT EDIT                             │

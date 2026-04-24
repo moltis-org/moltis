@@ -1555,3 +1555,66 @@ agent_timeout_secs = 600
         "default value should be stripped"
     );
 }
+
+// ── Provenance tests ─────────────────────────────────────────────────
+
+#[test]
+fn preset_provenance_custom_preset() {
+    let mut config = MoltisConfig::default();
+    config
+        .agents
+        .presets
+        .insert("my-custom".to_string(), crate::AgentPreset {
+            identity: AgentIdentity {
+                name: Some("Custom".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+    let provenance = crate::defaults::compute_preset_provenance(&config.agents);
+    let custom = provenance.iter().find(|p| p.id == "my-custom");
+    assert!(custom.is_some(), "custom preset should be in provenance");
+    assert_eq!(
+        custom.map(|p| p.source),
+        Some(crate::defaults::ConfigSource::Custom)
+    );
+}
+
+#[test]
+fn find_shadowed_defaults_detects_shadows() {
+    // User config that overrides a built-in default
+    let user = r#"
+[tools]
+agent_timeout_secs = 600
+
+[auth]
+disabled = false
+"#;
+    let shadowed = crate::defaults::find_shadowed_defaults(user);
+    assert!(
+        shadowed.contains(&"tools.agent_timeout_secs".to_string()),
+        "should detect tools.agent_timeout_secs as shadowed"
+    );
+    assert!(
+        shadowed.contains(&"auth.disabled".to_string()),
+        "should detect auth.disabled as shadowed"
+    );
+}
+
+#[test]
+fn find_shadowed_defaults_ignores_custom_keys() {
+    let user = r#"
+[identity]
+name = "Rex"
+"#;
+    let shadowed = crate::defaults::find_shadowed_defaults(user);
+    // identity.name is not in defaults (it's Option<String> and defaults to None / absent)
+    // so it should not appear as shadowed
+    for key in &shadowed {
+        assert!(
+            key != "identity.name",
+            "custom key identity.name should not be flagged as shadowed"
+        );
+    }
+}

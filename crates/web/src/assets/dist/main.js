@@ -21158,25 +21158,43 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
     }) })
   ] });
 }
-function PresetCard({ preset }) {
+function provenanceBadge(provenance) {
+  if (provenance === "built_in") return /* @__PURE__ */ u("span", { className: "recommended-badge", children: "Built-in" });
+  if (provenance === "user_override") return /* @__PURE__ */ u("span", { className: "tier-badge", children: "Overridden" });
+  if (provenance === "custom") return /* @__PURE__ */ u("span", { className: "tier-badge", children: "Custom" });
+  return /* @__PURE__ */ u("span", { className: "tier-badge", children: "config" });
+}
+function PresetCard({ preset, onRevert }) {
   const [expanded, setExpanded] = d(false);
-  return /* @__PURE__ */ u("div", { className: "backend-card", style: { opacity: 0.7 }, children: [
+  const isOverridden = preset.provenance === "user_override";
+  return /* @__PURE__ */ u("div", { className: "backend-card", style: { opacity: preset.provenance === "built_in" ? 0.7 : 1 }, children: [
     /* @__PURE__ */ u("div", { className: "flex items-center justify-between", children: [
       /* @__PURE__ */ u("div", { className: "flex items-center gap-2", children: [
         preset.emoji && /* @__PURE__ */ u("span", { className: "text-lg", children: preset.emoji }),
         /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: preset.name }),
-        /* @__PURE__ */ u("span", { className: "tier-badge", children: "config" }),
+        provenanceBadge(preset.provenance),
         preset.model && /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: preset.model })
       ] }),
-      /* @__PURE__ */ u(
-        "button",
-        {
-          className: "provider-btn provider-btn-secondary",
-          style: { fontSize: "0.7rem", padding: "3px 8px" },
-          onClick: () => setExpanded(!expanded),
-          children: expanded ? "Hide" : "View"
-        }
-      )
+      /* @__PURE__ */ u("div", { className: "flex gap-2", children: [
+        /* @__PURE__ */ u(
+          "button",
+          {
+            className: "provider-btn provider-btn-secondary",
+            style: { fontSize: "0.7rem", padding: "3px 8px" },
+            onClick: () => setExpanded(!expanded),
+            children: expanded ? "Hide" : "View"
+          }
+        ),
+        isOverridden && onRevert && /* @__PURE__ */ u(
+          "button",
+          {
+            className: "provider-btn provider-btn-secondary",
+            style: { fontSize: "0.7rem", padding: "3px 8px" },
+            onClick: () => onRevert(preset.id),
+            children: "Revert to built-in"
+          }
+        )
+      ] })
     ] }),
     preset.theme && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: preset.theme }),
     expanded && preset.toml && /* @__PURE__ */ u(
@@ -21259,6 +21277,19 @@ function AgentsPageComponent({ subPath }) {
       });
     });
   }
+  function onRevertPreset(id) {
+    confirmDialog(`Revert preset "${id}" to the built-in default? Your local override will be removed.`).then((yes) => {
+      if (!yes) return;
+      sendRpc("agents.preset.save", { id, toml: "" }).then((res) => {
+        var _a2;
+        if (res == null ? void 0 : res.ok) {
+          fetchConfigPresets();
+        } else {
+          setError(((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to revert");
+        }
+      });
+    });
+  }
   function onSetDefault(agent) {
     sendRpc("agents.set_default", { id: agent.id }).then((res) => {
       var _a2;
@@ -21315,7 +21346,7 @@ function AgentsPageComponent({ subPath }) {
     )) }),
     configPresets.length > 0 && /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 mt-2", style: { maxWidth: "600px" }, children: [
       /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Config-only Presets" }),
-      configPresets.map((preset) => /* @__PURE__ */ u(PresetCard, { preset }, preset.id))
+      configPresets.map((preset) => /* @__PURE__ */ u(PresetCard, { preset, onRevert: onRevertPreset }, preset.id))
     ] })
   ] });
 }
