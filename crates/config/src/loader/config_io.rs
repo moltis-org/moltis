@@ -327,25 +327,22 @@ pub fn save_config_to_path(path: &Path, config: &MoltisConfig) -> crate::Result<
 
 /// Save only the user-override layer to the given path.
 ///
-/// Computes the diff between the effective config and `MoltisConfig::default()`
-/// (the built-in defaults), then writes only the differing keys to the user
-/// file.  This prevents built-in defaults from being materialized into user
-/// config.
+/// For existing TOML files, preserves all keys already in the user file
+/// (even if they match defaults — those are intentional freezes).  Only
+/// *newly added* keys that match defaults are suppressed, preventing
+/// built-in values from being materialized during unrelated config writes.
 ///
-/// For existing TOML files, preserves user comments by merging the diff into
-/// the current user document.
+/// For new files, writes only non-default values.
 pub fn save_user_config_to_path(path: &Path, config: &MoltisConfig) -> crate::Result<PathBuf> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Serialize both the effective config and the defaults.
     let effective_toml = toml::to_string_pretty(config)
         .map_err(|source| crate::Error::external("serialize config", source))?;
     let defaults_toml = toml::to_string_pretty(&MoltisConfig::default())
         .map_err(|source| crate::Error::external("serialize defaults", source))?;
 
-    // Compute the user-override-only document.
     let effective_doc = effective_toml
         .parse::<toml_edit::DocumentMut>()
         .map_err(|source| crate::Error::external("parse effective TOML", source))?;
@@ -353,23 +350,33 @@ pub fn save_user_config_to_path(path: &Path, config: &MoltisConfig) -> crate::Re
         .parse::<toml_edit::DocumentMut>()
         .map_err(|source| crate::Error::external("parse defaults TOML", source))?;
 
-    let mut override_doc = effective_doc;
-    strip_default_values(override_doc.as_table_mut(), defaults_doc.as_table());
-
     let is_toml_path = path
         .extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
 
     if is_toml_path && path.exists() {
-        // Merge into existing user file to preserve comments.
+        // Existing file: preserve keys the user already has.
+        // Only strip defaults from keys that are NEW (not already on disk).
         let current_toml = std::fs::read_to_string(path)?;
-        let mut current_doc = current_toml
+        let current_doc = current_toml
             .parse::<toml_edit::DocumentMut>()
             .map_err(|source| crate::Error::external("parse existing user TOML", source))?;
-        merge_toml_tables(current_doc.as_table_mut(), override_doc.as_table());
-        std::fs::write(path, current_doc.to_string())?;
+
+        let mut override_doc = effective_doc;
+        strip_new_default_values(
+            override_doc.as_table_mut(),
+            defaults_doc.as_table(),
+            current_doc.as_table(),
+        );
+
+        let mut result_doc = current_doc;
+        merge_toml_tables(result_doc.as_table_mut(), override_doc.as_table());
+        std::fs::write(path, result_doc.to_string())?;
     } else {
+        // New file: strip all default values.
+        let mut override_doc = effective_doc;
+        strip_default_values(override_doc.as_table_mut(), defaults_doc.as_table());
         std::fs::write(path, override_doc.to_string())?;
     }
 
@@ -409,6 +416,67 @@ pub(super) fn strip_default_values(effective: &mut toml_edit::Table, defaults: &
             _ => {
                 // Type mismatch (e.g. table vs value) → user override, keep it.
             },
+        }
+    }
+}
+
+/// Strip default values only for keys that are NEW — not already present
+/// in the on-disk user file.  Keys the user already has are preserved even
+/// if they match defaults (those are intentional freezes from a prior
+/// version).  This prevents `update_config()` from silently trimming an
+/// existing user config on upgrade.
+fn strip_new_default_values(
+    effective: &mut toml_edit::Table,
+    defaults: &toml_edit::Table,
+    on_disk: &toml_edit::Table,
+) {
+    let keys: Vec<String> = effective.iter().map(|(k, _)| k.to_string()).collect();
+    for key in keys {
+        let Some(eff_item) = effective.get(&key) else {
+            continue;
+        };
+        let Some(def_item) = defaults.get(&key) else {
+            // Not in defaults → user-added, always keep.
+            continue;
+        };
+
+        // If this key already exists on disk, preserve it unconditionally.
+        if let Some(disk_item) = on_disk.get(&key) {
+            match (eff_item, def_item, disk_item) {
+                (
+                    toml_edit::Item::Table(_),
+                    toml_edit::Item::Table(def_table),
+                    toml_edit::Item::Table(disk_table),
+                ) => {
+                    // Recurse: check sub-keys individually.
+                    if let Some(toml_edit::Item::Table(eff_mut)) = effective.get_mut(&key) {
+                        strip_new_default_values(eff_mut, def_table, disk_table);
+                    }
+                },
+                _ => {
+                    // Key exists on disk → keep it (user put it there).
+                },
+            }
+            continue;
+        }
+
+        // Key is NEW (not on disk). Strip it if it matches the default.
+        match (eff_item, def_item) {
+            (toml_edit::Item::Table(_), toml_edit::Item::Table(def_table)) => {
+                let empty_disk = toml_edit::Table::new();
+                if let Some(toml_edit::Item::Table(eff_mut)) = effective.get_mut(&key) {
+                    strip_new_default_values(eff_mut, def_table, &empty_disk);
+                    if eff_mut.is_empty() {
+                        effective.remove(&key);
+                    }
+                }
+            },
+            (toml_edit::Item::Value(eff_val), toml_edit::Item::Value(def_val)) => {
+                if values_equal(eff_val, def_val) {
+                    effective.remove(&key);
+                }
+            },
+            _ => {},
         }
     }
 }

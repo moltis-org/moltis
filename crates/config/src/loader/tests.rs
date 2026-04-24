@@ -1506,6 +1506,66 @@ fn user_override_survives_defaults_refresh() {
     clear_config_dir();
 }
 
+/// Upgrade scenario: existing user has defaults spelled out in moltis.toml
+/// (from the old template). An unrelated config write must NOT strip those
+/// values — they are intentional freezes from the prior version.
+#[test]
+fn upgrade_existing_config_preserves_explicit_defaults() {
+    let _guard = CONFIG_DIR_TEST_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("moltis.toml");
+
+    // Simulate an old-style moltis.toml with many active defaults.
+    std::fs::write(
+        &config_path,
+        r#"[server]
+port = 18789
+bind = "127.0.0.1"
+
+[tools]
+agent_timeout_secs = 600
+agent_max_iterations = 25
+
+[auth]
+disabled = false
+"#,
+    )
+    .expect("write old-style config");
+
+    set_config_dir(dir.path().to_path_buf());
+
+    // Simulate a web UI change: user changes http_request_logs.
+    update_config(|cfg| {
+        cfg.server.http_request_logs = true;
+    })
+    .expect("update_config");
+
+    let saved = std::fs::read_to_string(&config_path).expect("read saved");
+
+    // New change must be present.
+    assert!(
+        saved.contains("http_request_logs = true"),
+        "http_request_logs should be saved"
+    );
+    // Existing defaults must NOT be stripped — they were already in the file.
+    assert!(
+        saved.contains("agent_timeout_secs = 600"),
+        "existing agent_timeout_secs must survive (not stripped)"
+    );
+    assert!(
+        saved.contains("agent_max_iterations = 25"),
+        "existing agent_max_iterations must survive (not stripped)"
+    );
+    assert!(
+        saved.contains("bind = \"127.0.0.1\""),
+        "existing bind must survive (not stripped)"
+    );
+    // Port is installation-specific, must survive.
+    assert!(saved.contains("port = 18789"), "port must survive");
+
+    clear_config_dir();
+}
+
 #[test]
 fn strip_default_values_removes_matching_defaults() {
     let effective = r#"
