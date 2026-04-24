@@ -288,7 +288,7 @@ pub async fn run_silent_memory_turn_with_prompt(
     // Inject today's date as an advisory hint. The tool layer enforces the correct
     // date regardless, but giving the LLM the right date reduces unnecessary rewrites.
     let fmt = format_description!("[year]-[month]-[day]");
-    let today = time::OffsetDateTime::now_utc().format(fmt).unwrap_or_default();
+    let today = time::OffsetDateTime::now_utc().format(fmt).unwrap_or_else(|_| "YYYY-MM-DD".to_owned());
     let system_prompt = system_prompt.replace("YYYY-MM-DD", &today);
 
     info!(
