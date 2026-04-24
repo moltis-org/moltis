@@ -5,7 +5,7 @@ version.workspace = true
 
 [features]
 bundled-skills = ["moltis-skills/bundled-skills"]
-default        = ["firecrawl", "fs-tools", "metrics", "wasm"]
+default        = ["firecrawl", "fs-tools", "landlock", "metrics", "wasm"]
 embedded-wasm = []
 firecrawl     = []
 # Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep).
@@ -19,6 +19,7 @@ fs-tools = [
   "dep:ignore",
   "dep:pdf-extract",
 ]
+landlock = ["dep:landlock"]
 metrics = ["dep:moltis-metrics"]
 wasm = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
 
@@ -42,6 +43,7 @@ moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }
 moltis-cron           = { workspace = true }
 moltis-media          = { workspace = true }
+landlock               = { optional = true, workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-network-filter = { workspace = true }
 moltis-providers      = { workspace = true }

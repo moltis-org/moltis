@@ -362,15 +362,41 @@ port = {port}                           # Port number (auto-generated for this i
 # ── Sandbox Configuration ─────────────────────────────────────────────────────
 # Commands run inside isolated containers for security.
 
-# [tools.exec.sandbox]
-# mode = "all"                      # "off" | "non-main" | "all" (recommended)
-# scope = "session"                 # "command" | "session" (recommended) | "global"
-# workspace_mount = "ro"            # "ro" | "rw" | "none"
-# home_persistence = "shared"       # "off" | "session" | "shared"
-# backend = "auto"                  # "auto" | "docker" | "apple-container"
-# no_network = true                 # Disable network access in sandbox
-# image = "custom-image:tag"        # Custom Docker image (default: auto-built)
-# packages = [...]                  # Packages installed in sandbox containers
+[tools.exec.sandbox]
+mode = "all"                      # Which commands to sandbox:
+                                  #   "off"      - No sandboxing (commands run on host)
+                                  #   "non-main" - Sandbox all except main session
+                                  #   "all"      - Sandbox everything (recommended)
+scope = "session"                 # Container lifecycle:
+                                  #   "command" - New container per command
+                                  #   "session" - Container per session (recommended)
+                                  #   "global"  - Single shared container
+workspace_mount = "ro"            # How to mount workspace in sandbox:
+                                  #   "ro"   - Read-only (safe; sandbox commands can read mounted files but cannot modify them)
+                                  #   "rw"   - Read-write (can modify files)
+                                  #   "none" - No mount
+# host_data_dir = "/host/path/data"  # Optional override if auto-detection cannot resolve the host-visible data dir
+home_persistence = "shared"       # Persist /home/sandbox across container recreation:
+                                  #   "off"     - Ephemeral home
+                                  #   "session" - Per-session persisted home
+                                  #   "shared"  - One shared persisted home (default)
+# shared_home_dir = "/path/to/shared-home"  # Host dir for shared persistence (default: data_dir()/sandbox/home/shared)
+backend = "auto"                  # Container backend:
+                                  #   "auto"            - Auto-detect (prefers Apple Container on macOS)
+                                  #   "docker"          - Use Docker
+                                  #   "apple-container" - Use Apple Container (macOS only)
+no_network = true                 # Disable network access in sandbox (recommended)
+# image = "custom-image:tag"      # Custom Docker image (default: auto-built)
+# container_prefix = "moltis"     # Prefix for container names
+# fs_allow_paths = []            # Landlock FS allowlist (Linux, restricted-host only):
+                                  #   Child processes can only access these paths.
+                                  #   Empty = no Landlock restrictions (default).
+                                  #   Must be absolute paths.
+                                  #   Common patterns:
+                                  #     fs_allow_paths = ["/usr", "/bin", "/lib", "/tmp"]
+                                  #     fs_allow_paths = ["/usr", "/bin", "/lib", "/tmp", "/workspace"]
+                                  #   Symlinks are resolved at rule-add time.
+
 
 # [tools.exec.sandbox.resource_limits]
 # memory_limit = "512M"             # Memory limit (e.g., "512M", "1G")

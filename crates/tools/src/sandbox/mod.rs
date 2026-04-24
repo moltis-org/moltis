@@ -8,6 +8,7 @@ pub(crate) mod containers;
 pub(crate) mod docker;
 pub(crate) mod file_system;
 pub(crate) mod host;
+pub(crate) mod landlock;
 pub(crate) mod paths;
 pub(crate) mod platform;
 pub(crate) mod router;

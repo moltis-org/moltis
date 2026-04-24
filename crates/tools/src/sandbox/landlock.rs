@@ -9,7 +9,10 @@ use std::path::PathBuf;
 /// Result of attempting to apply Landlock restrictions.
 #[derive(Debug)]
 pub struct LandlockResult {
-    /// Whether Landlock rules were built and will be enforced in the child.
+    /// Whether Landlock rules were successfully built and restrict_self() was called.
+    /// Note: This does NOT guarantee kernel-level enforcement. The child's pre_exec
+    /// closure may degrade gracefully on kernels < 5.13 or in containers with seccomp.
+    /// Call `is_kernel_landlock_available()` for a runtime capability probe.
     pub enforced: bool,
     /// Human-readable status message for logging.
     pub message: String,
@@ -198,26 +201,40 @@ pub fn apply_to_command(
 
 /// Check if the running kernel supports Landlock (runtime probe).
 ///
-/// Tests the full flow: create ruleset + restrict_self. This catches containers
-/// where the kernel supports Landlock but seccomp blocks `prctl(PR_SET_NO_NEW_PRIVS)`.
+/// Tests the full flow: create ruleset + add_rule + restrict_self. This catches
+/// containers where the kernel supports Landlock but seccomp blocks
+/// `prctl(PR_SET_NO_NEW_PRIVS)` or `landlock_restrict_self`. The child process
+/// exits with code 0 only if restrict_self() achieves Full or Partial enforcement.
 #[cfg(all(target_os = "linux", feature = "landlock"))]
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn is_kernel_landlock_available() -> bool {
-    use landlock::{Access, AccessFs, Ruleset, RulesetAttr, ABI};
+    use landlock::{Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, ABI};
     use std::os::unix::process::CommandExt;
     use std::process::Command;
 
+    let abi = ABI::V1;
+
     // Test 1: Can we create a ruleset?
     let ruleset = match Ruleset::default()
-        .handle_access(AccessFs::from_all(ABI::V1))
+        .handle_access(AccessFs::from_all(abi))
         .and_then(|rs| rs.create())
     {
         Ok(rs) => rs,
         Err(_) => return false,
     };
 
-    // Test 2: Can we actually restrict_self? (tests prctl + landlock_restrict_self)
-    // We fork a child process to test this without affecting the current process.
+    // Test 2: Can we add a rule? (current dir)
+    let fd = match PathFd::new(".") {
+        Ok(fd) => fd,
+        Err(_) => return false,
+    };
+    let ruleset = match ruleset.add_rule(PathBeneath::new(fd, AccessFs::from_all(abi))) {
+        Ok(rs) => rs,
+        Err(_) => return false,
+    };
+
+    // Test 3: Can we actually restrict_self? (tests prctl + landlock_restrict_self)
+    // The child exits 0 only if Full or Partial enforcement is achieved.
     let mut rs_opt = Some(ruleset);
     let mut cmd = Command::new("true");
     #[allow(unsafe_code)]
@@ -227,8 +244,20 @@ pub fn is_kernel_landlock_available() -> bool {
                 std::io::Error::new(std::io::ErrorKind::Other, "ruleset already taken")
             })?;
             match rs.restrict_self() {
-                Ok(_) => Ok(()),
-                Err(_) => Ok(()), // error means it's not usable, but don't fail the fork
+                Ok(status) => {
+                    match status.ruleset {
+                        landlock::RulesetStatus::FullyEnforced
+                        | landlock::RulesetStatus::PartiallyEnforced => Ok(()),
+                        landlock::RulesetStatus::NotEnforced => {
+                            // Landlock not enforced — signal failure via exit code
+                            std::process::exit(2);
+                        }
+                    }
+                }
+                Err(_) => {
+                    // restrict_self failed (e.g., seccomp, EPERM)
+                    std::process::exit(2);
+                }
             }
         });
     }

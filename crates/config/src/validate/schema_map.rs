@@ -89,6 +89,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("wasm_epoch_interval_ms", Leaf),
             ("wasm_tool_limits", wasm_tool_limits()),
             ("tools_policy", tool_policy_entry()),
+            ("fs_allow_paths", Array(Box::new(Leaf))),
         ]))
     };
 

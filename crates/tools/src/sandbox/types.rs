@@ -186,6 +186,8 @@ pub struct SandboxConfig {
     pub wasm_epoch_interval_ms: Option<u64>,
     /// Per-tool WASM limits (fuel/memory). Falls back to built-in defaults when absent.
     pub wasm_tool_limits: Option<WasmToolLimits>,
+    /// Optional Landlock FS allowlist for restricted-host on Linux.
+    pub fs_allow_paths: Vec<PathBuf>,
 }
 
 impl Default for SandboxConfig {
@@ -209,6 +211,7 @@ impl Default for SandboxConfig {
             wasm_fuel_limit: None,
             wasm_epoch_interval_ms: None,
             wasm_tool_limits: None,
+            fs_allow_paths: Vec::new(),
         }
     }
 }
@@ -268,6 +271,11 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             wasm_fuel_limit: cfg.wasm_fuel_limit,
             wasm_epoch_interval_ms: cfg.wasm_epoch_interval_ms,
             wasm_tool_limits: cfg.wasm_tool_limits.as_ref().map(WasmToolLimits::from),
+            fs_allow_paths: cfg
+                .fs_allow_paths
+                .iter()
+                .map(|p| PathBuf::from(p.as_str()))
+                .collect(),
         }
     }
 }
