@@ -57,11 +57,21 @@ impl BundledSkillStore {
     }
 
     /// Create a store with a custom materialization directory (for tests).
+    ///
+    /// Avoids calling [`data_dir()`](moltis_config::data_dir) so tests
+    /// do not trigger side effects from the global config.
     #[must_use]
     pub fn with_materialize_dir(materialize_dir: PathBuf) -> Self {
-        let mut store = Self::new();
-        store.materialize_dir = materialize_dir;
-        store
+        let cargo_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/assets");
+        let source = if cargo_dir.is_dir() {
+            AssetSource::Filesystem(cargo_dir)
+        } else {
+            AssetSource::Embedded
+        };
+        Self {
+            source,
+            materialize_dir,
+        }
     }
 
     /// Discover metadata for all bundled skills.
@@ -113,7 +123,8 @@ impl BundledSkillStore {
 
     /// Materialize sidecar files for a skill to an explicit target directory.
     ///
-    /// Returns `Some(target_dir/<name>)` if files were written.
+    /// Returns `Some(target_dir/<name>)` if at least one file was written,
+    /// `None` if the skill has no sidecars or every write failed.
     pub fn materialize_sidecars_to(&self, name: &str, target_dir: &Path) -> Option<PathBuf> {
         let sidecars = self.list_sidecars(name);
         if sidecars.is_empty() {
@@ -121,17 +132,21 @@ impl BundledSkillStore {
         }
 
         let skill_dir = target_dir.join(name);
+        let mut written = 0usize;
         for (rel_path, _) in &sidecars {
             let Some((bytes, _)) = self.read_sidecar(name, rel_path) else {
+                tracing::warn!(skill = %name, path = %rel_path, "failed to read bundled sidecar");
                 continue;
             };
             let target = skill_dir.join(rel_path);
             if let Some(parent) = target.parent()
-                && std::fs::create_dir_all(parent).is_err()
+                && let Err(e) = std::fs::create_dir_all(parent)
             {
+                tracing::warn!(skill = %name, path = %rel_path, %e, "failed to create sidecar directory");
                 continue;
             }
-            if std::fs::write(&target, &bytes).is_err() {
+            if let Err(e) = std::fs::write(&target, &bytes) {
+                tracing::warn!(skill = %name, path = %rel_path, %e, "failed to write sidecar file");
                 continue;
             }
             #[cfg(unix)]
@@ -139,9 +154,15 @@ impl BundledSkillStore {
                 use std::os::unix::fs::PermissionsExt;
                 let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
             }
+            written += 1;
         }
 
-        Some(skill_dir)
+        if written > 0 {
+            Some(skill_dir)
+        } else {
+            tracing::warn!(skill = %name, "no sidecar files could be materialized");
+            None
+        }
     }
 }
 
