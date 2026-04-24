@@ -239,10 +239,10 @@ function ProjectEditForm(props: ProjectEditFormProps): VNode {
 					))}
 				</datalist>
 			</div>
-			<div style={{ marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
-				<input ref={wtRef} type="checkbox" checked={p.auto_worktree} />
+			<label style={{ marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+				<input ref={wtRef} type="checkbox" defaultChecked={p.auto_worktree} />
 				<span className="text-xs text-[var(--text)]">{t("projects:editForm.autoWorktree")}</span>
-			</div>
+			</label>
 			<div style={{ display: "flex", gap: "8px" }}>
 				<button className="provider-btn" onClick={onSave}>
 					{t("common:actions.save")}

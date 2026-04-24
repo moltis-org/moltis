@@ -1,5 +1,6 @@
 use {
     crate::{
+        model::{ContentPart, UserContent},
         prompt::{
             formatting::{
                 append_truncated_text_block, format_compact_tool_schema, format_host_runtime_line,
@@ -216,6 +217,25 @@ pub fn build_system_prompt_minimal_runtime_details(
         limits,
         guidelines_text,
     )
+}
+
+/// Prepend datetime context to user content so it lives in the final
+/// (always-changing) user message rather than a separate system message
+/// that would shift position and break KV cache prefix matching.
+#[must_use]
+pub fn prepend_datetime_to_user_content(
+    user_content: &UserContent,
+    runtime_context: Option<&PromptRuntimeContext>,
+) -> Option<UserContent> {
+    let datetime_text = runtime_datetime_message(runtime_context)?;
+    Some(match user_content {
+        UserContent::Text(text) => UserContent::Text(format!("[{datetime_text}]\n\n{text}")),
+        UserContent::Multimodal(parts) => {
+            let mut new_parts = vec![ContentPart::Text(format!("[{datetime_text}]"))];
+            new_parts.extend(parts.iter().cloned());
+            UserContent::Multimodal(new_parts)
+        },
+    })
 }
 
 /// Build a short datetime string suitable for injection as a trailing system message.

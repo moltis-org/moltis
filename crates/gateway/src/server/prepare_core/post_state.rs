@@ -832,6 +832,15 @@ pub(super) async fn complete_startup(
             }
         }
 
+        #[cfg(feature = "home-assistant")]
+        {
+            if let Some(t) =
+                moltis_home_assistant::tool::HomeAssistantTool::from_config(&config.home_assistant)
+            {
+                tool_registry.register(Box::new(t));
+            }
+        }
+
         if let Some(ref mm) = memory_manager {
             tool_registry.register(Box::new(moltis_memory::tools::MemorySearchTool::new(
                 Arc::clone(mm),

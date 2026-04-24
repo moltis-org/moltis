@@ -31,6 +31,8 @@ pub struct ElevenLabsTts {
     api_key: Option<Secret<String>>,
     default_voice_id: String,
     default_model: String,
+    #[cfg(test)]
+    base_url: String,
 }
 
 impl std::fmt::Debug for ElevenLabsTts {
@@ -58,6 +60,8 @@ impl ElevenLabsTts {
             api_key,
             default_voice_id: DEFAULT_VOICE_ID.into(),
             default_model: DEFAULT_MODEL.into(),
+            #[cfg(test)]
+            base_url: API_BASE.into(),
         }
     }
 
@@ -73,6 +77,29 @@ impl ElevenLabsTts {
             api_key,
             default_voice_id: voice_id.unwrap_or_else(|| DEFAULT_VOICE_ID.into()),
             default_model: model.unwrap_or_else(|| DEFAULT_MODEL.into()),
+            #[cfg(test)]
+            base_url: API_BASE.into(),
+        }
+    }
+
+    /// Override the base URL (for testing with wiremock).
+    #[cfg(test)]
+    #[must_use]
+    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
+        self.base_url = base_url.into();
+        self
+    }
+
+    /// The API base URL. In production this is the constant `API_BASE`;
+    /// in tests the field can be overridden via [`Self::with_base_url`].
+    fn api_base(&self) -> &str {
+        #[cfg(test)]
+        {
+            &self.base_url
+        }
+        #[cfg(not(test))]
+        {
+            API_BASE
         }
     }
 
@@ -118,7 +145,7 @@ impl TtsProvider for ElevenLabsTts {
 
         let response = self
             .client
-            .get(format!("{API_BASE}/voices"))
+            .get(format!("{}/voices", self.api_base()))
             .header("xi-api-key", api_key.expose_secret())
             .send()
             .await
@@ -183,7 +210,8 @@ impl TtsProvider for ElevenLabsTts {
 
         let output_format = Self::output_format_param(request.output_format);
         let url = format!(
-            "{API_BASE}/text-to-speech/{voice_id}?output_format={output_format}&optimize_streaming_latency=2"
+            "{}/text-to-speech/{voice_id}?output_format={output_format}&optimize_streaming_latency=2",
+            self.api_base()
         );
 
         debug!(url = %url, "ElevenLabs TTS API call");
@@ -280,7 +308,7 @@ mod tests {
         super::*,
         wiremock::{
             Mock, MockServer, ResponseTemplate,
-            matchers::{header, method, path_regex},
+            matchers::{header, method, path, path_regex},
         },
     };
 
@@ -317,36 +345,173 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_voices_request() {
+    async fn test_voices_returns_premade_and_custom() {
         let mock_server = MockServer::start().await;
 
         Mock::given(method("GET"))
-            .and(path_regex("/v1/voices"))
+            .and(path("/voices"))
             .and(header("xi-api-key", "test-key"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "voices": [
                     {
-                        "voice_id": "voice1",
-                        "name": "Test Voice",
-                        "description": "A test voice",
-                        "preview_url": "https://example.com/preview.mp3"
+                        "voice_id": "21m00Tcm4TlvDq8ikWAM",
+                        "name": "Rachel",
+                        "category": "premade",
+                        "description": "A premade voice"
+                    },
+                    {
+                        "voice_id": "abcdef1234567890custom",
+                        "name": "My Custom Voice",
+                        "category": "cloned",
+                        "description": "A user-cloned voice"
+                    },
+                    {
+                        "voice_id": "generated9876543210ab",
+                        "name": "My Generated Voice",
+                        "category": "generated",
+                        "description": null,
+                        "preview_url": null
                     }
                 ]
             })))
+            .expect(1)
             .mount(&mock_server)
             .await;
 
-        // Create provider with mocked URL
-        let provider = ElevenLabsTts {
-            client: Client::new(),
-            api_key: Some(Secret::new("test-key".into())),
-            default_voice_id: DEFAULT_VOICE_ID.into(),
-            default_model: DEFAULT_MODEL.into(),
+        let provider = ElevenLabsTts::new(Some(Secret::new("test-key".into())))
+            .with_base_url(mock_server.uri());
+
+        let voices = provider.voices().await.unwrap();
+
+        assert_eq!(voices.len(), 3);
+        assert_eq!(voices[0].id, "21m00Tcm4TlvDq8ikWAM");
+        assert_eq!(voices[0].name, "Rachel");
+        assert_eq!(voices[1].id, "abcdef1234567890custom");
+        assert_eq!(voices[1].name, "My Custom Voice");
+        assert_eq!(voices[2].id, "generated9876543210ab");
+        assert_eq!(voices[2].name, "My Generated Voice");
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_with_custom_voice_id() {
+        let mock_server = MockServer::start().await;
+        let custom_voice_id = "abcdef1234567890custom";
+
+        Mock::given(method("POST"))
+            .and(path(format!("/text-to-speech/{custom_voice_id}")))
+            .and(header("xi-api-key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"fake-audio-data".to_vec()))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let provider = ElevenLabsTts::new(Some(Secret::new("test-key".into())))
+            .with_base_url(mock_server.uri());
+
+        let request = SynthesizeRequest {
+            text: "Hello from a custom voice".into(),
+            voice_id: Some(custom_voice_id.into()),
+            ..Default::default()
         };
 
-        // Note: This test would need the API_BASE to be configurable for full testing
-        // For now, we just verify the provider is properly structured
-        assert!(provider.is_configured());
+        let result = provider.synthesize(request).await.unwrap();
+        assert_eq!(result.data.as_ref(), b"fake-audio-data");
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_uses_default_voice_when_none_specified() {
+        let mock_server = MockServer::start().await;
+        let custom_default = "my-custom-default-voice";
+
+        Mock::given(method("POST"))
+            .and(path(format!("/text-to-speech/{custom_default}")))
+            .and(header("xi-api-key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"audio-data".to_vec()))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // Provider configured with a custom default voice
+        let provider = ElevenLabsTts::with_defaults(
+            Some(Secret::new("test-key".into())),
+            Some(custom_default.into()),
+            None,
+        )
+        .with_base_url(mock_server.uri());
+
+        let request = SynthesizeRequest {
+            text: "Hello".into(),
+            voice_id: None, // No voice_id in request — should use default
+            ..Default::default()
+        };
+
+        let result = provider.synthesize(request).await.unwrap();
+        assert_eq!(result.data.as_ref(), b"audio-data");
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_request_voice_id_overrides_default() {
+        let mock_server = MockServer::start().await;
+        let override_voice = "override-voice-id";
+
+        // Only match the override voice in the URL — the default must NOT be used.
+        Mock::given(method("POST"))
+            .and(path(format!("/text-to-speech/{override_voice}")))
+            .and(header("xi-api-key", "test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"override-audio".to_vec()))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let provider = ElevenLabsTts::with_defaults(
+            Some(Secret::new("test-key".into())),
+            Some("should-not-be-used".into()),
+            None,
+        )
+        .with_base_url(mock_server.uri());
+
+        let request = SynthesizeRequest {
+            text: "Test override".into(),
+            voice_id: Some(override_voice.into()),
+            ..Default::default()
+        };
+
+        let result = provider.synthesize(request).await.unwrap();
+        assert_eq!(result.data.as_ref(), b"override-audio");
+    }
+
+    #[tokio::test]
+    async fn test_synthesize_api_error_propagated() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path_regex("/text-to-speech/.*"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "detail": {
+                    "status": "invalid_voice",
+                    "message": "Voice not found or not authorized"
+                }
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let provider = ElevenLabsTts::new(Some(Secret::new("test-key".into())))
+            .with_base_url(mock_server.uri());
+
+        let request = SynthesizeRequest {
+            text: "Hello".into(),
+            voice_id: Some("nonexistent-voice".into()),
+            ..Default::default()
+        };
+
+        let result = provider.synthesize(request).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("400"),
+            "error should contain status code: {err}"
+        );
     }
 
     #[tokio::test]

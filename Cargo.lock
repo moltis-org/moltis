@@ -7174,6 +7174,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -7498,6 +7499,7 @@ dependencies = [
  "moltis-config",
  "moltis-cron",
  "moltis-discord",
+ "moltis-home-assistant",
  "moltis-matrix",
  "moltis-mcp",
  "moltis-mcp-agent-bridge",
@@ -7573,6 +7575,27 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
+]
+
+[[package]]
+name = "moltis-home-assistant"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "futures-util",
+ "moltis-agents",
+ "moltis-config",
+ "reqwest 0.13.2",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tracing",
+ "urlencoding",
 ]
 
 [[package]]

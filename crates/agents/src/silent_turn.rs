@@ -6,6 +6,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use time::macros::format_description;
+
 #[cfg(feature = "metrics")]
 use std::time::Instant;
 
@@ -81,7 +83,7 @@ impl AgentTool for MemoryWriteFileTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "File path relative to workspace (e.g. 'MEMORY.md' or 'memory/2024-01-15.md')"
+                    "description": "File path relative to workspace (e.g. 'MEMORY.md' or 'memory/YYYY-MM-DD.md')"
                 },
                 "content": {
                     "type": "string",
@@ -98,9 +100,10 @@ impl AgentTool for MemoryWriteFileTool {
     }
 
     async fn execute(&self, params: serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = params["path"]
+        let raw_path = params["path"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing 'path' parameter"))?;
+        let path_str = normalize_daily_log_date(raw_path);
         let content = params["content"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing 'content' parameter"))?;
@@ -110,7 +113,7 @@ impl AgentTool for MemoryWriteFileTool {
             location,
             bytes_written,
             checkpoint_id,
-        } = self.writer.write_memory(path_str, content, append).await?;
+        } = self.writer.write_memory(&path_str, content, append).await?;
 
         self.written_paths
             .lock()
@@ -149,6 +152,48 @@ Save information that would be useful in future conversations:
 Write to `memory/YYYY-MM-DD.md` (append, don't overwrite).
 Be concise — only save genuinely new information not already in memory.
 Do NOT respond to the user. Only use the write_file tool to save memories."#;
+
+/// Normalize the date portion of a `memory/YYYY-MM-DD.md` path to today's date.
+///
+/// The silent memory turn prompts instruct the LLM to write to `memory/YYYY-MM-DD.md`
+/// but the LLM may hallucinate a wrong date. This function detects that pattern and
+/// rewrites it to the current UTC date, ensuring daily log files always reflect when
+/// the memory was actually written.
+///
+/// Non-date filenames (e.g. `memory/notes.md`, `MEMORY.md`) pass through unchanged.
+fn normalize_daily_log_date(path: &str) -> String {
+    // Only rewrite paths under memory/ that look like date-stamped daily logs.
+    let Some(name) = path.strip_prefix("memory/") else {
+        return path.to_owned();
+    };
+
+    // Must end with .md and have a stem matching YYYY-MM-DD (exactly 10 chars).
+    let Some(stem) = name.strip_suffix(".md") else {
+        return path.to_owned();
+    };
+    if stem.len() != 10 {
+        return path.to_owned();
+    }
+
+    // Structural check: NNNN-NN-NN (digits and hyphens at expected positions).
+    let is_dateish = stem
+        .chars()
+        .enumerate()
+        .all(|(i, c)| matches!((i, c), (0..=3, '0'..='9') | (4 | 7, '-') | (5..=6, '0'..='9') | (8..=9, '0'..='9')));
+    if !is_dateish {
+        return path.to_owned();
+    }
+
+    // Already today? Fast path — no allocation needed beyond the original.
+    let fmt = format_description!("[year]-[month]-[day]");
+    let today = time::OffsetDateTime::now_utc().format(fmt).unwrap_or_else(|_| stem.to_owned());
+    if stem == today {
+        return path.to_owned();
+    }
+
+    // Rewrite to today's date.
+    format!("memory/{today}.md")
+}
 
 /// Prompt variant for [`run_silent_memory_turn_with_prompt`].
 #[derive(Debug)]
@@ -240,6 +285,12 @@ pub async fn run_silent_memory_turn_with_prompt(
         SilentTurnPrompt::SessionSummary => (SESSION_SUMMARY_SYSTEM_PROMPT, "session-summary"),
     };
 
+    // Inject today's date as an advisory hint. The tool layer enforces the correct
+    // date regardless, but giving the LLM the right date reduces unnecessary rewrites.
+    let fmt = format_description!("[year]-[month]-[day]");
+    let today = time::OffsetDateTime::now_utc().format(fmt).unwrap_or_else(|_| "YYYY-MM-DD".to_owned());
+    let system_prompt = system_prompt.replace("YYYY-MM-DD", &today);
+
     info!(
         messages = conversation.len(),
         variant = label,
@@ -253,7 +304,7 @@ pub async fn run_silent_memory_turn_with_prompt(
     let result = run_agent_loop(
         provider,
         &tools,
-        system_prompt,
+        &system_prompt,
         &user_content,
         None, // no event callbacks — silent
         None, // no history
@@ -570,6 +621,35 @@ mod tests {
         .unwrap();
 
         assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn normalize_daily_log_date_rewrites_wrong_date_to_today() {
+        let fmt = format_description!("[year]-[month]-[day]");
+        let today = time::OffsetDateTime::now_utc().format(fmt).unwrap();
+
+        // Past dates get rewritten
+        assert_eq!(normalize_daily_log_date("memory/2024-05-23.md"), format!("memory/{today}.md"));
+        assert_eq!(normalize_daily_log_date("memory/2025-04-09.md"), format!("memory/{today}.md"));
+
+        // Today's date passes through
+        assert_eq!(normalize_daily_log_date(&format!("memory/{today}.md")), format!("memory/{today}.md"));
+    }
+
+    #[test]
+    fn normalize_daily_log_date_preserves_non_date_paths() {
+        // Non-date filenames pass through unchanged
+        assert_eq!(normalize_daily_log_date("MEMORY.md"), "MEMORY.md");
+        assert_eq!(normalize_daily_log_date("memory/notes.md"), "memory/notes.md");
+        assert_eq!(normalize_daily_log_date("memory/project-x.md"), "memory/project-x.md");
+        assert_eq!(normalize_daily_log_date("memory/config.md"), "memory/config.md");
+    }
+
+    #[test]
+    fn normalize_daily_log_date_preserves_malformed_dates() {
+        // Things that look vaguely date-like but aren't YYYY-MM-DD
+        assert_eq!(normalize_daily_log_date("memory/24-01-15.md"), "memory/24-01-15.md");
+        assert_eq!(normalize_daily_log_date("memory/2024-1-15.md"), "memory/2024-1-15.md");
     }
 
     #[test]

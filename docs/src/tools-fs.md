@@ -20,13 +20,15 @@ Read a file with line-numbered output.
 {
   "file_path": "/absolute/path/to/file.rs",
   "offset": 1,
-  "limit": 2000
+  "limit": 2000,
+  "pages": "1-5"
 }
 ```
 
 - `file_path` — absolute path (required). Relative paths are rejected.
 - `offset` — 1-indexed line to start at. Default `1`.
 - `limit` — max lines to return. Default `2000`.
+- `pages` — (PDF only) page range to extract, e.g. `"1-5"`, `"3"`, or `"10-20"`. Max 20 pages per request.
 
 Returns one of the following typed payloads (the `kind` field is the
 discriminator the LLM branches on):
@@ -40,6 +42,12 @@ discriminator the LLM branches on):
 - `kind: "too_large"` — file exceeds `max_read_bytes`.
 - `kind: "not_regular_file"` — path is a directory, fifo, socket, etc.
 - `kind: "path_denied"` — blocked by `[tools.fs]` allow/deny rules.
+- `kind: "image"` — file detected as a supported image format
+  (PNG, JPEG, GIF, WebP). Includes `width`, `height`, `format`, and `base64`
+  data. Images are resized and optimized for LLM consumption.
+- `kind: "pdf"` — file detected as PDF. Includes `text` (extracted content),
+  `pages` (total page count), `rendered_pages`, and `truncated`. Supports
+  optional `pages` parameter (e.g. `"1-5"`) to extract a page range.
 
 CRLF files are rendered with `\r` stripped so the line-number column
 aligns correctly; the file on disk is not modified.
@@ -175,6 +183,11 @@ respect_gitignore = true
 # be restored via the `checkpoint_restore` tool. Off by default because
 # checkpoints grow with agent activity.
 checkpoint_before_mutation = false
+
+# Adaptive read sizing: when set, Read caps per-call output so a single
+# call can't consume more than ~20% of the model's working set.
+# Clamped to [50 KB, 512 KB]. When unset, Read uses a fixed 256 KB cap.
+# context_window_tokens = 200000  # e.g. Claude Sonnet
 ```
 
 `require_approval` reuses the existing approval queue and WebSocket

@@ -149,12 +149,50 @@ fn merge_schema_object(
     obj: &mut serde_json::Map<String, serde_json::Value>,
     variant: serde_json::Value,
 ) {
-    if let serde_json::Value::Object(inner) = variant {
-        for (key, value) in inner {
-            // Parent-key wins: if a key is already present (e.g. `description`
-            // from the surrounding schema), keep it and use the selected
-            // variant only for missing structural keys.
-            obj.entry(key).or_insert(value);
+    let serde_json::Value::Object(inner) = variant else {
+        return;
+    };
+    for (key, value) in inner {
+        match key.as_str() {
+            // Deep-merge `properties`: variant properties that are absent in
+            // the parent are added rather than silently dropped. Without this,
+            // a shallow `or_insert` on the `properties` key discards the
+            // entire variant property map when the parent already has one,
+            // creating orphaned `required` entries (#849).
+            "properties" => {
+                if let (Some(parent_props), Some(variant_props)) = (
+                    obj.get_mut("properties").and_then(|v| v.as_object_mut()),
+                    value.as_object(),
+                ) {
+                    for (prop_key, prop_value) in variant_props {
+                        parent_props.entry(prop_key).or_insert(prop_value.clone());
+                    }
+                } else {
+                    obj.entry(key).or_insert(value);
+                }
+            },
+            // Union `required` arrays: concatenate and deduplicate instead of
+            // discarding the variant's array when the parent already has one.
+            "required" => {
+                if let (Some(parent_req), Some(variant_req)) = (
+                    obj.get_mut("required").and_then(|v| v.as_array_mut()),
+                    value.as_array(),
+                ) {
+                    for entry in variant_req {
+                        if !parent_req.contains(entry) {
+                            parent_req.push(entry.clone());
+                        }
+                    }
+                } else {
+                    obj.entry(key).or_insert(value);
+                }
+            },
+            // Everything else: parent-key wins. If a key is already present
+            // (e.g. `description`), keep it and use the variant only for
+            // missing structural keys.
+            _ => {
+                obj.entry(key).or_insert(value);
+            },
         }
     }
 }
@@ -212,8 +250,17 @@ fn preferred_union_variant_index(variants: &[serde_json::Value]) -> Option<usize
         .or_else(|| (!variants.is_empty()).then_some(0))
 }
 
-/// Collapse `anyOf`/`oneOf` unions to a single schema for providers that
-/// cannot represent JSON Schema unions in tool parameters.
+/// Collapse `anyOf`/`oneOf`/`allOf` unions to a single schema for providers
+/// that cannot represent JSON Schema unions in tool parameters.
+///
+/// `anyOf` / `oneOf` — picks the best variant (prefers object > array >
+/// first non-null) and merges it into the parent.
+///
+/// `allOf` — merges ALL variants into the parent because `allOf` semantics
+/// require satisfying every variant simultaneously. Without this,
+/// multi-variant `allOf` (produced by `json_schema_ast` when a type array
+/// coexists with an existing `anyOf`) survives all transforms and
+/// OpenRouter's Gemini translation can mis-convert it (#849).
 #[derive(Debug, Clone, Default)]
 struct CollapseCompositeUnionTransform;
 
@@ -238,6 +285,37 @@ impl Transform for CollapseCompositeUnionTransform {
                 let selected = variants.remove(index);
                 obj.remove(keyword);
                 merge_schema_object(obj, selected);
+            }
+        }
+
+        // allOf: merge ALL variants (intersection semantics).
+        if let Some(variants) = obj.get_mut("allOf").and_then(|v| v.as_array_mut()) {
+            variants.retain(|v| !v.as_object().is_some_and(|o| o.is_empty()));
+            if variants.is_empty() {
+                obj.remove("allOf");
+            } else {
+                // Warn when variants carry conflicting `type` values — the
+                // first-wins merge silently drops later types, which can
+                // produce semantically impossible schemas (e.g. type:"string"
+                // with properties). True allOf with conflicting types is
+                // itself invalid JSON Schema, but logging helps debug
+                // provider rejections.
+                let types: Vec<&str> = variants
+                    .iter()
+                    .filter_map(|v| v.get("type").and_then(|t| t.as_str()))
+                    .collect();
+                if types.len() > 1 && types.windows(2).any(|w| w[0] != w[1]) {
+                    debug!(
+                        ?types,
+                        "allOf variants have conflicting types; first-wins merge may produce an inconsistent schema"
+                    );
+                }
+
+                let taken = std::mem::take(variants);
+                obj.remove("allOf");
+                for variant in taken {
+                    merge_schema_object(obj, variant);
+                }
             }
         }
     }
@@ -369,12 +447,38 @@ impl Transform for RestoreEnumTypeTransform {
         // Only restore when all non-null values share a single type.
         if types.len() == 1 {
             let inferred_type = types.into_iter().next().unwrap_or_default();
+
+            // Check for redundant boolean enum BEFORE mutating obj.
+            // `json_schema_ast` converts `"type": "boolean"` →
+            // `"enum": [false, true]` which adds no constraint beyond the
+            // restored type. Leaving this redundant enum causes
+            // `make_nullable` in strict mode to append `null` to the enum
+            // array, which Fireworks AI rejects with "could not translate
+            // the enum None" (#848).
+            let strip_redundant_enum =
+                inferred_type == "boolean" && is_complete_boolean_enum(values);
+
             obj.insert(
                 "type".to_string(),
                 serde_json::Value::String(inferred_type.to_string()),
             );
+
+            if strip_redundant_enum {
+                obj.remove("enum");
+            }
         }
     }
+}
+
+/// Whether an enum array is exactly `[false, true]` (in any order, ignoring
+/// nulls). This is the complete boolean domain produced by `json_schema_ast`'s
+/// `lower_boolean_and_null_types` canonicalization and adds no constraint when
+/// the type is already `"boolean"`.
+fn is_complete_boolean_enum(values: &[serde_json::Value]) -> bool {
+    let non_null: Vec<_> = values.iter().filter(|v| !v.is_null()).collect();
+    non_null.len() == 2
+        && non_null.iter().any(|v| v.as_bool() == Some(false))
+        && non_null.iter().any(|v| v.as_bool() == Some(true))
 }
 
 /// Remove empty `{}` (the JSON Schema "true" schema) from `anyOf`/`oneOf`

@@ -1,5 +1,5 @@
 import { c as connectWs, s as subscribeEvents, u } from "./ws-connect.js";
-import { a1 as t, ay as d, ax as y, az as A, d as sendRpc, aA as S, bs as modelVersionScore, x as activeSessionKey, aO as R } from "./theme.js";
+import { a0 as t, ay as d, ax as y, az as A, b as sendRpc, aA as S, bx as modelVersionScore, w as activeSessionKey, aQ as R } from "./theme.js";
 import { I as eventListeners, t as targetValue, V as prepareCreationOptions, W as detectPasskeyName, x as channelStorageNote, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, r as deriveSignalAccountId, T as TabBar, g as get, w as defaultTeamsBaseUrl, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, o as onEvent, u as generateWebhookSecretHex, s as buildTeamsEndpoint, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, J as refresh, P as EmojiPicker, Q as validateIdentityFields, R as updateIdentity, A as completeProviderOAuth, D as saveProviderKey, z as validateProviderKey, y as providerApiKeyHelp, E as testModel, F as isModelServiceNotConfigured, H as humanizeProbeError, B as startProviderOAuth, L as CATEGORY_META, N as categoryLabel, X as fetchVoiceProviders, a0 as toggleVoiceProvider, a1 as saveVoiceKey, a2 as saveVoiceSettings, a5 as VOICE_COUNTERPART_IDS, Y as fetchPhrase, Z as testTts, _ as decodeBase64Safe, $ as transcribeAudio, q as fetchChannelStatus } from "./voice-utils.js";
 var WsEventName = /* @__PURE__ */ ((WsEventName2) => {
   WsEventName2["Chat"] = "chat";
@@ -1141,9 +1141,20 @@ function SignalForm({ onConnected, error, setError }) {
     /* @__PURE__ */ u("div", { className: "rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1", children: [
       /* @__PURE__ */ u("span", { className: "font-medium text-[var(--text-strong)]", children: "Requires signal-cli" }),
       /* @__PURE__ */ u("span", { children: [
-        "Signal integration requires a running ",
-        /* @__PURE__ */ u("a", { href: "https://github.com/AsamK/signal-cli", target: "_blank", rel: "noopener noreferrer", className: "underline text-[var(--text-strong)]", children: "signal-cli" }),
-        " daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:"
+        "Signal integration requires a running",
+        " ",
+        /* @__PURE__ */ u(
+          "a",
+          {
+            href: "https://github.com/AsamK/signal-cli",
+            target: "_blank",
+            rel: "noopener noreferrer",
+            className: "underline text-[var(--text-strong)]",
+            children: "signal-cli"
+          }
+        ),
+        " ",
+        "daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:"
       ] }),
       /* @__PURE__ */ u("code", { className: "text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-0.5", children: "signal-cli daemon --http localhost:8080" })
     ] }),

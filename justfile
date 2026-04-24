@@ -43,16 +43,15 @@ build-css:
 [private]
 codesign-debug:
     #!/usr/bin/env bash
-    set -euo pipefail
     [ "$(uname -s)" = "Darwin" ] || exit 0
     [ -n "${MACOS_CODESIGN_IDENTITY:-}" ] || exit 0
     id="${MACOS_CODESIGN_IDENTIFIER:-org.moltis.dev}"
     sign() { codesign --force --sign "$MACOS_CODESIGN_IDENTITY" --identifier "$id" "$1" 2>/dev/null || true; }
     # Main binary
-    [ -f target/debug/moltis ] && sign target/debug/moltis
+    if [ -f target/debug/moltis ]; then sign target/debug/moltis; fi
     # Test binaries (Mach-O executables, skip .d/.fingerprint/dylib)
     for bin in target/debug/deps/moltis*; do
-        [ -f "$bin" ] && [ -x "$bin" ] && [[ "$bin" != *.d ]] && sign "$bin"
+        if [ -f "$bin" ] && [ -x "$bin" ] && [[ "$bin" != *.d ]]; then sign "$bin"; fi
     done
 
 # Build the project

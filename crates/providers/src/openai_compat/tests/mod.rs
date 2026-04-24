@@ -1,10 +1,67 @@
-use moltis_agents::model::StreamEvent;
+mod schema_normalization;
 
 use super::{
-    SseLineResult, StreamingToolState, parse_responses_completion, parse_tool_calls,
-    process_openai_sse_line, sanitize_schema_for_openai_compat,
+    parse_responses_completion, parse_tool_calls, sanitize_schema_for_openai_compat,
     strict_mode::patch_schema_for_strict_mode, to_openai_tools, to_responses_api_tools,
 };
+
+/// Recursively assert that every `required` entry has a corresponding key in
+/// `properties`. Panics with `path` context on the first orphaned entry.
+fn assert_no_orphaned_required(schema: &serde_json::Value, path: &str) {
+    let Some(obj) = schema.as_object() else {
+        return;
+    };
+
+    // Only check entries that are verifiably absent from the properties map.
+    // `required` without `properties` is valid JSON Schema (e.g. with
+    // `additionalProperties` or `patternProperties`), so skip the check
+    // when no `properties` map exists.
+    if let (Some(required), Some(props)) = (
+        obj.get("required").and_then(|v| v.as_array()),
+        obj.get("properties").and_then(|v| v.as_object()),
+    ) {
+        for entry in required {
+            if let Some(name) = entry.as_str() {
+                assert!(
+                    props.contains_key(name),
+                    "orphaned required entry \"{name}\" at {path} — not in properties {:?}",
+                    props.keys().collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    // Recurse into properties
+    if let Some(props) = obj.get("properties").and_then(|v| v.as_object()) {
+        for (key, value) in props {
+            assert_no_orphaned_required(value, &format!("{path}.properties.{key}"));
+        }
+    }
+    // Recurse into items
+    if let Some(items) = obj.get("items") {
+        if items.is_object() {
+            assert_no_orphaned_required(items, &format!("{path}.items"));
+        } else if let Some(arr) = items.as_array() {
+            for (i, item) in arr.iter().enumerate() {
+                assert_no_orphaned_required(item, &format!("{path}.items[{i}]"));
+            }
+        }
+    }
+    // Recurse into anyOf/oneOf/allOf
+    for keyword in ["anyOf", "oneOf", "allOf"] {
+        if let Some(variants) = obj.get(keyword).and_then(|v| v.as_array()) {
+            for (i, variant) in variants.iter().enumerate() {
+                assert_no_orphaned_required(variant, &format!("{path}.{keyword}[{i}]"));
+            }
+        }
+    }
+    // Recurse into additionalProperties
+    if let Some(ap) = obj.get("additionalProperties")
+        && ap.is_object()
+    {
+        assert_no_orphaned_required(ap, &format!("{path}.additionalProperties"));
+    }
+}
 
 #[test]
 fn parse_tool_calls_preserves_native_falsy_types() {
@@ -871,325 +928,4 @@ fn sanitize_draft07_schema_strips_unsupported_keywords() {
     );
     // The root `type: object` must survive.
     assert_eq!(schema["type"], "object");
-}
-
-/// Issue #743: end-to-end through `to_responses_api_tools` with a draft-07
-/// schema containing the exact Attio pattern that OpenAI rejects.
-#[test]
-fn responses_tools_draft07_attio_schema_normalized() {
-    let tools = vec![serde_json::json!({
-        "name": "mcp__attio__list-attribute-definitions",
-        "description": "Attio test tool (draft-07)",
-        "parameters": {
-            "$schema": "http://json-schema.org/draft-07/schema#",
-            "type": "object",
-            "properties": {
-                "query": {
-                    "anyOf": [
-                        {
-                            "anyOf": [
-                                {
-                                    "not": {
-                                        "const": ""
-                                    }
-                                },
-                                {
-                                    "type": "string"
-                                }
-                            ]
-                        },
-                        {
-                            "type": "null"
-                        }
-                    ]
-                }
-            }
-        }
-    })];
-
-    let converted = to_responses_api_tools(&tools);
-    let params = &converted[0]["parameters"];
-    let encoded = params.to_string();
-
-    assert!(
-        !encoded.contains("$schema"),
-        "$schema must be removed: {encoded}"
-    );
-    assert!(
-        !encoded.contains("\"not\""),
-        "\"not\" must be removed: {encoded}"
-    );
-    assert!(
-        !encoded.contains("{}"),
-        "empty schemas should not remain after sanitization: {encoded}"
-    );
-    assert_eq!(params["type"], "object");
-}
-
-/// Issue #760: draft-07 schemas with `$schema` inside nested `definitions`
-/// must go through full canonicalization, not fall back to best-effort
-/// normalization (which logs a WARN on every call). The `$schema` stripping
-/// must be recursive (not root-only) so that `validate_schema_dialects`
-/// inside `json_schema_ast` doesn't reject the schema at a nested pointer.
-///
-/// We detect the fallback path by checking for a canonicalization side-effect:
-/// `lower_boolean_and_null_types` converts `type: "boolean"` to `enum:
-/// [false, true]`, which only happens during canonicalization.
-#[test]
-fn sanitize_draft07_nested_definitions_schema_canonicalized() {
-    let mut schema = serde_json::json!({
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "type": "object",
-        "definitions": {
-            "Threshold": {
-                "$schema": "http://json-schema.org/draft-07/schema#",
-                "type": "object",
-                "properties": {
-                    "enabled": { "type": "boolean" },
-                    "value": { "type": "integer" }
-                },
-                "required": ["enabled", "value"]
-            }
-        },
-        "properties": {
-            "name": { "type": "string" },
-            "verbose": { "type": "boolean" },
-            "threshold": { "$ref": "#/definitions/Threshold" }
-        },
-        "required": ["name"]
-    });
-
-    sanitize_schema_for_openai_compat(&mut schema);
-    let encoded = schema.to_string();
-
-    // `$schema` must be stripped at all levels.
-    assert!(
-        !encoded.contains("$schema"),
-        "$schema should be removed from all levels, got: {encoded}"
-    );
-    // Root type preserved.
-    assert_eq!(schema["type"], "object");
-    // `name` property type preserved.
-    assert_eq!(schema["properties"]["name"]["type"], "string");
-
-    // Canonicalization lowers `type: "boolean"` → `enum: [false, true]`.
-    // If this enum is present, canonicalization ran (not the fallback path
-    // that would emit a WARN log).
-    let verbose_enum = schema["properties"]["verbose"]["enum"].as_array();
-    assert!(
-        verbose_enum.is_some(),
-        "boolean property should have enum after canonicalization (proves no WARN fallback), got: {}",
-        schema["properties"]["verbose"]
-    );
-}
-
-/// Issue #760: draft-07 schemas must go through full canonicalization (not
-/// just the best-effort fallback). Canonicalization lowers `type: "boolean"`
-/// to `enum: [false, true]` — if this enum is present after sanitization,
-/// it proves the schema was canonicalized rather than falling through to
-/// the raw-schema fallback path.
-#[test]
-fn sanitize_draft07_schema_uses_canonicalization_not_fallback() {
-    let mut schema = serde_json::json!({
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "type": "object",
-        "properties": {
-            "verbose": { "type": "boolean" },
-            "name": { "type": "string" }
-        }
-    });
-
-    sanitize_schema_for_openai_compat(&mut schema);
-
-    // Canonicalization lowers `type: "boolean"` → `enum: [false, true]`,
-    // then `RestoreEnumTypeTransform` re-adds `type: "boolean"`. The
-    // presence of `enum` proves canonicalization ran (the fallback path
-    // would leave `type: "boolean"` unchanged without an `enum`).
-    assert_eq!(
-        schema["properties"]["verbose"]["type"], "boolean",
-        "type must be restored after canonicalization"
-    );
-    let Some(verbose_enum) = schema["properties"]["verbose"]["enum"].as_array() else {
-        panic!(
-            "boolean property should have enum after canonicalization (proves non-fallback path), got: {}",
-            schema["properties"]["verbose"]
-        );
-    };
-    assert_eq!(
-        verbose_enum.len(),
-        2,
-        "boolean enum should have [false, true]"
-    );
-}
-
-/// `has_usable_type` considers bare `true`, empty `{}`, and description-only
-/// schemas as NOT having a usable type.  Properties that were genuinely
-/// defined (with `type`, `enum`, etc.) survive.
-#[test]
-fn schema_normalization_prunes_orphaned_required_with_stricter_check() {
-    // This tests the strengthened `has_usable_type` check.
-    // `area_id` has no definition at all (canonicalized to `true`), while
-    // `entity_id` has a real type — only `entity_id` should remain required.
-    let mut schema = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "entity_id": { "type": "string" },
-            "brightness": { "type": "integer" }
-        },
-        "required": ["entity_id", "brightness", "orphan"]
-    });
-
-    sanitize_schema_for_openai_compat(&mut schema);
-
-    let required = schema["required"]
-        .as_array()
-        .unwrap_or_else(|| panic!("required should be an array"));
-    let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
-    assert!(names.contains(&"entity_id"), "entity_id should stay");
-    assert!(names.contains(&"brightness"), "brightness should stay");
-    assert!(
-        !names.contains(&"orphan"),
-        "orphan property with no definition should be pruned"
-    );
-}
-
-/// The strengthened `has_usable_type` check rejects description-only and
-/// empty-object properties that were previously considered "defined".
-/// This test verifies the end-to-end pruning behavior.
-#[test]
-fn schema_normalization_prunes_description_only_from_required() {
-    // `description`-only property gets canonicalized to `true`, then the
-    // stricter `has_usable_type` check in `PruneOrphanedRequiredTransform`
-    // drops it from `required`.
-    let mut schema = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "query": { "type": "string" },
-            "context": { "description": "Search context" }
-        },
-        "required": ["query", "context"]
-    });
-
-    sanitize_schema_for_openai_compat(&mut schema);
-
-    let required = schema["required"]
-        .as_array()
-        .unwrap_or_else(|| panic!("required should be an array"));
-    let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
-    assert!(names.contains(&"query"), "typed property stays in required");
-    assert!(
-        !names.contains(&"context"),
-        "description-only property should be pruned from required"
-    );
-}
-
-// ── Streaming metadata extraction ──────────────────────────────────
-
-/// SSE chunk with `thought_signature` emits it in ToolCallStart metadata.
-#[test]
-fn streaming_tool_call_start_extracts_thought_signature() {
-    let data = serde_json::json!({
-        "choices": [{
-            "delta": {
-                "tool_calls": [{
-                    "index": 0,
-                    "id": "call_1",
-                    "thought_signature": "sig_xyz",
-                    "function": { "name": "get_weather", "arguments": "" }
-                }]
-            }
-        }]
-    })
-    .to_string();
-
-    let mut state = StreamingToolState::default();
-    let result = process_openai_sse_line(&data, &mut state);
-    let SseLineResult::Events(events) = result else {
-        panic!("expected Events");
-    };
-    let found = events
-        .iter()
-        .any(|e| matches!(e, StreamEvent::ToolCallStart { metadata, .. } if metadata.as_ref().is_some_and(|m| m["thought_signature"] == "sig_xyz")));
-    assert!(
-        found,
-        "should emit ToolCallStart with thought_signature metadata"
-    );
-}
-
-/// SSE chunk without `thought_signature` has None metadata.
-#[test]
-fn streaming_tool_call_start_no_metadata_when_absent() {
-    let data = serde_json::json!({
-        "choices": [{
-            "delta": {
-                "tool_calls": [{
-                    "index": 0,
-                    "id": "call_1",
-                    "function": { "name": "exec", "arguments": "" }
-                }]
-            }
-        }]
-    })
-    .to_string();
-
-    let mut state = StreamingToolState::default();
-    let result = process_openai_sse_line(&data, &mut state);
-    let SseLineResult::Events(events) = result else {
-        panic!("expected Events");
-    };
-    let found = events
-        .iter()
-        .any(|e| matches!(e, StreamEvent::ToolCallStart { metadata: None, .. }));
-    assert!(found, "ToolCallStart should have None metadata");
-}
-
-/// Non-streaming `parse_tool_calls` extracts metadata.
-#[test]
-fn parse_tool_calls_extracts_metadata() {
-    let message = serde_json::json!({
-        "tool_calls": [{
-            "id": "call_1",
-            "thought_signature": "sig_abc",
-            "function": { "name": "exec", "arguments": "{}" }
-        }]
-    });
-
-    let tool_calls = parse_tool_calls(&message);
-    assert_eq!(tool_calls.len(), 1);
-    assert!(
-        tool_calls[0]
-            .metadata
-            .as_ref()
-            .is_some_and(|m| m["thought_signature"] == "sig_abc"),
-        "should extract thought_signature into metadata"
-    );
-}
-
-/// Issue #712: enum-only schemas (no `type` key) must also get null
-/// appended. Canonicalization can strip the redundant `"type": "string"`
-/// leaving just `{"enum": [...]}` — the final fallback in make_nullable
-/// must handle this.
-#[test]
-fn strict_mode_nullable_enum_only_schema_includes_null() {
-    let mut schema = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "query": { "type": "string" },
-            "time_range": {
-                "enum": ["day", "week", "month", "year"],
-                "description": "No type key — enum-only schema"
-            }
-        },
-        "required": ["query"]
-    });
-
-    patch_schema_for_strict_mode(&mut schema);
-
-    let Some(time_enum) = schema["properties"]["time_range"]["enum"].as_array() else {
-        panic!("time_range should have enum");
-    };
-    assert!(
-        time_enum.iter().any(|v| v.is_null()),
-        "enum-only schema should include null, got: {time_enum:?}"
-    );
 }

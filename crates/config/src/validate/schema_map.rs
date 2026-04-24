@@ -554,6 +554,21 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ])),
         ),
         (
+            "home_assistant",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("default_instance", Leaf),
+                (
+                    "instances",
+                    Map(Box::new(Struct(HashMap::from([
+                        ("url", Leaf),
+                        ("token", Leaf),
+                        ("timeout_seconds", Leaf),
+                    ])))),
+                ),
+            ])),
+        ),
+        (
             "webhooks",
             Struct(HashMap::from([(
                 "rate_limit",

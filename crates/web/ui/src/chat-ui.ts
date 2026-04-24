@@ -65,7 +65,6 @@ export function smartScrollToBottom(): void {
 /** Show the "new content" floating indicator on the chat area. */
 export function showNewContentIndicator(): void {
 	if (!S.chatMsgBox) return;
-	S.setChatUnreadBelow(true);
 	let indicator = S.chatMsgBox.querySelector(".new-content-indicator") as HTMLButtonElement | null;
 	if (!indicator) {
 		indicator = document.createElement("button") as HTMLButtonElement;
@@ -82,7 +81,6 @@ export function showNewContentIndicator(): void {
 /** Hide the "new content" floating indicator. */
 export function hideNewContentIndicator(): void {
 	if (!S.chatMsgBox) return;
-	S.setChatUnreadBelow(false);
 	const indicator = S.chatMsgBox.querySelector(".new-content-indicator");
 	if (indicator) indicator.remove();
 }

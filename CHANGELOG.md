@@ -19,6 +19,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260424.01] - 2026-04-24
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+- [signal] Add signal-cli channel (#841)
+
+
+### Changed
+- [providers] Split openai_compat tests into submodules
+
+
+### Removed
+- Remove set -e from codesign-debug recipe that breaks just test
+- [web] Remove stale accountId assertion from signal channel E2E test
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+- [mcp] Show re-auth button when OAuth server needs re-authentication (#852)
+- [sandbox] Skip sysfs tmpfs mounts for missing paths (ARM/Raspberry Pi) (#853)
+- [prompt] Move datetime from system message to user content for KV cache stability (#855)
+- [providers] Deep-merge properties in schema union collapse, strip redundant boolean enum (#856)
+- [channels] Update ALL variant count for Signal channel type
+
 ## [20260423.01] - 2026-04-23
 ### Added
 - [skills] Add bundled skill category management to onboarding and settings (#829)

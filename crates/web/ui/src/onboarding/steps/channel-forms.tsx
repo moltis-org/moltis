@@ -673,7 +673,18 @@ export function SignalForm({ onConnected, error, setError }: ChannelFormProps): 
 			<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 				<span className="font-medium text-[var(--text-strong)]">Requires signal-cli</span>
 				{/* biome-ignore lint: single-line keeps whitespace intact */}
-				<span>Signal integration requires a running <a href="https://github.com/AsamK/signal-cli" target="_blank" rel="noopener noreferrer" className="underline text-[var(--text-strong)]">signal-cli</a> daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:</span>
+				<span>
+					Signal integration requires a running{" "}
+					<a
+						href="https://github.com/AsamK/signal-cli"
+						target="_blank"
+						rel="noopener noreferrer"
+						className="underline text-[var(--text-strong)]"
+					>
+						signal-cli
+					</a>{" "}
+					daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:
+				</span>
 				<code className="text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-0.5">
 					signal-cli daemon --http localhost:8080
 				</code>

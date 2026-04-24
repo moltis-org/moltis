@@ -98,7 +98,19 @@ export function AddSignalModal(): VNode {
 					<div>
 						<span className="text-xs font-medium text-[var(--text-strong)]">Requires signal-cli</span>
 						{/* biome-ignore lint: single-line keeps whitespace intact */}
-						<div className="text-xs text-[var(--muted)] channel-help">Signal integration requires a running <a href="https://github.com/AsamK/signal-cli" target="_blank" rel="noopener noreferrer" className="underline text-[var(--text-strong)]">signal-cli</a> daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:</div>
+						<div className="text-xs text-[var(--muted)] channel-help">
+							Signal integration requires a running{" "}
+							<a
+								href="https://github.com/AsamK/signal-cli"
+								target="_blank"
+								rel="noopener noreferrer"
+								className="underline text-[var(--text-strong)]"
+							>
+								signal-cli
+							</a>{" "}
+							daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the
+							daemon:
+						</div>
 						<code className="text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-1 block">
 							signal-cli daemon --http localhost:8080
 						</code>

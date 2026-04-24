@@ -16,6 +16,8 @@ import { formatTokens, sendRpc } from "../helpers";
 import { initMediaDrop, teardownMediaDrop } from "../media-drop";
 import { bindModelComboEvents } from "../models";
 import { bindNodeComboEvents, fetchNodes, unbindNodeEvents } from "../nodes-selector";
+import { bindProjectComboEvents } from "../project-combo";
+import { fetchProjects } from "../projects";
 import { bindReasoningToggle, unbindReasoningToggle } from "../reasoning-toggle";
 import { registerPrefix, sessionPath } from "../router";
 import { routes } from "../routes";
@@ -796,6 +798,13 @@ function initializeChatControls(): void {
 	S.setNodeDropdownList(S.$("nodeDropdownList"));
 	bindNodeComboEvents();
 	fetchNodes();
+	S.setProjectCombo(S.$("projectCombo"));
+	S.setProjectComboBtn(S.$("projectComboBtn"));
+	S.setProjectComboLabel(S.$("projectComboLabel"));
+	S.setProjectDropdown(S.$("projectDropdown"));
+	S.setProjectDropdownList(S.$("projectDropdownList"));
+	bindProjectComboEvents();
+	fetchProjects();
 	S.setSandboxToggleBtn(S.$("sandboxToggle"));
 	S.setSandboxLabel(S.$("sandboxLabel"));
 	bindSandboxToggleEvents();
@@ -874,6 +883,7 @@ const chatPageHTML =
 	'<div id="modelCombo" class="model-combo"><button id="modelComboBtn" class="model-combo-btn" type="button"><span id="modelComboLabel">loading\u2026</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="modelDropdown" class="model-dropdown hidden"><input id="modelSearchInput" type="text" placeholder="Search models\u2026" class="model-search-input" autocomplete="off" /><div id="modelDropdownList" class="model-dropdown-list"></div></div></div>' +
 	'<div id="reasoningCombo" class="model-combo hidden"><button id="reasoningComboBtn" class="model-combo-btn" type="button" title="Reasoning effort"><span class="icon icon-sm icon-brain" style="flex-shrink:0;"></span><span id="reasoningComboLabel">Off</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="reasoningDropdown" class="model-dropdown hidden"><div id="reasoningDropdownList" class="model-dropdown-list"></div></div></div>' +
 	'<div id="nodeCombo" class="model-combo hidden"><button id="nodeComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-server" style="flex-shrink:0;"></span><span id="nodeComboLabel">Local</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="nodeDropdown" class="model-dropdown hidden" tabindex="-1"><div id="nodeDropdownList" class="model-dropdown-list"></div></div></div>' +
+	'<div id="projectCombo" class="model-combo hidden"><button id="projectComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-folder" style="flex-shrink:0;"></span><span id="projectComboLabel">No project</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="projectDropdown" class="model-dropdown hidden"><div id="projectDropdownList" class="model-dropdown-list"></div></div></div>' +
 	'<div id="sessionHeaderToolbarMount" class="ml-auto flex items-center gap-1.5"></div>' +
 	'<button id="chatMoreBtn" type="button" class="model-combo-btn" title="More controls" aria-label="More controls"><span class="icon icon-lg icon-menu-dots-horizontal"></span></button></div>' +
 	'<div id="chatMoreModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:560px;max-width:92vw;"><div class="provider-modal-header"><div class="flex items-center gap-2"><button id="chatMoreDeleteAllBtn" type="button" class="provider-btn provider-btn-sm chat-session-btn-danger inline-flex items-center gap-1.5" style="background:var(--error);border-color:var(--error);color:#fff;"><span class="icon icon-sm icon-x-circle shrink-0"></span><span id="chatMoreDeleteAllLabel">Delete all sessions</span></button></div><div id="sessionHeaderModalTopMount" class="flex items-center gap-2"></div></div><div class="provider-modal-body flex flex-col gap-3"><div class="flex flex-wrap items-center gap-2"><button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">sandboxed</span></button><div style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">ubuntu:25.10</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div><button id="mcpToggleBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle MCP tools for this session"><span class="icon icon-md icon-link shrink-0"></span><span id="mcpToggleLabel">MCP</span></button><button id="debugPanelBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show context debug info"><span class="icon icon-md icon-wrench shrink-0"></span><span id="debugPanelLabel">Debug</span></button><button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show full LLM context (system prompt + history)"><span class="icon icon-md icon-document shrink-0"></span><span id="fullContextLabel">Context</span></button></div><div id="sessionControlsSection" class="border-t border-[var(--border)] pt-3"><div id="sessionHeaderModalMount" class="w-full"></div></div></div></div></div>' +
@@ -981,5 +991,10 @@ registerPrefix(
 		S.setNodeDropdownList(null);
 		S.setSandboxToggleBtn(null);
 		S.setSandboxLabel(null);
+		S.setProjectCombo(null);
+		S.setProjectComboBtn(null);
+		S.setProjectComboLabel(null);
+		S.setProjectDropdown(null);
+		S.setProjectDropdownList(null);
 	},
 );

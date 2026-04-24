@@ -555,6 +555,22 @@ pub mod labels {
     pub const VARIANT: &str = "variant";
 }
 
+/// Home Assistant integration metrics
+pub mod home_assistant {
+    /// Total number of HA REST API requests
+    pub const REST_REQUESTS_TOTAL: &str = "moltis_ha_rest_requests_total";
+    /// HA REST API request duration in seconds
+    pub const REST_REQUEST_DURATION_SECONDS: &str = "moltis_ha_rest_request_duration_seconds";
+    /// HA REST API errors
+    pub const REST_ERRORS_TOTAL: &str = "moltis_ha_rest_errors_total";
+    /// Total number of HA WebSocket connections
+    pub const WS_CONNECTIONS_TOTAL: &str = "moltis_ha_ws_connections_total";
+    /// Total number of HA WebSocket events received
+    pub const WS_EVENTS_RECEIVED_TOTAL: &str = "moltis_ha_ws_events_received_total";
+    /// HA WebSocket errors
+    pub const WS_ERRORS_TOTAL: &str = "moltis_ha_ws_errors_total";
+}
+
 /// Standard histogram buckets for different metric types
 pub mod buckets {
     use once_cell::sync::Lazy;

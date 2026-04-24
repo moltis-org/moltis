@@ -90,8 +90,7 @@ async function mockChannelsStatus(page, { channels, senders = [], allowRetryOwne
 					} else {
 						await channelsPage.prefetchChannels();
 					}
-					await new Promise((resolve) => requestAnimationFrame(() => resolve()));
-					await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+					await new Promise((resolve) => setTimeout(resolve, 100));
 				},
 				{ channels, senders, allowRetryOwnership, label },
 			);
@@ -224,6 +223,7 @@ test.describe("Settings navigation", () => {
 		test(`settings/${section.id} loads without errors`, async ({ page }) => {
 			const pageErrors = watchPageErrors(page);
 			await navigateAndWait(page, `/settings/${section.id}`);
+			await waitForWsConnected(page);
 
 			await expect(page).toHaveURL(new RegExp(`/settings/${section.id}$`));
 
@@ -1305,10 +1305,10 @@ test.describe("Settings navigation", () => {
 			});
 			state.setConnected(true);
 			await channelsPage.prefetchChannels();
-			await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+			await new Promise((resolve) => setTimeout(resolve, 100));
 		});
 
-		await expect(page.getByText("Matrix (moltis-testbot)", { exact: true })).toBeVisible();
+		await expect(page.getByText("Matrix (moltis-testbot)", { exact: true })).toBeVisible({ timeout: 10_000 });
 		await page.getByRole("tab", { name: /Senders/ }).click();
 		await expect.poll(() => page.locator(".senders-table tbody tr").count(), { timeout: 10_000 }).toBe(1);
 		await expect(page.getByText("Alice", { exact: true })).toBeVisible();

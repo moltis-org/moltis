@@ -27,26 +27,29 @@ The agent can also fork programmatically using the `branch_session` tool:
 
 ```json
 {
-  "at_message": 5,
+  "fork_point": 5,
   "label": "explore-alternative"
 }
 ```
 
-- **`at_message`** — the message index to fork at (messages 0..N are copied).
-  If omitted, all messages are copied.
-- **`label`** — optional human-readable label for the new session.
+- **`label`** — label for the new session (required).
+- **`fork_point`** — the message index to fork at (0-based). Messages at
+  indices 0 through N-1 are copied; the message at index N becomes the
+  first new message in the forked session. If omitted, all messages are
+  copied.
 
-The tool returns the new session key.
+The tool returns `{ "key": "<session-key>", "forkPoint": N }`.
 
 ## RPC Method
 
 The `sessions.fork` RPC method is the underlying mechanism:
 
 ```json
-{ "key": "main", "at_message": 5, "label": "my-fork" }
+{ "key": "main", "forkPoint": 5, "label": "my-fork" }
 ```
 
-On success the response payload contains `{ "sessionKey": "session:<uuid>" }`.
+On success the response payload contains `{ "sessionKey": "session:<uuid>",
+"forkPoint": N, "label": "..." }`.
 
 ## What Gets Inherited
 
@@ -57,7 +60,9 @@ When forking, the new session inherits:
 | Messages (up to fork point) | Worktree branch |
 | Model selection | Sandbox settings |
 | Project assignment | Channel binding |
+| Agent ID | |
 | MCP disabled flag | |
+| Node assignment | |
 
 ## Parent-Child Relationships
 

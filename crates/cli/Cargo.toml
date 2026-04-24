@@ -103,12 +103,14 @@ tempfile = { workspace = true }
 [features]
 agent  = ["moltis-gateway/agent", "moltis-web?/agent"]
 caldav = ["moltis-gateway/caldav"]
+home-assistant = ["moltis-gateway/home-assistant"]
 # User-facing integrations stay default-on in the CLI crate per workspace policy,
 # even when the underlying implementation remains feature-gated in lower crates.
 default = [
   "agent",
   "bundled-skills",
   "caldav",
+  "home-assistant",
   "code-splitter",
   "file-watcher",
   "firecrawl",

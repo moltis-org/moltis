@@ -248,6 +248,7 @@ pub struct MoltisConfig {
     pub voice: VoiceConfig,
     pub cron: CronConfig,
     pub caldav: CalDavConfig,
+    pub home_assistant: HomeAssistantConfig,
     pub webhooks: WebhooksConfig,
     /// Per-model overrides that apply across all providers.
     ///
