@@ -128,19 +128,24 @@ pub struct CronService {
     on_notify: Option<NotifyFn>,
     rate_limiter: Mutex<RateLimiter>,
     events_queue: Arc<SystemEventsQueue>,
+    /// Minimum ms between exec-triggered heartbeat wakes. Zero disables cooldown.
+    wake_cooldown_ms: u64,
 }
 
 /// Max time a job can be in "running" state before we consider it stuck (2 hours).
 const STUCK_THRESHOLD_MS: u64 = 2 * 60 * 60 * 1000;
 
-/// Minimum cooldown between heartbeat wake calls (5 minutes).
+/// Minimum cooldown between exec-triggered heartbeat wake calls.
 ///
 /// Prevents exec-completion callbacks from re-waking the heartbeat
 /// in a tight loop when the agent uses `exec` during a heartbeat turn.
 /// The wake is skipped if the heartbeat last completed less than this
 /// duration ago. This is a safety net — the scheduled interval still
 /// applies for normal periodic firing.
-const HEARTBEAT_WAKE_COOLDOWN_MS: u64 = 5 * 60 * 1000;
+///
+/// This cooldown only applies to exec-triggered wakes (reason = "exec-event").
+/// CronWakeMode::Now wakes (reason = "cron-event") are never suppressed.
+const DEFAULT_WAKE_COOLDOWN_MS: u64 = 5 * 60 * 1000;
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -221,6 +226,7 @@ impl CronService {
             on_notify,
             rate_limiter: Mutex::new(RateLimiter::new(rate_limit_config)),
             events_queue,
+            wake_cooldown_ms: DEFAULT_WAKE_COOLDOWN_MS,
         })
     }
 
@@ -233,6 +239,11 @@ impl CronService {
     ///
     /// Multiple wake calls coalesce naturally: they all set `next_run_at_ms = now`
     /// idempotently, and `running_at_ms` prevents the heartbeat from firing twice.
+    ///
+    /// When called with reason `"exec-event"`, a cooldown guard applies: if the
+    /// heartbeat last completed less than `wake_cooldown_ms` ago, the wake is skipped.
+    /// This prevents exec-completion callbacks from creating a re-fire loop.
+    /// Other reasons (e.g. `"cron-event"` from `CronWakeMode::Now`) are never suppressed.
     pub async fn wake(&self, reason: &str) {
         let now = now_ms();
         let mut jobs = self.jobs.write().await;
@@ -240,16 +251,20 @@ impl CronService {
             && job.enabled
             && job.state.running_at_ms.is_none()
         {
-            // Enforce cooldown: skip wake if the heartbeat completed recently.
-            // This prevents exec-completion callbacks from creating a re-fire loop
-            // when the heartbeat agent uses `exec` during its turn.
-            if let Some(last_run) = job.state.last_run_at_ms {
+            // Enforce cooldown for exec-triggered wakes only. This prevents
+            // exec-completion callbacks from creating a re-fire loop when the
+            // heartbeat agent uses `exec` during its turn. CronWakeMode::Now wakes
+            // ("cron-event") are never suppressed.
+            if reason == "exec-event"
+                && self.wake_cooldown_ms > 0
+                && let Some(last_run) = job.state.last_run_at_ms
+            {
                 let elapsed = now.saturating_sub(last_run);
-                if elapsed < HEARTBEAT_WAKE_COOLDOWN_MS {
+                if elapsed < self.wake_cooldown_ms {
                     debug!(
                         reason,
                         elapsed_ms = elapsed,
-                        cooldown_ms = HEARTBEAT_WAKE_COOLDOWN_MS,
+                        cooldown_ms = self.wake_cooldown_ms,
                         "skipping heartbeat wake — within cooldown"
                     );
                     return;
