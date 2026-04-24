@@ -91,7 +91,27 @@ pub fn discover_and_load() -> MoltisConfig {
         }
     }
 
-    discover_and_load_readonly()
+    let cfg = discover_and_load_readonly();
+
+    // Persist randomly generated port so it stays stable across restarts.
+    // discover_and_load_readonly generates an in-memory port when the on-disk
+    // value is 0 — write it back so the port is stable across restarts.
+    if let Some(path) = find_config_file()
+        && cfg.server.port != 0
+        && let Ok(raw) = std::fs::read_to_string(&path)
+        && let Ok(on_disk) = parse_config(&raw, &path)
+        && on_disk.server.port == 0
+    {
+        debug!(
+            port = cfg.server.port,
+            "persisting generated port to config"
+        );
+        if let Err(e) = save_user_config_to_path(&path, &cfg) {
+            warn!(error = %e, "failed to save config with generated port");
+        }
+    }
+
+    cfg
 }
 
 /// Load config using layered merge without writing any files.
