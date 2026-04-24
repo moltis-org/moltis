@@ -595,15 +595,23 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             "missing 'id' or 'agent_id' parameter",
                         )
                     })?;
-                    let config = moltis_config::discover_and_load();
+                    let config = moltis_config::discover_and_load_readonly();
                     let toml_str = match config.agents.presets.get(&id) {
                         Some(preset) => toml::to_string_pretty(preset).unwrap_or_default(),
                         None => String::new(),
                     };
+                    let provenance =
+                        moltis_config::defaults::compute_preset_provenance(&config.agents);
+                    let source = provenance
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map(|p| p.source)
+                        .unwrap_or(moltis_config::defaults::ConfigSource::Custom);
                     Ok(serde_json::json!({
                         "id": id,
                         "toml": toml_str,
                         "exists": !toml_str.is_empty(),
+                        "provenance": source,
                     }))
                 })
             }),
@@ -679,7 +687,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "agents.presets_list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let config = moltis_config::discover_and_load();
+                    let config = moltis_config::discover_and_load_readonly();
                     let persona_ids: std::collections::HashSet<String> =
                         if let Some(ref store) = ctx.state.services.agent_persona_store {
                             store
@@ -693,6 +701,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             std::collections::HashSet::new()
                         };
 
+                    let all_provenance =
+                        moltis_config::defaults::compute_preset_provenance(&config.agents);
                     let config_only: Vec<serde_json::Value> = config
                         .agents
                         .presets
@@ -700,6 +710,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .filter(|(name, _)| !persona_ids.contains(*name))
                         .map(|(name, preset)| {
                             let toml_str = toml::to_string_pretty(preset).unwrap_or_default();
+                            let provenance = all_provenance
+                                .iter()
+                                .find(|p| &p.id == name)
+                                .map(|p| p.source)
+                                .unwrap_or(moltis_config::defaults::ConfigSource::Custom);
                             serde_json::json!({
                                 "id": name,
                                 "name": preset.identity.name.as_deref().unwrap_or(name),
@@ -708,7 +723,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "model": preset.model,
                                 "system_prompt_suffix": preset.system_prompt_suffix,
                                 "toml": toml_str,
-                                "source": "config",
+                                "provenance": provenance,
                             })
                         })
                         .collect();

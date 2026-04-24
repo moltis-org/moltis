@@ -17,7 +17,7 @@ fn test_sandbox_scope_display() {
 
 #[test]
 fn test_docker_hardening_args_prebuilt() {
-    let args = DockerSandbox::hardening_args(true, BackendKind::Docker, false);
+    let args = DockerSandbox::hardening_args(true, BackendKind::Docker);
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
     assert!(args.contains(&"--security-opt".to_string()));
@@ -36,15 +36,21 @@ fn test_docker_hardening_args_prebuilt() {
         "sandbox",
         "--hostname value should be 'sandbox'"
     );
-    assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    // Sysfs masks are present (actual set depends on host — macOS includes
+    // all because /sys doesn't exist; Linux includes only existing paths).
+    // On macOS CI all four are present.
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    }
 }
 
 #[test]
 fn test_docker_hardening_args_not_prebuilt() {
-    let args = DockerSandbox::hardening_args(false, BackendKind::Docker, false);
+    let args = DockerSandbox::hardening_args(false, BackendKind::Docker);
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
     assert!(args.contains(&"--security-opt".to_string()));
@@ -53,7 +59,7 @@ fn test_docker_hardening_args_not_prebuilt() {
     assert!(!args.contains(&"--read-only".to_string()));
     // tmpfs mounts still present
     assert!(args.contains(&"/tmp:rw,nosuid,size=256m".to_string()));
-    // Host metadata isolation still present — all 4 sysfs masks + hostname
+    // Host metadata isolation still present — hostname
     let hostname_pos = args
         .iter()
         .position(|a| a == "--hostname")
@@ -63,15 +69,18 @@ fn test_docker_hardening_args_not_prebuilt() {
         "sandbox",
         "--hostname value should be 'sandbox'"
     );
-    assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    }
 }
 
 #[test]
 fn test_docker_hardening_args_podman() {
-    let args = DockerSandbox::hardening_args(true, BackendKind::Podman, false);
+    let args = DockerSandbox::hardening_args(true, BackendKind::Podman);
     // Core hardening flags must still be present
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
@@ -98,66 +107,42 @@ fn test_docker_hardening_args_podman() {
 }
 
 #[test]
-fn test_docker_hardening_args_skips_sysfs_on_wsl() {
-    // On WSL2 the sysfs directories (/sys/class/dmi, /sys/devices/virtual/dmi,
-    // etc.) may not exist inside the container's sysfs, so Docker cannot create
-    // tmpfs mountpoints on the read-only overlayfs.  hardening_args must skip
-    // sysfs masks when `skip_sysfs_mounts` is true.
-    let args = DockerSandbox::hardening_args(true, BackendKind::Docker, true);
-
-    // Core hardening flags must still be present
-    assert!(args.contains(&"--cap-drop".to_string()));
-    assert!(args.contains(&"ALL".to_string()));
-    assert!(args.contains(&"--security-opt".to_string()));
-    assert!(args.contains(&"no-new-privileges".to_string()));
-    assert!(args.contains(&"--read-only".to_string()));
-    // Basic tmpfs mounts (writable /tmp and /run) must still be present
-    assert!(args.contains(&"/tmp:rw,nosuid,size=256m".to_string()));
-    assert!(args.contains(&"/run:rw,nosuid,size=64m".to_string()));
-    // Hostname isolation still present
-    let hostname_pos = args
-        .iter()
-        .position(|a| a == "--hostname")
-        .expect("--hostname flag missing");
-    assert_eq!(
-        args[hostname_pos + 1],
-        "sandbox",
-        "--hostname value should be 'sandbox'"
-    );
-    // Sysfs tmpfs overlays must NOT be present (WSL2 compat)
-    assert!(!args.contains(&"/sys/firmware:ro,nosuid".to_string()));
-    assert!(!args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
-    assert!(!args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
-    assert!(!args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+fn test_sysfs_paths_to_mask_no_sysfs_root_returns_all() {
+    // When /sys doesn't exist (macOS), all paths should be returned because
+    // Docker Desktop runs in a Linux VM with full sysfs.
+    let paths = sysfs_paths_to_mask_from("/nonexistent/sysfs/root");
+    assert_eq!(paths, vec![
+        "/sys/firmware",
+        "/sys/class/dmi",
+        "/sys/devices/virtual/dmi",
+        "/sys/class/block",
+    ]);
 }
 
 #[test]
-fn test_is_wsl_returns_false_on_non_wsl() {
-    // On macOS and standard Linux CI, is_wsl() must return false.
-    // Note: uses the OnceLock-cached value — this test assumes it does not
-    // run on an actual WSL2 host.
-    assert!(!is_wsl());
-}
-
-#[test]
-fn test_detect_wsl_from_path_positive() {
+fn test_sysfs_paths_to_mask_filters_missing_paths() {
+    // Simulate a Linux host where the sysfs root exists but specific
+    // subtrees are missing (e.g. ARM without DMI, or WSL2).
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("proc_version");
-    std::fs::write(&path, "Linux version 5.15.167.4-microsoft-standard-WSL2").unwrap();
-    assert!(detect_wsl_from_path(path.to_str().unwrap()));
+    let sysfs_root = dir.path().join("sys");
+    // Create only /sys/firmware and /sys/class/block, skip DMI paths
+    // (simulates Raspberry Pi / ARM which lacks DMI).
+    std::fs::create_dir_all(sysfs_root.join("firmware")).unwrap();
+    std::fs::create_dir_all(sysfs_root.join("class/block")).unwrap();
+
+    let paths = sysfs_paths_to_mask_from(sysfs_root.to_str().unwrap());
+    // Only the two paths that exist under the tempdir sysfs root are returned.
+    assert_eq!(paths, vec!["/sys/firmware", "/sys/class/block"]);
 }
 
 #[test]
-fn test_detect_wsl_from_path_negative() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("proc_version");
-    std::fs::write(&path, "Linux version 6.8.0-45-generic (buildd@lcy02-amd64)").unwrap();
-    assert!(!detect_wsl_from_path(path.to_str().unwrap()));
-}
-
-#[test]
-fn test_detect_wsl_from_path_missing_file() {
-    assert!(!detect_wsl_from_path("/nonexistent/path/proc/version"));
+fn test_sysfs_mask_paths_constant_contains_expected_entries() {
+    // Guard against accidentally removing paths from the constant.
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/firmware"));
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/class/dmi"));
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/devices/virtual/dmi"));
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/class/block"));
+    assert_eq!(SYSFS_MASK_PATHS.len(), 4);
 }
 
 #[test]

@@ -198,15 +198,7 @@ impl DockerSandbox {
     /// `is_prebuilt` controls whether `--read-only` is applied: prebuilt images
     /// already have packages baked in so the root FS can be read-only, while
     /// non-prebuilt images need a writable root for `apt-get` provisioning.
-    ///
-    /// `skip_sysfs_mounts` suppresses sysfs tmpfs overlays.  This is needed on
-    /// WSL2 where the sysfs directories may not exist inside the container's
-    /// filesystem, causing Docker to fail with "mkdirat: read-only file system".
-    pub(crate) fn hardening_args(
-        is_prebuilt: bool,
-        kind: BackendKind,
-        skip_sysfs_mounts: bool,
-    ) -> Vec<String> {
+    pub(crate) fn hardening_args(is_prebuilt: bool, kind: BackendKind) -> Vec<String> {
         let mut args = vec![
             // --- Capability / privilege ---
             "--cap-drop".to_string(),
@@ -233,21 +225,10 @@ impl DockerSandbox {
         // With --cap-drop ALL some sysfs files are permission-denied even for
         // root, causing the mount (and container startup) to fail.  Podman
         // already masks /sys/firmware via its built-in OCI MaskedPaths.
-        //
-        // Skipped on WSL2: the sysfs directories (/sys/class/dmi, etc.) may
-        // not exist inside the container's sysfs, so Docker cannot create
-        // tmpfs mountpoints on the read-only overlayfs.
-        if kind != BackendKind::Podman && !skip_sysfs_mounts {
-            args.extend([
-                "--tmpfs".to_string(),
-                "/sys/firmware:ro,nosuid".to_string(),
-                "--tmpfs".to_string(),
-                "/sys/class/dmi:ro,nosuid".to_string(),
-                "--tmpfs".to_string(),
-                "/sys/devices/virtual/dmi:ro,nosuid".to_string(),
-                "--tmpfs".to_string(),
-                "/sys/class/block:ro,nosuid".to_string(),
-            ]);
+        if kind != BackendKind::Podman {
+            for path in sysfs_paths_to_mask() {
+                args.extend(["--tmpfs".to_string(), format!("{path}:ro,nosuid")]);
+            }
         }
         if is_prebuilt {
             args.push("--read-only".to_string());
@@ -441,7 +422,7 @@ impl Sandbox for DockerSandbox {
         }
 
         args.extend(self.resource_args());
-        args.extend(Self::hardening_args(is_prebuilt, self.kind, is_wsl()));
+        args.extend(Self::hardening_args(is_prebuilt, self.kind));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
 
@@ -746,29 +727,60 @@ impl Sandbox for NoSandbox {
     }
 }
 
-/// Return `true` when running on Windows Subsystem for Linux (WSL).
+/// Sysfs paths to mask with empty read-only tmpfs overlays.
 ///
-/// WSL2 kernels identify themselves with "microsoft" or "WSL" in
-/// `/proc/version`.  The result is cached for the process lifetime.
-pub(crate) fn is_wsl() -> bool {
-    static WSL: OnceLock<bool> = OnceLock::new();
-    *WSL.get_or_init(|| {
-        let detected = detect_wsl_from_path("/proc/version");
-        if detected {
-            warn!("WSL2 detected: sysfs hardware-identifier tmpfs overlays will be skipped");
-        }
-        detected
-    })
+/// On Linux, Docker shares the host kernel's sysfs.  Paths that don't exist
+/// on the host (ARM devices without DMI, WSL2, etc.) would cause Docker to
+/// fail with "mkdirat: read-only file system" when it tries to create
+/// mountpoints on the read-only sysfs.  We probe each path and only mount
+/// the ones that actually exist.
+///
+/// On non-Linux hosts (macOS), Docker Desktop runs in a Linux VM with full
+/// sysfs, so all paths are included unconditionally — the host `/sys` layout
+/// is irrelevant.
+pub(crate) const SYSFS_MASK_PATHS: &[&str] = &[
+    "/sys/firmware",
+    "/sys/class/dmi",
+    "/sys/devices/virtual/dmi",
+    "/sys/class/block",
+];
+
+pub(crate) fn sysfs_paths_to_mask() -> Vec<&'static str> {
+    static PATHS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    PATHS
+        .get_or_init(|| {
+            let paths = sysfs_paths_to_mask_from("/sys");
+            let skipped = SYSFS_MASK_PATHS.len() - paths.len();
+            if skipped > 0 {
+                warn!(
+                    skipped,
+                    "some sysfs mask paths do not exist on this host and will be skipped"
+                );
+            }
+            paths
+        })
+        .clone()
 }
 
-/// Testable inner helper: reads the given path and checks for WSL markers.
-pub(crate) fn detect_wsl_from_path(path: &str) -> bool {
-    std::fs::read_to_string(path)
-        .map(|v| {
-            let lower = v.to_ascii_lowercase();
-            lower.contains("microsoft") || lower.contains("wsl")
+/// Testable inner helper: probes each `SYSFS_MASK_PATHS` entry and returns
+/// only those that exist under `sysfs_root`.  If `sysfs_root` itself doesn't
+/// exist (macOS), all paths are returned — Docker Desktop's VM will have them.
+pub(crate) fn sysfs_paths_to_mask_from(sysfs_root: &str) -> Vec<&'static str> {
+    let root = std::path::Path::new(sysfs_root);
+    if !root.exists() {
+        // Non-Linux host (macOS): Docker runs in a VM with full sysfs.
+        return SYSFS_MASK_PATHS.to_vec();
+    }
+    SYSFS_MASK_PATHS
+        .iter()
+        .copied()
+        .filter(|p| {
+            // Strip the canonical "/sys/" prefix so the path is relative,
+            // then probe under the supplied root (real or test tempdir).
+            let rel = p.strip_prefix("/sys/").unwrap_or(p);
+            root.join(rel).exists()
         })
-        .unwrap_or(false)
+        .collect()
 }
 
 /// Return `true` when the installed Podman version supports `host-gateway`

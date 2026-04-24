@@ -15,6 +15,7 @@ capabilities that control what features are available.
 | WhatsApp | Gateway (WebSocket) | No | Streaming, voice ingest, OTP, pairing, location |
 | Slack | Socket Mode | No | Streaming, interactive messages, threads, reactions |
 | Nostr | Gateway (relay subscription) | No | OTP, encrypted DMs (NIP-04) |
+| Signal | Gateway (signal-cli SSE) | No | OTP, DMs, groups, outbound text |
 
 ## Inbound Modes
 
@@ -112,11 +113,16 @@ user_id = "@bot:example.com"
 
 [channels.whatsapp.my_wa]
 dm_policy = "open"
+
+[channels.signal.my_signal]
+account = "+15551234567"
+http_url = "http://127.0.0.1:8080"
 ```
 
 For detailed configuration, see the per-channel pages:
 [Telegram](telegram.md), [Microsoft Teams](teams.md), [Discord](discord.md),
-[Slack](slack.md), [Matrix](matrix.md), [WhatsApp](whatsapp.md).
+[Slack](slack.md), [Matrix](matrix.md), [WhatsApp](whatsapp.md),
+[Nostr](nostr.md), [Signal](signal.md).
 
 You can also use the web UI's **Channels** tab for guided setup with each platform. Web-added channels do not get written back into `moltis.toml`.
 

@@ -16,29 +16,33 @@ function isRetryableRpcError(message) {
 
 async function sendRpcFromPage(page, method, params) {
 	let lastResponse = null;
-	for (let attempt = 0; attempt < 40; attempt++) {
+	for (let attempt = 0; attempt < 10; attempt++) {
 		if (attempt > 0) {
 			await waitForWsConnected(page);
 		}
 		lastResponse = await page
 			.evaluate(
-				async ({ methodName, methodParams }) => {
+				async ({ methodName, methodParams, timeoutMs }) => {
 					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
 					if (!appScript) throw new Error("app module script not found");
 					var appUrl = new URL(appScript.src, window.location.origin);
 					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 					var helpers = await import(`${prefix}js/helpers.js`);
-					return helpers.sendRpc(methodName, methodParams);
+					var rpc = helpers.sendRpc(methodName, methodParams);
+					var timeout = new Promise((_, reject) => setTimeout(() => reject(new Error("RPC timeout")), timeoutMs));
+					return Promise.race([rpc, timeout]);
 				},
 				{
 					methodName: method,
 					methodParams: params,
+					timeoutMs: 5000,
 				},
 			)
 			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
 
 		if (lastResponse?.ok) return lastResponse;
-		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
+		if (!isRetryableRpcError(lastResponse?.error?.message) && !lastResponse?.error?.message?.includes("RPC timeout"))
+			return lastResponse;
 	}
 	return lastResponse;
 }

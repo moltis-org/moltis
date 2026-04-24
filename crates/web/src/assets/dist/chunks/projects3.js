@@ -21,7 +21,8 @@ const projects = {
     worktree: "工作树",
     setup: "初始化",
     teardown: "清理",
-    image: "镜像"
+    image: "镜像",
+    indexed: "已索引"
   },
   card: {
     systemPromptPrefix: "系统提示：",
@@ -44,7 +45,8 @@ const projects = {
     branchPrefixPlaceholder: "默认：moltis",
     sandboxImage: "沙盒镜像",
     sandboxImagePlaceholder: "默认 (ubuntu:25.10)",
-    autoWorktree: "每个会话自动创建 git 工作树"
+    autoWorktree: "每个会话自动创建 git 工作树",
+    codeIndex: "启用代码索引（语义搜索）"
   }
 };
 export {

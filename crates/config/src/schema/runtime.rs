@@ -183,7 +183,7 @@ pub struct McpOAuthOverrideEntry {
 /// Kept in `moltis-config` (not `moltis-channels`) so the config crate stays
 /// independent of the channels crate while still validating channel names.
 pub const KNOWN_CHANNEL_TYPES: &[&str] = &[
-    "telegram", "whatsapp", "msteams", "discord", "slack", "matrix",
+    "telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal",
 ];
 
 /// Per-chat-type tool policy for a channel account.
@@ -227,7 +227,7 @@ pub struct ChannelToolPolicyOverride {
 #[serde(default)]
 pub struct ChannelsConfig {
     /// Which channel types are offered in the web UI (onboarding + channels page).
-    /// Defaults to `["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr"]`.
+    /// Defaults to `["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]`.
     #[serde(
         default = "default_channels_offered",
         skip_serializing_if = "Vec::is_empty"
@@ -251,6 +251,9 @@ pub struct ChannelsConfig {
     /// Nostr DM accounts, keyed by account ID.
     #[serde(default)]
     pub nostr: HashMap<String, serde_json::Value>,
+    /// Signal accounts backed by signal-cli, keyed by account ID.
+    #[serde(default)]
+    pub signal: HashMap<String, serde_json::Value>,
     /// Additional channel types not covered by the named fields above.
     ///
     /// This allows new channel plugins to be configured without changing
@@ -264,7 +267,7 @@ impl ChannelsConfig {
     ///
     /// This is the single source of truth for the set of named channel types.
     /// Keep in sync with the struct fields.
-    fn named_fields(&self) -> [(&str, &HashMap<String, serde_json::Value>); 6] {
+    fn named_fields(&self) -> [(&str, &HashMap<String, serde_json::Value>); 7] {
         [
             ("telegram", &self.telegram),
             ("whatsapp", &self.whatsapp),
@@ -272,6 +275,7 @@ impl ChannelsConfig {
             ("discord", &self.discord),
             ("slack", &self.slack),
             ("nostr", &self.nostr),
+            ("signal", &self.signal),
         ]
     }
 
@@ -314,6 +318,7 @@ fn default_channels_offered() -> Vec<String> {
         "slack".into(),
         "matrix".into(),
         "nostr".into(),
+        "signal".into(),
     ]
 }
 
@@ -327,6 +332,7 @@ impl Default for ChannelsConfig {
             discord: HashMap::new(),
             slack: HashMap::new(),
             nostr: HashMap::new(),
+            signal: HashMap::new(),
             extra: HashMap::new(),
         }
     }

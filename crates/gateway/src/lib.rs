@@ -40,6 +40,7 @@ pub mod nodes;
 pub mod onboarding;
 pub mod pairing;
 pub mod project;
+pub mod project_aware_tools;
 pub mod provider_setup;
 #[cfg(feature = "push-notifications")]
 pub mod push;

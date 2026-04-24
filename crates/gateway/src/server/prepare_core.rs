@@ -1351,7 +1351,7 @@ pub async fn prepare_gateway_core(
     startup_mem_probe.checkpoint("memory_manager.initialized");
 
     // ── Code index initialization ──────────────────────────────────────
-    let code_index = init_code_index::init_code_index(&data_dir).await;
+    let code_index = init_code_index::init_code_index(&data_dir, &config).await;
     startup_mem_probe.checkpoint("code_index.initialized");
 
     post_state::complete_startup(post_state::PostStateInputs {
@@ -1408,6 +1408,8 @@ pub async fn prepare_gateway_core(
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
         code_index,
+        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+        project_store: Arc::clone(&project_store),
     })
     .await
 }

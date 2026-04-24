@@ -71,6 +71,8 @@ pub(super) struct PostStateInputs {
     pub live_mcp: Arc<crate::mcp_service::LiveMcpService>,
     pub memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
     pub code_index: Arc<moltis_code_index::CodeIndex>,
+    #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+    pub project_store: Arc<dyn moltis_projects::ProjectStore>,
     pub credential_store: Arc<auth::CredentialStore>,
     pub db_pool: sqlx::SqlitePool,
     pub session_store: Arc<SessionStore>,
@@ -307,6 +309,8 @@ pub(super) async fn complete_startup(
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
         code_index,
+        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+        project_store,
     } = inputs;
 
     let openclaw_startup_status = deferred_openclaw_status();
@@ -832,6 +836,15 @@ pub(super) async fn complete_startup(
             }
         }
 
+        #[cfg(feature = "home-assistant")]
+        {
+            if let Some(t) =
+                moltis_home_assistant::tool::HomeAssistantTool::from_config(&config.home_assistant)
+            {
+                tool_registry.register(Box::new(t));
+            }
+        }
+
         if let Some(ref mm) = memory_manager {
             tool_registry.register(Box::new(moltis_memory::tools::MemorySearchTool::new(
                 Arc::clone(mm),
@@ -855,14 +868,31 @@ pub(super) async fn complete_startup(
         // ── Code index tools ─────────────────────────────────────────────
         #[cfg(feature = "qmd")]
         {
-            moltis_code_index::tools::register_tools(&mut tool_registry, code_index_for_tools);
+            use crate::project_aware_tools::ProjectAwareCodeIndexTool;
+            moltis_code_index::tools::register_tools_wrapped(
+                &mut tool_registry,
+                code_index_for_tools,
+                |tool| {
+                    Box::new(ProjectAwareCodeIndexTool::new(
+                        tool,
+                        Arc::clone(&project_store),
+                    ))
+                },
+            );
         }
 
         #[cfg(all(feature = "code-index-builtin", not(feature = "qmd")))]
         {
-            moltis_code_index::tools::register_tools(
+            use crate::project_aware_tools::ProjectAwareCodeIndexTool;
+            moltis_code_index::tools::register_tools_wrapped(
                 &mut tool_registry,
                 code_index_for_tools_builtin,
+                |tool| {
+                    Box::new(ProjectAwareCodeIndexTool::new(
+                        tool,
+                        Arc::clone(&project_store),
+                    ))
+                },
             );
         }
 

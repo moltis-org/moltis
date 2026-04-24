@@ -70,6 +70,7 @@ export let chatMsgBox: HTMLElement | null = null;
 export let chatInput: HTMLElement | null = null;
 export let chatSendBtn: HTMLElement | null = null;
 export let chatBatchLoading = false;
+export let autoScrollMode: string = localStorage.getItem("moltis-auto-scroll") || "smart";
 export let sessionSwitchInProgress = false;
 // Highest message index loaded from session history; used to deduplicate
 // real-time events that duplicate already-rendered history entries.
@@ -265,6 +266,10 @@ export function setChatSendBtn(v: HTMLElement | null): void {
 }
 export function setChatBatchLoading(v: boolean): void {
 	chatBatchLoading = v;
+}
+export function setAutoScrollMode(v: string): void {
+	autoScrollMode = v;
+	localStorage.setItem("moltis-auto-scroll", v);
 }
 export function setSessionSwitchInProgress(v: boolean): void {
 	sessionSwitchInProgress = v;

@@ -40,6 +40,7 @@ import {
 	ChannelTypeSelector,
 	DiscordForm,
 	NostrForm,
+	SignalForm,
 	TelegramForm,
 } from "./channel-forms";
 import {
@@ -1117,6 +1118,9 @@ export function ChannelStep({ onNext, onBack }: { onNext: () => void; onBack: ()
 			)}
 			{phase === "form" && selectedType === "nostr" && (
 				<NostrForm onConnected={onConnected} error={channelError} setError={setChannelError} />
+			)}
+			{phase === "form" && selectedType === "signal" && (
+				<SignalForm onConnected={onConnected} error={channelError} setError={setChannelError} />
 			)}
 			{phase === "success" && connectedType && (
 				<ChannelSuccess channelName={connectedName} channelType={connectedType} onAnother={onAnother} />

@@ -60,6 +60,50 @@
             if ((localStorage.getItem('theme') || 'system') === 'system') applyTheme('system');
         });
     </script>
+    <style>
+        .compare-table {
+            table-layout: fixed;
+            min-width: 46rem;
+        }
+
+        .compare-table th,
+        .compare-table td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            vertical-align: top;
+        }
+
+        .compare-table th:first-child,
+        .compare-table td:first-child {
+            width: 8.5rem;
+            overflow-wrap: normal;
+        }
+
+        .compare-table th:nth-child(2),
+        .compare-table td:nth-child(2),
+        .compare-table th:nth-child(3),
+        .compare-table td:nth-child(3) {
+            width: 13.5rem;
+            max-width: 13.5rem;
+        }
+
+        .compare-table th:nth-child(4),
+        .compare-table td:nth-child(4) {
+            position: sticky;
+            right: 0;
+            z-index: 20;
+            width: 14rem;
+            min-width: 14rem;
+            background-color: rgb(255 247 237);
+            box-shadow: -1px 0 0 rgb(254 215 170);
+        }
+
+        .dark .compare-table th:nth-child(4),
+        .dark .compare-table td:nth-child(4) {
+            background-color: rgb(67 20 7);
+            box-shadow: -1px 0 0 rgb(124 45 18);
+        }
+    </style>
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="bg-white dark:bg-gray-950 text-gray-900 dark:text-white min-h-screen relative transition-colors duration-300 overflow-x-hidden w-full">
@@ -941,31 +985,31 @@
                 </h2>
                 <div class="grid grid-cols-3 gap-3">
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
-                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">0</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">核心中的 unsafe*</p>
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">小</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">小型隔离 unsafe 表面*</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
                         <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">0</p>
                         <p class="text-xs text-gray-500 dark:text-gray-400">npm 依赖</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
-                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~11K</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">代理核心代码行</p>
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">59</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">Rust 工作区 crate</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
-                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~216K</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">Rust 代码行（全部）</p>
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~270K</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">Rust 代码行</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
-                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">85%</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">带测试的文件</p>
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">470+</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">带测试的 Rust 文件</p>
                     </div>
                     <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
                         <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">MIT</p>
                         <p class="text-xs text-gray-500 dark:text-gray-400">许可证</p>
                     </div>
                 </div>
-                <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">*2 <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">unsafe impl Send/Sync</code> exist for the llama.cpp FFI wrapper, only compiled with the optional <code class="bg-gray-100 dark:bg-gray-800 px-1 rounded">local-llm</code> feature.</p>
+                <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">*Unsafe 代码隔离在 Swift FFI、本地模型包装器和预编译 WASM/运行时边界中。核心代理和网关路径保持安全 Rust。</p>
             </div>
         </div>
     </div>
@@ -974,7 +1018,7 @@
     <!-- PAGE: Compare -->
     <!-- ============================================================ -->
     <div id="page-compare" class="page-content hidden">
-        <div class="relative z-10 px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
+        <div class="relative z-10 px-4 sm:px-6 lg:px-8 w-full max-w-6xl mx-auto pt-12 pb-8">
             <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">Moltis 对比</h1>
             <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-10 text-center">您可以自托管的开源 AI 助手</p>
 
@@ -987,92 +1031,86 @@
                     一览
                 </h2>
                 <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
-                    <table class="w-full text-[11px] sm:text-xs text-left whitespace-nowrap">
+                    <table class="compare-table w-full text-[11px] sm:text-xs text-left">
                         <thead>
                             <tr class="bg-gray-50 dark:bg-gray-900/50">
                                 <th class="px-3 py-2.5 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800 sticky left-0 bg-gray-50 dark:bg-gray-900/80 z-10"></th>
                                 <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800"><a href="https://github.com/openclaw/openclaw" target="_blank" rel="noopener" class="hover:text-orange-500 transition-colors">OpenClaw</a></th>
-                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800"><a href="https://github.com/qwibitai/nanoclaw" target="_blank" rel="noopener" class="hover:text-orange-500 transition-colors">NanoClaw</a></th>
-                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800"><a href="https://github.com/zeroclaw-labs/zeroclaw" target="_blank" rel="noopener" class="hover:text-orange-500 transition-colors">ZeroClaw</a></th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800"><a href="https://github.com/NousResearch/hermes-agent" target="_blank" rel="noopener" class="hover:text-orange-500 transition-colors">Hermes Agent</a></th>
                                 <th class="px-3 py-2.5 font-semibold text-orange-600 dark:text-orange-400 border-b border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">Moltis</th>
                             </tr>
                         </thead>
                         <tbody class="text-gray-600 dark:text-gray-400">
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">语言</td>
-                                <td class="px-3 py-2">TypeScript</td>
-                                <td class="px-3 py-2">TypeScript</td>
-                                <td class="px-3 py-2">Rust</td>
+                                <td class="px-3 py-2">TypeScript + native apps</td>
+                                <td class="px-3 py-2">Python + TypeScript UI</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Rust</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">运行时</td>
-                                <td class="px-3 py-2">Node.js + npm</td>
-                                <td class="px-3 py-2">Node.js</td>
-                                <td class="px-3 py-2">Single binary</td>
+                                <td class="px-3 py-2">Node.js + npm/pnpm/bun</td>
+                                <td class="px-3 py-2">Python + uv/pip</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Single binary</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">沙盒</td>
-                                <td class="px-3 py-2">App-level</td>
-                                <td class="px-3 py-2">Docker</td>
-                                <td class="px-3 py-2">Docker</td>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Main shape</td>
+                                <td class="px-3 py-2">Gateway + apps + nodes</td>
+                                <td class="px-3 py-2">CLI + gateway + research tools</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Persistent agent server</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">沙盒</td>
+                                <td class="px-3 py-2">App-level permissions</td>
+                                <td class="px-3 py-2">Local, Docker, SSH, cloud backends</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Docker/Podman + Apple + WASM</td>
                             </tr>
-                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">认证</td>
-                                <td class="px-3 py-2">Basic password</td>
-                                <td class="px-3 py-2">None</td>
-                                <td class="px-3 py-2">Token + O认证</td>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">认证</td>
+                                <td class="px-3 py-2">Pairing + gateway controls</td>
+                                <td class="px-3 py-2">CLI + gateway setup</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Password + Passkey + API keys</td>
                             </tr>
-                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">语音</td>
-                                <td class="px-3 py-2">Plugin</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">语音</td>
+                                <td class="px-3 py-2">语音 wake + talk modes</td>
+                                <td class="px-3 py-2">语音 memo transcription</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Built-in (15+ providers)</td>
                             </tr>
-                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">MCP</td>
-                                <td class="px-3 py-2">Via plugin</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">MCP</td>
+                                <td class="px-3 py-2">Plugin/integration support</td>
+                                <td class="px-3 py-2">MCP integration</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Yes (stdio + HTTP/SSE)</td>
                             </tr>
-                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">记忆 / RAG</td>
-                                <td class="px-3 py-2">Plugin</td>
-                                <td class="px-3 py-2">Per-group files</td>
-                                <td class="px-3 py-2">SQLite + FTS</td>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">记忆 / RAG</td>
+                                <td class="px-3 py-2">Plugin + context engine</td>
+                                <td class="px-3 py-2">Memory + session search + user model</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">SQLite + FTS + vector</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">钩子</td>
-                                <td class="px-3 py-2">Limited</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
+                                <td class="px-3 py-2">Plugin/runtime hooks</td>
+                                <td class="px-3 py-2">钩子/plugins</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">15 event types</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">频道</td>
-                                <td class="px-3 py-2">Web, Telegram</td>
-                                <td class="px-3 py-2">Web, Telegram</td>
-                                <td class="px-3 py-2">Web, Discord</td>
+                                <td class="px-3 py-2">Broad channel and device list</td>
+                                <td class="px-3 py-2">Telegram, Discord, Slack, WhatsApp, Signal, CLI</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Web, Telegram, WhatsApp, Discord, Slack, Matrix, Nostr, Teams</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">API</td>
-                                <td class="px-3 py-2">REST</td>
-                                <td class="px-3 py-2">REST</td>
-                                <td class="px-3 py-2">REST + gRPC</td>
+                                <td class="px-3 py-2">Gateway APIs</td>
+                                <td class="px-3 py-2">CLI/gateway APIs</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">JSON-RPC + GraphQL</td>
                             </tr>
                             <tr>
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">OpenClaw 导入</td>
                                 <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
+                                <td class="px-3 py-2">Migration command</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Full (read-only, safe)</td>
                             </tr>
                         </tbody>
@@ -1089,57 +1127,50 @@
                     安全对比
                 </h2>
                 <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
-                    <table class="w-full text-[11px] sm:text-xs text-left whitespace-nowrap">
+                    <table class="compare-table w-full text-[11px] sm:text-xs text-left">
                         <thead>
                             <tr class="bg-gray-50 dark:bg-gray-900/50">
                                 <th class="px-3 py-2.5 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800 sticky left-0 bg-gray-50 dark:bg-gray-900/80 z-10"></th>
                                 <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">OpenClaw</th>
-                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">NanoClaw</th>
-                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">ZeroClaw</th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">Hermes Agent</th>
                                 <th class="px-3 py-2.5 font-semibold text-orange-600 dark:text-orange-400 border-b border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">Moltis</th>
                             </tr>
                         </thead>
                         <tbody class="text-gray-600 dark:text-gray-400">
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">代码沙盒</td>
-                                <td class="px-3 py-2">App-level</td>
-                                <td class="px-3 py-2">Docker</td>
-                                <td class="px-3 py-2">Docker</td>
+                                <td class="px-3 py-2">App-level permissions and tool controls</td>
+                                <td class="px-3 py-2">Local, container, SSH, and cloud backends</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Docker/Podman + Apple + WASM</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">密钥处理</td>
-                                <td class="px-3 py-2">环境变量</td>
-                                <td class="px-3 py-2">环境变量</td>
-                                <td class="px-3 py-2">加密配置</td>
+                                <td class="px-3 py-2">Config, env, and plugin paths</td>
+                                <td class="px-3 py-2">Config and provider credentials</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">加密保险库，已编辑，已清零</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">SSRF 防护</td>
-                                <td class="px-3 py-2">Plugin</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2">DNS 验证</td>
+                                <td class="px-3 py-2">Tool/plugin dependent</td>
+                                <td class="px-3 py-2">Tool/backend dependent</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Blocks loopback/private/CGNAT</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">WebSocket 来源</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
+                                <td class="px-3 py-2">Gateway dependent</td>
+                                <td class="px-3 py-2">Gateway dependent</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">跨域拒绝</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">钩子控制</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2">基于技能</td>
+                                <td class="px-3 py-2">Plugin/runtime hooks</td>
+                                <td class="px-3 py-2">钩子/plugins</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">检查 / 修改 / 阻止</td>
                             </tr>
                             <tr>
                                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">速率限制</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
-                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
+                                <td class="px-3 py-2">Gateway dependent</td>
+                                <td class="px-3 py-2">Gateway dependent</td>
                                 <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">每 IP 节流 + 登录限制</td>
                             </tr>
                         </tbody>
@@ -1147,61 +1178,56 @@
                 </div>
             </div>
 
-            <!-- 性能 comparison -->
+            <!-- Codebase comparison -->
             <div class="mb-10 text-left">
                 <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 flex items-center gap-2">
                     <span class="text-orange-500 dark:text-orange-400">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
                     </span>
-                    性能
+                    代码库快照
                 </h2>
                 <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
-                    <table class="w-full text-[11px] sm:text-xs text-left whitespace-nowrap">
+                    <table class="compare-table w-full text-[11px] sm:text-xs text-left">
                         <thead>
                             <tr class="bg-gray-50 dark:bg-gray-900/50">
                                 <th class="px-3 py-2.5 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800 sticky left-0 bg-gray-50 dark:bg-gray-900/80 z-10"></th>
                                 <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">OpenClaw</th>
-                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">NanoClaw</th>
-                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">ZeroClaw</th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">Hermes Agent</th>
                                 <th class="px-3 py-2.5 font-semibold text-orange-600 dark:text-orange-400 border-b border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">Moltis</th>
                             </tr>
                         </thead>
                         <tbody class="text-gray-600 dark:text-gray-400">
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">分发大小</td>
-                                <td class="px-3 py-2">~28 MB (node_modules)</td>
-                                <td class="px-3 py-2">Small</td>
-                                <td class="px-3 py-2">3.4 MB</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">44 MB</td>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">本地源码规模*</td>
+                                <td class="px-3 py-2">~1.1M app LoC</td>
+                                <td class="px-3 py-2">~152K app LoC</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">~270K Rust LoC</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">冷启动</td>
-                                <td class="px-3 py-2">&gt;30s</td>
-                                <td class="px-3 py-2">Fast</td>
-                                <td class="px-3 py-2">&lt;10ms</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">~1s</td>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">包形态</td>
+                                <td class="px-3 py-2">npm packages, extensions, apps</td>
+                                <td class="px-3 py-2">Python package, plugins, tools, UI packages</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">59 Rust 工作区 crate</td>
                             </tr>
                             <tr class="border-b border-gray-100 dark:border-gray-800/50">
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">内存（空闲）</td>
-                                <td class="px-3 py-2">&gt;100 MB</td>
-                                <td class="px-3 py-2">Low</td>
-                                <td class="px-3 py-2">&lt;5 MB</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">~30 MB</td>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">主要安装方式</td>
+                                <td class="px-3 py-2">npm install -g openclaw</td>
+                                <td class="px-3 py-2">install script, then hermes</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Install script, Homebrew, Docker, Cargo</td>
                             </tr>
                             <tr>
-                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">最低硬件</td>
-                                <td class="px-3 py-2">现代桌面</td>
-                                <td class="px-3 py-2">Any</td>
-                                <td class="px-3 py-2">$10 SBC</td>
-                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Raspberry Pi 4+</td>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">测试覆盖信号</td>
+                                <td class="px-3 py-2">Large TS/app test tree</td>
+                                <td class="px-3 py-2">Python and TUI tests</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">470+ 带测试的 Rust 文件</td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Moltis 更大是因为它打包了 Web 界面、语音引擎、浏览器自动化和 MCP 运行时。ZeroClaw 更小但缺少这些功能。</p>
+                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">*使用 tokei 从本地 checkout 统计，排除依赖目录和生成的构建输出。LoC 是规模和可审计性的信号，不是排名。</p>
             </div>
 
-            <p class="text-[10px] text-gray-400 dark:text-gray-500 text-center">基于公开信息。项目发展迅速 — 请查看各仓库获取最新信息。 <a href="https://docs.moltis.org/comparison.html" class="text-orange-500 dark:text-orange-400 hover:underline">文档中的完整对比</a>.</p>
+            <p class="text-[10px] text-gray-400 dark:text-gray-500 text-center">基于本地 checkout 快照和公开项目信息。项目发展迅速 — 请查看各仓库获取最新信息。 <a href="https://docs.moltis.org/comparison.html" class="text-orange-500 dark:text-orange-400 hover:underline">文档中的完整对比</a>.</p>
         </div>
     </div>
 

@@ -163,6 +163,12 @@
   <button id="updateDismissBtn" type="button" class="auth-disabled-setup bg-transparent border-0 p-0 cursor-pointer">Dismiss</button>
 </div>
 
+<!-- Vault sealed banner (shown when vault is locked after restart) -->
+<div id="vaultBanner" class="info-banner" style="display:none">
+  <span>Your encryption vault is locked — API keys are unavailable until unlocked.</span>
+  <a href="{{ routes.settings }}/vault" class="auth-disabled-setup">Unlock vault</a>
+</div>
+
 <!-- PWA Install Banner (shown on mobile when not installed) -->
 <div id="installBanner" class="hidden fixed bottom-0 left-0 right-0 z-50 bg-[var(--surface)] border-t border-[var(--border)] p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-lg flex-col gap-3 md:hidden">
   <div class="flex items-start gap-3">

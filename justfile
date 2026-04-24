@@ -37,9 +37,27 @@ lint: lockfile-check
 build-css:
     cd crates/web/ui && ./build.sh
 
+# Ad-hoc codesign debug binaries (macOS only, requires MACOS_CODESIGN_IDENTITY).
+# Signs the main binary and all test binaries in target/debug/deps/ so Little
+# Snitch doesn't prompt on every rebuild during local dev.
+[private]
+codesign-debug:
+    #!/usr/bin/env bash
+    [ "$(uname -s)" = "Darwin" ] || exit 0
+    [ -n "${MACOS_CODESIGN_IDENTITY:-}" ] || exit 0
+    id="${MACOS_CODESIGN_IDENTIFIER:-org.moltis.dev}"
+    sign() { codesign --force --sign "$MACOS_CODESIGN_IDENTITY" --identifier "$id" "$1" 2>/dev/null || true; }
+    # Main binary
+    if [ -f target/debug/moltis ]; then sign target/debug/moltis; fi
+    # Test binaries (Mach-O executables, skip .d/.fingerprint/dylib)
+    for bin in target/debug/deps/moltis*; do
+        if [ -f "$bin" ] && [ -x "$bin" ] && [[ "$bin" != *.d ]]; then sign "$bin"; fi
+    done
+
 # Build the project
 build: build-css
     cargo build
+    just codesign-debug
 
 # Build in release mode
 build-release:
@@ -60,6 +78,8 @@ build-release-with-wasm: build-wasm-artifacts
 
 # Run local dev server with workspace-local config/data dirs.
 dev-server:
+    cargo build --bin moltis
+    just codesign-debug
     MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis
 
 # Build Debian package for the current architecture
@@ -232,6 +252,7 @@ build-test: build-css
     else
         cargo +{{nightly_toolchain}} build --workspace --all-features --all-targets
     fi
+    just codesign-debug
     echo "==> Build complete. Running Rust tests and E2E tests in parallel..."
 
     RUST_LOG="$(mktemp)"
@@ -313,10 +334,13 @@ ship commit_message='' pr_title='' pr_body='':
 # Run all tests (nightly to share build cache with clippy/lint, OS-aware).
 # On macOS: single nextest run using default features (includes Metal, not CUDA).
 # On Linux: --all-features (includes CUDA).
+# Builds first so codesign can run before test execution (prevents Little Snitch prompts).
 test:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" = "Darwin" ]; then
+        cargo +{{nightly_toolchain}} build --workspace --all-targets
+        just codesign-debug
         cargo +{{nightly_toolchain}} nextest run --workspace
     else
         cargo +{{nightly_toolchain}} nextest run --workspace --all-features
@@ -340,11 +364,13 @@ ui-e2e-install:
 # Run gateway web UI e2e tests (Playwright).
 ui-e2e:
     cargo +{{nightly_toolchain}} build --bin moltis
+    just codesign-debug
     cd crates/web/ui && npm run e2e
 
 # Run gateway web UI e2e tests with headed browser.
 ui-e2e-headed:
     cargo +{{nightly_toolchain}} build --bin moltis
+    just codesign-debug
     cd crates/web/ui && npm run e2e:headed
 
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures

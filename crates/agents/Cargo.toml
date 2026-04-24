@@ -21,6 +21,7 @@ secrecy         = { workspace = true }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
 thiserror       = { workspace = true }
+time            = { workspace = true, features = ["macros"] }
 tokio           = { workspace = true }
 tokio-stream    = { workspace = true }
 tracing         = { workspace = true }

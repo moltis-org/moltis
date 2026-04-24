@@ -587,8 +587,8 @@ Default `tool_overrides` entries:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `offered` | array of string | `["telegram", "msteams", "discord", "slack", "matrix", "nostr"]` | Which channel types are offered in the web UI (onboarding + channels page). Add `"whatsapp"` to opt in. |
-| `<channel_type>` | map of `serde_json::Value` | `{}` | Account configs keyed by account name. Known types: `telegram`, `whatsapp`, `msteams`, `discord`, `slack`, `nostr`. Additional types accepted via flatten. |
+| `offered` | array of string | `["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]` | Which channel types are offered in the web UI (onboarding + channels page). |
+| `<channel_type>` | map of `serde_json::Value` | `{}` | Account configs keyed by account name. Known types: `telegram`, `whatsapp`, `msteams`, `discord`, `slack`, `matrix`, `nostr`, `signal`. Additional types accepted via flatten. |
 
 Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary JSON object that may contain provider-specific keys plus a `tools` sub-block (see below).
 

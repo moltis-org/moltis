@@ -230,7 +230,7 @@ fn to_openai_tools_collapses_union_types_without_strict_mode() {
 }
 
 #[test]
-fn to_openai_tools_prunes_orphans_after_non_strict_composite_collapse() {
+fn to_openai_tools_deep_merges_variant_properties_after_non_strict_composite_collapse() {
     let tools = vec![serde_json::json!({
         "name": "composite",
         "description": "Composite schema edge case",
@@ -266,11 +266,26 @@ fn to_openai_tools_prunes_orphans_after_non_strict_composite_collapse() {
     let mut orphans = Vec::new();
     find_required_orphans(params, "root", &mut orphans);
     assert!(orphans.is_empty(), "found required orphans: {orphans:?}");
+
+    // Deep merge: parent's `y` + variant's `x` are both preserved (#849).
+    let config_props = config["properties"]
+        .as_object()
+        .unwrap_or_else(|| panic!("config should have properties"));
     assert!(
-        config.get("required").is_none(),
-        "orphaned composite variant required entries should be pruned"
+        config_props.contains_key("y"),
+        "parent property y should survive"
     );
-    assert!(config["properties"].get("y").is_some());
+    assert!(
+        config_props.contains_key("x"),
+        "variant property x should be deep-merged"
+    );
+
+    // Since `x` is now in properties, required: ["x"] is no longer orphaned.
+    let config_required = config["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("config should have required since x was deep-merged"));
+    let names: Vec<&str> = config_required.iter().filter_map(|v| v.as_str()).collect();
+    assert!(names.contains(&"x"), "x should be in config.required");
 }
 
 #[test]

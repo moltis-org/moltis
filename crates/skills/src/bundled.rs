@@ -32,6 +32,9 @@ enum AssetSource {
 /// discoverer and the `ReadSkillTool`.
 pub struct BundledSkillStore {
     source: AssetSource,
+    /// Directory where bundled sidecar files (scripts, templates, etc.)
+    /// are materialized on disk so they can be executed by the agent.
+    materialize_dir: PathBuf,
 }
 
 impl BundledSkillStore {
@@ -39,6 +42,7 @@ impl BundledSkillStore {
     #[must_use]
     pub fn new() -> Self {
         let cargo_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/assets");
+        let materialize_dir = moltis_config::data_dir().join("bundled-skills");
         let source = if cargo_dir.is_dir() {
             tracing::debug!(path = %cargo_dir.display(), "bundled skills: using filesystem (dev mode)");
             AssetSource::Filesystem(cargo_dir)
@@ -46,7 +50,28 @@ impl BundledSkillStore {
             tracing::debug!("bundled skills: using embedded assets");
             AssetSource::Embedded
         };
-        Self { source }
+        Self {
+            source,
+            materialize_dir,
+        }
+    }
+
+    /// Create a store with a custom materialization directory (for tests).
+    ///
+    /// Avoids calling [`data_dir()`](moltis_config::data_dir) so tests
+    /// do not trigger side effects from the global config.
+    #[must_use]
+    pub fn with_materialize_dir(materialize_dir: PathBuf) -> Self {
+        let cargo_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/assets");
+        let source = if cargo_dir.is_dir() {
+            AssetSource::Filesystem(cargo_dir)
+        } else {
+            AssetSource::Embedded
+        };
+        Self {
+            source,
+            materialize_dir,
+        }
     }
 
     /// Discover metadata for all bundled skills.
@@ -83,6 +108,74 @@ impl BundledSkillStore {
         match &self.source {
             AssetSource::Filesystem(dir) => list_sidecars_fs(dir, name),
             AssetSource::Embedded => list_sidecars_embedded(name),
+        }
+    }
+
+    /// Materialize sidecar files for a skill to the configured directory.
+    ///
+    /// Returns `Some(skill_dir)` if files were written, `None` if the skill
+    /// has no sidecars. The returned path is the skill-level directory
+    /// (e.g. `<materialize_dir>/<name>/`), so `scripts/maps_client.py`
+    /// becomes `<skill_dir>/scripts/maps_client.py`.
+    pub fn materialize_sidecars(&self, name: &str) -> Option<PathBuf> {
+        self.materialize_sidecars_to(name, &self.materialize_dir)
+    }
+
+    /// Materialize sidecar files for a skill to an explicit target directory.
+    ///
+    /// Returns `Some(target_dir/<name>)` if **all** files were written
+    /// successfully, `None` if the skill has no sidecars or any write failed.
+    pub fn materialize_sidecars_to(&self, name: &str, target_dir: &Path) -> Option<PathBuf> {
+        let sidecars = self.list_sidecars(name);
+        if sidecars.is_empty() {
+            return None;
+        }
+
+        let skill_dir = target_dir.join(name);
+        let total = sidecars.len();
+        let mut failed = Vec::new();
+        for (rel_path, _) in &sidecars {
+            let Some((bytes, _)) = self.read_sidecar(name, rel_path) else {
+                tracing::warn!(skill = %name, path = %rel_path, "failed to read bundled sidecar");
+                failed.push(rel_path.clone());
+                continue;
+            };
+            let target = skill_dir.join(rel_path);
+            if let Some(parent) = target.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                tracing::warn!(skill = %name, path = %rel_path, %e, "failed to create sidecar directory");
+                failed.push(rel_path.clone());
+                continue;
+            }
+            if let Err(e) = std::fs::write(&target, &bytes) {
+                tracing::warn!(skill = %name, path = %rel_path, %e, "failed to write sidecar file");
+                failed.push(rel_path.clone());
+                continue;
+            }
+            #[cfg(unix)]
+            if rel_path.starts_with("scripts/") {
+                use std::os::unix::fs::PermissionsExt;
+                if let Err(e) =
+                    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
+                {
+                    tracing::warn!(skill = %name, path = %rel_path, %e, "failed to set executable permission");
+                    failed.push(rel_path.clone());
+                    continue;
+                }
+            }
+        }
+
+        if failed.is_empty() {
+            Some(skill_dir)
+        } else {
+            tracing::warn!(
+                skill = %name,
+                failed = failed.len(),
+                total,
+                "some sidecar files could not be materialized"
+            );
+            None
         }
     }
 }
@@ -206,6 +299,21 @@ fn find_skill_dir_fs(dir: &Path, name: &str) -> Option<PathBuf> {
 
 // ── Embedded (release mode) ─────────────────────────────────────────────────
 
+/// Find a file by name among the *direct* files of an embedded directory.
+///
+/// `include_dir` stores file paths relative to the root of the `include_dir!`
+/// tree, not relative to the containing `Dir`. So `dir.get_file("SKILL.md")`
+/// fails on subdirectories because it compares `"SKILL.md"` against full paths
+/// like `"research/arxiv/SKILL.md"`. This helper matches on the file-name
+/// component instead.
+fn dir_file_by_name<'a>(
+    dir: &'a include_dir::Dir<'static>,
+    name: &str,
+) -> Option<&'a include_dir::File<'static>> {
+    dir.files()
+        .find(|f| f.path().file_name().and_then(|n| n.to_str()) == Some(name))
+}
+
 /// Recursively walk the embedded `include_dir!` tree for SKILL.md files.
 fn discover_from_embedded() -> Vec<SkillMetadata> {
     let mut skills = Vec::new();
@@ -218,7 +326,7 @@ fn discover_from_embedded_recursive(
     skills: &mut Vec<SkillMetadata>,
 ) {
     for sub_dir in dir.dirs() {
-        if let Some(skill_md) = sub_dir.get_file("SKILL.md") {
+        if let Some(skill_md) = dir_file_by_name(sub_dir, "SKILL.md") {
             let Ok(content) = std::str::from_utf8(skill_md.contents()) else {
                 continue;
             };
@@ -254,7 +362,7 @@ fn discover_from_embedded_recursive(
 /// Read SKILL.md body from the embedded directory.
 fn read_skill_body_embedded(name: &str) -> Option<String> {
     let skill_dir = find_skill_dir_embedded(name)?;
-    let skill_md = skill_dir.get_file("SKILL.md")?;
+    let skill_md = dir_file_by_name(skill_dir, "SKILL.md")?;
     let content = std::str::from_utf8(skill_md.contents()).ok()?;
     let synthetic_path =
         PathBuf::from("__bundled__").join(skill_dir.path().to_string_lossy().as_ref());
@@ -264,7 +372,12 @@ fn read_skill_body_embedded(name: &str) -> Option<String> {
 
 fn read_sidecar_embedded(name: &str, rel_path: &str) -> Option<(Vec<u8>, bool)> {
     let skill_dir = find_skill_dir_embedded(name)?;
-    let file = skill_dir.get_file(rel_path)?;
+    // Sidecar paths like "references/foo.md" — match by the full relative tail.
+    let file = skill_dir.files().find(|f| {
+        f.path()
+            .strip_prefix(skill_dir.path())
+            .is_ok_and(|rel| rel == Path::new(rel_path))
+    })?;
     let bytes = file.contents().to_vec();
     let is_utf8 = std::str::from_utf8(&bytes).is_ok();
     Some((bytes, is_utf8))
@@ -276,7 +389,9 @@ fn list_sidecars_embedded(name: &str) -> Vec<(String, u64)> {
     };
     let mut out = Vec::new();
     for sub in crate::SIDECAR_SUBDIRS {
-        let Some(sub_dir) = skill_dir.get_dir(sub) else {
+        // Use get_dir with the full path since include_dir stores full paths.
+        let sub_path = skill_dir.path().join(sub);
+        let Some(sub_dir) = skill_dir.dirs().find(|d| d.path() == sub_path) else {
             continue;
         };
         for file in sub_dir.files() {
@@ -307,7 +422,7 @@ fn find_skill_dir_embedded_recursive(
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
-        if dir_name == name && sub_dir.get_file("SKILL.md").is_some() {
+        if dir_name == name && dir_file_by_name(sub_dir, "SKILL.md").is_some() {
             return Some(sub_dir);
         }
         if let Some(found) = find_skill_dir_embedded_recursive(sub_dir, name) {
@@ -326,6 +441,41 @@ mod tests {
 
     fn store() -> BundledSkillStore {
         BundledSkillStore::new()
+    }
+
+    // ── Embedded assets ─────────────────────────────────────────────────
+
+    #[test]
+    fn embedded_assets_have_skills() {
+        // Verify the include_dir! embedded data has skills, independent of
+        // the filesystem fallback. This catches build issues where the
+        // embedded assets are silently empty at runtime.
+        let skills = discover_from_embedded();
+        assert!(
+            skills.len() >= 90,
+            "expected ≥90 embedded skills, got {}",
+            skills.len()
+        );
+        for skill in &skills {
+            assert!(
+                skill.category.is_some(),
+                "embedded skill '{}' has no category",
+                skill.name
+            );
+        }
+    }
+
+    #[test]
+    fn embedded_skill_body_is_readable() {
+        let skills = discover_from_embedded();
+        assert!(!skills.is_empty(), "no embedded skills to test");
+        let first = &skills[0];
+        let body = read_skill_body_embedded(&first.name);
+        assert!(
+            body.is_some(),
+            "embedded skill '{}' body not readable via embedded path",
+            first.name
+        );
     }
 
     // ── Discovery ───────────────────────────────────────────────────────
@@ -486,6 +636,74 @@ mod tests {
     #[test]
     fn missing_sidecar_returns_none() {
         assert!(store().read_sidecar("arxiv", "nonexistent.md").is_none());
+    }
+
+    // ── Materialization ────────────────────────────────────────────
+
+    #[test]
+    fn materialize_sidecars_writes_scripts_to_disk() {
+        let s = store();
+        let tmp = tempfile::tempdir().unwrap();
+
+        // The "maps" skill has scripts/maps_client.py as a sidecar.
+        let skill_dir = s
+            .materialize_sidecars_to("maps", tmp.path())
+            .expect("maps skill should have sidecars to materialize");
+
+        let script = skill_dir.join("scripts/maps_client.py");
+        assert!(
+            script.exists(),
+            "maps_client.py must be materialized at {}",
+            script.display()
+        );
+
+        // Script content must be non-empty.
+        let content = std::fs::read_to_string(&script).unwrap();
+        assert!(!content.is_empty(), "materialized script must not be empty");
+
+        // On unix, scripts/ files must be executable.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&script).unwrap().permissions().mode();
+            assert!(
+                mode & 0o111 != 0,
+                "scripts must be executable, got mode {mode:#o}"
+            );
+        }
+    }
+
+    #[test]
+    fn materialize_sidecars_returns_none_for_skill_without_sidecars() {
+        let s = store();
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Find a skill that has no sidecars (e.g. ascii-art).
+        let sidecars = s.list_sidecars("ascii-art");
+        if sidecars.is_empty() {
+            let result = s.materialize_sidecars_to("ascii-art", tmp.path());
+            assert!(
+                result.is_none(),
+                "skill without sidecars should return None"
+            );
+        }
+    }
+
+    #[test]
+    fn materialize_sidecars_is_idempotent() {
+        let s = store();
+        let tmp = tempfile::tempdir().unwrap();
+
+        let dir1 = s.materialize_sidecars_to("maps", tmp.path());
+        let dir2 = s.materialize_sidecars_to("maps", tmp.path());
+        assert_eq!(
+            dir1, dir2,
+            "repeated materialization must return the same path"
+        );
+
+        // File must still be valid after second write.
+        let script = dir2.unwrap().join("scripts/maps_client.py");
+        assert!(script.exists());
     }
 
     // ── Specific skills smoke tests ─────────────────────────────────────

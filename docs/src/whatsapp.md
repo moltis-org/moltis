@@ -429,6 +429,7 @@ crates/whatsapp/
 │   ├── lib.rs           # Crate entry, WhatsAppPlugin
 │   ├── config.rs        # WhatsAppAccountConfig
 │   ├── connection.rs    # Bot startup, sled store, event loop
+│   ├── error.rs         # Error types
 │   ├── handlers.rs      # Event routing, message handling, media
 │   ├── outbound.rs      # WhatsAppOutbound (ChannelOutbound impl)
 │   ├── state.rs         # AccountState, loop detection, watermark

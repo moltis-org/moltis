@@ -19,6 +19,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260424.02] - 2026-04-24
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+- [signal] Add signal-cli channel (#841)
+- [home-assistant] Native Home Assistant integration crate (#827)
+- [web-ui] Smart auto-scroll for chat messages (#846)
+- [projects] Add code_index_enabled toggle to project settings (#837)
+
+
+### Changed
+- [providers] Split openai_compat tests into submodules
+
+
+### Removed
+- Remove set -e from codesign-debug recipe that breaks just test
+- [web] Remove stale accountId assertion from signal channel E2E test
+- [ui] Wire up project combo dropdown in chat header (#847)
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+- [mcp] Show re-auth button when OAuth server needs re-authentication (#852)
+- [sandbox] Skip sysfs tmpfs mounts for missing paths (ARM/Raspberry Pi) (#853)
+- [prompt] Move datetime from system message to user content for KV cache stability (#855)
+- [providers] Deep-merge properties in schema union collapse, strip redundant boolean enum (#856)
+- [channels] Update ALL variant count for Signal channel type
+- [web] Align signal channel E2E test with actual modal text
+- [web] Stabilize flaky E2E tests
+- Enforce correct date in silent memory turn daily log filenames (#859)
+- [macos] Configure release signing and notarization (#842)
+- [web] Add vault-sealed banner to main app (#839)
+- [skills] Materialize bundled skill scripts to disk for execution (#861)
+- [web] Biome formatting and i18n parity for projects page
+- [config] Derive Default for HomeAssistantConfig and collapse nested if
+- [config] Allow unwrap in code_index tests
+- [home-assistant] Clippy collapsible-if and field-reassign-with-default
+- [benchmarks] Add missing deps for code_index bench
+- [code-index] Replace redundant closure with PathBuf::from
+- Repair code-index compilation errors in gateway and benchmarks
+- Resolve remaining clippy errors from code-index feature
+- [providers] Strip null from enum arrays for Fireworks AI (#862)
+- [web] Repair chat-autoscroll and projects E2E tests
+- [benchmarks] Wire qmd feature to moltis-qmd dep for --all-features CI
+
+## [20260424.01] - 2026-04-24
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+- [signal] Add signal-cli channel (#841)
+
+
+### Changed
+- [providers] Split openai_compat tests into submodules
+
+
+### Removed
+- Remove set -e from codesign-debug recipe that breaks just test
+- [web] Remove stale accountId assertion from signal channel E2E test
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+- [mcp] Show re-auth button when OAuth server needs re-authentication (#852)
+- [sandbox] Skip sysfs tmpfs mounts for missing paths (ARM/Raspberry Pi) (#853)
+- [prompt] Move datetime from system message to user content for KV cache stability (#855)
+- [providers] Deep-merge properties in schema union collapse, strip redundant boolean enum (#856)
+- [channels] Update ALL variant count for Signal channel type
+
+## [20260423.01] - 2026-04-23
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+
 ## [20260422.01] - 2026-04-22
 ### Added
 - [skills] Add bundled skill category management to onboarding and settings (#829)

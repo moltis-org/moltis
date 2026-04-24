@@ -45,6 +45,7 @@ interface ConfigPreset {
 	model?: string;
 	system_prompt_suffix?: string;
 	toml?: string;
+	provenance?: "built_in" | "user_override" | "custom";
 }
 
 interface ModePreset {
@@ -72,6 +73,7 @@ interface PresetCardProps {
 	preset: ConfigPreset;
 	creating: boolean;
 	onCreate: (preset: ConfigPreset) => void;
+	onRevert?: (id: string) => void;
 }
 
 interface ModeCardProps {
@@ -438,15 +440,23 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCa
 
 // ── Config-only preset card ─────────────────────────────────
 
-function PresetCard({ preset, creating, onCreate }: PresetCardProps): VNode {
+function provenanceBadge(provenance?: string): VNode | null {
+	if (provenance === "built_in") return <span className="recommended-badge">Built-in</span>;
+	if (provenance === "user_override") return <span className="tier-badge">Overridden</span>;
+	if (provenance === "custom") return <span className="tier-badge">Custom</span>;
+	return null;
+}
+
+function PresetCard({ preset, creating, onCreate, onRevert }: PresetCardProps): VNode {
 	const [expanded, setExpanded] = useState(false);
+	const isOverridden = preset.provenance === "user_override";
 	return (
-		<div className="backend-card" style={{ opacity: 0.7 }}>
+		<div className="backend-card" style={{ opacity: preset.provenance === "built_in" ? 0.7 : 1 }}>
 			<div className="flex items-center justify-between">
 				<div className="flex items-center gap-2">
 					{preset.emoji && <span className="text-lg">{preset.emoji}</span>}
 					<span className="text-sm font-medium text-[var(--text-strong)]">{preset.name}</span>
-					<span className="tier-badge">config</span>
+					{provenanceBadge(preset.provenance)}
 					{preset.model && <span className="text-xs text-[var(--muted)]">{preset.model}</span>}
 				</div>
 				<div className="flex gap-2">
@@ -467,6 +477,16 @@ function PresetCard({ preset, creating, onCreate }: PresetCardProps): VNode {
 					>
 						{expanded ? "Hide" : "View"}
 					</button>
+					{isOverridden && onRevert && (
+						<button
+							type="button"
+							className="provider-btn provider-btn-secondary"
+							style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+							onClick={() => onRevert(preset.id)}
+						>
+							Revert to built-in
+						</button>
+					)}
 				</div>
 			</div>
 			{preset.theme && <div className="text-xs text-[var(--muted)] mt-1">{preset.theme}</div>}
@@ -629,6 +649,20 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 		});
 	}
 
+	function onRevertPreset(id: string): void {
+		confirmDialog(`Revert preset "${id}" to the built-in default? Your local override will be removed.`).then((yes) => {
+			if (!yes) return;
+			// Remove the user override by saving an empty TOML (removes from moltis.toml)
+			sendRpc("agents.preset.save", { id, toml: "" }).then((res) => {
+				if (res?.ok) {
+					fetchConfigPresets();
+				} else {
+					setError(res?.error?.message || "Failed to revert");
+				}
+			});
+		});
+	}
+
 	function onSetDefault(agent: AgentPersona): void {
 		sendRpc("agents.set_default", { id: agent.id }).then((res) => {
 			if (res?.ok) {
@@ -767,6 +801,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 								preset={preset}
 								creating={creatingPresetId === preset.id}
 								onCreate={onCreateFromPreset}
+								onRevert={onRevertPreset}
 							/>
 						))
 					) : (

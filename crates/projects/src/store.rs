@@ -122,6 +122,7 @@ impl SqliteProjectStore {
                 branch_prefix    TEXT,
                 sandbox_image    TEXT,
                 detected         INTEGER NOT NULL DEFAULT 0,
+                code_index_enabled INTEGER NOT NULL DEFAULT 1,
                 created_at       INTEGER NOT NULL,
                 updated_at       INTEGER NOT NULL
             )"#,
@@ -158,8 +159,8 @@ impl ProjectStore for SqliteProjectStore {
 
     async fn upsert(&self, project: Project) -> Result<()> {
         sqlx::query(
-            r#"INSERT INTO projects (id, label, directory, system_prompt, auto_worktree, setup_command, teardown_command, branch_prefix, sandbox_image, detected, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            r#"INSERT INTO projects (id, label, directory, system_prompt, auto_worktree, setup_command, teardown_command, branch_prefix, sandbox_image, detected, code_index_enabled, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                  label = excluded.label,
                  directory = excluded.directory,
@@ -170,6 +171,7 @@ impl ProjectStore for SqliteProjectStore {
                  branch_prefix = excluded.branch_prefix,
                  sandbox_image = excluded.sandbox_image,
                  detected = excluded.detected,
+                 code_index_enabled = excluded.code_index_enabled,
                  updated_at = excluded.updated_at"#,
         )
         .bind(&project.id)
@@ -182,6 +184,7 @@ impl ProjectStore for SqliteProjectStore {
         .bind(&project.branch_prefix)
         .bind(&project.sandbox_image)
         .bind(project.detected as i32)
+        .bind(project.code_index_enabled as i32)
         .bind(project.created_at as i64)
         .bind(project.updated_at as i64)
         .execute(&self.pool)
@@ -211,6 +214,7 @@ struct ProjectRow {
     branch_prefix: Option<String>,
     sandbox_image: Option<String>,
     detected: i32,
+    code_index_enabled: i32,
     created_at: i64,
     updated_at: i64,
 }
@@ -228,6 +232,7 @@ impl From<ProjectRow> for Project {
             branch_prefix: r.branch_prefix,
             sandbox_image: r.sandbox_image,
             detected: r.detected != 0,
+            code_index_enabled: r.code_index_enabled != 0,
             created_at: r.created_at as u64,
             updated_at: r.updated_at as u64,
         }
@@ -248,6 +253,7 @@ pub fn new_project(id: String, label: String, directory: PathBuf) -> Project {
         branch_prefix: None,
         sandbox_image: None,
         detected: false,
+        code_index_enabled: true,
         created_at: now,
         updated_at: now,
     }

@@ -429,6 +429,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                     ("slack", Map(Box::new(channel_account()))),
                     ("matrix", Map(Box::new(channel_account()))),
                     ("nostr", Map(Box::new(channel_account()))),
+                    ("signal", Map(Box::new(channel_account()))),
                 ]),
             }
         }),
@@ -565,6 +566,21 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ])),
         ),
         (
+            "home_assistant",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("default_instance", Leaf),
+                (
+                    "instances",
+                    Map(Box::new(Struct(HashMap::from([
+                        ("url", Leaf),
+                        ("token", Leaf),
+                        ("timeout_seconds", Leaf),
+                    ])))),
+                ),
+            ])),
+        ),
+        (
             "webhooks",
             Struct(HashMap::from([(
                 "rate_limit",
@@ -575,6 +591,17 @@ pub(super) fn build_schema_map() -> KnownKeys {
                     ("cleanup_interval_secs", Leaf),
                 ])),
             )])),
+        ),
+        (
+            "code_index",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("extensions", Array(Box::new(Leaf))),
+                ("max_file_size", Leaf),
+                ("skip_binary", Leaf),
+                ("skip_paths", Array(Box::new(Leaf))),
+                ("data_dir", Leaf),
+            ])),
         ),
         (
             "voice",

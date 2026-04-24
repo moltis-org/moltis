@@ -290,6 +290,22 @@ pub fn register_tools(
     registry.register(Box::new(CodebaseStatusTool::new(index)));
 }
 
+/// Register all code-index tools, wrapping each in a [`Fn`] before registration.
+///
+/// This allows callers to wrap tools with project-aware gating or other
+/// middleware without duplicating the tool list.
+pub fn register_tools_wrapped<W>(
+    registry: &mut moltis_agents::tool_registry::ToolRegistry,
+    index: Arc<CodeIndex>,
+    wrap: W,
+) where
+    W: Fn(Box<dyn AgentTool>) -> Box<dyn AgentTool>,
+{
+    registry.register(wrap(Box::new(CodebaseSearchTool::new(Arc::clone(&index)))));
+    registry.register(wrap(Box::new(CodebasePeekTool::new(Arc::clone(&index)))));
+    registry.register(wrap(Box::new(CodebaseStatusTool::new(index))));
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
