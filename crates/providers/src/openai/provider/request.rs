@@ -127,6 +127,18 @@ impl OpenAiProvider {
             || self.base_url.to_ascii_lowercase().contains("minimax")
     }
 
+    /// Whether this provider rejects `null` in JSON Schema `enum` arrays.
+    ///
+    /// Fireworks AI returns 400 "could not translate the enum None" when
+    /// any tool schema contains `null` in an `enum` array. For these
+    /// providers, `strip_null_from_typed_enums` is applied after strict-mode
+    /// patching so type-level nullability (`["string", "null"]`) remains
+    /// but the redundant null is removed from enum arrays (issue #848).
+    pub(super) fn rejects_null_in_enums(&self) -> bool {
+        self.provider_name.eq_ignore_ascii_case("fireworks")
+            || self.base_url.contains("fireworks.ai")
+    }
+
     fn is_custom_openai_compatible_provider(&self) -> bool {
         self.provider_name.starts_with("custom-")
     }
@@ -611,6 +623,41 @@ mod tests {
         assert!(
             p.needs_strict_tools(),
             "Native Fireworks models should use strict tools by default"
+        );
+    }
+
+    #[test]
+    fn fireworks_rejects_null_in_enums() {
+        let p = provider(
+            "accounts/fireworks/models/deepseek-v3p2",
+            "fireworks",
+            "https://api.fireworks.ai/inference/v1",
+        );
+        assert!(
+            p.rejects_null_in_enums(),
+            "Fireworks should reject null in enums (issue #848)"
+        );
+    }
+
+    #[test]
+    fn custom_fireworks_rejects_null_in_enums_via_base_url() {
+        let p = provider(
+            "accounts/fireworks/routers/kimi-k2p5-turbo",
+            "custom-fireworks-ai",
+            "https://api.fireworks.ai/inference/v1",
+        );
+        assert!(
+            p.rejects_null_in_enums(),
+            "Custom Fireworks provider should be detected via base URL (issue #848)"
+        );
+    }
+
+    #[test]
+    fn openai_allows_null_in_enums() {
+        let p = provider("gpt-4o", "openai", "https://api.openai.com/v1");
+        assert!(
+            !p.rejects_null_in_enums(),
+            "OpenAI should allow null in enums (issue #712)"
         );
     }
 

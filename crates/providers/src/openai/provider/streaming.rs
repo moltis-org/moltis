@@ -173,8 +173,15 @@ impl OpenAiProvider {
             self.apply_system_prompt_rewrite(&mut body);
 
             if !tools.is_empty() {
-                body["tools"] =
-                    serde_json::Value::Array(to_openai_tools(&tools, self.needs_strict_tools()));
+                let mut converted = to_openai_tools(&tools, self.needs_strict_tools());
+                if self.rejects_null_in_enums() {
+                    for tool in &mut converted {
+                        if let Some(params) = tool.pointer_mut("/function/parameters") {
+                            crate::openai_compat::strip_null_from_typed_enums(params);
+                        }
+                    }
+                }
+                body["tools"] = serde_json::Value::Array(converted);
             }
 
             self.apply_reasoning_effort_chat(&mut body);

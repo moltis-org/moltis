@@ -38,6 +38,10 @@ fn make_nullable(schema: &mut serde_json::Value) {
         // too. Without this the type says "nullable" but the enum doesn't
         // include null, causing LLMs to send the literal string "null"
         // instead of JSON null (issue #712).
+        //
+        // Providers that reject null in enums (Fireworks AI, issue #848)
+        // must apply `strip_null_from_typed_enums` as a post-processing
+        // step after strict-mode patching.
         add_null_to_enum(obj);
         return;
     }

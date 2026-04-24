@@ -686,6 +686,58 @@ pub(crate) fn sanitize_schema_for_openai_compat(schema: &mut serde_json::Value) 
     *schema = transformed.to_value();
 }
 
+/// Recursively remove `null` from `enum` arrays in schemas that already
+/// communicate nullability via `type` (e.g. `["string", "null"]`).
+///
+/// Strict mode's `make_nullable` adds `null` to both `type` and `enum`
+/// (issue #712, needed for OpenAI so LLMs send JSON null instead of the
+/// string "null"). However, providers like Fireworks AI reject `null` in
+/// enum arrays with "could not translate the enum None" (issue #848).
+///
+/// This function strips the redundant `null` from enum arrays when the
+/// `type` already includes `"null"`, making the schema compatible with
+/// providers that reject null enum values while preserving the type-level
+/// nullability signal.
+pub fn strip_null_from_typed_enums(schema: &mut serde_json::Value) {
+    let Some(obj) = schema.as_object_mut() else {
+        return;
+    };
+
+    // Only strip null from enum when type already communicates nullability.
+    let type_includes_null = obj
+        .get("type")
+        .and_then(|ty| ty.as_array())
+        .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some("null")));
+
+    if type_includes_null
+        && let Some(enum_values) = obj.get_mut("enum").and_then(|v| v.as_array_mut())
+    {
+        enum_values.retain(|v| !v.is_null());
+    }
+
+    // Recurse into sub-schemas.
+    if let Some(props) = obj.get_mut("properties").and_then(|v| v.as_object_mut()) {
+        for prop_schema in props.values_mut() {
+            strip_null_from_typed_enums(prop_schema);
+        }
+    }
+    if let Some(items) = obj.get_mut("items") {
+        strip_null_from_typed_enums(items);
+    }
+    for keyword in ["anyOf", "oneOf", "allOf"] {
+        if let Some(variants) = obj.get_mut(keyword).and_then(|v| v.as_array_mut()) {
+            for variant in variants {
+                strip_null_from_typed_enums(variant);
+            }
+        }
+    }
+    if let Some(ap) = obj.get_mut("additionalProperties")
+        && ap.is_object()
+    {
+        strip_null_from_typed_enums(ap);
+    }
+}
+
 /// Collapse union constructs that OpenRouter's non-strict Google path cannot
 /// safely translate into Gemini function declarations.
 pub(crate) fn collapse_schema_unions_for_non_strict_tools(schema: &mut serde_json::Value) {
