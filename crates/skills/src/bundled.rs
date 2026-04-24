@@ -160,6 +160,8 @@ impl BundledSkillStore {
                     std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
                 {
                     tracing::warn!(skill = %name, path = %rel_path, %e, "failed to set executable permission");
+                    failed.push(rel_path.clone());
+                    continue;
                 }
             }
         }
