@@ -6683,7 +6683,7 @@ function prettyConfigJson(value) {
     return "{}";
   }
 }
-function AllowlistInput({ value, onChange: onChange2, preserveAt }) {
+function AllowlistInput({ value, onChange: onChange2, preserveAt, placeholder }) {
   const input = useSignal("");
   function addTag(raw) {
     const tag = preserveAt ? raw.trim() : raw.trim().replace(/^@/, "");
@@ -6750,7 +6750,7 @@ function AllowlistInput({ value, onChange: onChange2, preserveAt }) {
               input.value = targetValue(e);
             },
             onKeyDown,
-            placeholder: value.length === 0 ? "Type a username and press Enter" : "",
+            placeholder: value.length === 0 ? placeholder || "Type a username and press Enter" : "",
             className: "flex-1 bg-transparent text-[var(--text)] text-sm outline-none border-none",
             style: { minWidth: "80px", padding: "2px 0", fontFamily: "var(--font-body)" }
           }
@@ -6815,6 +6815,8 @@ function AddDiscordModal() {
   const saving = useSignal(false);
   const addModel = useSignal("");
   const allowlistItems = useSignal([]);
+  const channelNamePatterns = useSignal([]);
+  const categoryAllowlist = useSignal([]);
   const accountDraft = useSignal("");
   const tokenDraft = useSignal("");
   const advancedConfigPatch = useSignal("");
@@ -6841,6 +6843,8 @@ function AddDiscordModal() {
       mention_mode: form.querySelector("[data-field=mentionMode]").value,
       allowlist: allowlistItems.value
     };
+    if (channelNamePatterns.value.length > 0) addConfig.channel_name_patterns = channelNamePatterns.value;
+    if (categoryAllowlist.value.length > 0) addConfig.category_allowlist = categoryAllowlist.value;
     if (addModel.value) {
       addConfig.model = addModel.value;
       const found = models$1.value.find((x) => x.id === addModel.value);
@@ -6855,6 +6859,8 @@ function AddDiscordModal() {
         showAddDiscord.value = false;
         addModel.value = "";
         allowlistItems.value = [];
+        channelNamePatterns.value = [];
+        categoryAllowlist.value = [];
         accountDraft.value = "";
         tokenDraft.value = "";
         advancedConfigPatch.value = "";
@@ -6935,6 +6941,30 @@ function AddDiscordModal() {
           /* @__PURE__ */ u("a", { href: inviteUrl, target: "_blank", className: "text-xs text-[var(--accent)] underline break-all", children: inviteUrl })
         ] }),
         /* @__PURE__ */ u(SharedChannelFields, { addModel, allowlistItems }),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Channel Name Patterns (optional)" }),
+        /* @__PURE__ */ u(
+          AllowlistInput,
+          {
+            value: channelNamePatterns.value,
+            onChange: (v) => {
+              channelNamePatterns.value = v;
+            },
+            placeholder: "e.g. ticket-* (glob patterns, Enter to add)"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] -mt-1", children: "When set, the bot only responds in guild channels whose name matches a pattern. Matched channels do not require @mention. Supports * wildcards." }),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Category IDs (optional)" }),
+        /* @__PURE__ */ u(
+          AllowlistInput,
+          {
+            value: categoryAllowlist.value,
+            onChange: (v) => {
+              categoryAllowlist.value = v;
+            },
+            placeholder: "Discord category ID (Enter to add)"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] -mt-1", children: "Only respond in channels under these Discord categories. Combined with name patterns via OR." }),
         /* @__PURE__ */ u(
           AdvancedConfigPatchField,
           {
@@ -8777,9 +8807,11 @@ function EditChannelModal() {
   const editMatrixOtpCooldown = useSignal("300");
   const editSignalAccount = useSignal("");
   const editSignalHttpUrl = useSignal("http://127.0.0.1:8080");
+  const editChannelNamePatterns = useSignal([]);
+  const editCategoryAllowlist = useSignal([]);
   const editAdvancedConfigPatch = useSignal("");
   y$1(() => {
-    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
     editModel.value = ((_a2 = ch == null ? void 0 : ch.config) == null ? void 0 : _a2.model) || "";
     allowlistItems.value = ((_b2 = ch == null ? void 0 : ch.config) == null ? void 0 : _b2.allowlist) || ((_c = ch == null ? void 0 : ch.config) == null ? void 0 : _c.user_allowlist) || ((_d = ch == null ? void 0 : ch.config) == null ? void 0 : _d.allowed_pubkeys) || [];
     roomAllowlistItems.value = ((_e = ch == null ? void 0 : ch.config) == null ? void 0 : _e.room_allowlist) || ((_f = ch == null ? void 0 : ch.config) == null ? void 0 : _f.group_allowlist) || [];
@@ -8798,6 +8830,8 @@ function EditChannelModal() {
     editMatrixOtpCooldown.value = String(((_q = ch == null ? void 0 : ch.config) == null ? void 0 : _q.otp_cooldown_secs) || 300);
     editSignalAccount.value = ((_r = ch == null ? void 0 : ch.config) == null ? void 0 : _r.account) || "";
     editSignalHttpUrl.value = ((_s = ch == null ? void 0 : ch.config) == null ? void 0 : _s.http_url) || "http://127.0.0.1:8080";
+    editChannelNamePatterns.value = ((_t = ch == null ? void 0 : ch.config) == null ? void 0 : _t.channel_name_patterns) || [];
+    editCategoryAllowlist.value = ((_u = ch == null ? void 0 : ch.config) == null ? void 0 : _u.category_allowlist) || [];
     editAdvancedConfigPatch.value = "";
   }, [ch]);
   if (!ch) return null;
@@ -8878,6 +8912,10 @@ function EditChannelModal() {
     }
     if (!(isWhatsApp || isNostr)) {
       updateConfig.mention_mode = ((_e = form.querySelector("[data-field=mentionMode]")) == null ? void 0 : _e.value) || "mention";
+    }
+    if (isDiscord) {
+      updateConfig.channel_name_patterns = editChannelNamePatterns.value;
+      updateConfig.category_allowlist = editCategoryAllowlist.value;
     }
     addChannelCredentials(updateConfig, form);
     addModelToConfig(updateConfig);
@@ -9041,6 +9079,32 @@ function EditChannelModal() {
               }
             }
           )
+        ] }),
+        isDiscord && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Channel Name Patterns (optional)" }),
+          /* @__PURE__ */ u(
+            AllowlistInput,
+            {
+              value: editChannelNamePatterns.value,
+              onChange: (v) => {
+                editChannelNamePatterns.value = v;
+              },
+              placeholder: "e.g. ticket-* (glob patterns, Enter to add)"
+            }
+          ),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] -mt-1", children: "When set, the bot only responds in guild channels whose name matches a pattern. Matched channels do not require @mention. Supports * wildcards." }),
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Category IDs (optional)" }),
+          /* @__PURE__ */ u(
+            AllowlistInput,
+            {
+              value: editCategoryAllowlist.value,
+              onChange: (v) => {
+                editCategoryAllowlist.value = v;
+              },
+              placeholder: "Discord category ID (Enter to add)"
+            }
+          ),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] -mt-1", children: "Only respond in channels under these Discord categories. Combined with name patterns via OR." })
         ] }),
         isNostr && /* @__PURE__ */ u(S, { children: [
           /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [

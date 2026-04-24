@@ -821,6 +821,7 @@ function DiscordForm({ onConnected, error, setError }) {
   const [token, setToken] = d("");
   const [dmPolicy, setDmPolicy] = d("allowlist");
   const [allowlist, setAllowlist] = d("");
+  const [channelPatterns, setChannelPatterns] = d("");
   const [advancedConfig, setAdvancedConfig] = d("");
   const [saving, setSaving] = d(false);
   function onSubmit(e) {
@@ -838,12 +839,14 @@ function DiscordForm({ onConnected, error, setError }) {
     setError(null);
     setSaving(true);
     const allowlistEntries = allowlist.trim().split(/\n/).map((s) => s.trim()).filter(Boolean);
+    const patternEntries = channelPatterns.trim().split(/\n/).map((s) => s.trim()).filter(Boolean);
     const config = {
       token: token.trim(),
       dm_policy: dmPolicy,
       mention_mode: "mention",
       allowlist: allowlistEntries
     };
+    if (patternEntries.length > 0) config.channel_name_patterns = patternEntries;
     Object.assign(config, advancedPatch.value);
     addChannel("discord", accountId.trim(), config).then((res) => {
       setSaving(false);
@@ -953,6 +956,21 @@ function DiscordForm({ onConnected, error, setError }) {
         }
       ),
       /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: "One username per line. These users can DM your bot." })
+    ] }),
+    /* @__PURE__ */ u("div", { children: [
+      /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] mb-1 block", children: "Channel Name Patterns (optional)" }),
+      /* @__PURE__ */ u(
+        "textarea",
+        {
+          className: "provider-key-input w-full",
+          rows: 2,
+          value: channelPatterns,
+          onInput: (e) => setChannelPatterns(targetValue(e)),
+          placeholder: "ticket-*",
+          style: "resize:vertical;font-family:var(--font-body);"
+        }
+      ),
+      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: "One glob pattern per line. When set, the bot only responds in matching guild channels (no @mention needed). Supports * wildcards. E.g., ticket-*, support-*." })
     ] }),
     /* @__PURE__ */ u(AdvancedConfigPatchField, { value: advancedConfig, onInput: setAdvancedConfig }),
     error && /* @__PURE__ */ u(ErrorPanel, { message: error }),

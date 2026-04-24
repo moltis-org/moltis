@@ -44,6 +44,8 @@ export function EditChannelModal(): VNode | null {
 	const editMatrixOtpCooldown = useSignal("300");
 	const editSignalAccount = useSignal("");
 	const editSignalHttpUrl = useSignal("http://127.0.0.1:8080");
+	const editChannelNamePatterns = useSignal<string[]>([]);
+	const editCategoryAllowlist = useSignal<string[]>([]);
 	const editAdvancedConfigPatch = useSignal("");
 
 	useEffect(() => {
@@ -68,6 +70,8 @@ export function EditChannelModal(): VNode | null {
 		editMatrixOtpCooldown.value = String(ch?.config?.otp_cooldown_secs || 300);
 		editSignalAccount.value = (ch?.config?.account as string) || "";
 		editSignalHttpUrl.value = (ch?.config?.http_url as string) || "http://127.0.0.1:8080";
+		editChannelNamePatterns.value = (ch?.config?.channel_name_patterns || []) as string[];
+		editCategoryAllowlist.value = (ch?.config?.category_allowlist || []) as string[];
 		editAdvancedConfigPatch.value = "";
 	}, [ch]);
 
@@ -163,6 +167,10 @@ export function EditChannelModal(): VNode | null {
 		if (!(isWhatsApp || isNostr)) {
 			updateConfig.mention_mode =
 				(form.querySelector("[data-field=mentionMode]") as HTMLSelectElement)?.value || "mention";
+		}
+		if (isDiscord) {
+			updateConfig.channel_name_patterns = editChannelNamePatterns.value;
+			updateConfig.category_allowlist = editCategoryAllowlist.value;
 		}
 		addChannelCredentials(updateConfig, form);
 		addModelToConfig(updateConfig);
@@ -318,6 +326,33 @@ export function EditChannelModal(): VNode | null {
 							}}
 						/>
 					</div>
+				)}
+				{isDiscord && (
+					<>
+						<label className="text-xs text-[var(--muted)]">Channel Name Patterns (optional)</label>
+						<AllowlistInput
+							value={editChannelNamePatterns.value}
+							onChange={(v) => {
+								editChannelNamePatterns.value = v;
+							}}
+							placeholder="e.g. ticket-* (glob patterns, Enter to add)"
+						/>
+						<div className="text-xs text-[var(--muted)] -mt-1">
+							When set, the bot only responds in guild channels whose name matches a pattern. Matched channels
+							do not require @mention. Supports * wildcards.
+						</div>
+						<label className="text-xs text-[var(--muted)]">Category IDs (optional)</label>
+						<AllowlistInput
+							value={editCategoryAllowlist.value}
+							onChange={(v) => {
+								editCategoryAllowlist.value = v;
+							}}
+							placeholder="Discord category ID (Enter to add)"
+						/>
+						<div className="text-xs text-[var(--muted)] -mt-1">
+							Only respond in channels under these Discord categories. Combined with name patterns via OR.
+						</div>
+					</>
 				)}
 				{isNostr && (
 					<>
