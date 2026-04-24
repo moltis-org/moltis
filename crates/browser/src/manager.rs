@@ -328,6 +328,18 @@ impl BrowserManager {
             .pool
             .get_or_create(session_id, sandbox, browser)
             .await?;
+
+        // Obscura has no pixel rendering — screenshots are unsupported.
+        if let Some(kind) = self.pool.browser_kind(&sid).await
+            && !kind.supports_screenshots()
+        {
+            return Err(Error::ScreenshotFailed(format!(
+                "Screenshots are not supported by {kind}. \
+                 Use 'snapshot' for DOM content, or switch to Chrome/Chromium \
+                 (set \"browser\": \"auto\") for pixel screenshots."
+            )));
+        }
+
         let page = self.pool.get_page(&sid).await?;
 
         // Optionally highlight an element before screenshot

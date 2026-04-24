@@ -184,8 +184,8 @@ impl AgentTool for BrowserTool {
                 },
                 "browser": {
                     "type": "string",
-                    "enum": ["auto", "chrome", "chromium", "edge", "brave", "opera", "vivaldi", "arc"],
-                    "description": "Browser to use for host mode. Default: auto (first installed browser)."
+                    "enum": ["auto", "chrome", "chromium", "edge", "brave", "opera", "vivaldi", "arc", "obscura"],
+                    "description": "Browser to use. Default: auto (first installed browser). Use 'obscura' for lightweight headless browsing (no screenshots)."
                 },
                 "url": {
                     "type": "string",

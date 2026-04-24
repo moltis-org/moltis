@@ -89,6 +89,9 @@ pub enum BrowserKind {
     Opera,
     Vivaldi,
     Arc,
+    /// Obscura: lightweight Rust-based headless browser with CDP support.
+    /// No pixel rendering (screenshots unavailable), but fast and low-memory.
+    Obscura,
     Custom,
 }
 
@@ -102,8 +105,15 @@ impl BrowserKind {
             Self::Opera => "opera",
             Self::Vivaldi => "vivaldi",
             Self::Arc => "arc",
+            Self::Obscura => "obscura",
             Self::Custom => "custom",
         }
+    }
+
+    /// Returns `true` when this browser kind is known to lack pixel rendering
+    /// (and therefore cannot take screenshots).
+    pub fn supports_screenshots(self) -> bool {
+        !matches!(self, Self::Obscura)
     }
 }
 
@@ -126,6 +136,7 @@ pub enum BrowserPreference {
     Opera,
     Vivaldi,
     Arc,
+    Obscura,
 }
 
 impl BrowserPreference {
@@ -139,6 +150,7 @@ impl BrowserPreference {
             Self::Opera => Some(BrowserKind::Opera),
             Self::Vivaldi => Some(BrowserKind::Vivaldi),
             Self::Arc => Some(BrowserKind::Arc),
+            Self::Obscura => Some(BrowserKind::Obscura),
         }
     }
 }
@@ -406,6 +418,9 @@ pub struct BrowserConfig {
     pub enabled: bool,
     /// Path to Chrome/Chromium binary (auto-detected if not set).
     pub chrome_path: Option<String>,
+    /// Path to the Obscura binary (auto-detected from PATH if not set).
+    /// Obscura is a lightweight Rust-based headless browser that supports CDP.
+    pub obscura_path: Option<String>,
     /// Whether to run in headless mode.
     pub headless: bool,
     /// Default viewport width.
@@ -483,6 +498,7 @@ impl Default for BrowserConfig {
         Self {
             enabled: true,
             chrome_path: None,
+            obscura_path: None,
             headless: true,
             viewport_width: 2560,
             viewport_height: 1440,
@@ -527,6 +543,7 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
         Self {
             enabled: cfg.enabled,
             chrome_path: cfg.chrome_path.clone(),
+            obscura_path: cfg.obscura_path.clone(),
             headless: cfg.headless,
             viewport_width: cfg.viewport_width,
             viewport_height: cfg.viewport_height,

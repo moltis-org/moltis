@@ -104,6 +104,11 @@ struct BrowserInstance {
     /// Container for sandboxed instances (None for host browser).
     #[allow(dead_code)]
     container: Option<BrowserContainer>,
+    /// Child process for Obscura sidecar instances. Killed on drop.
+    #[allow(dead_code)]
+    child_process: Option<tokio::process::Child>,
+    /// The browser kind used for this instance.
+    kind: Option<crate::types::BrowserKind>,
 }
 
 /// Pool of browser instances for reuse.
@@ -356,6 +361,14 @@ impl BrowserPool {
         self.instances.read().await.len()
     }
 
+    /// Get the browser kind for a session, if known.
+    pub async fn browser_kind(&self, session_id: &str) -> Option<crate::types::BrowserKind> {
+        let instances = self.instances.read().await;
+        let instance = instances.get(session_id)?;
+        let inst = instance.lock().await;
+        inst.kind
+    }
+
     /// Launch a new browser instance.
     async fn launch_browser(
         &self,
@@ -363,6 +376,11 @@ impl BrowserPool {
         sandbox: bool,
         browser: Option<BrowserPreference>,
     ) -> Result<BrowserInstance, Error> {
+        // Route to Obscura when explicitly requested.
+        if matches!(browser, Some(BrowserPreference::Obscura)) {
+            return self.launch_obscura_browser(session_id).await;
+        }
+
         if sandbox {
             self.launch_sandboxed_browser(session_id).await
         } else {
@@ -538,6 +556,8 @@ impl BrowserPool {
             created_at: Instant::now(),
             sandboxed: true,
             container: Some(container),
+            child_process: None,
+            kind: None,
         })
     }
 
@@ -711,8 +731,142 @@ impl BrowserPool {
             created_at: Instant::now(),
             sandboxed: false,
             container: None,
+            child_process: None,
+            kind: Some(selected.kind),
         })
     }
+
+    /// Launch an Obscura headless browser as a sidecar process and connect via CDP.
+    async fn launch_obscura_browser(&self, session_id: &str) -> Result<BrowserInstance, Error> {
+        let obscura_path = crate::detect::detect_obscura(self.config.obscura_path.as_deref())
+            .ok_or_else(|| {
+                Error::LaunchFailed(
+                    "Obscura binary not found. Install it from \
+                     https://github.com/nicholasgasior/obscura or set \
+                     [tools.browser] obscura_path in config."
+                        .to_string(),
+                )
+            })?;
+
+        // Pick a random port for the CDP server.
+        let port = pick_available_port().ok_or_else(|| {
+            Error::LaunchFailed("no available TCP port for Obscura CDP server".to_string())
+        })?;
+
+        info!(
+            session_id,
+            port,
+            path = %obscura_path.display(),
+            "launching Obscura sidecar"
+        );
+
+        let mut child = tokio::process::Command::new(&obscura_path)
+            .arg("serve")
+            .arg("--port")
+            .arg(port.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| {
+                Error::LaunchFailed(format!(
+                    "failed to spawn Obscura at {}: {e}",
+                    obscura_path.display()
+                ))
+            })?;
+
+        // Poll until the CDP endpoint is ready (or the process exits).
+        let ws_url = format!("ws://127.0.0.1:{port}/devtools/browser");
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+        let deadline = Instant::now() + Duration::from_secs(10);
+
+        loop {
+            // Check that the child hasn't exited.
+            if let Ok(Some(status)) = child.try_wait() {
+                return Err(Error::LaunchFailed(format!(
+                    "Obscura exited immediately with status {status}"
+                )));
+            }
+
+            // Try a TCP connect to see if the server is listening.
+            if tokio::time::timeout(
+                Duration::from_millis(200),
+                tokio::net::TcpStream::connect(addr),
+            )
+            .await
+            .is_ok_and(|r| r.is_ok())
+            {
+                break;
+            }
+
+            if Instant::now() >= deadline {
+                // Kill the child so it doesn't leak.
+                let _ = child.kill().await;
+                return Err(Error::LaunchFailed(
+                    "Obscura CDP server did not become ready within 10 seconds".to_string(),
+                ));
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Connect via CDP using the existing chromiumoxide client.
+        let handler_config = HandlerConfig {
+            request_timeout: Duration::from_millis(self.config.navigation_timeout_ms),
+            viewport: Some(chromiumoxide::handler::viewport::Viewport {
+                width: self.config.viewport_width,
+                height: self.config.viewport_height,
+                device_scale_factor: Some(self.config.device_scale_factor),
+                emulating_mobile: false,
+                is_landscape: true,
+                has_touch: false,
+            }),
+            ..Default::default()
+        };
+
+        let (browser, mut handler) = Browser::connect_with_config(&ws_url, handler_config)
+            .await
+            .map_err(|e| {
+                Error::LaunchFailed(format!("failed to connect to Obscura CDP at {ws_url}: {e}"))
+            })?;
+
+        // Spawn handler to process browser events.
+        let session_id_clone = session_id.to_string();
+        tokio::spawn(async move {
+            while let Some(event) = handler.next().await {
+                debug!(
+                    session_id = session_id_clone,
+                    ?event,
+                    "obscura browser event"
+                );
+            }
+            debug!(
+                session_id = session_id_clone,
+                "obscura browser event handler exited"
+            );
+        });
+
+        info!(session_id, port, "Obscura sidecar connected via CDP");
+
+        Ok(BrowserInstance {
+            browser,
+            pages: HashMap::new(),
+            last_used: Instant::now(),
+            created_at: Instant::now(),
+            sandboxed: false,
+            container: None,
+            child_process: Some(child),
+            kind: Some(crate::types::BrowserKind::Obscura),
+        })
+    }
+}
+
+/// Find an available TCP port by binding to port 0.
+fn pick_available_port() -> Option<u16> {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())
 }
 
 impl Drop for BrowserPool {
