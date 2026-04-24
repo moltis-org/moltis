@@ -1616,6 +1616,48 @@ agent_timeout_secs = 600
     );
 }
 
+// ── Revert to built-in tests ─────────────────────────────────────────
+
+#[test]
+fn revert_preset_removes_from_user_config() {
+    let _guard = CONFIG_DIR_TEST_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("moltis.toml");
+
+    // User config with a custom preset.
+    std::fs::write(
+        &config_path,
+        r#"[server]
+port = 44444
+
+[agents.presets.custom-agent]
+model = "openai/gpt-5.2"
+delegate_only = true
+"#,
+    )
+    .expect("write seed");
+
+    set_config_dir(dir.path().to_path_buf());
+
+    // Simulate revert: remove the preset via update_config.
+    update_config(|cfg| {
+        cfg.agents.presets.remove("custom-agent");
+    })
+    .expect("update_config");
+
+    let saved = std::fs::read_to_string(&config_path).expect("read saved");
+
+    // Preset should be removed from user config.
+    assert!(
+        !saved.contains("custom-agent"),
+        "reverted preset should be removed from user config"
+    );
+    // Port should survive.
+    assert!(saved.contains("port = 44444"), "port must survive revert");
+
+    clear_config_dir();
+}
+
 // ── Provenance tests ─────────────────────────────────────────────────
 
 #[test]
@@ -1659,6 +1701,28 @@ disabled = false
     assert!(
         shadowed.contains(&"auth.disabled".to_string()),
         "should detect auth.disabled as shadowed"
+    );
+}
+
+#[test]
+fn find_shadowed_defaults_ignores_intentional_overrides() {
+    // User config where values DIFFER from defaults — these are intentional
+    // overrides, not frozen defaults, and should NOT be flagged.
+    let user = r#"
+[tools]
+agent_timeout_secs = 120
+
+[auth]
+disabled = true
+"#;
+    let shadowed = crate::defaults::find_shadowed_defaults(user);
+    assert!(
+        !shadowed.contains(&"tools.agent_timeout_secs".to_string()),
+        "intentional override (120 != default 600) should not be flagged as shadowed"
+    );
+    assert!(
+        !shadowed.contains(&"auth.disabled".to_string()),
+        "intentional override (true != default false) should not be flagged as shadowed"
     );
 }
 
