@@ -17,6 +17,7 @@ import { initMediaDrop, teardownMediaDrop } from "../media-drop";
 import { bindModelComboEvents } from "../models";
 import { bindNodeComboEvents, fetchNodes, unbindNodeEvents } from "../nodes-selector";
 import { bindProjectComboEvents } from "../project-combo";
+import { fetchProjects } from "../projects";
 import { bindReasoningToggle, unbindReasoningToggle } from "../reasoning-toggle";
 import { registerPrefix, sessionPath } from "../router";
 import { routes } from "../routes";
@@ -803,6 +804,7 @@ function initializeChatControls(): void {
 	S.setProjectDropdown(S.$("projectDropdown"));
 	S.setProjectDropdownList(S.$("projectDropdownList"));
 	bindProjectComboEvents();
+	fetchProjects();
 	S.setSandboxToggleBtn(S.$("sandboxToggle"));
 	S.setSandboxLabel(S.$("sandboxLabel"));
 	bindSandboxToggleEvents();

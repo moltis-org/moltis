@@ -1,5 +1,5 @@
 import { _ as _wsConnect, u } from "./chunks/ws-connect.js";
-import { bS as S, bW as initTheme, bY as init, aN as R, ax as d, aw as y, Z as t } from "./chunks/theme.js";
+import { bS as S, bW as initTheme, bY as init, aP as R, ax as d, aw as y, Z as t } from "./chunks/theme.js";
 import { b as formatLoginTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
 window.__moltis_state = S;
 window.__moltis_modules = { ...window.__moltis_modules || {}, "ws-connect": _wsConnect };

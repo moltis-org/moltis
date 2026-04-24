@@ -1,7 +1,7 @@
 const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["chunks/index.js","chunks/theme.js","chunks/open-modal.js","chunks/ws-connect.js","chunks/branding.js","chunks/voice-utils.js","chunks/time-format.js"])))=>i.map(i=>d[i]);
 var _a, _b;
 import { u, f as forceReconnect, c as connectWs, s as subscribeEvents, _ as _wsConnect } from "./chunks/ws-connect.js";
-import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as commandModeEnabled, e as sessionExecPromptSymbol, g as chatBatchLoading, h as sessionContextWindow, i as sessionToolsEnabled, j as sessionExecMode, k as sessionCurrentInputTokens, _ as __vitePreload, l as setUnseenErrors, m as setUnseenWarns, n as unseenErrors, o as unseenWarns, q as connected, r as sessionStore, t as sessions, v as activeSessionKey, w as lastHistoryIndex, x as setLastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeComboBtn, U as nodeDropdownList, V as nodeCombo, W as nodeDropdown, X as nodeComboLabel, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as projectComboBtn, a7 as j, a8 as setSessionSandboxEnabled, a9 as hostExecIsRoot, aa as sandboxLabel, ab as sandboxToggleBtn, ac as sessionSandboxEnabled, ad as setSessionSandboxImage, ae as sandboxImageLabel, af as sandboxInfo, ag as sandboxImageDropdown, ah as sandboxImageBtn, ai as sessionSandboxImage, aj as projectStore, ak as setSessions, al as insertSessionInOrder, am as Session, an as chatSeq, ao as setSelectedModelId, ap as modelComboLabel, aq as setSessionSwitchInProgress, ar as setStreamEl, as as setStreamText, at as setLastToolOutput, au as setVoicePending, av as setActiveSessionKey, aw as y$1, ax as d, ay as A, az as S, aA as projectFilterId, aB as getById$1, aC as q, aD as warmAudioPlayback, aE as selectedModelId, aF as formatBytes$3, aG as setCommandModeEnabled, aH as chatHistory, aI as chatHistoryIdx, aJ as setChatHistoryDraft, aK as setChatHistoryIdx, aL as chatHistoryDraft, aM as setChatHistory, aN as R, aO as setChatMsgBox, aP as setChatInput, aQ as setChatSendBtn, aR as setModelCombo, aS as setModelComboBtn, aT as setModelComboLabel, aU as setModelDropdown, aV as setModelSearchInput, aW as setModelDropdownList, aX as setNodeCombo, aY as setNodeComboBtn, aZ as setNodeComboLabel, a_ as setNodeDropdown, a$ as setNodeDropdownList, b0 as setSandboxToggleBtn, b1 as setSandboxLabel, b2 as setProjectCombo, b3 as setProjectComboBtn, b4 as setProjectComboLabel, b5 as setProjectDropdown, b6 as setProjectDropdownList, b7 as setSandboxImageBtn, b8 as setSandboxImageLabel, b9 as setSandboxImageDropdown, ba as models, bb as chatSendBtn, bc as setModels, bd as modelComboBtn, be as modelSearchInput, bf as modelDropdownList, bg as modelCombo, bh as modelDropdown, bi as setModelIdx, bj as modelIdx, bk as REASONING_SEP, bl as models$1, bm as useSignal, bn as connected$1, bo as setCachedChannels, bp as setRefreshChannelsPage, bq as cachedChannels, br as setChannelEventUnsub, bs as channelEventUnsub, bt as setProjects, bu as setProjectFilterId, bv as refreshProvidersPage, bw as modelVersionScore, bx as streamEl, by as renderMapPointGroups, bz as renderMapLinks, bA as lastToolOutput, bB as localizeStructuredError, bC as voicePending, bD as streamText, bE as setSandboxInfo, bF as networkAuditEventHandler, bG as logsEventHandler, bH as setSubscribed, bI as projects$1, bJ as sandboxInfo$1, bK as localizedApiErrorMessage, bL as setLogsEventHandler, bM as setNetworkAuditEventHandler, bN as setRefreshProvidersPage, bO as setLocale, bP as esc, bQ as projectStore$1, bR as _modelStore, bS as S$1, bT as _sessionStoreModule, bU as _i18n, bV as _helpers, bW as initTheme, bX as injectMarkdownStyles, bY as init, bZ as translateStaticElements, b_ as setAll$1, b$ as setAll$2, c0 as select$1, c1 as selectedModelId$1 } from "./chunks/theme.js";
+import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as commandModeEnabled, e as sessionExecPromptSymbol, g as chatBatchLoading, h as sessionContextWindow, i as sessionToolsEnabled, j as sessionExecMode, k as sessionCurrentInputTokens, _ as __vitePreload, l as setUnseenErrors, m as setUnseenWarns, n as unseenErrors, o as unseenWarns, q as connected, r as sessionStore, t as sessions, v as activeSessionKey, w as lastHistoryIndex, x as setLastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeComboBtn, U as nodeDropdownList, V as nodeCombo, W as nodeDropdown, X as nodeComboLabel, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as projectComboBtn, a7 as j, a8 as setSessionSandboxEnabled, a9 as hostExecIsRoot, aa as sandboxLabel, ab as sandboxToggleBtn, ac as sessionSandboxEnabled, ad as setSessionSandboxImage, ae as sandboxImageLabel, af as sandboxInfo, ag as sandboxImageDropdown, ah as sandboxImageBtn, ai as sessionSandboxImage, aj as projectStore, ak as setSessions, al as insertSessionInOrder, am as Session, an as chatSeq, ao as setSelectedModelId, ap as modelComboLabel, aq as setSessionSwitchInProgress, ar as setStreamEl, as as setStreamText, at as setLastToolOutput, au as setVoicePending, av as setActiveSessionKey, aw as y$1, ax as d, ay as A, az as S, aA as projectFilterId, aB as getById$1, aC as q, aD as setProjects, aE as setProjectFilterId, aF as warmAudioPlayback, aG as selectedModelId, aH as formatBytes$3, aI as setCommandModeEnabled, aJ as chatHistory, aK as chatHistoryIdx, aL as setChatHistoryDraft, aM as setChatHistoryIdx, aN as chatHistoryDraft, aO as setChatHistory, aP as R, aQ as setChatMsgBox, aR as setChatInput, aS as setChatSendBtn, aT as setModelCombo, aU as setModelComboBtn, aV as setModelComboLabel, aW as setModelDropdown, aX as setModelSearchInput, aY as setModelDropdownList, aZ as setNodeCombo, a_ as setNodeComboBtn, a$ as setNodeComboLabel, b0 as setNodeDropdown, b1 as setNodeDropdownList, b2 as setSandboxToggleBtn, b3 as setSandboxLabel, b4 as setProjectCombo, b5 as setProjectComboBtn, b6 as setProjectComboLabel, b7 as setProjectDropdown, b8 as setProjectDropdownList, b9 as setSandboxImageBtn, ba as setSandboxImageLabel, bb as setSandboxImageDropdown, bc as models, bd as chatSendBtn, be as setModels, bf as modelComboBtn, bg as modelSearchInput, bh as modelDropdownList, bi as modelCombo, bj as modelDropdown, bk as setModelIdx, bl as modelIdx, bm as REASONING_SEP, bn as models$1, bo as useSignal, bp as connected$1, bq as setCachedChannels, br as setRefreshChannelsPage, bs as cachedChannels, bt as setChannelEventUnsub, bu as channelEventUnsub, bv as refreshProvidersPage, bw as modelVersionScore, bx as streamEl, by as renderMapPointGroups, bz as renderMapLinks, bA as lastToolOutput, bB as localizeStructuredError, bC as voicePending, bD as streamText, bE as setSandboxInfo, bF as networkAuditEventHandler, bG as logsEventHandler, bH as setSubscribed, bI as projects$1, bJ as sandboxInfo$1, bK as localizedApiErrorMessage, bL as setLogsEventHandler, bM as setNetworkAuditEventHandler, bN as setRefreshProvidersPage, bO as setLocale, bP as esc, bQ as projectStore$1, bR as _modelStore, bS as S$1, bT as _sessionStoreModule, bU as _i18n, bV as _helpers, bW as initTheme, bX as injectMarkdownStyles, bY as init, bZ as translateStaticElements, b_ as setAll$1, b$ as setAll$2, c0 as select$1, c1 as selectedModelId$1 } from "./chunks/theme.js";
 import { f as formatPageTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
 import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as deriveSignalAccountId, s as buildTeamsEndpoint, u as generateWebhookSecretHex, w as defaultTeamsBaseUrl, T as TabBar$1, x as channelStorageNote, y as providerApiKeyHelp, z as validateProviderKey, A as completeProviderOAuth, B as startProviderOAuth, D as saveProviderKey, E as testModel, F as isModelServiceNotConfigured, G as isTimeoutError, H as humanizeProbeError, I as eventListeners, J as refresh, K as isRepoSource, S as SkillSource, L as CATEGORY_META, N as categoryLabel, O as isDiscoveredSource, P as EmojiPicker, Q as validateIdentityFields, R as updateIdentity, U as set, V as prepareCreationOptions, W as detectPasskeyName, X as fetchVoiceProviders, Y as fetchPhrase, Z as testTts, _ as decodeBase64Safe, $ as transcribeAudio$1, a0 as toggleVoiceProvider, a1 as saveVoiceKey, a2 as saveVoiceSettings, a3 as gon, a4 as _events } from "./chunks/voice-utils.js";
 import "./chunks/time-format.js";
@@ -4569,6 +4569,184 @@ function clearPendingImages() {
 function hasPendingImages() {
   return pendingImages.length > 0;
 }
+const ids = {
+  skills: "navCountSkills",
+  crons: "navCountCrons"
+};
+function updateNavCount(key, n) {
+  const id = ids[key];
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (n > 0) {
+    el.textContent = String(n);
+    el.classList.add("visible");
+  } else {
+    el.textContent = "";
+    el.classList.remove("visible");
+  }
+}
+function updateNavCounts(counts) {
+  if (!counts) return;
+  for (const key of Object.keys(ids)) {
+    updateNavCount(key, counts[key] || 0);
+  }
+}
+updateNavCounts(get("counts"));
+onChange("counts", updateNavCounts);
+const combo = $("projectFilterCombo");
+const btn = $("projectFilterBtn");
+const label = $("projectFilterLabel");
+const dropdown = $("projectFilterDropdown");
+const list = $("projectFilterList");
+const searchInput$1 = $("projectFilterSearch");
+let kbIdx = -1;
+function fetchProjects() {
+  projectStore.fetch().then(() => {
+    const projects2 = projectStore.projects.value;
+    setProjects(projects2);
+    renderProjectSelect();
+    renderSessionProjectSelect();
+    updateNavCount("projects", projects2.length);
+    if (projectCombo) {
+      projectCombo.classList.toggle("hidden", projects2.length === 0);
+    }
+  });
+}
+function selectFilter(id) {
+  projectStore.setFilterId(id);
+  setProjectFilterId(id);
+  const p = projectStore.getById(id);
+  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
+  closeDropdown();
+  document.dispatchEvent(new CustomEvent("moltis:render-session-list"));
+}
+function closeDropdown() {
+  dropdown.classList.add("hidden");
+  if (searchInput$1) searchInput$1.value = "";
+  kbIdx = -1;
+}
+function openDropdown() {
+  dropdown.classList.remove("hidden");
+  kbIdx = -1;
+  renderList("");
+  requestAnimationFrame(() => {
+    if (searchInput$1) searchInput$1.focus();
+  });
+}
+function renderList(query2) {
+  list.textContent = "";
+  const q2 = (query2 || "").toLowerCase();
+  const filterId = projectStore.projectFilterId.value;
+  const allProjects = projectStore.projects.value;
+  const allSessionsLabel = t("common:sessions.allSessions");
+  if (!q2 || allSessionsLabel.toLowerCase().indexOf(q2) !== -1) {
+    const allEl = document.createElement("div");
+    allEl.className = "model-dropdown-item";
+    if (!filterId) allEl.classList.add("selected");
+    const allLabel = document.createElement("span");
+    allLabel.className = "model-item-label";
+    allLabel.textContent = allSessionsLabel;
+    allEl.appendChild(allLabel);
+    allEl.addEventListener("click", () => selectFilter(""));
+    list.appendChild(allEl);
+  }
+  const filtered = allProjects.filter((p) => {
+    if (!q2) return true;
+    const name = (p.label || p.id).toLowerCase();
+    return name.indexOf(q2) !== -1 || p.id.toLowerCase().indexOf(q2) !== -1;
+  });
+  filtered.forEach((p) => {
+    const el = document.createElement("div");
+    el.className = "model-dropdown-item";
+    if (p.id === filterId) el.classList.add("selected");
+    const itemLabel = document.createElement("span");
+    itemLabel.className = "model-item-label";
+    itemLabel.textContent = p.label || p.id;
+    el.appendChild(itemLabel);
+    el.addEventListener("click", () => selectFilter(p.id));
+    list.appendChild(el);
+  });
+  if (list.children.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "model-dropdown-empty";
+    empty.textContent = t("common:sessions.noMatchingProjects");
+    list.appendChild(empty);
+  }
+}
+function updateKbActive() {
+  const items = list.querySelectorAll(".model-dropdown-item");
+  items.forEach((el, i) => {
+    el.classList.toggle("kb-active", i === kbIdx);
+  });
+  if (kbIdx >= 0 && items[kbIdx]) {
+    items[kbIdx].scrollIntoView({ block: "nearest" });
+  }
+}
+function renderProjectSelect() {
+  const wrapper = $("projectSelectWrapper");
+  const allProjects = projectStore.projects.value;
+  const filterId = projectStore.projectFilterId.value;
+  if (allProjects.length === 0) {
+    if (wrapper) wrapper.classList.add("hidden");
+    if (filterId) {
+      projectStore.setFilterId("");
+      setProjectFilterId("");
+    }
+    label.textContent = t("common:sessions.allSessions");
+    return;
+  }
+  if (wrapper) wrapper.classList.remove("hidden");
+  const p = projectStore.getById(filterId);
+  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
+}
+btn.addEventListener("click", () => {
+  if (dropdown.classList.contains("hidden")) {
+    openDropdown();
+  } else {
+    closeDropdown();
+  }
+});
+if (searchInput$1) {
+  searchInput$1.addEventListener("input", () => {
+    kbIdx = -1;
+    renderList(searchInput$1.value.trim());
+  });
+  searchInput$1.addEventListener("keydown", (e) => {
+    const items = list.querySelectorAll(".model-dropdown-item");
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      kbIdx = Math.min(kbIdx + 1, items.length - 1);
+      updateKbActive();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      kbIdx = Math.max(kbIdx - 1, 0);
+      updateKbActive();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (kbIdx >= 0 && items[kbIdx]) {
+        items[kbIdx].click();
+      } else if (items.length === 1) {
+        items[0].click();
+      }
+    } else if (e.key === "Escape") {
+      closeDropdown();
+      btn.focus();
+    }
+  });
+}
+document.addEventListener("click", (e) => {
+  if (combo && !combo.contains(e.target)) {
+    closeDropdown();
+  }
+});
+window.addEventListener("moltis:locale-changed", () => {
+  renderProjectSelect();
+  if (!dropdown.classList.contains("hidden")) {
+    const query2 = searchInput$1 ? searchInput$1.value.trim() : "";
+    renderList(query2);
+  }
+});
 let micBtn = null;
 let mediaRecorder = null;
 let audioChunks = [];
@@ -6089,6 +6267,7 @@ function initializeChatControls() {
   setProjectDropdown($("projectDropdown"));
   setProjectDropdownList($("projectDropdownList"));
   bindProjectComboEvents();
+  fetchProjects();
   setSandboxToggleBtn($("sandboxToggle"));
   setSandboxLabel($("sandboxLabel"));
   bindSandboxToggleEvents();
@@ -6402,31 +6581,6 @@ window.addEventListener("moltis:locale-changed", () => {
     renderModelList(query2);
   }
 });
-const ids = {
-  skills: "navCountSkills",
-  crons: "navCountCrons"
-};
-function updateNavCount(key, n) {
-  const id = ids[key];
-  if (!id) return;
-  const el = document.getElementById(id);
-  if (!el) return;
-  if (n > 0) {
-    el.textContent = String(n);
-    el.classList.add("visible");
-  } else {
-    el.textContent = "";
-    el.classList.remove("visible");
-  }
-}
-function updateNavCounts(counts) {
-  if (!counts) return;
-  for (const key of Object.keys(ids)) {
-    updateNavCount(key, counts[key] || 0);
-  }
-}
-updateNavCounts(get("counts"));
-onChange("counts", updateNavCounts);
 function AdvancedConfigPatchField({
   value,
   onInput,
@@ -9849,159 +10003,6 @@ const _channelsPage = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defin
   waQrData,
   waQrSvg
 }, Symbol.toStringTag, { value: "Module" }));
-const combo = $("projectFilterCombo");
-const btn = $("projectFilterBtn");
-const label = $("projectFilterLabel");
-const dropdown = $("projectFilterDropdown");
-const list = $("projectFilterList");
-const searchInput$1 = $("projectFilterSearch");
-let kbIdx = -1;
-function fetchProjects() {
-  projectStore.fetch().then(() => {
-    const projects2 = projectStore.projects.value;
-    setProjects(projects2);
-    renderProjectSelect();
-    renderSessionProjectSelect();
-    updateNavCount("projects", projects2.length);
-    if (projectCombo) {
-      projectCombo.classList.toggle("hidden", projects2.length === 0);
-    }
-  });
-}
-function selectFilter(id) {
-  projectStore.setFilterId(id);
-  setProjectFilterId(id);
-  const p = projectStore.getById(id);
-  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
-  closeDropdown();
-  document.dispatchEvent(new CustomEvent("moltis:render-session-list"));
-}
-function closeDropdown() {
-  dropdown.classList.add("hidden");
-  if (searchInput$1) searchInput$1.value = "";
-  kbIdx = -1;
-}
-function openDropdown() {
-  dropdown.classList.remove("hidden");
-  kbIdx = -1;
-  renderList("");
-  requestAnimationFrame(() => {
-    if (searchInput$1) searchInput$1.focus();
-  });
-}
-function renderList(query2) {
-  list.textContent = "";
-  const q2 = (query2 || "").toLowerCase();
-  const filterId = projectStore.projectFilterId.value;
-  const allProjects = projectStore.projects.value;
-  const allSessionsLabel = t("common:sessions.allSessions");
-  if (!q2 || allSessionsLabel.toLowerCase().indexOf(q2) !== -1) {
-    const allEl = document.createElement("div");
-    allEl.className = "model-dropdown-item";
-    if (!filterId) allEl.classList.add("selected");
-    const allLabel = document.createElement("span");
-    allLabel.className = "model-item-label";
-    allLabel.textContent = allSessionsLabel;
-    allEl.appendChild(allLabel);
-    allEl.addEventListener("click", () => selectFilter(""));
-    list.appendChild(allEl);
-  }
-  const filtered = allProjects.filter((p) => {
-    if (!q2) return true;
-    const name = (p.label || p.id).toLowerCase();
-    return name.indexOf(q2) !== -1 || p.id.toLowerCase().indexOf(q2) !== -1;
-  });
-  filtered.forEach((p) => {
-    const el = document.createElement("div");
-    el.className = "model-dropdown-item";
-    if (p.id === filterId) el.classList.add("selected");
-    const itemLabel = document.createElement("span");
-    itemLabel.className = "model-item-label";
-    itemLabel.textContent = p.label || p.id;
-    el.appendChild(itemLabel);
-    el.addEventListener("click", () => selectFilter(p.id));
-    list.appendChild(el);
-  });
-  if (list.children.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "model-dropdown-empty";
-    empty.textContent = t("common:sessions.noMatchingProjects");
-    list.appendChild(empty);
-  }
-}
-function updateKbActive() {
-  const items = list.querySelectorAll(".model-dropdown-item");
-  items.forEach((el, i) => {
-    el.classList.toggle("kb-active", i === kbIdx);
-  });
-  if (kbIdx >= 0 && items[kbIdx]) {
-    items[kbIdx].scrollIntoView({ block: "nearest" });
-  }
-}
-function renderProjectSelect() {
-  const wrapper = $("projectSelectWrapper");
-  const allProjects = projectStore.projects.value;
-  const filterId = projectStore.projectFilterId.value;
-  if (allProjects.length === 0) {
-    if (wrapper) wrapper.classList.add("hidden");
-    if (filterId) {
-      projectStore.setFilterId("");
-      setProjectFilterId("");
-    }
-    label.textContent = t("common:sessions.allSessions");
-    return;
-  }
-  if (wrapper) wrapper.classList.remove("hidden");
-  const p = projectStore.getById(filterId);
-  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
-}
-btn.addEventListener("click", () => {
-  if (dropdown.classList.contains("hidden")) {
-    openDropdown();
-  } else {
-    closeDropdown();
-  }
-});
-if (searchInput$1) {
-  searchInput$1.addEventListener("input", () => {
-    kbIdx = -1;
-    renderList(searchInput$1.value.trim());
-  });
-  searchInput$1.addEventListener("keydown", (e) => {
-    const items = list.querySelectorAll(".model-dropdown-item");
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      kbIdx = Math.min(kbIdx + 1, items.length - 1);
-      updateKbActive();
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      kbIdx = Math.max(kbIdx - 1, 0);
-      updateKbActive();
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (kbIdx >= 0 && items[kbIdx]) {
-        items[kbIdx].click();
-      } else if (items.length === 1) {
-        items[0].click();
-      }
-    } else if (e.key === "Escape") {
-      closeDropdown();
-      btn.focus();
-    }
-  });
-}
-document.addEventListener("click", (e) => {
-  if (combo && !combo.contains(e.target)) {
-    closeDropdown();
-  }
-});
-window.addEventListener("moltis:locale-changed", () => {
-  renderProjectSelect();
-  if (!dropdown.classList.contains("hidden")) {
-    const query2 = searchInput$1 ? searchInput$1.value.trim() : "";
-    renderList(query2);
-  }
-});
 const root = document.getElementById("modalRoot");
 function createModal(id, titleId, bodyId, closeId) {
   const existing = document.getElementById(id);
