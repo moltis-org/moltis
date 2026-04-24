@@ -123,8 +123,8 @@ impl BundledSkillStore {
 
     /// Materialize sidecar files for a skill to an explicit target directory.
     ///
-    /// Returns `Some(target_dir/<name>)` if at least one file was written,
-    /// `None` if the skill has no sidecars or every write failed.
+    /// Returns `Some(target_dir/<name>)` if **all** files were written
+    /// successfully, `None` if the skill has no sidecars or any write failed.
     pub fn materialize_sidecars_to(&self, name: &str, target_dir: &Path) -> Option<PathBuf> {
         let sidecars = self.list_sidecars(name);
         if sidecars.is_empty() {
@@ -132,10 +132,12 @@ impl BundledSkillStore {
         }
 
         let skill_dir = target_dir.join(name);
-        let mut written = 0usize;
+        let total = sidecars.len();
+        let mut failed = Vec::new();
         for (rel_path, _) in &sidecars {
             let Some((bytes, _)) = self.read_sidecar(name, rel_path) else {
                 tracing::warn!(skill = %name, path = %rel_path, "failed to read bundled sidecar");
+                failed.push(rel_path.clone());
                 continue;
             };
             let target = skill_dir.join(rel_path);
@@ -143,24 +145,34 @@ impl BundledSkillStore {
                 && let Err(e) = std::fs::create_dir_all(parent)
             {
                 tracing::warn!(skill = %name, path = %rel_path, %e, "failed to create sidecar directory");
+                failed.push(rel_path.clone());
                 continue;
             }
             if let Err(e) = std::fs::write(&target, &bytes) {
                 tracing::warn!(skill = %name, path = %rel_path, %e, "failed to write sidecar file");
+                failed.push(rel_path.clone());
                 continue;
             }
             #[cfg(unix)]
             if rel_path.starts_with("scripts/") {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
+                if let Err(e) =
+                    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
+                {
+                    tracing::warn!(skill = %name, path = %rel_path, %e, "failed to set executable permission");
+                }
             }
-            written += 1;
         }
 
-        if written > 0 {
+        if failed.is_empty() {
             Some(skill_dir)
         } else {
-            tracing::warn!(skill = %name, "no sidecar files could be materialized");
+            tracing::warn!(
+                skill = %name,
+                failed = failed.len(),
+                total,
+                "some sidecar files could not be materialized"
+            );
             None
         }
     }
