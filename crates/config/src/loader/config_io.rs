@@ -370,8 +370,14 @@ pub fn save_user_config_to_path(path: &Path, config: &MoltisConfig) -> crate::Re
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
 
-    if is_toml_path && path.exists() {
-        // Existing file: preserve keys the user already has.
+    if !is_toml_path {
+        // YAML/JSON configs: fall back to full struct serialization (no
+        // TOML-level diffing). This preserves the pre-layered behavior.
+        return save_config_to_path(path, config);
+    }
+
+    if path.exists() {
+        // Existing TOML file: preserve keys the user already has.
         // Only strip defaults from keys that are NEW (not already on disk).
         let current_toml = std::fs::read_to_string(path)?;
         let current_doc = current_toml
@@ -389,7 +395,7 @@ pub fn save_user_config_to_path(path: &Path, config: &MoltisConfig) -> crate::Re
         merge_toml_tables(result_doc.as_table_mut(), override_doc.as_table());
         std::fs::write(path, result_doc.to_string())?;
     } else {
-        // New file: strip all default values.
+        // New TOML file: strip all default values.
         let mut override_doc = effective_doc;
         strip_default_values(override_doc.as_table_mut(), defaults_doc.as_table());
         std::fs::write(path, override_doc.to_string())?;

@@ -595,7 +595,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             "missing 'id' or 'agent_id' parameter",
                         )
                     })?;
-                    let config = moltis_config::discover_and_load();
+                    let config = moltis_config::discover_and_load_readonly();
                     let toml_str = match config.agents.presets.get(&id) {
                         Some(preset) => toml::to_string_pretty(preset).unwrap_or_default(),
                         None => String::new(),
@@ -687,7 +687,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "agents.presets_list",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    let config = moltis_config::discover_and_load();
+                    let config = moltis_config::discover_and_load_readonly();
                     let persona_ids: std::collections::HashSet<String> =
                         if let Some(ref store) = ctx.state.services.agent_persona_store {
                             store
