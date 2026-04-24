@@ -43,7 +43,6 @@ moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }
 moltis-cron           = { workspace = true }
 moltis-media          = { workspace = true }
-landlock               = { optional = true, workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-network-filter = { workspace = true }
 moltis-providers      = { workspace = true }
@@ -68,6 +67,10 @@ url                   = { workspace = true }
 uuid                  = { workspace = true }
 wasmtime              = { optional = true, workspace = true }
 wasmtime-wasi         = { optional = true, workspace = true }
+
+# Landlock is Linux-only (kernel 5.13+ LSM). Gate to avoid pulling it into macOS/Windows builds.
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = { optional = true, workspace = true }
 
 [dev-dependencies]
 mockito      = { workspace = true }
