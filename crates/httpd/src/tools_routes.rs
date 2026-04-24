@@ -211,7 +211,8 @@ pub async fn config_provenance(State(state): State<crate::server::AppState>) -> 
         return resp.into_response();
     }
 
-    let config = moltis_config::discover_and_load();
+    // Use read-only load to avoid writing defaults.toml on every GET request.
+    let config = moltis_config::discover_and_load_readonly();
 
     // Preset provenance
     let presets = moltis_config::defaults::compute_preset_provenance(&config.agents);

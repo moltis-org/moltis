@@ -68,41 +68,14 @@ pub fn discover_and_load() -> MoltisConfig {
         warn!(error = %e, "failed to write defaults.toml");
     }
 
-    let mut cfg = if let Some(path) = find_config_file() {
-        debug!(path = %path.display(), "loading config");
-        match load_layered_config(&path) {
-            Ok(mut cfg) => {
-                // If port is 0 (default/missing), generate a random port and save it
-                // to the *user* config file only.
-                // Use `save_config_to_path` directly instead of `save_config` because
-                // this function may be called from within `update_config`, which already
-                // holds `CONFIG_SAVE_LOCK`. Re-acquiring a `std::sync::Mutex` on the
-                // same thread would deadlock.
-                if cfg.server.port == 0 {
-                    cfg.server.port = generate_random_port();
-                    debug!(
-                        port = cfg.server.port,
-                        "generated random port for existing config"
-                    );
-                    if let Err(e) = save_user_config_to_path(&path, &cfg) {
-                        warn!(error = %e, "failed to save config with generated port");
-                    }
-                }
-                cfg // env overrides already applied by load_layered_config
-            },
-            Err(e) => {
-                warn!(path = %path.display(), error = %e, "failed to load config, using defaults");
-                apply_env_overrides(MoltisConfig::default())
-            },
-        }
-    } else {
+    // Write default user config on first run (when no config file exists).
+    if find_config_file().is_none() {
         let default_path = find_or_default_config_path();
         debug!(
             path = %default_path.display(),
             "no config file found, writing default config with random port"
         );
         let mut config = MoltisConfig::default();
-        // Generate a unique port for this installation
         config.server.port = generate_random_port();
         if let Err(e) = write_default_config(&default_path, &config) {
             warn!(
@@ -116,16 +89,38 @@ pub fn discover_and_load() -> MoltisConfig {
                 "wrote default config template"
             );
         }
-        apply_env_overrides(config)
+    }
+
+    discover_and_load_readonly()
+}
+
+/// Load config using layered merge without writing any files.
+///
+/// Same as [`discover_and_load`] but does not write `defaults.toml` or
+/// generate a default config for first-run.  Use this for read-only
+/// operations (e.g. API endpoints) that should not have side effects.
+pub fn discover_and_load_readonly() -> MoltisConfig {
+    let mut cfg = if let Some(path) = find_config_file() {
+        debug!(path = %path.display(), "loading config (read-only)");
+        match load_layered_config(&path) {
+            Ok(mut cfg) => {
+                if cfg.server.port == 0 {
+                    cfg.server.port = generate_random_port();
+                }
+                cfg
+            },
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "failed to load config, using defaults");
+                apply_env_overrides(MoltisConfig::default())
+            },
+        }
+    } else {
+        apply_env_overrides(MoltisConfig::default())
     };
 
     // Merge markdown agent definitions (TOML presets take precedence).
     let agent_defs = crate::agent_defs::discover_agent_defs();
     if !agent_defs.is_empty() {
-        debug!(
-            count = agent_defs.len(),
-            "discovered markdown agent definitions"
-        );
         crate::agent_defs::merge_agent_defs(&mut cfg.agents.presets, agent_defs);
     }
 
@@ -483,8 +478,9 @@ fn strip_new_default_values(
 
 /// Compare two `toml_edit::Value`s by their display representation.
 fn values_equal(a: &toml_edit::Value, b: &toml_edit::Value) -> bool {
-    // Compare using the canonical display format which strips decorations.
-    format!("{a}") == format!("{b}")
+    // Compare using the display format, trimming whitespace decorations that
+    // toml_edit preserves from source documents.
+    a.to_string().trim() == b.to_string().trim()
 }
 
 fn merge_toml_preserving_comments(path: &Path, updated_toml: &str) -> crate::Result<()> {

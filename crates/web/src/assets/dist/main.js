@@ -21162,7 +21162,7 @@ function provenanceBadge(provenance) {
   if (provenance === "built_in") return /* @__PURE__ */ u("span", { className: "recommended-badge", children: "Built-in" });
   if (provenance === "user_override") return /* @__PURE__ */ u("span", { className: "tier-badge", children: "Overridden" });
   if (provenance === "custom") return /* @__PURE__ */ u("span", { className: "tier-badge", children: "Custom" });
-  return /* @__PURE__ */ u("span", { className: "tier-badge", children: "config" });
+  return null;
 }
 function PresetCard({ preset, onRevert }) {
   const [expanded, setExpanded] = d(false);

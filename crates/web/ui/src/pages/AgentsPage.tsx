@@ -400,7 +400,7 @@ function provenanceBadge(provenance?: string): VNode | null {
 	if (provenance === "built_in") return <span className="recommended-badge">Built-in</span>;
 	if (provenance === "user_override") return <span className="tier-badge">Overridden</span>;
 	if (provenance === "custom") return <span className="tier-badge">Custom</span>;
-	return <span className="tier-badge">config</span>;
+	return null;
 }
 
 function PresetCard({ preset, onRevert }: PresetCardProps): VNode {
