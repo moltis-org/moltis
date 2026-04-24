@@ -244,23 +244,6 @@ impl DiscordAccountConfig {
             .or_else(|| self.model())
     }
 
-    /// Resolve effective provider with pattern override support.
-    pub fn resolve_provider_with_pattern(
-        &self,
-        channel_id: &str,
-        user_id: &str,
-        channel_name: Option<&str>,
-        category_id: Option<&str>,
-    ) -> Option<&str> {
-        self.user_model_provider(user_id)
-            .or_else(|| self.channel_model_provider(channel_id))
-            .or_else(|| {
-                self.find_pattern_override(channel_name, category_id)
-                    .and_then(|po| po.model_provider.as_deref())
-            })
-            .or_else(|| self.model_provider())
-    }
-
     /// Resolve effective agent ID with pattern override support.
     pub fn resolve_agent_with_pattern(
         &self,

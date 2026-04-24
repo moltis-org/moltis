@@ -110,7 +110,6 @@ pub enum AccessDenied {
     GuildNotOnAllowlist,
     MentionModeNone,
     NotMentioned,
-    ChannelNotAllowed,
 }
 
 impl std::fmt::Display for AccessDenied {
@@ -122,7 +121,6 @@ impl std::fmt::Display for AccessDenied {
             Self::GuildNotOnAllowlist => write!(f, "guild not on allowlist"),
             Self::MentionModeNone => write!(f, "bot does not respond in guilds"),
             Self::NotMentioned => write!(f, "bot was not mentioned"),
-            Self::ChannelNotAllowed => write!(f, "channel not in name/category filter"),
         }
     }
 }

@@ -797,16 +797,11 @@ impl EventHandler for Handler {
             let filter_active =
                 !config.channel_name_patterns.is_empty() || !config.category_allowlist.is_empty();
             if filter_active {
-                let filter_ok = access::channel_matches_filter(
+                access::channel_matches_filter(
                     &config,
                     channel_name.as_deref(),
                     category_id.as_deref(),
-                );
-                // Pattern overrides implicitly extend the filter.
-                let override_ok = config
-                    .find_pattern_override(channel_name.as_deref(), category_id.as_deref())
-                    .is_some();
-                filter_ok || override_ok
+                )
             } else {
                 true
             }
