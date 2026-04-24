@@ -119,6 +119,8 @@ impl moltis_tools::exec::EnvVarProvider for CredentialEnvVarProvider {
         let mut vars = match self.store.get_all_env_values().await {
             Ok(values) => values
                 .into_iter()
+                // Filter out internal keys that should not leak into sandbox env.
+                .filter(|(key, _)| !key.starts_with("__MOLTIS_"))
                 .map(|(key, value)| (key, Secret::new(value)))
                 .collect(),
             Err(error) => {
@@ -128,6 +130,7 @@ impl moltis_tools::exec::EnvVarProvider for CredentialEnvVarProvider {
         };
 
         // Inject gateway connection details for moltis-ctl inside sandboxes.
+        // Only injected when the gateway URL is set (skipped for blocked network).
         if let Some(ref url) = self.gateway_url {
             vars.push(("MOLTIS_GATEWAY_URL".into(), Secret::new(url.clone())));
         }
@@ -668,16 +671,28 @@ pub(super) async fn complete_startup(
         let broadcaster: Arc<dyn moltis_tools::exec::ApprovalBroadcaster> =
             Arc::new(GatewayApprovalBroadcaster::new(Arc::clone(&state)));
         // Build gateway URL for sandbox-to-gateway communication.
-        // Inside Docker, the host is reachable via `host.docker.internal`.
-        let sandbox_gateway_url = {
+        // Only inject when the sandbox network policy allows host access
+        // (Trusted or Bypass). With NetworkPolicy::Blocked the container
+        // has --network=none and host.docker.internal won't resolve.
+        let sandbox_network_allows_host = !matches!(
+            sandbox_router.config().network,
+            moltis_tools::sandbox::NetworkPolicy::Blocked
+        );
+        let sandbox_gateway_url = if sandbox_network_allows_host {
             let scheme = if tls_enabled_for_gateway {
                 "https"
             } else {
                 "http"
             };
             Some(format!("{scheme}://host.docker.internal:{port}"))
+        } else {
+            None
         };
-        let sandbox_api_key = ensure_sandbox_api_key(&credential_store).await;
+        let sandbox_api_key = if sandbox_network_allows_host {
+            ensure_sandbox_api_key(&credential_store).await
+        } else {
+            None
+        };
 
         let env_provider: Arc<dyn moltis_tools::exec::EnvVarProvider> =
             Arc::new(CredentialEnvVarProvider {
