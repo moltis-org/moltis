@@ -7,8 +7,7 @@ use crate::{
     ollama::normalize_ollama_api_base_url,
     openai_compat::{
         parse_openai_compat_usage_from_payload, parse_tool_calls,
-        split_responses_instructions_and_input, strip_think_tags, to_openai_tools,
-        to_responses_api_tools,
+        split_responses_instructions_and_input, strip_think_tags, to_responses_api_tools,
     },
     raw_model_id,
 };
@@ -225,15 +224,8 @@ impl OpenAiProvider {
         self.apply_system_prompt_rewrite(&mut body);
 
         if !tools.is_empty() {
-            let mut converted = to_openai_tools(tools, self.needs_strict_tools());
-            if self.rejects_null_in_enums() {
-                for tool in &mut converted {
-                    if let Some(params) = tool.pointer_mut("/function/parameters") {
-                        crate::openai_compat::strip_null_from_typed_enums(params);
-                    }
-                }
-            }
-            body["tools"] = serde_json::Value::Array(converted);
+            body["tools"] =
+                serde_json::Value::Array(self.prepare_chat_tools(tools));
         }
 
         self.apply_reasoning_effort_chat(&mut body);

@@ -9,7 +9,7 @@ use crate::{
     openai_compat::{
         ResponsesStreamState, SseLineResult, StreamingToolState, finalize_responses_stream,
         finalize_stream, process_openai_sse_line, process_responses_sse_line,
-        split_responses_instructions_and_input, to_openai_tools, to_responses_api_tools,
+        split_responses_instructions_and_input, to_responses_api_tools,
     },
 };
 
@@ -173,15 +173,8 @@ impl OpenAiProvider {
             self.apply_system_prompt_rewrite(&mut body);
 
             if !tools.is_empty() {
-                let mut converted = to_openai_tools(&tools, self.needs_strict_tools());
-                if self.rejects_null_in_enums() {
-                    for tool in &mut converted {
-                        if let Some(params) = tool.pointer_mut("/function/parameters") {
-                            crate::openai_compat::strip_null_from_typed_enums(params);
-                        }
-                    }
-                }
-                body["tools"] = serde_json::Value::Array(converted);
+                body["tools"] =
+                    serde_json::Value::Array(self.prepare_chat_tools(&tools));
             }
 
             self.apply_reasoning_effort_chat(&mut body);
