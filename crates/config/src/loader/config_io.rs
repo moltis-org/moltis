@@ -68,6 +68,25 @@ pub fn discover_and_load() -> MoltisConfig {
         warn!(error = %e, "failed to write defaults.toml");
     }
 
+    // Auto-compact: strip default values that were materialized by older
+    // versions. Runs on every startup (idempotent — no-op when already compact).
+    if find_config_file().is_some() {
+        match compact_config() {
+            Ok((before, after)) if before > after => {
+                info!(
+                    before,
+                    after,
+                    removed = before - after,
+                    "auto-compacted user config (stripped default values)"
+                );
+            },
+            Err(e) => {
+                debug!(error = %e, "auto-compact skipped");
+            },
+            _ => {},
+        }
+    }
+
     // Write default user config on first run (when no config file exists).
     if find_config_file().is_none() {
         let default_path = find_or_default_config_path();
@@ -407,7 +426,7 @@ pub fn save_user_config_to_path(path: &Path, config: &MoltisConfig) -> crate::Re
 
 /// Remove keys from `effective` that are identical to the corresponding key
 /// in `defaults`.  After this call, `effective` contains only user overrides.
-pub(super) fn strip_default_values(effective: &mut toml_edit::Table, defaults: &toml_edit::Table) {
+pub fn strip_default_values(effective: &mut toml_edit::Table, defaults: &toml_edit::Table) {
     let keys: Vec<String> = effective.iter().map(|(k, _)| k.to_string()).collect();
     for key in keys {
         let Some(eff_item) = effective.get(&key) else {
@@ -595,6 +614,58 @@ fn merge_toml_items(current: &mut toml_edit::Item, updated: &toml_edit::Item) {
             *current_item = updated_item.clone();
         },
     }
+}
+
+/// Strip all default values from the user config file, leaving only overrides.
+///
+/// Returns `(keys_before, keys_after)` so callers can report the reduction.
+/// Does nothing if the config file doesn't exist or isn't TOML.
+pub fn compact_config() -> crate::Result<(usize, usize)> {
+    let path = find_or_default_config_path();
+    if !path.exists() {
+        return Ok((0, 0));
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if !ext.eq_ignore_ascii_case("toml") {
+        return Ok((0, 0));
+    }
+
+    let user_toml = std::fs::read_to_string(&path)?;
+    let mut user_doc = user_toml
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|source| crate::Error::external("parse user TOML", source))?;
+
+    let defaults_toml = toml::to_string_pretty(&MoltisConfig::default())
+        .map_err(|source| crate::Error::external("serialize defaults", source))?;
+    let defaults_doc = defaults_toml
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|source| crate::Error::external("parse defaults TOML", source))?;
+
+    let keys_before = count_leaf_keys(user_doc.as_table());
+    strip_default_values(user_doc.as_table_mut(), defaults_doc.as_table());
+    let keys_after = count_leaf_keys(user_doc.as_table());
+
+    std::fs::write(&path, user_doc.to_string())?;
+    debug!(
+        path = %path.display(),
+        before = keys_before,
+        after = keys_after,
+        "compacted user config"
+    );
+    Ok((keys_before, keys_after))
+}
+
+/// Count leaf (non-table) keys recursively for reporting.
+fn count_leaf_keys(table: &toml_edit::Table) -> usize {
+    let mut count = 0;
+    for (_, item) in table.iter() {
+        match item {
+            toml_edit::Item::Table(sub) => count += count_leaf_keys(sub),
+            toml_edit::Item::Value(_) => count += 1,
+            _ => {},
+        }
+    }
+    count
 }
 
 /// Write the default config file to the user-global config path.
