@@ -28,6 +28,7 @@ pub mod cron;
 #[cfg(feature = "local-llm")]
 pub mod local_llm_setup;
 pub mod logs;
+pub mod mcp_agent_tools;
 pub mod mcp_health;
 pub mod mcp_service;
 #[cfg(feature = "mdns")]

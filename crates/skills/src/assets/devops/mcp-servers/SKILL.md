@@ -12,24 +12,21 @@ origin:
 Manage MCP (Model Context Protocol) servers that provide external tools to the agent.
 MCP servers extend the agent's capabilities by exposing tools over stdio, SSE, or streamable-HTTP transports.
 
-## CLI (`moltis-ctl`)
+## Agent Tools
 
-Inside sandboxes, use `moltis-ctl` to manage MCP servers. It communicates
-with the gateway over WebSocket using `MOLTIS_GATEWAY_URL` and `MOLTIS_API_KEY`
-environment variables (auto-injected in sandboxed environments).
+The agent has built-in tools for MCP management — no sandbox, network, or CLI needed:
 
-```bash
-moltis-ctl mcp list
-moltis-ctl mcp add --name gbrain --command gbrain --args "serve,--mcp"
-moltis-ctl mcp remove --name gbrain
-moltis-ctl mcp status --name gbrain
-moltis-ctl mcp tools --name gbrain
-moltis-ctl mcp enable --name gbrain
-moltis-ctl mcp disable --name gbrain
-moltis-ctl mcp restart --name gbrain
-```
+- `mcp_list` — list all configured servers with status
+- `mcp_add` — add a new server (params: `name`, `command`, `args`, `transport`, `url`, `env`, `display_name`)
+- `mcp_remove` — remove a server (params: `name`)
+- `mcp_status` — detailed status for a server (params: `name`)
+- `mcp_restart` — restart a running server (params: `name`)
 
-Outside sandboxes, use the RPC methods documented below.
+These are the preferred way to manage MCP servers from skills. Use them directly.
+
+## RPC Methods
+
+For advanced use or direct API access, the full RPC namespace is documented below.
 
 ## Listing Servers
 

@@ -827,6 +827,25 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(crate::channel_agent_tools::SendMessageTool::new(
             Arc::clone(&state.services.channel),
         )));
+        // MCP management tools — let agents add/remove/restart MCP servers directly.
+        {
+            let mcp = Arc::clone(&state.services.mcp);
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpListTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpAddTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpRemoveTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpStatusTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpRestartTool::new(
+                Arc::clone(&mcp),
+            )));
+        }
         {
             let tp = Arc::clone(&msteams_webhook_plugin);
             tool_registry.register(Box::new(
