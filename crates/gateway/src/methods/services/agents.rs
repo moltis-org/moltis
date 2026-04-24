@@ -611,7 +611,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         "id": id,
                         "toml": toml_str,
                         "exists": !toml_str.is_empty(),
-                        "source": source,
+                        "provenance": source,
                     }))
                 })
             }),
@@ -722,7 +722,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "theme": preset.identity.theme,
                                 "model": preset.model,
                                 "toml": toml_str,
-                                "source": "config",
                                 "provenance": provenance,
                             })
                         })

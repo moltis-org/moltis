@@ -249,7 +249,7 @@ pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> crate::Result<PathBuf
     let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
-    let mut config = discover_and_load();
+    let mut config = discover_and_load_readonly();
     f(&mut config);
     save_user_config_to_path(&target_path, &config)
 }
