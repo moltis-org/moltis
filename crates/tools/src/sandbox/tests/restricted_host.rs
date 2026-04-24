@@ -185,6 +185,21 @@ fn test_wasm_sandbox_available() {
 
 // ── Landlock FS isolation tests (Linux only, requires `landlock` feature) ──
 
+/// Build a Landlock allowlist that includes system paths for shell exec + test dirs.
+/// Includes /bin, /usr/bin, /lib, and /lib64 (if exists) so /bin/sh and libc are accessible.
+#[cfg(all(target_os = "linux", feature = "landlock"))]
+fn test_allowlist_with_system_paths(test_dirs: Vec<std::path::PathBuf>) -> Vec<std::path::PathBuf> {
+    let mut paths = test_dirs;
+    paths.push(PathBuf::from("/bin"));
+    paths.push(PathBuf::from("/usr/bin"));
+    paths.push(PathBuf::from("/lib"));
+    // lib64 only exists on x86_64; skip on ARM/RPi
+    if std::path::Path::new("/lib64").exists() {
+        paths.push(PathBuf::from("/lib64"));
+    }
+    paths
+}
+
 /// Default config (empty fs_allow_paths) must not restrict access — no regression.
 #[cfg(all(target_os = "linux", feature = "landlock"))]
 #[tokio::test]
@@ -213,7 +228,7 @@ async fn test_landlock_blocks_outside_allowlist() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let config = SandboxConfig {
-        fs_allow_paths: vec![tmp.path().to_path_buf()],
+        fs_allow_paths: test_allowlist_with_system_paths(vec![tmp.path().to_path_buf()]),
         ..Default::default()
     };
     let sandbox = RestrictedHostSandbox::new(config);
