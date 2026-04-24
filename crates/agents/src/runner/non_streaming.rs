@@ -523,6 +523,7 @@ pub async fn run_agent_loop_with_context(
                             id: tc.id.clone(),
                             name: tc.name.clone(),
                             arguments: args.clone(),
+                            metadata: tc.metadata.clone(),
                         });
                     }
                     info!(tool = %tc_name, id = %tc.id, args = %args, "executing tool");

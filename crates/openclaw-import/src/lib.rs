@@ -5,7 +5,7 @@
 //! - LLM provider keys and model preferences
 //! - Skills (SKILL.md format)
 //! - Memory (MEMORY.md and daily logs)
-//! - Telegram and Discord channel configuration
+//! - Telegram, Discord, and Signal channel configuration
 //! - Chat sessions (JSONL format)
 
 pub mod agents;
@@ -77,6 +77,7 @@ pub struct ImportScan {
     pub channels_available: bool,
     pub telegram_accounts: usize,
     pub discord_accounts: usize,
+    pub signal_accounts: usize,
     pub sessions_count: usize,
     pub unsupported_channels: Vec<String>,
     pub agent_ids: Vec<String>,
@@ -101,6 +102,7 @@ pub fn scan(detection: &OpenClawDetection) -> ImportScan {
     let (_, channels_result) = channels::import_channels(detection);
     let telegram_accounts = channels_result.telegram.len();
     let discord_accounts = channels_result.discord.len();
+    let signal_accounts = channels_result.signal.len();
 
     // Check for provider keys
     let (providers_report, _) = providers::import_providers(detection);
@@ -117,9 +119,10 @@ pub fn scan(detection: &OpenClawDetection) -> ImportScan {
         skills_count: skills.len(),
         memory_available: detection.has_memory,
         memory_files_count,
-        channels_available: telegram_accounts > 0 || discord_accounts > 0,
+        channels_available: telegram_accounts > 0 || discord_accounts > 0 || signal_accounts > 0,
         telegram_accounts,
         discord_accounts,
+        signal_accounts,
         sessions_count: detection.session_count,
         unsupported_channels: detection.unsupported_channels.clone(),
         agent_ids: detection.agent_ids.clone(),
@@ -259,7 +262,9 @@ pub fn import(
     // Channels
     if selection.channels {
         let (cat_report, imported_channels) = channels::import_channels(detection);
-        if (!imported_channels.telegram.is_empty() || !imported_channels.discord.is_empty())
+        if (!imported_channels.telegram.is_empty()
+            || !imported_channels.discord.is_empty()
+            || !imported_channels.signal.is_empty())
             && let Err(e) = persist_channels(&imported_channels, config_dir)
         {
             warn!("failed to persist channels to config: {e}");
@@ -479,6 +484,37 @@ fn persist_channels(imported: &channels::ImportedChannels, config_dir: &Path) ->
         config.channels.discord.insert(ch.account_id.clone(), value);
     }
 
+    for ch in &imported.signal {
+        ensure_channel_offered(&mut config.channels.offered, "signal");
+
+        let dm_policy = map_signal_dm_policy(ch.dm_policy.as_deref());
+        let group_policy = map_signal_group_policy(ch.group_policy.as_deref());
+        let mention_mode = map_discord_mention_mode(ch.mention_mode.as_deref());
+
+        let mut value = serde_json::json!({
+            "dm_policy": dm_policy,
+            "group_policy": group_policy,
+            "mention_mode": mention_mode,
+            "allowlist": ch.allowlist,
+            "group_allowlist": ch.group_allowlist,
+            "enabled": ch.enabled.unwrap_or(true),
+        });
+        if let Some(obj) = value.as_object_mut() {
+            if let Some(account) = &ch.account {
+                obj.insert("account".to_string(), serde_json::json!(account));
+            }
+            if let Some(account_uuid) = &ch.account_uuid {
+                obj.insert("account_uuid".to_string(), serde_json::json!(account_uuid));
+            }
+            if let Some(http_url) = &ch.http_url {
+                obj.insert("http_url".to_string(), serde_json::json!(http_url));
+            }
+        }
+
+        debug!(account_id = %ch.account_id, "persisting Signal channel to moltis.toml");
+        config.channels.signal.insert(ch.account_id.clone(), value);
+    }
+
     save_config_to_path(&config_path, &config)
 }
 
@@ -513,6 +549,24 @@ fn map_discord_mention_mode(mode: Option<&str>) -> &'static str {
         Some("always") => "always",
         Some("none") => "none",
         _ => "mention",
+    }
+}
+
+fn map_signal_dm_policy(policy: Option<&str>) -> &'static str {
+    match policy {
+        Some("open") => "open",
+        Some("disabled") => "disabled",
+        Some("allowlist") | Some("pairing") | Some("otp") => "allowlist",
+        _ => "allowlist",
+    }
+}
+
+fn map_signal_group_policy(policy: Option<&str>) -> &'static str {
+    match policy {
+        Some("open") => "open",
+        Some("allowlist") => "allowlist",
+        Some("disabled") => "disabled",
+        _ => "disabled",
     }
 }
 

@@ -462,7 +462,7 @@ pub(crate) fn is_path_in_agent_memory_scope(path: &Path, agent_id: &str) -> bool
         || path.starts_with(&root_memory_dir)
 }
 
-pub(crate) struct AgentScopedMemoryWriter {
+pub struct AgentScopedMemoryWriter {
     manager: moltis_memory::runtime::DynMemoryRuntime,
     agent_id: String,
     write_mode: AgentMemoryWriteMode,

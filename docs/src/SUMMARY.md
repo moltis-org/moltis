@@ -39,6 +39,7 @@
   - [Matrix](matrix.md)
   - [WhatsApp](whatsapp.md)
   - [Nostr](nostr.md)
+  - [Signal](signal.md)
 - [Browser Automation](browser-automation.md)
 - [CalDAV (Calendars)](caldav.md)
 - [GraphQL API](graphql.md)
@@ -73,6 +74,7 @@
 
 - [Docker](docker.md)
 - [Cloud Deploy](cloud-deploy.md)
+- [VPS Deployment](deploy-vps.md)
 
 ---
 

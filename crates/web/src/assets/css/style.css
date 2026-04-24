@@ -402,6 +402,12 @@
   .h-2\.5 {
     height: calc(var(--spacing) * 2.5);
   }
+  .h-4 {
+    height: calc(var(--spacing) * 4);
+  }
+  .h-5 {
+    height: calc(var(--spacing) * 5);
+  }
   .h-7 {
     height: calc(var(--spacing) * 7);
   }
@@ -467,6 +473,12 @@
   }
   .w-2\.5 {
     width: calc(var(--spacing) * 2.5);
+  }
+  .w-4 {
+    width: calc(var(--spacing) * 4);
+  }
+  .w-5 {
+    width: calc(var(--spacing) * 5);
   }
   .w-7 {
     width: calc(var(--spacing) * 7);
@@ -548,6 +560,9 @@
   }
   .animate-spin {
     animation: var(--animate-spin);
+  }
+  .cursor-not-allowed {
+    cursor: not-allowed;
   }
   .cursor-pointer {
     cursor: pointer;
@@ -816,6 +831,9 @@
       background-color: color-mix(in oklab, var(--accent) 10%, transparent);
     }
   }
+  .bg-\[var\(--accent-bg\,rgba\(var\(--accent-rgb\,59\,130\,246\)\,0\.08\)\)\] {
+    background-color: var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08));
+  }
   .bg-\[var\(--bg\)\] {
     background-color: var(--bg);
   }
@@ -842,6 +860,9 @@
   }
   .bg-\[var\(--surface-alt\)\] {
     background-color: var(--surface-alt);
+  }
+  .bg-\[var\(--surface1\)\] {
+    background-color: var(--surface1);
   }
   .bg-\[var\(--surface2\)\] {
     background-color: var(--surface2);
@@ -1079,6 +1100,9 @@
   .text-xs {
     font-size: var(--text-xs);
     line-height: var(--tw-leading, var(--text-xs--line-height));
+  }
+  .text-\[\.7rem\] {
+    font-size: .7rem;
   }
   .text-\[0\.6rem\] {
     font-size: 0.6rem;
@@ -1436,6 +1460,11 @@
       opacity: 40%;
     }
   }
+  .sm\:grid-cols-2 {
+    @media (width >= 40rem) {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
   .md\:grid-cols-2 {
     @media (width >= 48rem) {
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1466,9 +1495,9 @@
       column-gap: calc(var(--spacing) * 4);
     }
   }
-  .lg\:grid-cols-2 {
+  .lg\:grid-cols-3 {
     @media (width >= 64rem) {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
   }
   .xl\:grid-cols-2 {
@@ -1649,6 +1678,7 @@
     background: var(--assistant-bg);
     border: 1px solid var(--assistant-border);
     color: var(--text);
+    white-space: normal;
   }
   .msg.system {
     align-self: center;
@@ -3291,6 +3321,10 @@
     -webkit-mask-image: url("./icons/masks/nostr.svg");
     mask-image: url("./icons/masks/nostr.svg");
   }
+  .icon-signal {
+    -webkit-mask-image: url("./icons/masks/signal.svg");
+    mask-image: url("./icons/masks/signal.svg");
+  }
   .icon-cron {
     -webkit-mask-image: url("./icons/masks/mask-47feaf85cf1fb335.svg");
     mask-image: url("./icons/masks/mask-47feaf85cf1fb335.svg");
@@ -3318,6 +3352,14 @@
   .icon-link {
     -webkit-mask-image: url("./icons/masks/mask-d579c16638bc3452.svg");
     mask-image: url("./icons/masks/mask-d579c16638bc3452.svg");
+  }
+  .icon-github-issue {
+    -webkit-mask-image: url("./icons/masks/mask-github-issue.svg");
+    mask-image: url("./icons/masks/mask-github-issue.svg");
+  }
+  .icon-github-discussion {
+    -webkit-mask-image: url("./icons/masks/mask-github-discussion.svg");
+    mask-image: url("./icons/masks/mask-github-discussion.svg");
   }
   .icon-chart-bar {
     -webkit-mask-image: url("./icons/masks/mask-b9bf0315417c03e4.svg");

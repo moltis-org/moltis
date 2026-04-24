@@ -13,6 +13,8 @@ test.describe("Skills page", () => {
 	test("install input present", async ({ page }) => {
 		await navigateAndWait(page, "/skills");
 
+		// Install inputs are behind the Repositories tab
+		await page.getByRole("tab", { name: /Repositories/ }).click();
 		await expect(page.getByPlaceholder("owner/repo or full URL (e.g. anthropics/skills)")).toBeVisible();
 		await expect(page.getByRole("button", { name: "Install", exact: true }).first()).toBeVisible();
 		await expect(page.getByPlaceholder("/path/to/skill-bundle.tar.gz")).toBeVisible();
@@ -22,6 +24,8 @@ test.describe("Skills page", () => {
 	test("featured repos shown", async ({ page }) => {
 		await navigateAndWait(page, "/skills");
 
+		// Featured section is behind the Repositories tab
+		await page.getByRole("tab", { name: /Repositories/ }).click();
 		await expect(page.getByRole("heading", { name: "Featured Repositories", exact: true })).toBeVisible();
 		await expect(page.getByRole("link", { name: "openclaw/skills", exact: true })).toBeVisible();
 	});
@@ -75,6 +79,8 @@ test.describe("Skills page", () => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/skills");
 
+		// Repos are behind the Repositories tab
+		await page.getByRole("tab", { name: /Repositories/ }).click();
 		await page.getByText("0/1 enabled", { exact: true }).click();
 		await expect(page.getByRole("button", { name: "Export", exact: true })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Clear Quarantine", exact: true })).toBeVisible();

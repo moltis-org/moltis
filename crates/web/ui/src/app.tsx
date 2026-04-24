@@ -10,6 +10,7 @@ import { SessionList } from "./components/SessionList";
 import * as _events from "./events";
 import { onEvent } from "./events";
 import * as gon from "./gon";
+import "./github-stats";
 import * as _helpers from "./helpers";
 import * as _i18n from "./i18n";
 import { init as initI18n, translateStaticElements } from "./i18n";

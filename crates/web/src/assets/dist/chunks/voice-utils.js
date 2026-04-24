@@ -68,7 +68,8 @@ const ChannelType = {
   Discord: "discord",
   Slack: "slack",
   Matrix: "matrix",
-  Nostr: "nostr"
+  Nostr: "nostr",
+  Signal: "signal"
 };
 const MATRIX_DOCS_URL = "https://docs.moltis.org/matrix.html";
 const MATRIX_DEFAULT_HOMESERVER = "https://matrix.org";
@@ -163,6 +164,11 @@ function deriveMatrixAccountId(options = {}) {
   const base = hostSlug || "matrix";
   return `${base}-${randomSuffix(6)}`.slice(0, 80);
 }
+function deriveSignalAccountId(account) {
+  const slug = String(account || "").trim().replace(/^\+/, "").replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+  if (slug) return `signal-${slug}`.slice(0, 80);
+  return `signal-${randomSuffix(6)}`;
+}
 function normalizeMatrixOtpCooldown(value, fallback = 300) {
   const parsed = Number.parseInt(String(value || ""), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -225,6 +231,30 @@ function buildTeamsEndpoint(baseUrl, accountId, webhookSecret) {
   const secret = (webhookSecret || "").trim();
   if (!(normalizedBase && account && secret)) return "";
   return `${normalizedBase}/api/channels/msteams/${encodeURIComponent(account)}/webhook?secret=${encodeURIComponent(secret)}`;
+}
+function TabBar({ tabs, active, onChange: onChange2, className }) {
+  return /* @__PURE__ */ u("div", { className: className ?? "flex border-b border-[var(--border)] text-xs", role: "tablist", children: tabs.map((tab) => {
+    const isActive = tab.id === active;
+    const tabClass = [
+      "py-2 px-3 cursor-pointer bg-transparent border-b-2 transition-colors text-sm",
+      isActive ? "border-[var(--accent)] text-[var(--text)] font-medium" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"
+    ].join(" ");
+    return /* @__PURE__ */ u(
+      "button",
+      {
+        type: "button",
+        role: "tab",
+        "aria-selected": isActive,
+        className: tabClass,
+        onClick: () => onChange2(tab.id),
+        children: [
+          tab.label,
+          tab.badge != null && /* @__PURE__ */ u("span", { className: "ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]", children: tab.badge })
+        ]
+      },
+      tab.id
+    );
+  }) });
 }
 function targetValue(e) {
   return e.target.value;
@@ -450,6 +480,41 @@ function buildSaveKeyPayload(providerName, apiKey, baseUrl, model) {
 function saveProviderKey(providerName, apiKey, baseUrl, model) {
   const payload = buildSaveKeyPayload(providerName, apiKey, baseUrl, model);
   return sendRpc("providers.save_key", payload);
+}
+const SkillSource = {
+  Project: "project",
+  Personal: "personal",
+  Bundled: "bundled"
+};
+function isDiscoveredSource(source) {
+  return source === SkillSource.Personal || source === SkillSource.Project;
+}
+function isRepoSource(source) {
+  return !!(source == null ? void 0 : source.includes("/"));
+}
+const CATEGORY_META = {
+  apple: { icon: "🍎", desc: "Apple ecosystem (Shortcuts, HomeKit)" },
+  audio: { icon: "🎵", desc: "Audio processing and music" },
+  "autonomous-ai-agents": { icon: "🤖", desc: "Multi-agent orchestration" },
+  creative: { icon: "🎨", desc: "Writing, art, and content creation" },
+  "data-science": { icon: "📊", desc: "Data analysis and visualization" },
+  devops: { icon: "⚙️", desc: "Infrastructure, CI/CD, and deployment" },
+  dogfood: { icon: "🐶", desc: "Internal tooling and self-reference" },
+  email: { icon: "✉️", desc: "Email management and automation" },
+  gaming: { icon: "🎮", desc: "Game development and gaming tools" },
+  github: { icon: "🐙", desc: "GitHub workflows and integrations" },
+  media: { icon: "📷", desc: "Image, video, and media processing" },
+  messaging: { icon: "💬", desc: "Chat platforms and messaging" },
+  mlops: { icon: "🧠", desc: "ML training, fine-tuning, and deployment" },
+  "note-taking": { icon: "📝", desc: "Notes and knowledge management" },
+  productivity: { icon: "⚡", desc: "Task management and workflows" },
+  research: { icon: "🔬", desc: "Academic papers and web research" },
+  "smart-home": { icon: "🏠", desc: "Home automation and IoT" },
+  "social-media": { icon: "📱", desc: "Social platform integrations" },
+  "software-development": { icon: "💻", desc: "Coding, testing, and dev tools" }
+};
+function categoryLabel(name) {
+  return name.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }
 const EMOJI_LIST = [
   "🐶",
@@ -741,34 +806,41 @@ function decodeBase64Safe(input) {
   return bytes;
 }
 export {
-  startProviderOAuth as A,
-  saveProviderKey as B,
+  transcribeAudio as $,
+  completeProviderOAuth as A,
+  startProviderOAuth as B,
   ChannelType as C,
-  testModel as D,
-  isModelServiceNotConfigured as E,
-  isTimeoutError as F,
-  humanizeProbeError as G,
-  eventListeners as H,
-  refresh as I,
-  EmojiPicker as J,
-  validateIdentityFields as K,
-  updateIdentity as L,
+  saveProviderKey as D,
+  testModel as E,
+  isModelServiceNotConfigured as F,
+  isTimeoutError as G,
+  humanizeProbeError as H,
+  eventListeners as I,
+  refresh as J,
+  isRepoSource as K,
+  CATEGORY_META as L,
   MATRIX_DEFAULT_HOMESERVER as M,
-  set as N,
-  prepareCreationOptions as O,
-  detectPasskeyName as P,
-  fetchVoiceProviders as Q,
-  fetchPhrase as R,
-  testTts as S,
-  decodeBase64Safe as T,
-  transcribeAudio as U,
-  toggleVoiceProvider as V,
-  saveVoiceKey as W,
-  saveVoiceSettings as X,
-  gon$1 as Y,
-  VOICE_COUNTERPART_IDS as Z,
-  _events as _,
+  categoryLabel as N,
+  isDiscoveredSource as O,
+  EmojiPicker as P,
+  validateIdentityFields as Q,
+  updateIdentity as R,
+  SkillSource as S,
+  TabBar as T,
+  set as U,
+  prepareCreationOptions as V,
+  detectPasskeyName as W,
+  fetchVoiceProviders as X,
+  fetchPhrase as Y,
+  testTts as Z,
+  decodeBase64Safe as _,
   onChange as a,
+  toggleVoiceProvider as a0,
+  saveVoiceKey as a1,
+  saveVoiceSettings as a2,
+  gon$1 as a3,
+  _events as a4,
+  VOICE_COUNTERPART_IDS as a5,
   addChannel as b,
   MATRIX_ENCRYPTION_GUIDANCE as c,
   targetChecked as d,
@@ -785,13 +857,13 @@ export {
   onEvent as o,
   parseChannelConfigPatch as p,
   fetchChannelStatus as q,
-  buildTeamsEndpoint as r,
-  generateWebhookSecretHex as s,
+  deriveSignalAccountId as r,
+  buildTeamsEndpoint as s,
   targetValue as t,
-  defaultTeamsBaseUrl as u,
+  generateWebhookSecretHex as u,
   validateChannelFields as v,
-  channelStorageNote as w,
-  providerApiKeyHelp as x,
-  validateProviderKey as y,
-  completeProviderOAuth as z
+  defaultTeamsBaseUrl as w,
+  channelStorageNote as x,
+  providerApiKeyHelp as y,
+  validateProviderKey as z
 };

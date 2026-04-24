@@ -3,8 +3,6 @@
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { sendRpc } from "../../helpers";
-import { navigate } from "../../router";
-import { settingsPath } from "../../routes";
 import type { RpcResponse } from "./_shared";
 
 interface ToolEntry {
@@ -17,25 +15,11 @@ interface ToolGroup {
 	tools: ToolEntry[];
 }
 
-interface SkillEntry {
-	name?: string;
-	description?: string;
-	source?: string;
-}
-
-interface McpServerEntry {
-	name?: string;
-	state?: string;
-	tool_count?: number;
-}
-
 interface ToolsContextData {
 	session?: { model?: string; provider?: string; label?: string };
 	execution?: { mode?: string; promptSymbol?: string };
 	sandbox?: { enabled?: boolean; backend?: string };
 	tools?: ToolEntry[];
-	skills?: SkillEntry[];
-	mcpServers?: McpServerEntry[];
 	supportsTools?: boolean;
 	mcpDisabled?: boolean;
 }
@@ -146,12 +130,6 @@ export function ToolsSection(): VNode {
 	const sandbox = data.sandbox || {};
 	const tools: ToolEntry[] = Array.isArray(data.tools) ? data.tools : [];
 	const toolGroups = groupToolsForOverview(tools);
-	const skills: SkillEntry[] = Array.isArray(data.skills) ? data.skills : [];
-	const pluginCount = skills.filter((entry) => entry?.source === "plugin").length;
-	const personalSkillCount = skills.length - pluginCount;
-	const mcpServers: McpServerEntry[] = Array.isArray(data.mcpServers) ? data.mcpServers : [];
-	const runningMcpServers = mcpServers.filter((entry) => entry?.state === "running");
-	const runningMcpToolCount = runningMcpServers.reduce((sum, entry) => sum + (Number(entry?.tool_count) || 0), 0);
 	const remoteExecInventory = summarizeRemoteExecInventory(nodeInventory);
 	const routeDetails: string[] = [];
 	routeDetails.push(execution.mode === "sandbox" ? "sandboxed commands" : "host commands");
@@ -183,50 +161,6 @@ export function ToolsSection(): VNode {
 				>
 					{loadingTools ? "Refreshing\u2026" : "Refresh"}
 				</button>
-			</div>
-
-			<div className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[1100px]">
-				<div className="text-xs text-[var(--muted)] leading-relaxed">
-					Use this as the operator view of what the model can currently reach. For setup changes, jump straight to the
-					relevant control surface.
-				</div>
-				<div className="mt-3 flex gap-2 flex-wrap">
-					<button
-						type="button"
-						className="provider-btn provider-btn-secondary"
-						onClick={() => navigate(settingsPath("providers"))}
-					>
-						LLMs
-					</button>
-					<button
-						type="button"
-						className="provider-btn provider-btn-secondary"
-						onClick={() => navigate(settingsPath("mcp"))}
-					>
-						MCP
-					</button>
-					<button
-						type="button"
-						className="provider-btn provider-btn-secondary"
-						onClick={() => navigate(settingsPath("skills"))}
-					>
-						Skills
-					</button>
-					<button
-						type="button"
-						className="provider-btn provider-btn-secondary"
-						onClick={() => navigate(settingsPath("nodes"))}
-					>
-						Nodes
-					</button>
-					<button
-						type="button"
-						className="provider-btn provider-btn-secondary"
-						onClick={() => navigate(settingsPath("ssh"))}
-					>
-						SSH
-					</button>
-				</div>
 			</div>
 
 			{toolsErr ? <div className="text-xs text-[var(--error)] max-w-[1100px]">{toolsErr}</div> : null}
@@ -261,36 +195,6 @@ export function ToolsSection(): VNode {
 				</div>
 
 				<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
-					<div className="text-xs uppercase tracking-wide text-[var(--muted)]">MCP</div>
-					<div className="mt-2 flex items-center gap-2 flex-wrap">
-						<span
-							className={`provider-item-badge ${
-								data.supportsTools === false || data.mcpDisabled
-									? "warning"
-									: runningMcpServers.length > 0
-										? "configured"
-										: "muted"
-							}`}
-						>
-							{data.supportsTools === false
-								? "Unavailable"
-								: data.mcpDisabled
-									? "Off for session"
-									: runningMcpServers.length > 0
-										? "Active"
-										: "No running servers"}
-						</span>
-						<span className="text-sm font-medium text-[var(--text)]">
-							{pluralizeToolsCount(runningMcpToolCount, "MCP tool")}
-						</span>
-					</div>
-					<div className="text-xs text-[var(--muted)] mt-2 leading-relaxed">
-						{pluralizeToolsCount(runningMcpServers.length, "running server")}
-						{data.mcpDisabled ? ", disabled explicitly for this session." : "."}
-					</div>
-				</div>
-
-				<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
 					<div className="text-xs uppercase tracking-wide text-[var(--muted)]">Execution Routes</div>
 					<div className="mt-2 text-sm font-medium text-[var(--text)]">{routeDetails.join(" \u00b7 ")}</div>
 					<div className="text-xs text-[var(--muted)] mt-2 leading-relaxed">
@@ -311,98 +215,39 @@ export function ToolsSection(): VNode {
 				</div>
 			) : null}
 
-			<div className="grid gap-4 md:grid-cols-2 max-w-[1100px]">
-				<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
-					<div className="flex items-center justify-between gap-2 flex-wrap">
-						<h3 className="text-sm font-medium text-[var(--text-strong)] m-0">Registered Tools</h3>
-						<span className="provider-item-badge muted">{tools.length}</span>
-					</div>
-					{toolGroups.length > 0 ? (
-						<div className="mt-3 flex flex-col gap-3">
-							{toolGroups.map((group) => (
-								<div key={group.label}>
-									<div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-2">
-										{group.label} {"\u00b7"} {group.tools.length}
-									</div>
-									<div className="flex flex-col gap-2">
-										{group.tools.map((tool) => (
-											<div key={tool.name} className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3">
-												<div className="flex items-center justify-between gap-2 flex-wrap">
-													<div className="text-xs font-medium text-[var(--text)] break-words">{tool.name}</div>
-													{tool.name?.startsWith("mcp__") ? (
-														<span className="provider-item-badge configured">MCP</span>
-													) : null}
-												</div>
-												<div className="text-xs text-[var(--muted)] mt-1 leading-relaxed">
-													{tool.description || "No description provided."}
-												</div>
-											</div>
-										))}
-									</div>
+			<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4 max-w-[1100px]">
+				<div className="flex items-center justify-between gap-2 flex-wrap">
+					<h3 className="text-sm font-medium text-[var(--text-strong)] m-0">Registered Tools</h3>
+					<span className="provider-item-badge muted">{tools.length}</span>
+				</div>
+				{toolGroups.length > 0 ? (
+					<div className="mt-3 flex flex-col gap-3">
+						{toolGroups.map((group) => (
+							<div key={group.label}>
+								<div className="text-xs uppercase tracking-wide text-[var(--muted)] mb-2">
+									{group.label} {"\u00b7"} {group.tools.length}
 								</div>
-							))}
-						</div>
-					) : (
-						<div className="text-xs text-[var(--muted)] mt-3">No tools are currently exposed to this session.</div>
-					)}
-				</div>
-
-				<div className="flex flex-col gap-4">
-					<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
-						<div className="flex items-center justify-between gap-2 flex-wrap">
-							<h3 className="text-sm font-medium text-[var(--text-strong)] m-0">Skills & Plugins</h3>
-							<span className="provider-item-badge muted">{skills.length}</span>
-						</div>
-						<div className="text-xs text-[var(--muted)] mt-3 leading-relaxed">
-							{pluralizeToolsCount(personalSkillCount, "skill")}, {pluralizeToolsCount(pluginCount, "plugin")}.
-						</div>
-						{skills.length > 0 ? (
-							<div className="mt-3 flex flex-col gap-2">
-								{skills.map((entry) => (
-									<div key={entry.name} className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3">
-										<div className="flex items-center justify-between gap-2 flex-wrap">
-											<div className="text-xs font-medium text-[var(--text)]">{entry.name}</div>
-											<span className={`provider-item-badge ${entry.source === "plugin" ? "configured" : "muted"}`}>
-												{entry.source === "plugin" ? "Plugin" : "Skill"}
-											</span>
+								<div className="flex flex-col gap-2">
+									{group.tools.map((tool) => (
+										<div key={tool.name} className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3">
+											<div className="flex items-center justify-between gap-2 flex-wrap">
+												<div className="text-xs font-medium text-[var(--text)] break-words">{tool.name}</div>
+												{tool.name?.startsWith("mcp__") ? (
+													<span className="provider-item-badge configured">MCP</span>
+												) : null}
+											</div>
+											<div className="text-xs text-[var(--muted)] mt-1 leading-relaxed">
+												{tool.description || "No description provided."}
+											</div>
 										</div>
-										<div className="text-xs text-[var(--muted)] mt-1 leading-relaxed">
-											{entry.description || "No description provided."}
-										</div>
-									</div>
-								))}
+									))}
+								</div>
 							</div>
-						) : (
-							<div className="text-xs text-[var(--muted)] mt-3">No skills or plugins enabled.</div>
-						)}
+						))}
 					</div>
-
-					<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
-						<div className="flex items-center justify-between gap-2 flex-wrap">
-							<h3 className="text-sm font-medium text-[var(--text-strong)] m-0">MCP Servers</h3>
-							<span className="provider-item-badge muted">{mcpServers.length}</span>
-						</div>
-						{mcpServers.length > 0 ? (
-							<div className="mt-3 flex flex-col gap-2">
-								{mcpServers.map((entry) => (
-									<div key={entry.name} className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3">
-										<div className="flex items-center justify-between gap-2 flex-wrap">
-											<div className="text-xs font-medium text-[var(--text)]">{entry.name}</div>
-											<span className={`provider-item-badge ${entry.state === "running" ? "configured" : "warning"}`}>
-												{entry.state || "unknown"}
-											</span>
-										</div>
-										<div className="text-xs text-[var(--muted)] mt-1 leading-relaxed">
-											{pluralizeToolsCount(Number(entry.tool_count) || 0, "tool")}
-										</div>
-									</div>
-								))}
-							</div>
-						) : (
-							<div className="text-xs text-[var(--muted)] mt-3">No MCP servers configured.</div>
-						)}
-					</div>
-				</div>
+				) : (
+					<div className="text-xs text-[var(--muted)] mt-3">No tools are currently exposed to this session.</div>
+				)}
 			</div>
 		</div>
 	);

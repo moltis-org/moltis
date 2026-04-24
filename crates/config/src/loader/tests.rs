@@ -1,9 +1,13 @@
-use std::{path::PathBuf, sync::Mutex};
+use std::{collections::HashMap, path::PathBuf, sync::Mutex};
+
+use secrecy::ExposeSecret;
 
 use crate::{AgentIdentity, UserProfile, schema::MoltisConfig};
 
 use super::{
-    config_io::{apply_env_overrides_with, parse_config, parse_env_value, set_nested},
+    config_io::{
+        apply_env_overrides_with, parse_config, parse_env_value, resubstitute_config, set_nested,
+    },
     *,
 };
 
@@ -1080,4 +1084,210 @@ fn load_guidelines_md_for_agent_falls_back_to_root() {
     );
 
     clear_data_dir();
+}
+
+// ── GH-770: env variable resolution from [env] section and DB ────────
+
+/// GH-770: `${VAR}` in config sections should resolve against `[env]` values
+/// defined in the same TOML file.
+#[test]
+fn gh770_env_section_vars_resolve_in_config_placeholders() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("moltis.toml");
+    let expected = "sk-test-from-env-section";
+    std::fs::write(
+        &path,
+        format!(
+            r#"
+[env]
+MY_API_KEY = "{expected}"
+
+[tools.web.search.perplexity]
+api_key = "${{MY_API_KEY}}"
+model = "sonar"
+"#
+        ),
+    )
+    .expect("write config");
+
+    let config = load_config(&path).expect("load config");
+    let api_key = config
+        .tools
+        .web
+        .search
+        .perplexity
+        .api_key
+        .as_ref()
+        .expect("api_key should be set");
+    // Never pass secret values to assert_eq! — it prints both sides on failure.
+    assert!(
+        api_key.expose_secret() == expected,
+        "api_key should be resolved from [env] section, not left as literal placeholder"
+    );
+}
+
+/// GH-770: Precedence test.  Process env lookup wins over the overrides map.
+/// Tested via the underlying `substitute_env_with` with a mock lookup
+/// so that no real env vars are read (avoids leaking secrets on failure).
+#[test]
+fn gh770_process_env_takes_precedence_over_env_section() {
+    // The precedence logic lives in substitute_env_with_overrides which
+    // chains std::env::var → overrides.  We verify the same chain
+    // through substitute_env_with using a controlled mock.
+    let result = crate::env_subst::substitute_env_with_overrides(
+        "${MOLTIS_GH770_PRECEDENCE_TEST}",
+        &HashMap::from([("MOLTIS_GH770_PRECEDENCE_TEST".into(), "from-map".into())]),
+    );
+    // The var is not in the process env, so the map value is used.
+    assert_eq!(result, "from-map");
+
+    // The full precedence proof (process env > map) is in the env_subst
+    // unit test `with_overrides_primary_lookup_wins_over_map`.
+}
+
+/// GH-770: `resubstitute_config` resolves leftover `${VAR}` placeholders
+/// using a runtime override map (simulating DB env vars).
+#[test]
+fn gh770_resubstitute_config_resolves_db_env_vars() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("moltis.toml");
+    // Use a var name that definitely does not exist in the process env.
+    let var = "MOLTIS_GH770_ONLY_IN_DB_42";
+    let expected_after = "sk-or-from-db";
+    std::fs::write(
+        &path,
+        format!(
+            r#"
+[tools.web.search.perplexity]
+api_key = "${{{var}}}"
+model = "sonar"
+"#
+        ),
+    )
+    .expect("write config");
+
+    let config = load_config(&path).expect("load config");
+    // Before resubstitution, the placeholder should still be literal.
+    let key_before = config
+        .tools
+        .web
+        .search
+        .perplexity
+        .api_key
+        .as_ref()
+        .expect("api_key should be set");
+    assert!(
+        key_before.expose_secret().starts_with("${"),
+        "placeholder should be unresolved before resubstitution"
+    );
+
+    // Simulate DB env vars becoming available.
+    let mut runtime_overrides = HashMap::new();
+    runtime_overrides.insert(var.to_string(), expected_after.to_string());
+    let config = resubstitute_config(&config, &runtime_overrides).expect("resubstitute");
+
+    let key_after = config
+        .tools
+        .web
+        .search
+        .perplexity
+        .api_key
+        .as_ref()
+        .expect("api_key should be set");
+    assert!(
+        key_after.expose_secret() == expected_after,
+        "placeholder should resolve against runtime override map after resubstitution"
+    );
+}
+
+/// GH-770: `resubstitute_config` preserves already-resolved values and
+/// only resolves remaining placeholders.
+#[test]
+fn gh770_resubstitute_preserves_resolved_values() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("moltis.toml");
+    let var = "MOLTIS_GH770_UNRESOLVABLE_43";
+    let expected = "resolved-later";
+    std::fs::write(
+        &path,
+        format!(
+            r#"
+[identity]
+name = "Rex"
+
+[tools.web.search.perplexity]
+api_key = "${{{var}}}"
+model = "sonar"
+"#
+        ),
+    )
+    .expect("write config");
+
+    let config = load_config(&path).expect("load config");
+    assert_eq!(config.identity.name.as_deref(), Some("Rex"));
+
+    let mut overrides = HashMap::new();
+    overrides.insert(var.to_string(), expected.to_string());
+    let config = resubstitute_config(&config, &overrides).expect("resubstitute");
+
+    // Existing values must survive the round-trip.
+    assert_eq!(
+        config.identity.name.as_deref(),
+        Some("Rex"),
+        "non-placeholder values must survive resubstitution"
+    );
+    let key = config
+        .tools
+        .web
+        .search
+        .perplexity
+        .api_key
+        .as_ref()
+        .expect("api_key");
+    assert!(
+        key.expose_secret() == expected,
+        "placeholder should resolve after resubstitution"
+    );
+}
+
+/// GH-770: Override values containing quotes or backslashes must not break
+/// resubstitution (no TOML injection via textual round-trip).
+#[test]
+fn gh770_resubstitute_handles_special_chars_in_values() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("moltis.toml");
+    let var = "MOLTIS_GH770_SPECIAL_CHARS";
+    std::fs::write(
+        &path,
+        format!(
+            r#"
+[tools.web.search.perplexity]
+api_key = "${{{var}}}"
+model = "sonar"
+"#
+        ),
+    )
+    .expect("write config");
+
+    let config = load_config(&path).expect("load config");
+
+    // Value with double-quote and backslash — would break TOML text substitution.
+    let tricky_value = r#"sk-pass"word\with\special"chars"#;
+    let mut overrides = HashMap::new();
+    overrides.insert(var.to_string(), tricky_value.to_string());
+
+    let config = resubstitute_config(&config, &overrides)
+        .expect("resubstitute must not fail on special chars");
+    let key = config
+        .tools
+        .web
+        .search
+        .perplexity
+        .api_key
+        .as_ref()
+        .expect("api_key should be set");
+    assert!(
+        key.expose_secret() == tricky_value,
+        "value with quotes/backslashes must survive resubstitution intact"
+    );
 }

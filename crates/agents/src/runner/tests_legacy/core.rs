@@ -473,6 +473,7 @@ pub enum RunnerEvent {
         id: String,
         name: String,
         arguments: serde_json::Value,
+        metadata: Option<serde_json::Map<String, serde_json::Value>>,
     },
     ToolCallEnd {
         id: String,

@@ -19,6 +19,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260423.01] - 2026-04-23
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+
+## [20260422.01] - 2026-04-22
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+
+## [20260421.05] - 2026-04-21
+### Fixed
+- [code-index] Use discover_opts with permissive trust for gix
+- [web] Render inline markdown in table cells
+- [code-index] Set required_trust to Reduced for gix discovery
+- [code-index] Use struct init for clippy field_reassign_with_default
+- [code-index] Use open_opts with forced Trust::Full for gix
+- [code-index] Skip git-dependent tests when .git is absent
+- [telegram] Infer MIME from filename when Telegram sends octet-stream (#819)
+- [ci] Install git before checkout in CUDA containers
+
+## [20260421.04] - 2026-04-21
+### Fixed
+- [ci] Make safe.directory step non-fatal when git is absent
+
+## [20260421.03] - 2026-04-21
+### Fixed
+- [ci] Restore original step order, fix gix open, revert npm flag
+
+## [20260421.02] - 2026-04-21
+### Fixed
+- [ci] Gix safe.directory, read_ops file_path regression, npm --ignore-scripts
+- [tools] Empty file_path falls through to read_primary, whitespace rejected
+
+## [20260421.01] - 2026-04-21
+### Added
+- [channels] Centralized command registry for all channels (#794)
+- Gemini thought_signature round-tripping and schema validation fixes (#795)
+- Self-improving agent loop — skills, memory lifecycle, deployment (#803)
+- [web] Add GitHub Issues and Discussions links with count badges (#806)
+- [sandbox] Install Node.js 22 LTS via NodeSource (#807)
+- [web] Render markdown as HTML in chat messages (#808)
+- [skills] Bundle 101 default skills with category UI and format fallback (#797)
+
+
+### Changed
+- [tools] Split skill_tools.rs into submodules
+
+
+### Fixed
+- [ci] Add safe.directory for container jobs (gix ownership check)
+- [slack] Strip leading slash from commands before gateway dispatch (#804)
+- [mcp] Implement legacy SSE transport for endpoint discovery (#805)
+- [ci] Biome formatting and file size allowlist
+- [sandbox] Verify image in Podman store after BuildKit build (#811)
+- [providers] Disable strict tools for Fireworks Kimi router (#812)
+- [ci] Npm --ignore-scripts and git install ordering
+- [ci] Pass safe.directory to gix via env vars in rust-ci container
+
 ## [20260420.02] - 2026-04-20
 ### Fixed
 - [ci] Address main rust failures

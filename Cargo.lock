@@ -7520,6 +7520,7 @@ dependencies = [
  "moltis-secret-store",
  "moltis-service-traits",
  "moltis-sessions",
+ "moltis-signal",
  "moltis-skills",
  "moltis-slack",
  "moltis-tailscale",
@@ -8115,11 +8116,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-signal"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "moltis-channels",
+ "moltis-common",
+ "reqwest 0.13.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "moltis-skills"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "flate2",
+ "include_dir",
  "moltis-config",
  "moltis-metrics",
  "notify-debouncer-full",

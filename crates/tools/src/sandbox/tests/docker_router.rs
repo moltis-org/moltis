@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+use std::env;
+
 use super::*;
 
 #[test]
@@ -529,6 +531,38 @@ fn test_sandbox_image_dockerfile_installs_gogcli() {
 }
 
 #[test]
+fn test_sandbox_image_dockerfile_adds_nodesource_for_nodejs() {
+    let dockerfile = sandbox_image_dockerfile("ubuntu:25.10", &["curl".into(), "nodejs".into()]);
+    assert!(dockerfile.contains("nodesource.gpg"));
+    assert!(dockerfile.contains("node_22.x"));
+    // Bootstraps curl+gnupg before using them
+    assert!(dockerfile.contains("apt-get install -y -qq curl gnupg"));
+    // nodejs should remain in the main apt-get install line
+    assert!(dockerfile.contains("nodejs"));
+    // npm is superseded by NodeSource nodejs and should be filtered out
+    let dockerfile_with_npm = sandbox_image_dockerfile("ubuntu:25.10", &[
+        "curl".into(),
+        "nodejs".into(),
+        "npm".into(),
+    ]);
+    assert!(!dockerfile_with_npm.contains(" npm "));
+}
+
+#[test]
+fn test_sandbox_image_dockerfile_no_nodesource_without_nodejs() {
+    let dockerfile = sandbox_image_dockerfile("ubuntu:25.10", &["curl".into(), "git".into()]);
+    assert!(!dockerfile.contains("nodesource"));
+}
+
+#[test]
+fn test_sandbox_image_dockerfile_npm_without_nodejs_kept() {
+    // npm without nodejs is a valid config — should not be filtered
+    let dockerfile = sandbox_image_dockerfile("ubuntu:25.10", &["npm".into(), "curl".into()]);
+    assert!(dockerfile.contains("npm"));
+    assert!(!dockerfile.contains("nodesource"));
+}
+
+#[test]
 fn test_docker_image_tag_changes_with_base() {
     let packages = vec!["curl".into()];
     let t1 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &packages);
@@ -653,4 +687,49 @@ async fn test_sandbox_router_global_image_override() {
     router.remove_image_override("main").await;
     let img = router.default_image().await;
     assert_eq!(img, DEFAULT_SANDBOX_IMAGE);
+}
+
+/// E2E regression test for #796: Podman+BuildKit may leave images in
+/// BuildKit's cache instead of the Podman store.  Gated behind
+/// `MOLTIS_SANDBOX_RUNTIME_E2E=1` and requires Podman to be installed.
+#[tokio::test]
+async fn test_podman_build_image_exists_in_store() {
+    let enabled = env::var("MOLTIS_SANDBOX_RUNTIME_E2E")
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+    if !enabled || !is_cli_available("podman") {
+        eprintln!(
+            "skipping test_podman_build_image_exists_in_store (set MOLTIS_SANDBOX_RUNTIME_E2E=1 and install podman)"
+        );
+        return;
+    }
+
+    let sandbox = DockerSandbox::podman(SandboxConfig::default());
+    let packages = vec!["curl".into()];
+    let tag = sandbox_image_tag(sandbox.image_repo(), "ubuntu:25.10", &packages);
+
+    // Remove any pre-existing image so we exercise the full build path.
+    let _ = tokio::process::Command::new("podman")
+        .args(["rmi", "-f", &tag])
+        .output()
+        .await;
+
+    let result = sandbox
+        .build_image("ubuntu:25.10", &packages)
+        .await
+        .expect("build_image should succeed");
+    let result = result.expect("build_image should return Some for non-empty packages");
+    assert_eq!(result.tag, tag);
+
+    // The critical assertion: the image must be in the Podman store.
+    assert!(
+        sandbox_image_exists("podman", &tag).await,
+        "image {tag} must exist in podman store after build_image"
+    );
+
+    // Cleanup.
+    let _ = tokio::process::Command::new("podman")
+        .args(["rmi", "-f", &tag])
+        .output()
+        .await;
 }

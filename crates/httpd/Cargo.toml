@@ -71,6 +71,7 @@ default = [
   "nostr",
   "prometheus",
   "push-notifications",
+  "signal",
   "slack",
   "tailscale",
   "tls",
@@ -91,6 +92,7 @@ ngrok = ["dep:ngrok"]
 nostr = ["moltis-gateway/nostr"]
 prometheus = ["metrics", "moltis-gateway/prometheus"]
 push-notifications = ["dep:chrono", "moltis-gateway/push-notifications"]
+signal = ["moltis-gateway/signal"]
 slack = ["dep:moltis-slack", "moltis-gateway/slack"]
 tailscale = ["moltis-gateway/tailscale"]
 tls = ["dep:moltis-tls", "dep:rustls", "moltis-gateway/tls"]

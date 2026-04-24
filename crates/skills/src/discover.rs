@@ -76,12 +76,60 @@ impl SkillDiscoverer for FsSkillDiscoverer {
                 SkillSource::Plugin => {
                     discover_plugins(base_path, &mut skills);
                 },
+                // Bundled skills are handled by CompositeSkillDiscoverer,
+                // not by filesystem path scanning.
+                SkillSource::Bundled => {},
             }
         }
 
         Ok(skills)
     }
 }
+
+// ── Composite discoverer (fs + bundled) ─────────────────────────────────────
+
+#[cfg(feature = "bundled-skills")]
+use std::sync::Arc;
+
+/// Discoverer that merges filesystem-discovered skills with bundled skills.
+///
+/// Bundled skills are appended at lowest priority: any user skill with the
+/// same name takes precedence. This ensures users can override or shadow a
+/// bundled skill by creating one with the same name in their personal or
+/// project skills directory.
+#[cfg(feature = "bundled-skills")]
+pub struct CompositeSkillDiscoverer {
+    inner: Box<dyn SkillDiscoverer>,
+    bundled: Arc<crate::bundled::BundledSkillStore>,
+}
+
+#[cfg(feature = "bundled-skills")]
+impl CompositeSkillDiscoverer {
+    pub fn new(
+        inner: Box<dyn SkillDiscoverer>,
+        bundled: Arc<crate::bundled::BundledSkillStore>,
+    ) -> Self {
+        Self { inner, bundled }
+    }
+}
+
+#[cfg(feature = "bundled-skills")]
+#[async_trait]
+impl SkillDiscoverer for CompositeSkillDiscoverer {
+    async fn discover(&self) -> Result<Vec<SkillMetadata>> {
+        let mut skills = self.inner.discover().await?;
+        let mut seen: std::collections::HashSet<String> =
+            skills.iter().map(|s| s.name.clone()).collect();
+        for bundled in self.bundled.discover() {
+            if seen.insert(bundled.name.clone()) {
+                skills.push(bundled);
+            }
+        }
+        Ok(skills)
+    }
+}
+
+// ── Filesystem scanning helpers ─────────────────────────────────────────────
 
 /// Scan one level deep for SKILL.md dirs (project/personal sources).
 fn discover_flat(base_path: &Path, source: &SkillSource, skills: &mut Vec<SkillMetadata>) {

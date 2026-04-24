@@ -15,7 +15,9 @@ use {
 };
 
 use super::{
-    schema_normalization::sanitize_schema_for_openai_compat,
+    schema_normalization::{
+        collapse_schema_unions_for_non_strict_tools, sanitize_schema_for_openai_compat,
+    },
     strict_mode::patch_schema_for_strict_mode,
 };
 
@@ -91,6 +93,8 @@ pub fn to_openai_tools(tools: &[serde_json::Value], strict: bool) -> Vec<serde_j
             sanitize_schema_for_openai_compat(&mut params);
             if strict {
                 patch_schema_for_strict_mode(&mut params);
+            } else {
+                collapse_schema_unions_for_non_strict_tools(&mut params);
             }
 
             let name = t["name"].as_str()?.to_string();

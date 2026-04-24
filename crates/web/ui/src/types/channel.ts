@@ -7,7 +7,7 @@
  * Serialised as lowercase via `#[serde(rename_all = "lowercase")]`.
  * MsTeams is serialised as `"msteams"`.
  */
-export type ChannelType = "telegram" | "whatsapp" | "msteams" | "discord" | "slack" | "matrix" | "nostr";
+export type ChannelType = "telegram" | "whatsapp" | "msteams" | "discord" | "slack" | "matrix" | "nostr" | "signal";
 
 /**
  * Runtime constants for `ChannelType` values.
@@ -21,6 +21,7 @@ export const ChannelType = {
 	Slack: "slack" as const,
 	Matrix: "matrix" as const,
 	Nostr: "nostr" as const,
+	Signal: "signal" as const,
 } satisfies Record<string, ChannelType>;
 
 /**

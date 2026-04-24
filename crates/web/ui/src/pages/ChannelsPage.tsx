@@ -1,7 +1,7 @@
 // ── Channels page (Preact + Signals) ──────────────────────────
 
 import type { Signal } from "@preact/signals";
-import { signal, useSignal } from "@preact/signals";
+import { computed, signal, useSignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
@@ -12,6 +12,7 @@ import {
 	normalizeMatrixAuthMode,
 	normalizeMatrixOwnershipMode,
 } from "../channel-utils";
+import { TabBar } from "../components/forms/Tabs";
 import { onEvent } from "../events";
 import { get as getGon } from "../gon";
 import { sendRpc } from "../helpers";
@@ -22,6 +23,7 @@ import { ConfirmDialog, requestConfirm, showToast } from "../ui";
 import { AddDiscordModal } from "./channels/modals/AddDiscordModal";
 import { AddMatrixModal } from "./channels/modals/AddMatrixModal";
 import { AddNostrModal } from "./channels/modals/AddNostrModal";
+import { AddSignalModal } from "./channels/modals/AddSignalModal";
 import { AddSlackModal } from "./channels/modals/AddSlackModal";
 import { AddTeamsModal } from "./channels/modals/AddTeamsModal";
 // ── Sub-module imports (modals + shared fields) ──────────────
@@ -104,6 +106,12 @@ export interface ChannelConfig {
 	secret_key?: string;
 	relays?: string[];
 	allowed_pubkeys?: string[];
+	// Signal
+	account?: string;
+	account_uuid?: string;
+	http_url?: string;
+	group_allowlist?: string[];
+	text_chunk_limit?: number;
 	// Advanced config patch pass-through
 	[key: string]: unknown;
 }
@@ -176,6 +184,7 @@ export const showAddWhatsApp: Signal<boolean> = signal(false);
 export const showAddSlack: Signal<boolean> = signal(false);
 export const showAddMatrix: Signal<boolean> = signal(false);
 export const showAddNostr: Signal<boolean> = signal(false);
+export const showAddSignal: Signal<boolean> = signal(false);
 export const editingChannel: Signal<Channel | null> = signal(null);
 const sendersAccount: Signal<string> = signal("");
 
@@ -199,6 +208,7 @@ export function channelLabel(type: string | undefined): string {
 	if (t === "slack") return "Slack";
 	if (t === "matrix") return "Matrix";
 	if (t === "nostr") return "Nostr";
+	if (t === "signal") return "Signal";
 	return "Telegram";
 }
 
@@ -684,6 +694,16 @@ function ConnectButtons(): VNode {
 					<span className="icon icon-nostr" /> Connect Nostr
 				</button>
 			)}
+			{offered.has("signal") && (
+				<button
+					className="provider-btn provider-btn-secondary inline-flex items-center gap-1.5"
+					onClick={() => {
+						if (connected.value) showAddSignal.value = true;
+					}}
+				>
+					<span className="icon icon-signal" /> Connect Signal
+				</button>
+			)}
 		</div>
 	);
 }
@@ -894,32 +914,24 @@ function ChannelsPageComponent(): VNode {
 		};
 	}, [connected.value]);
 
+	const channelsTabs = computed(() => [
+		{ id: "channels", label: "Channels", badge: channels.value.length || undefined },
+		{ id: "senders", label: "Senders", badge: senders.value.length || undefined },
+	]);
+
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<div className="flex items-center gap-3 flex-wrap">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Channels</h2>
-				<div style={{ display: "flex", gap: "4px", marginLeft: "12px" }}>
-					<button
-						className="session-action-btn"
-						style={activeTab.value === "channels" ? { fontWeight: 600 } : undefined}
-						onClick={() => {
-							activeTab.value = "channels";
-						}}
-					>
-						Channels
-					</button>
-					<button
-						className="session-action-btn"
-						style={activeTab.value === "senders" ? { fontWeight: 600 } : undefined}
-						onClick={() => {
-							activeTab.value = "senders";
-						}}
-					>
-						Senders
-					</button>
-				</div>
 				{activeTab.value === "channels" && channels.value.length > 0 && <ConnectButtons />}
 			</div>
+			<TabBar
+				tabs={channelsTabs.value}
+				active={activeTab.value}
+				onChange={(id) => {
+					activeTab.value = id;
+				}}
+			/>
 			{activeTab.value === "channels" && <ChannelStorageNotice />}
 			{activeTab.value === "channels" ? <ChannelsTab /> : <SendersTab />}
 			<AddTelegramModal />
@@ -928,6 +940,7 @@ function ChannelsPageComponent(): VNode {
 			<AddSlackModal />
 			<AddMatrixModal />
 			<AddNostrModal />
+			<AddSignalModal />
 			<AddWhatsAppModal />
 			<EditChannelModal />
 			<ConfirmDialog />
@@ -949,6 +962,7 @@ export function initChannels(container: HTMLElement): void {
 	showAddSlack.value = false;
 	showAddMatrix.value = false;
 	showAddNostr.value = false;
+	showAddSignal.value = false;
 	showAddWhatsApp.value = false;
 	editingChannel.value = null;
 	sendersAccount.value = "";

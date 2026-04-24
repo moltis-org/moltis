@@ -3,7 +3,7 @@ var _a, _b;
 import { u, f as forceReconnect, c as connectWs, s as subscribeEvents, _ as _wsConnect } from "./chunks/ws-connect.js";
 import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as setChatUnreadBelow, d as sendRpc, e as autoScrollMode, g as commandModeEnabled, h as sessionExecPromptSymbol, i as chatBatchLoading, j as sessionContextWindow, k as sessionToolsEnabled, l as sessionExecMode, m as sessionCurrentInputTokens, _ as __vitePreload, n as setUnseenErrors, o as setUnseenWarns, q as unseenErrors, r as unseenWarns, t as connected, v as sessionStore, w as sessions, x as activeSessionKey, y as lastHistoryIndex, z as setLastHistoryIndex, A as renderAudioPlayer, B as renderMarkdown, C as setSessionContextWindow, D as setSessionTokens, E as setSessionCurrentInputTokens, F as setSessionToolsEnabled, G as toolCallSummary, H as renderScreenshot, I as renderDocument, J as formatAssistantTokenUsage, K as formatTokenSpeed, L as tokenSpeedTone, M as modelStore, N as parseAgentsListPayload, O as setHostExecIsRoot, P as setSessionExecMode, Q as setSessionExecPromptSymbol, R as setChatBatchLoading, S as setChatSeq, T as y, U as g, V as nodeComboBtn, W as nodeDropdownList, X as nodeCombo, Y as nodeDropdown, Z as nodeComboLabel, a0 as projectComboLabel, a1 as t, a2 as projects, a3 as activeProjectId, a4 as projectCombo, a5 as projectDropdown, a6 as projectDropdownList, a7 as setActiveProjectId, a8 as j, a9 as setSessionSandboxEnabled, aa as hostExecIsRoot, ab as sandboxLabel, ac as sandboxToggleBtn, ad as sessionSandboxEnabled, ae as setSessionSandboxImage, af as sandboxImageLabel, ag as sandboxInfo, ah as sandboxImageDropdown, ai as sandboxImageBtn, aj as sessionSandboxImage, ak as projectStore, al as setSessions, am as insertSessionInOrder, an as Session, ao as chatSeq, ap as setSelectedModelId, aq as modelComboLabel, ar as setSessionSwitchInProgress, as as setStreamEl, at as setStreamText, au as setLastToolOutput, av as setVoicePending, aw as setActiveSessionKey, ax as y$1, ay as d, az as A, aA as S, aB as projectFilterId, aC as getById$1, aD as q, aE as warmAudioPlayback, aF as selectedModelId, aG as formatBytes$3, aH as setCommandModeEnabled, aI as chatHistory, aJ as chatHistoryIdx, aK as setChatHistoryDraft, aL as setChatHistoryIdx, aM as chatHistoryDraft, aN as setChatHistory, aO as R, aP as setChatMsgBox, aQ as setChatInput, aR as setChatSendBtn, aS as setModelCombo, aT as setModelComboBtn, aU as setModelComboLabel, aV as setModelDropdown, aW as setModelSearchInput, aX as setModelDropdownList, aY as setNodeCombo, aZ as setNodeComboBtn, a_ as setNodeComboLabel, a$ as setNodeDropdown, b0 as setNodeDropdownList, b1 as setSandboxToggleBtn, b2 as setSandboxLabel, b3 as setSandboxImageBtn, b4 as setSandboxImageLabel, b5 as setSandboxImageDropdown, b6 as models, b7 as chatSendBtn, b8 as setModels, b9 as modelComboBtn, ba as modelSearchInput, bb as modelDropdownList, bc as modelCombo, bd as modelDropdown, be as setModelIdx, bf as modelIdx, bg as REASONING_SEP, bh as models$1, bi as useSignal, bj as connected$1, bk as setCachedChannels, bl as setRefreshChannelsPage, bm as cachedChannels, bn as setChannelEventUnsub, bo as channelEventUnsub, bp as setProjects, bq as setProjectFilterId, br as refreshProvidersPage, bs as modelVersionScore, bt as streamEl, bu as renderMapPointGroups, bv as renderMapLinks, bw as lastToolOutput, bx as localizeStructuredError, by as voicePending, bz as streamText, bA as setSandboxInfo, bB as networkAuditEventHandler, bC as logsEventHandler, bD as setSubscribed, bE as projects$1, bF as sandboxInfo$1, bG as localizedApiErrorMessage, bH as setLogsEventHandler, bI as setNetworkAuditEventHandler, bJ as setRefreshProvidersPage, bK as setLocale, bL as esc, bM as projectStore$1, bN as _modelStore, bO as S$1, bP as _sessionStoreModule, bQ as _i18n, bR as _helpers, bS as initTheme, bT as injectMarkdownStyles, bU as init, bV as translateStaticElements, bW as setAll$1, bX as setAll$2, bY as select$1, bZ as selectedModelId$1 } from "./chunks/theme.js";
 import { f as formatPageTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
-import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as buildTeamsEndpoint, s as generateWebhookSecretHex, u as defaultTeamsBaseUrl, w as channelStorageNote, x as providerApiKeyHelp, y as validateProviderKey, z as completeProviderOAuth, A as startProviderOAuth, B as saveProviderKey, D as testModel, E as isModelServiceNotConfigured, F as isTimeoutError, G as humanizeProbeError, H as eventListeners, I as refresh, J as EmojiPicker, K as validateIdentityFields, L as updateIdentity, N as set, O as prepareCreationOptions, P as detectPasskeyName, Q as fetchVoiceProviders, R as fetchPhrase, S as testTts, T as decodeBase64Safe, U as transcribeAudio$1, V as toggleVoiceProvider, W as saveVoiceKey, X as saveVoiceSettings, Y as gon, _ as _events } from "./chunks/voice-utils.js";
+import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as deriveSignalAccountId, s as buildTeamsEndpoint, u as generateWebhookSecretHex, w as defaultTeamsBaseUrl, T as TabBar$1, x as channelStorageNote, y as providerApiKeyHelp, z as validateProviderKey, A as completeProviderOAuth, B as startProviderOAuth, D as saveProviderKey, E as testModel, F as isModelServiceNotConfigured, G as isTimeoutError, H as humanizeProbeError, I as eventListeners, J as refresh, K as isRepoSource, S as SkillSource, L as CATEGORY_META, N as categoryLabel, O as isDiscoveredSource, P as EmojiPicker, Q as validateIdentityFields, R as updateIdentity, U as set, V as prepareCreationOptions, W as detectPasskeyName, X as fetchVoiceProviders, Y as fetchPhrase, Z as testTts, _ as decodeBase64Safe, $ as transcribeAudio$1, a0 as toggleVoiceProvider, a1 as saveVoiceKey, a2 as saveVoiceSettings, a3 as gon, a4 as _events } from "./chunks/voice-utils.js";
 import "./chunks/time-format.js";
 const BYTE_UNITS = [
   "B",
@@ -3707,6 +3707,71 @@ function SessionList() {
   }
   return /* @__PURE__ */ u("div", { ref: spinnersRef, children: roots.map((s) => renderTree(s, 0)) });
 }
+const REPO = "moltis-org/moltis";
+const CACHE_KEY = "moltis-github-stats";
+const CACHE_TTL_MS = 60 * 60 * 1e3;
+function readCache() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const cached2 = JSON.parse(raw);
+    if (Date.now() - cached2.fetchedAt < CACHE_TTL_MS) return cached2;
+  } catch {
+  }
+  return null;
+}
+function writeCache(stats) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(stats));
+  } catch {
+  }
+}
+function setBadge(id, count) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = count !== null && count > 0 ? String(count) : "";
+}
+function applyStats(stats) {
+  setBadge("githubIssuesCount", stats.issues);
+  setBadge("githubDiscussionsCount", stats.discussions);
+}
+async function fetchIssuesCount() {
+  try {
+    const resp = await fetch(`https://api.github.com/search/issues?q=repo:${REPO}+type:issue+state:open&per_page=1`);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.total_count ?? null;
+  } catch {
+    return null;
+  }
+}
+async function fetchDiscussionsCount() {
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${REPO}/discussions?per_page=1`);
+    if (!resp.ok) return null;
+    const link = resp.headers.get("Link");
+    if (link) {
+      const match = /[&?]page=(\d+)>;\s*rel="last"/.exec(link);
+      if (match) return Number.parseInt(match[1], 10);
+    }
+    const items = await resp.json();
+    return items.length;
+  } catch {
+    return null;
+  }
+}
+async function fetchAndCache() {
+  const [issues, discussions] = await Promise.all([fetchIssuesCount(), fetchDiscussionsCount()]);
+  const stats = { issues, discussions, fetchedAt: Date.now() };
+  writeCache(stats);
+  applyStats(stats);
+}
+const cached = readCache();
+if (cached) {
+  applyStats(cached);
+} else {
+  fetchAndCache();
+}
 let navPanel = null;
 let navOverlay = null;
 let sessionsPanel = null;
@@ -4960,7 +5025,7 @@ function renderContextMcpSection(card, data) {
         dot.style.background = "var(--ok)";
         tag.appendChild(dot);
         tag.appendChild(document.createTextNode(s.name));
-        tag.title = `${s.tool_count} tool${s.tool_count === 1 ? "" : "s"} — ${s.state}`;
+        tag.title = `${s.tool_count} tool${s.tool_count !== 1 ? "s" : ""} — ${s.state}`;
         wrap.appendChild(tag);
       });
       sec.appendChild(wrap);
@@ -7284,6 +7349,223 @@ function AddNostrModal() {
     }
   );
 }
+function AddSignalModal() {
+  const error2 = useSignal("");
+  const saving = useSignal(false);
+  const addModel = useSignal("");
+  const allowlistItems = useSignal([]);
+  const groupAllowlistItems = useSignal([]);
+  const accountDraft = useSignal("");
+  const httpUrlDraft = useSignal("http://127.0.0.1:8080");
+  const dmPolicy = useSignal("allowlist");
+  const groupPolicy = useSignal("disabled");
+  const mentionMode = useSignal("mention");
+  const advancedConfigPatch = useSignal("");
+  function reset() {
+    addModel.value = "";
+    allowlistItems.value = [];
+    groupAllowlistItems.value = [];
+    accountDraft.value = "";
+    httpUrlDraft.value = "http://127.0.0.1:8080";
+    dmPolicy.value = "allowlist";
+    groupPolicy.value = "disabled";
+    mentionMode.value = "mention";
+    advancedConfigPatch.value = "";
+    error2.value = "";
+  }
+  function onSubmit(e) {
+    e.preventDefault();
+    const account = accountDraft.value.trim();
+    const httpUrl = httpUrlDraft.value.trim();
+    if (!account) {
+      error2.value = "Signal account (phone number) is required.";
+      return;
+    }
+    if (!httpUrl) {
+      error2.value = "signal-cli daemon URL is required.";
+      return;
+    }
+    const advancedPatch = parseChannelConfigPatch(advancedConfigPatch.value);
+    if (!advancedPatch.ok) {
+      error2.value = advancedPatch.error;
+      return;
+    }
+    error2.value = "";
+    saving.value = true;
+    const addConfig = {
+      http_url: httpUrl,
+      dm_policy: dmPolicy.value,
+      allowlist: allowlistItems.value,
+      group_policy: groupPolicy.value,
+      group_allowlist: groupAllowlistItems.value,
+      mention_mode: mentionMode.value
+    };
+    addConfig.account = account;
+    const accountId = deriveSignalAccountId(account);
+    if (addModel.value) {
+      addConfig.model = addModel.value;
+      const found = models$1.value.find((x) => x.id === addModel.value);
+      if (found == null ? void 0 : found.provider) addConfig.model_provider = found.provider;
+    }
+    Object.assign(addConfig, advancedPatch.value);
+    addChannel(ChannelType.Signal, accountId, addConfig).then((res) => {
+      var _a2, _b2;
+      saving.value = false;
+      const r2 = res;
+      if (r2 == null ? void 0 : r2.ok) {
+        showAddSignal.value = false;
+        reset();
+        loadChannels();
+      } else {
+        error2.value = ((_a2 = r2 == null ? void 0 : r2.error) == null ? void 0 : _a2.message) || ((_b2 = r2 == null ? void 0 : r2.error) == null ? void 0 : _b2.detail) || "Failed to connect channel.";
+      }
+    });
+  }
+  return /* @__PURE__ */ u(
+    Modal,
+    {
+      show: showAddSignal.value,
+      onClose: () => {
+        showAddSignal.value = false;
+      },
+      title: "Connect Signal",
+      children: /* @__PURE__ */ u("div", { className: "channel-form", children: [
+        /* @__PURE__ */ u("div", { className: "channel-card", children: /* @__PURE__ */ u("div", { children: [
+          /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: "Requires signal-cli" }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] channel-help", children: [
+            "Signal integration requires a running ",
+            /* @__PURE__ */ u("a", { href: "https://github.com/AsamK/signal-cli", target: "_blank", rel: "noopener noreferrer", className: "underline text-[var(--text-strong)]", children: "signal-cli" }),
+            " daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:"
+          ] }),
+          /* @__PURE__ */ u("code", { className: "text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-1 block", children: "signal-cli daemon --http localhost:8080" })
+        ] }) }),
+        /* @__PURE__ */ u(ConnectionModeHint, { type: ChannelType.Signal }),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Signal Account (phone number)" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            "data-field": "account",
+            type: "text",
+            placeholder: "e.g. +15551234567",
+            value: accountDraft.value,
+            onInput: (e) => {
+              accountDraft.value = targetValue(e);
+            },
+            className: "channel-input",
+            autoComplete: "off"
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "signal-cli Daemon URL" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            "data-field": "httpUrl",
+            type: "url",
+            placeholder: "http://127.0.0.1:8080",
+            value: httpUrlDraft.value,
+            onInput: (e) => {
+              httpUrlDraft.value = targetValue(e);
+            },
+            className: "channel-input"
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "DM Policy" }),
+        /* @__PURE__ */ u(
+          "select",
+          {
+            "data-field": "dmPolicy",
+            className: "channel-select",
+            value: dmPolicy.value,
+            onChange: (e) => {
+              dmPolicy.value = targetValue(e);
+            },
+            children: [
+              /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+              /* @__PURE__ */ u("option", { value: "open", children: "Open (anyone)" }),
+              /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Policy" }),
+        /* @__PURE__ */ u(
+          "select",
+          {
+            "data-field": "groupPolicy",
+            className: "channel-select",
+            value: groupPolicy.value,
+            onChange: (e) => {
+              groupPolicy.value = targetValue(e);
+            },
+            children: [
+              /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" }),
+              /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+              /* @__PURE__ */ u("option", { value: "open", children: "Open (any group)" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Mention Mode" }),
+        /* @__PURE__ */ u(
+          "select",
+          {
+            "data-field": "mentionMode",
+            className: "channel-select",
+            value: mentionMode.value,
+            onChange: (e) => {
+              mentionMode.value = targetValue(e);
+            },
+            children: [
+              /* @__PURE__ */ u("option", { value: "mention", children: "Must mention bot" }),
+              /* @__PURE__ */ u("option", { value: "always", children: "Always respond" }),
+              /* @__PURE__ */ u("option", { value: "none", children: "Do not respond in groups" })
+            ]
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Default Model" }),
+        /* @__PURE__ */ u(
+          ModelSelect,
+          {
+            models: models$1.value,
+            value: addModel.value,
+            onChange: (v) => {
+              addModel.value = v;
+            }
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "DM Allowlist" }),
+        /* @__PURE__ */ u(
+          AllowlistInput,
+          {
+            value: allowlistItems.value,
+            onChange: (v) => {
+              allowlistItems.value = v;
+            }
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Allowlist" }),
+        /* @__PURE__ */ u(
+          AllowlistInput,
+          {
+            value: groupAllowlistItems.value,
+            onChange: (v) => {
+              groupAllowlistItems.value = v;
+            }
+          }
+        ),
+        /* @__PURE__ */ u(
+          AdvancedConfigPatchField,
+          {
+            value: advancedConfigPatch.value,
+            onInput: (value) => {
+              advancedConfigPatch.value = value;
+            }
+          }
+        ),
+        error2.value && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)] py-1", children: error2.value }),
+        /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onSubmit, disabled: saving.value, children: saving.value ? "Connecting…" : "Connect Signal" })
+      ] })
+    }
+  );
+}
 function AddSlackModal() {
   const error2 = useSignal("");
   const saving = useSignal(false);
@@ -8303,25 +8585,29 @@ function EditChannelModal() {
   const editMatrixOwnershipMode = useSignal("user_managed");
   const editMatrixOtpSelfApproval = useSignal(true);
   const editMatrixOtpCooldown = useSignal("300");
+  const editSignalAccount = useSignal("");
+  const editSignalHttpUrl = useSignal("http://127.0.0.1:8080");
   const editAdvancedConfigPatch = useSignal("");
   y$1(() => {
-    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     editModel.value = ((_a2 = ch == null ? void 0 : ch.config) == null ? void 0 : _a2.model) || "";
     allowlistItems.value = ((_b2 = ch == null ? void 0 : ch.config) == null ? void 0 : _b2.allowlist) || ((_c = ch == null ? void 0 : ch.config) == null ? void 0 : _c.user_allowlist) || ((_d = ch == null ? void 0 : ch.config) == null ? void 0 : _d.allowed_pubkeys) || [];
-    roomAllowlistItems.value = ((_e = ch == null ? void 0 : ch.config) == null ? void 0 : _e.room_allowlist) || [];
+    roomAllowlistItems.value = ((_e = ch == null ? void 0 : ch.config) == null ? void 0 : _e.room_allowlist) || ((_f = ch == null ? void 0 : ch.config) == null ? void 0 : _f.group_allowlist) || [];
     editCredential.value = "";
-    editWebhookSecret.value = ((_f = ch == null ? void 0 : ch.config) == null ? void 0 : _f.webhook_secret) || "";
-    editStreamMode.value = ((_g = ch == null ? void 0 : ch.config) == null ? void 0 : _g.stream_mode) || "edit_in_place";
-    editReplyStyle.value = ((_h = ch == null ? void 0 : ch.config) == null ? void 0 : _h.reply_style) || "top_level";
-    editWelcomeCard.value = ((_i = ch == null ? void 0 : ch.config) == null ? void 0 : _i.welcome_card) !== false;
-    editBotName.value = ((_j = ch == null ? void 0 : ch.config) == null ? void 0 : _j.bot_name) || "";
-    editMatrixAuthMode.value = ((_k = ch == null ? void 0 : ch.config) == null ? void 0 : _k.password) ? "password" : "access_token";
-    editMatrixDeviceDisplayName.value = ((_l = ch == null ? void 0 : ch.config) == null ? void 0 : _l.device_display_name) || "";
+    editWebhookSecret.value = ((_g = ch == null ? void 0 : ch.config) == null ? void 0 : _g.webhook_secret) || "";
+    editStreamMode.value = ((_h = ch == null ? void 0 : ch.config) == null ? void 0 : _h.stream_mode) || "edit_in_place";
+    editReplyStyle.value = ((_i = ch == null ? void 0 : ch.config) == null ? void 0 : _i.reply_style) || "top_level";
+    editWelcomeCard.value = ((_j = ch == null ? void 0 : ch.config) == null ? void 0 : _j.welcome_card) !== false;
+    editBotName.value = ((_k = ch == null ? void 0 : ch.config) == null ? void 0 : _k.bot_name) || "";
+    editMatrixAuthMode.value = ((_l = ch == null ? void 0 : ch.config) == null ? void 0 : _l.password) ? "password" : "access_token";
+    editMatrixDeviceDisplayName.value = ((_m = ch == null ? void 0 : ch.config) == null ? void 0 : _m.device_display_name) || "";
     editMatrixOwnershipMode.value = normalizeMatrixOwnershipMode(
-      ((_m = ch == null ? void 0 : ch.config) == null ? void 0 : _m.ownership_mode) || (((_n = ch == null ? void 0 : ch.config) == null ? void 0 : _n.password) ? "moltis_owned" : "user_managed")
+      ((_n = ch == null ? void 0 : ch.config) == null ? void 0 : _n.ownership_mode) || (((_o = ch == null ? void 0 : ch.config) == null ? void 0 : _o.password) ? "moltis_owned" : "user_managed")
     );
-    editMatrixOtpSelfApproval.value = ((_o = ch == null ? void 0 : ch.config) == null ? void 0 : _o.otp_self_approval) !== false;
-    editMatrixOtpCooldown.value = String(((_p = ch == null ? void 0 : ch.config) == null ? void 0 : _p.otp_cooldown_secs) || 300);
+    editMatrixOtpSelfApproval.value = ((_p = ch == null ? void 0 : ch.config) == null ? void 0 : _p.otp_self_approval) !== false;
+    editMatrixOtpCooldown.value = String(((_q = ch == null ? void 0 : ch.config) == null ? void 0 : _q.otp_cooldown_secs) || 300);
+    editSignalAccount.value = ((_r = ch == null ? void 0 : ch.config) == null ? void 0 : _r.account) || "";
+    editSignalHttpUrl.value = ((_s = ch == null ? void 0 : ch.config) == null ? void 0 : _s.http_url) || "http://127.0.0.1:8080";
     editAdvancedConfigPatch.value = "";
   }, [ch]);
   if (!ch) return null;
@@ -8333,6 +8619,7 @@ function EditChannelModal() {
   const isTelegram = chType === ChannelType.Telegram;
   const isMatrix = chType === ChannelType.Matrix;
   const isNostr = chType === ChannelType.Nostr;
+  const isSignal = chType === ChannelType.Signal;
   function addModelToConfig(config) {
     if (!editModel.value) return;
     config.model = editModel.value;
@@ -8353,6 +8640,9 @@ function EditChannelModal() {
       config.secret_key = editCredential.value || cfg.secret_key || "";
       const relaysVal = ((_a2 = form.querySelector("[data-field=relays]")) == null ? void 0 : _a2.value) || "";
       config.relays = relaysVal.split(",").map((r2) => r2.trim()).filter(Boolean);
+    } else if (isSignal) {
+      config.account = editSignalAccount.value.trim();
+      config.http_url = editSignalHttpUrl.value.trim() || "http://127.0.0.1:8080";
     } else if (isMatrix) {
       config.homeserver = ((_b2 = form.querySelector("[data-field=homeserver]")) == null ? void 0 : _b2.value) || cfg.homeserver || "";
       config.user_id = ((_c = form.querySelector("[data-field=userId]")) == null ? void 0 : _c.value) || cfg.user_id || "";
@@ -8369,9 +8659,10 @@ function EditChannelModal() {
     }
   }
   function buildUpdateConfig(form) {
-    var _a2, _b2, _c, _d;
+    var _a2, _b2, _c, _d, _e;
     const updateConfig = {};
-    updateConfig.dm_policy = ((_a2 = form.querySelector("[data-field=dmPolicy]")) == null ? void 0 : _a2.value) || "open";
+    const dmFallback = isWhatsApp ? "open" : "allowlist";
+    updateConfig.dm_policy = ((_a2 = form.querySelector("[data-field=dmPolicy]")) == null ? void 0 : _a2.value) || dmFallback;
     updateConfig.allowlist = allowlistItems.value;
     if (isMatrix) {
       updateConfig.user_allowlist = allowlistItems.value;
@@ -8386,8 +8677,17 @@ function EditChannelModal() {
       updateConfig.otp_self_approval = cfg.otp_self_approval !== false;
       updateConfig.otp_cooldown_secs = cfg.otp_cooldown_secs ?? 300;
     }
+    if (isSignal) {
+      updateConfig.group_policy = ((_d = form.querySelector("[data-field=groupPolicy]")) == null ? void 0 : _d.value) || cfg.group_policy || "disabled";
+      updateConfig.group_allowlist = roomAllowlistItems.value;
+      updateConfig.otp_self_approval = cfg.otp_self_approval !== false;
+      updateConfig.otp_cooldown_secs = cfg.otp_cooldown_secs ?? 300;
+      updateConfig.ignore_stories = cfg.ignore_stories !== false;
+      updateConfig.text_chunk_limit = cfg.text_chunk_limit || 4e3;
+      if (cfg.account_uuid) updateConfig.account_uuid = cfg.account_uuid;
+    }
     if (!(isWhatsApp || isNostr)) {
-      updateConfig.mention_mode = ((_d = form.querySelector("[data-field=mentionMode]")) == null ? void 0 : _d.value) || "mention";
+      updateConfig.mention_mode = ((_e = form.querySelector("[data-field=mentionMode]")) == null ? void 0 : _e.value) || "mention";
     }
     addChannelCredentials(updateConfig, form);
     addModelToConfig(updateConfig);
@@ -8577,6 +8877,38 @@ function EditChannelModal() {
                 type: "text",
                 className: "channel-input w-full",
                 defaultValue: (cfg.relays || []).join(", ")
+              }
+            )
+          ] })
+        ] }),
+        isSignal && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+            /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Signal Account" }),
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "text",
+                className: "channel-input w-full",
+                value: editSignalAccount.value,
+                onInput: (e) => {
+                  editSignalAccount.value = targetValue(e);
+                },
+                placeholder: "+15551234567"
+              }
+            )
+          ] }),
+          /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+            /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "signal-cli Daemon URL" }),
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "url",
+                className: "channel-input w-full",
+                value: editSignalHttpUrl.value,
+                onInput: (e) => {
+                  editSignalHttpUrl.value = targetValue(e);
+                },
+                placeholder: "http://127.0.0.1:8080"
               }
             )
           ] })
@@ -8771,6 +9103,22 @@ function EditChannelModal() {
             /* @__PURE__ */ u("option", { value: "off", children: "Do not auto-join" })
           ] })
         ] }),
+        isSignal && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Policy" }),
+          /* @__PURE__ */ u(
+            "select",
+            {
+              "data-field": "groupPolicy",
+              className: "channel-select",
+              value: cfg.group_policy || "disabled",
+              children: [
+                /* @__PURE__ */ u("option", { value: "disabled", children: "Disabled" }),
+                /* @__PURE__ */ u("option", { value: "allowlist", children: "Allowlist only" }),
+                /* @__PURE__ */ u("option", { value: "open", children: "Open (any group)" })
+              ]
+            }
+          )
+        ] }),
         /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Default Model" }),
         /* @__PURE__ */ u(
           ModelSelect,
@@ -8807,6 +9155,18 @@ function EditChannelModal() {
             }
           )
         ] }),
+        isSignal && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Group Allowlist" }),
+          /* @__PURE__ */ u(
+            AllowlistInput,
+            {
+              value: roomAllowlistItems.value,
+              onChange: (v) => {
+                roomAllowlistItems.value = v;
+              }
+            }
+          )
+        ] }),
         /* @__PURE__ */ u(
           AdvancedConfigPatchField,
           {
@@ -8836,7 +9196,7 @@ function prefetchChannels() {
   });
 }
 const senders = y([]);
-const activeTab$1 = y("channels");
+const activeTab$2 = y("channels");
 const showAddTelegram = y(false);
 const showAddTeams = y(false);
 const showAddDiscord = y(false);
@@ -8844,6 +9204,7 @@ const showAddWhatsApp = y(false);
 const showAddSlack = y(false);
 const showAddMatrix = y(false);
 const showAddNostr = y(false);
+const showAddSignal = y(false);
 const editingChannel = y(null);
 const sendersAccount = y("");
 const waQrData = y(null);
@@ -8861,6 +9222,7 @@ function channelLabel(type) {
   if (t2 === "slack") return "Slack";
   if (t2 === "matrix") return "Matrix";
   if (t2 === "nostr") return "Nostr";
+  if (t2 === "signal") return "Signal";
   return "Telegram";
 }
 function channelDescriptor(type) {
@@ -9278,6 +9640,19 @@ function ConnectButtons() {
           " Connect Nostr"
         ]
       }
+    ),
+    offered.has("signal") && /* @__PURE__ */ u(
+      "button",
+      {
+        className: "provider-btn provider-btn-secondary inline-flex items-center gap-1.5",
+        onClick: () => {
+          if (connected$1.value) showAddSignal.value = true;
+        },
+        children: [
+          /* @__PURE__ */ u("span", { className: "icon icon-signal" }),
+          " Connect Signal"
+        ]
+      }
     )
   ] });
 }
@@ -9406,7 +9781,7 @@ function handleChannelEvent(_payload) {
     loadChannels();
   }
   const selected = parseSenderSelectionKey(sendersAccount.value || "");
-  if (activeTab$1.value === "senders" && selected.account_id === p.account_id && selected.type === channelType(p.channel_type) && (p.kind === "inbound_message" || p.kind === "otp_challenge" || p.kind === "otp_resolved")) {
+  if (activeTab$2.value === "senders" && selected.account_id === p.account_id && selected.type === channelType(p.channel_type) && (p.kind === "inbound_message" || p.kind === "otp_challenge" || p.kind === "otp_resolved")) {
     loadSenders();
   }
 }
@@ -9423,43 +9798,34 @@ function ChannelsPageComponent() {
       setChannelEventUnsub(null);
     };
   }, [connected$1.value]);
+  const channelsTabs = g(() => [
+    { id: "channels", label: "Channels", badge: channels.value.length || void 0 },
+    { id: "senders", label: "Senders", badge: senders.value.length || void 0 }
+  ]);
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
     /* @__PURE__ */ u("div", { className: "flex items-center gap-3 flex-wrap", children: [
       /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Channels" }),
-      /* @__PURE__ */ u("div", { style: { display: "flex", gap: "4px", marginLeft: "12px" }, children: [
-        /* @__PURE__ */ u(
-          "button",
-          {
-            className: "session-action-btn",
-            style: activeTab$1.value === "channels" ? { fontWeight: 600 } : void 0,
-            onClick: () => {
-              activeTab$1.value = "channels";
-            },
-            children: "Channels"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            className: "session-action-btn",
-            style: activeTab$1.value === "senders" ? { fontWeight: 600 } : void 0,
-            onClick: () => {
-              activeTab$1.value = "senders";
-            },
-            children: "Senders"
-          }
-        )
-      ] }),
-      activeTab$1.value === "channels" && channels.value.length > 0 && /* @__PURE__ */ u(ConnectButtons, {})
+      activeTab$2.value === "channels" && channels.value.length > 0 && /* @__PURE__ */ u(ConnectButtons, {})
     ] }),
-    activeTab$1.value === "channels" && /* @__PURE__ */ u(ChannelStorageNotice, {}),
-    activeTab$1.value === "channels" ? /* @__PURE__ */ u(ChannelsTab, {}) : /* @__PURE__ */ u(SendersTab, {}),
+    /* @__PURE__ */ u(
+      TabBar$1,
+      {
+        tabs: channelsTabs.value,
+        active: activeTab$2.value,
+        onChange: (id) => {
+          activeTab$2.value = id;
+        }
+      }
+    ),
+    activeTab$2.value === "channels" && /* @__PURE__ */ u(ChannelStorageNotice, {}),
+    activeTab$2.value === "channels" ? /* @__PURE__ */ u(ChannelsTab, {}) : /* @__PURE__ */ u(SendersTab, {}),
     /* @__PURE__ */ u(AddTelegramModal, {}),
     /* @__PURE__ */ u(AddTeamsModal, {}),
     /* @__PURE__ */ u(AddDiscordModal, {}),
     /* @__PURE__ */ u(AddSlackModal, {}),
     /* @__PURE__ */ u(AddMatrixModal, {}),
     /* @__PURE__ */ u(AddNostrModal, {}),
+    /* @__PURE__ */ u(AddSignalModal, {}),
     /* @__PURE__ */ u(AddWhatsAppModal, {}),
     /* @__PURE__ */ u(EditChannelModal, {}),
     /* @__PURE__ */ u(ConfirmDialog, {})
@@ -9469,13 +9835,14 @@ let _channelsContainer = null;
 function initChannels(container) {
   _channelsContainer = container;
   container.style.cssText = "flex-direction:column;padding:0;overflow:hidden;";
-  activeTab$1.value = "channels";
+  activeTab$2.value = "channels";
   showAddTelegram.value = false;
   showAddTeams.value = false;
   showAddDiscord.value = false;
   showAddSlack.value = false;
   showAddMatrix.value = false;
   showAddNostr.value = false;
+  showAddSignal.value = false;
   showAddWhatsApp.value = false;
   editingChannel.value = null;
   sendersAccount.value = "";
@@ -9503,6 +9870,7 @@ const _channelsPage = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defin
   showAddDiscord,
   showAddMatrix,
   showAddNostr,
+  showAddSignal,
   showAddSlack,
   showAddTeams,
   showAddTelegram,
@@ -12729,11 +13097,11 @@ function handleLocalLlmDownload(payload) {
   }
   if (payload.downloaded != null && textEl) {
     const downloadedMb = (payload.downloaded / (1024 * 1024)).toFixed(1);
-    if (payload.total == null) {
-      textEl.textContent = `${downloadedMb} MB`;
-    } else {
+    if (payload.total != null) {
       const totalMb = (payload.total / (1024 * 1024)).toFixed(1);
       textEl.textContent = `${downloadedMb} / ${totalMb} MB`;
+    } else {
+      textEl.textContent = `${downloadedMb} MB`;
     }
   }
 }
@@ -14518,44 +14886,6 @@ function InstallProgressBar() {
     p.id
   )) });
 }
-function SecurityWarning() {
-  const dismissed = useSignal(!!localStorage.getItem("moltis-skills-warning-dismissed"));
-  if (dismissed.value) return null;
-  return /* @__PURE__ */ u("div", { className: "skills-warn", children: [
-    /* @__PURE__ */ u("div", { className: "skills-warn-title", children: [
-      "⚠️",
-      " Skills run code on your machine"
-    ] }),
-    /* @__PURE__ */ u("div", { children: [
-      "Skills are community-authored instructions the agent follows ",
-      /* @__PURE__ */ u("strong", { children: "with your full system privileges" }),
-      "."
-    ] }),
-    /* @__PURE__ */ u("div", { style: { marginTop: "6px", color: "var(--success, #4a4)" }, children: "With sandbox mode enabled, execution is isolated." }),
-    /* @__PURE__ */ u("div", { style: { display: "flex", gap: "8px", marginTop: "8px" }, children: [
-      /* @__PURE__ */ u(
-        "button",
-        {
-          onClick: () => {
-            localStorage.setItem("moltis-skills-warning-dismissed", "1");
-            dismissed.value = true;
-          },
-          style: {
-            background: "none",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius-sm)",
-            fontSize: ".72rem",
-            padding: "3px 10px",
-            cursor: "pointer",
-            color: "var(--muted)"
-          },
-          children: "Dismiss"
-        }
-      ),
-      /* @__PURE__ */ u("button", { className: "provider-btn provider-btn-danger provider-btn-sm", onClick: emergencyDisableAllSkills, children: "Disable all" })
-    ] })
-  ] });
-}
 function InstallBox$1() {
   const ref = A(null);
   const installing = useSignal(false);
@@ -14735,7 +15065,7 @@ function SkillDetailPanel({
     }
   }, [d2 == null ? void 0 : d2.body_html]);
   if (!d2) return null;
-  const isDisc = d2.source === "personal" || d2.source === "project";
+  const isDisc = isDiscoveredSource(d2.source);
   function doToggle() {
     actionBusy.value = true;
     sendRpc(d2.enabled ? "skills.skill.disable" : "skills.skill.enable", { source: repoSource, skill: d2.name }).then(
@@ -15072,6 +15402,82 @@ function RepoCard({ repo }) {
     ] })
   ] });
 }
+const bundledCategories = y([]);
+const bundledTotal = y(0);
+function fetchBundledCategories() {
+  sendRpc("skills.bundled.categories", {}).then((res) => {
+    if (res == null ? void 0 : res.ok) {
+      const payload = res.payload;
+      bundledCategories.value = payload.categories || [];
+      bundledTotal.value = payload.total_skills || 0;
+    }
+  });
+}
+function BundledCategoriesSection() {
+  const cats = bundledCategories.value;
+  const toggling = useSignal(null);
+  y$1(() => {
+    fetchBundledCategories();
+  }, []);
+  if (!cats.length) return /* @__PURE__ */ u(S, {});
+  function toggle(cat) {
+    if (toggling.value) return;
+    const newEnabled = !cat.enabled;
+    toggling.value = cat.name;
+    sendRpc("skills.bundled.toggle_category", { category: cat.name, enabled: newEnabled }).then((res) => {
+      toggling.value = null;
+      if (res == null ? void 0 : res.ok) {
+        bundledCategories.value = bundledCategories.value.map(
+          (c) => c.name === cat.name ? { ...c, enabled: newEnabled } : c
+        );
+        fetchAll();
+      } else {
+        showToast$3(`Failed: ${(res == null ? void 0 : res.error) || "unknown"}`, "error");
+      }
+    });
+  }
+  const enabledCount = cats.filter((c) => c.enabled).length;
+  return /* @__PURE__ */ u("div", { className: "skills-section", children: [
+    /* @__PURE__ */ u("div", { className: "flex items-center gap-3 mb-2", children: /* @__PURE__ */ u("h3", { className: "skills-section-title", style: { margin: 0 }, children: [
+      t("skills:bundledTitle"),
+      /* @__PURE__ */ u("span", { className: "ml-2 text-xs font-normal text-[var(--muted)]", children: [
+        "(",
+        enabledCount,
+        "/",
+        cats.length,
+        " enabled)"
+      ] })
+    ] }) }),
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] mb-3", children: t("skills:bundledDescription") }),
+    /* @__PURE__ */ u("div", { className: "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2", children: cats.map((cat) => {
+      const meta = CATEGORY_META[cat.name];
+      const icon = (meta == null ? void 0 : meta.icon) || "📦";
+      return /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          onClick: () => toggle(cat),
+          disabled: toggling.value === cat.name,
+          className: `flex items-center gap-2 px-3 py-2 rounded-md border text-left cursor-pointer transition-colors ${cat.enabled ? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]" : "border-[var(--border)] bg-[var(--surface)] opacity-60"}`,
+          children: [
+            /* @__PURE__ */ u("span", { className: "text-base shrink-0", children: icon }),
+            /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+              /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: categoryLabel(cat.name) }),
+              /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)] ml-1", children: [
+                "(",
+                cat.count,
+                ")"
+              ] }),
+              (meta == null ? void 0 : meta.desc) && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] truncate", children: meta.desc })
+            ] }),
+            cat.enabled ? /* @__PURE__ */ u("span", { className: "icon icon-check-circle text-[var(--accent)] shrink-0" }) : /* @__PURE__ */ u("span", { className: "w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block shrink-0" })
+          ]
+        },
+        cat.name
+      );
+    }) })
+  ] });
+}
 function ReposSection() {
   var _a2;
   return /* @__PURE__ */ u("div", { className: "skills-section", children: [
@@ -15088,9 +15494,26 @@ function EnabledSkillsTable() {
   const activeDetail = useSignal(null);
   const detailLoading = useSignal(false);
   const pending = useSignal(null);
+  const activeCategory = useSignal(null);
+  const searchQuery = useSignal("");
   if (!(s == null ? void 0 : s.length)) return null;
+  const categories = g(() => {
+    const cats = /* @__PURE__ */ new Set();
+    for (const sk of enabledSkills.value) {
+      cats.add(sk.category || "other");
+    }
+    return Array.from(cats).sort();
+  });
+  const filtered = s.filter((sk) => {
+    if (activeCategory.value && (sk.category || "other") !== activeCategory.value) return false;
+    if (searchQuery.value) {
+      const q2 = searchQuery.value.toLowerCase();
+      return sk.name.toLowerCase().includes(q2) || (sk.description || "").toLowerCase().includes(q2);
+    }
+    return true;
+  });
   function isDisc(sk) {
-    return sk.source === "personal" || sk.source === "project";
+    return isDiscoveredSource(sk.source);
   }
   function doDisable(sk) {
     pending.value = sk.name;
@@ -15130,7 +15553,65 @@ function EnabledSkillsTable() {
     });
   }
   return /* @__PURE__ */ u("div", { className: "skills-section", children: [
-    /* @__PURE__ */ u("h3", { className: "skills-section-title", children: "Enabled Skills" }),
+    /* @__PURE__ */ u("div", { className: "flex items-center gap-3 mb-2", children: [
+      /* @__PURE__ */ u("h3", { className: "skills-section-title", style: { margin: 0 }, children: [
+        "Enabled Skills",
+        /* @__PURE__ */ u("span", { className: "ml-2 text-xs font-normal text-[var(--muted)]", children: [
+          "(",
+          filtered.length,
+          filtered.length !== s.length ? ` of ${s.length}` : "",
+          ")"
+        ] })
+      ] }),
+      /* @__PURE__ */ u(
+        "input",
+        {
+          type: "text",
+          placeholder: "Search skills...",
+          value: searchQuery.value,
+          onInput: (e) => {
+            searchQuery.value = e.target.value;
+          },
+          className: "skills-install-input",
+          style: { maxWidth: "240px", fontSize: ".78rem", padding: "4px 8px" }
+        }
+      )
+    ] }),
+    categories.value.length > 1 && /* @__PURE__ */ u("div", { className: "flex flex-wrap gap-1.5 mb-3", children: [
+      /* @__PURE__ */ u(
+        "button",
+        {
+          className: `skills-category-pill ${activeCategory.value === null ? "active" : ""}`,
+          onClick: () => {
+            activeCategory.value = null;
+          },
+          children: [
+            "All (",
+            s.length,
+            ")"
+          ]
+        }
+      ),
+      categories.value.map((cat) => {
+        const count = s.filter((sk) => (sk.category || "other") === cat).length;
+        return /* @__PURE__ */ u(
+          "button",
+          {
+            className: `skills-category-pill ${activeCategory.value === cat ? "active" : ""}`,
+            onClick: () => {
+              activeCategory.value = activeCategory.value === cat ? null : cat;
+            },
+            children: [
+              cat,
+              " (",
+              count,
+              ")"
+            ]
+          },
+          cat
+        );
+      })
+    ] }),
     /* @__PURE__ */ u("div", { className: "skills-table-wrap", children: /* @__PURE__ */ u("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: ".82rem" }, children: [
       /* @__PURE__ */ u("thead", { children: /* @__PURE__ */ u("tr", { style: { borderBottom: "1px solid var(--border)", background: "var(--surface)" }, children: [
         /* @__PURE__ */ u(
@@ -15177,66 +15658,89 @@ function EnabledSkillsTable() {
         ),
         /* @__PURE__ */ u("th", {})
       ] }) }),
-      /* @__PURE__ */ u("tbody", { children: s.map((sk) => {
+      /* @__PURE__ */ u("tbody", { children: filtered.map((sk) => {
         var _a2;
-        return /* @__PURE__ */ u(
-          "tr",
-          {
-            className: "cursor-pointer",
-            style: { borderBottom: "1px solid var(--border)" },
-            onClick: () => loadDetail(sk),
-            children: [
-              /* @__PURE__ */ u(
-                "td",
-                {
-                  style: {
-                    padding: "8px 12px",
-                    fontWeight: 500,
-                    color: "var(--accent)",
-                    fontFamily: "var(--font-mono)"
-                  },
-                  children: sk.name
-                }
-              ),
-              /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: sk.description || "—" }),
-              /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: /* @__PURE__ */ u("span", { className: ((_a2 = sk.source) == null ? void 0 : _a2.includes("/")) ? "tier-badge" : "recommended-badge", children: sk.source }) }),
-              /* @__PURE__ */ u("td", { style: { padding: "8px 12px", textAlign: "right" }, children: /* @__PURE__ */ u(
-                "button",
-                {
-                  disabled: isDisc(sk) && sk.protected === true || pending.value === sk.name,
-                  className: isDisc(sk) ? "provider-btn provider-btn-sm provider-btn-danger" : "provider-btn provider-btn-sm provider-btn-secondary",
-                  onClick: (e) => {
-                    e.stopPropagation();
-                    onDisable(sk);
-                  },
-                  children: pending.value === sk.name ? "..." : isDisc(sk) ? "Delete" : "Disable"
-                }
-              ) })
-            ]
-          },
-          sk.name
-        );
+        const isActive = ((_a2 = activeDetail.value) == null ? void 0 : _a2.name) === sk.name;
+        return /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u(
+            "tr",
+            {
+              className: "cursor-pointer",
+              style: {
+                borderBottom: isActive ? "none" : "1px solid var(--border)",
+                background: isActive ? "var(--bg-hover)" : void 0
+              },
+              onClick: () => loadDetail(sk),
+              children: [
+                /* @__PURE__ */ u(
+                  "td",
+                  {
+                    style: {
+                      padding: "8px 12px",
+                      fontWeight: 500,
+                      color: "var(--accent)",
+                      fontFamily: "var(--font-mono)"
+                    },
+                    children: [
+                      sk.name,
+                      sk.category && !activeCategory.value && /* @__PURE__ */ u("span", { className: "skills-category-badge", children: sk.category })
+                    ]
+                  }
+                ),
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: sk.description || "—" }),
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px" }, children: /* @__PURE__ */ u("span", { className: isRepoSource(sk.source) ? "tier-badge" : "recommended-badge", children: sk.source }) }),
+                /* @__PURE__ */ u("td", { style: { padding: "8px 12px", textAlign: "right" }, children: sk.source !== SkillSource.Bundled && /* @__PURE__ */ u(
+                  "button",
+                  {
+                    disabled: isDisc(sk) && sk.protected === true || pending.value === sk.name,
+                    className: isDisc(sk) ? "provider-btn provider-btn-sm provider-btn-danger" : "provider-btn provider-btn-sm provider-btn-secondary",
+                    onClick: (e) => {
+                      e.stopPropagation();
+                      onDisable(sk);
+                    },
+                    children: pending.value === sk.name ? "..." : isDisc(sk) ? "Delete" : "Disable"
+                  }
+                ) })
+              ]
+            },
+            sk.name
+          ),
+          isActive && activeDetail.value && /* @__PURE__ */ u("tr", { children: /* @__PURE__ */ u("td", { colSpan: 4, style: { padding: 0, borderBottom: "1px solid var(--border)" }, children: /* @__PURE__ */ u(
+            SkillDetailPanel,
+            {
+              detail: activeDetail.value,
+              repoSource: activeDetail.value.source,
+              onClose: () => {
+                activeDetail.value = null;
+              },
+              onReload: () => {
+                var _a3, _b2;
+                return loadDetail({
+                  name: (_a3 = activeDetail.value) == null ? void 0 : _a3.name,
+                  source: (_b2 = activeDetail.value) == null ? void 0 : _b2.source
+                });
+              }
+            }
+          ) }) }, `${sk.name}-detail`)
+        ] });
       }) })
-    ] }) }),
-    activeDetail.value && /* @__PURE__ */ u(
-      SkillDetailPanel,
-      {
-        detail: activeDetail.value,
-        repoSource: activeDetail.value.source,
-        onClose: () => {
-          activeDetail.value = null;
-        },
-        onReload: () => {
-          var _a2, _b2;
-          return loadDetail({ name: (_a2 = activeDetail.value) == null ? void 0 : _a2.name, source: (_b2 = activeDetail.value) == null ? void 0 : _b2.source });
-        }
-      }
-    )
+    ] }) })
   ] });
 }
+const activeTab$1 = y("skills");
+const skillsTabs = g(() => {
+  const enabledCats = bundledCategories.value.filter((c) => c.enabled).length;
+  const totalCats = bundledCategories.value.length;
+  return [
+    { id: "skills", label: "Skills", badge: enabledSkills.value.length || void 0 },
+    { id: "categories", label: "Categories", badge: totalCats ? `${enabledCats}/${totalCats}` : void 0 },
+    { id: "repositories", label: "Repositories", badge: repos.value.length || void 0 }
+  ];
+});
 function SkillsPageComponent() {
   y$1(() => {
     ensurePrefetch().then(() => fetchAll());
+    fetchBundledCategories();
     const off2 = onEvent("skills.install.progress", (p) => {
       const d2 = p;
       if (!(d2 == null ? void 0 : d2.op_id)) return;
@@ -15266,14 +15770,28 @@ function SkillsPageComponent() {
         }
       )
     ] }),
-    /* @__PURE__ */ u(SecurityWarning, {}),
-    /* @__PURE__ */ u(InstallBox$1, {}),
-    /* @__PURE__ */ u(BundleTransferBox, {}),
-    /* @__PURE__ */ u(InstallProgressBar, {}),
-    /* @__PURE__ */ u(FeaturedSection$1, {}),
-    /* @__PURE__ */ u(ReposSection, {}),
-    loading$7.value && !enabledSkills.value.length && !repos.value.length && /* @__PURE__ */ u("div", { style: { padding: "24px", textAlign: "center", color: "var(--muted)" }, children: "Loading skills..." }),
-    /* @__PURE__ */ u(EnabledSkillsTable, {})
+    /* @__PURE__ */ u(
+      TabBar$1,
+      {
+        tabs: skillsTabs.value,
+        active: activeTab$1.value,
+        onChange: (id) => {
+          activeTab$1.value = id;
+        }
+      }
+    ),
+    activeTab$1.value === "skills" && /* @__PURE__ */ u(S, { children: [
+      loading$7.value && !enabledSkills.value.length && /* @__PURE__ */ u("div", { style: { padding: "24px", textAlign: "center", color: "var(--muted)" }, children: "Loading skills..." }),
+      /* @__PURE__ */ u(EnabledSkillsTable, {})
+    ] }),
+    activeTab$1.value === "categories" && /* @__PURE__ */ u(BundledCategoriesSection, {}),
+    activeTab$1.value === "repositories" && /* @__PURE__ */ u(S, { children: [
+      /* @__PURE__ */ u(InstallBox$1, {}),
+      /* @__PURE__ */ u(BundleTransferBox, {}),
+      /* @__PURE__ */ u(InstallProgressBar, {}),
+      /* @__PURE__ */ u(FeaturedSection$1, {}),
+      /* @__PURE__ */ u(ReposSection, {})
+    ] })
   ] });
 }
 let _skillsContainer = null;
@@ -19684,30 +20202,6 @@ function StatusMessage({ error: error2, success, className }) {
   const text = error2 ?? success;
   return /* @__PURE__ */ u("div", { className: className ?? "text-xs mt-2", style: { color }, children: text });
 }
-function TabBar$1({ tabs, active, onChange: onChange2, className }) {
-  return /* @__PURE__ */ u("div", { className: className ?? "flex border-b border-[var(--border)] text-xs", role: "tablist", children: tabs.map((tab) => {
-    const isActive = tab.id === active;
-    const tabClass = [
-      "py-2 px-3 cursor-pointer bg-transparent border-b-2 transition-colors text-sm",
-      isActive ? "border-[var(--accent)] text-[var(--text)] font-medium" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"
-    ].join(" ");
-    return /* @__PURE__ */ u(
-      "button",
-      {
-        type: "button",
-        role: "tab",
-        "aria-selected": isActive,
-        className: tabClass,
-        onClick: () => onChange2(tab.id),
-        children: [
-          tab.label,
-          tab.badge != null && /* @__PURE__ */ u("span", { className: "ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]", children: tab.badge })
-        ]
-      },
-      tab.id
-    );
-  }) });
-}
 const metricsData = y(null);
 const historyPoints = y([]);
 const loading$6 = y(true);
@@ -22737,6 +23231,7 @@ function ServerCard({ server }) {
   const expanded = useSignal(false);
   const tools = useSignal(null);
   const toggling = useSignal(false);
+  const authing = useSignal(false);
   const editing = useSignal(false);
   const editTransport = useSignal("stdio");
   const editCmd = useSignal("");
@@ -22776,6 +23271,19 @@ function ServerCard({ server }) {
     await sendRpc("mcp.restart", { name: server.name });
     showToast$1(`Restarted "${server.name}"`, "success");
     await refreshServers();
+  }
+  async function reauth(e) {
+    var _a2;
+    e.stopPropagation();
+    authing.value = true;
+    const res = await sendRpc("mcp.reauth", { name: server.name, redirectUri: oauthCallbackUrl() });
+    if (res == null ? void 0 : res.ok) {
+      const p = res.payload;
+      showToast$1(`OAuth started for "${server.name}"`, "success");
+      if (p == null ? void 0 : p.authUrl) window.open(p.authUrl, "_blank", "noopener,noreferrer");
+    } else showToast$1(`Re-auth failed: ${((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "unknown"}`, "error");
+    await refreshServers();
+    authing.value = false;
   }
   function startEdit(e) {
     e.stopPropagation();
@@ -22851,6 +23359,7 @@ function ServerCard({ server }) {
       });
     });
   }
+  const needsReauth = server.auth_state === "awaiting_browser" || server.auth_state === "failed";
   const displayName = server.display_name || server.name;
   const showTechnical = server.display_name && server.display_name !== server.name;
   const currentSafeUrl = typeof server.url === "string" ? server.url.trim() : "";
@@ -22874,9 +23383,11 @@ function ServerCard({ server }) {
           server.tool_count,
           " tool",
           server.tool_count !== 1 ? "s" : ""
-        ] })
+        ] }),
+        needsReauth && /* @__PURE__ */ u("span", { className: "text-[0.62rem] px-1.5 py-px rounded-full bg-[var(--error)] text-white font-medium", children: server.auth_state === "failed" ? "Auth failed" : "OAuth required" })
       ] }),
       /* @__PURE__ */ u("div", { className: "flex items-center gap-1.5", children: [
+        needsReauth && /* @__PURE__ */ u("button", { onClick: reauth, disabled: authing.value, className: "provider-btn provider-btn-sm", children: authing.value ? "…" : "Re-auth" }),
         /* @__PURE__ */ u("button", { onClick: startEdit, className: "provider-btn provider-btn-secondary provider-btn-sm", children: "Edit" }),
         /* @__PURE__ */ u(
           "button",
@@ -27060,6 +27571,11 @@ function MemorySection() {
   const [searchMergeStrategy, setSearchMergeStrategy] = d("rrf");
   const [sessionExport, setSessionExport] = d("on-new-or-reset");
   const [promptMemoryMode, setPromptMemoryMode] = d("live-reload");
+  const [enablePrefetch, setEnablePrefetch] = d(true);
+  const [prefetchLimit, setPrefetchLimit] = d(3);
+  const [autoExtractInterval, setAutoExtractInterval] = d(5);
+  const [enableSessionSummary, setEnableSessionSummary] = d(true);
+  const [enableSelfImprovement, setEnableSelfImprovement] = d(true);
   y$1(() => {
     Promise.all([sendRpc("memory.status", {}), sendRpc("memory.config.get", {}), sendRpc("memory.qmd.status", {})]).then(([statusRes, configRes, qmdRes]) => {
       if (statusRes == null ? void 0 : statusRes.ok) {
@@ -27078,6 +27594,11 @@ function MemorySection() {
         setSearchMergeStrategy(cfg.search_merge_strategy || "rrf");
         setSessionExport(cfg.session_export || "on-new-or-reset");
         setPromptMemoryMode(cfg.prompt_memory_mode || "live-reload");
+        setEnablePrefetch(cfg.enable_prefetch ?? true);
+        setPrefetchLimit(cfg.prefetch_limit ?? 3);
+        setAutoExtractInterval(cfg.auto_extract_interval ?? 5);
+        setEnableSessionSummary(cfg.enable_session_summary ?? true);
+        setEnableSelfImprovement(cfg.enable_self_improvement ?? true);
       }
       if (qmdRes == null ? void 0 : qmdRes.ok) {
         setQmdStatus(qmdRes.payload);
@@ -27103,7 +27624,12 @@ function MemorySection() {
       llm_reranking: llmReranking,
       search_merge_strategy: searchMergeStrategy,
       session_export: sessionExport,
-      prompt_memory_mode: promptMemoryMode
+      prompt_memory_mode: promptMemoryMode,
+      enable_prefetch: enablePrefetch,
+      prefetch_limit: prefetchLimit,
+      auto_extract_interval: autoExtractInterval,
+      enable_session_summary: enableSessionSummary,
+      enable_self_improvement: enableSelfImprovement
     }).then((res) => {
       var _a2;
       save.setSaving(false);
@@ -27553,6 +28079,119 @@ function MemorySection() {
         ] })
       ] }) }),
       /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u(SubHeading, { title: "Agent Self-Improvement" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", style: { margin: "0 0 8px" }, children: "Controls how the agent learns autonomously across sessions." }),
+        /* @__PURE__ */ u("div", { style: { display: "flex", flexDirection: "column", gap: "10px" }, children: [
+          /* @__PURE__ */ u("label", { className: "text-xs flex items-center gap-2 cursor-pointer", children: [
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "checkbox",
+                checked: enableSelfImprovement,
+                onChange: (e) => {
+                  setEnableSelfImprovement(targetChecked(e));
+                  rerender$1();
+                }
+              }
+            ),
+            /* @__PURE__ */ u("div", { children: [
+              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Skill self-improvement prompting" }),
+              /* @__PURE__ */ u("span", { className: "text-[var(--muted)] block text-[.7rem]", children: "Encourage the agent to create reusable skills after complex tasks" })
+            ] })
+          ] }),
+          /* @__PURE__ */ u("label", { className: "text-xs flex items-center gap-2 cursor-pointer", children: [
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "checkbox",
+                checked: enablePrefetch,
+                onChange: (e) => {
+                  setEnablePrefetch(targetChecked(e));
+                  rerender$1();
+                }
+              }
+            ),
+            /* @__PURE__ */ u("div", { children: [
+              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Memory recall (prefetch)" }),
+              /* @__PURE__ */ u("span", { className: "text-[var(--muted)] block text-[.7rem]", children: "Automatically recall relevant memories before each turn" })
+            ] })
+          ] }),
+          enablePrefetch ? /* @__PURE__ */ u("div", { style: { marginLeft: "24px" }, children: /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: [
+            "Max results per turn:",
+            " ",
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "number",
+                min: 1,
+                max: 10,
+                className: "provider-key-input",
+                style: { width: "60px", marginLeft: "4px" },
+                value: prefetchLimit,
+                onChange: (e) => {
+                  setPrefetchLimit(Number.parseInt(targetValue(e), 10) || 3);
+                  rerender$1();
+                }
+              }
+            )
+          ] }) }) : null,
+          /* @__PURE__ */ u("label", { className: "text-xs flex items-center gap-2 cursor-pointer", children: [
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "checkbox",
+                checked: autoExtractInterval > 0,
+                onChange: (e) => {
+                  setAutoExtractInterval(targetChecked(e) ? 5 : 0);
+                  rerender$1();
+                }
+              }
+            ),
+            /* @__PURE__ */ u("div", { children: [
+              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Periodic memory extraction" }),
+              /* @__PURE__ */ u("span", { className: "text-[var(--muted)] block text-[.7rem]", children: "Automatically save important context every N turns" })
+            ] })
+          ] }),
+          autoExtractInterval > 0 ? /* @__PURE__ */ u("div", { style: { marginLeft: "24px" }, children: /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: [
+            "Every",
+            " ",
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "number",
+                min: 1,
+                max: 50,
+                className: "provider-key-input",
+                style: { width: "60px", margin: "0 4px" },
+                value: autoExtractInterval,
+                onChange: (e) => {
+                  setAutoExtractInterval(Number.parseInt(targetValue(e), 10) || 5);
+                  rerender$1();
+                }
+              }
+            ),
+            "turns"
+          ] }) }) : null,
+          /* @__PURE__ */ u("label", { className: "text-xs flex items-center gap-2 cursor-pointer", children: [
+            /* @__PURE__ */ u(
+              "input",
+              {
+                type: "checkbox",
+                checked: enableSessionSummary,
+                onChange: (e) => {
+                  setEnableSessionSummary(targetChecked(e));
+                  rerender$1();
+                }
+              }
+            ),
+            /* @__PURE__ */ u("div", { children: [
+              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Session-end summary" }),
+              /* @__PURE__ */ u("span", { className: "text-[var(--muted)] block text-[.7rem]", children: "Summarize accomplishments when a session is reset" })
+            ] })
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ u("div", { children: [
         /* @__PURE__ */ u(SubHeading, { title: "Session Export" }),
         /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", style: { margin: "0 0 8px" }, children: "Export session transcripts into searchable memory when a session is rolled over." }),
         /* @__PURE__ */ u(
@@ -27958,6 +28597,14 @@ function NotificationsSection() {
     ] })
   ] });
 }
+const IMPORT_CATEGORY_ICONS = {
+  identity: "👤",
+  providers: "🔑",
+  skills: "✨",
+  memory: "🧠",
+  channels: "💬",
+  sessions: "💾"
+};
 function OpenClawImportSection() {
   const [importLoading, setImportLoading] = d(true);
   const [scan, setScan] = d(null);
@@ -28025,9 +28672,11 @@ function OpenClawImportSection() {
   }
   const telegramAccounts = Number(scan.telegram_accounts) || 0;
   const discordAccounts = Number(scan.discord_accounts) || 0;
+  const signalAccounts = Number(scan.signal_accounts) || 0;
   const channelParts = [];
   if (telegramAccounts > 0) channelParts.push(`${telegramAccounts} Telegram account(s)`);
   if (discordAccounts > 0) channelParts.push(`${discordAccounts} Discord account(s)`);
+  if (signalAccounts > 0) channelParts.push(`${signalAccounts} Signal account(s)`);
   const channelDetail = channelParts.length > 0 ? channelParts.join(", ") : null;
   const unsupportedChannels = (scan.unsupported_channels || []).filter(
     (channel) => String(channel).toLowerCase() !== ChannelType.Discord
@@ -28114,31 +28763,28 @@ function OpenClawImportSection() {
           children: "Import Again"
         }
       )
-    ] }) : /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", style: { maxWidth: "400px" }, children: categories.map((cat) => /* @__PURE__ */ u(
-      "label",
-      {
-        className: `flex items-center gap-2 text-sm cursor-pointer ${cat.available ? "text-[var(--text)]" : "text-[var(--muted)] opacity-60"}`,
-        children: [
-          /* @__PURE__ */ u(
-            "input",
-            {
-              type: "checkbox",
-              checked: selection[cat.key] && cat.available,
-              disabled: !cat.available || importing,
-              onChange: () => toggleCategory(cat.key)
-            }
-          ),
-          /* @__PURE__ */ u("span", { children: cat.label }),
-          cat.detail && cat.available ? /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: [
-            "(",
-            cat.detail,
-            ")"
-          ] }) : null,
-          cat.available ? null : /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: "(not found)" })
-        ]
-      },
-      cat.key
-    )) }),
+    ] }) : /* @__PURE__ */ u("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2", style: { maxWidth: "600px" }, children: categories.map((cat) => {
+      const checked = selection[cat.key] && cat.available;
+      return /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          onClick: () => cat.available && !importing && toggleCategory(cat.key),
+          disabled: !cat.available || importing,
+          className: `flex items-center gap-3 p-3 rounded-md border text-left cursor-pointer transition-colors ${cat.available ? checked ? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]" : "border-[var(--border)] bg-[var(--surface)] opacity-60" : "border-[var(--border)] bg-[var(--surface)] opacity-40 cursor-not-allowed"}`,
+          children: [
+            /* @__PURE__ */ u("span", { className: "text-lg shrink-0", children: IMPORT_CATEGORY_ICONS[cat.key] || "📦" }),
+            /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+              /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: cat.label }),
+              cat.detail && cat.available ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: cat.detail }) : null,
+              cat.available ? null : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-0.5", children: "not found" })
+            ] }),
+            /* @__PURE__ */ u("div", { className: "shrink-0", children: checked ? /* @__PURE__ */ u("span", { className: "icon icon-check-circle text-[var(--accent)]" }) : /* @__PURE__ */ u("span", { className: "w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block" }) })
+          ]
+        },
+        cat.key
+      );
+    }) }),
     !done && unsupportedChannels.length > 0 ? /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", style: { maxWidth: "600px" }, children: [
       "Unsupported channels (coming soon): ",
       unsupportedChannels.join(", ")
@@ -28620,13 +29266,19 @@ function RemoteAccessSection() {
       ] })
     ] });
   }
+  const [activeTab2, setActiveTab] = d("tailscale");
+  const tsBadge = tsLoading ? void 0 : (tsStatus == null ? void 0 : tsStatus.mode) && tsStatus.mode !== "off" ? tsStatus.mode : void 0;
+  const ngBadge = ngLoading ? void 0 : (ngStatus == null ? void 0 : ngStatus.enabled) ? "on" : void 0;
+  const tabs = [
+    { id: "tailscale", label: "Tailscale", badge: tsBadge },
+    { id: "ngrok", label: "ngrok", badge: ngBadge }
+  ];
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
     /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Remote Access" }),
     /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed max-w-[60rem]", style: { margin: 0 }, children: "Choose how moltis is exposed beyond localhost. Tailscale is the safer default for tailnet access and optional public Funnel, while ngrok gives you a managed public HTTPS URL for teams, demos, and shared endpoints." }),
-    /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
-      renderTailscaleCard(),
-      renderNgrokCard()
-    ] })
+    /* @__PURE__ */ u(TabBar$1, { tabs, active: activeTab2, onChange: setActiveTab }),
+    activeTab2 === "tailscale" && renderTailscaleCard(),
+    activeTab2 === "ngrok" && renderNgrokCard()
   ] });
 }
 function bufToB64(buf) {
@@ -29765,310 +30417,302 @@ function SshSection() {
       rerender$1();
     }).catch((error2) => setError(error2.message));
   }
+  const [sshTab, setSshTab] = d("keys");
+  const sshTabs = [
+    { id: "keys", label: "Deploy Keys", badge: keys.length || void 0 },
+    { id: "targets", label: "Targets", badge: targets.length || void 0 }
+  ];
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
     /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "SSH" }),
-    /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[760px]", children: [
-      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 mb-1.5 leading-relaxed", children: [
-        "Manage outbound SSH keys and named remote exec targets. Generated deploy keys use",
-        " ",
-        /* @__PURE__ */ u("strong", { className: "text-[var(--text)]", children: "Ed25519" }),
-        ", the private half stays inside Moltis, and the public half is shown so you can install it in ",
-        /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "authorized_keys" }),
-        "."
-      ] }),
-      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 leading-relaxed", children: [
-        "Current auth path:",
-        /* @__PURE__ */ u("strong", { className: "text-[var(--text)]", children: vaultStatus === "unsealed" ? " vault-backed managed keys are available" : vaultStatus === "sealed" ? " vault is locked, managed keys cannot be used until unlocked" : " system OpenSSH remains available, managed keys stay plaintext until the vault is enabled" })
-      ] })
+    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed max-w-[760px]", style: { margin: 0 }, children: [
+      "Manage outbound SSH keys and named remote exec targets. Current auth path:",
+      /* @__PURE__ */ u("strong", { className: "text-[var(--text)]", children: vaultStatus === "unsealed" ? " vault-backed managed keys are available" : vaultStatus === "sealed" ? " vault is locked, managed keys cannot be used until unlocked" : " system OpenSSH remains available, managed keys stay plaintext until the vault is enabled" })
     ] }),
     sshMsg ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--accent)]", children: sshMsg }) : null,
     sshErr ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)]", children: sshErr }) : null,
-    /* @__PURE__ */ u("div", { className: "grid gap-4 lg:grid-cols-2 max-w-[1100px]", children: [
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0 mb-2", children: "Deploy Keys" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 mb-3", children: "Generate a new keypair for a host, or import an existing private key. Passphrase-protected imports are decrypted once and then stored under Moltis control." }),
-        /* @__PURE__ */ u("div", { className: "mb-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-xs text-[var(--muted)] leading-relaxed", children: [
-          "Recommended flow: generate one deploy key per remote host, copy the public key below, add it to that host's ",
-          /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "~/.ssh/authorized_keys" }),
-          ", then pin the host key with",
-          /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "ssh-keyscan -H host" }),
-          " when creating the target."
-        ] }),
-        /* @__PURE__ */ u("form", { onSubmit: onGenerateKey, className: "flex flex-col gap-2 mb-4", children: [
-          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Generate deploy key" }),
-          /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u(
-              "input",
-              {
-                className: "provider-key-input flex-1 min-w-[180px]",
-                type: "text",
-                value: generateName,
-                onInput: (e) => setGenerateName(targetValue(e)),
-                placeholder: "production-box"
-              }
-            ),
-            /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: busyAction === "generate-key", children: busyAction === "generate-key" ? "Generating…" : "Generate" })
-          ] })
-        ] }),
-        /* @__PURE__ */ u("form", { onSubmit: onImportKey, className: "flex flex-col gap-2", children: [
-          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Import private key" }),
-          /* @__PURE__ */ u(
-            "input",
-            {
-              className: "provider-key-input",
-              type: "text",
-              value: importName,
-              onInput: (e) => setImportName(targetValue(e)),
-              placeholder: "existing-deploy-key"
-            }
-          ),
-          /* @__PURE__ */ u(
-            "textarea",
-            {
-              className: "provider-key-input min-h-[140px] font-mono text-xs",
-              value: importPrivateKey,
-              onInput: (e) => setImportPrivateKey(targetValue(e)),
-              placeholder: "-----BEGIN OPENSSH PRIVATE KEY-----"
-            }
-          ),
-          /* @__PURE__ */ u(
-            "input",
-            {
-              className: "provider-key-input",
-              type: "password",
-              value: importPassphrase,
-              onInput: (e) => setImportPassphrase(targetValue(e)),
-              placeholder: "Optional import passphrase"
-            }
-          ),
-          /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: busyAction === "import-key", children: busyAction === "import-key" ? "Importing…" : "Import Key" })
-        ] }),
-        /* @__PURE__ */ u("div", { className: "mt-4 flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading keys..." }) : keys.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No managed SSH keys yet." }) : keys.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item items-start gap-4", children: [
-          /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
-            /* @__PURE__ */ u("div", { className: "provider-item-name", children: entry.name }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all mt-1", children: [
-              /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Fingerprint (SHA256):" }),
-              " ",
-              entry.fingerprint
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: [
-              entry.encrypted ? "Encrypted in vault" : "Stored plaintext until the vault is available",
-              (entry.target_count ?? 0) > 0 ? `, used by ${entry.target_count} target${entry.target_count === 1 ? "" : "s"}` : ""
-            ] }),
-            /* @__PURE__ */ u("pre", { className: "mt-3 whitespace-pre-wrap break-all rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-[11px] leading-relaxed text-[var(--muted)]", children: entry.public_key })
-          ] }),
-          /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 shrink-0 self-start", children: [
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onCopyPublicKey(entry),
-                children: copiedKeyId === entry.id ? "Copied" : "Copy Public Key"
-              }
-            ),
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-danger",
-                onClick: () => onDeleteKey(entry.id),
-                disabled: busyAction === `delete-key:${entry.id}` || (entry.target_count ?? 0) > 0,
-                children: busyAction === `delete-key:${entry.id}` ? "Deleting…" : "Delete"
-              }
-            )
-          ] })
-        ] }, entry.id)) })
+    /* @__PURE__ */ u(TabBar$1, { tabs: sshTabs, active: sshTab, onChange: setSshTab }),
+    sshTab === "keys" && /* @__PURE__ */ u("div", { className: "flex flex-col gap-4 max-w-[760px]", children: [
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0", children: "Generate a new keypair for a host, or import an existing private key. Passphrase-protected imports are decrypted once and then stored under Moltis control." }),
+      /* @__PURE__ */ u("div", { className: "mb-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-xs text-[var(--muted)] leading-relaxed", children: [
+        "Recommended flow: generate one deploy key per remote host, copy the public key below, add it to that host's ",
+        /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "~/.ssh/authorized_keys" }),
+        ", then pin the host key with",
+        /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "ssh-keyscan -H host" }),
+        " when creating the target."
       ] }),
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0 mb-2", children: "SSH Targets" }),
-        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0 mb-3", children: "Add named hosts for remote execution. Targets can use your system OpenSSH setup or one of the managed keys above." }),
-        /* @__PURE__ */ u("form", { onSubmit: onCreateTarget, className: "flex flex-col gap-2 mb-4", children: [
+      /* @__PURE__ */ u("form", { onSubmit: onGenerateKey, className: "flex flex-col gap-2 mb-4", children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Generate deploy key" }),
+        /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
           /* @__PURE__ */ u(
             "input",
             {
-              className: "provider-key-input",
+              className: "provider-key-input flex-1 min-w-[180px]",
               type: "text",
-              value: targetLabel,
-              onInput: (e) => setTargetLabel(targetValue(e)),
-              placeholder: "prod-box"
+              value: generateName,
+              onInput: (e) => setGenerateName(targetValue(e)),
+              placeholder: "production-box"
             }
           ),
-          /* @__PURE__ */ u(
-            "input",
-            {
-              className: "provider-key-input",
-              type: "text",
-              value: targetHost,
-              onInput: (e) => setTargetHost(targetValue(e)),
-              placeholder: "deploy@example.com"
-            }
-          ),
-          /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u(
-              "input",
-              {
-                className: "provider-key-input w-[120px]",
-                type: "number",
-                min: 1,
-                max: 65535,
-                value: targetPort,
-                onInput: (e) => setTargetPort(targetValue(e)),
-                placeholder: "22"
-              }
-            ),
-            /* @__PURE__ */ u(
-              "select",
-              {
-                className: "provider-key-input flex-1 min-w-[180px]",
-                value: targetAuthMode,
-                onInput: (e) => setTargetAuthMode(targetValue(e)),
-                children: [
-                  /* @__PURE__ */ u("option", { value: "managed", children: "Managed key" }),
-                  /* @__PURE__ */ u("option", { value: "system", children: "System OpenSSH" })
-                ]
-              }
-            )
+          /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn", disabled: busyAction === "generate-key", children: busyAction === "generate-key" ? "Generating…" : "Generate" })
+        ] })
+      ] }),
+      /* @__PURE__ */ u("form", { onSubmit: onImportKey, className: "flex flex-col gap-2", children: [
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Import private key" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "text",
+            value: importName,
+            onInput: (e) => setImportName(targetValue(e)),
+            placeholder: "existing-deploy-key"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "textarea",
+          {
+            className: "provider-key-input min-h-[140px] font-mono text-xs",
+            value: importPrivateKey,
+            onInput: (e) => setImportPrivateKey(targetValue(e)),
+            placeholder: "-----BEGIN OPENSSH PRIVATE KEY-----"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "password",
+            value: importPassphrase,
+            onInput: (e) => setImportPassphrase(targetValue(e)),
+            placeholder: "Optional import passphrase"
+          }
+        ),
+        /* @__PURE__ */ u("button", { type: "submit", className: "provider-btn self-start", disabled: busyAction === "import-key", children: busyAction === "import-key" ? "Importing…" : "Import Key" })
+      ] }),
+      /* @__PURE__ */ u("div", { className: "mt-4 flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading keys..." }) : keys.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No managed SSH keys yet." }) : keys.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item items-start gap-4", children: [
+        /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+          /* @__PURE__ */ u("div", { className: "provider-item-name", children: entry.name }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all mt-1", children: [
+            /* @__PURE__ */ u("span", { className: "text-[var(--text)]", children: "Fingerprint (SHA256):" }),
+            " ",
+            entry.fingerprint
           ] }),
-          /* @__PURE__ */ u(
-            "textarea",
-            {
-              className: "provider-key-input min-h-[96px] font-mono text-xs",
-              value: targetKnownHost,
-              onInput: (e) => setTargetKnownHost(targetValue(e)),
-              placeholder: "Optional known_hosts line from ssh-keyscan -H host"
-            }
-          ),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
-            "If you paste a ",
-            /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "known_hosts" }),
-            " line here, Moltis will use strict host-key checking for this target instead of trusting your global SSH config."
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: [
+            entry.encrypted ? "Encrypted in vault" : "Stored plaintext until the vault is available",
+            (entry.target_count ?? 0) > 0 ? `, used by ${entry.target_count} target${entry.target_count === 1 ? "" : "s"}` : ""
           ] }),
+          /* @__PURE__ */ u("pre", { className: "mt-3 whitespace-pre-wrap break-all rounded border border-[var(--border)] bg-[var(--surface2)] p-2 text-[11px] leading-relaxed text-[var(--muted)]", children: entry.public_key })
+        ] }),
+        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 shrink-0 self-start", children: [
           /* @__PURE__ */ u(
             "button",
             {
               type: "button",
-              className: "provider-btn provider-btn-secondary self-start",
-              onClick: onScanCreateTargetHost,
-              disabled: busyAction === "scan-create-target",
-              children: busyAction === "scan-create-target" ? "Scanning…" : "Scan Host Key"
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onCopyPublicKey(entry),
+              children: copiedKeyId === entry.id ? "Copied" : "Copy Public Key"
             }
           ),
-          targetAuthMode === "managed" ? /* @__PURE__ */ u(
-            "select",
-            {
-              className: "provider-key-input",
-              value: targetKeyId,
-              onInput: (e) => setTargetKeyId(targetValue(e)),
-              children: [
-                /* @__PURE__ */ u("option", { value: "", children: "Choose a managed key" }),
-                keys.map((entry) => /* @__PURE__ */ u("option", { value: entry.id, children: entry.name }, entry.id))
-              ]
-            }
-          ) : null,
-          targetAuthMode === "managed" && keys.length === 0 ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Generate or import a deploy key first. Moltis cannot connect with a managed target until a private key exists." }) : null,
-          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] flex items-center gap-2", children: [
-            /* @__PURE__ */ u(
-              "input",
-              {
-                type: "checkbox",
-                checked: targetIsDefault,
-                onInput: (e) => setTargetIsDefault(targetChecked(e))
-              }
-            ),
-            "Set as default remote SSH target"
-          ] }),
           /* @__PURE__ */ u(
             "button",
             {
-              type: "submit",
-              className: "provider-btn self-start",
-              disabled: busyAction === "create-target" || targetAuthMode === "managed" && keys.length === 0,
-              children: busyAction === "create-target" ? "Saving…" : "Add Target"
+              type: "button",
+              className: "provider-btn provider-btn-danger",
+              onClick: () => onDeleteKey(entry.id),
+              disabled: busyAction === `delete-key:${entry.id}` || (entry.target_count ?? 0) > 0,
+              children: busyAction === `delete-key:${entry.id}` ? "Deleting…" : "Delete"
+            }
+          )
+        ] })
+      ] }, entry.id)) })
+    ] }),
+    sshTab === "targets" && /* @__PURE__ */ u("div", { className: "flex flex-col gap-4 max-w-[760px]", children: [
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] m-0", children: "Add named hosts for remote execution. Targets can use your system OpenSSH setup or one of the managed keys." }),
+      /* @__PURE__ */ u("form", { onSubmit: onCreateTarget, className: "flex flex-col gap-2 mb-4", children: [
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "text",
+            value: targetLabel,
+            onInput: (e) => setTargetLabel(targetValue(e)),
+            placeholder: "prod-box"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            className: "provider-key-input",
+            type: "text",
+            value: targetHost,
+            onInput: (e) => setTargetHost(targetValue(e)),
+            placeholder: "deploy@example.com"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "flex gap-2 flex-wrap", children: [
+          /* @__PURE__ */ u(
+            "input",
+            {
+              className: "provider-key-input w-[120px]",
+              type: "number",
+              min: 1,
+              max: 65535,
+              value: targetPort,
+              onInput: (e) => setTargetPort(targetValue(e)),
+              placeholder: "22"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "select",
+            {
+              className: "provider-key-input flex-1 min-w-[180px]",
+              value: targetAuthMode,
+              onInput: (e) => setTargetAuthMode(targetValue(e)),
+              children: [
+                /* @__PURE__ */ u("option", { value: "managed", children: "Managed key" }),
+                /* @__PURE__ */ u("option", { value: "system", children: "System OpenSSH" })
+              ]
             }
           )
         ] }),
-        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading targets..." }) : targets.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No SSH targets configured." }) : targets.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item", children: [
-          /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
-            /* @__PURE__ */ u("div", { className: "provider-item-name flex items-center gap-2 flex-wrap", children: [
-              /* @__PURE__ */ u("span", { children: entry.label }),
-              entry.is_default ? /* @__PURE__ */ u(Badge, { label: "Default", variant: "configured" }) : null,
-              /* @__PURE__ */ u(Badge, { label: entry.auth_mode === "managed" ? "Managed key" : "System SSH" }),
-              entry.known_host ? /* @__PURE__ */ u(Badge, { label: "Host pinned", variant: "configured" }) : /* @__PURE__ */ u(Badge, { label: "Uses global known_hosts", variant: "warning" })
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all", children: [
-              entry.target,
-              entry.port ? `:${entry.port}` : ""
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: entry.key_name ? `Key: ${entry.key_name}` : "Uses your local ssh config / agent" }),
-            testResults[entry.id] ? /* @__PURE__ */ u("div", { className: "mt-1", children: [
-              /* @__PURE__ */ u(
-                "div",
-                {
-                  className: `text-xs ${testResults[entry.id].reachable ? "text-[var(--accent)]" : "text-[var(--error)]"}`,
-                  children: testResults[entry.id].reachable ? "Reachable" : "Unreachable"
-                }
-              ),
-              testResults[entry.id].failure_hint ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--text-muted)] mt-1", children: [
-                "Hint: ",
-                testResults[entry.id].failure_hint
-              ] }) : null
-            ] }) : null
+        /* @__PURE__ */ u(
+          "textarea",
+          {
+            className: "provider-key-input min-h-[96px] font-mono text-xs",
+            value: targetKnownHost,
+            onInput: (e) => setTargetKnownHost(targetValue(e)),
+            placeholder: "Optional known_hosts line from ssh-keyscan -H host"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: [
+          "If you paste a ",
+          /* @__PURE__ */ u("code", { className: "text-[var(--text)]", children: "known_hosts" }),
+          " line here, Moltis will use strict host-key checking for this target instead of trusting your global SSH config."
+        ] }),
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-secondary self-start",
+            onClick: onScanCreateTargetHost,
+            disabled: busyAction === "scan-create-target",
+            children: busyAction === "scan-create-target" ? "Scanning…" : "Scan Host Key"
+          }
+        ),
+        targetAuthMode === "managed" ? /* @__PURE__ */ u(
+          "select",
+          {
+            className: "provider-key-input",
+            value: targetKeyId,
+            onInput: (e) => setTargetKeyId(targetValue(e)),
+            children: [
+              /* @__PURE__ */ u("option", { value: "", children: "Choose a managed key" }),
+              keys.map((entry) => /* @__PURE__ */ u("option", { value: entry.id, children: entry.name }, entry.id))
+            ]
+          }
+        ) : null,
+        targetAuthMode === "managed" && keys.length === 0 ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: "Generate or import a deploy key first. Moltis cannot connect with a managed target until a private key exists." }) : null,
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)] flex items-center gap-2", children: [
+          /* @__PURE__ */ u(
+            "input",
+            {
+              type: "checkbox",
+              checked: targetIsDefault,
+              onInput: (e) => setTargetIsDefault(targetChecked(e))
+            }
+          ),
+          "Set as default remote SSH target"
+        ] }),
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "submit",
+            className: "provider-btn self-start",
+            disabled: busyAction === "create-target" || targetAuthMode === "managed" && keys.length === 0,
+            children: busyAction === "create-target" ? "Saving…" : "Add Target"
+          }
+        )
+      ] }),
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: loadingSsh ? /* @__PURE__ */ u(Loading, { message: "Loading targets..." }) : targets.length === 0 ? /* @__PURE__ */ u(EmptyState$1, { message: "No SSH targets configured." }) : targets.map((entry) => /* @__PURE__ */ u("div", { className: "provider-item", children: [
+        /* @__PURE__ */ u("div", { className: "flex-1 min-w-0", children: [
+          /* @__PURE__ */ u("div", { className: "provider-item-name flex items-center gap-2 flex-wrap", children: [
+            /* @__PURE__ */ u("span", { children: entry.label }),
+            entry.is_default ? /* @__PURE__ */ u(Badge, { label: "Default", variant: "configured" }) : null,
+            /* @__PURE__ */ u(Badge, { label: entry.auth_mode === "managed" ? "Managed key" : "System SSH" }),
+            entry.known_host ? /* @__PURE__ */ u(Badge, { label: "Host pinned", variant: "configured" }) : /* @__PURE__ */ u(Badge, { label: "Uses global known_hosts", variant: "warning" })
           ] }),
-          /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: [
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] break-all", children: [
+            entry.target,
+            entry.port ? `:${entry.port}` : ""
+          ] }),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: entry.key_name ? `Key: ${entry.key_name}` : "Uses your local ssh config / agent" }),
+          testResults[entry.id] ? /* @__PURE__ */ u("div", { className: "mt-1", children: [
             /* @__PURE__ */ u(
-              "button",
+              "div",
               {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onTestTarget(entry.id),
-                disabled: busyAction === `test-target:${entry.id}`,
-                children: busyAction === `test-target:${entry.id}` ? "Testing…" : "Test"
+                className: `text-xs ${testResults[entry.id].reachable ? "text-[var(--accent)]" : "text-[var(--error)]"}`,
+                children: testResults[entry.id].reachable ? "Reachable" : "Unreachable"
               }
             ),
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onScanAndPinTarget(entry),
-                disabled: busyAction === `pin-target:${entry.id}`,
-                children: busyAction === `pin-target:${entry.id}` ? "Scanning…" : entry.known_host ? "Refresh Pin" : "Scan & Pin"
-              }
-            ),
-            entry.known_host ? /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onClearTargetPin(entry),
-                disabled: busyAction === `clear-pin:${entry.id}`,
-                children: busyAction === `clear-pin:${entry.id}` ? "Clearing…" : "Clear Pin"
-              }
-            ) : null,
-            entry.is_default ? null : /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-secondary",
-                onClick: () => onSetDefaultTarget(entry.id),
-                disabled: busyAction === `default-target:${entry.id}`,
-                children: "Make Default"
-              }
-            ),
-            /* @__PURE__ */ u(
-              "button",
-              {
-                type: "button",
-                className: "provider-btn provider-btn-danger",
-                onClick: () => onDeleteTarget(entry.id),
-                disabled: busyAction === `delete-target:${entry.id}`,
-                children: busyAction === `delete-target:${entry.id}` ? "Deleting…" : "Delete"
-              }
-            )
-          ] })
-        ] }, entry.id)) })
-      ] })
+            testResults[entry.id].failure_hint ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--text-muted)] mt-1", children: [
+              "Hint: ",
+              testResults[entry.id].failure_hint
+            ] }) : null
+          ] }) : null
+        ] }),
+        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: [
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onTestTarget(entry.id),
+              disabled: busyAction === `test-target:${entry.id}`,
+              children: busyAction === `test-target:${entry.id}` ? "Testing…" : "Test"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onScanAndPinTarget(entry),
+              disabled: busyAction === `pin-target:${entry.id}`,
+              children: busyAction === `pin-target:${entry.id}` ? "Scanning…" : entry.known_host ? "Refresh Pin" : "Scan & Pin"
+            }
+          ),
+          entry.known_host ? /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onClearTargetPin(entry),
+              disabled: busyAction === `clear-pin:${entry.id}`,
+              children: busyAction === `clear-pin:${entry.id}` ? "Clearing…" : "Clear Pin"
+            }
+          ) : null,
+          entry.is_default ? null : /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-secondary",
+              onClick: () => onSetDefaultTarget(entry.id),
+              disabled: busyAction === `default-target:${entry.id}`,
+              children: "Make Default"
+            }
+          ),
+          /* @__PURE__ */ u(
+            "button",
+            {
+              type: "button",
+              className: "provider-btn provider-btn-danger",
+              onClick: () => onDeleteTarget(entry.id),
+              disabled: busyAction === `delete-target:${entry.id}`,
+              children: busyAction === `delete-target:${entry.id}` ? "Deleting…" : "Delete"
+            }
+          )
+        ] })
+      ] }, entry.id)) })
     ] })
   ] });
 }
@@ -30153,12 +30797,6 @@ function ToolsSection() {
   const sandbox = data.sandbox || {};
   const tools = Array.isArray(data.tools) ? data.tools : [];
   const toolGroups = groupToolsForOverview(tools);
-  const skills = Array.isArray(data.skills) ? data.skills : [];
-  const pluginCount = skills.filter((entry) => (entry == null ? void 0 : entry.source) === "plugin").length;
-  const personalSkillCount = skills.length - pluginCount;
-  const mcpServers = Array.isArray(data.mcpServers) ? data.mcpServers : [];
-  const runningMcpServers = mcpServers.filter((entry) => (entry == null ? void 0 : entry.state) === "running");
-  const runningMcpToolCount = runningMcpServers.reduce((sum, entry) => sum + (Number(entry == null ? void 0 : entry.tool_count) || 0), 0);
   const remoteExecInventory = summarizeRemoteExecInventory(nodeInventory);
   const routeDetails = [];
   routeDetails.push(execution.mode === "sandbox" ? "sandboxed commands" : "host commands");
@@ -30188,56 +30826,6 @@ function ToolsSection() {
         }
       )
     ] }),
-    /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[1100px]", children: [
-      /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] leading-relaxed", children: "Use this as the operator view of what the model can currently reach. For setup changes, jump straight to the relevant control surface." }),
-      /* @__PURE__ */ u("div", { className: "mt-3 flex gap-2 flex-wrap", children: [
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("providers")),
-            children: "LLMs"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("mcp")),
-            children: "MCP"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("skills")),
-            children: "Skills"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("nodes")),
-            children: "Nodes"
-          }
-        ),
-        /* @__PURE__ */ u(
-          "button",
-          {
-            type: "button",
-            className: "provider-btn provider-btn-secondary",
-            onClick: () => navigate(settingsPath("ssh")),
-            children: "SSH"
-          }
-        )
-      ] })
-    ] }),
     toolsErr ? /* @__PURE__ */ u("div", { className: "text-xs text-[var(--error)] max-w-[1100px]", children: toolsErr }) : null,
     /* @__PURE__ */ u("div", { className: "grid gap-4 md:grid-cols-2 max-w-[1100px]", children: [
       /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
@@ -30261,23 +30849,6 @@ function ToolsSection() {
         ] })
       ] }),
       /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)]", children: "MCP" }),
-        /* @__PURE__ */ u("div", { className: "mt-2 flex items-center gap-2 flex-wrap", children: [
-          /* @__PURE__ */ u(
-            "span",
-            {
-              className: `provider-item-badge ${data.supportsTools === false || data.mcpDisabled ? "warning" : runningMcpServers.length > 0 ? "configured" : "muted"}`,
-              children: data.supportsTools === false ? "Unavailable" : data.mcpDisabled ? "Off for session" : runningMcpServers.length > 0 ? "Active" : "No running servers"
-            }
-          ),
-          /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text)]", children: pluralizeToolsCount(runningMcpToolCount, "MCP tool") })
-        ] }),
-        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-2 leading-relaxed", children: [
-          pluralizeToolsCount(runningMcpServers.length, "running server"),
-          data.mcpDisabled ? ", disabled explicitly for this session." : "."
-        ] })
-      ] }),
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
         /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)]", children: "Execution Routes" }),
         /* @__PURE__ */ u("div", { className: "mt-2 text-sm font-medium text-[var(--text)]", children: routeDetails.join(" · ") }),
         /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-2 leading-relaxed", children: [
@@ -30298,66 +30869,30 @@ function ToolsSection() {
       ] }),
       " and refresh this page."
     ] }) }) : null,
-    /* @__PURE__ */ u("div", { className: "grid gap-4 md:grid-cols-2 max-w-[1100px]", children: [
-      /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-        /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-          /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "Registered Tools" }),
-          /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: tools.length })
-        ] }),
-        toolGroups.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-3", children: toolGroups.map((group) => /* @__PURE__ */ u("div", { children: [
-          /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)] mb-2", children: [
-            group.label,
-            " ",
-            "·",
-            " ",
-            group.tools.length
-          ] }),
-          /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: group.tools.map((tool) => {
-            var _a2;
-            return /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
-              /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-                /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)] break-words", children: tool.name }),
-                ((_a2 = tool.name) == null ? void 0 : _a2.startsWith("mcp__")) ? /* @__PURE__ */ u("span", { className: "provider-item-badge configured", children: "MCP" }) : null
-              ] }),
-              /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: tool.description || "No description provided." })
-            ] }, tool.name);
-          }) })
-        ] }, group.label)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No tools are currently exposed to this session." })
+    /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4 max-w-[1100px]", children: [
+      /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
+        /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "Registered Tools" }),
+        /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: tools.length })
       ] }),
-      /* @__PURE__ */ u("div", { className: "flex flex-col gap-4", children: [
-        /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-          /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "Skills & Plugins" }),
-            /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: skills.length })
-          ] }),
-          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3 leading-relaxed", children: [
-            pluralizeToolsCount(personalSkillCount, "skill"),
-            ", ",
-            pluralizeToolsCount(pluginCount, "plugin"),
-            "."
-          ] }),
-          skills.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-2", children: skills.map((entry) => /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
-            /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-              /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)]", children: entry.name }),
-              /* @__PURE__ */ u("span", { className: `provider-item-badge ${entry.source === "plugin" ? "configured" : "muted"}`, children: entry.source === "plugin" ? "Plugin" : "Skill" })
-            ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: entry.description || "No description provided." })
-          ] }, entry.name)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No skills or plugins enabled." })
+      toolGroups.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-3", children: toolGroups.map((group) => /* @__PURE__ */ u("div", { children: [
+        /* @__PURE__ */ u("div", { className: "text-xs uppercase tracking-wide text-[var(--muted)] mb-2", children: [
+          group.label,
+          " ",
+          "·",
+          " ",
+          group.tools.length
         ] }),
-        /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface)] p-4", children: [
-          /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-            /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)] m-0", children: "MCP Servers" }),
-            /* @__PURE__ */ u("span", { className: "provider-item-badge muted", children: mcpServers.length })
-          ] }),
-          mcpServers.length > 0 ? /* @__PURE__ */ u("div", { className: "mt-3 flex flex-col gap-2", children: mcpServers.map((entry) => /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
+        /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: group.tools.map((tool) => {
+          var _a2;
+          return /* @__PURE__ */ u("div", { className: "rounded border border-[var(--border)] bg-[var(--surface2)] p-3", children: [
             /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-2 flex-wrap", children: [
-              /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)]", children: entry.name }),
-              /* @__PURE__ */ u("span", { className: `provider-item-badge ${entry.state === "running" ? "configured" : "warning"}`, children: entry.state || "unknown" })
+              /* @__PURE__ */ u("div", { className: "text-xs font-medium text-[var(--text)] break-words", children: tool.name }),
+              ((_a2 = tool.name) == null ? void 0 : _a2.startsWith("mcp__")) ? /* @__PURE__ */ u("span", { className: "provider-item-badge configured", children: "MCP" }) : null
             ] }),
-            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: pluralizeToolsCount(Number(entry.tool_count) || 0, "tool") })
-          ] }, entry.name)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No MCP servers configured." })
-        ] })
-      ] })
+            /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1 leading-relaxed", children: tool.description || "No description provided." })
+          ] }, tool.name);
+        }) })
+      ] }, group.label)) }) : /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-3", children: "No tools are currently exposed to this session." })
     ] })
   ] });
 }

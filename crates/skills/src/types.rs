@@ -136,6 +136,8 @@ pub enum SkillSource {
     Plugin,
     /// Installed from a registry (e.g. skills.sh).
     Registry,
+    /// Embedded in the binary at compile time from `crates/skills/src/assets/`.
+    Bundled,
 }
 
 /// Lightweight metadata parsed from SKILL.md frontmatter.
@@ -177,12 +179,35 @@ pub struct SkillMetadata {
     /// Binary/tool requirements for this skill.
     #[serde(default)]
     pub requires: SkillRequirements,
+    /// Provenance of a bundled or imported skill (upstream repo, commit, date).
+    #[serde(default)]
+    pub origin: Option<SkillOrigin>,
+    /// Category for grouping in the UI (e.g. "research", "creative", "mlops").
+    /// Derived from the parent directory name for bundled skills.
+    #[serde(skip)]
+    pub category: Option<String>,
     /// Filesystem path to the skill directory.
     #[serde(skip)]
     pub path: PathBuf,
     /// Where this skill was discovered.
     #[serde(skip)]
     pub source: Option<SkillSource>,
+}
+
+// ── Skill origin ────────────────────────────────────────────────────────────
+
+/// Provenance information for a skill copied from an external source.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SkillOrigin {
+    /// Upstream project name (e.g. `"hermes-agent"`).
+    #[serde(default)]
+    pub source: Option<String>,
+    /// URL of the upstream repository.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Commit SHA or version tag at which the skill was copied.
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 // ── Skill requirements ──────────────────────────────────────────────────────

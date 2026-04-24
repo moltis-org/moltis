@@ -792,7 +792,9 @@ async fn test_read_skill_unknown_name_with_empty_registry_is_clear() {
 }
 
 #[tokio::test]
-async fn test_read_skill_sidecar_rejects_empty_file_path() {
+async fn test_read_skill_empty_file_path_falls_through_to_primary() {
+    // Models often send file_path: "" instead of omitting the field.
+    // Treat empty/whitespace as absent and return the primary body.
     let tmp = tempfile::tempdir().unwrap();
     seed_personal_skill(tmp.path(), "demo", "# Demo\n");
     let tool = read_tool_for(tmp.path());
@@ -801,8 +803,9 @@ async fn test_read_skill_sidecar_rejects_empty_file_path() {
             "name": "demo",
             "file_path": ""
         }))
-        .await;
-    assert!(result.is_err(), "empty file_path must be rejected");
+        .await
+        .expect("empty file_path should fall through to read_primary");
+    assert_eq!(result.get("name").and_then(|v| v.as_str()), Some("demo"));
 }
 
 #[tokio::test]

@@ -89,6 +89,160 @@ impl Transform for EnsurePropertyTypeTransform {
     }
 }
 
+/// Collapse JSON Schema `type` arrays to a single provider-compatible type.
+///
+/// Some OpenAI-compatible providers, especially Google AI Studio through
+/// OpenRouter, reject or mis-convert array-form types. When an object union
+/// like `["object", "string"]` has `properties`/`required`, OpenRouter's
+/// Google translation can drop the properties but keep `required`, causing
+/// "property is not defined" at request time (#793).
+#[derive(Debug, Clone, Default)]
+struct CollapseTypeArrayTransform;
+
+impl Transform for CollapseTypeArrayTransform {
+    fn transform(&mut self, schema: &mut Schema) {
+        let Some(obj) = schema.as_object_mut() else {
+            return;
+        };
+
+        let Some(types) = obj.get("type").and_then(|value| value.as_array()) else {
+            return;
+        };
+
+        let has_type = |name: &str| {
+            types
+                .iter()
+                .any(|value| value.as_str().is_some_and(|kind| kind == name))
+        };
+
+        let collapsed = if has_type("object")
+            && (obj.contains_key("properties")
+                || obj.contains_key("required")
+                || obj.contains_key("additionalProperties"))
+        {
+            Some("object")
+        } else if has_type("array")
+            && (obj.contains_key("items")
+                || obj.contains_key("minItems")
+                || obj.contains_key("maxItems")
+                || obj.contains_key("uniqueItems"))
+        {
+            Some("array")
+        } else {
+            types
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .find(|kind| *kind != "null")
+                .or_else(|| types.iter().filter_map(serde_json::Value::as_str).next())
+        };
+
+        if let Some(kind) = collapsed {
+            obj.insert(
+                "type".to_string(),
+                serde_json::Value::String(kind.to_string()),
+            );
+        }
+    }
+}
+
+fn merge_schema_object(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    variant: serde_json::Value,
+) {
+    if let serde_json::Value::Object(inner) = variant {
+        for (key, value) in inner {
+            // Parent-key wins: if a key is already present (e.g. `description`
+            // from the surrounding schema), keep it and use the selected
+            // variant only for missing structural keys.
+            obj.entry(key).or_insert(value);
+        }
+    }
+}
+
+fn schema_type(value: &serde_json::Value) -> Option<&str> {
+    value
+        .as_object()
+        .and_then(|obj| obj.get("type"))
+        .and_then(serde_json::Value::as_str)
+}
+
+fn has_object_shape(value: &serde_json::Value) -> bool {
+    value.as_object().is_some_and(|obj| {
+        obj.contains_key("properties")
+            || obj.contains_key("required")
+            || obj.contains_key("additionalProperties")
+    })
+}
+
+fn has_array_shape(value: &serde_json::Value) -> bool {
+    value.as_object().is_some_and(|obj| {
+        obj.contains_key("items")
+            || obj.contains_key("minItems")
+            || obj.contains_key("maxItems")
+            || obj.contains_key("uniqueItems")
+    })
+}
+
+fn preferred_union_variant_index(variants: &[serde_json::Value]) -> Option<usize> {
+    variants
+        .iter()
+        .position(|variant| schema_type(variant) == Some("object") && has_object_shape(variant))
+        .or_else(|| variants.iter().position(has_object_shape))
+        .or_else(|| {
+            variants.iter().position(|variant| {
+                schema_type(variant) == Some("array") && has_array_shape(variant)
+            })
+        })
+        .or_else(|| variants.iter().position(has_array_shape))
+        .or_else(|| {
+            variants
+                .iter()
+                .position(|variant| schema_type(variant) == Some("object"))
+        })
+        .or_else(|| {
+            variants
+                .iter()
+                .position(|variant| schema_type(variant) == Some("array"))
+        })
+        .or_else(|| {
+            variants
+                .iter()
+                .position(|variant| schema_type(variant).is_some_and(|kind| kind != "null"))
+        })
+        .or_else(|| (!variants.is_empty()).then_some(0))
+}
+
+/// Collapse `anyOf`/`oneOf` unions to a single schema for providers that
+/// cannot represent JSON Schema unions in tool parameters.
+#[derive(Debug, Clone, Default)]
+struct CollapseCompositeUnionTransform;
+
+impl Transform for CollapseCompositeUnionTransform {
+    fn transform(&mut self, schema: &mut Schema) {
+        let Some(obj) = schema.as_object_mut() else {
+            return;
+        };
+
+        for keyword in ["anyOf", "oneOf"] {
+            let Some(variants) = obj.get_mut(keyword).and_then(|v| v.as_array_mut()) else {
+                continue;
+            };
+
+            variants.retain(|v| !v.as_object().is_some_and(|o| o.is_empty()));
+            if variants.is_empty() {
+                obj.remove(keyword);
+                continue;
+            }
+
+            if let Some(index) = preferred_union_variant_index(variants) {
+                let selected = variants.remove(index);
+                obj.remove(keyword);
+                merge_schema_object(obj, selected);
+            }
+        }
+    }
+}
+
 /// Prune `required` entries that reference properties not defined in `properties`.
 ///
 /// MCP tools (e.g. Home Assistant with 80+ tools) may declare `required`
@@ -252,13 +406,7 @@ impl Transform for SimplifyCompositeTransform {
                 let single = variants.remove(0);
                 obj.remove(keyword);
                 if let serde_json::Value::Object(inner) = single {
-                    for (k, v) in inner {
-                        // Parent-key wins: if a key is already present (e.g. `type`
-                        // from a surrounding object schema), we keep the parent value
-                        // and discard the variant's. This is safe for the `not`→`{}`
-                        // canonicalization pattern this transform targets.
-                        obj.entry(k).or_insert(v);
-                    }
+                    merge_schema_object(obj, serde_json::Value::Object(inner));
                 }
             } else if variants.is_empty() {
                 obj.remove(keyword);
@@ -400,6 +548,12 @@ pub(crate) fn sanitize_schema_for_openai_compat(schema: &mut serde_json::Value) 
     let mut subset_transform = RecursiveTransform(OpenAiSchemaSubsetTransform);
     subset_transform.transform(&mut transformed);
 
+    // Collapse array-form types before pruning. Otherwise OpenRouter's Google
+    // converter can discard union-typed object properties while keeping their
+    // nested `required` arrays (#793).
+    let mut collapse_type_arrays = RecursiveTransform(CollapseTypeArrayTransform);
+    collapse_type_arrays.transform(&mut transformed);
+
     // Strip empty `{}` schemas from anyOf/oneOf (left behind by
     // canonicalization of `not` and other negation keywords) and collapse
     // single-variant composites inline (issue #743).
@@ -424,6 +578,22 @@ pub(crate) fn sanitize_schema_for_openai_compat(schema: &mut serde_json::Value) 
     // annotations even when enum values unambiguously imply the type.
     let mut restore_enum_type = RecursiveTransform(RestoreEnumTypeTransform);
     restore_enum_type.transform(&mut transformed);
+
+    *schema = transformed.to_value();
+}
+
+/// Collapse union constructs that OpenRouter's non-strict Google path cannot
+/// safely translate into Gemini function declarations.
+pub(crate) fn collapse_schema_unions_for_non_strict_tools(schema: &mut serde_json::Value) {
+    let Ok(mut transformed) = Schema::try_from(schema.clone()) else {
+        return;
+    };
+
+    let mut collapse_composite_unions = RecursiveTransform(CollapseCompositeUnionTransform);
+    collapse_composite_unions.transform(&mut transformed);
+
+    let mut prune_orphaned_required = RecursiveTransform(PruneOrphanedRequiredTransform);
+    prune_orphaned_required.transform(&mut transformed);
 
     *schema = transformed.to_value();
 }

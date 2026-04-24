@@ -1,8 +1,8 @@
 // ── Onboarding wizard ──────────────────────────────────────
 //
 // Multi-step setup page shown to first-time users.
-// Steps: Auth (conditional) → Identity → Provider → Voice (conditional) →
-// Remote Access → Channel → Summary
+// Steps: Auth (conditional) → Import (conditional) → Provider →
+// Voice (conditional) → Skills → Remote Access → Channel → Identity → Summary
 // No new Rust code — all existing RPC methods and REST endpoints.
 
 import type { VNode } from "preact";
@@ -20,6 +20,7 @@ import { IdentityStep } from "./onboarding/steps/IdentityStep";
 import { OpenClawImportStep } from "./onboarding/steps/OpenClawImportStep";
 import { ProviderStep } from "./onboarding/steps/ProviderStep";
 import { RemoteAccessStep } from "./onboarding/steps/RemoteAccessStep";
+import { SkillsStep } from "./onboarding/steps/SkillsStep";
 import { VoiceStep } from "./onboarding/steps/VoiceStep";
 import type { IdentityInfo } from "./onboarding/types";
 import { fetchVoiceProviders } from "./voice-utils";
@@ -136,6 +137,13 @@ interface SummaryVoice {
 	stt: SummaryVoiceProvider[];
 }
 
+interface SummarySkills {
+	enabledCategories: number;
+	totalCategories: number;
+	enabledSkills: number;
+	totalSkills: number;
+}
+
 interface SummaryData {
 	identity: IdentityInfo | null;
 	mem: { total?: number; available?: number } | null;
@@ -146,6 +154,7 @@ interface SummaryData {
 	tailscale: { tailscale_up?: boolean; installed?: boolean } | null;
 	voice: SummaryVoice | null;
 	sandbox: { backend?: string } | null;
+	skills: SummarySkills | null;
 }
 
 // ── SummaryStep ─────────────────────────────────────────────
@@ -171,7 +180,7 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 			} | null;
 			const voiceEnabled = getGon("voice_enabled") === true;
 
-			const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes] = await Promise.all([
+			const [providersRes, channelsRes, tailscaleRes, voiceRes, bootstrapRes, skillsRes] = await Promise.all([
 				(
 					sendRpc("providers.available", {}) as Promise<{
 						ok?: boolean;
@@ -213,9 +222,19 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 							: null,
 					)
 					.catch(() => null),
+				(
+					sendRpc("skills.bundled.categories", {}) as Promise<{
+						ok?: boolean;
+						payload?: { categories?: { name: string; count: number; enabled: boolean }[]; total_skills?: number };
+					}>
+				).catch(() => null),
 			]);
 
 			if (cancelled) return;
+
+			const skillsCats = skillsRes?.ok ? skillsRes.payload?.categories || [] : [];
+			const skillsTotal = skillsRes?.ok ? skillsRes.payload?.total_skills || 0 : 0;
+			const skillsEnabledCats = skillsCats.filter((c) => c.enabled);
 
 			setData({
 				identity,
@@ -227,6 +246,14 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 				tailscale: tailscaleRes,
 				voice: voiceRes?.ok ? voiceRes.payload || { tts: [], stt: [] } : null,
 				sandbox: bootstrapRes?.sandbox || null,
+				skills: skillsCats.length
+					? {
+							enabledCategories: skillsEnabledCats.length,
+							totalCategories: skillsCats.length,
+							enabledSkills: skillsEnabledCats.reduce((sum, c) => sum + c.count, 0),
+							totalSkills: skillsTotal,
+						}
+					: null,
 			});
 			setLoading(false);
 		}
@@ -331,6 +358,17 @@ function SummaryStep({ onBack, onFinish }: { onBack: () => void; onFinish: () =>
 						<>No channels configured</>
 					)}
 				</SummaryRow>
+
+				{/* Skills */}
+				{data.skills && (
+					<SummaryRow icon={data.skills.enabledCategories > 0 ? <CheckIcon /> : <InfoIcon />} label="Skills">
+						<span className="font-medium text-[var(--text)]">{data.skills.enabledSkills}</span> skills enabled across{" "}
+						<span className="font-medium text-[var(--text)]">
+							{data.skills.enabledCategories}/{data.skills.totalCategories}
+						</span>{" "}
+						categories
+					</SummaryRow>
+				)}
 
 				{/* System Memory */}
 				<SummaryRow
@@ -529,6 +567,7 @@ function OnboardingPage(): VNode {
 	allLabels.push(t("onboarding:steps.llm"));
 	if (voiceAvailable) allLabels.push(t("onboarding:steps.voice"));
 	allLabels.push(
+		t("onboarding:steps.skills"),
 		t("onboarding:steps.remoteAccess"),
 		t("onboarding:steps.channel"),
 		t("onboarding:steps.identity"),
@@ -542,6 +581,7 @@ function OnboardingPage(): VNode {
 	const importStep = openclawDetected ? nextIdx++ : -1;
 	const llmStep = nextIdx++;
 	const voiceStep = voiceAvailable ? nextIdx++ : -1;
+	const skillsStep = nextIdx++;
 	const remoteAccessStep = nextIdx++;
 	const channelStep = nextIdx++;
 	const identityStep = nextIdx++;
@@ -573,6 +613,7 @@ function OnboardingPage(): VNode {
 				{step === importStep && <OpenClawImportStep onNext={goNext} onBack={authNeeded ? goBack : null} />}
 				{step === llmStep && <ProviderStep onNext={goNext} onBack={authNeeded || openclawDetected ? goBack : null} />}
 				{step === voiceStep && <VoiceStep onNext={goNext} onBack={goBack} />}
+				{step === skillsStep && <SkillsStep onNext={goNext} onBack={goBack} />}
 				{step === remoteAccessStep && <RemoteAccessStep onNext={goNext} onBack={goBack} />}
 				{step === channelStep && <ChannelStep onNext={goNext} onBack={goBack} />}
 				{step === identityStep && <IdentityStep onNext={goNext} onBack={goBack} />}

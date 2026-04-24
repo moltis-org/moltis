@@ -1056,15 +1056,39 @@ pub(super) async fn complete_startup(
             tool_registry.register(Box::new(moltis_tools::skill_tools::UpdateSkillTool::new(
                 data_dir.clone(),
             )));
+            tool_registry.register(Box::new(moltis_tools::skill_tools::PatchSkillTool::new(
+                data_dir.clone(),
+            )));
             tool_registry.register(Box::new(moltis_tools::skill_tools::DeleteSkillTool::new(
                 data_dir.clone(),
             )));
-            let read_discoverer = Arc::new(FsSkillDiscoverer::new(
-                FsSkillDiscoverer::default_paths_for(&data_dir),
-            ));
-            tool_registry.register(Box::new(moltis_tools::skill_tools::ReadSkillTool::new(
-                read_discoverer,
-            )));
+
+            let fs_discoverer =
+                FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths_for(&data_dir));
+
+            #[cfg(feature = "bundled-skills")]
+            {
+                let bundled_store = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+                let read_discoverer: Arc<dyn moltis_skills::discover::SkillDiscoverer> =
+                    Arc::new(moltis_skills::discover::CompositeSkillDiscoverer::new(
+                        Box::new(fs_discoverer),
+                        Arc::clone(&bundled_store),
+                    ));
+                tool_registry.register(Box::new(
+                    moltis_tools::skill_tools::ReadSkillTool::with_bundled(
+                        read_discoverer,
+                        bundled_store,
+                    ),
+                ));
+            }
+            #[cfg(not(feature = "bundled-skills"))]
+            {
+                let read_discoverer = Arc::new(fs_discoverer);
+                tool_registry.register(Box::new(moltis_tools::skill_tools::ReadSkillTool::new(
+                    read_discoverer,
+                )));
+            }
+
             if config.skills.enable_agent_sidecar_files {
                 tool_registry.register(Box::new(
                     moltis_tools::skill_tools::WriteSkillFilesTool::new(data_dir.clone()),

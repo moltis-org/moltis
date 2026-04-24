@@ -11,7 +11,7 @@
 use {
     futures::StreamExt,
     moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent, ToolCall},
-    moltis_providers::openai::OpenAiProvider,
+    moltis_providers::{openai::OpenAiProvider, openai_compat::to_openai_tools},
     secrecy::{ExposeSecret, Secret},
 };
 
@@ -189,6 +189,64 @@ async fn multi_turn_tool_use() {
         .await
         .expect("second turn");
     assert!(r2.text.is_some(), "should have text after tool result");
+}
+
+#[tokio::test]
+#[ignore]
+async fn google_ai_studio_accepts_non_strict_union_typed_tool_schema() {
+    let key = api_key();
+    let client = reqwest::Client::new();
+    let tools = to_openai_tools(
+        &[serde_json::json!({
+            "name": "cron",
+            "description": "Manage cron jobs.",
+            "parameters": {
+                "type": "object",
+                "required": ["action", "job"],
+                "properties": {
+                    "action": { "type": "string" },
+                    "job": {
+                        "type": ["object", "string"],
+                        "properties": {
+                            "name": { "type": "string" },
+                            "schedule": {
+                                "type": ["object", "string", "integer"],
+                                "properties": {
+                                    "kind": { "type": "string" }
+                                },
+                                "required": ["kind"]
+                            }
+                        },
+                        "required": ["name", "schedule"]
+                    }
+                }
+            }
+        })],
+        false,
+    );
+    let body = serde_json::json!({
+        "model": "google/gemini-3-flash-preview",
+        "messages": [{ "role": "user", "content": "hi" }],
+        "stream": false,
+        "provider": {
+            "ignore": ["google-vertex"]
+        },
+        "tools": tools
+    });
+
+    let resp = client
+        .post(format!("{BASE_URL}/chat/completions"))
+        .header("Authorization", format!("Bearer {}", key.expose_secret()))
+        .json(&body)
+        .send()
+        .await
+        .expect("HTTP request should complete");
+    let status = resp.status();
+    let text = resp.text().await.expect("response body should be readable");
+    assert!(
+        status.is_success(),
+        "OpenRouter Google AI Studio should accept normalized union-typed tool schema, got {status}: {text}"
+    );
 }
 
 // ── Probe & streaming ────────────────────────────────────────────────────────

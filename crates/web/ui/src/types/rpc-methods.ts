@@ -152,6 +152,8 @@ export interface RpcMethodMap {
 	"skills.repos.unquarantine": unknown;
 	"skills.skill.detail": unknown;
 	"skills.skill.disable": unknown;
+	"skills.bundled.categories": unknown;
+	"skills.bundled.toggle_category": unknown;
 
 	// ── STT (Speech-to-Text) ────────────────────────────────────
 	"stt.status": unknown;

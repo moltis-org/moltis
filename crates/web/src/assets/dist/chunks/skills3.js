@@ -89,6 +89,9 @@ const skills = {
   securitySandbox: "启用沙盒模式（Docker、Apple Container 或 cgroup）后，命令执行将被隔离，恶意技能造成的损害将大大减少。",
   dismiss: "忽略",
   disableAllThirdParty: "禁用所有第三方技能",
+  // ── Bundled categories ──────────────────────────────────
+  bundledTitle: "内置技能类别",
+  bundledDescription: "切换内置技能类别。已禁用的类别将从代理上下文中排除。",
   // ── Featured skill descriptions ─────────────────────────
   featuredOpenClaw: "来自 ClawdHub 的社区技能",
   featuredAnthropic: "Anthropic 官方代理技能",

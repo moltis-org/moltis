@@ -50,6 +50,10 @@ pub(in crate::channel_events) async fn dispatch_command(
         .ok_or_else(|| ChannelError::unavailable("session metadata not available"))?;
     let session_key = resolve_channel_session(&reply_to, session_metadata).await;
 
+    // Strip leading slash — some channels (e.g. Slack) include it in the
+    // command field, others (Telegram, Discord) strip it before calling.
+    let command = command.strip_prefix('/').unwrap_or(command);
+
     // Extract the command name (first word) and args (rest).
     let cmd = command.split_whitespace().next().unwrap_or("");
     let args = command[cmd.len()..].trim();

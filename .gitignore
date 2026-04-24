@@ -6,6 +6,7 @@ prompts
 .env.*
 .DS_Store
 .claude/worktrees/
+.entire/
 .playwright-mcp/
 features/
 .moltis/

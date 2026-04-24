@@ -83,6 +83,100 @@ fn extract_document_file_defaults_media_type_when_missing() {
 }
 
 #[test]
+fn extract_document_file_infers_mime_from_extension_for_octet_stream() {
+    // Telegram sends application/octet-stream for .md files — we should
+    // derive text/markdown from the filename extension.
+    let msg: Message = serde_json::from_value(json!({
+        "message_id": 4,
+        "date": 1,
+        "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+        "from": {
+            "id": 1001,
+            "is_bot": false,
+            "first_name": "Alice",
+            "username": "alice"
+        },
+        "document": {
+            "file_id": "doc-md-file-id",
+            "file_unique_id": "doc-md-unique-id",
+            "file_name": "notes.md",
+            "mime_type": "application/octet-stream",
+            "file_size": 256
+        }
+    }))
+    .expect("deserialize document message");
+
+    let document = extract_document_file(&msg).expect("document should be extracted");
+    assert_eq!(document.media_type, "text/markdown");
+    assert!(is_supported_document_type(&document.media_type));
+}
+
+#[test]
+fn extract_document_file_infers_mime_for_other_text_extensions() {
+    for (file_name, expected_mime) in [
+        ("config.toml", "text/x-toml"),
+        ("data.yaml", "text/x-yaml"),
+        ("data.yml", "text/x-yaml"),
+        ("readme.txt", "text/plain"),
+        ("schema.json", "application/json"),
+    ] {
+        let msg: Message = serde_json::from_value(json!({
+            "message_id": 5,
+            "date": 1,
+            "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+            "from": {
+                "id": 1001,
+                "is_bot": false,
+                "first_name": "Alice",
+                "username": "alice"
+            },
+            "document": {
+                "file_id": "doc-file-id",
+                "file_unique_id": "doc-unique-id",
+                "file_name": file_name,
+                "mime_type": "application/octet-stream",
+                "file_size": 128
+            }
+        }))
+        .expect("deserialize document message");
+
+        let document = extract_document_file(&msg).expect("document should be extracted");
+        assert_eq!(
+            document.media_type, expected_mime,
+            "expected {expected_mime} for {file_name}, got {}",
+            document.media_type
+        );
+    }
+}
+
+#[test]
+fn extract_document_file_keeps_explicit_mime_when_not_octet_stream() {
+    // When Telegram provides a real MIME type, don't override it.
+    let msg: Message = serde_json::from_value(json!({
+        "message_id": 6,
+        "date": 1,
+        "chat": { "id": 42, "type": "private", "first_name": "Alice" },
+        "from": {
+            "id": 1001,
+            "is_bot": false,
+            "first_name": "Alice",
+            "username": "alice"
+        },
+        "document": {
+            "file_id": "doc-file-id",
+            "file_unique_id": "doc-unique-id",
+            "file_name": "photo.jpg",
+            "mime_type": "image/jpeg",
+            "file_size": 512
+        }
+    }))
+    .expect("deserialize document message");
+
+    let document = extract_document_file(&msg).expect("document should be extracted");
+    assert_eq!(document.media_type, "image/jpeg");
+}
+
+#[test]
 fn should_inline_markdown_document_types() {
     assert!(should_inline_document_text("text/markdown"));
     assert!(should_inline_document_text("text/x-markdown"));

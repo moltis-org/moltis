@@ -948,6 +948,20 @@ impl ProviderRegistry {
                     oai = oai.with_strict_tools(strict);
                 }
 
+                // Fireworks Fire Pass router models for Kimi route to
+                // Moonshot, which rejects strict-mode schemas and requires
+                // reasoning_content on tool-call messages (issue #810).
+                if is_fireworks_kimi_router(def, &model_id) {
+                    if config
+                        .get(def.config_name)
+                        .and_then(|e| e.strict_tools)
+                        .is_none()
+                    {
+                        oai = oai.with_strict_tools(false);
+                    }
+                    oai = oai.with_reasoning_content(true);
+                }
+
                 let provider = Arc::new(oai);
                 self.register(
                     ModelInfo {

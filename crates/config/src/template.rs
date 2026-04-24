@@ -475,8 +475,7 @@ packages = [
     "python3-pip",
     "python3-venv",
     "python-is-python3",
-    "nodejs",
-    "npm",
+    "nodejs",  # installed via NodeSource 22.x (npm bundled)
     "ruby",
     "ruby-dev",
     "golang-go",
@@ -662,6 +661,7 @@ search_paths = []                 # Additional directories to search for skills
 auto_load = []                    # Skills to always load without explicit activation
                                   # Example: ["code-review", "commit"]
 enable_agent_sidecar_files = false # Allow agents to write supplementary text files inside personal skill dirs
+enable_self_improvement = true    # Include system prompt guidance encouraging autonomous skill creation/update
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MCP SERVERS
@@ -862,6 +862,10 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # base_url = "http://localhost:11434/v1"  # Builtin backend only: embedding API base (host, /v1, or /embeddings)
 # model = "nomic-embed-text"      # Builtin backend only: embedding model name
 # api_key = "..."                 # Builtin backend only: API key (optional for local endpoints like Ollama)
+# enable_prefetch = true           # Recall relevant memories before each turn (injected as <recalled_context>)
+# prefetch_limit = 3               # Max memories to prefetch per turn (1-10)
+# auto_extract_interval = 5        # Run background memory extraction every N turns (0 = disabled)
+# enable_session_summary = true    # Write a session summary to memory on /new, /reset, or timeout
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHANNELS
@@ -873,9 +877,8 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 
 [channels]
 # Which channel types appear in the web UI's "+ Add Channel" menu.
-# Default: ["telegram", "msteams", "discord", "slack", "matrix", "nostr"]
-# Add "whatsapp" to enable it in the UI.
-# offered = ["telegram", "msteams", "discord", "slack", "matrix", "nostr", "whatsapp"]
+# Default: ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]
+# offered = ["telegram", "msteams", "discord", "slack", "matrix", "nostr", "signal", "whatsapp"]
 
 # WhatsApp linked-device accounts
 # [channels.whatsapp.my-bot]
@@ -1018,6 +1021,24 @@ reset_on_exit = true              # Reset serve/funnel when gateway shuts down
 # [channels.nostr.my-bot.profile]  # NIP-01 profile metadata (optional)
 # name = "Moltis Bot"
 # about = "AI assistant on Nostr"
+
+# Signal accounts via signal-cli daemon
+# Start signal-cli separately, for example:
+#   signal-cli --account +15551234567 daemon --http 127.0.0.1:8080
+# [channels.signal.my-bot]
+# account = "+15551234567"         # Signal account loaded by signal-cli
+# http_url = "http://127.0.0.1:8080"
+# dm_policy = "allowlist"          # "open", "allowlist", or "disabled"
+# allowlist = []                   # Allowed sender phone numbers or UUIDs
+# group_policy = "disabled"        # "open", "allowlist", or "disabled"
+# group_allowlist = []             # Signal group IDs
+# mention_mode = "mention"         # "mention", "always", or "none"
+# ignore_stories = true
+# model = "anthropic/claude-sonnet-4-20250514"
+# model_provider = "anthropic"
+# otp_self_approval = true         # OTP self-approval for non-allowlisted DM users
+# otp_cooldown_secs = 300          # Cooldown after 3 failed OTP attempts
+# text_chunk_limit = 4000
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS

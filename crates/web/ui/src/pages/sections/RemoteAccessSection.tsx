@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { TabBar } from "../../components/forms/Tabs";
 import { navigate } from "../../router";
 import { settingsPath } from "../../routes";
 import { targetValue } from "../../typed-events";
@@ -610,6 +611,16 @@ export function RemoteAccessSection(): VNode {
 		);
 	}
 
+	const [activeTab, setActiveTab] = useState("tailscale");
+
+	const tsBadge = tsLoading ? undefined : tsStatus?.mode && tsStatus.mode !== "off" ? tsStatus.mode : undefined;
+	const ngBadge = ngLoading ? undefined : ngStatus?.enabled ? "on" : undefined;
+
+	const tabs = [
+		{ id: "tailscale", label: "Tailscale", badge: tsBadge },
+		{ id: "ngrok", label: "ngrok", badge: ngBadge },
+	];
+
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">Remote Access</h2>
@@ -617,10 +628,9 @@ export function RemoteAccessSection(): VNode {
 				Choose how moltis is exposed beyond localhost. Tailscale is the safer default for tailnet access and optional
 				public Funnel, while ngrok gives you a managed public HTTPS URL for teams, demos, and shared endpoints.
 			</p>
-			<div className="flex flex-col gap-4">
-				{renderTailscaleCard()}
-				{renderNgrokCard()}
-			</div>
+			<TabBar tabs={tabs} active={activeTab} onChange={setActiveTab} />
+			{activeTab === "tailscale" && renderTailscaleCard()}
+			{activeTab === "ngrok" && renderNgrokCard()}
 		</div>
 	);
 }

@@ -11,7 +11,6 @@ use {
     },
     moltis_config::{AgentMemoryWriteMode, LoadedWorkspaceMarkdown, MemoryStyle, PromptMemoryMode},
     moltis_sessions::{metadata::SessionEntry, state_store::SessionStateStore},
-    moltis_skills::discover::SkillDiscoverer,
     moltis_tools::policy::{PolicyContext, resolve_effective_policy},
 };
 
@@ -246,6 +245,7 @@ pub(crate) fn prompt_build_limits_from_config(
 ) -> PromptBuildLimits {
     PromptBuildLimits {
         workspace_file_max_chars: config.chat.workspace_file_max_chars,
+        enable_skill_self_improvement: config.skills.enable_self_improvement,
     }
 }
 
@@ -260,10 +260,43 @@ pub(crate) async fn discover_skills_if_enabled(
     if !config.skills.enabled {
         return Vec::new();
     }
-    let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
-    let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
-    match discoverer.discover().await {
-        Ok(skills) => skills,
+    let fs_discoverer = moltis_skills::discover::FsSkillDiscoverer::new(
+        moltis_skills::discover::FsSkillDiscoverer::default_paths(),
+    );
+
+    #[cfg(feature = "bundled-skills")]
+    let skills = {
+        use moltis_skills::discover::SkillDiscoverer;
+        let bundled = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+        let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
+            Box::new(fs_discoverer),
+            bundled,
+        );
+        composite.discover().await
+    };
+    #[cfg(not(feature = "bundled-skills"))]
+    let skills = {
+        use moltis_skills::discover::SkillDiscoverer;
+        fs_discoverer.discover().await
+    };
+
+    let disabled_cats = &config.skills.disabled_bundled_categories;
+
+    match skills {
+        Ok(skills) if disabled_cats.is_empty() => skills,
+        Ok(skills) => skills
+            .into_iter()
+            .filter(|s| {
+                // Only filter bundled skills; non-bundled skills pass through.
+                if s.source != Some(moltis_skills::types::SkillSource::Bundled) {
+                    return true;
+                }
+                // Keep the skill if its category is not in the disabled list.
+                s.category
+                    .as_deref()
+                    .is_none_or(|cat| !disabled_cats.iter().any(|d| d == cat))
+            })
+            .collect(),
         Err(e) => {
             warn!("failed to discover skills: {e}");
             Vec::new()

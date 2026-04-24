@@ -829,6 +829,7 @@ async fn to_shared_message(
 mod maintenance;
 mod service;
 mod share;
+pub(crate) mod summary;
 #[cfg(test)]
 mod tests;
 mod voice;

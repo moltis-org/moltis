@@ -180,6 +180,152 @@ fn to_openai_tools_collapses_union_types_end_to_end() {
 }
 
 #[test]
+fn to_openai_tools_collapses_union_types_without_strict_mode() {
+    let tools = vec![serde_json::json!({
+        "name": "cron",
+        "description": "Manage cron jobs",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": { "type": "string" },
+                "job": {
+                    "type": ["object", "string"],
+                    "properties": {
+                        "name": { "type": "string" },
+                        "schedule": {
+                            "type": ["object", "string", "integer"],
+                            "properties": {
+                                "kind": { "type": "string" }
+                            },
+                            "required": ["kind"]
+                        }
+                    },
+                    "required": ["name", "schedule"]
+                }
+            },
+            "required": ["action", "job"]
+        }
+    })];
+
+    let converted = to_openai_tools(&tools, false);
+    assert_eq!(converted.len(), 1);
+
+    let params = &converted[0]["function"]["parameters"];
+    assert_eq!(params["properties"]["job"]["type"], "object");
+    assert_eq!(
+        params["properties"]["job"]["properties"]["schedule"]["type"],
+        "object"
+    );
+
+    let mut type_arrays = Vec::new();
+    find_type_arrays(params, "root", &mut type_arrays);
+    assert!(
+        type_arrays.is_empty(),
+        "found type arrays after non-strict pipeline: {type_arrays:?}"
+    );
+
+    let mut orphans = Vec::new();
+    find_required_orphans(params, "root", &mut orphans);
+    assert!(orphans.is_empty(), "found required orphans: {orphans:?}");
+}
+
+#[test]
+fn to_openai_tools_prunes_orphans_after_non_strict_composite_collapse() {
+    let tools = vec![serde_json::json!({
+        "name": "composite",
+        "description": "Composite schema edge case",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "properties": {
+                        "y": { "type": "string" }
+                    },
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "properties": {
+                                "x": { "type": "string" }
+                            },
+                            "required": ["x"]
+                        },
+                        { "type": "string" }
+                    ]
+                }
+            },
+            "required": ["config"]
+        }
+    })];
+
+    let converted = to_openai_tools(&tools, false);
+    assert_eq!(converted.len(), 1);
+
+    let params = &converted[0]["function"]["parameters"];
+    let config = &params["properties"]["config"];
+    let mut orphans = Vec::new();
+    find_required_orphans(params, "root", &mut orphans);
+    assert!(orphans.is_empty(), "found required orphans: {orphans:?}");
+    assert!(
+        config.get("required").is_none(),
+        "orphaned composite variant required entries should be pruned"
+    );
+    assert!(config["properties"].get("y").is_some());
+}
+
+#[test]
+fn to_openai_tools_preserves_nested_array_item_required_properties() {
+    let tools = vec![serde_json::json!({
+        "name": "MultiEdit",
+        "description": "Apply multiple sequential edits to a single file.",
+        "parameters": {
+            "type": "object",
+            "required": ["file_path", "edits"],
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Absolute path to the file to edit."
+                },
+                "edits": {
+                    "type": "array",
+                    "minItems": 1,
+                    "description": "Ordered list of edits to apply atomically.",
+                    "items": {
+                        "type": "object",
+                        "required": ["old_string", "new_string"],
+                        "properties": {
+                            "old_string": { "type": "string" },
+                            "new_string": { "type": "string" },
+                            "replace_all": { "type": "boolean", "default": false }
+                        }
+                    }
+                }
+            }
+        }
+    })];
+
+    let converted = to_openai_tools(&tools, false);
+    assert_eq!(converted.len(), 1);
+
+    let params = &converted[0]["function"]["parameters"];
+    let mut orphans = Vec::new();
+    find_required_orphans(params, "root", &mut orphans);
+    assert!(orphans.is_empty(), "found required orphans: {orphans:?}");
+
+    let edits_items = &params["properties"]["edits"]["items"];
+    let item_required: Vec<&str> = array_value(&edits_items["required"], "edits.items.required")
+        .iter()
+        .map(|value| str_value(value, "required entry"))
+        .collect();
+    let item_properties = object_value(&edits_items["properties"], "edits.items.properties");
+    assert_eq!(item_required.len(), 2);
+    assert!(item_required.contains(&"old_string"));
+    assert!(item_required.contains(&"new_string"));
+    assert!(item_properties.contains_key("old_string"));
+    assert!(item_properties.contains_key("new_string"));
+}
+
+#[test]
 fn collapse_inside_any_of_variants() {
     let mut schema = serde_json::json!({
         "type": "object",

@@ -205,6 +205,7 @@
     background: var(--assistant-bg);
     border: 1px solid var(--assistant-border);
     color: var(--text);
+    white-space: normal;
   }
   .msg.system {
     align-self: center;
@@ -1894,6 +1895,10 @@
     -webkit-mask-image: url("./icons/masks/nostr.svg");
     mask-image: url("./icons/masks/nostr.svg");
   }
+  .icon-signal {
+    -webkit-mask-image: url("./icons/masks/signal.svg");
+    mask-image: url("./icons/masks/signal.svg");
+  }
   .icon-cron {
     -webkit-mask-image: url("./icons/masks/mask-47feaf85cf1fb335.svg");
     mask-image: url("./icons/masks/mask-47feaf85cf1fb335.svg");
@@ -1923,6 +1928,14 @@
   .icon-link {
     -webkit-mask-image: url("./icons/masks/mask-d579c16638bc3452.svg");
     mask-image: url("./icons/masks/mask-d579c16638bc3452.svg");
+  }
+  .icon-github-issue {
+    -webkit-mask-image: url("./icons/masks/mask-github-issue.svg");
+    mask-image: url("./icons/masks/mask-github-issue.svg");
+  }
+  .icon-github-discussion {
+    -webkit-mask-image: url("./icons/masks/mask-github-discussion.svg");
+    mask-image: url("./icons/masks/mask-github-discussion.svg");
   }
   .icon-chart-bar {
     -webkit-mask-image: url("./icons/masks/mask-b9bf0315417c03e4.svg");

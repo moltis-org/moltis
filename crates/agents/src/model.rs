@@ -9,6 +9,12 @@ use crate::multimodal::parse_data_uri;
 /// Re-export from config so downstream crates can use `moltis_agents::model::ReasoningEffort`.
 pub use moltis_config::schema::ReasoningEffort;
 
+mod types;
+pub use types::{
+    CompletionResponse, MAX_CAPTURED_PROVIDER_RAW_EVENTS, ModelMetadata, TOOL_CALL_METADATA_KEYS,
+    ToolCall, Usage, push_capped_provider_raw_event,
+};
+
 fn document_absolute_path_from_media_ref(media_ref: &str) -> String {
     if Path::new(media_ref).is_absolute() {
         return media_ref.to_string();
@@ -251,9 +257,14 @@ pub fn extract_tool_call_metadata(
     tc: &serde_json::Value,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     let obj = tc.as_object()?;
+    let nested = obj.get("metadata").and_then(serde_json::Value::as_object);
     let meta: serde_json::Map<_, _> = TOOL_CALL_METADATA_KEYS
         .iter()
-        .filter_map(|&k| obj.get(k).map(|v| (k.to_string(), v.clone())))
+        .filter_map(|&k| {
+            obj.get(k)
+                .or_else(|| nested.and_then(|metadata| metadata.get(k)))
+                .map(|v| (k.to_string(), v.clone()))
+        })
         .collect();
     if meta.is_empty() {
         None
@@ -626,73 +637,6 @@ pub trait LlmProvider: Send + Sync {
             context_length: self.context_window(),
         })
     }
-}
-
-/// Response from an LLM completion call.
-#[derive(Debug)]
-pub struct CompletionResponse {
-    pub text: Option<String>,
-    pub tool_calls: Vec<ToolCall>,
-    pub usage: Usage,
-}
-
-pub const MAX_CAPTURED_PROVIDER_RAW_EVENTS: usize = 256;
-
-#[derive(Debug, Clone)]
-pub struct ToolCall {
-    pub id: String,
-    pub name: String,
-    pub arguments: serde_json::Value,
-    /// Provider-specific opaque metadata to round-trip (e.g. Gemini `thought_signature`).
-    /// Only allowlisted keys are extracted; see [`TOOL_CALL_METADATA_KEYS`].
-    pub metadata: Option<serde_json::Map<String, serde_json::Value>>,
-}
-
-/// Keys extracted from provider tool-call JSON into [`ToolCall::metadata`].
-pub const TOOL_CALL_METADATA_KEYS: &[&str] = &["thought_signature"];
-
-#[derive(Debug, Clone, Default)]
-pub struct Usage {
-    pub input_tokens: u32,
-    pub output_tokens: u32,
-    pub cache_read_tokens: u32,
-    pub cache_write_tokens: u32,
-}
-
-impl Usage {
-    #[must_use]
-    pub fn saturating_add(&self, other: &Self) -> Self {
-        Self {
-            input_tokens: self.input_tokens.saturating_add(other.input_tokens),
-            output_tokens: self.output_tokens.saturating_add(other.output_tokens),
-            cache_read_tokens: self
-                .cache_read_tokens
-                .saturating_add(other.cache_read_tokens),
-            cache_write_tokens: self
-                .cache_write_tokens
-                .saturating_add(other.cache_write_tokens),
-        }
-    }
-
-    pub fn saturating_add_assign(&mut self, other: &Self) {
-        *self = self.saturating_add(other);
-    }
-}
-
-pub fn push_capped_provider_raw_event(
-    raw_events: &mut Vec<serde_json::Value>,
-    raw_event: serde_json::Value,
-) {
-    if raw_events.len() < MAX_CAPTURED_PROVIDER_RAW_EVENTS {
-        raw_events.push(raw_event);
-    }
-}
-
-/// Runtime model metadata fetched from provider APIs.
-#[derive(Debug, Clone)]
-pub struct ModelMetadata {
-    pub id: String,
-    pub context_length: u32,
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -1449,6 +1393,19 @@ mod tests {
             ChatMessage::Assistant { tool_calls, .. } => {
                 let meta = tool_calls[0].metadata.as_ref().expect("metadata present");
                 assert_eq!(meta["thought_signature"], "sig_abc");
+            },
+            other => panic!("expected Assistant, got {other:?}"),
+        }
+        // Persisted sessions store provider fields under tool_calls[].metadata.
+        let persisted = vec![serde_json::json!({
+            "role": "assistant", "content": null,
+            "tool_calls": [{"id": "c1", "metadata": {"thought_signature": "sig_persisted"},
+                            "function": {"name": "exec", "arguments": "{}"}}]
+        })];
+        match &values_to_chat_messages(&persisted)[0] {
+            ChatMessage::Assistant { tool_calls, .. } => {
+                let meta = tool_calls[0].metadata.as_ref().expect("metadata present");
+                assert_eq!(meta["thought_signature"], "sig_persisted");
             },
             other => panic!("expected Assistant, got {other:?}"),
         }

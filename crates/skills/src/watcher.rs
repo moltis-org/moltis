@@ -80,7 +80,8 @@ pub(crate) fn build_watch_specs(
             SkillSource::Project | SkillSource::Personal => {
                 insert_watch_spec(&mut specs, path.clone(), RecursiveMode::Recursive);
             },
-            SkillSource::Registry | SkillSource::Plugin => {},
+            // Registry, Plugin, and Bundled skills are not watched for changes.
+            SkillSource::Registry | SkillSource::Plugin | SkillSource::Bundled => {},
         }
     }
 

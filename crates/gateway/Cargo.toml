@@ -52,6 +52,7 @@ moltis-routing          = { workspace = true }
 moltis-secret-store     = { workspace = true }
 moltis-service-traits   = { workspace = true }
 moltis-sessions         = { workspace = true }
+moltis-signal           = { optional = true, workspace = true }
 moltis-skills           = { workspace = true }
 moltis-slack            = { optional = true, workspace = true }
 moltis-tailscale        = { optional = true, workspace = true }
@@ -91,9 +92,11 @@ which                   = { optional = true, workspace = true }
 
 [features]
 agent = []
+bundled-skills = ["moltis-chat/bundled-skills", "moltis-skills/bundled-skills", "moltis-tools/bundled-skills"]
 caldav = ["dep:moltis-caldav"]
 default = [
   "agent",
+  "bundled-skills",
   "caldav",
   "code-index-builtin",
   "file-watcher",
@@ -110,6 +113,7 @@ default = [
   "prometheus",
   "push-notifications",
   "qmd",
+  "signal",
   "slack",
   "tailscale",
   "tls",
@@ -150,12 +154,14 @@ metrics = [
   "moltis-metrics/sqlite",
   "moltis-msteams/metrics",
   "moltis-nostr?/metrics",
+  "moltis-signal?/metrics",
 ]
 nostr = ["dep:moltis-nostr"]
 openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]
 qmd = ["dep:moltis-qmd", "moltis-code-index/qmd"]
+signal = ["dep:moltis-signal"]
 slack = ["dep:moltis-slack", "moltis-slack/metrics"]
 tailscale = ["dep:moltis-tailscale"]
 tls = []

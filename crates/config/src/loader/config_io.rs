@@ -11,12 +11,27 @@ use {
 /// Load config from the given path (any supported format).
 ///
 /// After parsing, `MOLTIS_*` env vars are applied as overrides.
+///
+/// Uses a two-pass approach so that `[env]` section values are available
+/// for `${VAR}` substitution in other sections of the same config file.
 pub fn load_config(path: &Path) -> crate::Result<MoltisConfig> {
     let raw = std::fs::read_to_string(path).map_err(|source| {
         crate::Error::external(format!("failed to read {}", path.display()), source)
     })?;
-    let raw = substitute_env(&raw);
-    let config = parse_config(&raw, path)?;
+
+    // First pass: resolve process env vars, parse to extract [env] section.
+    let first_pass = substitute_env(&raw);
+    let preliminary: MoltisConfig = parse_config(&first_pass, path)?;
+
+    // Second pass: re-substitute using both process env and [env] values.
+    // This allows ${VAR} in other sections to reference [env]-defined vars.
+    let config = if preliminary.env.is_empty() {
+        preliminary
+    } else {
+        let second_pass = crate::env_subst::substitute_env_with_overrides(&raw, &preliminary.env);
+        parse_config(&second_pass, path)?
+    };
+
     Ok(apply_env_overrides(config))
 }
 
@@ -415,6 +430,50 @@ pub(super) fn apply_env_overrides_with(
             warn!(error = %e, "failed to apply env overrides, using config as-is");
             config
         },
+    }
+}
+
+/// Re-resolve `${VAR}` placeholders in a loaded config using additional overrides.
+///
+/// Call this after runtime env vars (e.g. DB-stored UI variables) become
+/// available.  Substitution happens at the JSON value level (not textual
+/// TOML), so override values that contain quotes or backslashes are safe.
+///
+/// Lookup precedence: process env → `overrides` map.
+pub fn resubstitute_config(
+    config: &MoltisConfig,
+    overrides: &std::collections::HashMap<String, String>,
+) -> crate::Result<MoltisConfig> {
+    let mut json = serde_json::to_value(config)
+        .map_err(|source| crate::Error::external("serialize config for resubstitution", source))?;
+    resolve_placeholders_in_value(&mut json, overrides);
+    let reloaded: MoltisConfig = serde_json::from_value(json).map_err(|source| {
+        crate::Error::external("deserialize config after resubstitution", source)
+    })?;
+    Ok(apply_env_overrides(reloaded))
+}
+
+/// Recursively walk a JSON value tree and resolve `${VAR}` placeholders in
+/// string values using process env + the overrides map.
+fn resolve_placeholders_in_value(
+    value: &mut serde_json::Value,
+    overrides: &std::collections::HashMap<String, String>,
+) {
+    match value {
+        serde_json::Value::String(s) if s.contains("${") => {
+            *s = crate::env_subst::substitute_env_with_overrides(s, overrides);
+        },
+        serde_json::Value::Object(map) => {
+            for v in map.values_mut() {
+                resolve_placeholders_in_value(v, overrides);
+            }
+        },
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                resolve_placeholders_in_value(v, overrides);
+            }
+        },
+        _ => {},
     }
 }
 
