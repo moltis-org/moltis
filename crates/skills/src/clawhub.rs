@@ -295,6 +295,8 @@ pub struct EnrichedSearchResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default)]
     pub downloads: u64,
@@ -313,6 +315,7 @@ impl From<SearchResult> for EnrichedSearchResult {
             slug: r.slug,
             display_name: r.display_name,
             summary: r.summary,
+            updated_at: r.updated_at,
             version: r.version,
             downloads: 0,
             owner_handle: None,
