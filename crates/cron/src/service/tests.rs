@@ -846,3 +846,137 @@ async fn test_deliver_empty_string_channel_fails() {
             .contains("deliver=true requires")
     );
 }
+
+#[tokio::test]
+async fn test_wake_noop_within_cooldown_after_last_run() {
+    let store = Arc::new(InMemoryStore::new());
+    let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+    svc.add(CronJobCreate {
+        id: Some("__heartbeat__".into()),
+        name: "__heartbeat__".into(),
+        schedule: CronSchedule::Every {
+            every_ms: 999_999_999,
+            anchor_ms: None,
+        },
+        payload: CronPayload::AgentTurn {
+            message: "heartbeat".into(),
+            model: None,
+            timeout_secs: None,
+            deliver: false,
+            channel: None,
+            to: None,
+        },
+        session_target: SessionTarget::Named("heartbeat".into()),
+        delete_after_run: false,
+        enabled: true,
+        system: true,
+        sandbox: CronSandboxConfig::default(),
+        wake_mode: CronWakeMode::default(),
+    })
+    .await
+    .unwrap();
+
+    // Set last_run_at_ms to 1 minute ago (within 5-min cooldown).
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 60_000);
+    })
+    .await;
+
+    let before = svc.list().await;
+    let hb = before.iter().find(|j| j.id == "__heartbeat__").unwrap();
+    let next_before = hb.state.next_run_at_ms.unwrap();
+
+    svc.wake("exec-event").await;
+
+    let after = svc.list().await;
+    let hb = after.iter().find(|j| j.id == "__heartbeat__").unwrap();
+    // next_run_at_ms should NOT have been updated — wake was skipped.
+    assert_eq!(hb.state.next_run_at_ms.unwrap(), next_before);
+}
+
+#[tokio::test]
+async fn test_wake_allowed_after_cooldown_expires() {
+    let store = Arc::new(InMemoryStore::new());
+    let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+    svc.add(CronJobCreate {
+        id: Some("__heartbeat__".into()),
+        name: "__heartbeat__".into(),
+        schedule: CronSchedule::Every {
+            every_ms: 999_999_999,
+            anchor_ms: None,
+        },
+        payload: CronPayload::AgentTurn {
+            message: "heartbeat".into(),
+            model: None,
+            timeout_secs: None,
+            deliver: false,
+            channel: None,
+            to: None,
+        },
+        session_target: SessionTarget::Named("heartbeat".into()),
+        delete_after_run: false,
+        enabled: true,
+        system: true,
+        sandbox: CronSandboxConfig::default(),
+        wake_mode: CronWakeMode::default(),
+    })
+    .await
+    .unwrap();
+
+    // Set last_run_at_ms to 10 minutes ago (beyond 5-min cooldown).
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 10 * 60 * 1000);
+    })
+    .await;
+
+    let before = svc.list().await;
+    let hb = before.iter().find(|j| j.id == "__heartbeat__").unwrap();
+    let original_next = hb.state.next_run_at_ms.unwrap();
+
+    svc.wake("exec-event").await;
+
+    let after = svc.list().await;
+    let hb = after.iter().find(|j| j.id == "__heartbeat__").unwrap();
+    // next_run_at_ms should have been advanced to now.
+    assert!(hb.state.next_run_at_ms.unwrap() <= original_next);
+}
+
+#[tokio::test]
+async fn test_wake_allowed_when_no_last_run() {
+    let store = Arc::new(InMemoryStore::new());
+    let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+
+    svc.add(CronJobCreate {
+        id: Some("__heartbeat__".into()),
+        name: "__heartbeat__".into(),
+        schedule: CronSchedule::Every {
+            every_ms: 999_999_999,
+            anchor_ms: None,
+        },
+        payload: CronPayload::AgentTurn {
+            message: "heartbeat".into(),
+            model: None,
+            timeout_secs: None,
+            deliver: false,
+            channel: None,
+            to: None,
+        },
+        session_target: SessionTarget::Named("heartbeat".into()),
+        delete_after_run: false,
+        enabled: true,
+        system: true,
+        sandbox: CronSandboxConfig::default(),
+        wake_mode: CronWakeMode::default(),
+    })
+    .await
+    .unwrap();
+
+    // No last_run_at_ms set — first-ever wake should proceed.
+    svc.wake("exec-event").await;
+
+    let after = svc.list().await;
+    let hb = after.iter().find(|j| j.id == "__heartbeat__").unwrap();
+    assert!(hb.state.next_run_at_ms.is_some());
+}

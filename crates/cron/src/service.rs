@@ -133,6 +133,15 @@ pub struct CronService {
 /// Max time a job can be in "running" state before we consider it stuck (2 hours).
 const STUCK_THRESHOLD_MS: u64 = 2 * 60 * 60 * 1000;
 
+/// Minimum cooldown between heartbeat wake calls (5 minutes).
+///
+/// Prevents exec-completion callbacks from re-waking the heartbeat
+/// in a tight loop when the agent uses `exec` during a heartbeat turn.
+/// The wake is skipped if the heartbeat last completed less than this
+/// duration ago. This is a safety net — the scheduled interval still
+/// applies for normal periodic firing.
+const HEARTBEAT_WAKE_COOLDOWN_MS: u64 = 5 * 60 * 1000;
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -231,6 +240,22 @@ impl CronService {
             && job.enabled
             && job.state.running_at_ms.is_none()
         {
+            // Enforce cooldown: skip wake if the heartbeat completed recently.
+            // This prevents exec-completion callbacks from creating a re-fire loop
+            // when the heartbeat agent uses `exec` during its turn.
+            if let Some(last_run) = job.state.last_run_at_ms {
+                let elapsed = now.saturating_sub(last_run);
+                if elapsed < HEARTBEAT_WAKE_COOLDOWN_MS {
+                    debug!(
+                        reason,
+                        elapsed_ms = elapsed,
+                        cooldown_ms = HEARTBEAT_WAKE_COOLDOWN_MS,
+                        "skipping heartbeat wake — within cooldown"
+                    );
+                    return;
+                }
+            }
+
             debug!(reason, "waking heartbeat");
             job.state.next_run_at_ms = Some(now);
         }
