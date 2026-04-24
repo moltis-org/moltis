@@ -717,6 +717,14 @@ pub fn strip_null_from_typed_enums(schema: &mut serde_json::Value) {
     {
         enum_values.retain(|v| !v.is_null());
     }
+    // An empty enum means "no value is valid" — remove it entirely.
+    if obj
+        .get("enum")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| a.is_empty())
+    {
+        obj.remove("enum");
+    }
 
     // Recurse into sub-schemas.
     if let Some(props) = obj.get_mut("properties").and_then(|v| v.as_object_mut()) {
