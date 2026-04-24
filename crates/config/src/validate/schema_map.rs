@@ -387,11 +387,14 @@ pub(super) fn build_schema_map() -> KnownKeys {
             "skills",
             Struct(HashMap::from([
                 ("enabled", Leaf),
-                ("search_paths", Leaf),
-                ("auto_load", Leaf),
+                ("search_paths", Array(Box::new(Leaf))),
+                ("auto_load", Array(Box::new(Leaf))),
                 ("enable_agent_sidecar_files", Leaf),
                 ("enable_self_improvement", Leaf),
-                ("disabled_bundled_categories", Leaf),
+                ("disabled_bundled_categories", Array(Box::new(Leaf))),
+                ("whitelist_mode", Leaf),
+                ("bundled_whitelist", Array(Box::new(Leaf))),
+                ("bundled_blacklist", Array(Box::new(Leaf))),
             ])),
         ),
         (

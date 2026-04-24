@@ -289,9 +289,11 @@ pub(crate) async fn discover_skills_if_enabled(
     let skills = {
         use moltis_skills::discover::SkillDiscoverer;
         let bundled = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+        let skills_config = Some(config.skills.clone());
         let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
             Box::new(fs_discoverer),
             bundled,
+            skills_config,
         );
         composite.discover().await
     };

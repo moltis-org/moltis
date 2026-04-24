@@ -444,9 +444,11 @@ port = {port}                           # Port number (auto-generated for this i
 # ══════════════════════════════════════════════════════════════════════════════
 
 # [skills]
-# enabled = true                    # Enable skills system
-# search_paths = []                 # Additional directories to search for skills
-# auto_load = []                    # Skills to always load
+# whitelist_mode = false            # If true, only skills in bundled_whitelist are exposed
+# bundled_whitelist = []            # List of category/skill to include (e.g. [\"github/*\", \"software-development/plan\"])
+#                                   # Wildcards supported: \"category/*\" includes all skills in that category
+# bundled_blacklist = []            # List of category/skill to exclude (applied after whitelist)
+#                                   # Examples: [\"gaming/pokemon-player\"], [\"creative/*\"]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MCP SERVERS

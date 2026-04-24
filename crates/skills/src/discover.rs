@@ -101,6 +101,7 @@ use std::sync::Arc;
 pub struct CompositeSkillDiscoverer {
     inner: Box<dyn SkillDiscoverer>,
     bundled: Arc<crate::bundled::BundledSkillStore>,
+    skills_config: Option<moltis_config::schema::SkillsConfig>,
 }
 
 #[cfg(feature = "bundled-skills")]
@@ -108,8 +109,9 @@ impl CompositeSkillDiscoverer {
     pub fn new(
         inner: Box<dyn SkillDiscoverer>,
         bundled: Arc<crate::bundled::BundledSkillStore>,
+        skills_config: Option<moltis_config::schema::SkillsConfig>,
     ) -> Self {
-        Self { inner, bundled }
+        Self { inner, bundled, skills_config }
     }
 }
 
@@ -120,7 +122,7 @@ impl SkillDiscoverer for CompositeSkillDiscoverer {
         let mut skills = self.inner.discover().await?;
         let mut seen: std::collections::HashSet<String> =
             skills.iter().map(|s| s.name.clone()).collect();
-        for bundled in self.bundled.discover() {
+        for bundled in self.bundled.discover(self.skills_config.as_ref()) {
             if seen.insert(bundled.name.clone()) {
                 skills.push(bundled);
             }

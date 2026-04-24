@@ -68,9 +68,12 @@ impl SkillsService for NoopSkillsService {
         #[cfg(feature = "bundled-skills")]
         let skills = {
             let bundled = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+            let config = moltis_config::load().ok();
+            let skills_config = config.as_ref().map(|c| c.skills.clone());
             let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
                 Box::new(fs_discoverer),
                 bundled,
+                skills_config,
             );
             composite.discover().await.map_err(ServiceError::message)?
         };
@@ -789,9 +792,12 @@ impl SkillsService for NoopSkillsService {
         #[cfg(feature = "bundled-skills")]
         let skills = {
             let bundled = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+            let config = moltis_config::load().ok();
+            let skills_config = config.as_ref().map(|c| c.skills.clone());
             let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
                 Box::new(fs_discoverer),
                 bundled,
+                skills_config,
             );
             composite.discover().await.map_err(ServiceError::message)?
         };

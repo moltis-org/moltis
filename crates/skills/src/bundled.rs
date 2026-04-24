@@ -74,15 +74,41 @@ impl BundledSkillStore {
         }
     }
 
-    /// Discover metadata for all bundled skills.
+    /// Discover metadata for all bundled skills, optionally filtered by config.
     ///
     /// Walks the assets directory two levels deep (`<category>/<skill>/SKILL.md`),
     /// parses frontmatter, and tags each with [`SkillSource::Bundled`].
-    pub fn discover(&self) -> Vec<SkillMetadata> {
-        match &self.source {
+    ///
+    /// If `config` is provided, applies whitelist/blacklist filtering:
+    /// - `whitelist_mode=true`: only skills in `bundled_whitelist` are included
+    /// - `bundled_blacklist`: excluded regardless of whitelist mode
+    /// - Wildcards supported: `["github/*", "creative/*"]`
+    pub fn discover(&self, config: Option<&moltis_config::schema::SkillsConfig>) -> Vec<SkillMetadata> {
+        let skills = match &self.source {
             AssetSource::Filesystem(dir) => discover_from_fs(dir),
             AssetSource::Embedded => discover_from_embedded(),
-        }
+        };
+        
+        // Apply filtering if config is provided
+        let Some(cfg) = config else {
+            return skills;
+        };
+        
+        skills.into_iter().filter(|skill| {
+            let path = format!("{}/{}", skill.category.as_deref().unwrap_or("unknown"), skill.name);
+            
+            // Blacklist always applies first
+            if matches_pattern(&cfg.bundled_blacklist, &path) {
+                return false;
+            }
+            
+            // Whitelist mode: exclude anything not in the whitelist
+            if cfg.whitelist_mode && !matches_pattern(&cfg.bundled_whitelist, &path) {
+                return false;
+            }
+            
+            true
+        }).collect()
     }
 
     /// Read the full body of a bundled skill by name.
@@ -178,6 +204,25 @@ impl BundledSkillStore {
             None
         }
     }
+}
+
+/// Check if a path matches any pattern in the list (supports wildcards like `category/*`).
+fn matches_pattern(patterns: &[String], path: &str) -> bool {
+    let parts: Vec<&str> = path.split('/').collect();
+    let category = parts.first().copied().unwrap_or("");
+    
+    for pattern in patterns {
+        if pattern == path {
+            return true;
+        }
+        // Wildcard: `category/*` matches all skills in that category
+        if let Some(cat_pattern) = pattern.strip_suffix("/*") {
+            if cat_pattern == category {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 impl Default for BundledSkillStore {
@@ -482,7 +527,7 @@ mod tests {
 
     #[test]
     fn bundled_skills_are_discovered() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         assert!(
             skills.len() >= 90,
             "expected ≥90 bundled skills, got {}",
@@ -501,7 +546,7 @@ mod tests {
 
     #[test]
     fn no_duplicate_skill_names() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         let mut seen = std::collections::HashSet::new();
         for skill in &skills {
             assert!(
@@ -514,7 +559,7 @@ mod tests {
 
     #[test]
     fn all_names_pass_validation() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         for skill in &skills {
             assert!(
                 parse::validate_name(&skill.name),
@@ -528,7 +573,7 @@ mod tests {
 
     #[test]
     fn every_bundled_skill_has_category() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         for skill in &skills {
             assert!(
                 skill.category.is_some(),
@@ -545,7 +590,7 @@ mod tests {
 
     #[test]
     fn known_categories_present() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         let cats: std::collections::HashSet<String> =
             skills.iter().filter_map(|s| s.category.clone()).collect();
         // These categories must exist (from both hermes and openclaw copies).
@@ -567,7 +612,7 @@ mod tests {
 
     #[test]
     fn category_derived_from_top_level_directory() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         // axolotl lives at mlops/training/axolotl — category should be "mlops"
         let axolotl = skills.iter().find(|s| s.name == "axolotl");
         if let Some(skill) = axolotl {
@@ -584,7 +629,7 @@ mod tests {
 
     #[test]
     fn all_bundled_skills_have_origin() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         for skill in &skills {
             assert!(
                 skill.origin.is_some(),
@@ -596,7 +641,7 @@ mod tests {
 
     #[test]
     fn origin_sources_are_known() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         let sources: std::collections::HashSet<String> = skills
             .iter()
             .filter_map(|s| s.origin.as_ref()?.source.clone())
@@ -616,7 +661,7 @@ mod tests {
     #[test]
     fn every_bundled_skill_body_is_readable() {
         let s = store();
-        let skills = s.discover();
+        let skills = s.discover(None);
         for skill in &skills {
             let body = s.read_skill(&skill.name);
             assert!(body.is_some(), "skill '{}' body not readable", skill.name);
@@ -710,7 +755,7 @@ mod tests {
 
     #[test]
     fn arxiv_skill_metadata() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         let arxiv = skills
             .iter()
             .find(|s| s.name == "arxiv")
@@ -725,7 +770,7 @@ mod tests {
 
     #[test]
     fn weather_skill_metadata() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         let weather = skills
             .iter()
             .find(|s| s.name == "weather")
@@ -739,7 +784,7 @@ mod tests {
 
     #[test]
     fn himalaya_has_requires() {
-        let skills = store().discover();
+        let skills = store().discover(None);
         let himalaya = skills
             .iter()
             .find(|s| s.name == "himalaya")
@@ -766,6 +811,121 @@ mod tests {
         assert!(
             !body.contains("hermes webhook"),
             "webhook skill should not reference Hermes CLI"
+        );
+    }
+
+    // ── Whitelist/Blacklist pattern matching ─────────────────────────────────────
+
+    #[test]
+    fn matches_pattern_exact_match() {
+        let patterns = vec!["github/github-pr-workflow".to_string()];
+        assert!(matches_pattern(&patterns, "github/github-pr-workflow"));
+        assert!(!matches_pattern(&patterns, "github/github-issues"));
+    }
+
+    #[test]
+    fn matches_pattern_wildcard_category() {
+        let patterns = vec!["github/*".to_string()];
+        assert!(matches_pattern(&patterns, "github/github-pr-workflow"));
+        assert!(matches_pattern(&patterns, "github/github-issues"));
+        assert!(!matches_pattern(&patterns, "software-development/plan"));
+    }
+
+    #[test]
+    fn matches_pattern_multiple_wildcards() {
+        let patterns = vec![
+            "github/*".to_string(),
+            "software-development/*".to_string(),
+        ];
+        assert!(matches_pattern(&patterns, "github/github-pr-workflow"));
+        assert!(matches_pattern(&patterns, "software-development/plan"));
+        assert!(!matches_pattern(&patterns, "gaming/pokemon-player"));
+    }
+
+    #[test]
+    fn matches_pattern_blacklist_excludes() {
+        let blacklist = vec!["gaming/*".to_string(), "creative/ascii-art".to_string()];
+        assert!(matches_pattern(&blacklist, "gaming/pokemon-player"));
+        assert!(matches_pattern(&blacklist, "gaming/minecraft-modpack-server"));
+        assert!(matches_pattern(&blacklist, "creative/ascii-art"));
+        assert!(!matches_pattern(&blacklist, "creative/p5js"));
+    }
+
+    #[test]
+    fn discover_with_whitelist_mode() {
+        let s = store();
+        let config = moltis_config::schema::SkillsConfig {
+            whitelist_mode: true,
+            bundled_whitelist: vec!["github/*".to_string()],
+            bundled_blacklist: vec![],
+            ..Default::default()
+        };
+        let skills = s.discover(Some(&config));
+        // All skills should be from github category
+        for skill in &skills {
+            assert_eq!(
+                skill.category.as_deref(),
+                Some("github"),
+                "skill {} should be in github category",
+                skill.name
+            );
+        }
+    }
+
+    #[test]
+    fn discover_with_blacklist() {
+        let s = store();
+        let config = moltis_config::schema::SkillsConfig {
+            whitelist_mode: false,
+            bundled_whitelist: vec![],
+            bundled_blacklist: vec!["gaming/*".to_string()],
+            ..Default::default()
+        };
+        let skills = s.discover(Some(&config));
+        // No gaming skills should be present
+        for skill in &skills {
+            assert_ne!(
+                skill.category.as_deref(),
+                Some("gaming"),
+                "gaming skills should be blacklisted"
+            );
+        }
+    }
+
+    #[test]
+    fn discover_with_whitelist_and_blacklist() {
+        let s = store();
+        let config = moltis_config::schema::SkillsConfig {
+            whitelist_mode: true,
+            bundled_whitelist: vec!["software-development/*".to_string()],
+            bundled_blacklist: vec!["software-development/plan".to_string()],
+            ..Default::default()
+        };
+        let skills = s.discover(Some(&config));
+        // All skills should be software-development except 'plan'
+        for skill in &skills {
+            assert_eq!(
+                skill.category.as_deref(),
+                Some("software-development"),
+                "skill {} should be in software-development category",
+                skill.name
+            );
+            assert_ne!(skill.name, "plan", "plan skill should be blacklisted");
+        }
+    }
+
+    #[test]
+    fn discover_without_config_returns_all() {
+        let s = store();
+        let skills = s.discover(None);
+        assert!(!skills.is_empty(), "should return all bundled skills");
+        // Verify we have skills from multiple categories
+        let categories: std::collections::HashSet<_> =
+            skills.iter().filter_map(|s| s.category.as_deref()).collect();
+        assert!(
+            categories.len() > 5,
+            "should have skills from at least 5 categories, got {:?}",
+            categories
         );
     }
 }

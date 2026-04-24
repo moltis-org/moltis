@@ -86,6 +86,18 @@ pub struct SkillsConfig {
     /// `crates/skills/src/assets/` (e.g. `"gaming"`, `"social-media"`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_bundled_categories: Vec<String>,
+    /// If true, only skills in `bundled_whitelist` are exposed.
+    /// Default: false (all bundled skills enabled).
+    #[serde(default)]
+    pub whitelist_mode: bool,
+    /// List of category/skill patterns to include (supports wildcards like `"github/*"`).
+    /// Only used when `whitelist_mode` is true.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bundled_whitelist: Vec<String>,
+    /// List of category/skill patterns to exclude (supports wildcards).
+    /// Applied after whitelist filtering.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bundled_blacklist: Vec<String>,
 }
 
 impl Default for SkillsConfig {
@@ -97,6 +109,9 @@ impl Default for SkillsConfig {
             enable_agent_sidecar_files: false,
             enable_self_improvement: true,
             disabled_bundled_categories: Vec::new(),
+            whitelist_mode: false,
+            bundled_whitelist: Vec::new(),
+            bundled_blacklist: Vec::new(),
         }
     }
 }

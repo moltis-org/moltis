@@ -1197,10 +1197,12 @@ pub(super) async fn complete_startup(
             #[cfg(feature = "bundled-skills")]
             {
                 let bundled_store = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+                let skills_config = Some(config.skills.clone());
                 let read_discoverer: Arc<dyn moltis_skills::discover::SkillDiscoverer> =
                     Arc::new(moltis_skills::discover::CompositeSkillDiscoverer::new(
                         Box::new(fs_discoverer),
                         Arc::clone(&bundled_store),
+                        skills_config,
                     ));
                 tool_registry.register(Box::new(
                     moltis_tools::skill_tools::ReadSkillTool::with_bundled(

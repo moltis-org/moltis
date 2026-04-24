@@ -594,9 +594,11 @@ pub async fn api_skills_handler(State(state): State<AppState>) -> impl IntoRespo
         #[cfg(feature = "bundled-skills")]
         let discovered = {
             let bundled = std::sync::Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+            let skills_config = Some(config.skills.clone());
             let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
                 Box::new(fs_discoverer),
                 bundled,
+                skills_config,
             );
             composite.discover().await
         };
