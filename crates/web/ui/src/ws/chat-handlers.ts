@@ -6,6 +6,7 @@ import {
 	chatAddErrorMsg,
 	chatAddMsg,
 	removeThinking,
+	smartScrollToBottom,
 	updateTokenBar,
 } from "../chat-ui";
 import { highlightCodeBlocks } from "../code-highlight";
@@ -68,7 +69,7 @@ function handleChatThinking(p: ChatPayload, isActive: boolean, isChatPage: boole
 	thinkEl.appendChild(makeThinkingDots());
 	thinkEl.appendChild(makeThinkingStopBtn(eventSession));
 	S.chatMsgBox?.appendChild(thinkEl);
-	if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	smartScrollToBottom();
 }
 
 function handleChatThinkingText(p: ChatPayload, isActive: boolean, isChatPage: boolean, eventSession: string): void {
@@ -84,7 +85,7 @@ function handleChatThinkingText(p: ChatPayload, isActive: boolean, isChatPage: b
 		textEl.textContent = p.text || "";
 		indicator.appendChild(textEl);
 		indicator.appendChild(existingBtn || makeThinkingStopBtn(eventSession));
-		if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+		smartScrollToBottom();
 	}
 }
 
@@ -237,7 +238,7 @@ function handleChatDelta(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 	}
 	S.setStreamText(S.streamText + p.text);
 	setSafeMarkdownHtml(S.streamEl!, S.streamText);
-	if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	smartScrollToBottom();
 }
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: Final message handling with audio/voice branching
@@ -326,7 +327,7 @@ function handleChatFinal(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 			appendReasoningDisclosure(msgEl, p.reasoning);
 		}
 		appendFinalFooter(msgEl, p, eventSession);
-		if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+		smartScrollToBottom();
 	} else {
 		let resolvedEl = resolveFinalMessageEl(p);
 		const skipReasoning = p.reasoning && isReasoningAlreadyShown(p.reasoning);
@@ -525,7 +526,7 @@ function handleChatRetrying(p: ChatPayload, isActive: boolean, isChatPage: boole
 	textEl.className = "thinking-text";
 	textEl.textContent = retryStatusText(p);
 	indicator.appendChild(textEl);
-	if (S.chatMsgBox) S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	smartScrollToBottom();
 }
 
 // ── Error / abort / notice / clear ────────────────────────────

@@ -16,7 +16,7 @@ async function sendRpcFromPage(page, method, params) {
 	let lastResponse = null;
 	for (let attempt = 0; attempt < 30; attempt++) {
 		if (attempt > 0) {
-			await waitForWsConnected(page, 5_000).catch(() => {});
+			await waitForWsConnected(page, 5_000).catch(() => null);
 		}
 		lastResponse = await page
 			.evaluate(
@@ -69,7 +69,10 @@ async function waitForWelcomeOrNoProvidersCard(page) {
 
 async function deleteAgentByName(page, agentName) {
 	await navigateAndWait(page, "/settings/agents");
-	const testCard = page.locator(".backend-card").filter({ hasText: agentName });
+	const testCard = page
+		.locator(".backend-card")
+		.filter({ hasText: agentName })
+		.filter({ has: page.getByRole("button", { name: "Delete", exact: true }) });
 	await expect(testCard).toBeVisible({ timeout: 10_000 });
 	await testCard.getByRole("button", { name: "Delete", exact: true }).click();
 	await page.locator(".provider-modal").getByRole("button", { name: "Delete", exact: true }).click();
@@ -83,6 +86,20 @@ test.describe("Agents settings page", () => {
 
 		await expect(page).toHaveURL(/\/settings\/agents$/);
 		await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /Chat Agents/ })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /Sub-Agents/ })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /Modes/ })).toBeVisible();
+
+		const chatPanel = page.getByLabel("Chat Agents panel");
+		await expect(chatPanel.getByText("Persistent identities you can select in chat.", { exact: false })).toBeVisible();
+
+		await page.getByRole("tab", { name: /Modes/ }).click();
+		const modesPanel = page.getByLabel("Modes panel");
+		await expect(modesPanel.getByText("Temporary per-session prompt overlays", { exact: false })).toBeVisible();
+		await expect(modesPanel.locator(".backend-card").filter({ hasText: "Concise" })).toBeVisible({
+			timeout: 10_000,
+		});
+		await expect(modesPanel.locator(".backend-card").filter({ hasText: "Review" })).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -116,6 +133,44 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByPlaceholder("Creative Writer")).toBeVisible();
 		await expect(page.getByRole("button", { name: "Create", exact: true })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("config-only preset can be promoted into an agent", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/agents");
+		await waitForWsConnected(page);
+		await sendRpcFromPage(page, "agents.delete", { id: "coder" });
+		await navigateAndWait(page, "/settings/agents");
+		await waitForWsConnected(page);
+
+		await page.getByRole("tab", { name: /Sub-Agents/ }).click();
+		await expect(page.getByRole("heading", { name: "Sub-Agent Presets", exact: true })).toBeVisible({
+			timeout: 10_000,
+		});
+		await expect(page.getByText("already usable by spawn_agent", { exact: false })).toBeVisible();
+		const presetCard = page.locator(".backend-card").filter({ hasText: "Coder" }).filter({ hasText: "config" }).first();
+		await expect(presetCard).toBeVisible({ timeout: 10_000 });
+		await presetCard.getByRole("button", { name: "Add to Chat", exact: true }).click();
+		await expect(presetCard).toHaveCount(0, { timeout: 10_000 });
+		await page.getByRole("tab", { name: /Chat Agents/ }).click();
+
+		const agentCard = page
+			.locator(".backend-card")
+			.filter({ hasText: "Coder" })
+			.filter({ has: page.getByRole("button", { name: "Edit", exact: true }) })
+			.first();
+		await expect(agentCard).toBeVisible({ timeout: 10_000 });
+
+		try {
+			await agentCard.getByRole("button", { name: "Edit", exact: true }).click();
+			await expect(page.getByText("Edit Coder", { exact: true })).toBeVisible({ timeout: 10_000 });
+			await expect(page.locator("textarea").first()).toHaveValue(/Implement scoped code changes/);
+			await page.getByRole("button", { name: "Cancel", exact: true }).click();
+		} finally {
+			await deleteAgentByName(page, "Coder");
+		}
 
 		expect(pageErrors).toEqual([]);
 	});

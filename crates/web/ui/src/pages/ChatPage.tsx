@@ -10,12 +10,14 @@
 
 import { effect } from "@preact/signals";
 import { render } from "preact";
-import { chatAddMsg } from "../chat-ui";
+import { chatAddMsg, hideNewContentIndicator, isChatAtBottom, smartScrollToBottom } from "../chat-ui";
 import { SessionHeader } from "../components/SessionHeader";
 import { formatTokens, sendRpc } from "../helpers";
 import { initMediaDrop, teardownMediaDrop } from "../media-drop";
 import { bindModelComboEvents } from "../models";
 import { bindNodeComboEvents, fetchNodes, unbindNodeEvents } from "../nodes-selector";
+import { bindProjectComboEvents } from "../project-combo";
+import { fetchProjects } from "../projects";
 import { bindReasoningToggle, unbindReasoningToggle } from "../reasoning-toggle";
 import { registerPrefix, sessionPath } from "../router";
 import { routes } from "../routes";
@@ -23,7 +25,7 @@ import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, 
 import { clearAllSessions, switchSession } from "../sessions";
 import * as S from "../state";
 import { sessionStore } from "../stores/session-store";
-import { initVoiceInput, teardownVoiceInput } from "../voice-input";
+import { initVadButton, initVoiceInput, teardownVoiceInput } from "../voice-input";
 import {
 	chatAutoResize,
 	handleHistoryDown,
@@ -219,7 +221,7 @@ export function renderCompactCard(data: CompactCardData): void {
 		card.appendChild(hintSec);
 	}
 	S.chatMsgBox.appendChild(card);
-	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	smartScrollToBottom();
 }
 
 // ── Debug / full context panels ──────────────────────────────
@@ -592,7 +594,7 @@ export function showModelNotice(model: ModelNotice): void {
 	const providerEl = card.querySelector("[data-provider]");
 	if (providerEl) providerEl.textContent = model.provider || "local";
 	S.chatMsgBox.appendChild(card);
-	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	smartScrollToBottom();
 }
 
 // ── Chat copy handler ───────────────────────────────────────
@@ -796,6 +798,13 @@ function initializeChatControls(): void {
 	S.setNodeDropdownList(S.$("nodeDropdownList"));
 	bindNodeComboEvents();
 	fetchNodes();
+	S.setProjectCombo(S.$("projectCombo"));
+	S.setProjectComboBtn(S.$("projectComboBtn"));
+	S.setProjectComboLabel(S.$("projectComboLabel"));
+	S.setProjectDropdown(S.$("projectDropdown"));
+	S.setProjectDropdownList(S.$("projectDropdownList"));
+	bindProjectComboEvents();
+	fetchProjects();
 	S.setSandboxToggleBtn(S.$("sandboxToggle"));
 	S.setSandboxLabel(S.$("sandboxLabel"));
 	bindSandboxToggleEvents();
@@ -874,6 +883,7 @@ const chatPageHTML =
 	'<div id="modelCombo" class="model-combo"><button id="modelComboBtn" class="model-combo-btn" type="button"><span id="modelComboLabel">loading\u2026</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="modelDropdown" class="model-dropdown hidden"><input id="modelSearchInput" type="text" placeholder="Search models\u2026" class="model-search-input" autocomplete="off" /><div id="modelDropdownList" class="model-dropdown-list"></div></div></div>' +
 	'<div id="reasoningCombo" class="model-combo hidden"><button id="reasoningComboBtn" class="model-combo-btn" type="button" title="Reasoning effort"><span class="icon icon-sm icon-brain" style="flex-shrink:0;"></span><span id="reasoningComboLabel">Off</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="reasoningDropdown" class="model-dropdown hidden"><div id="reasoningDropdownList" class="model-dropdown-list"></div></div></div>' +
 	'<div id="nodeCombo" class="model-combo hidden"><button id="nodeComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-server" style="flex-shrink:0;"></span><span id="nodeComboLabel">Local</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="nodeDropdown" class="model-dropdown hidden" tabindex="-1"><div id="nodeDropdownList" class="model-dropdown-list"></div></div></div>' +
+	'<div id="projectCombo" class="model-combo hidden"><button id="projectComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-folder" style="flex-shrink:0;"></span><span id="projectComboLabel">No project</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="projectDropdown" class="model-dropdown hidden"><div id="projectDropdownList" class="model-dropdown-list"></div></div></div>' +
 	'<div id="sessionHeaderToolbarMount" class="ml-auto flex items-center gap-1.5"></div>' +
 	'<button id="chatMoreBtn" type="button" class="model-combo-btn" title="More controls" aria-label="More controls"><span class="icon icon-lg icon-menu-dots-horizontal"></span></button></div>' +
 	'<div id="chatMoreModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:560px;max-width:92vw;"><div class="provider-modal-header"><div class="flex items-center gap-2"><button id="chatMoreDeleteAllBtn" type="button" class="provider-btn provider-btn-sm chat-session-btn-danger inline-flex items-center gap-1.5" style="background:var(--error);border-color:var(--error);color:#fff;"><span class="icon icon-sm icon-x-circle shrink-0"></span><span id="chatMoreDeleteAllLabel">Delete all sessions</span></button></div><div id="sessionHeaderModalTopMount" class="flex items-center gap-2"></div></div><div class="provider-modal-body flex flex-col gap-3"><div class="flex flex-wrap items-center gap-2"><button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">sandboxed</span></button><div style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">ubuntu:25.10</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div><button id="mcpToggleBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle MCP tools for this session"><span class="icon icon-md icon-link shrink-0"></span><span id="mcpToggleLabel">MCP</span></button><button id="debugPanelBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show context debug info"><span class="icon icon-md icon-wrench shrink-0"></span><span id="debugPanelLabel">Debug</span></button><button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show full LLM context (system prompt + history)"><span class="icon icon-md icon-document shrink-0"></span><span id="fullContextLabel">Context</span></button></div><div id="sessionControlsSection" class="border-t border-[var(--border)] pt-3"><div id="sessionHeaderModalMount" class="w-full"></div></div></div></div></div>' +
@@ -882,11 +892,13 @@ const chatPageHTML =
 	'<div class="p-4 flex flex-col gap-2" id="messages" style="grid-row:3;overflow-y:auto;min-height:0"></div>' +
 	'<div id="queuedMessages" class="queued-tray hidden" style="grid-row:4;"></div>' +
 	'<div id="tokenBar" class="token-bar" style="grid-row:5;"></div>' +
-	'<div class="chat-input-row px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end" style="grid-row:6;"><span id="chatCommandPrompt" class="chat-command-prompt chat-command-prompt-hidden" title="Command prompt symbol" aria-hidden="true">$</span><textarea id="chatInput" placeholder="Type a message..." rows="1" enterkeyhint="send" class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea><button id="micBtn" disabled title="Click to start recording" class="mic-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"><span class="icon icon-lg icon-microphone"></span></button><button id="sendBtn" disabled class="provider-btn min-h-[40px] disabled:opacity-40 disabled:cursor-default">Send</button></div></div>';
+	'<div class="chat-input-row px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end" style="grid-row:6;"><span id="chatCommandPrompt" class="chat-command-prompt chat-command-prompt-hidden" title="Command prompt symbol" aria-hidden="true">$</span><textarea id="chatInput" placeholder="Type a message..." rows="1" enterkeyhint="send" class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea><button id="micBtn" disabled title="Click to start recording" class="mic-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"><span class="icon icon-lg icon-microphone"></span></button><button id="vadBtn" disabled title="Conversation mode (VAD)" class="vad-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"><span class="icon icon-lg icon-waveform"></span></button><button id="sendBtn" disabled class="provider-btn min-h-[40px] disabled:opacity-40 disabled:cursor-default">Send</button></div></div>';
 
 // ── Page registration ────────────────────────────────────────
 
 import { updateCommandInputUI } from "../chat-ui";
+
+let chatScrollHandler: (() => void) | null = null;
 
 registerPrefix(
 	routes.chats!,
@@ -927,11 +939,24 @@ registerPrefix(
 		startInitialChatSession(sessionKey);
 		bindChatComposer();
 		S.chatMsgBox?.addEventListener("copy", handleChatCopy);
+
+		// Smart auto-scroll: detect when user scrolls back to bottom
+		chatScrollHandler = () => {
+			if (isChatAtBottom()) hideNewContentIndicator();
+		};
+		S.chatMsgBox?.addEventListener("scroll", chatScrollHandler, { passive: true });
+
 		initVoiceInput(S.$("micBtn") as HTMLButtonElement | null);
+		initVadButton(S.$("vadBtn") as HTMLButtonElement | null);
 		initializeChatMediaDrop();
 		S.chatInput?.focus();
 	},
 	function teardownChat() {
+		if (chatScrollHandler) {
+			S.chatMsgBox?.removeEventListener("scroll", chatScrollHandler);
+			chatScrollHandler = null;
+		}
+		S.chatMsgBox?.removeEventListener("copy", handleChatCopy);
 		teardownVoiceInput();
 		teardownMediaDrop();
 		unbindReasoningToggle();
@@ -967,5 +992,10 @@ registerPrefix(
 		S.setNodeDropdownList(null);
 		S.setSandboxToggleBtn(null);
 		S.setSandboxLabel(null);
+		S.setProjectCombo(null);
+		S.setProjectComboBtn(null);
+		S.setProjectComboLabel(null);
+		S.setProjectDropdown(null);
+		S.setProjectDropdownList(null);
 	},
 );

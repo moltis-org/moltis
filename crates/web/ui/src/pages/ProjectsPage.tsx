@@ -24,6 +24,7 @@ interface Project extends ProjectInfo {
 	auto_worktree?: boolean;
 	sandbox_image?: string | null;
 	detected?: boolean;
+	code_index_enabled?: boolean;
 	created_at?: number;
 	updated_at?: number;
 }
@@ -142,6 +143,7 @@ function ProjectEditForm(props: ProjectEditFormProps): VNode {
 	const prefixRef = useRef<HTMLInputElement>(null);
 	const wtRef = useRef<HTMLInputElement>(null);
 	const imageRef = useRef<HTMLInputElement>(null);
+	const indexRef = useRef<HTMLInputElement>(null);
 
 	useEffect(() => {
 		fetchCachedImages();
@@ -156,6 +158,7 @@ function ProjectEditForm(props: ProjectEditFormProps): VNode {
 		updated.teardown_command = teardownRef.current?.value.trim() || null;
 		updated.branch_prefix = prefixRef.current?.value.trim() || null;
 		updated.auto_worktree = wtRef.current?.checked;
+		updated.code_index_enabled = indexRef.current?.checked;
 		updated.sandbox_image = imageRef.current?.value.trim() || null;
 		updated.updated_at = Date.now();
 		sendRpc("projects.upsert", updated).then(() => {
@@ -239,10 +242,14 @@ function ProjectEditForm(props: ProjectEditFormProps): VNode {
 					))}
 				</datalist>
 			</div>
-			<div style={{ marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
-				<input ref={wtRef} type="checkbox" checked={p.auto_worktree} />
+			<label style={{ marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+				<input ref={wtRef} type="checkbox" defaultChecked={p.auto_worktree} />
 				<span className="text-xs text-[var(--text)]">{t("projects:editForm.autoWorktree")}</span>
-			</div>
+			</label>
+			<label style={{ marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}>
+				<input ref={indexRef} type="checkbox" defaultChecked={p.code_index_enabled !== false} />
+				<span className="text-xs text-[var(--text)]">{t("projects:editForm.codeIndex")}</span>
+			</label>
 			<div style={{ display: "flex", gap: "8px" }}>
 				<button className="provider-btn" onClick={onSave}>
 					{t("common:actions.save")}
@@ -281,6 +288,9 @@ function ProjectCard(props: ProjectCardProps): VNode {
 						<span className="provider-item-badge api-key" title={p.sandbox_image}>
 							{t("projects:badges.image")}
 						</span>
+					)}
+					{p.code_index_enabled !== false && (
+						<span className="provider-item-badge oauth">{t("projects:badges.indexed")}</span>
 					)}
 				</div>
 				<div

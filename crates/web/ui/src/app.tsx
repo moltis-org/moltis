@@ -583,6 +583,10 @@ function fetchBootstrap(): void {
 				S.setProjects(bootProjects);
 				renderProjectSelect();
 				renderSessionProjectSelect();
+				// Show/hide project combo — matches fetchProjects() pattern
+				if (S.projectCombo) {
+					S.projectCombo.classList.toggle("hidden", bootProjects.length === 0);
+				}
 			}
 			S.setSandboxInfo(boot.sandbox || null);
 			// Re-apply sandbox UI now that we know the backend status.

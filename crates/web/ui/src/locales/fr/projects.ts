@@ -27,6 +27,7 @@ export default {
 		setup: "setup",
 		teardown: "teardown",
 		image: "image",
+		indexed: "indexed",
 	},
 	card: {
 		systemPromptPrefix: "System prompt: ",
@@ -50,5 +51,6 @@ export default {
 		sandboxImage: "Sandbox image",
 		sandboxImagePlaceholder: "Default (ubuntu:25.10)",
 		autoWorktree: "Auto-create git worktree per session",
+		codeIndex: "Enable code indexing (semantic search)",
 	},
 };

@@ -578,6 +578,9 @@ fn read_bundled(
         .map(|(path, bytes)| json!({"path": path, "bytes": bytes}))
         .collect();
 
+    // Materialize sidecar files to disk so scripts can be executed.
+    let skill_dir = store.materialize_sidecars(name);
+
     let mut response = serde_json::Map::new();
     response.insert("name".into(), json!(name));
     response.insert("description".into(), json!(meta.description));
@@ -587,6 +590,9 @@ fn read_bundled(
     }
     response.insert("body".into(), json!(body));
     response.insert("bytes".into(), json!(body.len()));
+    if let Some(ref dir) = skill_dir {
+        response.insert("skill_dir".into(), json!(dir.display().to_string()));
+    }
 
     if let Some(display_name) = &meta.display_name {
         response.insert("display_name".into(), json!(display_name));
@@ -604,13 +610,22 @@ fn read_bundled(
         response.insert("allowed_tools".into(), json!(meta.allowed_tools));
     }
     if !linked.is_empty() {
-        response.insert(
-            "usage_hint".into(),
-            json!(
-                "To view a linked file, call read_skill again with file_path \
-                 set to one of the paths in linked_files."
-            ),
-        );
+        let has_scripts = skill_dir.is_some()
+            && linked.iter().any(|v| {
+                v.get("path")
+                    .and_then(|p| p.as_str())
+                    .is_some_and(|p| p.starts_with("scripts/"))
+            });
+        let hint = if has_scripts {
+            "This skill includes executable scripts. Use the `skill_dir` path \
+             to resolve script references in the body. To view a linked file, \
+             call read_skill again with file_path set to one of the paths in \
+             linked_files."
+        } else {
+            "To view a linked file, call read_skill again with file_path \
+             set to one of the paths in linked_files."
+        };
+        response.insert("usage_hint".into(), json!(hint));
     }
     response.insert("linked_files".into(), json!(linked));
 

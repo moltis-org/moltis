@@ -120,7 +120,7 @@ Verify releases with `gh attestation verify <artifact> -R moltis-org/moltis` or 
 
 ## Features
 
-- **AI Gateway** — Multi-provider LLM support (OpenAI Codex, GitHub Copilot, Local), streaming responses, agent loop with sub-agent delegation, parallel tool execution
+- **AI Gateway** — Multi-provider LLM support (OpenAI Codex, GitHub Copilot, Local), streaming responses, agent loop with sub-agent delegation, session modes, parallel tool execution
 - **Communication** — Web UI, Telegram, Signal, Microsoft Teams, Discord, API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
 - **Memory & Recall** — Per-agent memory workspaces, embeddings-powered long-term memory, hybrid vector + full-text search, session persistence with auto-compaction, cross-session recall, Cursor-compatible project context, context-file safety scanning
 - **Safer Agent Editing** — Automatic checkpoints before built-in skill and memory mutations, restore tooling, session branching

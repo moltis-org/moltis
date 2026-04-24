@@ -2,13 +2,14 @@
 
 use {
     crate::{
+        model::{ContentPart, UserContent},
         prompt::{
             ModelFamily, PromptBuildLimits, PromptHostRuntimeContext, PromptRuntimeContext,
             PromptSandboxRuntimeContext, build_system_prompt, build_system_prompt_minimal_runtime,
             build_system_prompt_with_session_runtime,
             build_system_prompt_with_session_runtime_details,
             formatting::{format_compact_tool_schema, tool_call_guidance},
-            runtime_datetime_message,
+            prepend_datetime_to_user_content, runtime_datetime_message,
         },
         tool_registry::ToolRegistry,
     },
@@ -312,6 +313,7 @@ fn test_runtime_context_injected_when_provided() {
             session_override: Some(true),
         }),
         nodes: None,
+        mode: None,
     };
 
     let prompt = build_system_prompt_with_session_runtime(
@@ -371,6 +373,7 @@ fn test_runtime_context_sandbox_without_sudo_omits_sudo_hint() {
             ..Default::default()
         }),
         nodes: None,
+        mode: None,
     };
 
     let prompt = build_system_prompt_with_session_runtime(
@@ -407,6 +410,7 @@ fn test_runtime_context_no_sandbox_uses_host_only_routing() {
         },
         sandbox: None,
         nodes: None,
+        mode: None,
     };
 
     let prompt = build_system_prompt_with_session_runtime(
@@ -446,6 +450,7 @@ fn test_runtime_context_no_sandbox_with_sudo_includes_sudo_hint() {
         },
         sandbox: None,
         nodes: None,
+        mode: None,
     };
 
     let prompt = build_system_prompt_with_session_runtime(
@@ -480,6 +485,7 @@ fn test_runtime_context_includes_location_when_set() {
         },
         sandbox: None,
         nodes: None,
+        mode: None,
     };
 
     let prompt = build_system_prompt_with_session_runtime(
@@ -517,6 +523,7 @@ fn test_runtime_context_includes_channel_surface_fields_when_set() {
         },
         sandbox: None,
         nodes: None,
+        mode: None,
     };
 
     let prompt = build_system_prompt_with_session_runtime(
@@ -554,6 +561,7 @@ fn test_runtime_context_omits_location_when_none() {
         },
         sandbox: None,
         nodes: None,
+        mode: None,
     };
 
     let prompt = build_system_prompt_with_session_runtime(
@@ -584,6 +592,7 @@ fn test_minimal_prompt_runtime_does_not_add_exec_routing_block() {
         },
         sandbox: None,
         nodes: None,
+        mode: None,
     };
 
     let prompt = build_system_prompt_minimal_runtime(
@@ -920,6 +929,7 @@ fn test_system_prompt_does_not_contain_datetime() {
         },
         sandbox: None,
         nodes: None,
+        mode: None,
     };
 
     let prompt = build_system_prompt_with_session_runtime(
@@ -952,6 +962,7 @@ fn test_runtime_datetime_message_returns_time_when_present() {
         },
         sandbox: None,
         nodes: None,
+        mode: None,
     };
 
     let msg = runtime_datetime_message(Some(&runtime));
@@ -970,6 +981,7 @@ fn test_runtime_datetime_message_falls_back_to_today() {
         },
         sandbox: None,
         nodes: None,
+        mode: None,
     };
 
     let msg = runtime_datetime_message(Some(&runtime));
@@ -982,6 +994,7 @@ fn test_runtime_datetime_message_returns_none_without_time_or_date() {
         host: PromptHostRuntimeContext::default(),
         sandbox: None,
         nodes: None,
+        mode: None,
     };
 
     assert!(runtime_datetime_message(Some(&runtime)).is_none());
@@ -1260,4 +1273,115 @@ fn test_skill_self_improvement_omitted_when_disabled() {
     );
     // Skills block itself should still be present.
     assert!(output.prompt.contains("<available_skills>"));
+}
+
+// ── prepend_datetime_to_user_content tests ──────────────────────────
+
+#[test]
+fn test_prepend_datetime_to_text_content() {
+    let runtime = PromptRuntimeContext {
+        host: PromptHostRuntimeContext {
+            time: Some("2026-04-23 10:30:00 CET".into()),
+            ..Default::default()
+        },
+        sandbox: None,
+        nodes: None,
+        mode: None,
+    };
+    let content = UserContent::Text("Hello, what time is it?".into());
+    let result = prepend_datetime_to_user_content(&content, Some(&runtime));
+    assert!(result.is_some());
+    match result.unwrap() {
+        UserContent::Text(text) => {
+            assert!(text.starts_with("[The current user datetime is 2026-04-23 10:30:00 CET.]"));
+            assert!(text.ends_with("Hello, what time is it?"));
+            assert!(text.contains("\n\n"));
+        },
+        UserContent::Multimodal(_) => panic!("expected Text variant"),
+    }
+}
+
+#[test]
+fn test_prepend_datetime_to_multimodal_content() {
+    let runtime = PromptRuntimeContext {
+        host: PromptHostRuntimeContext {
+            time: Some("2026-04-23 10:30:00 CET".into()),
+            ..Default::default()
+        },
+        sandbox: None,
+        nodes: None,
+        mode: None,
+    };
+    let content = UserContent::Multimodal(vec![
+        ContentPart::Text("Describe this image".into()),
+        ContentPart::Image {
+            media_type: "image/png".into(),
+            data: "base64data".into(),
+        },
+    ]);
+    let result = prepend_datetime_to_user_content(&content, Some(&runtime));
+    assert!(result.is_some());
+    match result.unwrap() {
+        UserContent::Multimodal(parts) => {
+            assert_eq!(parts.len(), 3);
+            match &parts[0] {
+                ContentPart::Text(t) => {
+                    assert!(t.contains("The current user datetime is 2026-04-23 10:30:00 CET."));
+                },
+                _ => panic!("expected Text part first"),
+            }
+            match &parts[1] {
+                ContentPart::Text(t) => assert_eq!(t, "Describe this image"),
+                _ => panic!("expected original Text part second"),
+            }
+            match &parts[2] {
+                ContentPart::Image { media_type, data } => {
+                    assert_eq!(media_type, "image/png");
+                    assert_eq!(data, "base64data");
+                },
+                _ => panic!("expected Image part third"),
+            }
+        },
+        UserContent::Text(_) => panic!("expected Multimodal variant"),
+    }
+}
+
+#[test]
+fn test_prepend_datetime_returns_none_without_runtime() {
+    let content = UserContent::Text("Hello".into());
+    assert!(prepend_datetime_to_user_content(&content, None).is_none());
+}
+
+#[test]
+fn test_prepend_datetime_returns_none_without_time_or_date() {
+    let runtime = PromptRuntimeContext {
+        host: PromptHostRuntimeContext::default(),
+        sandbox: None,
+        nodes: None,
+        mode: None,
+    };
+    let content = UserContent::Text("Hello".into());
+    assert!(prepend_datetime_to_user_content(&content, Some(&runtime)).is_none());
+}
+
+#[test]
+fn test_prepend_datetime_falls_back_to_today() {
+    let runtime = PromptRuntimeContext {
+        host: PromptHostRuntimeContext {
+            today: Some("2026-04-23".into()),
+            ..Default::default()
+        },
+        sandbox: None,
+        nodes: None,
+        mode: None,
+    };
+    let content = UserContent::Text("What day is it?".into());
+    let result = prepend_datetime_to_user_content(&content, Some(&runtime));
+    assert!(result.is_some());
+    match result.unwrap() {
+        UserContent::Text(text) => {
+            assert!(text.starts_with("[The current user date is 2026-04-23.]"));
+        },
+        _ => panic!("expected Text variant"),
+    }
 }

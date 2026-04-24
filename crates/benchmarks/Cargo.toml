@@ -6,12 +6,17 @@ repository.workspace = true
 version.workspace    = true
 
 [dependencies]
+grep-regex       = { workspace = true }
+grep-searcher    = { workspace = true }
 moltis-agents    = { workspace = true }
+moltis-code-index = { workspace = true }
 moltis-config    = { workspace = true }
 moltis-providers = { workspace = true }
+moltis-qmd       = { optional = true, workspace = true }
 moltis-sessions  = { workspace = true }
 serde_json       = { workspace = true }
 tempfile         = { workspace = true }
+tokio            = { workspace = true }
 toml             = { workspace = true }
 
 [dev-dependencies]
@@ -20,6 +25,13 @@ divan = { package = "codspeed-divan-compat", version = "4.3" }
 [[bench]]
 harness = false
 name    = "boot"
+
+[[bench]]
+harness = false
+name    = "code_index"
+
+[features]
+qmd = ["dep:moltis-qmd"]
 
 [lints]
 workspace = true

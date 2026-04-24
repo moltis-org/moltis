@@ -14,7 +14,7 @@ use {
 
 use {
     moltis_agents::{
-        AgentRunError, ChatMessage, UserContent,
+        AgentRunError, UserContent,
         model::values_to_chat_messages,
         prompt::{
             PromptRuntimeContext, build_system_prompt_minimal_runtime_details,
@@ -822,20 +822,21 @@ pub(crate) async fn run_with_tools(
         .insert(session_key.to_string(), event_forwarder);
 
     // Convert persisted JSON history to typed ChatMessages for the LLM provider.
-    let mut chat_history = values_to_chat_messages(history_raw);
-
-    // Inject the datetime as a trailing system message so the main system
-    // prompt stays byte-identical between turns, enabling KV cache hits for
-    // local LLMs (Ollama, LM Studio) and prompt-cache hits for cloud providers.
-    if let Some(datetime_msg) = moltis_agents::prompt::runtime_datetime_message(runtime_context) {
-        chat_history.push(ChatMessage::system(&datetime_msg));
-    }
+    let chat_history = values_to_chat_messages(history_raw);
 
     let hist = if chat_history.is_empty() {
         None
     } else {
         Some(chat_history)
     };
+
+    // Fold datetime into the user message content so the message array before
+    // it stays positionally stable, preserving KV cache prefix matching for
+    // local LLMs (llama.cpp, Ollama, LM Studio) and prompt-cache hits for
+    // cloud providers.
+    let effective_user_content =
+        moltis_agents::prompt::prepend_datetime_to_user_content(user_content, runtime_context)
+            .unwrap_or_else(|| user_content.clone());
 
     // Inject session key and accept-language into tool call params so tools can
     // resolve per-session state and forward the user's locale to web requests.
@@ -851,7 +852,7 @@ pub(crate) async fn run_with_tools(
         provider,
         &filtered_registry,
         &system_prompt,
-        user_content,
+        &effective_user_content,
         Some(&on_event),
         hist,
         Some(tool_context.clone()),
@@ -937,24 +938,19 @@ pub(crate) async fn run_with_tools(
 
                     // Reload compacted history and retry.
                     let compacted_history_raw = store.read(session_key).await.unwrap_or_default();
-                    let mut compacted_chat = values_to_chat_messages(&compacted_history_raw);
-                    // Re-inject datetime so the retry has current time context.
-                    if let Some(datetime_msg) =
-                        moltis_agents::prompt::runtime_datetime_message(runtime_context)
-                    {
-                        compacted_chat.push(ChatMessage::system(&datetime_msg));
-                    }
+                    let compacted_chat = values_to_chat_messages(&compacted_history_raw);
                     let retry_hist = if compacted_chat.is_empty() {
                         None
                     } else {
                         Some(compacted_chat)
                     };
 
+                    // effective_user_content already carries datetime context.
                     run_agent_loop_streaming(
                         provider_ref.clone(),
                         &filtered_registry,
                         &system_prompt,
-                        user_content,
+                        &effective_user_content,
                         Some(&on_event),
                         retry_hist,
                         Some(tool_context),

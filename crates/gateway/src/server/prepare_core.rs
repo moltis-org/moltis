@@ -554,6 +554,13 @@ pub async fn prepare_gateway_core(
                         .set_project_id(&entry.key, entry.project_id.clone())
                         .await;
                 }
+                if entry.mode_id.is_some()
+                    && let Err(e) = sqlite_meta
+                        .set_mode_id(&entry.key, entry.mode_id.as_deref())
+                        .await
+                {
+                    tracing::warn!("failed to migrate session mode for {}: {e}", entry.key);
+                }
             }
         }
         let bak = metadata_json_path.with_extension("json.bak");
@@ -1343,7 +1350,7 @@ pub async fn prepare_gateway_core(
     startup_mem_probe.checkpoint("memory_manager.initialized");
 
     // ── Code index initialization ──────────────────────────────────────
-    let code_index = init_code_index::init_code_index(&data_dir).await;
+    let code_index = init_code_index::init_code_index(&data_dir, &config).await;
     startup_mem_probe.checkpoint("code_index.initialized");
 
     post_state::complete_startup(post_state::PostStateInputs {
@@ -1400,6 +1407,8 @@ pub async fn prepare_gateway_core(
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
         code_index,
+        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+        project_store: Arc::clone(&project_store),
     })
     .await
 }

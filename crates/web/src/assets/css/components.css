@@ -1593,6 +1593,30 @@
   50% { transform: scale(1.05); }
 }
 
+/* -- VAD Button States -- */
+.vad-btn.vad-active {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+.vad-btn.vad-listening {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  animation: vad-glow 2s ease-in-out infinite;
+}
+
+.vad-btn.vad-speech {
+  background: var(--error) !important;
+  border-color: var(--error) !important;
+  color: #fff !important;
+  animation: mic-pulse 1s infinite;
+}
+
+@keyframes vad-glow {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
 /* ── Toggle Switch ── */
 
 .toggle-switch {

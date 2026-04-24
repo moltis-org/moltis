@@ -2022,6 +2022,11 @@
     mask-image: url("./icons/masks/mask-0162291303f5d971.svg");
   }
 
+  .icon-waveform {
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='black' stroke-width='1.5' stroke-linecap='round' d='M3 12h1M7 8v8M11 5v14M15 8v8M19 10v4M23 12h-1'%2F%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='black' stroke-width='1.5' stroke-linecap='round' d='M3 12h1M7 8v8M11 5v14M15 8v8M19 10v4M23 12h-1'%2F%3E%3C/svg%3E");
+  }
+
   /* Status icons */
   .icon-checkmark {
     -webkit-mask-image: url("./icons/masks/mask-48b7d531f003fdb1.svg");

@@ -1013,12 +1013,17 @@ name = "benchmarks"
 version = "0.1.0"
 dependencies = [
  "codspeed-divan-compat",
+ "grep-regex",
+ "grep-searcher",
  "moltis-agents",
+ "moltis-code-index",
  "moltis-config",
  "moltis-providers",
+ "moltis-qmd",
  "moltis-sessions",
  "serde_json",
  "tempfile",
+ "tokio",
  "toml 0.8.23",
 ]
 
@@ -7152,7 +7157,7 @@ dependencies = [
  "moltis-tools",
  "moltis-web",
  "open",
- "rand 0.10.0",
+ "rand 0.10.1",
  "reqwest 0.13.2",
  "secrecy 0.8.0",
  "serde_json",
@@ -7188,6 +7193,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -7209,7 +7215,7 @@ dependencies = [
  "moltis-vault",
  "openssl",
  "password-hash",
- "rand 0.10.0",
+ "rand 0.10.1",
  "secrecy 0.8.0",
  "serde",
  "serde_json",
@@ -7249,7 +7255,7 @@ dependencies = [
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
- "rand 0.10.0",
+ "rand 0.10.1",
  "serde",
  "serde_json",
  "sysinfo",
@@ -7309,7 +7315,7 @@ dependencies = [
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
- "rand 0.10.0",
+ "rand 0.10.1",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -7527,6 +7533,7 @@ dependencies = [
  "moltis-config",
  "moltis-cron",
  "moltis-discord",
+ "moltis-home-assistant",
  "moltis-matrix",
  "moltis-mcp",
  "moltis-mcp-agent-bridge",
@@ -7563,7 +7570,7 @@ dependencies = [
  "portable-pty",
  "pulldown-cmark 0.12.2",
  "qrcode",
- "rand 0.10.0",
+ "rand 0.10.1",
  "reqwest 0.13.2",
  "secrecy 0.8.0",
  "serde",
@@ -7602,6 +7609,31 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
+]
+
+[[package]]
+name = "moltis-home-assistant"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "dotenvy",
+ "futures-util",
+ "moltis-agents",
+ "moltis-config",
+ "moltis-metrics",
+ "reqwest 0.13.2",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tracing",
+ "urlencoding",
+ "wiremock",
 ]
 
 [[package]]
@@ -7647,7 +7679,7 @@ dependencies = [
  "moltis-web",
  "moltis-webhooks",
  "ngrok",
- "rand 0.10.0",
+ "rand 0.10.1",
  "reqwest 0.13.2",
  "rustls 0.23.36",
  "secrecy 0.8.0",
@@ -7824,7 +7856,7 @@ dependencies = [
  "moltis-channels",
  "moltis-common",
  "moltis-metrics",
- "rand 0.10.0",
+ "rand 0.10.1",
  "reqwest 0.13.2",
  "secrecy 0.8.0",
  "serde",
@@ -7904,7 +7936,7 @@ dependencies = [
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
- "rand 0.10.0",
+ "rand 0.10.1",
  "reqwest 0.13.2",
  "secrecy 0.8.0",
  "serde",
@@ -8265,7 +8297,7 @@ dependencies = [
  "moltis-media",
  "moltis-metrics",
  "pdf-extract",
- "rand 0.10.0",
+ "rand 0.10.1",
  "reqwest 0.13.2",
  "rstest",
  "secrecy 0.8.0",
@@ -8361,7 +8393,7 @@ dependencies = [
  "base64 0.22.1",
  "chacha20poly1305",
  "moltis-metrics",
- "rand 0.10.0",
+ "rand 0.10.1",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -8481,7 +8513,7 @@ dependencies = [
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
- "rand 0.10.0",
+ "rand 0.10.1",
  "rstest",
  "serde",
  "serde_json",
@@ -8510,7 +8542,7 @@ dependencies = [
  "moltis-metrics",
  "postcard",
  "qrcode",
- "rand 0.10.0",
+ "rand 0.10.1",
  "serde",
  "serde_json",
  "sled",
@@ -9102,9 +9134,9 @@ dependencies = [
 
 [[package]]
 name = "openssl"
-version = "0.10.75"
+version = "0.10.78"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08838db121398ad17ab8531ce9de97b244589089e290a384c900cb9ff7434328"
+checksum = "f38c4372413cdaaf3cc79dd92d29d7d9f5ab09b51b10dded508fb90bb70b9222"
 dependencies = [
  "bitflags 2.10.0",
  "cfg-if",
@@ -9149,9 +9181,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.111"
+version = "0.9.114"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82cab2d520aa75e3c58898289429321eb788c3106963d0dc886ec7a5f4adc321"
+checksum = "13ce1245cd07fcc4cfdb438f7507b0c7e4f3849a69fd84d52374c66d83741bb6"
 dependencies = [
  "cc",
  "libc",
@@ -9842,7 +9874,7 @@ version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
- "heck 0.5.0",
+ "heck 0.4.1",
  "itertools 0.14.0",
  "log",
  "multimap",
@@ -10105,9 +10137,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc266eb313df6c5c09c1c7b1fbe2510961e5bcd3add930c1e31f7ed9da0feff8"
+checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
  "chacha20 0.10.0",
  "getrandom 0.4.1",
@@ -11794,7 +11826,7 @@ dependencies = [
  "lazy_static",
  "mime",
  "mime_guess",
- "rand 0.10.0",
+ "rand 0.10.1",
  "rsb_derive",
  "rvstruct",
  "serde",
@@ -13801,7 +13833,7 @@ dependencies = [
  "once_cell",
  "pbkdf2",
  "prost 0.14.3",
- "rand 0.10.0",
+ "rand 0.10.1",
  "serde",
  "serde-big-array",
  "serde_json",
@@ -13885,7 +13917,7 @@ dependencies = [
  "hmac 0.12.1",
  "log",
  "prost 0.14.3",
- "rand 0.10.0",
+ "rand 0.10.1",
  "serde",
  "sha1",
  "sha2 0.10.9",
@@ -13908,7 +13940,7 @@ dependencies = [
  "hkdf",
  "log",
  "prost 0.14.3",
- "rand 0.10.0",
+ "rand 0.10.1",
  "sha2 0.10.9",
  "thiserror 2.0.18",
  "wacore-binary",
@@ -14754,7 +14786,7 @@ dependencies = [
  "hex",
  "log",
  "prost 0.14.3",
- "rand 0.10.0",
+ "rand 0.10.1",
  "scopeguard",
  "serde",
  "serde_json",

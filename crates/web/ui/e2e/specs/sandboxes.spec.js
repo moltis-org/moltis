@@ -238,7 +238,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 
 		await navigateAndWait(page, "/settings/sandboxes");
 		await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeVisible();
-		await expect(page.getByText("No containers found.")).toBeVisible();
+		await expect(page.getByText("No containers found.")).toBeVisible({ timeout: 10_000 });
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -396,7 +396,8 @@ test.describe("Sandboxes page – Container error handling", () => {
 		await navigateAndWait(page, "/settings/sandboxes");
 		await expect.poll(() => containerListFetches, { timeout: 10_000 }).toBeGreaterThan(0);
 
-		// Click the delete button
+		// Wait for the container row to render before clicking delete
+		await expect(page.getByText("moltis-sandbox-ghost")).toBeVisible({ timeout: 10_000 });
 		await page.getByRole("button", { name: "Delete", exact: true }).click();
 
 		// Error message should appear

@@ -823,3 +823,31 @@
   min-width: 2.5em;
   text-align: right;
 }
+
+/* ── New content indicator (smart auto-scroll) ── */
+
+.new-content-indicator {
+  position: sticky;
+  bottom: 8px;
+  z-index: 10;
+  align-self: flex-end;
+  margin-top: -36px;
+  margin-right: 8px;
+  margin-bottom: 8px;
+  background: var(--surface);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: var(--radius);
+  padding: 4px 12px;
+  font-size: 0.78rem;
+  font-family: var(--font-body);
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s, border-color 0.15s;
+  animation: 0.2s ease-out msg-in;
+}
+
+.new-content-indicator:hover {
+  background: var(--surface2);
+  border-color: var(--accent-hover);
+}

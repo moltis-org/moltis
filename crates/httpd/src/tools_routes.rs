@@ -202,6 +202,38 @@ pub async fn config_template(State(state): State<crate::server::AppState>) -> im
     .into_response()
 }
 
+/// Get provenance information for configuration values.
+///
+/// Returns info about which config values are built-in defaults, user
+/// overrides, or custom additions.
+pub async fn config_provenance(State(state): State<crate::server::AppState>) -> impl IntoResponse {
+    if let Err(resp) = require_config_access(&state, None, false).await {
+        return resp.into_response();
+    }
+
+    // Use read-only load to avoid writing defaults.toml on every GET request.
+    let config = moltis_config::discover_and_load_readonly();
+
+    // Preset provenance
+    let presets = moltis_config::defaults::compute_preset_provenance(&config.agents);
+
+    // Shadowed defaults (keys in user config that shadow built-ins)
+    let path = moltis_config::find_or_default_config_path();
+    let shadowed = if path.exists() {
+        std::fs::read_to_string(&path)
+            .map(|raw| moltis_config::defaults::find_shadowed_defaults(&raw))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    Json(serde_json::json!({
+        "presets": presets,
+        "shadowed_keys": shadowed,
+    }))
+    .into_response()
+}
+
 /// Save configuration from TOML.
 pub async fn config_save(
     identity: Option<axum::Extension<AuthIdentity>>,

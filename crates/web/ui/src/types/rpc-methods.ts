@@ -122,6 +122,10 @@ export interface RpcMethodMap {
 	"projects.list": unknown;
 	"projects.upsert": unknown;
 
+	// ── Modes ──────────────────────────────────────────────────
+	"modes.list": unknown;
+	"modes.set_session": unknown;
+
 	// ── Providers ───────────────────────────────────────────────
 	"providers.add_custom": unknown;
 	"providers.available": unknown;

@@ -3,6 +3,29 @@
 Agent presets let `spawn_agent` run sub-agents with role-specific configuration.
 Use them to control model cost, tool access, session visibility, and behavior.
 
+They are different from [modes](modes.md): modes are temporary overlays for the
+current chat session, while agent presets configure delegated sub-agents.
+
+## Built-In Presets
+
+Moltis ships with these presets on every install:
+
+| Preset | Role |
+|--------|------|
+| `research` | Evidence gathering and synthesis. This is the default when `spawn_agent.preset` is omitted. |
+| `coder` | Scoped implementation, debugging, cleanup, and focused verification. |
+| `reviewer` | Code review for correctness, regressions, security, and missing tests. |
+| `qa` | End-to-end behavior validation, repro steps, and pass/fail reporting. |
+| `ux` | UX, accessibility, interaction, and visual quality review. |
+| `docs` | User-facing documentation, examples, and config reference updates. |
+| `coordinator` | Delegation-first planning and result integration. |
+
+User TOML presets and markdown agent definitions with the same name override
+the built-in preset. The built-ins do not set a model or tool allow/deny
+policy, so they inherit the session's provider and normal tool access. The
+`coordinator` preset sets `delegate_only = true`, restricting it to delegation,
+session, and task-list tools.
+
 ## Quick Start
 
 ```toml
@@ -11,8 +34,8 @@ identity.name = "scout"
 identity.emoji = "🔍"
 identity.theme = "thorough and methodical"
 model = "anthropic/claude-haiku-3-5-20241022"
-tools.allow = ["read_file", "glob", "grep", "web_search", "web_fetch"]
-tools.deny = ["exec", "write_file"]
+tools.allow = ["Read", "Glob", "Grep", "web_search", "web_fetch"]
+tools.deny = ["exec", "Write"]
 system_prompt_suffix = "Gather facts and report clearly."
 
 [agents.presets.coordinator]

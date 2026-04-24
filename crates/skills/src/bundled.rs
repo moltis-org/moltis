@@ -32,6 +32,9 @@ enum AssetSource {
 /// discoverer and the `ReadSkillTool`.
 pub struct BundledSkillStore {
     source: AssetSource,
+    /// Directory where bundled sidecar files (scripts, templates, etc.)
+    /// are materialized on disk so they can be executed by the agent.
+    materialize_dir: PathBuf,
 }
 
 impl BundledSkillStore {
@@ -39,6 +42,7 @@ impl BundledSkillStore {
     #[must_use]
     pub fn new() -> Self {
         let cargo_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/assets");
+        let materialize_dir = moltis_config::data_dir().join("bundled-skills");
         let source = if cargo_dir.is_dir() {
             tracing::debug!(path = %cargo_dir.display(), "bundled skills: using filesystem (dev mode)");
             AssetSource::Filesystem(cargo_dir)
@@ -46,7 +50,28 @@ impl BundledSkillStore {
             tracing::debug!("bundled skills: using embedded assets");
             AssetSource::Embedded
         };
-        Self { source }
+        Self {
+            source,
+            materialize_dir,
+        }
+    }
+
+    /// Create a store with a custom materialization directory (for tests).
+    ///
+    /// Avoids calling [`data_dir()`](moltis_config::data_dir) so tests
+    /// do not trigger side effects from the global config.
+    #[must_use]
+    pub fn with_materialize_dir(materialize_dir: PathBuf) -> Self {
+        let cargo_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/assets");
+        let source = if cargo_dir.is_dir() {
+            AssetSource::Filesystem(cargo_dir)
+        } else {
+            AssetSource::Embedded
+        };
+        Self {
+            source,
+            materialize_dir,
+        }
     }
 
     /// Discover metadata for all bundled skills.
@@ -83,6 +108,74 @@ impl BundledSkillStore {
         match &self.source {
             AssetSource::Filesystem(dir) => list_sidecars_fs(dir, name),
             AssetSource::Embedded => list_sidecars_embedded(name),
+        }
+    }
+
+    /// Materialize sidecar files for a skill to the configured directory.
+    ///
+    /// Returns `Some(skill_dir)` if files were written, `None` if the skill
+    /// has no sidecars. The returned path is the skill-level directory
+    /// (e.g. `<materialize_dir>/<name>/`), so `scripts/maps_client.py`
+    /// becomes `<skill_dir>/scripts/maps_client.py`.
+    pub fn materialize_sidecars(&self, name: &str) -> Option<PathBuf> {
+        self.materialize_sidecars_to(name, &self.materialize_dir)
+    }
+
+    /// Materialize sidecar files for a skill to an explicit target directory.
+    ///
+    /// Returns `Some(target_dir/<name>)` if **all** files were written
+    /// successfully, `None` if the skill has no sidecars or any write failed.
+    pub fn materialize_sidecars_to(&self, name: &str, target_dir: &Path) -> Option<PathBuf> {
+        let sidecars = self.list_sidecars(name);
+        if sidecars.is_empty() {
+            return None;
+        }
+
+        let skill_dir = target_dir.join(name);
+        let total = sidecars.len();
+        let mut failed = Vec::new();
+        for (rel_path, _) in &sidecars {
+            let Some((bytes, _)) = self.read_sidecar(name, rel_path) else {
+                tracing::warn!(skill = %name, path = %rel_path, "failed to read bundled sidecar");
+                failed.push(rel_path.clone());
+                continue;
+            };
+            let target = skill_dir.join(rel_path);
+            if let Some(parent) = target.parent()
+                && let Err(e) = std::fs::create_dir_all(parent)
+            {
+                tracing::warn!(skill = %name, path = %rel_path, %e, "failed to create sidecar directory");
+                failed.push(rel_path.clone());
+                continue;
+            }
+            if let Err(e) = std::fs::write(&target, &bytes) {
+                tracing::warn!(skill = %name, path = %rel_path, %e, "failed to write sidecar file");
+                failed.push(rel_path.clone());
+                continue;
+            }
+            #[cfg(unix)]
+            if rel_path.starts_with("scripts/") {
+                use std::os::unix::fs::PermissionsExt;
+                if let Err(e) =
+                    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
+                {
+                    tracing::warn!(skill = %name, path = %rel_path, %e, "failed to set executable permission");
+                    failed.push(rel_path.clone());
+                    continue;
+                }
+            }
+        }
+
+        if failed.is_empty() {
+            Some(skill_dir)
+        } else {
+            tracing::warn!(
+                skill = %name,
+                failed = failed.len(),
+                total,
+                "some sidecar files could not be materialized"
+            );
+            None
         }
     }
 }
@@ -543,6 +636,74 @@ mod tests {
     #[test]
     fn missing_sidecar_returns_none() {
         assert!(store().read_sidecar("arxiv", "nonexistent.md").is_none());
+    }
+
+    // ── Materialization ────────────────────────────────────────────
+
+    #[test]
+    fn materialize_sidecars_writes_scripts_to_disk() {
+        let s = store();
+        let tmp = tempfile::tempdir().unwrap();
+
+        // The "maps" skill has scripts/maps_client.py as a sidecar.
+        let skill_dir = s
+            .materialize_sidecars_to("maps", tmp.path())
+            .expect("maps skill should have sidecars to materialize");
+
+        let script = skill_dir.join("scripts/maps_client.py");
+        assert!(
+            script.exists(),
+            "maps_client.py must be materialized at {}",
+            script.display()
+        );
+
+        // Script content must be non-empty.
+        let content = std::fs::read_to_string(&script).unwrap();
+        assert!(!content.is_empty(), "materialized script must not be empty");
+
+        // On unix, scripts/ files must be executable.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&script).unwrap().permissions().mode();
+            assert!(
+                mode & 0o111 != 0,
+                "scripts must be executable, got mode {mode:#o}"
+            );
+        }
+    }
+
+    #[test]
+    fn materialize_sidecars_returns_none_for_skill_without_sidecars() {
+        let s = store();
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Find a skill that has no sidecars (e.g. ascii-art).
+        let sidecars = s.list_sidecars("ascii-art");
+        if sidecars.is_empty() {
+            let result = s.materialize_sidecars_to("ascii-art", tmp.path());
+            assert!(
+                result.is_none(),
+                "skill without sidecars should return None"
+            );
+        }
+    }
+
+    #[test]
+    fn materialize_sidecars_is_idempotent() {
+        let s = store();
+        let tmp = tempfile::tempdir().unwrap();
+
+        let dir1 = s.materialize_sidecars_to("maps", tmp.path());
+        let dir2 = s.materialize_sidecars_to("maps", tmp.path());
+        assert_eq!(
+            dir1, dir2,
+            "repeated materialization must return the same path"
+        );
+
+        // File must still be valid after second write.
+        let script = dir2.unwrap().join("scripts/maps_client.py");
+        assert!(script.exists());
     }
 
     // ── Specific skills smoke tests ─────────────────────────────────────

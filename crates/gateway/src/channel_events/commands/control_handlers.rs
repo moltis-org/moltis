@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use {
     moltis_channels::{ChannelReplyTarget, Error as ChannelError, Result as ChannelResult},
+    moltis_config::ModePreset,
     moltis_sessions::metadata::SqliteSessionMetadata,
     moltis_tools::image_cache::ImageBuilder,
 };
@@ -20,6 +21,25 @@ use super::{
 };
 
 // ── Control command handlers ─────────────────────────────────────
+
+fn sorted_mode_presets(config: &moltis_config::MoltisConfig) -> Vec<(String, ModePreset)> {
+    let mut modes: Vec<(String, ModePreset)> = config
+        .modes
+        .presets
+        .iter()
+        .filter(|(_, preset)| !preset.prompt.trim().is_empty())
+        .map(|(id, preset)| (id.clone(), preset.clone()))
+        .collect();
+    modes.sort_by(|(left_id, left), (right_id, right)| {
+        let left_name = left.name.as_deref().unwrap_or(left_id);
+        let right_name = right.name.as_deref().unwrap_or(right_id);
+        left_name
+            .to_lowercase()
+            .cmp(&right_name.to_lowercase())
+            .then_with(|| left_id.cmp(right_id))
+    });
+    modes
+}
 
 pub(in crate::channel_events) async fn handle_approvals(
     state: &Arc<GatewayState>,
@@ -208,6 +228,118 @@ pub(in crate::channel_events) async fn handle_agent(
             Ok(format!("Agent switched to: {} {}", emoji, chosen.name))
         }
     }
+}
+
+pub(in crate::channel_events) async fn handle_mode(
+    state: &Arc<GatewayState>,
+    session_metadata: &SqliteSessionMetadata,
+    session_key: &str,
+    args: &str,
+) -> ChannelResult<String> {
+    let config = moltis_config::discover_and_load();
+    let modes = sorted_mode_presets(&config);
+    if modes.is_empty() {
+        return Ok("No modes are configured.".to_string());
+    }
+
+    let current_mode = session_metadata
+        .get(session_key)
+        .await
+        .and_then(|entry| entry.mode_id)
+        .filter(|value| !value.trim().is_empty());
+
+    if args.is_empty() {
+        let mut lines = Vec::with_capacity(modes.len() + 1);
+        for (i, (id, preset)) in modes.iter().enumerate() {
+            let marker = if current_mode.as_deref() == Some(id.as_str()) {
+                " *"
+            } else {
+                ""
+            };
+            let name = preset.name.as_deref().unwrap_or(id);
+            let description = preset.description.as_deref().unwrap_or_default();
+            if description.is_empty() {
+                lines.push(format!("{}. {} [{}]{}", i + 1, name, id, marker));
+            } else {
+                lines.push(format!(
+                    "{}. {} [{}] - {}{}",
+                    i + 1,
+                    name,
+                    id,
+                    description,
+                    marker,
+                ));
+            }
+        }
+        lines.push("\nUse /mode N, /mode <id>, or /mode none.".to_string());
+        return Ok(lines.join("\n"));
+    }
+
+    let normalized = args.trim().to_lowercase();
+    if matches!(
+        normalized.as_str(),
+        "none" | "off" | "clear" | "default" | "reset"
+    ) {
+        session_metadata
+            .set_mode_id(session_key, None)
+            .await
+            .map_err(|e| ChannelError::external("clearing session mode", e))?;
+        broadcast(
+            state,
+            "session",
+            serde_json::json!({
+                "kind": "patched",
+                "sessionKey": session_key,
+            }),
+            BroadcastOpts {
+                drop_if_slow: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        return Ok("Mode cleared.".to_string());
+    }
+
+    let chosen = if let Ok(n) = normalized.parse::<usize>() {
+        if n == 0 || n > modes.len() {
+            return Err(ChannelError::invalid_input(format!(
+                "invalid mode number. Use 1-{}.",
+                modes.len()
+            )));
+        }
+        modes.get(n - 1)
+    } else {
+        modes.iter().find(|(id, preset)| {
+            id.eq_ignore_ascii_case(args.trim())
+                || preset
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(args.trim()))
+        })
+    }
+    .ok_or_else(|| ChannelError::invalid_input(format!("unknown mode: {args}")))?;
+
+    session_metadata
+        .set_mode_id(session_key, Some(&chosen.0))
+        .await
+        .map_err(|e| ChannelError::external("setting session mode", e))?;
+
+    broadcast(
+        state,
+        "session",
+        serde_json::json!({
+            "kind": "patched",
+            "sessionKey": session_key,
+        }),
+        BroadcastOpts {
+            drop_if_slow: true,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let name = chosen.1.name.as_deref().unwrap_or(&chosen.0);
+    Ok(format!("Mode switched to: {name}"))
 }
 
 pub(in crate::channel_events) async fn handle_model(

@@ -1,7 +1,7 @@
 const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["chunks/index.js","chunks/theme.js","chunks/open-modal.js","chunks/ws-connect.js","chunks/branding.js","chunks/voice-utils.js","chunks/time-format.js"])))=>i.map(i=>d[i]);
 var _a, _b;
 import { u, f as forceReconnect, c as connectWs, s as subscribeEvents, _ as _wsConnect } from "./chunks/ws-connect.js";
-import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as commandModeEnabled, e as sessionExecPromptSymbol, g as chatBatchLoading, h as sessionContextWindow, i as sessionToolsEnabled, j as sessionExecMode, k as sessionCurrentInputTokens, _ as __vitePreload, l as setUnseenErrors, m as setUnseenWarns, n as unseenErrors, o as unseenWarns, q as connected, r as sessionStore, t as sessions, v as activeSessionKey, w as lastHistoryIndex, x as setLastHistoryIndex, y as renderAudioPlayer, z as renderMarkdown, A as setSessionContextWindow, B as setSessionTokens, C as setSessionCurrentInputTokens, D as setSessionToolsEnabled, E as toolCallSummary, F as renderScreenshot, G as renderDocument, H as formatAssistantTokenUsage, I as formatTokenSpeed, J as tokenSpeedTone, K as modelStore, L as parseAgentsListPayload, M as setHostExecIsRoot, N as setSessionExecMode, O as setSessionExecPromptSymbol, P as setChatBatchLoading, Q as setChatSeq, R as y, S as g, T as nodeComboBtn, U as nodeDropdownList, V as nodeCombo, W as nodeDropdown, X as nodeComboLabel, Y as projectComboLabel, Z as t, a0 as projects, a1 as activeProjectId, a2 as projectCombo, a3 as projectDropdown, a4 as projectDropdownList, a5 as setActiveProjectId, a6 as j, a7 as setSessionSandboxEnabled, a8 as hostExecIsRoot, a9 as sandboxLabel, aa as sandboxToggleBtn, ab as sessionSandboxEnabled, ac as setSessionSandboxImage, ad as sandboxImageLabel, ae as sandboxInfo, af as sandboxImageDropdown, ag as sandboxImageBtn, ah as sessionSandboxImage, ai as projectStore, aj as setSessions, ak as insertSessionInOrder, al as Session, am as chatSeq, an as setSelectedModelId, ao as modelComboLabel, ap as setSessionSwitchInProgress, aq as setStreamEl, ar as setStreamText, as as setLastToolOutput, at as setVoicePending, au as setActiveSessionKey, av as y$1, aw as d, ax as A, ay as S, az as projectFilterId, aA as getById$1, aB as q, aC as warmAudioPlayback, aD as selectedModelId, aE as formatBytes$3, aF as setCommandModeEnabled, aG as chatHistory, aH as chatHistoryIdx, aI as setChatHistoryDraft, aJ as setChatHistoryIdx, aK as chatHistoryDraft, aL as setChatHistory, aM as R, aN as setChatMsgBox, aO as setChatInput, aP as setChatSendBtn, aQ as setModelCombo, aR as setModelComboBtn, aS as setModelComboLabel, aT as setModelDropdown, aU as setModelSearchInput, aV as setModelDropdownList, aW as setNodeCombo, aX as setNodeComboBtn, aY as setNodeComboLabel, aZ as setNodeDropdown, a_ as setNodeDropdownList, a$ as setSandboxToggleBtn, b0 as setSandboxLabel, b1 as setSandboxImageBtn, b2 as setSandboxImageLabel, b3 as setSandboxImageDropdown, b4 as models, b5 as chatSendBtn, b6 as setModels, b7 as modelComboBtn, b8 as modelSearchInput, b9 as modelDropdownList, ba as modelCombo, bb as modelDropdown, bc as setModelIdx, bd as modelIdx, be as REASONING_SEP, bf as models$1, bg as useSignal, bh as connected$1, bi as setCachedChannels, bj as setRefreshChannelsPage, bk as cachedChannels, bl as setChannelEventUnsub, bm as channelEventUnsub, bn as setProjects, bo as setProjectFilterId, bp as refreshProvidersPage, bq as modelVersionScore, br as streamEl, bs as renderMapPointGroups, bt as renderMapLinks, bu as lastToolOutput, bv as localizeStructuredError, bw as voicePending, bx as streamText, by as setSandboxInfo, bz as networkAuditEventHandler, bA as logsEventHandler, bB as setSubscribed, bC as projects$1, bD as sandboxInfo$1, bE as localizedApiErrorMessage, bF as setLogsEventHandler, bG as setNetworkAuditEventHandler, bH as setRefreshProvidersPage, bI as setLocale, bJ as esc, bK as projectStore$1, bL as _modelStore, bM as S$1, bN as _sessionStoreModule, bO as _i18n, bP as _helpers, bQ as initTheme, bR as injectMarkdownStyles, bS as init, bT as translateStaticElements, bU as setAll$1, bV as setAll$2, bW as select$1, bX as selectedModelId$1 } from "./chunks/theme.js";
+import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as autoScrollMode, e as commandModeEnabled, g as sessionExecPromptSymbol, h as chatBatchLoading, i as sessionContextWindow, j as sessionToolsEnabled, k as sessionExecMode, l as sessionCurrentInputTokens, _ as __vitePreload, m as setUnseenErrors, n as setUnseenWarns, o as unseenErrors, q as unseenWarns, r as connected, t as sessionStore, v as sessions, w as activeSessionKey, x as lastHistoryIndex, y as setLastHistoryIndex, z as renderAudioPlayer, A as renderMarkdown, B as setSessionContextWindow, C as setSessionTokens, D as setSessionCurrentInputTokens, E as setSessionToolsEnabled, F as toolCallSummary, G as renderScreenshot, H as renderDocument, I as formatAssistantTokenUsage, J as formatTokenSpeed, K as tokenSpeedTone, L as modelStore, M as parseAgentsListPayload, N as setHostExecIsRoot, O as setSessionExecMode, P as setSessionExecPromptSymbol, Q as setChatBatchLoading, R as setChatSeq, S as y, T as g, U as nodeComboBtn, V as nodeDropdownList, W as nodeCombo, X as nodeDropdown, Y as nodeComboLabel, Z as projectComboLabel, a0 as t, a1 as projects, a2 as activeProjectId, a3 as projectCombo, a4 as projectDropdown, a5 as projectDropdownList, a6 as setActiveProjectId, a7 as projectComboBtn, a8 as j, a9 as setSessionSandboxEnabled, aa as hostExecIsRoot, ab as sandboxLabel, ac as sandboxToggleBtn, ad as sessionSandboxEnabled, ae as setSessionSandboxImage, af as sandboxImageLabel, ag as sandboxInfo, ah as sandboxImageDropdown, ai as sandboxImageBtn, aj as sessionSandboxImage, ak as projectStore, al as setSessions, am as insertSessionInOrder, an as Session, ao as chatSeq, ap as setSelectedModelId, aq as modelComboLabel, ar as setSessionSwitchInProgress, as as setStreamEl, at as setStreamText, au as setLastToolOutput, av as setVoicePending, aw as setActiveSessionKey, ax as y$1, ay as d, az as A, aA as S, aB as projectFilterId, aC as getById$1, aD as q, aE as setProjects, aF as setProjectFilterId, aG as warmAudioPlayback, aH as selectedModelId, aI as formatBytes$3, aJ as setCommandModeEnabled, aK as chatHistory, aL as chatHistoryIdx, aM as setChatHistoryDraft, aN as setChatHistoryIdx, aO as chatHistoryDraft, aP as setChatHistory, aQ as R, aR as setChatMsgBox, aS as setChatInput, aT as setChatSendBtn, aU as setModelCombo, aV as setModelComboBtn, aW as setModelComboLabel, aX as setModelDropdown, aY as setModelSearchInput, aZ as setModelDropdownList, a_ as setNodeCombo, a$ as setNodeComboBtn, b0 as setNodeComboLabel, b1 as setNodeDropdown, b2 as setNodeDropdownList, b3 as setSandboxToggleBtn, b4 as setSandboxLabel, b5 as setProjectCombo, b6 as setProjectComboBtn, b7 as setProjectComboLabel, b8 as setProjectDropdown, b9 as setProjectDropdownList, ba as setSandboxImageBtn, bb as setSandboxImageLabel, bc as setSandboxImageDropdown, bd as models, be as chatSendBtn, bf as setModels, bg as modelComboBtn, bh as modelSearchInput, bi as modelDropdownList, bj as modelCombo, bk as modelDropdown, bl as setModelIdx, bm as modelIdx, bn as REASONING_SEP, bo as models$1, bp as useSignal, bq as connected$1, br as setCachedChannels, bs as setRefreshChannelsPage, bt as cachedChannels, bu as setChannelEventUnsub, bv as channelEventUnsub, bw as refreshProvidersPage, bx as modelVersionScore, by as streamEl, bz as renderMapPointGroups, bA as renderMapLinks, bB as lastToolOutput, bC as localizeStructuredError, bD as voicePending, bE as streamText, bF as setSandboxInfo, bG as networkAuditEventHandler, bH as logsEventHandler, bI as setSubscribed, bJ as projects$1, bK as sandboxInfo$1, bL as localizedApiErrorMessage, bM as setLogsEventHandler, bN as setNetworkAuditEventHandler, bO as setRefreshProvidersPage, bP as setLocale, bQ as esc, bR as projectStore$1, bS as _modelStore, bT as S$1, bU as _sessionStoreModule, bV as _i18n, bW as _helpers, bX as initTheme, bY as injectMarkdownStyles, bZ as init, b_ as translateStaticElements, b$ as setAll$1, c0 as setAll$2, c1 as select$1, c2 as selectedModelId$1 } from "./chunks/theme.js";
 import { f as formatPageTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
 import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as deriveSignalAccountId, s as buildTeamsEndpoint, u as generateWebhookSecretHex, w as defaultTeamsBaseUrl, T as TabBar$1, x as channelStorageNote, y as providerApiKeyHelp, z as validateProviderKey, A as completeProviderOAuth, B as startProviderOAuth, D as saveProviderKey, E as testModel, F as isModelServiceNotConfigured, G as isTimeoutError, H as humanizeProbeError, I as eventListeners, J as refresh, K as isRepoSource, S as SkillSource, L as CATEGORY_META, N as categoryLabel, O as isDiscoveredSource, P as EmojiPicker, Q as validateIdentityFields, R as updateIdentity, U as set, V as prepareCreationOptions, W as detectPasskeyName, X as fetchVoiceProviders, Y as fetchPhrase, Z as testTts, _ as decodeBase64Safe, $ as transcribeAudio$1, a0 as toggleVoiceProvider, a1 as saveVoiceKey, a2 as saveVoiceSettings, a3 as gon, a4 as _events } from "./chunks/voice-utils.js";
 import "./chunks/time-format.js";
@@ -117,6 +117,42 @@ function scrollChatToBottom() {
   setTimeout(() => {
     observer.disconnect();
   }, 500);
+  hideNewContentIndicator();
+}
+function isChatAtBottom(threshold = 60) {
+  if (!chatMsgBox) return true;
+  const { scrollTop, scrollHeight, clientHeight } = chatMsgBox;
+  return scrollHeight - scrollTop - clientHeight < threshold;
+}
+function smartScrollToBottom() {
+  if (autoScrollMode === "always") {
+    scrollChatToBottom();
+    return;
+  }
+  if (isChatAtBottom()) {
+    scrollChatToBottom();
+  } else {
+    showNewContentIndicator();
+  }
+}
+function showNewContentIndicator() {
+  if (!chatMsgBox) return;
+  let indicator = chatMsgBox.querySelector(".new-content-indicator");
+  if (!indicator) {
+    indicator = document.createElement("button");
+    indicator.className = "new-content-indicator";
+    indicator.type = "button";
+    indicator.textContent = "↓ New messages";
+    indicator.addEventListener("click", () => {
+      scrollChatToBottom();
+    });
+    chatMsgBox.appendChild(indicator);
+  }
+}
+function hideNewContentIndicator() {
+  if (!chatMsgBox) return;
+  const indicator = chatMsgBox.querySelector(".new-content-indicator");
+  if (indicator) indicator.remove();
 }
 function chatAddMsg(cls, content, isHtml) {
   if (!chatMsgBox) return null;
@@ -132,7 +168,10 @@ function chatAddMsg(cls, content, isHtml) {
     el.textContent = content;
   }
   chatMsgBox.appendChild(el);
-  if (!chatBatchLoading) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  if (!chatBatchLoading) {
+    if (cls === "user") scrollChatToBottom();
+    else smartScrollToBottom();
+  }
   return el;
 }
 function chatAddMsgWithImages(cls, htmlContent, images2) {
@@ -158,7 +197,10 @@ function chatAddMsgWithImages(cls, htmlContent, images2) {
     el.appendChild(thumbRow);
   }
   chatMsgBox.appendChild(el);
-  if (!chatBatchLoading) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  if (!chatBatchLoading) {
+    if (cls === "user") scrollChatToBottom();
+    else smartScrollToBottom();
+  }
   return el;
 }
 function stripChannelPrefix(text) {
@@ -246,7 +288,7 @@ function chatAddErrorCard(err) {
     el.appendChild(body);
   }
   chatMsgBox.appendChild(el);
-  chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  smartScrollToBottom();
 }
 function chatAddErrorMsg(message) {
   chatAddErrorCard(parseErrorMessage(message));
@@ -282,7 +324,7 @@ function renderApprovalCard(requestId, command) {
   }, 1e3);
   countdown.textContent = `${remaining}s`;
   chatMsgBox.appendChild(card);
-  chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  smartScrollToBottom();
 }
 function resolveApproval(requestId, decision, command, card) {
   const params = { requestId, decision };
@@ -412,12 +454,16 @@ const _chatUi = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.definePrope
   chatAddMsg,
   chatAddMsgWithImages,
   chatAutoResize: chatAutoResize$1,
+  hideNewContentIndicator,
   highlightAndScroll,
   highlightTermInElement,
+  isChatAtBottom,
   removeThinking,
   renderApprovalCard,
   resolveApproval,
   scrollChatToBottom,
+  showNewContentIndicator,
+  smartScrollToBottom,
   stripChannelPrefix,
   updateCommandInputUI,
   updateTokenBar
@@ -1957,6 +2003,11 @@ const _nodeSelector = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defin
   selectNode,
   unbindNodeEvents
 }, Symbol.toStringTag, { value: "Module" }));
+function openProjectDropdown() {
+  if (!projectDropdown) return;
+  projectDropdown.classList.remove("hidden");
+  renderProjectDropdownList();
+}
 function closeProjectDropdown() {
   if (!projectDropdown) return;
   projectDropdown.classList.add("hidden");
@@ -2008,6 +2059,17 @@ function updateSessionProjectSelect(projectId) {
 }
 function renderSessionProjectSelect() {
   updateSessionProjectSelect(activeProjectId);
+}
+function bindProjectComboEvents() {
+  if (!(projectComboBtn && projectCombo)) return;
+  projectComboBtn.addEventListener("click", () => {
+    var _a2;
+    if ((_a2 = projectDropdown) == null ? void 0 : _a2.classList.contains("hidden")) {
+      openProjectDropdown();
+    } else {
+      closeProjectDropdown();
+    }
+  });
 }
 document.addEventListener("click", (e) => {
   if (projectCombo && !projectCombo.contains(e.target)) {
@@ -4553,20 +4615,250 @@ function clearPendingImages() {
 function hasPendingImages() {
   return pendingImages.length > 0;
 }
+const ids = {
+  skills: "navCountSkills",
+  crons: "navCountCrons"
+};
+function updateNavCount(key, n) {
+  const id = ids[key];
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (n > 0) {
+    el.textContent = String(n);
+    el.classList.add("visible");
+  } else {
+    el.textContent = "";
+    el.classList.remove("visible");
+  }
+}
+function updateNavCounts(counts) {
+  if (!counts) return;
+  for (const key of Object.keys(ids)) {
+    updateNavCount(key, counts[key] || 0);
+  }
+}
+updateNavCounts(get("counts"));
+onChange("counts", updateNavCounts);
+const combo = $("projectFilterCombo");
+const btn = $("projectFilterBtn");
+const label = $("projectFilterLabel");
+const dropdown = $("projectFilterDropdown");
+const list = $("projectFilterList");
+const searchInput$1 = $("projectFilterSearch");
+let kbIdx = -1;
+function fetchProjects() {
+  projectStore.fetch().then(() => {
+    const projects2 = projectStore.projects.value;
+    setProjects(projects2);
+    renderProjectSelect();
+    renderSessionProjectSelect();
+    updateNavCount("projects", projects2.length);
+    if (projectCombo) {
+      projectCombo.classList.toggle("hidden", projects2.length === 0);
+    }
+  });
+}
+function selectFilter(id) {
+  projectStore.setFilterId(id);
+  setProjectFilterId(id);
+  const p = projectStore.getById(id);
+  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
+  closeDropdown();
+  document.dispatchEvent(new CustomEvent("moltis:render-session-list"));
+}
+function closeDropdown() {
+  dropdown.classList.add("hidden");
+  if (searchInput$1) searchInput$1.value = "";
+  kbIdx = -1;
+}
+function openDropdown() {
+  dropdown.classList.remove("hidden");
+  kbIdx = -1;
+  renderList("");
+  requestAnimationFrame(() => {
+    if (searchInput$1) searchInput$1.focus();
+  });
+}
+function renderList(query2) {
+  list.textContent = "";
+  const q2 = (query2 || "").toLowerCase();
+  const filterId = projectStore.projectFilterId.value;
+  const allProjects = projectStore.projects.value;
+  const allSessionsLabel = t("common:sessions.allSessions");
+  if (!q2 || allSessionsLabel.toLowerCase().indexOf(q2) !== -1) {
+    const allEl = document.createElement("div");
+    allEl.className = "model-dropdown-item";
+    if (!filterId) allEl.classList.add("selected");
+    const allLabel = document.createElement("span");
+    allLabel.className = "model-item-label";
+    allLabel.textContent = allSessionsLabel;
+    allEl.appendChild(allLabel);
+    allEl.addEventListener("click", () => selectFilter(""));
+    list.appendChild(allEl);
+  }
+  const filtered = allProjects.filter((p) => {
+    if (!q2) return true;
+    const name = (p.label || p.id).toLowerCase();
+    return name.indexOf(q2) !== -1 || p.id.toLowerCase().indexOf(q2) !== -1;
+  });
+  filtered.forEach((p) => {
+    const el = document.createElement("div");
+    el.className = "model-dropdown-item";
+    if (p.id === filterId) el.classList.add("selected");
+    const itemLabel = document.createElement("span");
+    itemLabel.className = "model-item-label";
+    itemLabel.textContent = p.label || p.id;
+    el.appendChild(itemLabel);
+    el.addEventListener("click", () => selectFilter(p.id));
+    list.appendChild(el);
+  });
+  if (list.children.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "model-dropdown-empty";
+    empty.textContent = t("common:sessions.noMatchingProjects");
+    list.appendChild(empty);
+  }
+}
+function updateKbActive() {
+  const items = list.querySelectorAll(".model-dropdown-item");
+  items.forEach((el, i) => {
+    el.classList.toggle("kb-active", i === kbIdx);
+  });
+  if (kbIdx >= 0 && items[kbIdx]) {
+    items[kbIdx].scrollIntoView({ block: "nearest" });
+  }
+}
+function renderProjectSelect() {
+  const wrapper = $("projectSelectWrapper");
+  const allProjects = projectStore.projects.value;
+  const filterId = projectStore.projectFilterId.value;
+  if (allProjects.length === 0) {
+    if (wrapper) wrapper.classList.add("hidden");
+    if (filterId) {
+      projectStore.setFilterId("");
+      setProjectFilterId("");
+    }
+    label.textContent = t("common:sessions.allSessions");
+    return;
+  }
+  if (wrapper) wrapper.classList.remove("hidden");
+  const p = projectStore.getById(filterId);
+  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
+}
+btn.addEventListener("click", () => {
+  if (dropdown.classList.contains("hidden")) {
+    openDropdown();
+  } else {
+    closeDropdown();
+  }
+});
+if (searchInput$1) {
+  searchInput$1.addEventListener("input", () => {
+    kbIdx = -1;
+    renderList(searchInput$1.value.trim());
+  });
+  searchInput$1.addEventListener("keydown", (e) => {
+    const items = list.querySelectorAll(".model-dropdown-item");
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      kbIdx = Math.min(kbIdx + 1, items.length - 1);
+      updateKbActive();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      kbIdx = Math.max(kbIdx - 1, 0);
+      updateKbActive();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (kbIdx >= 0 && items[kbIdx]) {
+        items[kbIdx].click();
+      } else if (items.length === 1) {
+        items[0].click();
+      }
+    } else if (e.key === "Escape") {
+      closeDropdown();
+      btn.focus();
+    }
+  });
+}
+document.addEventListener("click", (e) => {
+  if (combo && !combo.contains(e.target)) {
+    closeDropdown();
+  }
+});
+window.addEventListener("moltis:locale-changed", () => {
+  renderProjectSelect();
+  if (!dropdown.classList.contains("hidden")) {
+    const query2 = searchInput$1 ? searchInput$1.value.trim() : "";
+    renderList(query2);
+  }
+});
 let micBtn = null;
+let vadBtn = null;
 let mediaRecorder = null;
 let audioChunks = [];
 let sttConfigured = false;
 let isRecording = false;
 let isStarting = false;
+let recordingCancelled = false;
 let transcribingEl = null;
+let pttKey = localStorage.getItem("moltis_ptt_key") || "F13";
+let pttActive = false;
+const voiceLockChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("moltis_voice_lock") : null;
+let voiceLockedByOtherTab = false;
+if (voiceLockChannel) {
+  voiceLockChannel.onmessage = (e) => {
+    var _a2, _b2;
+    if (((_a2 = e.data) == null ? void 0 : _a2.type) === "voice_lock") {
+      voiceLockedByOtherTab = true;
+      console.debug("[voice] another tab claimed voice lock");
+    } else if (((_b2 = e.data) == null ? void 0 : _b2.type) === "voice_unlock") {
+      voiceLockedByOtherTab = false;
+      console.debug("[voice] another tab released voice lock");
+    }
+  };
+}
+function claimVoiceLock() {
+  voiceLockedByOtherTab = false;
+  voiceLockChannel == null ? void 0 : voiceLockChannel.postMessage({ type: "voice_lock" });
+}
+function releaseVoiceLock() {
+  voiceLockChannel == null ? void 0 : voiceLockChannel.postMessage({ type: "voice_unlock" });
+}
+let vadActive = false;
+let vadStream = null;
+let vadAudioCtx = null;
+let vadAnalyser = null;
+let vadDataArray = null;
+let vadRafId = null;
+let vadSpeechDetected = false;
+let vadSilenceStart = 0;
+let vadMutedForTts = false;
+let vadSensitivity = parseInt(localStorage.getItem("moltis_vad_sensitivity") || "50", 10);
+let vadSpeechThreshold = sensitivityToThreshold(vadSensitivity);
+function sensitivityToThreshold(pct) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  return 0.08 * (5e-3 / 0.08) ** (clamped / 100);
+}
+const VAD_SILENCE_DURATION = 2500;
+const VAD_DEBOUNCE_SPEECH = 250;
+let vadSpeechStart = 0;
+let vadRecordingStart = 0;
+let vadMediaRecorder = null;
+let vadTranscribing = false;
+let vadReacquiring = false;
+let vadStarting = false;
+let vadSourceNode = null;
+let vadMonitorMuteStart = 0;
 function isVoiceEnabled() {
   return get("voice_enabled") === true;
 }
 async function checkSttStatus() {
   if (!isVoiceEnabled()) {
     sttConfigured = false;
+    if (vadActive) stopVad();
     updateMicButton();
+    updateVadButton();
     return;
   }
   const res = await sendRpc("stt.status", {});
@@ -4575,13 +4867,21 @@ async function checkSttStatus() {
   } else {
     sttConfigured = false;
   }
+  if (!sttConfigured && vadActive) stopVad();
   updateMicButton();
+  updateVadButton();
 }
 function updateMicButton() {
   if (!micBtn) return;
   micBtn.style.display = sttConfigured && isVoiceEnabled() ? "" : "none";
   micBtn.disabled = !connected;
   micBtn.title = isStarting ? t("chat:micStarting") : isRecording ? t("chat:micStopAndSend") : t("chat:micTooltip");
+}
+function updateVadButton() {
+  if (!vadBtn) return;
+  vadBtn.style.display = sttConfigured && isVoiceEnabled() ? "" : "none";
+  vadBtn.disabled = !connected;
+  vadBtn.title = vadActive ? t("chat:vadStopTooltip") : t("chat:vadTooltip");
 }
 function stopAllAudio() {
   for (const audio of document.querySelectorAll("audio")) {
@@ -4591,25 +4891,58 @@ function stopAllAudio() {
     }
   }
 }
-async function startRecording() {
+function getRMS(analyser, dataArray) {
+  analyser.getByteTimeDomainData(dataArray);
+  let sum = 0;
+  for (const sample of dataArray) {
+    const val = (sample - 128) / 128;
+    sum += val * val;
+  }
+  return Math.sqrt(sum / dataArray.length);
+}
+async function startRecording(opts) {
   if (isRecording || isStarting || !sttConfigured) return;
+  const fromVad = (opts == null ? void 0 : opts.fromVad) === true;
+  let stream = null;
   stopAllAudio();
   isStarting = true;
-  micBtn == null ? void 0 : micBtn.classList.add("starting");
-  micBtn == null ? void 0 : micBtn.setAttribute("aria-busy", "true");
-  micBtn.title = t("chat:micStarting");
+  if (micBtn && !fromVad) {
+    micBtn.classList.add("starting");
+    micBtn.setAttribute("aria-busy", "true");
+    micBtn.title = t("chat:micStarting");
+  }
   try {
     let showRecordingUi = function() {
-      if (recordingUiShown || !micBtn) return;
+      if (recordingUiShown) return;
       recordingUiShown = true;
       isStarting = false;
-      micBtn.classList.remove("starting");
-      micBtn.removeAttribute("aria-busy");
-      micBtn.classList.add("recording");
-      micBtn.setAttribute("aria-pressed", "true");
-      micBtn.title = t("chat:micStopAndSend");
+      if (fromVad) ;
+      else if (micBtn) {
+        micBtn.classList.remove("starting");
+        micBtn.removeAttribute("aria-busy");
+        micBtn.classList.add("recording");
+        micBtn.setAttribute("aria-pressed", "true");
+        micBtn.title = t("chat:micStopAndSend");
+      }
     };
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (!stream) {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
+    }
+    if (recordingCancelled) {
+      isStarting = false;
+      recordingCancelled = false;
+      if (!fromVad) {
+        for (const track of stream.getTracks()) track.stop();
+      }
+      if (micBtn) {
+        micBtn.classList.remove("starting");
+        micBtn.removeAttribute("aria-busy");
+        micBtn.title = t("chat:micTooltip");
+      }
+      return;
+    }
     audioChunks = [];
     let recordingUiShown = false;
     const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
@@ -4630,16 +4963,19 @@ async function startRecording() {
       audioTrack.addEventListener("unmute", showRecordingUi, { once: true });
     }
     mediaRecorder.onstop = async () => {
-      for (const track of stream.getTracks()) {
-        track.stop();
+      if (!fromVad) {
+        for (const track of stream.getTracks()) {
+          track.stop();
+        }
       }
+      if (fromVad) ;
       await transcribeAudio();
     };
     mediaRecorder.start(250);
   } catch (err) {
     isStarting = false;
     isRecording = false;
-    if (micBtn) {
+    if (micBtn && !fromVad) {
       micBtn.classList.remove("starting");
       micBtn.removeAttribute("aria-busy");
       micBtn.setAttribute("aria-pressed", "false");
@@ -4657,24 +4993,30 @@ function stopRecording() {
   if (!(isRecording && mediaRecorder)) return;
   isStarting = false;
   isRecording = false;
-  micBtn == null ? void 0 : micBtn.classList.remove("starting");
-  micBtn == null ? void 0 : micBtn.removeAttribute("aria-busy");
-  micBtn == null ? void 0 : micBtn.classList.remove("recording");
-  micBtn == null ? void 0 : micBtn.setAttribute("aria-pressed", "false");
-  micBtn == null ? void 0 : micBtn.classList.add("transcribing");
-  micBtn.title = t("chat:voiceTranscribing");
+  if (micBtn) {
+    micBtn.classList.remove("starting");
+    micBtn.removeAttribute("aria-busy");
+    micBtn.classList.remove("recording");
+    micBtn.setAttribute("aria-pressed", "false");
+    micBtn.classList.add("transcribing");
+    micBtn.title = t("chat:voiceTranscribing");
+  }
   mediaRecorder.stop();
 }
 function cancelRecording() {
   if (!(isRecording && mediaRecorder)) return;
   console.debug("[voice] recording cancelled via Escape");
+  recordingCancelled = true;
   audioChunks = [];
   isStarting = false;
   isRecording = false;
-  micBtn == null ? void 0 : micBtn.classList.remove("starting", "recording");
-  micBtn == null ? void 0 : micBtn.removeAttribute("aria-busy");
-  micBtn == null ? void 0 : micBtn.setAttribute("aria-pressed", "false");
-  micBtn.title = t("chat:micTooltip");
+  if (micBtn) {
+    micBtn.classList.remove("starting", "recording");
+    micBtn.removeAttribute("aria-busy");
+    micBtn.setAttribute("aria-pressed", "false");
+    micBtn.title = t("chat:micTooltip");
+  }
+  vadBtn == null ? void 0 : vadBtn.classList.remove("vad-speech");
   mediaRecorder.stop();
 }
 function createTranscribingIndicator(message, isError) {
@@ -4712,7 +5054,7 @@ function cleanupTranscribingState() {
   micBtn == null ? void 0 : micBtn.classList.remove("starting");
   micBtn == null ? void 0 : micBtn.removeAttribute("aria-busy");
   micBtn == null ? void 0 : micBtn.classList.remove("transcribing");
-  micBtn.title = t("chat:micTooltip");
+  if (micBtn) micBtn.title = t("chat:micTooltip");
   if (transcribingEl) {
     transcribingEl.remove();
     transcribingEl = null;
@@ -4728,7 +5070,6 @@ function sendTranscribedMessage(text, audioFilename) {
       if (text) {
         const textWrap = document.createElement("div");
         textWrap.className = "mt-2";
-        textWrap.textContent = "";
         const rendered = renderMarkdown(text);
         const fragment = document.createRange().createContextualFragment(rendered);
         textWrap.appendChild(fragment);
@@ -4742,13 +5083,9 @@ function sendTranscribedMessage(text, audioFilename) {
     text,
     _input_medium: "voice"
   };
-  if (audioFilename) {
-    chatParams._audio_filename = audioFilename;
-  }
+  if (audioFilename) chatParams._audio_filename = audioFilename;
   const selectedModel = selectedModelId;
-  if (selectedModel) {
-    chatParams.model = selectedModel;
-  }
+  if (selectedModel) chatParams.model = selectedModel;
   bumpSessionCount(activeSessionKey, 1);
   seedSessionPreviewFromUserText(activeSessionKey, text);
   setSessionReplying(activeSessionKey, true);
@@ -4761,26 +5098,47 @@ function sendTranscribedMessage(text, audioFilename) {
 }
 async function transcribeAudio() {
   var _a2;
-  if (audioChunks.length === 0) {
+  if (recordingCancelled || audioChunks.length === 0) {
+    recordingCancelled = false;
     cleanupTranscribingState();
     return;
   }
+  recordingCancelled = false;
   if (chatMsgBox) {
     transcribingEl = createTranscribingIndicator(t("chat:voiceTranscribingMessage"));
     chatMsgBox.appendChild(transcribingEl);
-    chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+    smartScrollToBottom();
   }
   try {
     const blob = new Blob(audioChunks, { type: "audio/webm" });
     audioChunks = [];
-    const resp = await fetch(`/api/sessions/${encodeURIComponent(activeSessionKey)}/upload?transcribe=true`, {
-      method: "POST",
-      headers: { "Content-Type": blob.type || "audio/webm" },
-      body: blob
-    });
-    const res = await resp.json();
+    if (blob.size < 2e3) {
+      console.debug("[voice] skipping tiny blob:", blob.size, "bytes");
+      cleanupTranscribingState();
+      return;
+    }
+    const headerBytes = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+    if (headerBytes[0] !== 26 || headerBytes[1] !== 69 || headerBytes[2] !== 223 || headerBytes[3] !== 163) {
+      console.warn("[voice] corrupt WebM blob (bad EBML header), discarding. size:", blob.size);
+      cleanupTranscribingState();
+      return;
+    }
+    const abortCtrl = new AbortController();
+    const fetchTimeout = setTimeout(() => abortCtrl.abort(), 15e3);
+    let res;
+    try {
+      const resp = await fetch(`/api/sessions/${encodeURIComponent(activeSessionKey)}/upload?transcribe=true`, {
+        method: "POST",
+        headers: { "Content-Type": blob.type || "audio/webm" },
+        body: blob,
+        signal: abortCtrl.signal
+      });
+      res = await resp.json();
+    } finally {
+      clearTimeout(fetchTimeout);
+    }
     micBtn == null ? void 0 : micBtn.classList.remove("transcribing");
-    micBtn.title = t("chat:micTooltip");
+    if (micBtn) micBtn.title = t("chat:micTooltip");
     if (res.ok && ((_a2 = res.transcription) == null ? void 0 : _a2.text)) {
       const text = String(res.transcription.text).trim();
       const audioFilename = typeof res.filename === "string" ? res.filename.trim() : "";
@@ -4788,28 +5146,373 @@ async function transcribeAudio() {
         cleanupTranscribingState();
         sendTranscribedMessage(text, audioFilename || null);
       } else {
-        showTemporaryMessage("No speech detected", false, 2e3);
+        showTemporaryMessage(t("chat:voiceNoSpeech"), false, 2e3);
       }
     } else if (res.transcriptionError) {
       console.error("Transcription failed:", res.transcriptionError);
-      showTemporaryMessage(`Transcription failed: ${res.transcriptionError}`, true, 4e3);
+      showTemporaryMessage(t("chat:voiceTranscriptionFailed", { error: res.transcriptionError }), true, 4e3);
     } else if (!res.ok) {
       console.error("Upload failed:", res.error);
-      showTemporaryMessage(`Upload failed: ${res.error || "Unknown error"}`, true, 4e3);
+      showTemporaryMessage(t("chat:voiceUploadFailed", { error: res.error || t("chat:unknownError") }), true, 4e3);
     }
   } catch (err) {
     console.error("Transcription error:", err);
     micBtn == null ? void 0 : micBtn.classList.remove("transcribing");
-    micBtn.title = t("chat:micTooltip");
-    showTemporaryMessage("Transcription error", true, 4e3);
+    if (micBtn) micBtn.title = t("chat:micTooltip");
+    showTemporaryMessage(t("chat:voiceTranscriptionError"), true, 4e3);
   }
 }
 function onMicClick(e) {
   e.preventDefault();
+  if (vadActive) return;
   if (isRecording) {
+    releaseVoiceLock();
     stopRecording();
   } else {
+    if (voiceLockedByOtherTab) return;
+    claimVoiceLock();
     startRecording();
+  }
+}
+function onPttKeyDown(e) {
+  var _a2;
+  if (e.key !== pttKey) return;
+  if (vadActive || pttActive || isRecording) return;
+  const isFunctionKey = /^F\d{1,2}$/.test(e.key);
+  if (!isFunctionKey) {
+    const tag = (_a2 = document.activeElement) == null ? void 0 : _a2.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  }
+  e.preventDefault();
+  if (voiceLockedByOtherTab) return;
+  pttActive = true;
+  claimVoiceLock();
+  console.debug("[voice] PTT start:", pttKey);
+  stopAllAudio();
+  startRecording();
+}
+function onPttKeyUp(e) {
+  if (e.key !== pttKey) return;
+  if (!pttActive) return;
+  e.preventDefault();
+  pttActive = false;
+  releaseVoiceLock();
+  if (isStarting) {
+    recordingCancelled = true;
+  }
+  console.debug("[voice] PTT release — sending");
+  stopRecording();
+}
+async function startVad() {
+  if (vadActive || vadStarting || isRecording || isStarting) return;
+  vadStarting = true;
+  console.debug("[voice] VAD starting");
+  try {
+    vadStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+  } catch (err) {
+    vadStarting = false;
+    console.error("[voice] VAD mic access failed:", err);
+    if (err.name === "NotAllowedError") {
+      alert(t("settings:voice.micDenied"));
+    }
+    return;
+  }
+  vadStarting = false;
+  vadActive = true;
+  vadSpeechDetected = false;
+  vadSilenceStart = 0;
+  vadSpeechStart = 0;
+  vadMutedForTts = false;
+  claimVoiceLock();
+  if (vadBtn) {
+    vadBtn.classList.add("vad-active");
+    vadBtn.title = t("chat:vadStopTooltip");
+  }
+  vadAudioCtx = new AudioContext();
+  vadSourceNode = vadAudioCtx.createMediaStreamSource(vadStream);
+  vadAnalyser = vadAudioCtx.createAnalyser();
+  vadAnalyser.fftSize = 512;
+  vadAnalyser.smoothingTimeConstant = 0.3;
+  vadSourceNode.connect(vadAnalyser);
+  vadDataArray = new Uint8Array(vadAnalyser.fftSize);
+  vadStartContinuousRecorder();
+  vadMonitorLoop();
+  document.addEventListener("play", onTtsPlay, true);
+  document.addEventListener("ended", onTtsEnded, true);
+  document.addEventListener("pause", onTtsPause, true);
+}
+function vadStartContinuousRecorder() {
+  if (!(vadActive && vadStream)) return;
+  if (vadTranscribing) return;
+  if (vadMediaRecorder && vadMediaRecorder.state === "recording") return;
+  audioChunks = [];
+  const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+  vadMediaRecorder = new MediaRecorder(vadStream, { mimeType });
+  vadMediaRecorder.ondataavailable = (e) => {
+    if (e.data.size > 0) audioChunks.push(e.data);
+  };
+  vadMediaRecorder.onstop = async () => {
+    vadBtn == null ? void 0 : vadBtn.classList.remove("vad-speech");
+    if (audioChunks.length > 0 && vadSpeechDetected) {
+      vadSpeechDetected = false;
+      vadTranscribing = true;
+      try {
+        await transcribeAudio();
+      } finally {
+        vadTranscribing = false;
+      }
+    } else {
+      audioChunks = [];
+      vadSpeechDetected = false;
+    }
+    if (vadActive && !vadMutedForTts) {
+      vadStartContinuousRecorder();
+    }
+  };
+  vadMediaRecorder.start(250);
+  console.debug("[voice] VAD continuous recorder started");
+}
+async function vadReacquireStream() {
+  try {
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+    if (vadStream) {
+      for (const track of vadStream.getTracks()) track.stop();
+    }
+    vadStream = newStream;
+    if (vadAudioCtx && vadAnalyser) {
+      if (vadSourceNode) {
+        vadSourceNode.disconnect();
+      }
+      vadSourceNode = vadAudioCtx.createMediaStreamSource(newStream);
+      vadSourceNode.connect(vadAnalyser);
+    }
+    if (vadMediaRecorder && vadMediaRecorder.state === "recording") {
+      vadMediaRecorder.stop();
+    } else {
+      vadStartContinuousRecorder();
+    }
+    console.debug("[voice] VAD: stream reacquired successfully");
+  } catch (err) {
+    console.error("[voice] VAD: failed to reacquire stream:", err);
+    stopVad();
+  }
+}
+function stopVad() {
+  if (!vadActive) return;
+  console.debug("[voice] VAD stopping");
+  vadActive = false;
+  vadSpeechDetected = false;
+  vadTranscribing = false;
+  if (vadMediaRecorder && vadMediaRecorder.state !== "inactive") {
+    audioChunks = [];
+    vadMediaRecorder.stop();
+  }
+  vadMediaRecorder = null;
+  if (isRecording && mediaRecorder) {
+    audioChunks = [];
+    isRecording = false;
+    mediaRecorder.stop();
+  }
+  if (vadRafId) {
+    cancelAnimationFrame(vadRafId);
+    vadRafId = null;
+  }
+  if (vadSourceNode) {
+    vadSourceNode.disconnect();
+    vadSourceNode = null;
+  }
+  if (vadAudioCtx) {
+    vadAudioCtx.close().catch(() => {
+    });
+    vadAudioCtx = null;
+    vadAnalyser = null;
+    vadDataArray = null;
+  }
+  if (vadStream) {
+    for (const track of vadStream.getTracks()) track.stop();
+    vadStream = null;
+  }
+  if (vadBtn) {
+    vadBtn.classList.remove("vad-active", "vad-speech", "vad-listening");
+    vadBtn.title = t("chat:vadTooltip");
+  }
+  releaseVoiceLock();
+  document.removeEventListener("play", onTtsPlay, true);
+  document.removeEventListener("ended", onTtsEnded, true);
+  document.removeEventListener("pause", onTtsPause, true);
+}
+function vadMonitorLoop() {
+  if (!(vadActive && vadAnalyser && vadDataArray)) return;
+  if (vadAudioCtx && vadAudioCtx.state === "suspended") {
+    console.debug("[voice] VAD: AudioContext suspended, resuming");
+    vadAudioCtx.resume().catch(() => {
+    });
+  }
+  if (vadStream) {
+    const track = vadStream.getAudioTracks()[0];
+    if (!track || track.readyState !== "live") {
+      if (!vadReacquiring) {
+        vadReacquiring = true;
+        console.warn("[voice] VAD: mic track died, reacquiring");
+        vadReacquireStream().finally(() => {
+          vadReacquiring = false;
+        });
+      }
+      vadRafId = requestAnimationFrame(vadMonitorLoop);
+      return;
+    }
+  }
+  if (vadMutedForTts || (micBtn == null ? void 0 : micBtn.classList.contains("transcribing"))) {
+    if (vadMutedForTts && !vadMonitorMuteStart) {
+      vadMonitorMuteStart = Date.now();
+    } else if (vadMutedForTts && Date.now() - vadMonitorMuteStart > 1e4) {
+      console.debug("[voice] VAD: TTS mute timeout, force-resuming");
+      vadMutedForTts = false;
+      vadMonitorMuteStart = 0;
+      vadSpeechDetected = false;
+      vadStartContinuousRecorder();
+      vadBtn == null ? void 0 : vadBtn.classList.add("vad-listening");
+    }
+    vadRafId = requestAnimationFrame(vadMonitorLoop);
+    return;
+  }
+  vadMonitorMuteStart = 0;
+  const activeSession = sessionStore.getByKey(activeSessionKey);
+  if (activeSession == null ? void 0 : activeSession.replying.value) {
+    vadRafId = requestAnimationFrame(vadMonitorLoop);
+    return;
+  }
+  if (vadMediaRecorder && vadMediaRecorder.state === "recording" && vadBtn && !vadBtn.classList.contains("vad-listening") && !vadBtn.classList.contains("vad-speech")) {
+    vadBtn.classList.add("vad-listening");
+  }
+  if (!vadTranscribing && (!vadMediaRecorder || vadMediaRecorder.state === "inactive")) {
+    vadStartContinuousRecorder();
+  }
+  const rms = getRMS(vadAnalyser, vadDataArray);
+  const now = Date.now();
+  if (rms > vadSpeechThreshold) {
+    vadSilenceStart = 0;
+    if (vadSpeechDetected && vadRecordingStart && now - vadRecordingStart > 3e4) {
+      console.debug("[voice] VAD: max duration reached, auto-sending");
+      vadSilenceStart = 0;
+      vadRecordingStart = 0;
+      vadBtn == null ? void 0 : vadBtn.classList.remove("vad-speech", "vad-listening");
+      if (vadMediaRecorder && vadMediaRecorder.state === "recording") {
+        vadMediaRecorder.stop();
+      }
+      vadRafId = requestAnimationFrame(vadMonitorLoop);
+      return;
+    }
+    if (!vadSpeechDetected) {
+      if (!vadSpeechStart) {
+        vadSpeechStart = now;
+      } else if (now - vadSpeechStart >= VAD_DEBOUNCE_SPEECH) {
+        vadSpeechDetected = true;
+        vadSpeechStart = 0;
+        vadRecordingStart = now;
+        console.debug("[voice] VAD: speech detected (recorder already running)");
+        stopAllAudio();
+        vadBtn == null ? void 0 : vadBtn.classList.add("vad-speech");
+      }
+    }
+  } else {
+    vadSpeechStart = 0;
+    if (vadSpeechDetected) {
+      if (!vadSilenceStart) {
+        vadSilenceStart = now;
+      } else if (now - vadSilenceStart >= VAD_SILENCE_DURATION) {
+        console.debug("[voice] VAD: silence detected, stopping & sending");
+        vadRecordingStart = 0;
+        vadSilenceStart = 0;
+        vadBtn == null ? void 0 : vadBtn.classList.remove("vad-speech", "vad-listening");
+        if (vadMediaRecorder && vadMediaRecorder.state === "recording") {
+          vadMediaRecorder.stop();
+        } else {
+          vadSpeechDetected = false;
+          audioChunks = [];
+        }
+      }
+    }
+  }
+  vadRafId = requestAnimationFrame(vadMonitorLoop);
+}
+function isAnyAudioPlaying() {
+  return Array.from(document.querySelectorAll("audio")).some((a) => !(a.paused || a.ended));
+}
+function onTtsPlay(e) {
+  var _a2;
+  if (!vadActive) return;
+  if (((_a2 = e.target) == null ? void 0 : _a2.tagName) !== "AUDIO") return;
+  console.debug("[voice] VAD: TTS playing, muting VAD + stopping recorder");
+  vadMutedForTts = true;
+  vadBtn == null ? void 0 : vadBtn.classList.remove("vad-listening", "vad-speech");
+  if (vadMediaRecorder && vadMediaRecorder.state === "recording") {
+    vadSpeechDetected = false;
+    audioChunks = [];
+    const mr = vadMediaRecorder;
+    vadMediaRecorder = null;
+    mr.stop();
+  }
+}
+function resumeVadAfterTts() {
+  vadSpeechDetected = false;
+  vadSilenceStart = 0;
+  vadSpeechStart = 0;
+  setTimeout(() => {
+    if (!vadActive) return;
+    if (isAnyAudioPlaying()) {
+      console.debug("[voice] VAD: another audio still playing, staying muted");
+      return;
+    }
+    vadMutedForTts = false;
+    if (!vadTranscribing) {
+      vadStartContinuousRecorder();
+      vadBtn == null ? void 0 : vadBtn.classList.add("vad-listening");
+    }
+  }, 400);
+}
+function onTtsEnded(e) {
+  var _a2;
+  if (!vadActive) return;
+  if (((_a2 = e.target) == null ? void 0 : _a2.tagName) !== "AUDIO") return;
+  console.debug("[voice] VAD: TTS ended, resuming VAD after delay");
+  resumeVadAfterTts();
+}
+function onTtsPause(e) {
+  var _a2;
+  if (!vadActive) return;
+  if (((_a2 = e.target) == null ? void 0 : _a2.tagName) !== "AUDIO") return;
+  const audio = e.target;
+  if (audio.ended || audio.duration && audio.currentTime >= audio.duration - 0.1) {
+    console.debug("[voice] VAD: TTS paused at end, treating as ended");
+    resumeVadAfterTts();
+  } else if (!isAnyAudioPlaying()) {
+    vadMutedForTts = false;
+  }
+}
+function onVadClick(e) {
+  e.preventDefault();
+  if (vadActive) {
+    stopVad();
+  } else {
+    startVad();
+  }
+}
+function onMicKeydown(e) {
+  if (e.key === " " || e.key === "Enter") {
+    e.preventDefault();
+    onMicClick(e);
+  }
+}
+function onEscapeKeydown(e) {
+  if (e.key === "Escape" && isRecording) {
+    e.preventDefault();
+    cancelRecording();
+    if (vadActive) stopVad();
   }
 }
 function initVoiceInput(btn2) {
@@ -4817,29 +5520,53 @@ function initVoiceInput(btn2) {
   micBtn = btn2;
   checkSttStatus();
   micBtn.addEventListener("click", onMicClick);
-  micBtn.addEventListener("keydown", (e) => {
-    if (e.key === " " || e.key === "Enter") {
-      e.preventDefault();
-      onMicClick(e);
-    }
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && isRecording) {
-      e.preventDefault();
-      cancelRecording();
-    }
-  });
+  micBtn.addEventListener("keydown", onMicKeydown);
+  document.addEventListener("keydown", onEscapeKeydown);
+  document.addEventListener("keydown", onPttKeyDown);
+  document.addEventListener("keyup", onPttKeyUp);
   window.addEventListener("voice-config-changed", checkSttStatus);
 }
+function initVadButton(btn2) {
+  if (!btn2) return;
+  vadBtn = btn2;
+  updateVadButton();
+  vadBtn.addEventListener("click", onVadClick);
+}
 function teardownVoiceInput() {
+  if (vadActive) stopVad();
   if (isRecording && mediaRecorder) {
     mediaRecorder.stop();
   }
+  document.removeEventListener("keydown", onEscapeKeydown);
+  document.removeEventListener("keydown", onPttKeyDown);
+  document.removeEventListener("keyup", onPttKeyUp);
+  micBtn == null ? void 0 : micBtn.removeEventListener("keydown", onMicKeydown);
   window.removeEventListener("voice-config-changed", checkSttStatus);
+  releaseVoiceLock();
   micBtn = null;
+  vadBtn = null;
   mediaRecorder = null;
+  vadMediaRecorder = null;
+  vadTranscribing = false;
   audioChunks = [];
   isRecording = false;
+}
+function setPttKey(key) {
+  pttKey = key;
+  localStorage.setItem("moltis_ptt_key", key);
+  console.debug("[voice] PTT key set to:", key);
+}
+function getPttKey() {
+  return pttKey;
+}
+function setVadSensitivity(pct) {
+  vadSensitivity = Math.max(0, Math.min(100, pct));
+  vadSpeechThreshold = sensitivityToThreshold(vadSensitivity);
+  localStorage.setItem("moltis_vad_sensitivity", String(vadSensitivity));
+  console.debug("[voice] VAD sensitivity set to:", vadSensitivity, "threshold:", vadSpeechThreshold.toFixed(4));
+}
+function getVadSensitivity() {
+  return vadSensitivity;
 }
 function ctxEl(tag, cls, text) {
   const el = document.createElement(tag);
@@ -5083,12 +5810,13 @@ function renderContextCard(data) {
   renderContextPromptMemorySection(card, data);
   renderContextTokensSection(card, data);
   chatMsgBox.appendChild(card);
-  chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  smartScrollToBottom();
 }
 const slashCommands = [
   { name: "clear", description: "Clear conversation history" },
   { name: "compact", description: "Summarize conversation to save tokens" },
   { name: "context", description: "Show session context and project info" },
+  { name: "mode", description: "Switch session mode" },
   { name: "sh", description: "Enter command mode (/sh off or Esc to exit)" }
 ];
 let slashMenuEl = null;
@@ -5226,6 +5954,85 @@ function setCommandMode(enabled) {
   setCommandModeEnabled(!!enabled);
   updateCommandInputUI();
 }
+function isRecord$1(value) {
+  return typeof value === "object" && value !== null;
+}
+function parseMode(value) {
+  if (!isRecord$1(value)) return null;
+  const id = typeof value.id === "string" ? value.id : "";
+  if (!id) return null;
+  return {
+    id,
+    name: typeof value.name === "string" && value.name.trim() ? value.name : id,
+    description: typeof value.description === "string" ? value.description : "",
+    prompt: typeof value.prompt === "string" ? value.prompt : ""
+  };
+}
+function parseModesListPayload(value) {
+  if (!(isRecord$1(value) && Array.isArray(value.modes))) return { modes: [] };
+  return { modes: value.modes.map(parseMode).filter((mode) => mode !== null) };
+}
+function formatModeList(modes) {
+  if (modes.length === 0) return "No modes are configured.";
+  const lines = modes.map((mode, index) => {
+    const description = mode.description ? ` - ${mode.description}` : "";
+    return `${index + 1}. ${mode.name} [${mode.id}]${description}`;
+  });
+  lines.push("", "Use `/mode N`, `/mode <id>`, or `/mode none`.");
+  return lines.join("\n");
+}
+function findMode(modes, args) {
+  const normalized = args.trim().toLowerCase();
+  const number = Number.parseInt(normalized, 10);
+  if (Number.isInteger(number) && number > 0 && String(number) === normalized) {
+    return modes[number - 1] || null;
+  }
+  return modes.find((mode) => mode.id.toLowerCase() === normalized || mode.name.toLowerCase() === normalized) || null;
+}
+function handleModeCommand(cmdArgs) {
+  const args = cmdArgs.trim();
+  chatAddMsg("system", "Loading modes...");
+  sendRpc("modes.list", {}).then((listRes) => {
+    var _a2, _b2;
+    if ((_a2 = chatMsgBox) == null ? void 0 : _a2.lastChild) chatMsgBox.removeChild(chatMsgBox.lastChild);
+    if (!(listRes == null ? void 0 : listRes.ok)) {
+      chatAddMsg("error", ((_b2 = listRes == null ? void 0 : listRes.error) == null ? void 0 : _b2.message) || "Failed to load modes");
+      return;
+    }
+    const modes = parseModesListPayload(listRes.payload).modes;
+    if (!args) {
+      chatAddMsg("system", renderMarkdown(formatModeList(modes)), true);
+      return;
+    }
+    const normalized = args.toLowerCase();
+    if (["none", "off", "clear", "default", "reset"].includes(normalized)) {
+      sendRpc("modes.set_session", { session_key: activeSessionKey, mode_id: null }).then((setRes) => {
+        var _a3;
+        if (!(setRes == null ? void 0 : setRes.ok)) {
+          chatAddMsg("error", ((_a3 = setRes == null ? void 0 : setRes.error) == null ? void 0 : _a3.message) || "Failed to clear mode");
+          return;
+        }
+        fetchSessions();
+        chatAddMsg("system", renderMarkdown("**Mode:** cleared"), true);
+      });
+      return;
+    }
+    const selected = findMode(modes, args);
+    if (!selected) {
+      chatAddMsg("error", `Unknown mode: ${args}`);
+      return;
+    }
+    sendRpc("modes.set_session", { session_key: activeSessionKey, mode_id: selected.id }).then((setRes) => {
+      var _a3;
+      if (!(setRes == null ? void 0 : setRes.ok)) {
+        chatAddMsg("error", ((_a3 = setRes == null ? void 0 : setRes.error) == null ? void 0 : _a3.message) || "Failed to set mode");
+        return;
+      }
+      fetchSessions();
+      chatAddMsg("system", renderMarkdown(`**Mode:** ${selected.name}`), true);
+    });
+  });
+}
 function handleSlashCommand(cmdName, cmdArgs) {
   if (cmdName === "clear") {
     clearActiveSession();
@@ -5254,6 +6061,10 @@ function handleSlashCommand(cmdName, cmdArgs) {
         }
       } else chatAddMsg("error", ((_b2 = res.error) == null ? void 0 : _b2.message) || "Context failed");
     });
+    return;
+  }
+  if (cmdName === "mode") {
+    handleModeCommand(cmdArgs);
     return;
   }
   if (cmdName === "sh") {
@@ -5543,7 +6354,7 @@ function renderCompactCard(data) {
     card.appendChild(hintSec);
   }
   chatMsgBox.appendChild(card);
-  chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  smartScrollToBottom();
 }
 function setDebugModalOpen(open) {
   const modal = $("debugModal");
@@ -5869,7 +6680,7 @@ function showModelNotice(model) {
   const providerEl = card.querySelector("[data-provider]");
   if (providerEl) providerEl.textContent = model.provider || "local";
   chatMsgBox.appendChild(card);
-  chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  smartScrollToBottom();
 }
 function msgRole(el) {
   if (el.classList.contains("user")) return "You";
@@ -6067,6 +6878,13 @@ function initializeChatControls() {
   setNodeDropdownList($("nodeDropdownList"));
   bindNodeComboEvents();
   fetchNodes();
+  setProjectCombo($("projectCombo"));
+  setProjectComboBtn($("projectComboBtn"));
+  setProjectComboLabel($("projectComboLabel"));
+  setProjectDropdown($("projectDropdown"));
+  setProjectDropdownList($("projectDropdownList"));
+  bindProjectComboEvents();
+  fetchProjects();
   setSandboxToggleBtn($("sandboxToggle"));
   setSandboxLabel($("sandboxLabel"));
   bindSandboxToggleEvents();
@@ -6127,11 +6945,12 @@ function initializeChatMediaDrop() {
   const inputArea = (_a2 = chatInput) == null ? void 0 : _a2.closest(".px-4.py-3");
   initMediaDrop(chatMsgBox, inputArea);
 }
-const chatPageHTML = '<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto auto;overflow:hidden"><div class="chat-toolbar h-12 px-4 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2" style="grid-row:1;"><div id="modelCombo" class="model-combo"><button id="modelComboBtn" class="model-combo-btn" type="button"><span id="modelComboLabel">loading…</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="modelDropdown" class="model-dropdown hidden"><input id="modelSearchInput" type="text" placeholder="Search models…" class="model-search-input" autocomplete="off" /><div id="modelDropdownList" class="model-dropdown-list"></div></div></div><div id="reasoningCombo" class="model-combo hidden"><button id="reasoningComboBtn" class="model-combo-btn" type="button" title="Reasoning effort"><span class="icon icon-sm icon-brain" style="flex-shrink:0;"></span><span id="reasoningComboLabel">Off</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="reasoningDropdown" class="model-dropdown hidden"><div id="reasoningDropdownList" class="model-dropdown-list"></div></div></div><div id="nodeCombo" class="model-combo hidden"><button id="nodeComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-server" style="flex-shrink:0;"></span><span id="nodeComboLabel">Local</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="nodeDropdown" class="model-dropdown hidden" tabindex="-1"><div id="nodeDropdownList" class="model-dropdown-list"></div></div></div><div id="sessionHeaderToolbarMount" class="ml-auto flex items-center gap-1.5"></div><button id="chatMoreBtn" type="button" class="model-combo-btn" title="More controls" aria-label="More controls"><span class="icon icon-lg icon-menu-dots-horizontal"></span></button></div><div id="chatMoreModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:560px;max-width:92vw;"><div class="provider-modal-header"><div class="flex items-center gap-2"><button id="chatMoreDeleteAllBtn" type="button" class="provider-btn provider-btn-sm chat-session-btn-danger inline-flex items-center gap-1.5" style="background:var(--error);border-color:var(--error);color:#fff;"><span class="icon icon-sm icon-x-circle shrink-0"></span><span id="chatMoreDeleteAllLabel">Delete all sessions</span></button></div><div id="sessionHeaderModalTopMount" class="flex items-center gap-2"></div></div><div class="provider-modal-body flex flex-col gap-3"><div class="flex flex-wrap items-center gap-2"><button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">sandboxed</span></button><div style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">ubuntu:25.10</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div><button id="mcpToggleBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle MCP tools for this session"><span class="icon icon-md icon-link shrink-0"></span><span id="mcpToggleLabel">MCP</span></button><button id="debugPanelBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show context debug info"><span class="icon icon-md icon-wrench shrink-0"></span><span id="debugPanelLabel">Debug</span></button><button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show full LLM context (system prompt + history)"><span class="icon icon-md icon-document shrink-0"></span><span id="fullContextLabel">Context</span></button></div><div id="sessionControlsSection" class="border-t border-[var(--border)] pt-3"><div id="sessionHeaderModalMount" class="w-full"></div></div></div></div></div><div id="debugModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:min(980px,96vw);max-width:96vw;max-height:88vh;"><div class="provider-modal-header"><div class="provider-item-name">Debug context</div><button id="debugModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button></div><div class="provider-modal-body" style="padding:0;overflow:hidden;"><div id="debugPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div></div></div></div><div id="fullContextModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:min(1080px,96vw);max-width:96vw;max-height:88vh;"><div class="provider-modal-header"><div class="provider-item-name">Full context</div><button id="fullContextModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button></div><div class="provider-modal-body" style="padding:0;overflow:hidden;"><div id="fullContextPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div></div></div></div><div class="p-4 flex flex-col gap-2" id="messages" style="grid-row:3;overflow-y:auto;min-height:0"></div><div id="queuedMessages" class="queued-tray hidden" style="grid-row:4;"></div><div id="tokenBar" class="token-bar" style="grid-row:5;"></div><div class="chat-input-row px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end" style="grid-row:6;"><span id="chatCommandPrompt" class="chat-command-prompt chat-command-prompt-hidden" title="Command prompt symbol" aria-hidden="true">$</span><textarea id="chatInput" placeholder="Type a message..." rows="1" enterkeyhint="send" class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea><button id="micBtn" disabled title="Click to start recording" class="mic-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"><span class="icon icon-lg icon-microphone"></span></button><button id="sendBtn" disabled class="provider-btn min-h-[40px] disabled:opacity-40 disabled:cursor-default">Send</button></div></div>';
+const chatPageHTML = '<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto auto;overflow:hidden"><div class="chat-toolbar h-12 px-4 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2" style="grid-row:1;"><div id="modelCombo" class="model-combo"><button id="modelComboBtn" class="model-combo-btn" type="button"><span id="modelComboLabel">loading…</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="modelDropdown" class="model-dropdown hidden"><input id="modelSearchInput" type="text" placeholder="Search models…" class="model-search-input" autocomplete="off" /><div id="modelDropdownList" class="model-dropdown-list"></div></div></div><div id="reasoningCombo" class="model-combo hidden"><button id="reasoningComboBtn" class="model-combo-btn" type="button" title="Reasoning effort"><span class="icon icon-sm icon-brain" style="flex-shrink:0;"></span><span id="reasoningComboLabel">Off</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="reasoningDropdown" class="model-dropdown hidden"><div id="reasoningDropdownList" class="model-dropdown-list"></div></div></div><div id="nodeCombo" class="model-combo hidden"><button id="nodeComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-server" style="flex-shrink:0;"></span><span id="nodeComboLabel">Local</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="nodeDropdown" class="model-dropdown hidden" tabindex="-1"><div id="nodeDropdownList" class="model-dropdown-list"></div></div></div><div id="projectCombo" class="model-combo hidden"><button id="projectComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-folder" style="flex-shrink:0;"></span><span id="projectComboLabel">No project</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="projectDropdown" class="model-dropdown hidden"><div id="projectDropdownList" class="model-dropdown-list"></div></div></div><div id="sessionHeaderToolbarMount" class="ml-auto flex items-center gap-1.5"></div><button id="chatMoreBtn" type="button" class="model-combo-btn" title="More controls" aria-label="More controls"><span class="icon icon-lg icon-menu-dots-horizontal"></span></button></div><div id="chatMoreModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:560px;max-width:92vw;"><div class="provider-modal-header"><div class="flex items-center gap-2"><button id="chatMoreDeleteAllBtn" type="button" class="provider-btn provider-btn-sm chat-session-btn-danger inline-flex items-center gap-1.5" style="background:var(--error);border-color:var(--error);color:#fff;"><span class="icon icon-sm icon-x-circle shrink-0"></span><span id="chatMoreDeleteAllLabel">Delete all sessions</span></button></div><div id="sessionHeaderModalTopMount" class="flex items-center gap-2"></div></div><div class="provider-modal-body flex flex-col gap-3"><div class="flex flex-wrap items-center gap-2"><button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">sandboxed</span></button><div style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">ubuntu:25.10</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div><button id="mcpToggleBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle MCP tools for this session"><span class="icon icon-md icon-link shrink-0"></span><span id="mcpToggleLabel">MCP</span></button><button id="debugPanelBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show context debug info"><span class="icon icon-md icon-wrench shrink-0"></span><span id="debugPanelLabel">Debug</span></button><button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show full LLM context (system prompt + history)"><span class="icon icon-md icon-document shrink-0"></span><span id="fullContextLabel">Context</span></button></div><div id="sessionControlsSection" class="border-t border-[var(--border)] pt-3"><div id="sessionHeaderModalMount" class="w-full"></div></div></div></div></div><div id="debugModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:min(980px,96vw);max-width:96vw;max-height:88vh;"><div class="provider-modal-header"><div class="provider-item-name">Debug context</div><button id="debugModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button></div><div class="provider-modal-body" style="padding:0;overflow:hidden;"><div id="debugPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div></div></div></div><div id="fullContextModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:min(1080px,96vw);max-width:96vw;max-height:88vh;"><div class="provider-modal-header"><div class="provider-item-name">Full context</div><button id="fullContextModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button></div><div class="provider-modal-body" style="padding:0;overflow:hidden;"><div id="fullContextPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div></div></div></div><div class="p-4 flex flex-col gap-2" id="messages" style="grid-row:3;overflow-y:auto;min-height:0"></div><div id="queuedMessages" class="queued-tray hidden" style="grid-row:4;"></div><div id="tokenBar" class="token-bar" style="grid-row:5;"></div><div class="chat-input-row px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end" style="grid-row:6;"><span id="chatCommandPrompt" class="chat-command-prompt chat-command-prompt-hidden" title="Command prompt symbol" aria-hidden="true">$</span><textarea id="chatInput" placeholder="Type a message..." rows="1" enterkeyhint="send" class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea><button id="micBtn" disabled title="Click to start recording" class="mic-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"><span class="icon icon-lg icon-microphone"></span></button><button id="vadBtn" disabled title="Conversation mode (VAD)" class="vad-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"><span class="icon icon-lg icon-waveform"></span></button><button id="sendBtn" disabled class="provider-btn min-h-[40px] disabled:opacity-40 disabled:cursor-default">Send</button></div></div>';
+let chatScrollHandler = null;
 registerPrefix(
   routes.chats,
   function initChat(container, sessionKeyFromUrl) {
-    var _a2, _b2, _c;
+    var _a2, _b2, _c, _d;
     container.style.cssText = "position:relative";
     container.innerHTML = chatPageHTML;
     setChatMsgBox($("messages"));
@@ -6158,11 +6977,22 @@ registerPrefix(
     startInitialChatSession(sessionKey);
     bindChatComposer();
     (_b2 = chatMsgBox) == null ? void 0 : _b2.addEventListener("copy", handleChatCopy);
+    chatScrollHandler = () => {
+      if (isChatAtBottom()) hideNewContentIndicator();
+    };
+    (_c = chatMsgBox) == null ? void 0 : _c.addEventListener("scroll", chatScrollHandler, { passive: true });
     initVoiceInput($("micBtn"));
+    initVadButton($("vadBtn"));
     initializeChatMediaDrop();
-    (_c = chatInput) == null ? void 0 : _c.focus();
+    (_d = chatInput) == null ? void 0 : _d.focus();
   },
   function teardownChat() {
+    var _a2, _b2;
+    if (chatScrollHandler) {
+      (_a2 = chatMsgBox) == null ? void 0 : _a2.removeEventListener("scroll", chatScrollHandler);
+      chatScrollHandler = null;
+    }
+    (_b2 = chatMsgBox) == null ? void 0 : _b2.removeEventListener("copy", handleChatCopy);
     teardownVoiceInput();
     teardownMediaDrop();
     unbindReasoningToggle();
@@ -6198,6 +7028,11 @@ registerPrefix(
     setNodeDropdownList(null);
     setSandboxToggleBtn(null);
     setSandboxLabel(null);
+    setProjectCombo(null);
+    setProjectComboBtn(null);
+    setProjectComboLabel(null);
+    setProjectDropdown(null);
+    setProjectDropdownList(null);
   }
 );
 function setSessionModel(sessionKey, modelId) {
@@ -6375,31 +7210,6 @@ window.addEventListener("moltis:locale-changed", () => {
     renderModelList(query2);
   }
 });
-const ids = {
-  skills: "navCountSkills",
-  crons: "navCountCrons"
-};
-function updateNavCount(key, n) {
-  const id = ids[key];
-  if (!id) return;
-  const el = document.getElementById(id);
-  if (!el) return;
-  if (n > 0) {
-    el.textContent = String(n);
-    el.classList.add("visible");
-  } else {
-    el.textContent = "";
-    el.classList.remove("visible");
-  }
-}
-function updateNavCounts(counts) {
-  if (!counts) return;
-  for (const key of Object.keys(ids)) {
-    updateNavCount(key, counts[key] || 0);
-  }
-}
-updateNavCounts(get("counts"));
-onChange("counts", updateNavCounts);
 function AdvancedConfigPatchField({
   value,
   onInput,
@@ -6445,7 +7255,7 @@ function prettyConfigJson(value) {
     return "{}";
   }
 }
-function AllowlistInput({ value, onChange: onChange2, preserveAt }) {
+function AllowlistInput({ value, onChange: onChange2, preserveAt, placeholder }) {
   const input = useSignal("");
   function addTag(raw) {
     const tag = preserveAt ? raw.trim() : raw.trim().replace(/^@/, "");
@@ -6512,7 +7322,7 @@ function AllowlistInput({ value, onChange: onChange2, preserveAt }) {
               input.value = targetValue(e);
             },
             onKeyDown,
-            placeholder: value.length === 0 ? "Type a username and press Enter" : "",
+            placeholder: value.length === 0 ? placeholder || "Type a username and press Enter" : "",
             className: "flex-1 bg-transparent text-[var(--text)] text-sm outline-none border-none",
             style: { minWidth: "80px", padding: "2px 0", fontFamily: "var(--font-body)" }
           }
@@ -6577,6 +7387,8 @@ function AddDiscordModal() {
   const saving = useSignal(false);
   const addModel = useSignal("");
   const allowlistItems = useSignal([]);
+  const channelNamePatterns = useSignal([]);
+  const categoryAllowlist = useSignal([]);
   const accountDraft = useSignal("");
   const tokenDraft = useSignal("");
   const advancedConfigPatch = useSignal("");
@@ -6603,6 +7415,8 @@ function AddDiscordModal() {
       mention_mode: form.querySelector("[data-field=mentionMode]").value,
       allowlist: allowlistItems.value
     };
+    if (channelNamePatterns.value.length > 0) addConfig.channel_name_patterns = channelNamePatterns.value;
+    if (categoryAllowlist.value.length > 0) addConfig.category_allowlist = categoryAllowlist.value;
     if (addModel.value) {
       addConfig.model = addModel.value;
       const found = models$1.value.find((x) => x.id === addModel.value);
@@ -6617,6 +7431,8 @@ function AddDiscordModal() {
         showAddDiscord.value = false;
         addModel.value = "";
         allowlistItems.value = [];
+        channelNamePatterns.value = [];
+        categoryAllowlist.value = [];
         accountDraft.value = "";
         tokenDraft.value = "";
         advancedConfigPatch.value = "";
@@ -6697,6 +7513,30 @@ function AddDiscordModal() {
           /* @__PURE__ */ u("a", { href: inviteUrl, target: "_blank", className: "text-xs text-[var(--accent)] underline break-all", children: inviteUrl })
         ] }),
         /* @__PURE__ */ u(SharedChannelFields, { addModel, allowlistItems }),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Channel Name Patterns (optional)" }),
+        /* @__PURE__ */ u(
+          AllowlistInput,
+          {
+            value: channelNamePatterns.value,
+            onChange: (v) => {
+              channelNamePatterns.value = v;
+            },
+            placeholder: "e.g. ticket-* (glob patterns, Enter to add)"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] -mt-1", children: "When set, the bot only responds in guild channels whose name matches a pattern. Matched channels do not require @mention. Supports * wildcards." }),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Category IDs (optional)" }),
+        /* @__PURE__ */ u(
+          AllowlistInput,
+          {
+            value: categoryAllowlist.value,
+            onChange: (v) => {
+              categoryAllowlist.value = v;
+            },
+            placeholder: "Discord category ID (Enter to add)"
+          }
+        ),
+        /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] -mt-1", children: "Only respond in channels under these Discord categories. Combined with name patterns via OR." }),
         /* @__PURE__ */ u(
           AdvancedConfigPatchField,
           {
@@ -7374,9 +8214,20 @@ function AddSignalModal() {
         /* @__PURE__ */ u("div", { className: "channel-card", children: /* @__PURE__ */ u("div", { children: [
           /* @__PURE__ */ u("span", { className: "text-xs font-medium text-[var(--text-strong)]", children: "Requires signal-cli" }),
           /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] channel-help", children: [
-            "Signal integration requires a running ",
-            /* @__PURE__ */ u("a", { href: "https://github.com/AsamK/signal-cli", target: "_blank", rel: "noopener noreferrer", className: "underline text-[var(--text-strong)]", children: "signal-cli" }),
-            " daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:"
+            "Signal integration requires a running",
+            " ",
+            /* @__PURE__ */ u(
+              "a",
+              {
+                href: "https://github.com/AsamK/signal-cli",
+                target: "_blank",
+                rel: "noopener noreferrer",
+                className: "underline text-[var(--text-strong)]",
+                children: "signal-cli"
+              }
+            ),
+            " ",
+            "daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:"
           ] }),
           /* @__PURE__ */ u("code", { className: "text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-1 block", children: "signal-cli daemon --http localhost:8080" })
         ] }) }),
@@ -8528,9 +9379,11 @@ function EditChannelModal() {
   const editMatrixOtpCooldown = useSignal("300");
   const editSignalAccount = useSignal("");
   const editSignalHttpUrl = useSignal("http://127.0.0.1:8080");
+  const editChannelNamePatterns = useSignal([]);
+  const editCategoryAllowlist = useSignal([]);
   const editAdvancedConfigPatch = useSignal("");
   y$1(() => {
-    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
     editModel.value = ((_a2 = ch == null ? void 0 : ch.config) == null ? void 0 : _a2.model) || "";
     allowlistItems.value = ((_b2 = ch == null ? void 0 : ch.config) == null ? void 0 : _b2.allowlist) || ((_c = ch == null ? void 0 : ch.config) == null ? void 0 : _c.user_allowlist) || ((_d = ch == null ? void 0 : ch.config) == null ? void 0 : _d.allowed_pubkeys) || [];
     roomAllowlistItems.value = ((_e = ch == null ? void 0 : ch.config) == null ? void 0 : _e.room_allowlist) || ((_f = ch == null ? void 0 : ch.config) == null ? void 0 : _f.group_allowlist) || [];
@@ -8549,6 +9402,8 @@ function EditChannelModal() {
     editMatrixOtpCooldown.value = String(((_q = ch == null ? void 0 : ch.config) == null ? void 0 : _q.otp_cooldown_secs) || 300);
     editSignalAccount.value = ((_r = ch == null ? void 0 : ch.config) == null ? void 0 : _r.account) || "";
     editSignalHttpUrl.value = ((_s = ch == null ? void 0 : ch.config) == null ? void 0 : _s.http_url) || "http://127.0.0.1:8080";
+    editChannelNamePatterns.value = ((_t = ch == null ? void 0 : ch.config) == null ? void 0 : _t.channel_name_patterns) || [];
+    editCategoryAllowlist.value = ((_u = ch == null ? void 0 : ch.config) == null ? void 0 : _u.category_allowlist) || [];
     editAdvancedConfigPatch.value = "";
   }, [ch]);
   if (!ch) return null;
@@ -8629,6 +9484,10 @@ function EditChannelModal() {
     }
     if (!(isWhatsApp || isNostr)) {
       updateConfig.mention_mode = ((_e = form.querySelector("[data-field=mentionMode]")) == null ? void 0 : _e.value) || "mention";
+    }
+    if (isDiscord) {
+      updateConfig.channel_name_patterns = editChannelNamePatterns.value;
+      updateConfig.category_allowlist = editCategoryAllowlist.value;
     }
     addChannelCredentials(updateConfig, form);
     addModelToConfig(updateConfig);
@@ -8792,6 +9651,32 @@ function EditChannelModal() {
               }
             }
           )
+        ] }),
+        isDiscord && /* @__PURE__ */ u(S, { children: [
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Channel Name Patterns (optional)" }),
+          /* @__PURE__ */ u(
+            AllowlistInput,
+            {
+              value: editChannelNamePatterns.value,
+              onChange: (v) => {
+                editChannelNamePatterns.value = v;
+              },
+              placeholder: "e.g. ticket-* (glob patterns, Enter to add)"
+            }
+          ),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] -mt-1", children: "When set, the bot only responds in guild channels whose name matches a pattern. Matched channels do not require @mention. Supports * wildcards." }),
+          /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Category IDs (optional)" }),
+          /* @__PURE__ */ u(
+            AllowlistInput,
+            {
+              value: editCategoryAllowlist.value,
+              onChange: (v) => {
+                editCategoryAllowlist.value = v;
+              },
+              placeholder: "Discord category ID (Enter to add)"
+            }
+          ),
+          /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] -mt-1", children: "Only respond in channels under these Discord categories. Combined with name patterns via OR." })
         ] }),
         isNostr && /* @__PURE__ */ u(S, { children: [
           /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
@@ -9822,156 +10707,6 @@ const _channelsPage = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defin
   waQrData,
   waQrSvg
 }, Symbol.toStringTag, { value: "Module" }));
-const combo = $("projectFilterCombo");
-const btn = $("projectFilterBtn");
-const label = $("projectFilterLabel");
-const dropdown = $("projectFilterDropdown");
-const list = $("projectFilterList");
-const searchInput$1 = $("projectFilterSearch");
-let kbIdx = -1;
-function fetchProjects() {
-  projectStore.fetch().then(() => {
-    const projects2 = projectStore.projects.value;
-    setProjects(projects2);
-    renderProjectSelect();
-    renderSessionProjectSelect();
-    updateNavCount("projects", projects2.length);
-  });
-}
-function selectFilter(id) {
-  projectStore.setFilterId(id);
-  setProjectFilterId(id);
-  const p = projectStore.getById(id);
-  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
-  closeDropdown();
-  document.dispatchEvent(new CustomEvent("moltis:render-session-list"));
-}
-function closeDropdown() {
-  dropdown.classList.add("hidden");
-  if (searchInput$1) searchInput$1.value = "";
-  kbIdx = -1;
-}
-function openDropdown() {
-  dropdown.classList.remove("hidden");
-  kbIdx = -1;
-  renderList("");
-  requestAnimationFrame(() => {
-    if (searchInput$1) searchInput$1.focus();
-  });
-}
-function renderList(query2) {
-  list.textContent = "";
-  const q2 = (query2 || "").toLowerCase();
-  const filterId = projectStore.projectFilterId.value;
-  const allProjects = projectStore.projects.value;
-  const allSessionsLabel = t("common:sessions.allSessions");
-  if (!q2 || allSessionsLabel.toLowerCase().indexOf(q2) !== -1) {
-    const allEl = document.createElement("div");
-    allEl.className = "model-dropdown-item";
-    if (!filterId) allEl.classList.add("selected");
-    const allLabel = document.createElement("span");
-    allLabel.className = "model-item-label";
-    allLabel.textContent = allSessionsLabel;
-    allEl.appendChild(allLabel);
-    allEl.addEventListener("click", () => selectFilter(""));
-    list.appendChild(allEl);
-  }
-  const filtered = allProjects.filter((p) => {
-    if (!q2) return true;
-    const name = (p.label || p.id).toLowerCase();
-    return name.indexOf(q2) !== -1 || p.id.toLowerCase().indexOf(q2) !== -1;
-  });
-  filtered.forEach((p) => {
-    const el = document.createElement("div");
-    el.className = "model-dropdown-item";
-    if (p.id === filterId) el.classList.add("selected");
-    const itemLabel = document.createElement("span");
-    itemLabel.className = "model-item-label";
-    itemLabel.textContent = p.label || p.id;
-    el.appendChild(itemLabel);
-    el.addEventListener("click", () => selectFilter(p.id));
-    list.appendChild(el);
-  });
-  if (list.children.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "model-dropdown-empty";
-    empty.textContent = t("common:sessions.noMatchingProjects");
-    list.appendChild(empty);
-  }
-}
-function updateKbActive() {
-  const items = list.querySelectorAll(".model-dropdown-item");
-  items.forEach((el, i) => {
-    el.classList.toggle("kb-active", i === kbIdx);
-  });
-  if (kbIdx >= 0 && items[kbIdx]) {
-    items[kbIdx].scrollIntoView({ block: "nearest" });
-  }
-}
-function renderProjectSelect() {
-  const wrapper = $("projectSelectWrapper");
-  const allProjects = projectStore.projects.value;
-  const filterId = projectStore.projectFilterId.value;
-  if (allProjects.length === 0) {
-    if (wrapper) wrapper.classList.add("hidden");
-    if (filterId) {
-      projectStore.setFilterId("");
-      setProjectFilterId("");
-    }
-    label.textContent = t("common:sessions.allSessions");
-    return;
-  }
-  if (wrapper) wrapper.classList.remove("hidden");
-  const p = projectStore.getById(filterId);
-  label.textContent = p ? p.label || p.id : t("common:sessions.allSessions");
-}
-btn.addEventListener("click", () => {
-  if (dropdown.classList.contains("hidden")) {
-    openDropdown();
-  } else {
-    closeDropdown();
-  }
-});
-if (searchInput$1) {
-  searchInput$1.addEventListener("input", () => {
-    kbIdx = -1;
-    renderList(searchInput$1.value.trim());
-  });
-  searchInput$1.addEventListener("keydown", (e) => {
-    const items = list.querySelectorAll(".model-dropdown-item");
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      kbIdx = Math.min(kbIdx + 1, items.length - 1);
-      updateKbActive();
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      kbIdx = Math.max(kbIdx - 1, 0);
-      updateKbActive();
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (kbIdx >= 0 && items[kbIdx]) {
-        items[kbIdx].click();
-      } else if (items.length === 1) {
-        items[0].click();
-      }
-    } else if (e.key === "Escape") {
-      closeDropdown();
-      btn.focus();
-    }
-  });
-}
-document.addEventListener("click", (e) => {
-  if (combo && !combo.contains(e.target)) {
-    closeDropdown();
-  }
-});
-window.addEventListener("moltis:locale-changed", () => {
-  renderProjectSelect();
-  if (!dropdown.classList.contains("hidden")) {
-    const query2 = searchInput$1 ? searchInput$1.value.trim() : "";
-    renderList(query2);
-  }
-});
 const root = document.getElementById("modalRoot");
 function createModal(id, titleId, bodyId, closeId) {
   const existing = document.getElementById(id);
@@ -12199,7 +12934,7 @@ function handleToolCallStartDom(p, eventSession) {
     pendingToolCallEnds.delete(endKey);
     completeToolCard(card, pendingEnd, eventSession);
   }
-  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  smartScrollToBottom();
 }
 function renderChannelUserMessage(p, _eventSession) {
   var _a2;
@@ -12329,7 +13064,7 @@ function renderAbortedPartialInDom(eventSession, p, partialState) {
     },
     eventSession
   );
-  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  smartScrollToBottom();
 }
 function handleChatThinking(p, isActive, isChatPage, eventSession) {
   var _a2;
@@ -12344,7 +13079,7 @@ function handleChatThinking(p, isActive, isChatPage, eventSession) {
   thinkEl.appendChild(makeThinkingDots());
   thinkEl.appendChild(makeThinkingStopBtn(eventSession));
   (_a2 = chatMsgBox) == null ? void 0 : _a2.appendChild(thinkEl);
-  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  smartScrollToBottom();
 }
 function handleChatThinkingText(p, isActive, isChatPage, eventSession) {
   updateSessionRunId(eventSession, p.runId);
@@ -12359,7 +13094,7 @@ function handleChatThinkingText(p, isActive, isChatPage, eventSession) {
     textEl.textContent = p.text || "";
     indicator.appendChild(textEl);
     indicator.appendChild(existingBtn || makeThinkingStopBtn(eventSession));
-    if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+    smartScrollToBottom();
   }
 }
 function handleChatThinkingDone(_p, isActive, isChatPage) {
@@ -12475,7 +13210,7 @@ function handleChatDelta(p, isActive, isChatPage, eventSession) {
   }
   setStreamText(streamText + p.text);
   setSafeMarkdownHtml(streamEl, streamText);
-  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  smartScrollToBottom();
 }
 function handleChatFinal(p, isActive, isChatPage, eventSession) {
   var _a2, _b2, _c;
@@ -12553,7 +13288,7 @@ function handleChatFinal(p, isActive, isChatPage, eventSession) {
       appendReasoningDisclosure(msgEl, p.reasoning);
     }
     appendFinalFooter(msgEl, p, eventSession);
-    if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+    smartScrollToBottom();
   } else {
     let resolvedEl = resolveFinalMessageEl(p);
     const skipReasoning = p.reasoning && isReasoningAlreadyShown(p.reasoning);
@@ -12703,7 +13438,7 @@ function handleChatRetrying(p, isActive, isChatPage, eventSession) {
   textEl.className = "thinking-text";
   textEl.textContent = retryStatusText(p);
   indicator.appendChild(textEl);
-  if (chatMsgBox) chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+  smartScrollToBottom();
 }
 function handleChatError(p, isActive, isChatPage, eventSession) {
   var _a2, _b2, _c;
@@ -13021,7 +13756,7 @@ function handleLocalLlmDownload(payload) {
     if (chatMsgBox) {
       clearChatEmptyState();
       chatMsgBox.appendChild(downloadIndicatorEl);
-      chatMsgBox.scrollTop = chatMsgBox.scrollHeight;
+      smartScrollToBottom();
     }
   }
   const barEl = downloadIndicatorEl.querySelector(".download-progress-bar");
@@ -14354,11 +15089,12 @@ function ProjectEditForm(props) {
   const prefixRef = A(null);
   const wtRef = A(null);
   const imageRef = A(null);
+  const indexRef = A(null);
   y$1(() => {
     fetchCachedImages();
   }, []);
   function onSave() {
-    var _a2, _b2, _c, _d, _e, _f, _g, _h;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i;
     const updated = JSON.parse(JSON.stringify(p));
     updated.label = ((_a2 = labelRef.current) == null ? void 0 : _a2.value.trim()) || p.label;
     updated.directory = ((_b2 = dirRef.current) == null ? void 0 : _b2.value.trim()) || p.directory;
@@ -14367,7 +15103,8 @@ function ProjectEditForm(props) {
     updated.teardown_command = ((_e = teardownRef.current) == null ? void 0 : _e.value.trim()) || null;
     updated.branch_prefix = ((_f = prefixRef.current) == null ? void 0 : _f.value.trim()) || null;
     updated.auto_worktree = (_g = wtRef.current) == null ? void 0 : _g.checked;
-    updated.sandbox_image = ((_h = imageRef.current) == null ? void 0 : _h.value.trim()) || null;
+    updated.code_index_enabled = (_h = indexRef.current) == null ? void 0 : _h.checked;
+    updated.sandbox_image = ((_i = imageRef.current) == null ? void 0 : _i.value.trim()) || null;
     updated.updated_at = Date.now();
     sendRpc("projects.upsert", updated).then(() => {
       editingProject.value = null;
@@ -14443,9 +15180,13 @@ function ProjectEditForm(props) {
       ),
       /* @__PURE__ */ u("datalist", { id: "project-image-list", children: cachedImages.value.map((img) => /* @__PURE__ */ u("option", { value: img.tag }, img.tag)) })
     ] }),
-    /* @__PURE__ */ u("div", { style: { marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }, children: [
-      /* @__PURE__ */ u("input", { ref: wtRef, type: "checkbox", checked: p.auto_worktree }),
+    /* @__PURE__ */ u("label", { style: { marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }, children: [
+      /* @__PURE__ */ u("input", { ref: wtRef, type: "checkbox", defaultChecked: p.auto_worktree }),
       /* @__PURE__ */ u("span", { className: "text-xs text-[var(--text)]", children: t("projects:editForm.autoWorktree") })
+    ] }),
+    /* @__PURE__ */ u("label", { style: { marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }, children: [
+      /* @__PURE__ */ u("input", { ref: indexRef, type: "checkbox", defaultChecked: p.code_index_enabled !== false }),
+      /* @__PURE__ */ u("span", { className: "text-xs text-[var(--text)]", children: t("projects:editForm.codeIndex") })
     ] }),
     /* @__PURE__ */ u("div", { style: { display: "flex", gap: "8px" }, children: [
       /* @__PURE__ */ u("button", { className: "provider-btn", onClick: onSave, children: t("common:actions.save") }),
@@ -14479,7 +15220,8 @@ function ProjectCard(props) {
           p.branch_prefix,
           "/*"
         ] }),
-        p.sandbox_image && /* @__PURE__ */ u("span", { className: "provider-item-badge api-key", title: p.sandbox_image, children: t("projects:badges.image") })
+        p.sandbox_image && /* @__PURE__ */ u("span", { className: "provider-item-badge api-key", title: p.sandbox_image, children: t("projects:badges.image") }),
+        p.code_index_enabled !== false && /* @__PURE__ */ u("span", { className: "provider-item-badge oauth", children: t("projects:badges.indexed") })
       ] }),
       /* @__PURE__ */ u(
         "div",
@@ -21258,6 +22000,24 @@ registerPrefix(routes.monitoring, initMonitoring, teardownMonitoring);
 const WS_RETRY_LIMIT = 75;
 const WS_RETRY_DELAY_MS = 200;
 let containerRef$1 = null;
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function parseModePayload(value) {
+  if (!isRecord(value)) return null;
+  const id = typeof value.id === "string" ? value.id : "";
+  if (!id) return null;
+  return {
+    id,
+    name: typeof value.name === "string" && value.name.trim() ? value.name : id,
+    description: typeof value.description === "string" ? value.description : "",
+    prompt: typeof value.prompt === "string" ? value.prompt : ""
+  };
+}
+function parseModesPayload(value) {
+  if (!(isRecord(value) && Array.isArray(value.modes))) return [];
+  return value.modes.map(parseModePayload).filter((mode) => mode !== null);
+}
 function initAgents(container, subPath) {
   containerRef$1 = container;
   R(/* @__PURE__ */ u(AgentsPageComponent, { subPath: subPath || void 0 }), container);
@@ -21492,6 +22252,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
         isMain ? /* @__PURE__ */ u(
           "button",
           {
+            type: "button",
             className: "provider-btn provider-btn-secondary",
             style: { fontSize: "0.7rem", padding: "3px 8px" },
             onClick: () => navigate(settingsPath("identity")),
@@ -21501,6 +22262,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
           /* @__PURE__ */ u(
             "button",
             {
+              type: "button",
               className: "provider-btn provider-btn-secondary",
               style: { fontSize: "0.7rem", padding: "3px 8px" },
               onClick: () => onEdit(agent),
@@ -21510,6 +22272,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
           /* @__PURE__ */ u(
             "button",
             {
+              type: "button",
               className: "provider-btn provider-btn-danger",
               style: { fontSize: "0.7rem", padding: "3px 8px" },
               onClick: () => onDelete(agent),
@@ -21520,6 +22283,7 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
         !isDefault && /* @__PURE__ */ u(
           "button",
           {
+            type: "button",
             className: "provider-btn provider-btn-secondary",
             style: { fontSize: "0.7rem", padding: "3px 8px" },
             onClick: () => onSetDefault(agent),
@@ -21540,25 +22304,56 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
     }) })
   ] });
 }
-function PresetCard({ preset }) {
+function provenanceBadge(provenance) {
+  if (provenance === "built_in") return /* @__PURE__ */ u("span", { className: "recommended-badge", children: "Built-in" });
+  if (provenance === "user_override") return /* @__PURE__ */ u("span", { className: "tier-badge", children: "Overridden" });
+  if (provenance === "custom") return /* @__PURE__ */ u("span", { className: "tier-badge", children: "Custom" });
+  return null;
+}
+function PresetCard({ preset, creating, onCreate, onRevert }) {
   const [expanded, setExpanded] = d(false);
-  return /* @__PURE__ */ u("div", { className: "backend-card", style: { opacity: 0.7 }, children: [
+  const isOverridden = preset.provenance === "user_override";
+  return /* @__PURE__ */ u("div", { className: "backend-card", style: { opacity: preset.provenance === "built_in" ? 0.7 : 1 }, children: [
     /* @__PURE__ */ u("div", { className: "flex items-center justify-between", children: [
       /* @__PURE__ */ u("div", { className: "flex items-center gap-2", children: [
         preset.emoji && /* @__PURE__ */ u("span", { className: "text-lg", children: preset.emoji }),
         /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: preset.name }),
-        /* @__PURE__ */ u("span", { className: "tier-badge", children: "config" }),
+        provenanceBadge(preset.provenance),
         preset.model && /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: preset.model })
       ] }),
-      /* @__PURE__ */ u(
-        "button",
-        {
-          className: "provider-btn provider-btn-secondary",
-          style: { fontSize: "0.7rem", padding: "3px 8px" },
-          onClick: () => setExpanded(!expanded),
-          children: expanded ? "Hide" : "View"
-        }
-      )
+      /* @__PURE__ */ u("div", { className: "flex gap-2", children: [
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn",
+            style: { fontSize: "0.7rem", padding: "3px 8px" },
+            disabled: creating,
+            onClick: () => onCreate(preset),
+            children: creating ? "Adding..." : "Add to Chat"
+          }
+        ),
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-secondary",
+            style: { fontSize: "0.7rem", padding: "3px 8px" },
+            onClick: () => setExpanded(!expanded),
+            children: expanded ? "Hide" : "View"
+          }
+        ),
+        isOverridden && onRevert && /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-secondary",
+            style: { fontSize: "0.7rem", padding: "3px 8px" },
+            onClick: () => onRevert(preset.id),
+            children: "Revert to built-in"
+          }
+        )
+      ] })
     ] }),
     preset.theme && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)] mt-1", children: preset.theme }),
     expanded && preset.toml && /* @__PURE__ */ u(
@@ -21578,12 +22373,41 @@ function PresetCard({ preset }) {
     )
   ] });
 }
+function ModeCard({ mode }) {
+  const [expanded, setExpanded] = d(false);
+  const title = mode.name || mode.id;
+  return /* @__PURE__ */ u("div", { className: "backend-card", children: [
+    /* @__PURE__ */ u("div", { className: "flex items-center justify-between gap-3", children: [
+      /* @__PURE__ */ u("div", { className: "flex min-w-0 flex-col gap-1", children: [
+        /* @__PURE__ */ u("div", { className: "flex items-center gap-2", children: [
+          /* @__PURE__ */ u("span", { className: "text-sm font-medium text-[var(--text-strong)]", children: title }),
+          /* @__PURE__ */ u("span", { className: "tier-badge", children: mode.id })
+        ] }),
+        mode.description && /* @__PURE__ */ u("div", { className: "text-xs text-[var(--muted)]", children: mode.description })
+      ] }),
+      /* @__PURE__ */ u(
+        "button",
+        {
+          type: "button",
+          className: "provider-btn provider-btn-secondary",
+          style: { fontSize: "0.7rem", padding: "3px 8px" },
+          onClick: () => setExpanded(!expanded),
+          children: expanded ? "Hide" : "View"
+        }
+      )
+    ] }),
+    expanded && /* @__PURE__ */ u("pre", { className: "text-xs mt-2 p-2 rounded bg-[var(--bg-offset)] font-mono whitespace-pre-wrap overflow-x-auto max-h-[200px] overflow-y-auto", children: mode.prompt })
+  ] });
+}
 function AgentsPageComponent({ subPath }) {
   const [agents, setAgents] = d([]);
   const [configPresets, setConfigPresets] = d([]);
+  const [modes, setModes] = d([]);
   const [defaultId, setDefaultId] = d("main");
   const [isLoading, setIsLoading] = d(true);
   const [editing, setEditing] = d(null);
+  const [creatingPresetId, setCreatingPresetId] = d(null);
+  const [activeTab2, setActiveTab] = d("chat");
   const [error2, setError] = d(null);
   function fetchAgents() {
     setIsLoading(true);
@@ -21609,16 +22433,43 @@ function AgentsPageComponent({ subPath }) {
     load();
   }
   function fetchConfigPresets() {
-    sendRpc("agents.presets_list", {}).then((res) => {
-      var _a2;
-      if ((res == null ? void 0 : res.ok) && ((_a2 = res.payload) == null ? void 0 : _a2.presets)) {
-        setConfigPresets(res.payload.presets);
-      }
-    });
+    let attempts = 0;
+    function load() {
+      sendRpc("agents.presets_list", {}).then((res) => {
+        var _a2, _b2, _c;
+        if ((((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.code) === "UNAVAILABLE" || ((_b2 = res == null ? void 0 : res.error) == null ? void 0 : _b2.message) === "WebSocket not connected") && attempts < WS_RETRY_LIMIT) {
+          attempts += 1;
+          window.setTimeout(load, WS_RETRY_DELAY_MS);
+          return;
+        }
+        if ((res == null ? void 0 : res.ok) && ((_c = res.payload) == null ? void 0 : _c.presets)) {
+          setConfigPresets(res.payload.presets);
+        }
+      });
+    }
+    load();
+  }
+  function fetchModes() {
+    let attempts = 0;
+    function load() {
+      sendRpc("modes.list", {}).then((res) => {
+        var _a2, _b2;
+        if ((((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.code) === "UNAVAILABLE" || ((_b2 = res == null ? void 0 : res.error) == null ? void 0 : _b2.message) === "WebSocket not connected") && attempts < WS_RETRY_LIMIT) {
+          attempts += 1;
+          window.setTimeout(load, WS_RETRY_DELAY_MS);
+          return;
+        }
+        if (res == null ? void 0 : res.ok) {
+          setModes(parseModesPayload(res.payload));
+        }
+      });
+    }
+    load();
   }
   y$1(() => {
     fetchAgents();
     fetchConfigPresets();
+    fetchModes();
     if (subPath === "new") {
       setEditing("new");
     }
@@ -21641,6 +22492,19 @@ function AgentsPageComponent({ subPath }) {
       });
     });
   }
+  function onRevertPreset(id) {
+    confirmDialog(`Revert preset "${id}" to the built-in default? Your local override will be removed.`).then((yes) => {
+      if (!yes) return;
+      sendRpc("agents.preset.save", { id, toml: "" }).then((res) => {
+        var _a2;
+        if (res == null ? void 0 : res.ok) {
+          fetchConfigPresets();
+        } else {
+          setError(((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to revert");
+        }
+      });
+    });
+  }
   function onSetDefault(agent) {
     sendRpc("agents.set_default", { id: agent.id }).then((res) => {
       var _a2;
@@ -21650,6 +22514,37 @@ function AgentsPageComponent({ subPath }) {
       } else {
         setError(((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to set default");
       }
+    });
+  }
+  function onCreateFromPreset(preset) {
+    setError(null);
+    setCreatingPresetId(preset.id);
+    sendRpc("agents.create", {
+      id: preset.id,
+      name: preset.name || preset.id,
+      emoji: preset.emoji || null,
+      theme: preset.theme || null
+    }).then((createRes) => {
+      var _a2, _b2;
+      if (!(createRes == null ? void 0 : createRes.ok)) {
+        setCreatingPresetId(null);
+        setError(((_a2 = createRes == null ? void 0 : createRes.error) == null ? void 0 : _a2.message) || "Failed to create agent from preset");
+        return;
+      }
+      const promptSuffix = (_b2 = preset.system_prompt_suffix) == null ? void 0 : _b2.trim();
+      const afterSoul = promptSuffix ? sendRpc("agents.identity.update_soul", { agent_id: preset.id, soul: promptSuffix }) : Promise.resolve({ ok: true, payload: void 0, error: void 0 });
+      afterSoul.then((soulRes) => {
+        var _a3;
+        setCreatingPresetId(null);
+        if (!(soulRes == null ? void 0 : soulRes.ok)) {
+          setError(((_a3 = soulRes == null ? void 0 : soulRes.error) == null ? void 0 : _a3.message) || "Created agent, but failed to copy preset prompt");
+          return;
+        }
+        refresh();
+        fetchSessions();
+        fetchAgents();
+        fetchConfigPresets();
+      });
     });
   }
   if (isLoading) {
@@ -21670,11 +22565,12 @@ function AgentsPageComponent({ subPath }) {
     ) });
   }
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
-    /* @__PURE__ */ u("div", { className: "flex items-center gap-3", children: [
+    /* @__PURE__ */ u("div", { className: "flex items-center gap-3 flex-wrap", children: [
       /* @__PURE__ */ u("h2", { className: "text-lg font-medium text-[var(--text-strong)]", children: "Agents" }),
-      /* @__PURE__ */ u(
+      activeTab2 === "chat" && /* @__PURE__ */ u(
         "button",
         {
+          type: "button",
           className: "provider-btn",
           style: { fontSize: "0.75rem", padding: "4px 10px" },
           onClick: () => setEditing("new"),
@@ -21682,22 +22578,58 @@ function AgentsPageComponent({ subPath }) {
         }
       )
     ] }),
-    /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { maxWidth: "600px", margin: 0 }, children: "Create agent personas with different identities and personalities. Each agent has its own memory and system prompt." }),
-    error2 && /* @__PURE__ */ u("span", { className: "text-xs", style: { color: "var(--error)" }, children: error2 }),
-    /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", style: { maxWidth: "600px" }, children: agents.map((agent) => /* @__PURE__ */ u(
-      AgentCard,
+    /* @__PURE__ */ u(
+      TabBar$1,
       {
-        agent,
-        defaultId,
-        onEdit: (a) => setEditing(a),
-        onDelete,
-        onSetDefault
-      },
-      agent.id
-    )) }),
-    configPresets.length > 0 && /* @__PURE__ */ u("div", { className: "flex flex-col gap-2 mt-2", style: { maxWidth: "600px" }, children: [
-      /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Config-only Presets" }),
-      configPresets.map((preset) => /* @__PURE__ */ u(PresetCard, { preset }, preset.id))
+        tabs: [
+          { id: "chat", label: "Chat Agents", badge: agents.length || void 0 },
+          { id: "subagents", label: "Sub-Agents", badge: configPresets.length || void 0 },
+          { id: "modes", label: "Modes", badge: modes.length || void 0 }
+        ],
+        active: activeTab2,
+        onChange: setActiveTab
+      }
+    ),
+    error2 && /* @__PURE__ */ u("span", { className: "text-xs", style: { color: "var(--error)" }, children: error2 }),
+    activeTab2 === "chat" && /* @__PURE__ */ u("section", { className: "flex flex-col gap-3 max-w-[600px]", "aria-label": "Chat Agents panel", children: [
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Chat Agents" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "Persistent identities you can select in chat. Each chat agent has its own memory, system prompt, sessions, and fallback setting." })
+      ] }),
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-2", children: agents.map((agent) => /* @__PURE__ */ u(
+        AgentCard,
+        {
+          agent,
+          defaultId,
+          onEdit: (a) => setEditing(a),
+          onDelete,
+          onSetDefault
+        },
+        agent.id
+      )) })
+    ] }),
+    activeTab2 === "subagents" && /* @__PURE__ */ u("section", { className: "flex flex-col gap-2 max-w-[600px]", "aria-label": "Sub-Agents panel", children: [
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Sub-Agent Presets" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "Config roles already usable by spawn_agent for delegated work. Add one to chat only when you want that preset to become a persistent chat agent with memory and sessions." })
+      ] }),
+      configPresets.length > 0 ? configPresets.map((preset) => /* @__PURE__ */ u(
+        PresetCard,
+        {
+          preset,
+          creating: creatingPresetId === preset.id,
+          onCreate: onCreateFromPreset,
+          onRevert: onRevertPreset
+        },
+        preset.id
+      )) : /* @__PURE__ */ u("div", { className: "backend-card text-xs text-[var(--muted)]", children: "All configured sub-agent presets are already available as chat agents." })
+    ] }),
+    activeTab2 === "modes" && /* @__PURE__ */ u("section", { className: "flex flex-col gap-2 max-w-[600px]", "aria-label": "Modes panel", children: [
+      /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
+        /* @__PURE__ */ u("h3", { className: "text-xs font-medium text-[var(--muted)]", children: "Modes" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "Temporary per-session prompt overlays. Use /mode in chat or any connected channel to switch how the current agent should work without changing its identity, memory, or sub-agent presets." })
+      ] }),
+      modes.length > 0 ? modes.map((mode) => /* @__PURE__ */ u(ModeCard, { mode }, mode.id)) : /* @__PURE__ */ u("div", { className: "backend-card text-xs text-[var(--muted)]", children: "No modes are configured." })
     ] })
   ] });
 }
@@ -31471,6 +32403,43 @@ function VaultSection() {
 const voiceShowAddModal = y(false);
 const voiceSelectedProvider = y(null);
 const voiceSelectedProviderData = y(null);
+function PttKeyPicker({ pttListening, setPttListening, pttKeyValue, setPttKeyValue }) {
+  const handlerRef = A(null);
+  y$1(() => {
+    return () => {
+      if (handlerRef.current) {
+        document.removeEventListener("keydown", handlerRef.current, true);
+        handlerRef.current = null;
+      }
+    };
+  }, []);
+  return /* @__PURE__ */ u(
+    "button",
+    {
+      type: "button",
+      className: "provider-key-input",
+      style: { minWidth: "120px", textAlign: "center", cursor: "pointer" },
+      onClick: () => {
+        if (pttListening) return;
+        setPttListening(true);
+        const handler = (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          setPttKeyValue(ev.key);
+          setPttKey(ev.key);
+          setPttListening(false);
+          document.removeEventListener("keydown", handler, true);
+          handlerRef.current = null;
+          rerender$1();
+        };
+        handlerRef.current = handler;
+        document.addEventListener("keydown", handler, true);
+        rerender$1();
+      },
+      children: pttListening ? "Press any key..." : pttKeyValue
+    }
+  );
+}
 function VoiceSection() {
   const [allProviders, setAllProviders] = d({ tts: [], stt: [] });
   const [voiceLoading, setVoiceLoading] = d(true);
@@ -31481,6 +32450,9 @@ function VoiceSection() {
   const [voiceTesting, setVoiceTesting] = d(null);
   const [activeRecorder, setActiveRecorder] = d(null);
   const [voiceTestResults, setVoiceTestResults] = d({});
+  const [pttKeyValue, setPttKeyValue] = d(getPttKey());
+  const [pttListening, setPttListening] = d(false);
+  const [vadSens, setVadSens] = d(getVadSensitivity());
   function fetchVoiceStatus(options) {
     if (!(options == null ? void 0 : options.silent)) {
       setVoiceLoading(true);
@@ -31731,6 +32703,50 @@ function VoiceSection() {
             prov.id
           );
         }) })
+      ] })
+    ] }),
+    /* @__PURE__ */ u("div", { style: { maxWidth: "700px", display: "flex", flexDirection: "column", gap: "12px" }, children: [
+      /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)]", children: "Push-to-Talk" }),
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "Hold a keyboard key to record voice input. Release to send. Function keys (F1–F24) work even when focused in an input field." }),
+      /* @__PURE__ */ u("div", { className: "flex items-center gap-3", children: [
+        /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", children: "PTT Key:" }),
+        /* @__PURE__ */ u(
+          PttKeyPicker,
+          {
+            pttListening,
+            setPttListening,
+            pttKeyValue,
+            setPttKeyValue
+          }
+        )
+      ] })
+    ] }),
+    /* @__PURE__ */ u("div", { style: { maxWidth: "700px", display: "flex", flexDirection: "column", gap: "12px" }, children: [
+      /* @__PURE__ */ u("h3", { className: "text-sm font-medium text-[var(--text-strong)]", children: "Conversation Mode (VAD)" }),
+      /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: 0 }, children: "Adjust how sensitive the voice activity detection is. Higher values pick up softer speech but may trigger on background noise." }),
+      /* @__PURE__ */ u("div", { className: "flex items-center gap-3", children: [
+        /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", style: { minWidth: "80px" }, children: "Sensitivity:" }),
+        /* @__PURE__ */ u(
+          "input",
+          {
+            type: "range",
+            min: "0",
+            max: "100",
+            step: "5",
+            value: vadSens,
+            style: { flex: 1, maxWidth: "200px", accentColor: "var(--accent)" },
+            onInput: (e) => {
+              const val = parseInt(targetValue(e), 10);
+              setVadSens(val);
+              setVadSensitivity(val);
+              rerender$1();
+            }
+          }
+        ),
+        /* @__PURE__ */ u("span", { className: "text-xs text-[var(--muted)]", style: { minWidth: "35px", textAlign: "right" }, children: [
+          vadSens,
+          "%"
+        ] })
       ] })
     ] }),
     /* @__PURE__ */ u(
@@ -33079,6 +34095,9 @@ function fetchBootstrap() {
       setProjects(bootProjects);
       renderProjectSelect();
       renderSessionProjectSelect();
+      if (projectCombo) {
+        projectCombo.classList.toggle("hidden", bootProjects.length === 0);
+      }
     }
     setSandboxInfo(boot.sandbox || null);
     updateSandboxUI(sessionSandboxEnabled);

@@ -42,9 +42,6 @@ test.describe("Signal channel", () => {
 		await page.getByRole("button", { name: "Connect Signal", exact: true }).click();
 		await expect(page.getByRole("heading", { name: "Connect Signal", exact: true })).toBeVisible();
 
-		const accountIdInput = page.locator('input[data-field="accountId"]');
-		await expect(accountIdInput).toBeVisible();
-
 		const accountInput = page.locator('input[data-field="account"]');
 		await expect(accountInput).toBeVisible();
 		await expect(accountInput).toHaveAttribute("placeholder", "e.g. +15551234567");
@@ -61,8 +58,8 @@ test.describe("Signal channel", () => {
 		await expect(groupPolicySelect).toBeVisible();
 		await expect(groupPolicySelect).toHaveValue("disabled");
 
-		await expect(page.getByText("How to set up Signal")).toBeVisible();
-		await expect(page.getByText("Run signal-cli daemon with JSON-RPC HTTP enabled")).toBeVisible();
+		await expect(page.getByText("Requires signal-cli")).toBeVisible();
+		await expect(page.getByText("signal-cli daemon --http localhost:8080")).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});

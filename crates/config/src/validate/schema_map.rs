@@ -316,6 +316,14 @@ pub(super) fn build_schema_map() -> KnownKeys {
         ]))
     };
 
+    let mode_preset = || {
+        Struct(HashMap::from([
+            ("name", Leaf),
+            ("description", Leaf),
+            ("prompt", Leaf),
+        ]))
+    };
+
     Struct(HashMap::from([
         (
             "server",
@@ -369,6 +377,10 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("default_preset", Leaf),
                 ("presets", Map(Box::new(agent_preset()))),
             ])),
+        ),
+        (
+            "modes",
+            Struct(HashMap::from([("presets", Map(Box::new(mode_preset())))])),
         ),
         ("tools", tools()),
         (
@@ -554,6 +566,21 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ])),
         ),
         (
+            "home_assistant",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("default_instance", Leaf),
+                (
+                    "instances",
+                    Map(Box::new(Struct(HashMap::from([
+                        ("url", Leaf),
+                        ("token", Leaf),
+                        ("timeout_seconds", Leaf),
+                    ])))),
+                ),
+            ])),
+        ),
+        (
             "webhooks",
             Struct(HashMap::from([(
                 "rate_limit",
@@ -564,6 +591,17 @@ pub(super) fn build_schema_map() -> KnownKeys {
                     ("cleanup_interval_secs", Leaf),
                 ])),
             )])),
+        ),
+        (
+            "code_index",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("extensions", Array(Box::new(Leaf))),
+                ("max_file_size", Leaf),
+                ("skip_binary", Leaf),
+                ("skip_paths", Array(Box::new(Leaf))),
+                ("data_dir", Leaf),
+            ])),
         ),
         (
             "voice",

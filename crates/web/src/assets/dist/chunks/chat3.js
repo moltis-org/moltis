@@ -7,6 +7,12 @@ const chat = {
   micStopAndSend: "点击停止并发送",
   voiceTranscribing: "转录中...",
   voiceTranscribingMessage: "正在转录语音...",
+  vadTooltip: "对话模式 (VAD)",
+  vadStopTooltip: "点击停止对话模式",
+  voiceNoSpeech: "未检测到语音",
+  voiceTranscriptionError: "转录错误",
+  voiceTranscriptionFailed: "转录失败：{{error}}",
+  voiceUploadFailed: "上传失败：{{error}}",
   // ── Slash commands ───────────────────────────────────────
   slashClear: "清除对话历史",
   slashCompact: "压缩对话以节省 token",

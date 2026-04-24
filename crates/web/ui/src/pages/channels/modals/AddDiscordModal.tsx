@@ -9,7 +9,7 @@ import { targetValue } from "../../../typed-events";
 import { ChannelType } from "../../../types";
 import { Modal } from "../../../ui";
 import { type ChannelConfig, ConnectionModeHint, loadChannels, showAddDiscord } from "../../ChannelsPage";
-import { AdvancedConfigPatchField, SharedChannelFields } from "../ChannelFields";
+import { AdvancedConfigPatchField, AllowlistInput, SharedChannelFields } from "../ChannelFields";
 
 // ── Discord invite URL helper ────────────────────────────────
 
@@ -31,6 +31,8 @@ export function AddDiscordModal(): VNode {
 	const saving = useSignal(false);
 	const addModel = useSignal("");
 	const allowlistItems = useSignal<string[]>([]);
+	const channelNamePatterns = useSignal<string[]>([]);
+	const categoryAllowlist = useSignal<string[]>([]);
 	const accountDraft = useSignal("");
 	const tokenDraft = useSignal("");
 	const advancedConfigPatch = useSignal("");
@@ -58,6 +60,8 @@ export function AddDiscordModal(): VNode {
 			mention_mode: (form.querySelector("[data-field=mentionMode]") as HTMLSelectElement).value,
 			allowlist: allowlistItems.value,
 		};
+		if (channelNamePatterns.value.length > 0) addConfig.channel_name_patterns = channelNamePatterns.value;
+		if (categoryAllowlist.value.length > 0) addConfig.category_allowlist = categoryAllowlist.value;
 		if (addModel.value) {
 			addConfig.model = addModel.value;
 			const found = modelsSig.value.find((x) => x.id === addModel.value);
@@ -71,6 +75,8 @@ export function AddDiscordModal(): VNode {
 				showAddDiscord.value = false;
 				addModel.value = "";
 				allowlistItems.value = [];
+				channelNamePatterns.value = [];
+				categoryAllowlist.value = [];
 				accountDraft.value = "";
 				tokenDraft.value = "";
 				advancedConfigPatch.value = "";
@@ -160,6 +166,29 @@ export function AddDiscordModal(): VNode {
 					</div>
 				)}
 				<SharedChannelFields addModel={addModel} allowlistItems={allowlistItems} />
+				<label className="text-xs text-[var(--muted)]">Channel Name Patterns (optional)</label>
+				<AllowlistInput
+					value={channelNamePatterns.value}
+					onChange={(v) => {
+						channelNamePatterns.value = v;
+					}}
+					placeholder="e.g. ticket-* (glob patterns, Enter to add)"
+				/>
+				<div className="text-xs text-[var(--muted)] -mt-1">
+					When set, the bot only responds in guild channels whose name matches a pattern. Matched channels do not
+					require @mention. Supports * wildcards.
+				</div>
+				<label className="text-xs text-[var(--muted)]">Category IDs (optional)</label>
+				<AllowlistInput
+					value={categoryAllowlist.value}
+					onChange={(v) => {
+						categoryAllowlist.value = v;
+					}}
+					placeholder="Discord category ID (Enter to add)"
+				/>
+				<div className="text-xs text-[var(--muted)] -mt-1">
+					Only respond in channels under these Discord categories. Combined with name patterns via OR.
+				</div>
 				<AdvancedConfigPatchField
 					value={advancedConfigPatch.value}
 					onInput={(value) => {

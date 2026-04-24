@@ -1147,6 +1147,69 @@ async fn test_read_skill_sidecar_rejects_symlinked_skill_directory() {
     );
 }
 
+// ── Bundled skill materialization ────────────────────────────────────
+
+#[cfg(feature = "bundled-skills")]
+#[tokio::test]
+async fn test_read_bundled_skill_with_scripts_includes_skill_dir() {
+    use moltis_skills::bundled::BundledSkillStore;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Arc::new(BundledSkillStore::with_materialize_dir(
+        tmp.path().to_path_buf(),
+    ));
+    let skills = store.discover();
+    let maps = skills
+        .iter()
+        .find(|s| s.name == "maps")
+        .expect("maps should be a bundled skill")
+        .clone();
+
+    let discoverer: Arc<dyn SkillDiscoverer> = Arc::new(StaticDiscoverer::new(vec![maps]));
+    let tool = ReadSkillTool::with_bundled(discoverer, store);
+
+    let result = tool.execute(json!({ "name": "maps" })).await.unwrap();
+
+    // A bundled skill with script sidecars must include `skill_dir`
+    // so the agent can resolve script paths referenced in the body.
+    let skill_dir = result["skill_dir"]
+        .as_str()
+        .expect("bundled skill with scripts must include skill_dir in response");
+    assert!(
+        Path::new(skill_dir).join("scripts/maps_client.py").exists(),
+        "scripts/maps_client.py must be materialized at {skill_dir}"
+    );
+}
+
+#[cfg(feature = "bundled-skills")]
+#[tokio::test]
+async fn test_read_bundled_skill_without_scripts_omits_skill_dir() {
+    use moltis_skills::bundled::BundledSkillStore;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Arc::new(BundledSkillStore::with_materialize_dir(
+        tmp.path().to_path_buf(),
+    ));
+    let skills = store.discover();
+
+    // Find a skill without sidecars.
+    let no_sidecars = skills
+        .iter()
+        .find(|s| store.list_sidecars(&s.name).is_empty())
+        .expect("should have at least one skill without sidecars")
+        .clone();
+    let name = no_sidecars.name.clone();
+
+    let discoverer: Arc<dyn SkillDiscoverer> = Arc::new(StaticDiscoverer::new(vec![no_sidecars]));
+    let tool = ReadSkillTool::with_bundled(discoverer, store);
+
+    let result = tool.execute(json!({ "name": name })).await.unwrap();
+    assert!(
+        result.get("skill_dir").is_none(),
+        "bundled skill without sidecars should not include skill_dir: {result}"
+    );
+}
+
 /// Test-only `SkillDiscoverer` that returns a fixed snapshot. Lets the
 /// plugin/symlink tests construct scenarios that don't match the
 /// `FsSkillDiscoverer`'s directory-walking assumptions.

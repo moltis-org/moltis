@@ -1308,7 +1308,7 @@ mod tests {
     #[test]
     fn all_covers_every_variant() {
         // If a new variant is added to ChannelType, this test forces updating ALL.
-        assert_eq!(ChannelType::ALL.len(), 7);
+        assert_eq!(ChannelType::ALL.len(), 8);
         for ct in ChannelType::ALL {
             // descriptor() must not panic
             let desc = ct.descriptor();

@@ -322,6 +322,7 @@ export function DiscordForm({ onConnected, error, setError }: ChannelFormProps):
 	const [token, setToken] = useState("");
 	const [dmPolicy, setDmPolicy] = useState("allowlist");
 	const [allowlist, setAllowlist] = useState("");
+	const [channelPatterns, setChannelPatterns] = useState("");
 	const [advancedConfig, setAdvancedConfig] = useState("");
 	const [saving, setSaving] = useState(false);
 
@@ -344,12 +345,18 @@ export function DiscordForm({ onConnected, error, setError }: ChannelFormProps):
 			.split(/\n/)
 			.map((s) => s.trim())
 			.filter(Boolean);
+		const patternEntries = channelPatterns
+			.trim()
+			.split(/\n/)
+			.map((s) => s.trim())
+			.filter(Boolean);
 		const config: Record<string, unknown> = {
 			token: token.trim(),
 			dm_policy: dmPolicy,
 			mention_mode: "mention",
 			allowlist: allowlistEntries,
 		};
+		if (patternEntries.length > 0) config.channel_name_patterns = patternEntries;
 		Object.assign(config, advancedPatch.value);
 		(
 			addChannel("discord", accountId.trim(), config) as Promise<{
@@ -455,6 +462,21 @@ export function DiscordForm({ onConnected, error, setError }: ChannelFormProps):
 					style="resize:vertical;font-family:var(--font-body);"
 				/>
 				<div className="text-xs text-[var(--muted)] mt-1">One username per line. These users can DM your bot.</div>
+			</div>
+			<div>
+				<label className="text-xs text-[var(--muted)] mb-1 block">Channel Name Patterns (optional)</label>
+				<textarea
+					className="provider-key-input w-full"
+					rows={2}
+					value={channelPatterns}
+					onInput={(e) => setChannelPatterns(targetValue(e))}
+					placeholder="ticket-*"
+					style="resize:vertical;font-family:var(--font-body);"
+				/>
+				<div className="text-xs text-[var(--muted)] mt-1">
+					One glob pattern per line. When set, the bot only responds in matching guild channels (no @mention needed).
+					Supports * wildcards. E.g., ticket-*, support-*.
+				</div>
 			</div>
 			<AdvancedConfigPatchField value={advancedConfig} onInput={setAdvancedConfig} />
 			{error && <ErrorPanel message={error} />}
@@ -673,7 +695,18 @@ export function SignalForm({ onConnected, error, setError }: ChannelFormProps): 
 			<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
 				<span className="font-medium text-[var(--text-strong)]">Requires signal-cli</span>
 				{/* biome-ignore lint: single-line keeps whitespace intact */}
-				<span>Signal integration requires a running <a href="https://github.com/AsamK/signal-cli" target="_blank" rel="noopener noreferrer" className="underline text-[var(--text-strong)]">signal-cli</a> daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:</span>
+				<span>
+					Signal integration requires a running{" "}
+					<a
+						href="https://github.com/AsamK/signal-cli"
+						target="_blank"
+						rel="noopener noreferrer"
+						className="underline text-[var(--text-strong)]"
+					>
+						signal-cli
+					</a>{" "}
+					daemon with JSON-RPC HTTP enabled. Install it, register or link your Signal account, then start the daemon:
+				</span>
 				<code className="text-[10px] bg-[var(--surface1)] px-1.5 py-0.5 rounded mt-0.5">
 					signal-cli daemon --http localhost:8080
 				</code>

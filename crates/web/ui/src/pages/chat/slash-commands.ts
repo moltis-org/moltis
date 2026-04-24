@@ -2,7 +2,7 @@
 
 import { chatAddMsg, updateCommandInputUI } from "../../chat-ui";
 import { renderMarkdown, sendRpc } from "../../helpers";
-import { clearActiveSession, switchSession } from "../../sessions";
+import { clearActiveSession, fetchSessions, switchSession } from "../../sessions";
 import * as S from "../../state";
 import { type ContextData, renderContextCard } from "./context-card";
 
@@ -18,12 +18,28 @@ export interface ParsedSlash {
 	args: string;
 }
 
+interface UnknownRecord {
+	[key: string]: unknown;
+}
+
+interface ModePayload {
+	id: string;
+	name: string;
+	description: string;
+	prompt: string;
+}
+
+interface ModesListPayload {
+	modes: ModePayload[];
+}
+
 // ── Slash commands list ─────────────────────────────────────
 
 export const slashCommands: SlashCommand[] = [
 	{ name: "clear", description: "Clear conversation history" },
 	{ name: "compact", description: "Summarize conversation to save tokens" },
 	{ name: "context", description: "Show session context and project info" },
+	{ name: "mode", description: "Switch session mode" },
 	{ name: "sh", description: "Enter command mode (/sh off or Esc to exit)" },
 ];
 
@@ -207,6 +223,88 @@ function setCommandMode(enabled: boolean): void {
 	updateCommandInputUI();
 }
 
+function isRecord(value: unknown): value is UnknownRecord {
+	return typeof value === "object" && value !== null;
+}
+
+function parseMode(value: unknown): ModePayload | null {
+	if (!isRecord(value)) return null;
+	const id = typeof value.id === "string" ? value.id : "";
+	if (!id) return null;
+	return {
+		id,
+		name: typeof value.name === "string" && value.name.trim() ? value.name : id,
+		description: typeof value.description === "string" ? value.description : "",
+		prompt: typeof value.prompt === "string" ? value.prompt : "",
+	};
+}
+
+function parseModesListPayload(value: unknown): ModesListPayload {
+	if (!(isRecord(value) && Array.isArray(value.modes))) return { modes: [] };
+	return { modes: value.modes.map(parseMode).filter((mode): mode is ModePayload => mode !== null) };
+}
+
+function formatModeList(modes: ModePayload[]): string {
+	if (modes.length === 0) return "No modes are configured.";
+	const lines = modes.map((mode, index) => {
+		const description = mode.description ? ` - ${mode.description}` : "";
+		return `${index + 1}. ${mode.name} [${mode.id}]${description}`;
+	});
+	lines.push("", "Use `/mode N`, `/mode <id>`, or `/mode none`.");
+	return lines.join("\n");
+}
+
+function findMode(modes: ModePayload[], args: string): ModePayload | null {
+	const normalized = args.trim().toLowerCase();
+	const number = Number.parseInt(normalized, 10);
+	if (Number.isInteger(number) && number > 0 && String(number) === normalized) {
+		return modes[number - 1] || null;
+	}
+	return modes.find((mode) => mode.id.toLowerCase() === normalized || mode.name.toLowerCase() === normalized) || null;
+}
+
+function handleModeCommand(cmdArgs: string): void {
+	const args = cmdArgs.trim();
+	chatAddMsg("system", "Loading modes...");
+	sendRpc("modes.list", {}).then((listRes) => {
+		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+		if (!listRes?.ok) {
+			chatAddMsg("error", listRes?.error?.message || "Failed to load modes");
+			return;
+		}
+		const modes = parseModesListPayload(listRes.payload).modes;
+		if (!args) {
+			chatAddMsg("system", renderMarkdown(formatModeList(modes)), true);
+			return;
+		}
+		const normalized = args.toLowerCase();
+		if (["none", "off", "clear", "default", "reset"].includes(normalized)) {
+			sendRpc("modes.set_session", { session_key: S.activeSessionKey, mode_id: null }).then((setRes) => {
+				if (!setRes?.ok) {
+					chatAddMsg("error", setRes?.error?.message || "Failed to clear mode");
+					return;
+				}
+				fetchSessions();
+				chatAddMsg("system", renderMarkdown("**Mode:** cleared"), true);
+			});
+			return;
+		}
+		const selected = findMode(modes, args);
+		if (!selected) {
+			chatAddMsg("error", `Unknown mode: ${args}`);
+			return;
+		}
+		sendRpc("modes.set_session", { session_key: S.activeSessionKey, mode_id: selected.id }).then((setRes) => {
+			if (!setRes?.ok) {
+				chatAddMsg("error", setRes?.error?.message || "Failed to set mode");
+				return;
+			}
+			fetchSessions();
+			chatAddMsg("system", renderMarkdown(`**Mode:** ${selected.name}`), true);
+		});
+	});
+}
+
 export function handleSlashCommand(cmdName: string, cmdArgs: string): void {
 	if (cmdName === "clear") {
 		clearActiveSession();
@@ -233,6 +331,10 @@ export function handleSlashCommand(cmdName: string, cmdArgs: string): void {
 				}
 			} else chatAddMsg("error", res.error?.message || "Context failed");
 		});
+		return;
+	}
+	if (cmdName === "mode") {
+		handleModeCommand(cmdArgs);
 		return;
 	}
 	if (cmdName === "sh") {

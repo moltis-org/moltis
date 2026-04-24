@@ -719,6 +719,7 @@ type Project {
 	branchPrefix: String
 	sandboxImage: String
 	detected: Boolean
+	codeIndexEnabled: Boolean
 	createdAt: String
 	updatedAt: String
 }

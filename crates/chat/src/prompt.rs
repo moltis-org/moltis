@@ -6,8 +6,8 @@ use {serde_json::Value, tracing::warn};
 
 use {
     moltis_agents::prompt::{
-        PromptBuildLimits, PromptHostRuntimeContext, PromptNodeInfo, PromptNodesRuntimeContext,
-        PromptRuntimeContext, PromptSandboxRuntimeContext,
+        PromptBuildLimits, PromptHostRuntimeContext, PromptModeRuntimeContext, PromptNodeInfo,
+        PromptNodesRuntimeContext, PromptRuntimeContext, PromptSandboxRuntimeContext,
     },
     moltis_config::{AgentMemoryWriteMode, LoadedWorkspaceMarkdown, MemoryStyle, PromptMemoryMode},
     moltis_sessions::{metadata::SessionEntry, state_store::SessionStateStore},
@@ -98,6 +98,27 @@ pub(crate) fn resolve_prompt_agent_id(session_entry: Option<&SessionEntry>) -> S
         "session references unknown agent workspace, falling back to main prompt persona"
     );
     "main".to_string()
+}
+
+pub(crate) fn resolve_prompt_mode_context(
+    config: &moltis_config::MoltisConfig,
+    session_entry: Option<&SessionEntry>,
+) -> Option<PromptModeRuntimeContext> {
+    let mode_id = session_entry?
+        .mode_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let mode = config.modes.get_preset(mode_id)?;
+    let prompt = mode.prompt.trim();
+    if prompt.is_empty() {
+        return None;
+    }
+    Some(PromptModeRuntimeContext {
+        id: mode_id.to_string(),
+        name: mode.name.clone().unwrap_or_else(|| mode_id.to_string()),
+        prompt: prompt.to_string(),
+    })
 }
 
 /// Load identity, user profile, soul, and workspace text for one agent.
@@ -472,6 +493,7 @@ pub(crate) async fn build_prompt_runtime_context(
         host: host_ctx,
         sandbox: sandbox_ctx,
         nodes: nodes_ctx,
+        mode: None,
     }
 }
 

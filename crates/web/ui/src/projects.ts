@@ -23,6 +23,12 @@ export function fetchProjects(): void {
 		renderProjectSelect();
 		renderSessionProjectSelect();
 		updateNavCount("projects", projects.length);
+		// Show or hide the chat-header project combo depending on whether
+		// projects exist.  Matches the pattern used by fetchNodes() for
+		// the node selector.
+		if (S.projectCombo) {
+			S.projectCombo.classList.toggle("hidden", projects.length === 0);
+		}
 	});
 }
 

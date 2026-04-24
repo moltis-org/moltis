@@ -152,6 +152,17 @@ impl GatewayOnboardingService {
                     "openclaw import: failed to set agent_id on session"
                 );
             }
+            if let Err(e) = self
+                .session_metadata
+                .set_mode_id(&entry.key, entry.mode_id.as_deref())
+                .await
+            {
+                tracing::warn!(
+                    key = %entry.key,
+                    error = %e,
+                    "openclaw import: failed to set mode_id on session"
+                );
+            }
             self.session_metadata
                 .set_preview(&entry.key, entry.preview.as_deref())
                 .await;

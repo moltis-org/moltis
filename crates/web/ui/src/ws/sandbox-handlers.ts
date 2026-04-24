@@ -1,6 +1,6 @@
 // ── Sandbox event handlers ───────────────────────────────────
 
-import { chatAddMsg } from "../chat-ui";
+import { chatAddMsg, smartScrollToBottom } from "../chat-ui";
 import { currentPrefix } from "../router";
 import * as S from "../state";
 import type { LocalLlmDownloadPayload, SandboxPhasePayload } from "../types/ws-events";
@@ -165,7 +165,7 @@ export function handleLocalLlmDownload(payload: LocalLlmDownloadPayload): void {
 		if (S.chatMsgBox) {
 			clearChatEmptyState();
 			S.chatMsgBox.appendChild(downloadIndicatorEl);
-			S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+			smartScrollToBottom();
 		}
 	}
 
