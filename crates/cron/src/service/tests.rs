@@ -959,3 +959,127 @@ async fn get_hb_next_run(svc: &Arc<CronService>) -> Option<u64> {
         .find(|j| j.id == "__heartbeat__")
         .and_then(|j| j.state.next_run_at_ms)
 }
+
+#[tokio::test]
+async fn test_custom_wake_cooldown_propagates_through_constructor() {
+    // Verify that with_config correctly propagates a custom wake_cooldown_ms.
+    // Use a 30-second cooldown so the test runs fast.
+    let custom_cooldown_ms: u64 = 30_000;
+    let store = Arc::new(InMemoryStore::new());
+    let svc = CronService::with_config(
+        store,
+        noop_system_event(),
+        noop_agent_turn(),
+        None,
+        RateLimitConfig::default(),
+        custom_cooldown_ms,
+    );
+
+    svc.add(CronJobCreate {
+        id: Some("__heartbeat__".into()),
+        name: "__heartbeat__".into(),
+        schedule: CronSchedule::Every {
+            every_ms: 999_999_999,
+            anchor_ms: None,
+        },
+        payload: CronPayload::AgentTurn {
+            message: "heartbeat".into(),
+            model: None,
+            timeout_secs: None,
+            deliver: false,
+            channel: None,
+            to: None,
+        },
+        session_target: SessionTarget::Named("heartbeat".into()),
+        delete_after_run: false,
+        enabled: true,
+        system: true,
+        sandbox: CronSandboxConfig::default(),
+        wake_mode: CronWakeMode::default(),
+    })
+    .await
+    .unwrap();
+
+    // last_run 15 seconds ago — within 30s custom cooldown → wake suppressed.
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 15_000);
+    })
+    .await;
+
+    let next_before = get_hb_next_run(&svc).await;
+    svc.wake("exec-event").await;
+    assert_eq!(
+        get_hb_next_run(&svc).await,
+        next_before,
+        "wake should be suppressed within custom 30s cooldown"
+    );
+
+    // last_run 45 seconds ago — beyond 30s custom cooldown → wake proceeds.
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 45_000);
+    })
+    .await;
+
+    let pre_wake = now_ms();
+    svc.wake("exec-event").await;
+    let post_wake = now_ms();
+    let new_next = get_hb_next_run(&svc).await.unwrap();
+    assert!(
+        new_next >= pre_wake && new_next <= post_wake,
+        "wake should proceed after custom 30s cooldown expires"
+    );
+}
+
+#[tokio::test]
+async fn test_zero_wake_cooldown_disables_guard() {
+    let store = Arc::new(InMemoryStore::new());
+    let svc = CronService::with_config(
+        store,
+        noop_system_event(),
+        noop_agent_turn(),
+        None,
+        RateLimitConfig::default(),
+        0, // cooldown disabled
+    );
+
+    svc.add(CronJobCreate {
+        id: Some("__heartbeat__".into()),
+        name: "__heartbeat__".into(),
+        schedule: CronSchedule::Every {
+            every_ms: 999_999_999,
+            anchor_ms: None,
+        },
+        payload: CronPayload::AgentTurn {
+            message: "heartbeat".into(),
+            model: None,
+            timeout_secs: None,
+            deliver: false,
+            channel: None,
+            to: None,
+        },
+        session_target: SessionTarget::Named("heartbeat".into()),
+        delete_after_run: false,
+        enabled: true,
+        system: true,
+        sandbox: CronSandboxConfig::default(),
+        wake_mode: CronWakeMode::default(),
+    })
+    .await
+    .unwrap();
+
+    // last_run just 1 second ago — would be suppressed with any nonzero cooldown.
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 1_000);
+    })
+    .await;
+
+    let pre_wake = now_ms();
+    svc.wake("exec-event").await;
+    let post_wake = now_ms();
+
+    let new_next = get_hb_next_run(&svc).await.unwrap();
+    assert!(
+        new_next >= pre_wake && new_next <= post_wake,
+        "wake should proceed when cooldown is zero (disabled)"
+    );
+}
