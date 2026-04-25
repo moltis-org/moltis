@@ -65,9 +65,9 @@ impl ToolSearchTool {
         results
     }
 
-    fn activate_tool(&self, name: &str) -> Result<serde_json::Value, String> {
+    fn activate_tool(&self, name: &str) -> serde_json::Value {
         let Some(tool) = self.full_registry.get(name) else {
-            return Ok(self.unknown_tool_response(name));
+            return self.unknown_tool_response(name);
         };
         let source = self
             .full_registry
@@ -83,13 +83,13 @@ impl ToolSearchTool {
 
         debug!(tool = name, "tool activated via tool_search");
 
-        Ok(serde_json::json!({
+        serde_json::json!({
             "activated": true,
             "name": name,
             "description": description,
             "parameters": schema,
             "hint": format!("Tool `{name}` is now available. Call it directly on your next turn.")
-        }))
+        })
     }
 
     fn unknown_tool_response(&self, name: &str) -> serde_json::Value {
@@ -163,7 +163,7 @@ impl AgentTool for ToolSearchTool {
         match (name, query) {
             (Some(name), _) => {
                 // Activate a specific tool by name.
-                self.activate_tool(name).map_err(|e| anyhow::anyhow!("{e}"))
+                Ok(self.activate_tool(name))
             },
             (None, Some(query)) => {
                 // Keyword search.
@@ -383,6 +383,26 @@ mod tests {
                 .unwrap()
                 .contains("Skills are not tools")
         );
+    }
+
+    #[tokio::test]
+    async fn activate_unknown_tool_returns_search_suggestions() {
+        let full = build_full_registry();
+        let lazy = wrap_registry_lazy(full);
+        let search_tool = lazy.get("tool_search").unwrap();
+
+        let result = search_tool
+            .execute(serde_json::json!({ "name": "memory" }))
+            .await
+            .unwrap();
+
+        let suggestions = result["suggestions"].as_array().unwrap();
+        let names: Vec<&str> = suggestions
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"memory_search"));
+        assert!(names.contains(&"memory_save"));
     }
 
     #[tokio::test]
