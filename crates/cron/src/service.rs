@@ -145,7 +145,7 @@ const STUCK_THRESHOLD_MS: u64 = 2 * 60 * 60 * 1000;
 ///
 /// This cooldown only applies to exec-triggered wakes ([`WAKE_REASON_EXEC_EVENT`]).
 /// CronWakeMode::Now wakes ([`WAKE_REASON_CRON_EVENT`]) are never suppressed.
-const DEFAULT_WAKE_COOLDOWN_MS: u64 = 5 * 60 * 1000;
+pub const DEFAULT_WAKE_COOLDOWN_MS: u64 = 5 * 60 * 1000;
 
 /// Wake reason: exec-completion callback.
 pub const WAKE_REASON_EXEC_EVENT: &str = "exec-event";
