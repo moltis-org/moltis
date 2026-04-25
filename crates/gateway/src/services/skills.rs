@@ -498,6 +498,10 @@ impl SkillsService for NoopSkillsService {
     }
 
     async fn skill_enable(&self, params: Value) -> ServiceResult {
+        let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        if source == "bundled" {
+            return toggle_bundled_skill(&params, true);
+        }
         toggle_skill(&params, true)
     }
 
@@ -507,6 +511,10 @@ impl SkillsService for NoopSkillsService {
         // Personal/project skills live as files — delete the directory to disable.
         if source == "personal" || source == "project" {
             return delete_discovered_skill(source, &params);
+        }
+
+        if source == "bundled" {
+            return toggle_bundled_skill(&params, false);
         }
 
         toggle_skill(&params, false)
@@ -1281,6 +1289,56 @@ fn skill_detail_bundled(skill_name: &str) -> ServiceResult {
         "body_html": markdown_to_html(&body),
         "source": "bundled",
     }))
+}
+
+/// Toggle a bundled skill by adding/removing its category from
+/// `disabled_bundled_categories` in config. Bundled skills are not tracked
+/// in the manifest, so `toggle_skill()` cannot handle them.
+fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResult {
+    let skill_name = params
+        .get("skill")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing 'skill' parameter".to_string())?;
+
+    // Find the category for this bundled skill.
+    #[cfg(feature = "bundled-skills")]
+    {
+        let store = moltis_skills::bundled::BundledSkillStore::new();
+        let skills = store.discover();
+        let category = skills
+            .iter()
+            .find(|s| s.name == skill_name)
+            .and_then(|s| s.category.clone())
+            .ok_or_else(|| format!("bundled skill '{skill_name}' not found"))?;
+
+        let cat_clone = category.clone();
+        if let Err(e) = moltis_config::update_config(|cfg| {
+            if enabled {
+                cfg.skills.disabled_bundled_categories.retain(|c| c != &cat_clone);
+            } else if !cfg.skills.disabled_bundled_categories.iter().any(|c| c == &cat_clone) {
+                cfg.skills.disabled_bundled_categories.push(cat_clone.clone());
+            }
+        }) {
+            return Err(format!("failed to save config: {e}").into());
+        }
+
+        security_audit(
+            "skills.skill.toggle",
+            serde_json::json!({
+                "source": "bundled",
+                "skill": skill_name,
+                "category": category,
+                "enabled": enabled,
+            }),
+        );
+
+        return Ok(serde_json::json!({ "source": "bundled", "skill": skill_name, "enabled": enabled }));
+    }
+    #[cfg(not(feature = "bundled-skills"))]
+    {
+        let _ = (skill_name, enabled);
+        Err("bundled skills are not available in this build".into())
+    }
 }
 
 fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
