@@ -461,7 +461,7 @@ mod tests {
         let events = vec![
             crate::system_events::SystemEvent {
                 text: "Command `ls` exited 0".into(),
-                reason: "exec-event".into(),
+                reason: crate::service::WAKE_REASON_EXEC_EVENT.into(),
                 enqueued_at_ms: 1000,
             },
             crate::system_events::SystemEvent {
@@ -472,7 +472,10 @@ mod tests {
         ];
         let prompt = build_event_enriched_prompt(&events, "check inbox");
         assert!(prompt.starts_with(EVENTS_PROMPT_PREFIX));
-        assert!(prompt.contains("Command `ls` exited 0 [exec-event]"));
+        assert!(prompt.contains(&format!(
+            "Command `ls` exited 0 [{}]",
+            crate::service::WAKE_REASON_EXEC_EVENT
+        )));
         assert!(prompt.contains("Cron job fired [cron:abc]"));
         assert!(prompt.ends_with("check inbox"));
     }

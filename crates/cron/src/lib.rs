@@ -15,6 +15,7 @@ pub mod system_events;
 pub mod types;
 
 pub use error::{Error, Result};
+pub use service::{WAKE_REASON_CRON_EVENT, WAKE_REASON_EXEC_EVENT};
 
 /// Run database migrations for the cron crate.
 ///

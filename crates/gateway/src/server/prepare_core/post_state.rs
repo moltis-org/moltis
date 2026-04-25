@@ -707,8 +707,8 @@ pub(super) async fn complete_startup(
             let eq = Arc::clone(&eq);
             let cs = Arc::clone(&cs);
             tokio::spawn(async move {
-                eq.enqueue(summary, "exec-event".into()).await;
-                cs.wake("exec-event").await;
+                eq.enqueue(summary, moltis_cron::WAKE_REASON_EXEC_EVENT.into()).await;
+                cs.wake(moltis_cron::WAKE_REASON_EXEC_EVENT).await;
             });
         });
         let mut exec_tool = moltis_tools::exec::ExecTool::default()

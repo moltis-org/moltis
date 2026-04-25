@@ -143,9 +143,14 @@ const STUCK_THRESHOLD_MS: u64 = 2 * 60 * 60 * 1000;
 /// duration ago. This is a safety net — the scheduled interval still
 /// applies for normal periodic firing.
 ///
-/// This cooldown only applies to exec-triggered wakes (reason = "exec-event").
-/// CronWakeMode::Now wakes (reason = "cron-event") are never suppressed.
+/// This cooldown only applies to exec-triggered wakes ([`WAKE_REASON_EXEC_EVENT`]).
+/// CronWakeMode::Now wakes ([`WAKE_REASON_CRON_EVENT`]) are never suppressed.
 const DEFAULT_WAKE_COOLDOWN_MS: u64 = 5 * 60 * 1000;
+
+/// Wake reason: exec-completion callback.
+pub const WAKE_REASON_EXEC_EVENT: &str = "exec-event";
+/// Wake reason: cron job with [`CronWakeMode::Now`](crate::types::CronWakeMode::Now) finished.
+pub const WAKE_REASON_CRON_EVENT: &str = "cron-event";
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -245,10 +250,10 @@ impl CronService {
     /// Multiple wake calls coalesce naturally: they all set `next_run_at_ms = now`
     /// idempotently, and `running_at_ms` prevents the heartbeat from firing twice.
     ///
-    /// When called with reason `"exec-event"`, a cooldown guard applies: if the
+    /// When called with reason [`WAKE_REASON_EXEC_EVENT`], a cooldown guard applies: if the
     /// heartbeat last completed less than `wake_cooldown_ms` ago, the wake is skipped.
     /// This prevents exec-completion callbacks from creating a re-fire loop.
-    /// Other reasons (e.g. `"cron-event"` from `CronWakeMode::Now`) are never suppressed.
+    /// Other reasons (e.g. [`WAKE_REASON_CRON_EVENT`]) are never suppressed.
     pub async fn wake(&self, reason: &str) {
         let now = now_ms();
         let mut jobs = self.jobs.write().await;
@@ -259,8 +264,8 @@ impl CronService {
             // Enforce cooldown for exec-triggered wakes only. This prevents
             // exec-completion callbacks from creating a re-fire loop when the
             // heartbeat agent uses `exec` during its turn. CronWakeMode::Now wakes
-            // ("cron-event") are never suppressed.
-            if reason == "exec-event"
+            // are never suppressed.
+            if reason == WAKE_REASON_EXEC_EVENT
                 && self.wake_cooldown_ms > 0
                 && let Some(last_run) = job.state.last_run_at_ms
             {
@@ -710,7 +715,7 @@ impl CronService {
 
         // Wake heartbeat immediately if this job requested it.
         if job.wake_mode == CronWakeMode::Now && job.id != "__heartbeat__" {
-            self.wake("cron-event").await;
+            self.wake(WAKE_REASON_CRON_EVENT).await;
         }
 
         info!(

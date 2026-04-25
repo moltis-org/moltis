@@ -861,7 +861,7 @@ async fn test_wake_noop_within_cooldown_after_last_run() {
 
     let next_before = get_hb_next_run(&svc).await;
 
-    svc.wake("exec-event").await;
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
 
     // next_run_at_ms should NOT have been updated — wake was skipped.
     assert_eq!(get_hb_next_run(&svc).await, next_before);
@@ -878,7 +878,7 @@ async fn test_wake_allowed_after_cooldown_expires() {
     .await;
 
     let pre_wake = now_ms();
-    svc.wake("exec-event").await;
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
     let post_wake = now_ms();
 
     let new_next = get_hb_next_run(&svc).await.unwrap();
@@ -893,7 +893,7 @@ async fn test_wake_allowed_when_no_last_run() {
     let svc = make_heartbeat_svc().await;
 
     // No last_run_at_ms set — first-ever wake should proceed.
-    svc.wake("exec-event").await;
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
 
     assert!(get_hb_next_run(&svc).await.is_some());
 }
@@ -909,10 +909,10 @@ async fn test_wake_cron_event_bypasses_cooldown() {
     .await;
 
     let pre_wake = now_ms();
-    svc.wake("cron-event").await;
+    svc.wake(WAKE_REASON_CRON_EVENT).await;
     let post_wake = now_ms();
 
-    // CronWakeMode::Now wakes ("cron-event") must never be suppressed.
+    // CronWakeMode::Now wakes must never be suppressed.
     let new_next = get_hb_next_run(&svc).await.unwrap();
     assert!(
         new_next >= pre_wake && new_next <= post_wake,
@@ -922,8 +922,20 @@ async fn test_wake_cron_event_bypasses_cooldown() {
 
 /// Helper: create a service with a single heartbeat job and a far-future schedule.
 async fn make_heartbeat_svc() -> Arc<CronService> {
+    make_heartbeat_svc_with_cooldown(DEFAULT_WAKE_COOLDOWN_MS).await
+}
+
+/// Helper: create a service with a single heartbeat job, custom wake cooldown.
+async fn make_heartbeat_svc_with_cooldown(cooldown_ms: u64) -> Arc<CronService> {
     let store = Arc::new(InMemoryStore::new());
-    let svc = make_svc(store, noop_system_event(), noop_agent_turn());
+    let svc = CronService::with_config(
+        store,
+        noop_system_event(),
+        noop_agent_turn(),
+        None,
+        RateLimitConfig::default(),
+        cooldown_ms,
+    );
     svc.add(CronJobCreate {
         id: Some("__heartbeat__".into()),
         name: "__heartbeat__".into(),
@@ -962,43 +974,7 @@ async fn get_hb_next_run(svc: &Arc<CronService>) -> Option<u64> {
 
 #[tokio::test]
 async fn test_custom_wake_cooldown_propagates_through_constructor() {
-    // Verify that with_config correctly propagates a custom wake_cooldown_ms.
-    // Use a 30-second cooldown so the test runs fast.
-    let custom_cooldown_ms: u64 = 30_000;
-    let store = Arc::new(InMemoryStore::new());
-    let svc = CronService::with_config(
-        store,
-        noop_system_event(),
-        noop_agent_turn(),
-        None,
-        RateLimitConfig::default(),
-        custom_cooldown_ms,
-    );
-
-    svc.add(CronJobCreate {
-        id: Some("__heartbeat__".into()),
-        name: "__heartbeat__".into(),
-        schedule: CronSchedule::Every {
-            every_ms: 999_999_999,
-            anchor_ms: None,
-        },
-        payload: CronPayload::AgentTurn {
-            message: "heartbeat".into(),
-            model: None,
-            timeout_secs: None,
-            deliver: false,
-            channel: None,
-            to: None,
-        },
-        session_target: SessionTarget::Named("heartbeat".into()),
-        delete_after_run: false,
-        enabled: true,
-        system: true,
-        sandbox: CronSandboxConfig::default(),
-        wake_mode: CronWakeMode::default(),
-    })
-    .await
-    .unwrap();
+    let svc = make_heartbeat_svc_with_cooldown(30_000).await;
 
     // last_run 15 seconds ago — within 30s custom cooldown → wake suppressed.
     svc.update_job_state("__heartbeat__", |state| {
@@ -1007,7 +983,7 @@ async fn test_custom_wake_cooldown_propagates_through_constructor() {
     .await;
 
     let next_before = get_hb_next_run(&svc).await;
-    svc.wake("exec-event").await;
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
     assert_eq!(
         get_hb_next_run(&svc).await,
         next_before,
@@ -1021,7 +997,7 @@ async fn test_custom_wake_cooldown_propagates_through_constructor() {
     .await;
 
     let pre_wake = now_ms();
-    svc.wake("exec-event").await;
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
     let post_wake = now_ms();
     let new_next = get_hb_next_run(&svc).await.unwrap();
     assert!(
@@ -1032,40 +1008,7 @@ async fn test_custom_wake_cooldown_propagates_through_constructor() {
 
 #[tokio::test]
 async fn test_zero_wake_cooldown_disables_guard() {
-    let store = Arc::new(InMemoryStore::new());
-    let svc = CronService::with_config(
-        store,
-        noop_system_event(),
-        noop_agent_turn(),
-        None,
-        RateLimitConfig::default(),
-        0, // cooldown disabled
-    );
-
-    svc.add(CronJobCreate {
-        id: Some("__heartbeat__".into()),
-        name: "__heartbeat__".into(),
-        schedule: CronSchedule::Every {
-            every_ms: 999_999_999,
-            anchor_ms: None,
-        },
-        payload: CronPayload::AgentTurn {
-            message: "heartbeat".into(),
-            model: None,
-            timeout_secs: None,
-            deliver: false,
-            channel: None,
-            to: None,
-        },
-        session_target: SessionTarget::Named("heartbeat".into()),
-        delete_after_run: false,
-        enabled: true,
-        system: true,
-        sandbox: CronSandboxConfig::default(),
-        wake_mode: CronWakeMode::default(),
-    })
-    .await
-    .unwrap();
+    let svc = make_heartbeat_svc_with_cooldown(0).await;
 
     // last_run just 1 second ago — would be suppressed with any nonzero cooldown.
     svc.update_job_state("__heartbeat__", |state| {
@@ -1074,7 +1017,7 @@ async fn test_zero_wake_cooldown_disables_guard() {
     .await;
 
     let pre_wake = now_ms();
-    svc.wake("exec-event").await;
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
     let post_wake = now_ms();
 
     let new_next = get_hb_next_run(&svc).await.unwrap();

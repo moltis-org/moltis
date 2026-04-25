@@ -486,15 +486,10 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [heartbeat]
 # enabled = true                    # Enable periodic heartbeats
-# every = "30m"                     # Interval between heartbeats (e.g., "30m", "1h", "6h")
-# model = "anthropic/claude-sonnet-4-20250514"  # Override model for heartbeats
-# prompt = "..."                    # Custom heartbeat prompt (default: built-in)
+# every = "30m"                     # Interval (e.g., "30m", "1h", "6h")
 # ack_max_chars = 300               # Max characters for acknowledgment reply
-# deliver = false                   # Deliver heartbeat replies to a channel account
-# channel = "my-bot"                # Channel account identifier (required when deliver = true)
-# to = "123456789"                  # Chat/recipient ID (required when deliver = true)
+# deliver = false                   # Deliver heartbeat replies to a channel
 # sandbox_enabled = true            # Run heartbeat commands in sandbox
-# sandbox_image = "..."             # Override sandbox image for heartbeats
 # wake_cooldown = "5m"              # Min duration between exec-triggered heartbeat wakes (0 to disable)
 
 # [heartbeat.active_hours]
