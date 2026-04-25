@@ -5,7 +5,7 @@ version.workspace = true
 
 [features]
 bundled-skills = ["moltis-skills/bundled-skills"]
-default        = ["firecrawl", "fs-tools", "metrics", "wasm"]
+default        = ["firecrawl", "fs-tools", "landlock", "metrics", "wasm"]
 embedded-wasm = []
 firecrawl     = []
 # Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep).
@@ -19,6 +19,7 @@ fs-tools = [
   "dep:ignore",
   "dep:pdf-extract",
 ]
+landlock = ["dep:landlock"]
 metrics = ["dep:moltis-metrics"]
 wasm = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
 
@@ -66,6 +67,10 @@ url                   = { workspace = true }
 uuid                  = { workspace = true }
 wasmtime              = { optional = true, workspace = true }
 wasmtime-wasi         = { optional = true, workspace = true }
+
+# Landlock is Linux-only (kernel 5.13+ LSM). Gate to avoid pulling it into macOS/Windows builds.
+[target.'cfg(target_os = "linux")'.dependencies]
+landlock = { optional = true, workspace = true }
 
 [dev-dependencies]
 mockito      = { workspace = true }

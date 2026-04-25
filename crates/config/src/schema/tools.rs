@@ -694,6 +694,12 @@ pub struct SandboxConfig {
     pub wasm_epoch_interval_ms: Option<u64>,
     /// Optional per-tool WASM limits (fuel + memory).
     pub wasm_tool_limits: Option<WasmToolLimitsConfig>,
+    /// Optional Landlock allowlist for restricted-host on Linux.
+    /// Child processes can only access paths in this list.
+    /// Ignored on non-Linux or non-restricted-host backends.
+    /// Paths must be absolute. Symlinks are resolved at rule-add time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fs_allow_paths: Vec<String>,
     /// Optional tool policy overrides applied when running inside this sandbox.
     /// Acts as layer 6 in the policy resolution chain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -896,6 +902,7 @@ impl Default for SandboxConfig {
             wasm_epoch_interval_ms: None,
             wasm_tool_limits: None,
             tools_policy: None,
+            fs_allow_paths: Vec::new(),
         }
     }
 }

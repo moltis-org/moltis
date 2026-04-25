@@ -233,7 +233,12 @@ pub(crate) fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
             maybe_wrap_with_failover(apple_backend, &config)
         },
         "restricted-host" => {
-            tracing::info!("sandbox backend: restricted-host (env clearing, rlimits)");
+            let has_landlock = cfg!(all(target_os = "linux", feature = "landlock"))
+                && !config.fs_allow_paths.is_empty();
+            tracing::info!(
+                "sandbox backend: restricted-host (env clearing, rlimits{})",
+                if has_landlock { ", landlock FS isolation" } else { "" },
+            );
             Arc::new(RestrictedHostSandbox::new(config))
         },
         "wasm" | "wasmtime" => create_wasm_backend(config),

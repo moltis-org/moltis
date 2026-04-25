@@ -294,6 +294,8 @@ tree-sitter-ruby       = "0.23"
 tree-sitter-rust       = "0.24"
 tree-sitter-toml-ng    = "0.7"
 tree-sitter-typescript = "0.23"
+# Sandbox isolation
+landlock = "0.4"
 # Allocator
 tikv-jemallocator = "0.6"
 # Filesystem / archiving

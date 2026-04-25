@@ -224,6 +224,14 @@ impl Sandbox for RestrictedHostSandbox {
         let mut cmd = tokio::process::Command::new("sh");
         cmd.args(["-c", &wrapped]);
 
+        // Apply Landlock FS restrictions before exec (Linux only, when configured).
+        let landlock_result = super::landlock::apply_to_command(&mut cmd, &self.config.fs_allow_paths);
+        if landlock_result.enforced {
+            tracing::debug!(%landlock_result.message, "landlock enforced");
+        } else {
+            tracing::debug!(%landlock_result.message, "landlock not enforced");
+        }
+
         // Scrub all inherited env vars for isolation.
         cmd.env_clear();
 
