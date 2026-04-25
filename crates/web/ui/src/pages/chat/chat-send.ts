@@ -3,7 +3,13 @@
 import { chatAddMsg, chatAddMsgWithImages } from "../../chat-ui";
 import { highlightCodeBlocks } from "../../code-highlight";
 // File upload imports
-import { clearPendingUploads, getPendingUploads, hasPendingUploads, uploadFiles } from "../../file-upload";
+import {
+	clearPendingUploads,
+	getPendingUploads,
+	hasPendingUploads,
+	renderFilePreviewStrip,
+	uploadFiles,
+} from "../../file-upload";
 import { renderMarkdown, sendRpc, warmAudioPlayback } from "../../helpers";
 import { clearPendingImages, getPendingImages, hasPendingImages } from "../../media-drop";
 import { setSessionModel } from "../../models";
@@ -26,6 +32,8 @@ export interface ChatSendParams {
 	content?: ChatContentPart[];
 	_seq: number;
 	model?: string;
+	/** Document metadata for backend's _document_files pipeline. */
+	_document_files?: DocumentFileEntry[];
 }
 
 export type ChatContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
@@ -99,27 +107,41 @@ export function resetComposerAfterSend(): void {
 
 // ── File upload integration ─────────────────────────────────
 
+/** Document metadata matching backend's InputChannelDocumentFile shape. */
+export interface DocumentFileEntry {
+	display_name: string;
+	stored_filename: string;
+	mime_type: string;
+}
+
 /**
- * Upload pending files to session media storage and return their URLs.
- * Called during sendChat() before building the message.
+ * Upload pending files to session media storage and return document metadata
+ * for the `_document_files` RPC parameter. This mirrors the channel attachment
+ * pipeline (attachments.rs) which sends documents separately from `content[]`.
  */
-export async function uploadPendingFiles(): Promise<string[]> {
+export async function uploadPendingFiles(): Promise<DocumentFileEntry[]> {
 	const pending = getPendingUploads();
 	if (pending.length === 0) return [];
 
 	const files = pending.map((p) => p.file);
 	const results = await uploadFiles(files);
 	clearPendingUploads();
+	renderFilePreviewStrip();
 
-	const urls: string[] = [];
-	for (const r of results) {
-		if (r.ok && r.url) {
-			urls.push(r.url);
+	const docs: DocumentFileEntry[] = [];
+	for (let i = 0; i < results.length; i++) {
+		const r = results[i];
+		if (r.ok && r.filename) {
+			docs.push({
+				display_name: files[i].name,
+				stored_filename: r.filename,
+				mime_type: files[i].type || "application/octet-stream",
+			});
 		} else {
 			console.error("[chat-send] file upload failed:", r.error);
 		}
 	}
-	return urls;
+	return docs;
 }
 
 export function normalizeOutgoingText(text: string, hasImages: boolean): string {
@@ -145,15 +167,12 @@ export function handleChatSendRpcResponse(res: RpcResponse<ChatSendPayload>, use
 	if (!res.ok && res.error) chatAddMsg("error", res.error.message || "Request failed");
 }
 
-/** Build multimodal content array from text, images, and file URLs. */
-function buildContentParts(text: string, images: unknown[], fileUrls?: string[]): ChatContentPart[] {
+/** Build multimodal content array from text and images. */
+function buildContentParts(text: string, images: unknown[]): ChatContentPart[] {
 	const content: ChatContentPart[] = [];
 	if (text) content.push({ type: "text", text });
 	for (const img of images)
 		content.push({ type: "image_url", image_url: { url: (img as { dataUrl: string }).dataUrl } });
-	if (fileUrls) {
-		for (const url of fileUrls) content.push({ type: "image_url", image_url: { url } });
-	}
 	return content;
 }
 
@@ -161,13 +180,12 @@ export function buildChatMessage(
 	text: string,
 	seq: number,
 	displayText?: string,
-	fileUrls?: string[],
 ): { params: ChatSendParams; el: HTMLElement | null } {
 	const userText = displayText === undefined ? text : displayText;
 	const images = hasPendingImages() ? getPendingImages() : [];
 
-	if (images.length > 0 || (fileUrls && fileUrls.length > 0)) {
-		const content = buildContentParts(text, images, fileUrls);
+	if (images.length > 0) {
+		const content = buildContentParts(text, images);
 		const params: ChatSendParams = { content, _seq: seq };
 		const el = chatAddMsgWithImages("user", userText ? renderMarkdown(userText) : "", images);
 		clearPendingImages();
@@ -224,12 +242,16 @@ export function sendChat(): void {
 	const outgoingText = normalizeOutgoingText(text, hasImages);
 	S.setChatSeq(S.chatSeq + 1);
 
-	// If files are pending, upload them first then send synchronously.
-	// This keeps the send flow synchronous for the no-files fast path.
+	// If files are pending, upload them first then send.
+	// Files are sent via `_document_files` (matching the channel attachment
+	// pipeline) rather than as image_url content parts.
 	if (hasFiles) {
-		uploadPendingFiles().then((fileUrls) => {
-			const msg = buildChatMessage(outgoingText, S.chatSeq, text, fileUrls);
+		uploadPendingFiles().then((docFiles) => {
+			const msg = buildChatMessage(outgoingText, S.chatSeq, text);
 			const chatParams = msg.params;
+			if (docFiles.length > 0) {
+				chatParams._document_files = docFiles;
+			}
 			const userEl = msg.el;
 			if (userEl) highlightCodeBlocks(userEl);
 			applySelectedModelToChatParams(chatParams);

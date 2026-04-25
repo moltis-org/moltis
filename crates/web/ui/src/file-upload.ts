@@ -201,9 +201,9 @@ function sanitizeFilename(filename: string): string {
 	// Strip non-printable characters (C0 controls 0x00-0x1F and DEL 0x7F)
 	// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional control-char sanitization for security
 	sanitized = sanitized.replace(/[\x00-\x1f\x7f]/g, "");
-	// Limit length, keep extension intact
+	// Limit length from the head to preserve meaningful filename prefix
 	if (sanitized.length > 200) {
-		return sanitized.substring(sanitized.length - 200);
+		return sanitized.substring(0, 200);
 	}
 	return sanitized || "unnamed";
 }
@@ -389,7 +389,7 @@ let filePreviewStrip: HTMLElement | null = null;
 let fileInputRef: HTMLInputElement | null = null;
 
 /** Render current pending uploads as a preview strip. */
-function renderFilePreviewStrip(): void {
+export function renderFilePreviewStrip(): void {
 	if (!filePreviewStrip) return;
 
 	filePreviewStrip.textContent = "";
