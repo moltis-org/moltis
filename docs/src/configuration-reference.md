@@ -747,6 +747,7 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | `to` | optional string | — | Destination chat/recipient id for heartbeat delivery. |
 | `sandbox_enabled` | bool | `true` | Whether heartbeat runs inside a sandbox. |
 | `sandbox_image` | optional string | — | Override sandbox image for heartbeat. |
+| `wake_cooldown` | string | `"5m"` | Minimum duration between exec-triggered heartbeat wakes. Use `"0"` to disable the guard. |
 
 
 ### `heartbeat.active_hours`

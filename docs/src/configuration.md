@@ -42,6 +42,17 @@ and which are inherited.
 The `defaults.toml` file lives in the same directory. Do not edit it — your
 changes will be overwritten on the next startup.
 
+## Checking Config
+
+`moltis config check` validates your override file (`moltis.toml`) against the
+known config schema. It also checks that Moltis-managed `defaults.toml` exists
+and can be parsed, but it does not treat `defaults.toml` as user-authored input.
+
+New config fields should be added to the Rust config schema and its `Default`
+implementation. Moltis regenerates `defaults.toml` from those built-in defaults
+on startup, while `moltis.toml` should contain only values you intentionally
+override.
+
 ## Basic Settings
 
 ```toml
