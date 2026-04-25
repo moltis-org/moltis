@@ -2,6 +2,8 @@
 
 import { chatAddMsg, chatAddMsgWithImages } from "../../chat-ui";
 import { highlightCodeBlocks } from "../../code-highlight";
+// File upload imports
+import { clearPendingUploads, getPendingUploads, hasPendingUploads, uploadFiles } from "../../file-upload";
 import { renderMarkdown, sendRpc, warmAudioPlayback } from "../../helpers";
 import { clearPendingImages, getPendingImages, hasPendingImages } from "../../media-drop";
 import { setSessionModel } from "../../models";
@@ -16,14 +18,6 @@ import * as S from "../../state";
 import { modelStore } from "../../stores/model-store";
 import type { RpcResponse } from "../../types/rpc";
 import { handleSlashCommand, parseSlashCommand, shouldHandleSlashLocally, slashHideMenu } from "./slash-commands";
-
-// File upload imports
-import { 
-	clearPendingUploads, 
-	getPendingUploads, 
-	uploadFiles,
-	type PendingFileUpload,
-} from "../../file-upload";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -106,57 +100,26 @@ export function resetComposerAfterSend(): void {
 // ── File upload integration ─────────────────────────────────
 
 /**
- * Attach files to the message being composed.
- * Uploads files to session media storage and includes URLs in the message.
+ * Upload pending files to session media storage and return their URLs.
+ * Called during sendChat() before building the message.
  */
-export async function attachFilesToMessage(files: File[]): Promise<void> {
-	if (!files || files.length === 0) return;
-	
-	// Upload files
-	const results = await uploadFiles(files);
-	
-	// Clear pending uploads
-	clearPendingUploads();
-	
-	// Check for errors
-	const failed = results.filter(r => !r.ok);
-	if (failed.length > 0) {
-		console.error("[chat-send] file upload failed:", failed);
-		return;
-	}
-	
-	// Files uploaded successfully - they will be included in the next message
-	// via the getPendingUploads() call in sendChat()
-}
+export async function uploadPendingFiles(): Promise<string[]> {
+	const pending = getPendingUploads();
+	if (pending.length === 0) return [];
 
-/**
- * Get pending file uploads as message content parts.
- * Converts uploaded file URLs to content parts for the chat payload.
- */
-export function getPendingFileContentParts(): { text: string }[] {
-	const uploads = getPendingUploads();
-	if (!uploads || uploads.length === 0) return [];
-	
-	const parts: { text: string }[] = [];
-	
-	// For now, include file references as text in the message
-	// Future: could add special file content parts if backend supports it
-	for (const upload of uploads) {
-		if (upload.url) {
-			parts.push({
-				text: `📎 ${upload.filename || "Attached file"} (${upload.url})`,
-			});
+	const files = pending.map((p) => p.file);
+	const results = await uploadFiles(files);
+	clearPendingUploads();
+
+	const urls: string[] = [];
+	for (const r of results) {
+		if (r.ok && r.url) {
+			urls.push(r.url);
+		} else {
+			console.error("[chat-send] file upload failed:", r.error);
 		}
 	}
-	
-	return parts;
-}
-
-/**
- * Clear pending file uploads after message is sent.
- */
-export function clearPendingFiles(): void {
-	clearPendingUploads();
+	return urls;
 }
 
 export function normalizeOutgoingText(text: string, hasImages: boolean): string {
@@ -182,18 +145,29 @@ export function handleChatSendRpcResponse(res: RpcResponse<ChatSendPayload>, use
 	if (!res.ok && res.error) chatAddMsg("error", res.error.message || "Request failed");
 }
 
+/** Build multimodal content array from text, images, and file URLs. */
+function buildContentParts(text: string, images: unknown[], fileUrls?: string[]): ChatContentPart[] {
+	const content: ChatContentPart[] = [];
+	if (text) content.push({ type: "text", text });
+	for (const img of images)
+		content.push({ type: "image_url", image_url: { url: (img as { dataUrl: string }).dataUrl } });
+	if (fileUrls) {
+		for (const url of fileUrls) content.push({ type: "image_url", image_url: { url } });
+	}
+	return content;
+}
+
 export function buildChatMessage(
 	text: string,
 	seq: number,
 	displayText?: string,
+	fileUrls?: string[],
 ): { params: ChatSendParams; el: HTMLElement | null } {
-	const userText = displayText !== undefined ? displayText : text;
+	const userText = displayText === undefined ? text : displayText;
 	const images = hasPendingImages() ? getPendingImages() : [];
-	if (images.length > 0) {
-		const content: ChatContentPart[] = [];
-		if (text) content.push({ type: "text", text });
-		for (const img of images)
-			content.push({ type: "image_url", image_url: { url: (img as { dataUrl: string }).dataUrl } });
+
+	if (images.length > 0 || (fileUrls && fileUrls.length > 0)) {
+		const content = buildContentParts(text, images, fileUrls);
 		const params: ChatSendParams = { content, _seq: seq };
 		const el = chatAddMsgWithImages("user", userText ? renderMarkdown(userText) : "", images);
 		clearPendingImages();
@@ -241,13 +215,34 @@ export function setMaybeRefreshFullContextFn(fn: () => void): void {
 export function sendChat(): void {
 	const text = (S.chatInput as HTMLTextAreaElement).value.trim();
 	const hasImages = hasPendingImages();
-	if (!((text || hasImages) && S.connected)) return;
+	const hasFiles = hasPendingUploads();
+	if (!((text || hasImages || hasFiles) && S.connected)) return;
 	warmAudioPlayback();
 	if (tryHandleLocalSlashCommand(text, hasImages)) return;
 	rememberChatHistory(text);
 	resetComposerAfterSend();
 	const outgoingText = normalizeOutgoingText(text, hasImages);
 	S.setChatSeq(S.chatSeq + 1);
+
+	// If files are pending, upload them first then send synchronously.
+	// This keeps the send flow synchronous for the no-files fast path.
+	if (hasFiles) {
+		uploadPendingFiles().then((fileUrls) => {
+			const msg = buildChatMessage(outgoingText, S.chatSeq, text, fileUrls);
+			const chatParams = msg.params;
+			const userEl = msg.el;
+			if (userEl) highlightCodeBlocks(userEl);
+			applySelectedModelToChatParams(chatParams);
+			bumpSessionCount(S.activeSessionKey, 1);
+			cacheOutgoingUserMessage(S.activeSessionKey, chatParams);
+			seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
+			setSessionReplying(S.activeSessionKey, true);
+			sendRpc<ChatSendPayload>("chat.send", chatParams).then((res) => handleChatSendRpcResponse(res, userEl));
+			maybeRefreshFullContextFn?.();
+		});
+		return;
+	}
+
 	const msg = buildChatMessage(outgoingText, S.chatSeq, text);
 	const chatParams = msg.params;
 	const userEl = msg.el;

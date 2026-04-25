@@ -87,6 +87,16 @@ export let fileUploadBtn: HTMLButtonElement | null = null;
 export let fileUploadInput: HTMLInputElement | null = null;
 export let filePreviewContainer: HTMLElement | null = null;
 
+export function setFileUploadBtn(v: HTMLButtonElement | null): void {
+	fileUploadBtn = v;
+}
+export function setFileUploadInput(v: HTMLInputElement | null): void {
+	fileUploadInput = v;
+}
+export function setFilePreviewContainer(v: HTMLElement | null): void {
+	filePreviewContainer = v;
+}
+
 // Provider/channel page refresh callbacks
 export let refreshProvidersPage: (() => void) | null = null;
 export let refreshChannelsPage: (() => void) | null = null;

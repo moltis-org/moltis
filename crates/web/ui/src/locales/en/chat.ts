@@ -22,7 +22,6 @@ export default {
 	fileTypeNotSupported: "File type not supported: {{type}}",
 	fileTypeBlocked: "File type blocked for security: {{extension}}",
 	fileTooLarge: "File too large ({{size}} MB, max {{max}} MB)",
-	unknownError: "Unknown error",
 
 	// ── Slash commands ───────────────────────────────────────
 	slashClear: "Clear conversation history",

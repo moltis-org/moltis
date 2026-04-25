@@ -5,10 +5,9 @@
 
 import { t } from "./i18n";
 import * as S from "./state";
-import { activeSessionKey } from "./stores/session-store";
 
 // ── Configuration ────────────────────────────────────────────
-const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB (matches backend MAX_UPLOAD_SIZE)
+export const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB (matches backend MAX_UPLOAD_SIZE)
 
 // Allowed MIME types by category
 const ALLOWED_TYPES: Record<string, string[]> = {
@@ -18,7 +17,7 @@ const ALLOWED_TYPES: Record<string, string[]> = {
 	"text/markdown": [".md"],
 	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
 	"application/rtf": [".rtf"],
-	
+
 	// Data files
 	"text/csv": [".csv"],
 	"application/json": [".json"],
@@ -26,8 +25,10 @@ const ALLOWED_TYPES: Record<string, string[]> = {
 	"text/xml": [".xml"],
 	"application/yaml": [".yaml", ".yml"],
 	"text/yaml": [".yaml", ".yml"],
-	
-	// Code files (common languages)
+
+	// Code files (common languages) — note: shell/ruby code uploads allowed
+	// only when MIME type is set by the browser (e.g. text/x-rust).
+	// Raw .sh/.rb extensions are blocked in BLOCKED_EXTENSIONS as a safety net.
 	"text/x-rust": [".rs"],
 	"text/x-python": [".py"],
 	"text/javascript": [".js"],
@@ -36,16 +37,13 @@ const ALLOWED_TYPES: Record<string, string[]> = {
 	"text/x-c++": [".cpp", ".cc", ".cxx", ".h", ".hpp"],
 	"text/x-c": [".c", ".h"],
 	"text/x-go": [".go"],
-	"text/x-ruby": [".rb"],
-	"text/x-shellscript": [".sh", ".bash"],
-	"application/x-shellscript": [".sh"],
-	
+
 	// Images (already supported by existing flow)
 	"image/png": [".png"],
 	"image/jpeg": [".jpg", ".jpeg"],
 	"image/gif": [".gif"],
 	"image/webp": [".webp"],
-	
+
 	// Audio (already supported by existing flow)
 	"audio/webm": [".webm"],
 	"audio/wav": [".wav"],
@@ -54,21 +52,48 @@ const ALLOWED_TYPES: Record<string, string[]> = {
 	"audio/flac": [".flac"],
 };
 
-// Blocked file types (security)
-const BLOCKED_EXTENSIONS = [
-	".exe", ".bat", ".cmd", ".com", ".scr", ".pif", // Windows executables
-	".sh", ".bash", ".zsh", ".fish", // Shell scripts (context-dependent, allow some)
-	".ps1", ".psm1", ".psd1", // PowerShell
-	".html", ".htm", ".xhtml", // Web pages (XSS risk)
-	".php", ".phtml", // PHP
-	".asp", ".aspx", ".asa", ".asax", // ASP.NET
-	".jsp", ".jspx", // JSP
-	".pl", ".pm", // Perl
-	".rb", // Ruby (context-dependent)
-	".dll", ".so", ".dylib", // Shared libraries
-	".docm", ".xlsm", ".pptm", // Office with macros
-	".jar", ".war", // Java archives
-];
+// Blocked file extensions (security).
+// These are blocked by extension regardless of MIME type.
+// Note: .sh/.rb/.pl are intentionally blocked here even though some code
+// MIME types (text/x-shellscript, text/x-ruby) are in ALLOWED_TYPES.
+// The extension block wins — users must not upload executable scripts.
+const BLOCKED_EXTENSIONS = new Set([
+	".exe",
+	".bat",
+	".cmd",
+	".com",
+	".scr",
+	".pif", // Windows executables
+	".sh",
+	".bash",
+	".zsh",
+	".fish", // Shell scripts
+	".ps1",
+	".psm1",
+	".psd1", // PowerShell
+	".html",
+	".htm",
+	".xhtml", // Web pages (XSS risk)
+	".php",
+	".phtml", // PHP
+	".asp",
+	".aspx",
+	".asa",
+	".asax", // ASP.NET
+	".jsp",
+	".jspx", // JSP
+	".pl",
+	".pm", // Perl
+	".rb", // Ruby
+	".dll",
+	".so",
+	".dylib", // Shared libraries
+	".docm",
+	".xlsm",
+	".pptm", // Office with macros
+	".jar",
+	".war", // Java archives
+]);
 
 // ── Upload Response Types ────────────────────────────────────
 export interface UploadResponse {
@@ -95,25 +120,17 @@ export interface PendingFileUpload {
 }
 
 // ── File Type Utilities ──────────────────────────────────────
-function getSupportedCategories(): string[] {
-	return [
-		t("chat:fileTypeDocuments"),
-		t("chat:fileTypeData"),
-		t("chat:fileTypeCode"),
-		t("chat:fileTypeImages"),
-		t("chat:fileTypeAudio"),
-	];
-}
 
 function getFileCategory(mimeType: string): string {
-	if (mimeType.startsWith("application/pdf") || mimeType.startsWith("text/plain") || mimeType.includes("wordprocessing")) {
+	if (
+		mimeType.startsWith("application/pdf") ||
+		mimeType.startsWith("text/plain") ||
+		mimeType.includes("wordprocessing")
+	) {
 		return "document";
 	}
 	if (mimeType.includes("csv") || mimeType.includes("json") || mimeType.includes("xml") || mimeType.includes("yaml")) {
 		return "data";
-	}
-	if (mimeType.startsWith("text/") || mimeType.includes("x-")) {
-		return "code";
 	}
 	if (mimeType.startsWith("image/")) {
 		return "image";
@@ -124,67 +141,77 @@ function getFileCategory(mimeType: string): string {
 	return "unknown";
 }
 
-function getFileIconClass(mimeType: string): string {
+export function getFileIconClass(mimeType: string): string {
 	const category = getFileCategory(mimeType);
 	switch (category) {
-		case "document": return "icon-document";
-		case "data": return "icon-data";
-		case "code": return "icon-code";
-		case "image": return "icon-image";
-		case "audio": return "icon-audio";
-		default: return "icon-file";
+		case "document":
+			return "icon-document";
+		case "data":
+			return "icon-data";
+		case "image":
+			return "icon-image";
+		case "audio":
+			return "icon-audio";
+		default:
+			return "icon-file";
 	}
 }
 
-function isFileTypeAllowed(file: File): { allowed: boolean; reason?: string } {
-	const ext = "." + file.name.split(".").pop()?.toLowerCase() || "";
-	
-	// Check blocked extensions first
-	if (BLOCKED_EXTENSIONS.includes(ext)) {
-		return { 
-			allowed: false, 
-			reason: t("chat:fileTypeBlocked", { extension: ext }) 
+export function isFileTypeAllowed(file: File): { allowed: boolean; reason?: string } {
+	const ext = `.${file.name.split(".").pop()?.toLowerCase() ?? ""}`;
+
+	// Check blocked extensions first — this wins over MIME type allowlist
+	if (BLOCKED_EXTENSIONS.has(ext)) {
+		return {
+			allowed: false,
+			reason: t("chat:fileTypeBlocked", { extension: ext }),
 		};
 	}
-	
+
 	// Check if MIME type is in allowed list
-	const allowedExtensions = ALLOWED_TYPES[file.type];
-	if (allowedExtensions) {
+	if (ALLOWED_TYPES[file.type]) {
 		return { allowed: true };
 	}
-	
-	// Unknown MIME type - allow if extension looks safe
-	const safeUnknownTypes = [
+
+	// Unknown MIME type — allow only known-safe archive types
+	const safeArchiveTypes = new Set([
 		"application/octet-stream",
 		"application/zip",
 		"application/x-tar",
 		"application/gzip",
-	];
-	
-	if (safeUnknownTypes.includes(file.type)) {
-		// For archives, check extension
-		if ([".zip", ".tar", ".gz", ".tgz"].includes(ext)) {
-			return { allowed: true };
-		}
+	]);
+
+	if (safeArchiveTypes.has(file.type) && [".zip", ".tar", ".gz", ".tgz"].includes(ext)) {
+		return { allowed: true };
 	}
-	
-	// For unknown types, be permissive but warn
-	return { allowed: true };
+
+	// Reject unknown types
+	return {
+		allowed: false,
+		reason: t("chat:fileTypeNotSupported", { type: file.type || ext }),
+	};
 }
 
 function sanitizeFilename(filename: string): string {
-	// Remove path components
-	let sanitized = filename.split("/").pop()?.split("\\").pop() || "unnamed";
-	
-	// Remove or replace dangerous characters
-	sanitized = sanitized.replace(/[<>:"|?*]/g, "_");
-	
-	// Limit length
+	// Remove path components using a single split on both separators
+	const basename = filename.split(/[/\\]/).pop() ?? "unnamed";
+	// Replace dangerous characters: < > : " | ? *
+	const dangerousChars = /[<>:"|?*]/g;
+	let sanitized = basename.replace(dangerousChars, "_");
+	// Strip non-printable characters (C0 controls 0x00-0x1F and DEL 0x7F)
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: intentional control-char sanitization for security
+	sanitized = sanitized.replace(/[\x00-\x1f\x7f]/g, "");
+	// Limit length, keep extension intact
 	if (sanitized.length > 200) {
-		sanitized = sanitized.substring(0, 200);
+		return sanitized.substring(sanitized.length - 200);
 	}
-	
 	return sanitized || "unnamed";
+}
+
+export function formatFileSize(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 // ── Upload Functions ─────────────────────────────────────────
@@ -194,37 +221,36 @@ export async function uploadFile(file: File, options?: { transcribe?: boolean })
 	if (!typeCheck.allowed) {
 		return {
 			ok: false,
-			error: typeCheck.reason || t("chat:fileTypeNotSupported"),
+			error: typeCheck.reason || t("chat:fileTypeNotSupported", { type: file.type }),
 			code: "FILE_TYPE_BLOCKED",
 		};
 	}
-	
+
 	// Validate file size
 	if (file.size > MAX_FILE_SIZE) {
 		return {
 			ok: false,
-			error: t("chat:fileTooLarge", { 
+			error: t("chat:fileTooLarge", {
 				size: (file.size / 1024 / 1024).toFixed(2),
-				max: (MAX_FILE_SIZE / 1024 / 1024).toFixed(0)
+				max: (MAX_FILE_SIZE / 1024 / 1024).toFixed(0),
 			}),
 			code: "FILE_TOO_LARGE",
 		};
 	}
-	
+
 	// Sanitize filename
 	const sanitizedFilename = sanitizeFilename(file.name);
-	
+
 	try {
-		// Build upload URL
-		const sessionKey = activeSessionKey || "main";
-		const uploadUrl = `/api/sessions/${encodeURIComponent(sessionKey)}/upload`;
-		
+		// Build upload URL — use S.activeSessionKey (plain string) for consistency
+		const uploadUrl = `/api/sessions/${encodeURIComponent(S.activeSessionKey)}/upload`;
+
 		// Build query params
 		const params = new URLSearchParams();
 		if (options?.transcribe && file.type.startsWith("audio/")) {
 			params.set("transcribe", "true");
 		}
-		
+
 		// Perform upload
 		const response = await fetch(`${uploadUrl}?${params.toString()}`, {
 			method: "POST",
@@ -234,19 +260,18 @@ export async function uploadFile(file: File, options?: { transcribe?: boolean })
 			},
 			body: file,
 		});
-		
+
 		const result: UploadResponse = await response.json();
-		
+
 		if (!response.ok) {
 			return {
 				ok: false,
-				error: result.error || t("chat:uploadFailed"),
+				error: result.error || t("chat:fileUploadFailed", { error: "server error" }),
 				code: result.code || "UPLOAD_FAILED",
 			};
 		}
-		
+
 		return result;
-		
 	} catch (error) {
 		console.error("[file-upload] upload error:", error);
 		return {
@@ -258,37 +283,27 @@ export async function uploadFile(file: File, options?: { transcribe?: boolean })
 }
 
 export async function uploadFiles(files: File[], options?: { transcribe?: boolean }): Promise<UploadResponse[]> {
+	// Upload sequentially to avoid overwhelming the server
 	const results: UploadResponse[] = [];
-	
 	for (const file of files) {
-		const result = await uploadFile(file, options);
-		results.push(result);
+		results.push(await uploadFile(file, options));
 	}
-	
 	return results;
 }
 
 // ── File Preview Helpers ─────────────────────────────────────
 export function readFileAsDataUrl(file: File): Promise<string> {
 	return new Promise((resolve, reject) => {
+		// For large files, don't create data URL
+		if (file.size > 5 * 1024 * 1024) {
+			resolve("");
+			return;
+		}
 		const reader = new FileReader();
 		reader.onload = () => resolve(reader.result as string);
 		reader.onerror = () => reject(reader.error);
-		
-		// For large files, don't create data URL (use placeholder instead)
-		if (file.size > 5 * 1024 * 1024) {
-			resolve(""); // Return empty for large files
-			return;
-		}
-		
 		reader.readAsDataURL(file);
 	});
-}
-
-export function formatFileSize(bytes: number): string {
-	if (bytes < 1024) return bytes + " B";
-	if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-	return (bytes / 1024 / 1024).toFixed(1) + " MB";
 }
 
 // ── State Management ─────────────────────────────────────────
@@ -298,8 +313,12 @@ export function getPendingUploads(): PendingFileUpload[] {
 	return pendingUploads;
 }
 
-export function addPendingUpload(pending: PendingFileUpload): void {
-	pendingUploads.push(pending);
+export function hasPendingUploads(): boolean {
+	return pendingUploads.length > 0;
+}
+
+export function addPendingUpload(entry: PendingFileUpload): void {
+	pendingUploads.push(entry);
 }
 
 export function removePendingUpload(index: number): void {
@@ -316,49 +335,50 @@ export function updatePendingUpload(index: number, updates: Partial<PendingFileU
 	}
 }
 
-// ── UI Helpers ───────────────────────────────────────────────
+// ── UI Helpers ───────────────────────────────���───────────────
 export function triggerFileSelect(accept?: string): void {
 	const input = document.createElement("input");
 	input.type = "file";
 	input.multiple = true;
 	input.accept = accept || "*/*";
-	
+
 	input.addEventListener("change", async (event: Event) => {
 		const target = event.target as HTMLInputElement;
 		if (target.files && target.files.length > 0) {
-			const files = Array.from(target.files);
-			await handleFileUpload(files);
+			await handleFileSelection(Array.from(target.files));
 		}
 	});
-	
+
 	input.click();
 }
 
-async function handleFileUpload(files: File[]): Promise<void> {
-	// Import chat-send dynamically to avoid circular deps
-	const { attachFilesToMessage } = await import("./pages/chat/chat-send");
-	
+/** Validate and stage files into pendingUploads (does NOT upload). */
+export function handleFileSelection(files: File[]): File[] {
 	const validFiles: File[] = [];
-	
+
 	for (const file of files) {
 		const typeCheck = isFileTypeAllowed(file);
 		if (!typeCheck.allowed) {
 			console.warn("[file-upload] skipping blocked file:", file.name, typeCheck.reason);
 			continue;
 		}
-		
+
 		if (file.size > MAX_FILE_SIZE) {
 			console.warn("[file-upload] skipping oversized file:", file.name);
 			continue;
 		}
-		
+
 		validFiles.push(file);
 	}
-	
-	if (validFiles.length > 0) {
-		await attachFilesToMessage(validFiles);
-	}
-}
 
-// ── Export for backwards compat ──────────────────────────────
-export { getFileIconClass, formatFileSize, isFileTypeAllowed };
+	// Stage into pending
+	for (const file of validFiles) {
+		addPendingUpload({
+			file,
+			uploading: false,
+			progress: 0,
+		});
+	}
+
+	return validFiles;
+}
