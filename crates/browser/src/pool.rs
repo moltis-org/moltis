@@ -22,7 +22,7 @@ use {
 use crate::{
     container::{BrowserContainer, browserless_session_timeout_ms},
     error::Error,
-    types::{BrowserConfig, BrowserPreference, BrowserlessApiVersion},
+    types::{BrowserConfig, BrowserKind, BrowserPreference, BrowserlessApiVersion},
 };
 
 pub(crate) const MAX_BROWSER_INSTANCE_LIFETIME: Duration = Duration::from_secs(30 * 60);
@@ -104,11 +104,11 @@ struct BrowserInstance {
     /// Container for sandboxed instances (None for host browser).
     #[allow(dead_code)]
     container: Option<BrowserContainer>,
-    /// Child process for Obscura sidecar instances. Killed on drop.
+    /// Child process for lightweight sidecar instances. Killed on drop.
     #[allow(dead_code)]
     child_process: Option<tokio::process::Child>,
     /// The browser kind used for this instance.
-    kind: Option<crate::types::BrowserKind>,
+    kind: Option<BrowserKind>,
 }
 
 /// Pool of browser instances for reuse.
@@ -362,7 +362,7 @@ impl BrowserPool {
     }
 
     /// Get the browser kind for a session, if known.
-    pub async fn browser_kind(&self, session_id: &str) -> Option<crate::types::BrowserKind> {
+    pub async fn browser_kind(&self, session_id: &str) -> Option<BrowserKind> {
         let instances = self.instances.read().await;
         let instance = instances.get(session_id)?;
         let inst = instance.lock().await;
@@ -376,9 +376,8 @@ impl BrowserPool {
         sandbox: bool,
         browser: Option<BrowserPreference>,
     ) -> Result<BrowserInstance, Error> {
-        // Route to Obscura when explicitly requested.
-        if matches!(browser, Some(BrowserPreference::Obscura)) {
-            return self.launch_obscura_browser(session_id).await;
+        if let Some(spec) = browser.and_then(sidecar_browser_spec) {
+            return self.launch_sidecar_browser(session_id, spec).await;
         }
 
         if sandbox {
@@ -736,40 +735,46 @@ impl BrowserPool {
         })
     }
 
-    /// Launch an Obscura headless browser as a sidecar process and connect via CDP.
+    /// Launch a lightweight headless browser as a sidecar process and connect via CDP.
     ///
     /// Uses a retry loop to handle TOCTOU races on port selection: if a
-    /// picked port is stolen between bind-to-0 and `obscura serve`, we
-    /// try again with a fresh port (up to [`OBSCURA_PORT_RETRIES`] times).
-    async fn launch_obscura_browser(&self, session_id: &str) -> Result<BrowserInstance, Error> {
-        let obscura_path = crate::detect::detect_obscura(self.config.obscura_path.as_deref())
-            .ok_or_else(|| {
-                Error::LaunchFailed(
-                    "Obscura binary not found. Install it from \
-                     https://github.com/h4ckf0r0day/obscura or set \
-                     [tools.browser] obscura_path in config."
-                        .to_string(),
-                )
-            })?;
+    /// picked port is stolen between bind-to-0 and browser startup, we try
+    /// again with a fresh port (up to [`SIDECAR_PORT_RETRIES`] times).
+    async fn launch_sidecar_browser(
+        &self,
+        session_id: &str,
+        spec: SidecarBrowserSpec,
+    ) -> Result<BrowserInstance, Error> {
+        let browser_path = spec.detect(&self.config).ok_or_else(|| {
+            Error::LaunchFailed(format!(
+                "{} binary not found. Install it from {} or set \
+                 [tools.browser] {} in config.",
+                spec.display_name, spec.install_url, spec.config_key
+            ))
+        })?;
 
         let mut last_error = String::new();
 
-        for attempt in 0..OBSCURA_PORT_RETRIES {
+        for attempt in 0..SIDECAR_PORT_RETRIES {
             // Pick a random port for the CDP server.
             let port = pick_available_port().ok_or_else(|| {
-                Error::LaunchFailed("no available TCP port for Obscura CDP server".to_string())
+                Error::LaunchFailed(format!(
+                    "no available TCP port for {} CDP server",
+                    spec.display_name
+                ))
             })?;
 
             info!(
                 session_id,
                 port,
                 attempt,
-                path = %obscura_path.display(),
-                "launching Obscura sidecar"
+                browser = %spec.kind,
+                path = %browser_path.display(),
+                "launching browser sidecar"
             );
 
             match self
-                .try_launch_obscura(session_id, &obscura_path, port)
+                .try_launch_sidecar(session_id, spec, &browser_path, port)
                 .await
             {
                 Ok(instance) => return Ok(instance),
@@ -779,7 +784,8 @@ impl BrowserPool {
                         port,
                         attempt,
                         error = %e,
-                        "Obscura launch attempt failed, retrying with new port"
+                        browser = %spec.kind,
+                        "browser sidecar launch attempt failed, retrying with new port"
                     );
                     last_error = e.to_string();
                 },
@@ -787,34 +793,38 @@ impl BrowserPool {
         }
 
         Err(Error::LaunchFailed(format!(
-            "Obscura failed to start after {OBSCURA_PORT_RETRIES} attempts: {last_error}"
+            "{} failed to start after {SIDECAR_PORT_RETRIES} attempts: {last_error}",
+            spec.display_name
         )))
     }
 
-    /// Single attempt to spawn Obscura on a given port and connect via CDP.
-    async fn try_launch_obscura(
+    /// Single attempt to spawn a sidecar browser on a given port and connect via CDP.
+    async fn try_launch_sidecar(
         &self,
         session_id: &str,
-        obscura_path: &std::path::Path,
+        spec: SidecarBrowserSpec,
+        browser_path: &std::path::Path,
         port: u16,
     ) -> Result<BrowserInstance, Error> {
-        let mut child = tokio::process::Command::new(obscura_path)
+        let mut command = tokio::process::Command::new(browser_path);
+        command
             .arg("serve")
-            .arg("--port")
-            .arg(port.to_string())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| {
-                Error::LaunchFailed(format!(
-                    "failed to spawn Obscura at {}: {e}",
-                    obscura_path.display()
-                ))
-            })?;
+            .kill_on_drop(true);
+        for arg in spec.serve_args(port) {
+            command.arg(arg);
+        }
+        let mut child = command.spawn().map_err(|e| {
+            Error::LaunchFailed(format!(
+                "failed to spawn {} at {}: {e}",
+                spec.display_name,
+                browser_path.display()
+            ))
+        })?;
 
         // Poll until the CDP endpoint is ready (or the process exits).
-        let ws_url = format!("ws://127.0.0.1:{port}/devtools/browser");
+        let ws_url = spec.websocket_url(port);
         let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
         let deadline = Instant::now() + Duration::from_secs(10);
 
@@ -823,10 +833,17 @@ impl BrowserPool {
             if let Ok(Some(status)) = child.try_wait() {
                 let stderr = drain_child_stderr(&mut child).await;
                 if !stderr.is_empty() {
-                    warn!(session_id, port, stderr, "Obscura stderr before exit");
+                    warn!(
+                        session_id,
+                        port,
+                        stderr,
+                        browser = %spec.kind,
+                        "browser sidecar stderr before exit"
+                    );
                 }
                 return Err(Error::LaunchFailed(format!(
-                    "Obscura exited immediately with status {status}: {stderr}"
+                    "{} exited immediately with status {status}: {stderr}",
+                    spec.display_name
                 )));
             }
 
@@ -844,11 +861,18 @@ impl BrowserPool {
             if Instant::now() >= deadline {
                 let stderr = drain_child_stderr(&mut child).await;
                 if !stderr.is_empty() {
-                    warn!(session_id, port, stderr, "Obscura stderr at timeout");
+                    warn!(
+                        session_id,
+                        port,
+                        stderr,
+                        browser = %spec.kind,
+                        "browser sidecar stderr at timeout"
+                    );
                 }
                 let _ = child.kill().await;
                 return Err(Error::LaunchFailed(format!(
-                    "Obscura CDP server did not become ready within 10 seconds: {stderr}"
+                    "{} CDP server did not become ready within 10 seconds: {stderr}",
+                    spec.display_name
                 )));
             }
 
@@ -872,7 +896,10 @@ impl BrowserPool {
         let (browser, mut handler) = Browser::connect_with_config(&ws_url, handler_config)
             .await
             .map_err(|e| {
-                Error::LaunchFailed(format!("failed to connect to Obscura CDP at {ws_url}: {e}"))
+                Error::LaunchFailed(format!(
+                    "failed to connect to {} CDP at {ws_url}: {e}",
+                    spec.display_name
+                ))
             })?;
 
         // Spawn handler to process browser events.
@@ -882,16 +909,23 @@ impl BrowserPool {
                 debug!(
                     session_id = session_id_clone,
                     ?event,
-                    "obscura browser event"
+                    browser = %spec.kind,
+                    "sidecar browser event"
                 );
             }
             debug!(
                 session_id = session_id_clone,
-                "obscura browser event handler exited"
+                browser = %spec.kind,
+                "sidecar browser event handler exited"
             );
         });
 
-        info!(session_id, port, "Obscura sidecar connected via CDP");
+        info!(
+            session_id,
+            port,
+            browser = %spec.kind,
+            "browser sidecar connected via CDP"
+        );
 
         Ok(BrowserInstance {
             browser,
@@ -901,13 +935,72 @@ impl BrowserPool {
             sandboxed: false,
             container: None,
             child_process: Some(child),
-            kind: Some(crate::types::BrowserKind::Obscura),
+            kind: Some(spec.kind),
         })
     }
 }
 
-/// Maximum number of port-selection retries when launching Obscura.
-const OBSCURA_PORT_RETRIES: usize = 3;
+#[derive(Debug, Clone, Copy)]
+struct SidecarBrowserSpec {
+    kind: BrowserKind,
+    display_name: &'static str,
+    config_key: &'static str,
+    install_url: &'static str,
+}
+
+impl SidecarBrowserSpec {
+    fn detect(self, config: &BrowserConfig) -> Option<PathBuf> {
+        match self.kind {
+            BrowserKind::Obscura => crate::detect::detect_obscura(config.obscura_path.as_deref()),
+            BrowserKind::Lightpanda => {
+                crate::detect::detect_lightpanda(config.lightpanda_path.as_deref())
+            },
+            _ => None,
+        }
+    }
+
+    fn serve_args(self, port: u16) -> Vec<String> {
+        match self.kind {
+            BrowserKind::Obscura => vec!["--port".to_string(), port.to_string()],
+            BrowserKind::Lightpanda => vec![
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                port.to_string(),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn websocket_url(self, port: u16) -> String {
+        match self.kind {
+            BrowserKind::Obscura => format!("ws://127.0.0.1:{port}/devtools/browser"),
+            BrowserKind::Lightpanda => format!("ws://127.0.0.1:{port}"),
+            _ => format!("ws://127.0.0.1:{port}"),
+        }
+    }
+}
+
+fn sidecar_browser_spec(preference: BrowserPreference) -> Option<SidecarBrowserSpec> {
+    match preference {
+        BrowserPreference::Obscura => Some(SidecarBrowserSpec {
+            kind: BrowserKind::Obscura,
+            display_name: "Obscura",
+            config_key: "obscura_path",
+            install_url: "https://github.com/h4ckf0r0day/obscura",
+        }),
+        BrowserPreference::Lightpanda => Some(SidecarBrowserSpec {
+            kind: BrowserKind::Lightpanda,
+            display_name: "Lightpanda",
+            config_key: "lightpanda_path",
+            install_url: "https://github.com/lightpanda-io/browser",
+        }),
+        _ => None,
+    }
+}
+
+/// Maximum number of port-selection retries when launching a sidecar browser.
+const SIDECAR_PORT_RETRIES: usize = 3;
 
 /// Find an available TCP port by binding to port 0.
 fn pick_available_port() -> Option<u16> {
@@ -937,7 +1030,7 @@ async fn drain_child_stderr(child: &mut tokio::process::Child) -> String {
                 }
             },
             Ok(Err(error)) => {
-                warn!(%error, "failed to drain Obscura stderr");
+                warn!(%error, "failed to drain browser sidecar stderr");
                 break;
             },
         }
@@ -1123,6 +1216,35 @@ mod tests {
     #[test]
     fn low_memory_args_disabled_when_threshold_zero() {
         assert!(low_memory_chrome_args(512, 0).is_empty());
+    }
+
+    #[test]
+    fn lightpanda_sidecar_uses_host_port_args_and_root_ws_endpoint() {
+        let spec = sidecar_browser_spec(BrowserPreference::Lightpanda)
+            .unwrap_or_else(|| panic!("expected Lightpanda sidecar spec"));
+
+        assert_eq!(spec.serve_args(9222), vec![
+            "--host".to_string(),
+            "127.0.0.1".to_string(),
+            "--port".to_string(),
+            "9222".to_string(),
+        ]);
+        assert_eq!(spec.websocket_url(9222), "ws://127.0.0.1:9222");
+    }
+
+    #[test]
+    fn obscura_sidecar_uses_browser_ws_endpoint() {
+        let spec = sidecar_browser_spec(BrowserPreference::Obscura)
+            .unwrap_or_else(|| panic!("expected Obscura sidecar spec"));
+
+        assert_eq!(spec.serve_args(9222), vec![
+            "--port".to_string(),
+            "9222".to_string()
+        ]);
+        assert_eq!(
+            spec.websocket_url(9222),
+            "ws://127.0.0.1:9222/devtools/browser"
+        );
     }
 
     #[test]

@@ -92,6 +92,9 @@ pub enum BrowserKind {
     /// Obscura: lightweight Rust-based headless browser with CDP support.
     /// No pixel rendering (screenshots unavailable), but fast and low-memory.
     Obscura,
+    /// Lightpanda: lightweight Zig-based headless browser with CDP support.
+    /// No pixel rendering (screenshots unavailable), but fast and low-memory.
+    Lightpanda,
     Custom,
 }
 
@@ -106,6 +109,7 @@ impl BrowserKind {
             Self::Vivaldi => "vivaldi",
             Self::Arc => "arc",
             Self::Obscura => "obscura",
+            Self::Lightpanda => "lightpanda",
             Self::Custom => "custom",
         }
     }
@@ -113,7 +117,7 @@ impl BrowserKind {
     /// Returns `true` when this browser kind is known to lack pixel rendering
     /// (and therefore cannot take screenshots).
     pub fn supports_screenshots(self) -> bool {
-        !matches!(self, Self::Obscura)
+        !matches!(self, Self::Obscura | Self::Lightpanda)
     }
 }
 
@@ -137,6 +141,7 @@ pub enum BrowserPreference {
     Vivaldi,
     Arc,
     Obscura,
+    Lightpanda,
 }
 
 impl BrowserPreference {
@@ -151,6 +156,7 @@ impl BrowserPreference {
             Self::Vivaldi => Some(BrowserKind::Vivaldi),
             Self::Arc => Some(BrowserKind::Arc),
             Self::Obscura => Some(BrowserKind::Obscura),
+            Self::Lightpanda => Some(BrowserKind::Lightpanda),
         }
     }
 }
@@ -421,6 +427,9 @@ pub struct BrowserConfig {
     /// Path to the Obscura binary (auto-detected from PATH if not set).
     /// Obscura is a lightweight Rust-based headless browser that supports CDP.
     pub obscura_path: Option<String>,
+    /// Path to the Lightpanda binary (auto-detected from PATH if not set).
+    /// Lightpanda is a lightweight Zig-based headless browser that supports CDP.
+    pub lightpanda_path: Option<String>,
     /// Whether to run in headless mode.
     pub headless: bool,
     /// Default viewport width.
@@ -499,6 +508,7 @@ impl Default for BrowserConfig {
             enabled: true,
             chrome_path: None,
             obscura_path: None,
+            lightpanda_path: None,
             headless: true,
             viewport_width: 2560,
             viewport_height: 1440,
@@ -544,6 +554,7 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             enabled: cfg.enabled,
             chrome_path: cfg.chrome_path.clone(),
             obscura_path: cfg.obscura_path.clone(),
+            lightpanda_path: cfg.lightpanda_path.clone(),
             headless: cfg.headless,
             viewport_width: cfg.viewport_width,
             viewport_height: cfg.viewport_height,
@@ -655,6 +666,13 @@ mod tests {
             Err(error) => panic!("failed to deserialize browser preference: {error}"),
         };
         assert_eq!(value, BrowserPreference::Brave);
+    }
+
+    #[test]
+    fn renderless_browsers_do_not_support_screenshots() {
+        assert!(!BrowserKind::Obscura.supports_screenshots());
+        assert!(!BrowserKind::Lightpanda.supports_screenshots());
+        assert!(BrowserKind::Chrome.supports_screenshots());
     }
 
     #[test]

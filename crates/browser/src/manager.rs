@@ -1034,6 +1034,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn screenshot_with_lightpanda_preference_fails_without_launching() {
+        let manager = BrowserManager::default();
+        let response = manager
+            .handle_request(BrowserRequest {
+                session_id: None,
+                action: BrowserAction::Screenshot {
+                    full_page: false,
+                    highlight_ref: None,
+                },
+                timeout_ms: 1000,
+                sandbox: Some(false),
+                browser: Some(BrowserPreference::Lightpanda),
+            })
+            .await;
+
+        assert!(!response.success);
+        assert_eq!(manager.active_count().await, 0);
+        assert!(
+            response
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Screenshots are not supported by lightpanda")),
+            "expected Lightpanda screenshot unsupported error, got: {:?}",
+            response.error
+        );
+    }
+
+    #[tokio::test]
     async fn cleanup_stale_session_returns_connection_closed() {
         let manager = BrowserManager::default();
         let err = manager.cleanup_stale_session("sess-42", "screenshot").await;

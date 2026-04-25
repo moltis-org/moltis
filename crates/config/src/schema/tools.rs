@@ -432,6 +432,9 @@ pub struct BrowserConfig {
     /// Path to the Obscura binary (auto-detected from PATH if not set).
     /// Set `browser = "obscura"` in requests to use this lightweight headless browser.
     pub obscura_path: Option<String>,
+    /// Path to the Lightpanda binary (auto-detected from PATH if not set).
+    /// Set `browser = "lightpanda"` in requests to use this lightweight headless browser.
+    pub lightpanda_path: Option<String>,
     /// Whether to run in headless mode.
     pub headless: bool,
     /// Default viewport width.
@@ -525,6 +528,7 @@ impl Default for BrowserConfig {
             enabled: true,
             chrome_path: None,
             obscura_path: None,
+            lightpanda_path: None,
             headless: true,
             viewport_width: 2560,
             viewport_height: 1440,
