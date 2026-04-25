@@ -17,6 +17,14 @@ import { modelStore } from "../../stores/model-store";
 import type { RpcResponse } from "../../types/rpc";
 import { handleSlashCommand, parseSlashCommand, shouldHandleSlashLocally, slashHideMenu } from "./slash-commands";
 
+// File upload imports
+import { 
+	clearPendingUploads, 
+	getPendingUploads, 
+	uploadFiles,
+	type PendingFileUpload,
+} from "../../file-upload";
+
 // ── Types ────────────────────────────────────────────────────
 
 export interface ChatSendParams {
@@ -93,6 +101,62 @@ export function resetComposerAfterSend(): void {
 	(S.chatInput as HTMLTextAreaElement).value = "";
 	chatAutoResize();
 	if (window.innerWidth < 768) S.chatInput?.blur();
+}
+
+// ── File upload integration ─────────────────────────────────
+
+/**
+ * Attach files to the message being composed.
+ * Uploads files to session media storage and includes URLs in the message.
+ */
+export async function attachFilesToMessage(files: File[]): Promise<void> {
+	if (!files || files.length === 0) return;
+	
+	// Upload files
+	const results = await uploadFiles(files);
+	
+	// Clear pending uploads
+	clearPendingUploads();
+	
+	// Check for errors
+	const failed = results.filter(r => !r.ok);
+	if (failed.length > 0) {
+		console.error("[chat-send] file upload failed:", failed);
+		return;
+	}
+	
+	// Files uploaded successfully - they will be included in the next message
+	// via the getPendingUploads() call in sendChat()
+}
+
+/**
+ * Get pending file uploads as message content parts.
+ * Converts uploaded file URLs to content parts for the chat payload.
+ */
+export function getPendingFileContentParts(): { text: string }[] {
+	const uploads = getPendingUploads();
+	if (!uploads || uploads.length === 0) return [];
+	
+	const parts: { text: string }[] = [];
+	
+	// For now, include file references as text in the message
+	// Future: could add special file content parts if backend supports it
+	for (const upload of uploads) {
+		if (upload.url) {
+			parts.push({
+				text: `📎 ${upload.filename || "Attached file"} (${upload.url})`,
+			});
+		}
+	}
+	
+	return parts;
+}
+
+/**
+ * Clear pending file uploads after message is sent.
+ */
+export function clearPendingFiles(): void {
+	clearPendingUploads();
 }
 
 export function normalizeOutgoingText(text: string, hasImages: boolean): string {

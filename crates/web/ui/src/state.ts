@@ -82,6 +82,11 @@ export let sessionExecPromptSymbol = "$";
 export let hostExecIsRoot = false;
 export let commandModeEnabled = false;
 
+// File upload DOM refs and state
+export let fileUploadBtn: HTMLButtonElement | null = null;
+export let fileUploadInput: HTMLInputElement | null = null;
+export let filePreviewContainer: HTMLElement | null = null;
+
 // Provider/channel page refresh callbacks
 export let refreshProvidersPage: (() => void) | null = null;
 export let refreshChannelsPage: (() => void) | null = null;

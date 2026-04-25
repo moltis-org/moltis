@@ -1,0 +1,230 @@
+/* ══ File Upload UI Styles ══ */
+
+/* File upload button (next to mic button) */
+.file-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.file-upload-btn:hover:not(:disabled) {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.file-upload-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.file-upload-btn .icon {
+  font-size: 1.1rem;
+}
+
+/* File preview container (above chat input) */
+.file-preview-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.file-preview-container.hidden {
+  display: none;
+}
+
+/* Individual file preview card */
+.file-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  max-width: 280px;
+  animation: 0.2s ease-out file-preview-in;
+}
+
+@keyframes file-preview-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.file-preview-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.file-preview-icon.icon-document { color: #60a5fa; }
+.file-preview-icon.icon-data { color: #fbbf24; }
+.file-preview-icon.icon-code { color: #a78bfa; }
+.file-preview-icon.icon-image { color: #34d399; }
+.file-preview-icon.icon-audio { color: #f472b6; }
+
+.file-preview-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.file-preview-name {
+  font-weight: 500;
+  color: var(--text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-preview-size {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.file-preview-progress {
+  height: 2px;
+  background: var(--border);
+  border-radius: 1px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.file-preview-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.file-preview-remove {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  transition: all 0.2s ease;
+}
+
+.file-preview-remove:hover {
+  background: var(--error);
+  color: white;
+}
+
+/* Uploading state */
+.file-preview-item.uploading .file-preview-name {
+  color: var(--accent);
+}
+
+.file-preview-item.uploading {
+  border-color: var(--accent-dim);
+}
+
+/* Error state */
+.file-preview-item.error {
+  border-color: var(--error);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.file-preview-item.error .file-preview-name {
+  color: var(--error);
+}
+
+/* File type badges */
+.file-type-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  background: var(--surface);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+
+/* Drag overlay */
+.file-drag-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 17, 21, 0.9);
+  border: 3px dashed var(--accent);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 16px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.file-drag-overlay.active {
+  opacity: 1;
+}
+
+.file-drag-overlay .icon {
+  font-size: 4rem;
+  color: var(--accent);
+}
+
+.file-drag-overlay-text {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+  .file-upload-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 1rem;
+  }
+  
+  .file-preview-item {
+    max-width: 100%;
+  }
+}
+
