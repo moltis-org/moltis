@@ -924,10 +924,26 @@ async fn drain_child_stderr(child: &mut tokio::process::Child) -> String {
     let Some(stderr) = child.stderr.as_mut() else {
         return String::new();
     };
-    let mut buf = Vec::with_capacity(4096);
-    // Use a short timeout so we don't block if the pipe is empty.
-    let _ = tokio::time::timeout(Duration::from_millis(100), stderr.read_to_end(&mut buf)).await;
-    String::from_utf8_lossy(&buf).trim().to_string()
+    let mut output = Vec::with_capacity(4096);
+    let mut chunk = [0; 4096];
+
+    loop {
+        match tokio::time::timeout(Duration::from_millis(10), stderr.read(&mut chunk)).await {
+            Ok(Ok(0)) | Err(_) => break,
+            Ok(Ok(read)) => {
+                output.extend_from_slice(&chunk[..read]);
+                if output.len() >= 64 * 1024 {
+                    break;
+                }
+            },
+            Ok(Err(error)) => {
+                warn!(%error, "failed to drain Obscura stderr");
+                break;
+            },
+        }
+    }
+
+    String::from_utf8_lossy(&output).trim().to_string()
 }
 
 impl Drop for BrowserPool {

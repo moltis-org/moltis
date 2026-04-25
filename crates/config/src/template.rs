@@ -438,6 +438,7 @@ port = {port}                           # Port number (auto-generated for this i
 # sandbox = false                   # Run browser in container for isolation
 # allowed_domains = []              # Domain restrictions (empty = all allowed)
 # chrome_path = "/path/to/chrome"   # Custom Chrome binary path
+# obscura_path = "/path/to/obscura" # Custom Obscura binary path for browser = "obscura"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SKILLS

@@ -151,10 +151,10 @@ impl moltis_tools::exec::EnvVarProvider for CredentialEnvVarProvider {
 /// one with `operator.read` + `operator.write` scopes. Returns the raw key.
 async fn ensure_sandbox_api_key(store: &auth::CredentialStore) -> Option<String> {
     // Check if we already have a sandbox-ctl key stored in env vars.
-    if let Ok(vals) = store.get_all_env_values().await {
-        if let Some((_, key)) = vals.iter().find(|(k, _)| k == "__MOLTIS_SANDBOX_API_KEY") {
-            return Some(key.clone());
-        }
+    if let Ok(vals) = store.get_all_env_values().await
+        && let Some((_, key)) = vals.iter().find(|(k, _)| k == "__MOLTIS_SANDBOX_API_KEY")
+    {
+        return Some(key.clone());
     }
 
     // Create a new API key scoped for sandbox use.

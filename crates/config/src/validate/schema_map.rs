@@ -155,6 +155,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
         Struct(HashMap::from([
             ("enabled", Leaf),
             ("chrome_path", Leaf),
+            ("obscura_path", Leaf),
             ("headless", Leaf),
             ("viewport_width", Leaf),
             ("viewport_height", Leaf),
