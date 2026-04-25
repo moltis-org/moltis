@@ -815,7 +815,7 @@ pub async fn prepare_gateway_core(
         window_ms: config.cron.rate_limit_window_secs * 1000,
     };
 
-    let default_cooldown_ms = 5 * 60 * 1000;
+    let default_cooldown_ms = moltis_cron::service::DEFAULT_WAKE_COOLDOWN_MS;
     let wake_cooldown_ms = match moltis_cron::parse::parse_duration_ms(&config.heartbeat.wake_cooldown) {
         Ok(ms) => ms,
         Err(e) => {
