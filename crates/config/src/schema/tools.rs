@@ -39,7 +39,7 @@ pub struct ToolsConfig {
     /// Window size for the tool-call reflex-loop detector. When this many
     /// consecutive tool calls share the same tool + (args or error), the
     /// runner injects a directive intervention message. Set to 0 to disable.
-    /// Default 3.
+    /// Default 2.
     #[serde(default = "default_agent_loop_detector_window")]
     pub agent_loop_detector_window: usize,
     /// When the loop detector fires a second time (stage 2), strip the tool
@@ -224,7 +224,7 @@ fn default_max_tool_result_bytes() -> usize {
 }
 
 fn default_agent_loop_detector_window() -> usize {
-    3
+    2
 }
 
 fn default_agent_loop_detector_strip_tools() -> bool {

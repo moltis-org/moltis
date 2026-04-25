@@ -84,6 +84,15 @@ fn test_native_prompt_uses_compact_tool_list() {
 }
 
 #[test]
+fn test_tool_guidelines_prefer_native_mcp_tools() {
+    let tools = ToolRegistry::new();
+    let prompt = build_system_prompt(&tools, true, None);
+    assert!(prompt.contains("mcp__<server>__<tool>"));
+    assert!(prompt.contains("mcp_list"));
+    assert!(prompt.contains("Skills describe workflows"));
+}
+
+#[test]
 fn test_skills_injected_into_prompt() {
     let tools = ToolRegistry::new();
     let skills = vec![SkillMetadata {

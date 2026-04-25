@@ -513,6 +513,15 @@ mod tests {
     }
 
     #[test]
+    fn bundled_skills_do_not_include_mcporter() {
+        let skills = store().discover();
+        assert!(
+            skills.iter().all(|skill| skill.name != "mcporter"),
+            "Moltis has native MCP tools; mcporter must not be bundled by default"
+        );
+    }
+
+    #[test]
     fn all_names_pass_validation() {
         let skills = store().discover();
         for skill in &skills {

@@ -572,7 +572,7 @@ Default `tool_overrides` entries:
 | agent_auto_continue_min_tool_calls | integer | `3` | Minimum tool calls in the current run before auto-continue can trigger. |
 | max_tool_result_bytes | integer | `50000` (50 KB) | Maximum bytes for a single tool result before truncation. |
 | registry_mode | string (enum) | `"full"` | How tool schemas are presented to the model. One of: `full` (all schemas sent every turn), `lazy` (only `tool_search` sent; model discovers tools on demand). |
-| agent_loop_detector_window | integer | `3` | Window size for the tool-call reflex-loop detector. When this many consecutive tool calls share the same tool + (args or error), the runner injects a directive intervention message. Set to 0 to disable. |
+| agent_loop_detector_window | integer | `2` | Window size for the tool-call reflex-loop detector. When this many consecutive tool calls share the same tool + (args or error), the runner injects a directive intervention message. Set to 0 to disable. |
 | agent_loop_detector_strip_tools_on_second_fire | bool | `true` | When the loop detector fires a second time (stage 2), strip the tool schema list for a single LLM turn so the model is forced to respond in text. |
 
 ---

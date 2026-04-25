@@ -64,6 +64,12 @@ enabled = true
 }
 
 #[test]
+fn tools_loop_detector_window_defaults_to_two() {
+    let config: MoltisConfig = toml::from_str("").unwrap();
+    assert_eq!(config.tools.agent_loop_detector_window, 2);
+}
+
+#[test]
 fn env_section_parses() {
     let toml = r#"
 [env]

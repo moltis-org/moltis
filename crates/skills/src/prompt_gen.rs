@@ -120,7 +120,9 @@ fn build_activation_instruction() -> String {
          (e.g. `{READ_SKILL_TOOL_NAME}(name=\"<skill-name>\")`). To load a sidecar \
          file inside a skill directory ({subdir_list}), pass the `file_path` \
          argument as well \
-         (e.g. `{READ_SKILL_TOOL_NAME}(name=\"<skill-name>\", file_path=\"references/api.md\")`).\n\n",
+         (e.g. `{READ_SKILL_TOOL_NAME}(name=\"<skill-name>\", file_path=\"references/api.md\")`). \
+         If `{READ_SKILL_TOOL_NAME}` is not currently listed in Available Tools, activate it first with \
+         `tool_search(name=\"{READ_SKILL_TOOL_NAME}\")`.\n\n",
     )
 }
 
@@ -184,6 +186,10 @@ mod tests {
         assert!(
             prompt.contains(&format!("{READ_SKILL_TOOL_NAME}(name=\"")),
             "instruction must include a concrete call example: {prompt}"
+        );
+        assert!(
+            prompt.contains(&format!("tool_search(name=\"{READ_SKILL_TOOL_NAME}\")")),
+            "lazy-mode instruction must explain how to activate read_skill: {prompt}"
         );
     }
 

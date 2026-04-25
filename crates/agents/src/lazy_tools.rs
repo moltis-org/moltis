@@ -66,10 +66,9 @@ impl ToolSearchTool {
     }
 
     fn activate_tool(&self, name: &str) -> Result<serde_json::Value, String> {
-        let tool = self
-            .full_registry
-            .get(name)
-            .ok_or_else(|| format!("unknown tool: {name}"))?;
+        let Some(tool) = self.full_registry.get(name) else {
+            return Ok(self.unknown_tool_response(name));
+        };
         let source = self
             .full_registry
             .get_source(name)
@@ -91,6 +90,40 @@ impl ToolSearchTool {
             "parameters": schema,
             "hint": format!("Tool `{name}` is now available. Call it directly on your next turn.")
         }))
+    }
+
+    fn unknown_tool_response(&self, name: &str) -> serde_json::Value {
+        let suggestions: Vec<serde_json::Value> = self
+            .keyword_search(name)
+            .into_iter()
+            .map(|(name, desc, _score)| {
+                serde_json::json!({
+                    "name": name,
+                    "description": desc
+                })
+            })
+            .collect();
+        let mcp_servers: Vec<String> = self
+            .full_registry
+            .list_schemas()
+            .into_iter()
+            .filter_map(|schema| {
+                (schema.get("source").and_then(serde_json::Value::as_str) == Some("mcp"))
+                    .then(|| schema.get("mcpServer")?.as_str().map(str::to_string))
+                    .flatten()
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        serde_json::json!({
+            "activated": false,
+            "name": name,
+            "error": format!("unknown tool: {name}"),
+            "suggestions": suggestions,
+            "mcpServers": mcp_servers,
+            "hint": "The `name` field must be an exact tool name from search results or Available Tools. Skills are not tools. For connected MCP servers, search with query set to the server or domain name, then activate the exact `mcp__<server>__<tool>` name."
+        })
     }
 }
 
@@ -246,13 +279,20 @@ mod tests {
             "browser_navigate",
             "Navigate browser to a URL",
         )));
+        registry.register_mcp(
+            Box::new(DummyTool::new(
+                "mcp__vmcp-ha__homeassistant_ha_get_state",
+                "Get current status, state, and attributes from Home Assistant",
+            )),
+            "vmcp-ha".to_string(),
+        );
         registry
     }
 
     #[test]
     fn wrap_registry_lazy_contains_only_tool_search() {
         let full = build_full_registry();
-        assert_eq!(full.list_names().len(), 7);
+        assert_eq!(full.list_names().len(), 8);
 
         let lazy = wrap_registry_lazy(full);
         let names = lazy.list_names();
@@ -324,22 +364,67 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn activate_unknown_tool_returns_error() {
+    async fn activate_unknown_tool_returns_recovery_response() {
         let full = build_full_registry();
         let lazy = wrap_registry_lazy(full);
         let search_tool = lazy.get("tool_search").unwrap();
 
         let result = search_tool
             .execute(serde_json::json!({ "name": "nonexistent" }))
-            .await;
+            .await
+            .unwrap();
 
-        assert!(result.is_err());
+        assert_eq!(result["activated"], false);
+        assert_eq!(result["name"], "nonexistent");
+        assert_eq!(result["error"], "unknown tool: nonexistent");
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("unknown tool: nonexistent")
+            result["hint"]
+                .as_str()
+                .unwrap()
+                .contains("Skills are not tools")
         );
+    }
+
+    #[tokio::test]
+    async fn activate_skill_name_gives_mcp_recovery_hint() {
+        let full = build_full_registry();
+        let lazy = wrap_registry_lazy(full);
+        let search_tool = lazy.get("tool_search").unwrap();
+
+        let result = search_tool
+            .execute(serde_json::json!({ "name": "mcporter", "query": "null" }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["activated"], false);
+        assert_eq!(result["error"], "unknown tool: mcporter");
+        assert_eq!(result["mcpServers"], serde_json::json!(["vmcp-ha"]));
+        assert!(
+            result["hint"]
+                .as_str()
+                .unwrap()
+                .contains("mcp__<server>__<tool>")
+        );
+    }
+
+    #[tokio::test]
+    async fn search_finds_homeassistant_mcp_tools() {
+        let full = build_full_registry();
+        let lazy = wrap_registry_lazy(full);
+        let search_tool = lazy.get("tool_search").unwrap();
+
+        let result = search_tool
+            .execute(serde_json::json!({ "query": "homeassistant" }))
+            .await
+            .unwrap();
+
+        let names: Vec<&str> = result["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"mcp__vmcp-ha__homeassistant_ha_get_state"));
     }
 
     #[tokio::test]
