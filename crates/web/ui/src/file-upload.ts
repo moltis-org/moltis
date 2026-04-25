@@ -382,3 +382,122 @@ export function handleFileSelection(files: File[]): File[] {
 
 	return validFiles;
 }
+
+// ── Preview Strip Management ────────────────────────────────
+
+let filePreviewStrip: HTMLElement | null = null;
+let fileInputRef: HTMLInputElement | null = null;
+
+/** Render current pending uploads as a preview strip. */
+function renderFilePreviewStrip(): void {
+	if (!filePreviewStrip) return;
+
+	filePreviewStrip.textContent = "";
+
+	if (pendingUploads.length === 0) {
+		filePreviewStrip.classList.add("hidden");
+		return;
+	}
+
+	filePreviewStrip.classList.remove("hidden");
+
+	for (let i = 0; i < pendingUploads.length; i++) {
+		const entry = pendingUploads[i];
+		const item = document.createElement("div");
+		item.className = "file-preview-item";
+
+		const icon = document.createElement("span");
+		icon.className = "icon icon-md icon-file file-preview-icon";
+		item.appendChild(icon);
+
+		const info = document.createElement("div");
+		info.className = "file-preview-info";
+
+		const name = document.createElement("span");
+		name.className = "file-preview-name";
+		name.textContent = entry.file.name;
+		name.title = entry.file.name;
+		info.appendChild(name);
+
+		const size = document.createElement("span");
+		size.className = "file-preview-size";
+		size.textContent = formatFileSize(entry.file.size);
+		info.appendChild(size);
+
+		item.appendChild(info);
+
+		const removeBtn = document.createElement("button");
+		removeBtn.type = "button";
+		removeBtn.className = "file-preview-remove";
+		removeBtn.textContent = "×";
+		removeBtn.title = "Remove file";
+		removeBtn.addEventListener("click", () => {
+			removePendingUpload(i);
+			renderFilePreviewStrip();
+		});
+		item.appendChild(removeBtn);
+
+		filePreviewStrip.appendChild(item);
+	}
+}
+
+// ── Init / Teardown ─────────────────────────────────────────
+
+/**
+ * Initialize file upload UI.
+ * Creates a hidden file input, a preview strip, and binds the upload button.
+ * @param btn The `+` button element (may be null — module becomes inert)
+ * @param inputRow The chat input row — preview strip is inserted before it
+ */
+export function initFileUpload(btn: HTMLButtonElement | null, inputRow: HTMLElement | null): void {
+	// Create hidden file input (not in HTML template — avoids stale refs)
+	fileInputRef = document.createElement("input");
+	fileInputRef.type = "file";
+	fileInputRef.multiple = true;
+	fileInputRef.style.display = "none";
+	fileInputRef.accept = buildAcceptString();
+
+	fileInputRef.addEventListener("change", () => {
+		if (fileInputRef?.files && fileInputRef.files.length > 0) {
+			handleFileSelection(Array.from(fileInputRef.files));
+			renderFilePreviewStrip();
+			// Reset so same file can be re-selected
+			fileInputRef.value = "";
+		}
+	});
+
+	if (btn) {
+		btn.addEventListener("click", () => fileInputRef?.click());
+	}
+
+	// Create preview strip above the input row (same pattern as media-drop)
+	filePreviewStrip = document.createElement("div");
+	filePreviewStrip.className = "file-preview-strip hidden";
+	if (inputRow?.parentElement) {
+		inputRow.parentElement.insertBefore(filePreviewStrip, inputRow);
+	}
+}
+
+/**
+ * Teardown file upload UI — clean up DOM elements.
+ */
+export function teardownFileUpload(): void {
+	if (filePreviewStrip?.parentElement) {
+		filePreviewStrip.parentElement.removeChild(filePreviewStrip);
+	}
+	filePreviewStrip = null;
+	fileInputRef = null;
+	clearPendingUploads();
+}
+
+/**
+ * Build the `accept` attribute string from ALLOWED_TYPES.
+ * Returns a comma-separated list of file extensions.
+ */
+function buildAcceptString(): string {
+	const extensions = new Set<string>();
+	for (const exts of Object.values(ALLOWED_TYPES)) {
+		for (const ext of exts) extensions.add(ext);
+	}
+	return Array.from(extensions).join(",");
+}
