@@ -8045,6 +8045,7 @@ dependencies = [
  "moltis-oauth",
  "moltis-providers",
  "moltis-service-traits",
+ "moltis-vault",
  "reqwest 0.13.2",
  "secrecy 0.8.0",
  "serde",

@@ -124,6 +124,51 @@ pub async fn migrate_json_file<C: Cipher>(
     Ok(true)
 }
 
+/// Encrypt a JSON file to an `.enc` file without removing the original.
+///
+/// Unlike [`migrate_json_file`], this leaves the plaintext file in place so
+/// sync consumers (e.g. `KeyStore`) can still read it.  The `.enc` copy is
+/// authoritative when the vault is unsealed; the plaintext serves as a
+/// fallback until all consumers are made vault-aware.
+///
+/// Returns `true` when a new `.enc` file was written.
+pub async fn encrypt_json_file<C: Cipher>(
+    vault: &Vault<C>,
+    path: &Path,
+    aad: &str,
+) -> Result<bool, VaultError> {
+    let enc_path = path.with_extension("json.enc");
+
+    // Skip if plaintext doesn't exist or .enc is already up-to-date.
+    if !path.exists() || enc_path.exists() {
+        return Ok(false);
+    }
+
+    let plaintext = std::fs::read_to_string(path)
+        .map_err(|e| VaultError::CipherError(format!("failed to read {}: {e}", path.display())))?;
+
+    if plaintext.trim().is_empty() {
+        return Ok(false);
+    }
+
+    let encrypted = vault.encrypt_string(&plaintext, aad).await?;
+
+    std::fs::write(&enc_path, &encrypted).map_err(|e| {
+        VaultError::CipherError(format!("failed to write {}: {e}", enc_path.display()))
+    })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&enc_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    #[cfg(feature = "tracing")]
+    tracing::info!(path = %path.display(), "encrypted copy created");
+
+    Ok(true)
+}
+
 /// Decrypt an `.enc` file back to a string. Falls back to plaintext if `.enc` doesn't exist.
 pub async fn load_encrypted_or_plaintext<C: Cipher>(
     vault: Option<&Vault<C>>,
@@ -154,6 +199,46 @@ pub async fn load_encrypted_or_plaintext<C: Cipher>(
     }
 
     Ok(None)
+}
+
+/// Write content to an encrypted `.enc` file if the vault is available,
+/// otherwise fall back to writing the plaintext `.json` file.
+///
+/// This is the write counterpart to [`load_encrypted_or_plaintext`].
+pub async fn save_encrypted_or_plaintext<C: Cipher>(
+    vault: Option<&Vault<C>>,
+    path: &Path,
+    aad: &str,
+    content: &str,
+) -> Result<(), VaultError> {
+    let enc_path = path.with_extension("json.enc");
+
+    if let Some(vault) = vault {
+        let encrypted = vault.encrypt_string(content, aad).await?;
+        std::fs::write(&enc_path, &encrypted).map_err(|e| {
+            VaultError::CipherError(format!("failed to write {}: {e}", enc_path.display()))
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&enc_path, std::fs::Permissions::from_mode(0o600));
+        }
+        // Remove plaintext file if it still exists (post-migration cleanup).
+        if path.exists() {
+            let bak_path = path.with_extension("json.bak");
+            let _ = std::fs::rename(path, &bak_path);
+        }
+    } else {
+        std::fs::write(path, content).map_err(|e| {
+            VaultError::CipherError(format!("failed to write {}: {e}", path.display()))
+        })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+    Ok(())
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -320,6 +405,69 @@ mod tests {
             .await
             .unwrap();
         assert!(!migrated2);
+    }
+
+    #[tokio::test]
+    async fn encrypt_json_file_keeps_original() {
+        let (_, vault) = setup_vault().await;
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let json_path = tmp_dir.path().join("keys.json");
+        let enc_path = tmp_dir.path().join("keys.json.enc");
+
+        std::fs::write(&json_path, r#"{"groq":{"apiKey":"sk-groq"}}"#).unwrap();
+
+        let created = encrypt_json_file(&vault, &json_path, "keys").await.unwrap();
+        assert!(created);
+        // Original must still exist (unlike migrate_json_file).
+        assert!(json_path.exists());
+        assert!(enc_path.exists());
+
+        // Encrypted content should decrypt to the original.
+        let content = load_encrypted_or_plaintext(Some(&vault), &json_path, "keys")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(content.contains("sk-groq"));
+
+        // Running again is a no-op (.enc already exists).
+        let created2 = encrypt_json_file(&vault, &json_path, "keys").await.unwrap();
+        assert!(!created2);
+    }
+
+    #[tokio::test]
+    async fn save_encrypted_or_plaintext_round_trip() {
+        let (_, vault) = setup_vault().await;
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let json_path = tmp_dir.path().join("data.json");
+        let enc_path = tmp_dir.path().join("data.json.enc");
+
+        // With vault: writes .enc
+        save_encrypted_or_plaintext(Some(&vault), &json_path, "data", r#"{"secret":"value"}"#)
+            .await
+            .unwrap();
+        assert!(enc_path.exists());
+
+        let decrypted = load_encrypted_or_plaintext(Some(&vault), &json_path, "data")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(decrypted, r#"{"secret":"value"}"#);
+
+        // Without vault: writes plaintext .json
+        let plain_path = tmp_dir.path().join("plain.json");
+        save_encrypted_or_plaintext::<XChaCha20Poly1305Cipher>(
+            None,
+            &plain_path,
+            "plain",
+            r#"{"open":"data"}"#,
+        )
+        .await
+        .unwrap();
+        assert!(plain_path.exists());
+        assert_eq!(
+            std::fs::read_to_string(&plain_path).unwrap(),
+            r#"{"open":"data"}"#
+        );
     }
 
     #[tokio::test]
