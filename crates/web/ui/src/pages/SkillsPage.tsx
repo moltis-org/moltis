@@ -163,7 +163,7 @@ function fetchAll(): void {
 		});
 }
 
-function doInstall(source: string, autoTrust = false): Promise<void> {
+function doInstall(source: string): Promise<void> {
 	if (!(source && S.connected)) {
 		if (!S.connected) showToast("Not connected to gateway.", "error");
 		return Promise.resolve();
@@ -174,21 +174,10 @@ function doInstall(source: string, autoTrust = false): Promise<void> {
 		if (res?.ok) {
 			const p = (res.payload || {}) as Record<string, unknown[]>;
 			const installed = (p.installed || []) as Array<{ name?: string }>;
-			showToast(`Installed ${source} (${installed.length} skills)`, "success");
-
-			if (autoTrust && installed.length > 0) {
-				let trustFailed = 0;
-				for (const skill of installed) {
-					if (!skill.name) continue;
-					const trustRes = await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
-					const enableRes = await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
-					if (!(trustRes?.ok && enableRes?.ok)) trustFailed++;
-				}
-				if (trustFailed > 0) {
-					showToast(`${trustFailed} skill(s) could not be auto-trusted. Enable them manually in Skills.`, "error");
-				}
-			}
-
+			showToast(
+				`Installed ${source} (${installed.length} skills) — review and enable the skills you need.`,
+				"success",
+			);
 			fetchAll();
 			stopInstallProgress(pid, true);
 		} else {
@@ -306,18 +295,15 @@ interface FeaturedSkill {
 	repo: string;
 	desc: string;
 	hasRecipe?: boolean;
-	/** When true, all skills in this repo are auto-trusted and enabled on install. */
-	autoTrust?: boolean;
 }
 const featuredSkills: FeaturedSkill[] = [
-	{ repo: "anthropics/skills", desc: "Official Anthropic agent skills", autoTrust: true },
-	{ repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection", autoTrust: true },
-	{ repo: "vercel-labs/skills", desc: "Vercel skills toolkit", autoTrust: true },
+	{ repo: "anthropics/skills", desc: "Official Anthropic agent skills" },
+	{ repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection" },
+	{ repo: "vercel-labs/skills", desc: "Vercel skills toolkit" },
 	{
 		repo: "garrytan/gbrain",
 		desc: "Knowledge graph with hybrid search for agent memory",
 		hasRecipe: true,
-		autoTrust: true,
 	},
 ];
 
@@ -393,7 +379,7 @@ function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
 				onClick={() => {
 					if (isInstalled) return;
 					installing.value = true;
-					doInstall(f.repo, f.autoTrust)
+					doInstall(f.repo)
 						.then(() => {
 							if (f.hasRecipe) checkPostInstallRecipe(f.repo).catch(console.error);
 						})

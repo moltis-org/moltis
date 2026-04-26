@@ -164,19 +164,6 @@ function DetailPanel({
 			const res = await sendRpc("skills.clawhub.install", { slug });
 			if (res?.ok) {
 				installed.value = true;
-				const payload = res.payload as { installed?: Array<{ name?: string }> } | undefined;
-				const skills = payload?.installed || [];
-				const source = `clawhub:${slug}`;
-				let trustFailed = 0;
-				for (const skill of skills) {
-					if (!skill.name) continue;
-					const trustRes = await sendRpc("skills.skill.trust", { source, skill: skill.name, trusted: true });
-					const enableRes = await sendRpc("skills.skill.enable", { source, skill: skill.name, enabled: true });
-					if (!(trustRes?.ok && enableRes?.ok)) trustFailed++;
-				}
-				if (trustFailed > 0) {
-					error.value = `${trustFailed} skill(s) could not be auto-trusted. Enable manually in Skills tab.`;
-				}
 				onInstalled();
 			} else {
 				error.value = String(res?.error || "Install failed");
