@@ -168,27 +168,27 @@ export function handleChatSendRpcResponse(res: RpcResponse<ChatSendPayload>, use
 }
 
 /** Build multimodal content array from text and images. */
-function buildContentParts(text: string, images: unknown[]): ChatContentPart[] {
+function buildContentParts(text: string, images: { dataUrl: string; name: string }[]): ChatContentPart[] {
 	const content: ChatContentPart[] = [];
 	if (text) content.push({ type: "text", text });
-	for (const img of images)
-		content.push({ type: "image_url", image_url: { url: (img as { dataUrl: string }).dataUrl } });
+	for (const img of images) content.push({ type: "image_url", image_url: { url: img.dataUrl } });
 	return content;
 }
 
-export function buildChatMessage(
+/** Build chat message params and user message element from pre-captured images.
+ *  Images must be snapshotted before any async gap to prevent race conditions. */
+export function buildChatMessageWithImages(
 	text: string,
 	seq: number,
-	displayText?: string,
+	displayText: string | undefined,
+	images: { dataUrl: string; name: string }[],
 ): { params: ChatSendParams; el: HTMLElement | null } {
 	const userText = displayText === undefined ? text : displayText;
-	const images = hasPendingImages() ? getPendingImages() : [];
 
 	if (images.length > 0) {
 		const content = buildContentParts(text, images);
 		const params: ChatSendParams = { content, _seq: seq };
 		const el = chatAddMsgWithImages("user", userText ? renderMarkdown(userText) : "", images);
-		clearPendingImages();
 		return { params, el };
 	}
 	return { params: { text, _seq: seq }, el: chatAddMsg("user", renderMarkdown(userText), true) };
@@ -241,13 +241,18 @@ export function sendChat(): void {
 	resetComposerAfterSend();
 	const outgoingText = normalizeOutgoingText(text, hasImages);
 	S.setChatSeq(S.chatSeq + 1);
+	const seq = S.chatSeq;
+	// Snapshot image state before any async gap to prevent a concurrent send
+	// from stealing images staged for this message.
+	const snapshotImages = hasImages ? getPendingImages() : [];
+	if (snapshotImages.length > 0) clearPendingImages();
 
 	// If files are pending, upload them first then send.
 	// Files are sent via `_document_files` (matching the channel attachment
 	// pipeline) rather than as image_url content parts.
 	if (hasFiles) {
 		uploadPendingFiles().then((docFiles) => {
-			const msg = buildChatMessage(outgoingText, S.chatSeq, text);
+			const msg = buildChatMessageWithImages(outgoingText, seq, text, snapshotImages);
 			const chatParams = msg.params;
 			if (docFiles.length > 0) {
 				chatParams._document_files = docFiles;
@@ -265,7 +270,7 @@ export function sendChat(): void {
 		return;
 	}
 
-	const msg = buildChatMessage(outgoingText, S.chatSeq, text);
+	const msg = buildChatMessageWithImages(outgoingText, seq, text, snapshotImages);
 	const chatParams = msg.params;
 	const userEl = msg.el;
 	if (userEl) highlightCodeBlocks(userEl);
