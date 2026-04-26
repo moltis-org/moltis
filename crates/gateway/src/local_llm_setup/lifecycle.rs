@@ -154,17 +154,30 @@ impl ModelLifecycleManager {
 
     /// Return current state for all registered models.
     pub async fn model_states(&self) -> Vec<ModelState> {
-        let providers = self.providers.read().await;
-        let timeouts = self.timeouts.read().await;
-        let mut states = Vec::with_capacity(providers.len());
+        // Snapshot Arcs and timeouts so we don't hold locks across awaits.
+        let snapshot: Vec<(String, Arc<local_llm::LocalLlmProvider>, Option<u64>)> = {
+            let providers = self.providers.read().await;
+            let timeouts = self.timeouts.read().await;
+            providers
+                .iter()
+                .map(|(id, prov)| {
+                    (
+                        id.clone(),
+                        Arc::clone(prov),
+                        timeouts.get(id).copied().flatten(),
+                    )
+                })
+                .collect()
+        };
 
-        for (model_id, provider) in providers.iter() {
+        let mut states = Vec::with_capacity(snapshot.len());
+        for (model_id, provider, timeout) in &snapshot {
             states.push(ModelState {
                 model_id: model_id.clone(),
                 is_loaded: provider.is_loaded().await,
                 memory_bytes: provider.model_size_bytes().await,
                 last_activity: provider.last_activity_secs(),
-                idle_timeout_secs: timeouts.get(model_id).copied().flatten(),
+                idle_timeout_secs: *timeout,
             });
         }
 
