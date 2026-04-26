@@ -640,6 +640,14 @@ body {
   }
 }
 
+/* ── Hide secondary chat badges on mobile ── */
+
+@media (max-width: 767px) {
+  .chat-badge-desktop-only {
+    display: none !important;
+  }
+}
+
 /* ── Scrollbar on Mobile ── */
 
 @media (max-width: 767px) {
