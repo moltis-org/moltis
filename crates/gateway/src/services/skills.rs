@@ -1305,18 +1305,21 @@ fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResult {
     {
         let store = moltis_skills::bundled::BundledSkillStore::new();
         let skills = store.discover();
-        let category = skills
+        let skill = skills
             .iter()
             .find(|s| s.name == skill_name)
-            .and_then(|s| s.category.clone())
             .ok_or_else(|| format!("bundled skill '{skill_name}' not found"))?;
+        let category = skill
+            .category
+            .clone()
+            .ok_or_else(|| format!("bundled skill '{skill_name}' has no category"))?;;
 
         let cat_clone = category.clone();
         if let Err(e) = moltis_config::update_config(|cfg| {
             if enabled {
                 cfg.skills.disabled_bundled_categories.retain(|c| c != &cat_clone);
             } else if !cfg.skills.disabled_bundled_categories.iter().any(|c| c == &cat_clone) {
-                cfg.skills.disabled_bundled_categories.push(cat_clone.clone());
+                cfg.skills.disabled_bundled_categories.push(cat_clone);
             }
         }) {
             return Err(format!("failed to save config: {e}").into());
@@ -1332,7 +1335,7 @@ fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResult {
             }),
         );
 
-        return Ok(serde_json::json!({ "source": "bundled", "skill": skill_name, "enabled": enabled }));
+        return Ok(serde_json::json!({ "source": "bundled", "skill": skill_name, "category": category, "enabled": enabled }));
     }
     #[cfg(not(feature = "bundled-skills"))]
     {
