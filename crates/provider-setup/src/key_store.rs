@@ -297,13 +297,30 @@ impl KeyStore {
     }
 
     /// Load all provider configs from vault-encrypted storage, falling back to
-    /// plaintext when the vault is unavailable.
+    /// plaintext when the vault is unavailable or when the plaintext file is
+    /// newer than the encrypted copy (indicating a sync write occurred since
+    /// the last vault-unseal encryption).
     #[cfg(feature = "vault")]
     pub async fn load_all_configs_encrypted<C: moltis_vault::Cipher>(
         &self,
         vault: Option<&moltis_vault::Vault<C>>,
     ) -> HashMap<String, ProviderConfig> {
         let path = self.path();
+
+        // If the plaintext is newer than the .enc file, a sync write happened
+        // after the last vault-unseal encryption.  Prefer the fresher plaintext
+        // so we don't silently return stale data.
+        let enc_path = path.with_extension("json.enc");
+        if path.exists() && enc_path.exists() {
+            let json_mod = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            let enc_mod = std::fs::metadata(&enc_path).and_then(|m| m.modified()).ok();
+            if let (Some(j), Some(e)) = (json_mod, enc_mod) {
+                if j > e {
+                    return Self::load_all_configs_from_path(&path);
+                }
+            }
+        }
+
         match moltis_vault::migration::load_encrypted_or_plaintext(vault, &path, "provider_keys")
             .await
         {
