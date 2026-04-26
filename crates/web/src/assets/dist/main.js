@@ -11932,10 +11932,14 @@ function createLifecycleButton(modelId, container) {
     btn2.disabled = true;
     btn2.textContent = isLoaded ? "Unloading..." : "Loading...";
     const success = isLoaded ? await unloadModel(modelId) : await loadModel(modelId);
-    if (success) {
-      await refreshModelStates();
-    }
+    await refreshModelStates();
     container.textContent = "";
+    if (!success) {
+      const err = document.createElement("span");
+      err.className = "text-xs text-[var(--error)] mr-2";
+      err.textContent = "Failed";
+      container.appendChild(err);
+    }
     createLifecycleButton(modelId, container);
   });
   container.appendChild(btn2);

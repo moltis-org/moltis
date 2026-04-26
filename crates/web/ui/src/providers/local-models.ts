@@ -100,11 +100,15 @@ export function createLifecycleButton(modelId: string, container: HTMLElement): 
 		btn.textContent = isLoaded ? "Unloading..." : "Loading...";
 
 		const success = isLoaded ? await unloadModel(modelId) : await loadModel(modelId);
-		if (success) {
-			await refreshModelStates();
-		}
-		// Recreate button with new state
+		await refreshModelStates();
+		// Recreate button with new state (reflects actual server state even on failure)
 		container.textContent = "";
+		if (!success) {
+			const err = document.createElement("span");
+			err.className = "text-xs text-[var(--error)] mr-2";
+			err.textContent = "Failed";
+			container.appendChild(err);
+		}
 		createLifecycleButton(modelId, container);
 	});
 

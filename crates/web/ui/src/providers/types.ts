@@ -102,13 +102,7 @@ export interface LocalLlmDownloadPayload {
 	total?: number;
 }
 
-export interface LocalLlmLifecyclePayload {
-	modelId: string;
-	state: "loading" | "loaded" | "unloading" | "unloaded";
-	modelSizeBytes?: number;
-	totalLoadedBytes?: number;
-	reason?: "idle" | "manual";
-}
+export type { LocalLlmLifecyclePayload } from "../types/ws-events";
 
 export interface ModelStateEntry {
 	model_id: string;
