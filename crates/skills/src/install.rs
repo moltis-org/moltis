@@ -62,11 +62,40 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> Result<Vec<Skill
                 let meta: Vec<SkillMetadata> = entries.iter().map(|e| e.metadata.clone()).collect();
                 let states: Vec<SkillState> = entries
                     .iter()
-                    .map(|e| SkillState {
-                        name: e.metadata.name.clone(),
-                        relative_path: relative.clone(),
-                        trusted: false,
-                        enabled: false,
+                    .map(|e| {
+                        // Compute per-skill relative_path so discovery can
+                        // locate each skill independently.  Previously every
+                        // entry shared the repo-root path, which broke
+                        // SKILL.md-based marketplace skills because read_ops
+                        // looked for SKILL.md at the repo root.
+                        //
+                        // • SKILL.md entries (source_file ends with
+                        //   "SKILL.md") → use metadata.path which already
+                        //   points at the directory containing that file.
+                        // • Single .md file entries → build the path to the
+                        //   .md file itself so the Plugin-as-file branch in
+                        //   read_ops can detect it.
+                        let is_skill_md_entry = e
+                            .source_file
+                            .as_ref()
+                            .is_some_and(|f| f.ends_with("SKILL.md"));
+                        let skill_relative = if is_skill_md_entry {
+                            e.metadata
+                                .path
+                                .strip_prefix(install_dir)
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_else(|_| relative.clone())
+                        } else if let Some(sf) = &e.source_file {
+                            format!("{relative}/{sf}")
+                        } else {
+                            relative.clone()
+                        };
+                        SkillState {
+                            name: e.metadata.name.clone(),
+                            relative_path: skill_relative,
+                            trusted: false,
+                            enabled: false,
+                        }
                     })
                     .collect();
                 (meta, states)
@@ -510,5 +539,194 @@ mod tests {
         assert_eq!(meta.len(), 2);
         assert_eq!(states.len(), 2);
         assert!(states.iter().all(|s| !s.enabled));
+    }
+
+    /// Regression test for #880: marketplace repos must store per-skill
+    /// relative paths, not the repo root for every entry.
+    #[test]
+    fn test_marketplace_skill_states_have_per_skill_relative_paths() {
+        use crate::formats::{PluginFormat, detect_format, scan_with_adapter};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let install_dir = tmp.path();
+        let dir_name = "anthropic-agent-skills";
+        let target = install_dir.join(dir_name);
+
+        // Build a marketplace repo with two SKILL.md-based skills.
+        std::fs::create_dir_all(target.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            target.join(".claude-plugin/marketplace.json"),
+            r#"{
+  "name": "anthropic-agent-skills",
+  "plugins": [
+    {
+      "name": "document-skills",
+      "description": "Document processing skills",
+      "source": "./",
+      "skills": ["./skills/xlsx", "./skills/pdf"]
+    }
+  ]
+}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(target.join("skills/xlsx")).unwrap();
+        std::fs::write(
+            target.join("skills/xlsx/SKILL.md"),
+            "---\nname: xlsx\ndescription: Spreadsheets\n---\nRead spreadsheets.\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(target.join("skills/pdf")).unwrap();
+        std::fs::write(
+            target.join("skills/pdf/SKILL.md"),
+            "---\nname: pdf\ndescription: PDF docs\n---\nRead PDF documents.\n",
+        )
+        .unwrap();
+
+        let format = detect_format(&target);
+        assert_eq!(format, PluginFormat::ClaudeCode);
+
+        let entries = scan_with_adapter(&target, format).unwrap().unwrap();
+        assert_eq!(entries.len(), 2);
+
+        // Reproduce the logic from install_skill for non-Skill formats.
+        let relative = target
+            .strip_prefix(install_dir)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let states: Vec<SkillState> = entries
+            .iter()
+            .map(|e| {
+                let is_skill_md_entry = e
+                    .source_file
+                    .as_ref()
+                    .is_some_and(|f| f.ends_with("SKILL.md"));
+                let skill_relative = if is_skill_md_entry {
+                    e.metadata
+                        .path
+                        .strip_prefix(install_dir)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| relative.clone())
+                } else if let Some(sf) = &e.source_file {
+                    format!("{relative}/{sf}")
+                } else {
+                    relative.clone()
+                };
+                SkillState {
+                    name: e.metadata.name.clone(),
+                    relative_path: skill_relative,
+                    trusted: false,
+                    enabled: false,
+                }
+            })
+            .collect();
+
+        // Each skill must have its own path, not the repo root.
+        let xlsx = states
+            .iter()
+            .find(|s| s.name == "document-skills:xlsx")
+            .unwrap();
+        assert_eq!(
+            xlsx.relative_path,
+            format!("{dir_name}/skills/xlsx"),
+            "xlsx skill must point at its own SKILL.md directory"
+        );
+
+        let pdf = states
+            .iter()
+            .find(|s| s.name == "document-skills:pdf")
+            .unwrap();
+        assert_eq!(
+            pdf.relative_path,
+            format!("{dir_name}/skills/pdf"),
+            "pdf skill must point at its own SKILL.md directory"
+        );
+
+        // The paths must actually resolve to directories containing SKILL.md.
+        for state in &states {
+            let skill_dir = install_dir.join(&state.relative_path);
+            assert!(
+                skill_dir.join("SKILL.md").is_file(),
+                "SKILL.md must exist at {} for skill '{}'",
+                skill_dir.display(),
+                state.name,
+            );
+        }
+    }
+
+    /// Regression test: single-plugin .md file skills must store the path to
+    /// the .md file (not its parent directory) so the Plugin-as-file branch
+    /// in read_ops can detect and serve them.
+    #[test]
+    fn test_single_plugin_skill_states_point_to_md_file() {
+        use crate::formats::{PluginFormat, detect_format, scan_with_adapter};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let install_dir = tmp.path();
+        let dir_name = "test-owner-test-repo";
+        let target = install_dir.join(dir_name);
+
+        std::fs::create_dir_all(target.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            target.join(".claude-plugin/plugin.json"),
+            r#"{"name":"test-plugin","description":"A test plugin"}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(target.join("agents")).unwrap();
+        std::fs::write(
+            target.join("agents/helper.md"),
+            "Use this agent to help with tasks.",
+        )
+        .unwrap();
+
+        let format = detect_format(&target);
+        assert_eq!(format, PluginFormat::ClaudeCode);
+
+        let entries = scan_with_adapter(&target, format).unwrap().unwrap();
+        assert_eq!(entries.len(), 1);
+
+        let relative = target
+            .strip_prefix(install_dir)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let states: Vec<SkillState> = entries
+            .iter()
+            .map(|e| {
+                let is_skill_md_entry = e
+                    .source_file
+                    .as_ref()
+                    .is_some_and(|f| f.ends_with("SKILL.md"));
+                let skill_relative = if is_skill_md_entry {
+                    e.metadata
+                        .path
+                        .strip_prefix(install_dir)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| relative.clone())
+                } else if let Some(sf) = &e.source_file {
+                    format!("{relative}/{sf}")
+                } else {
+                    relative.clone()
+                };
+                SkillState {
+                    name: e.metadata.name.clone(),
+                    relative_path: skill_relative,
+                    trusted: false,
+                    enabled: false,
+                }
+            })
+            .collect();
+
+        // The relative path must point to the .md file, not its parent dir.
+        assert_eq!(states[0].name, "test-plugin:helper");
+        assert_eq!(
+            states[0].relative_path,
+            format!("{dir_name}/agents/helper.md"),
+            "single .md plugin skill must point at the file itself"
+        );
+        assert!(
+            install_dir.join(&states[0].relative_path).is_file(),
+            "relative_path must resolve to an existing file"
+        );
     }
 }
