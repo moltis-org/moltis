@@ -133,6 +133,120 @@ pub(crate) fn voice_key_store_name(provider: &str) -> String {
     }
 }
 
+/// One-time migration: move voice API keys from `moltis.toml` into the
+/// [`KeyStore`] and clear them from the config file.
+///
+/// Called once at gateway startup.  If a voice key already exists in the
+/// store the TOML value is ignored (store wins).  After migration the
+/// TOML file no longer contains voice secrets.
+#[cfg(feature = "voice")]
+pub(crate) fn migrate_voice_keys_to_key_store(config: &moltis_config::MoltisConfig) {
+    use secrecy::ExposeSecret;
+
+    let store = crate::provider_setup::KeyStore::new();
+
+    // (store_key, tts_key, stt_key) — for shared providers both may be Some.
+    let candidates: Vec<(&str, Option<&Secret<String>>, Option<&Secret<String>>)> = vec![
+        (
+            "voice-elevenlabs",
+            config.voice.tts.elevenlabs.api_key.as_ref(),
+            config.voice.stt.elevenlabs.api_key.as_ref(),
+        ),
+        (
+            "voice-openai",
+            config.voice.tts.openai.api_key.as_ref(),
+            None,
+        ),
+        (
+            "voice-google",
+            config.voice.tts.google.api_key.as_ref(),
+            config.voice.stt.google.api_key.as_ref(),
+        ),
+        (
+            "voice-whisper",
+            None,
+            config.voice.stt.whisper.api_key.as_ref(),
+        ),
+        ("voice-groq", None, config.voice.stt.groq.api_key.as_ref()),
+        (
+            "voice-deepgram",
+            None,
+            config.voice.stt.deepgram.api_key.as_ref(),
+        ),
+        (
+            "voice-mistral",
+            None,
+            config.voice.stt.mistral.api_key.as_ref(),
+        ),
+    ];
+
+    let mut migrated = Vec::new();
+    for (store_key, tts_key, stt_key) in &candidates {
+        // Skip if the store already has this key.
+        if store.load(store_key).is_some() {
+            continue;
+        }
+        // Pick whichever TOML key is present (TTS first).
+        let value = tts_key.or(*stt_key);
+        if let Some(secret) = value {
+            let plaintext = secret.expose_secret();
+            if !plaintext.is_empty() && !plaintext.starts_with('$') {
+                if let Err(e) =
+                    store.save_config(store_key, Some(plaintext.to_string()), None, None)
+                {
+                    tracing::warn!(key = store_key, error = %e, "failed to migrate voice key");
+                    continue;
+                }
+                migrated.push(*store_key);
+            }
+        }
+    }
+
+    if migrated.is_empty() {
+        return;
+    }
+
+    // Clear the TOML entries so secrets don't linger in the config file.
+    if let Err(e) = moltis_config::update_config(|cfg| {
+        for key in &migrated {
+            match *key {
+                "voice-elevenlabs" => {
+                    cfg.voice.tts.elevenlabs.api_key = None;
+                    cfg.voice.stt.elevenlabs.api_key = None;
+                },
+                "voice-openai" => {
+                    cfg.voice.tts.openai.api_key = None;
+                },
+                "voice-google" => {
+                    cfg.voice.tts.google.api_key = None;
+                    cfg.voice.stt.google.api_key = None;
+                },
+                "voice-whisper" => {
+                    cfg.voice.stt.whisper.api_key = None;
+                },
+                "voice-groq" => {
+                    cfg.voice.stt.groq.api_key = None;
+                },
+                "voice-deepgram" => {
+                    cfg.voice.stt.deepgram.api_key = None;
+                },
+                "voice-mistral" => {
+                    cfg.voice.stt.mistral.api_key = None;
+                },
+                _ => {},
+            }
+        }
+    }) {
+        tracing::warn!(error = %e, "failed to clear migrated voice keys from config");
+    } else {
+        tracing::info!(
+            count = migrated.len(),
+            keys = ?migrated,
+            "migrated voice API keys from moltis.toml to credential store"
+        );
+    }
+}
+
 /// Resolve an OpenAI API key with fallback: voice-specific config → `OPENAI_API_KEY`
 /// env var → LLM provider config (`providers.openai.api_key`).
 #[cfg(feature = "voice")]
@@ -1272,6 +1386,52 @@ base_url = "http://127.0.0.1:8001/"
             cfg.voice.tts.elevenlabs.api_key.unwrap().expose_secret(),
             "el-test-key"
         );
+
+        drop(guard);
+    }
+
+    #[test]
+    fn migrate_voice_keys_moves_config_keys_to_key_store() {
+        let guard = VoiceConfigTestGuard::with_config("");
+
+        // Build a config with voice keys as if they came from TOML.
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.voice.tts.elevenlabs.api_key = Some(Secret::new("el-legacy-key".to_string()));
+        cfg.voice.stt.groq.api_key = Some(Secret::new("groq-legacy-key".to_string()));
+
+        migrate_voice_keys_to_key_store(&cfg);
+
+        // Keys should now be in the store.
+        let store = crate::provider_setup::KeyStore::new();
+        assert_eq!(
+            store.load("voice-elevenlabs").as_deref(),
+            Some("el-legacy-key")
+        );
+        assert_eq!(store.load("voice-groq").as_deref(), Some("groq-legacy-key"));
+
+        // Running again with empty config is a no-op (keys already in store).
+        let cfg2 = moltis_config::MoltisConfig::default();
+        migrate_voice_keys_to_key_store(&cfg2);
+        assert_eq!(
+            store.load("voice-elevenlabs").as_deref(),
+            Some("el-legacy-key")
+        );
+
+        drop(guard);
+    }
+
+    #[test]
+    fn migrate_voice_keys_skips_env_var_references() {
+        let guard = VoiceConfigTestGuard::with_config("");
+
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.voice.tts.elevenlabs.api_key = Some(Secret::new("${ELEVENLABS_API_KEY}".to_string()));
+
+        migrate_voice_keys_to_key_store(&cfg);
+
+        // Env var reference should NOT be migrated.
+        let store = crate::provider_setup::KeyStore::new();
+        assert!(store.load("voice-elevenlabs").is_none());
 
         drop(guard);
     }
