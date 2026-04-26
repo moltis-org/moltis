@@ -1,7 +1,7 @@
 const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["chunks/index.js","chunks/theme.js","chunks/open-modal.js","chunks/ws-connect.js","chunks/branding.js","chunks/voice-utils.js","chunks/time-format.js"])))=>i.map(i=>d[i]);
 var _a, _b;
 import { u, f as forceReconnect, c as connectWs, s as subscribeEvents, _ as _wsConnect } from "./chunks/ws-connect.js";
-import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as autoScrollMode, e as commandModeEnabled, g as sessionExecPromptSymbol, h as chatBatchLoading, i as sessionContextWindow, j as sessionToolsEnabled, k as sessionExecMode, l as sessionCurrentInputTokens, _ as __vitePreload, m as setUnseenErrors, n as setUnseenWarns, o as unseenErrors, q as unseenWarns, r as connected, t as sessionStore, v as sessions, w as activeSessionKey, x as lastHistoryIndex, y as setLastHistoryIndex, z as renderAudioPlayer, A as renderMarkdown, B as setSessionContextWindow, C as setSessionTokens, D as setSessionCurrentInputTokens, E as setSessionToolsEnabled, F as toolCallSummary, G as renderScreenshot, H as renderDocument, I as formatAssistantTokenUsage, J as formatTokenSpeed, K as tokenSpeedTone, L as modelStore, M as parseAgentsListPayload, N as setHostExecIsRoot, O as setSessionExecMode, P as setSessionExecPromptSymbol, Q as setChatBatchLoading, R as setChatSeq, S as y, T as g, U as nodeComboBtn, V as nodeDropdownList, W as nodeCombo, X as nodeDropdown, Y as nodeComboLabel, Z as projectComboLabel, a0 as t, a1 as projects, a2 as activeProjectId, a3 as projectCombo, a4 as projectDropdown, a5 as projectDropdownList, a6 as setActiveProjectId, a7 as projectComboBtn, a8 as j, a9 as setSessionSandboxEnabled, aa as hostExecIsRoot, ab as sandboxLabel, ac as sandboxToggleBtn, ad as sessionSandboxEnabled, ae as setSessionSandboxImage, af as sandboxImageLabel, ag as sandboxInfo, ah as sandboxImageDropdown, ai as sandboxImageBtn, aj as sessionSandboxImage, ak as projectStore, al as setSessions, am as insertSessionInOrder, an as Session, ao as chatSeq, ap as setSelectedModelId, aq as modelComboLabel, ar as setSessionSwitchInProgress, as as setStreamEl, at as setStreamText, au as setLastToolOutput, av as setVoicePending, aw as setActiveSessionKey, ax as y$1, ay as d, az as A, aA as S, aB as projectFilterId, aC as getById$1, aD as q, aE as setProjects, aF as setProjectFilterId, aG as warmAudioPlayback, aH as selectedModelId, aI as formatBytes$4, aJ as setCommandModeEnabled, aK as chatHistory, aL as chatHistoryIdx, aM as setChatHistoryDraft, aN as setChatHistoryIdx, aO as chatHistoryDraft, aP as setChatHistory, aQ as R, aR as setChatMsgBox, aS as setChatInput, aT as setChatSendBtn, aU as setModelCombo, aV as setModelComboBtn, aW as setModelComboLabel, aX as setModelDropdown, aY as setModelSearchInput, aZ as setModelDropdownList, a_ as setNodeCombo, a$ as setNodeComboBtn, b0 as setNodeComboLabel, b1 as setNodeDropdown, b2 as setNodeDropdownList, b3 as setSandboxToggleBtn, b4 as setSandboxLabel, b5 as setProjectCombo, b6 as setProjectComboBtn, b7 as setProjectComboLabel, b8 as setProjectDropdown, b9 as setProjectDropdownList, ba as setSandboxImageBtn, bb as setSandboxImageLabel, bc as setSandboxImageDropdown, bd as models, be as chatSendBtn, bf as setModels, bg as modelComboBtn, bh as modelSearchInput, bi as modelDropdownList, bj as modelCombo, bk as modelDropdown, bl as setModelIdx, bm as modelIdx, bn as REASONING_SEP, bo as models$1, bp as useSignal, bq as connected$1, br as setCachedChannels, bs as setRefreshChannelsPage, bt as cachedChannels, bu as setChannelEventUnsub, bv as channelEventUnsub, bw as refreshProvidersPage, bx as modelVersionScore, by as streamEl, bz as renderMapPointGroups, bA as renderMapLinks, bB as lastToolOutput, bC as localizeStructuredError, bD as voicePending, bE as streamText, bF as setSandboxInfo, bG as networkAuditEventHandler, bH as logsEventHandler, bI as setSubscribed, bJ as projects$1, bK as sandboxInfo$1, bL as localizedApiErrorMessage, bM as setLogsEventHandler, bN as setNetworkAuditEventHandler, bO as setRefreshProvidersPage, bP as setLocale, bQ as esc, bR as projectStore$1, bS as _modelStore, bT as S$1, bU as _sessionStoreModule, bV as _i18n, bW as _helpers, bX as initTheme, bY as injectMarkdownStyles, bZ as init, b_ as translateStaticElements, b$ as setAll$1, c0 as setAll$2, c1 as select$1, c2 as selectedModelId$1 } from "./chunks/theme.js";
+import { $, s as sessionTokens, f as formatTokens$1, c as chatMsgBox, u as updateCountdown, p as parseErrorMessage, a as chatInput, b as sendRpc, d as autoScrollMode, e as commandModeEnabled, g as sessionExecPromptSymbol, h as chatBatchLoading, i as sessionContextWindow, j as sessionToolsEnabled, k as sessionExecMode, l as sessionCurrentInputTokens, _ as __vitePreload, m as setUnseenErrors, n as setUnseenWarns, o as unseenErrors, q as unseenWarns, r as connected, t as sessionStore, v as sessions, w as activeSessionKey, x as lastHistoryIndex, y as setLastHistoryIndex, z as renderAudioPlayer, A as renderMarkdown, B as setSessionContextWindow, C as setSessionTokens, D as setSessionCurrentInputTokens, E as setSessionToolsEnabled, F as toolCallSummary, G as renderScreenshot, H as renderDocument, I as formatAssistantTokenUsage, J as formatTokenSpeed, K as tokenSpeedTone, L as modelStore, M as parseAgentsListPayload, N as setHostExecIsRoot, O as setSessionExecMode, P as setSessionExecPromptSymbol, Q as setChatBatchLoading, R as setChatSeq, S as y, T as g, U as nodeComboBtn, V as nodeDropdownList, W as nodeCombo, X as nodeDropdown, Y as nodeComboLabel, Z as projectComboLabel, a0 as t, a1 as projects, a2 as activeProjectId, a3 as projectCombo, a4 as projectDropdown, a5 as projectDropdownList, a6 as setActiveProjectId, a7 as projectComboBtn, a8 as j, a9 as setSessionSandboxEnabled, aa as hostExecIsRoot, ab as sandboxLabel, ac as sandboxToggleBtn, ad as sessionSandboxEnabled, ae as setSessionSandboxImage, af as sandboxImageLabel, ag as sandboxInfo, ah as sandboxImageDropdown, ai as sandboxImageBtn, aj as sessionSandboxImage, ak as projectStore, al as setSessions, am as insertSessionInOrder, an as Session, ao as chatSeq, ap as setSelectedModelId, aq as modelComboLabel, ar as setSessionSwitchInProgress, as as setStreamEl, at as setStreamText, au as setLastToolOutput, av as setVoicePending, aw as setActiveSessionKey, ax as y$1, ay as d, az as A, aA as S, aB as projectFilterId, aC as getById$1, aD as q, aE as setProjects, aF as setProjectFilterId, aG as warmAudioPlayback, aH as selectedModelId, aI as formatBytes$3, aJ as setCommandModeEnabled, aK as chatHistory, aL as chatHistoryIdx, aM as setChatHistoryDraft, aN as setChatHistoryIdx, aO as chatHistoryDraft, aP as setChatHistory, aQ as R, aR as setChatMsgBox, aS as setChatInput, aT as setChatSendBtn, aU as setModelCombo, aV as setModelComboBtn, aW as setModelComboLabel, aX as setModelDropdown, aY as setModelSearchInput, aZ as setModelDropdownList, a_ as setNodeCombo, a$ as setNodeComboBtn, b0 as setNodeComboLabel, b1 as setNodeDropdown, b2 as setNodeDropdownList, b3 as setSandboxToggleBtn, b4 as setSandboxLabel, b5 as setProjectCombo, b6 as setProjectComboBtn, b7 as setProjectComboLabel, b8 as setProjectDropdown, b9 as setProjectDropdownList, ba as setSandboxImageBtn, bb as setSandboxImageLabel, bc as setSandboxImageDropdown, bd as models, be as chatSendBtn, bf as setModels, bg as modelComboBtn, bh as modelSearchInput, bi as modelDropdownList, bj as modelCombo, bk as modelDropdown, bl as setModelIdx, bm as modelIdx, bn as REASONING_SEP, bo as models$1, bp as useSignal, bq as connected$1, br as setCachedChannels, bs as setRefreshChannelsPage, bt as cachedChannels, bu as setChannelEventUnsub, bv as channelEventUnsub, bw as refreshProvidersPage, bx as modelVersionScore, by as streamEl, bz as renderMapPointGroups, bA as renderMapLinks, bB as lastToolOutput, bC as localizeStructuredError, bD as voicePending, bE as streamText, bF as setSandboxInfo, bG as networkAuditEventHandler, bH as logsEventHandler, bI as setSubscribed, bJ as projects$1, bK as sandboxInfo$1, bL as localizedApiErrorMessage, bM as setLogsEventHandler, bN as setNetworkAuditEventHandler, bO as setRefreshProvidersPage, bP as setLocale, bQ as esc, bR as projectStore$1, bS as _modelStore, bT as S$1, bU as _sessionStoreModule, bV as _i18n, bW as _helpers, bX as initTheme, bY as injectMarkdownStyles, bZ as init, b_ as translateStaticElements, b$ as setAll$1, c0 as setAll$2, c1 as select$1, c2 as selectedModelId$1 } from "./chunks/theme.js";
 import { f as formatPageTitle, a as applyIdentityFavicon } from "./chunks/branding.js";
 import { g as get, o as onEvent, C as ChannelType, a as onChange, t as targetValue, v as validateChannelFields, p as parseChannelConfigPatch, b as addChannel, M as MATRIX_DEFAULT_HOMESERVER, c as MATRIX_ENCRYPTION_GUIDANCE, n as normalizeMatrixAuthMode, m as matrixAuthModeGuidance, d as targetChecked, e as normalizeMatrixOwnershipMode, f as matrixOwnershipModeGuidance, h as matrixCredentialLabel, i as matrixCredentialPlaceholder, j as MATRIX_DOCS_URL, k as deriveMatrixAccountId, l as normalizeMatrixOtpCooldown, q as fetchChannelStatus, r as deriveSignalAccountId, s as buildTeamsEndpoint, u as generateWebhookSecretHex, w as defaultTeamsBaseUrl, T as TabBar$1, x as channelStorageNote, y as providerApiKeyHelp, z as validateProviderKey, A as completeProviderOAuth, B as startProviderOAuth, D as saveProviderKey, E as testModel, F as isModelServiceNotConfigured, G as isTimeoutError, H as humanizeProbeError, I as eventListeners, J as refresh, K as isRepoSource, S as SkillSource, L as CATEGORY_META, N as categoryLabel, O as isDiscoveredSource, P as EmojiPicker, Q as validateIdentityFields, R as updateIdentity, U as set, V as prepareCreationOptions, W as detectPasskeyName, X as fetchVoiceProviders, Y as fetchPhrase, Z as testTts, _ as decodeBase64Safe, $ as transcribeAudio$1, a0 as toggleVoiceProvider, a1 as saveVoiceKey, a2 as saveVoiceSettings, a3 as gon, a4 as _events } from "./chunks/voice-utils.js";
 import "./chunks/time-format.js";
@@ -5629,7 +5629,7 @@ function renderContextProjectSection(card, data) {
       ctxFiles.forEach((f) => {
         const row = ctxEl("div", "ctx-file");
         row.appendChild(ctxEl("span", "ctx-file-path", f.path));
-        row.appendChild(ctxEl("span", "ctx-file-size", formatBytes$4(f.size ?? 0)));
+        row.appendChild(ctxEl("span", "ctx-file-size", formatBytes$3(f.size ?? 0)));
         sec.appendChild(row);
       });
     }
@@ -11901,49 +11901,6 @@ async function refreshModelStates() {
 function getModelState(modelId) {
   return modelStates[modelId];
 }
-async function loadModel(modelId) {
-  const res = await sendRpc("providers.local.load", { modelId });
-  return !!(res == null ? void 0 : res.ok);
-}
-async function unloadModel(modelId) {
-  const res = await sendRpc("providers.local.unload", { modelId });
-  return !!(res == null ? void 0 : res.ok);
-}
-function formatBytes$3(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-function createLifecycleButton(modelId, container) {
-  const state = modelStates[modelId];
-  const isLoaded = (state == null ? void 0 : state.is_loaded) ?? false;
-  const btn2 = document.createElement("button");
-  btn2.className = isLoaded ? "provider-btn-danger text-xs px-2 py-1" : "provider-btn-secondary text-xs px-2 py-1";
-  btn2.textContent = isLoaded ? "Unload" : "Load";
-  if (isLoaded && (state == null ? void 0 : state.memory_bytes)) {
-    const badge = document.createElement("span");
-    badge.className = "text-xs text-[var(--muted)] ml-2";
-    badge.textContent = formatBytes$3(state.memory_bytes);
-    container.appendChild(badge);
-  }
-  btn2.addEventListener("click", async (e) => {
-    e.stopPropagation();
-    btn2.disabled = true;
-    btn2.textContent = isLoaded ? "Unloading..." : "Loading...";
-    const success = isLoaded ? await unloadModel(modelId) : await loadModel(modelId);
-    await refreshModelStates();
-    container.textContent = "";
-    if (!success) {
-      const err = document.createElement("span");
-      err.className = "text-xs text-[var(--error)] mr-2";
-      err.textContent = "Failed";
-      container.appendChild(err);
-    }
-    createLifecycleButton(modelId, container);
-  });
-  container.appendChild(btn2);
-}
 function showLocalModelFlow(provider) {
   const m = els();
   m.title.textContent = provider.displayName;
@@ -12527,20 +12484,16 @@ function pollLocalStatus(model, _provider, statusEl2, progressEl, offEvent) {
 const _providers = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   closeProviderModal,
-  createLifecycleButton,
   getModelState,
   getProviderModal,
   initModelLifecycleTracking,
-  loadModel,
   openModelSelectorForProvider,
   openProviderModal,
-  refreshModelStates,
   showApiKeyForm,
   showCustomProviderForm,
   showLocalModelFlow,
   showModelDownloadProgress,
-  showOAuthFlow,
-  unloadModel
+  showOAuthFlow
 }, Symbol.toStringTag, { value: "Module" }));
 let deferredInstallPrompt = null;
 let swRegistration = null;

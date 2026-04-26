@@ -222,9 +222,7 @@ export function handleLocalLlmLifecycle(raw: Record<string, unknown>): void {
 		chatAddMsg("system", `Model ${modelName} loaded${sizeStr}`);
 	} else if (payload.state === "unloaded") {
 		const msg =
-			payload.reason === "idle"
-				? `Model ${modelName} unloaded after inactivity`
-				: `Model ${modelName} unloaded`;
+			payload.reason === "idle" ? `Model ${modelName} unloaded after inactivity` : `Model ${modelName} unloaded`;
 		chatAddMsg("system", msg);
 	}
 	// "unloading" state is transient — no need to show in chat

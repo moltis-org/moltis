@@ -45,7 +45,7 @@ export function initModelLifecycleTracking(): void {
 }
 
 /** Fetch current model states from the gateway. */
-export async function refreshModelStates(): Promise<void> {
+async function refreshModelStates(): Promise<void> {
 	const res = await sendRpc<ModelStateEntry[]>("providers.local.model_states", {});
 	if (res?.ok && Array.isArray(res.payload)) {
 		for (const entry of res.payload) {
@@ -57,62 +57,6 @@ export async function refreshModelStates(): Promise<void> {
 /** Get the cached lifecycle state for a model. */
 export function getModelState(modelId: string): ModelStateEntry | undefined {
 	return modelStates[modelId];
-}
-
-/** Load a model into memory via RPC. */
-export async function loadModel(modelId: string): Promise<boolean> {
-	const res = await sendRpc<{ ok: boolean }>("providers.local.load", { modelId });
-	return !!res?.ok;
-}
-
-/** Unload a model from memory via RPC. */
-export async function unloadModel(modelId: string): Promise<boolean> {
-	const res = await sendRpc<{ ok: boolean }>("providers.local.unload", { modelId });
-	return !!res?.ok;
-}
-
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
-/** Create a Load/Unload button for a model row. */
-export function createLifecycleButton(modelId: string, container: HTMLElement): void {
-	const state = modelStates[modelId];
-	const isLoaded = state?.is_loaded ?? false;
-
-	const btn = document.createElement("button");
-	btn.className = isLoaded ? "provider-btn-danger text-xs px-2 py-1" : "provider-btn-secondary text-xs px-2 py-1";
-	btn.textContent = isLoaded ? "Unload" : "Load";
-
-	if (isLoaded && state?.memory_bytes) {
-		const badge = document.createElement("span");
-		badge.className = "text-xs text-[var(--muted)] ml-2";
-		badge.textContent = formatBytes(state.memory_bytes);
-		container.appendChild(badge);
-	}
-
-	btn.addEventListener("click", async (e) => {
-		e.stopPropagation();
-		btn.disabled = true;
-		btn.textContent = isLoaded ? "Unloading..." : "Loading...";
-
-		const success = isLoaded ? await unloadModel(modelId) : await loadModel(modelId);
-		await refreshModelStates();
-		// Recreate button with new state (reflects actual server state even on failure)
-		container.textContent = "";
-		if (!success) {
-			const err = document.createElement("span");
-			err.className = "text-xs text-[var(--error)] mr-2";
-			err.textContent = "Failed";
-			container.appendChild(err);
-		}
-		createLifecycleButton(modelId, container);
-	});
-
-	container.appendChild(btn);
 }
 
 export function showLocalModelFlow(provider: ProviderInfo): void {

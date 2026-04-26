@@ -6,14 +6,10 @@
 export { openModelSelectorForProvider, showApiKeyForm, showOAuthFlow } from "./providers/auth-flow";
 export { showCustomProviderForm } from "./providers/custom-provider";
 export {
-	createLifecycleButton,
 	getModelState,
 	initModelLifecycleTracking,
-	loadModel,
-	refreshModelStates,
 	showLocalModelFlow,
 	showModelDownloadProgress,
-	unloadModel,
 } from "./providers/local-models";
 export { closeProviderModal, getProviderModal, openProviderModal } from "./providers/shared";
 export type {
