@@ -1262,6 +1262,12 @@ fn skill_detail_bundled(skill_name: &str) -> ServiceResult {
 
     let elig = check_requirements(meta);
 
+    let config = moltis_config::discover_and_load();
+    let enabled = meta
+        .category
+        .as_deref()
+        .is_none_or(|cat| !config.skills.disabled_bundled_categories.iter().any(|c| c == cat));
+
     Ok(serde_json::json!({
         "name": meta.name,
         "description": meta.description,
@@ -1275,7 +1281,7 @@ fn skill_detail_bundled(skill_name: &str) -> ServiceResult {
         "missing_bins": elig.missing_bins,
         "install_options": elig.install_options,
         "trusted": true,
-        "enabled": true,
+        "enabled": enabled,
         "protected": true,
         "body": body,
         "body_html": markdown_to_html(&body),
