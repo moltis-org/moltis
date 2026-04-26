@@ -5,7 +5,7 @@ use moltis_metrics::{counter, histogram, skills as skills_metrics};
 
 use crate::{
     error::{Error, Result},
-    formats::{PluginFormat, detect_format, scan_with_adapter},
+    formats::{PluginFormat, PluginSkillEntry, detect_format, scan_with_adapter},
     manifest::ManifestStore,
     parse,
     types::{RepoEntry, SkillMetadata, SkillState},
@@ -62,40 +62,11 @@ pub async fn install_skill(source: &str, install_dir: &Path) -> Result<Vec<Skill
                 let meta: Vec<SkillMetadata> = entries.iter().map(|e| e.metadata.clone()).collect();
                 let states: Vec<SkillState> = entries
                     .iter()
-                    .map(|e| {
-                        // Compute per-skill relative_path so discovery can
-                        // locate each skill independently.  Previously every
-                        // entry shared the repo-root path, which broke
-                        // SKILL.md-based marketplace skills because read_ops
-                        // looked for SKILL.md at the repo root.
-                        //
-                        // • SKILL.md entries (source_file ends with
-                        //   "SKILL.md") → use metadata.path which already
-                        //   points at the directory containing that file.
-                        // • Single .md file entries → build the path to the
-                        //   .md file itself so the Plugin-as-file branch in
-                        //   read_ops can detect it.
-                        let is_skill_md_entry = e
-                            .source_file
-                            .as_ref()
-                            .is_some_and(|f| f.ends_with("SKILL.md"));
-                        let skill_relative = if is_skill_md_entry {
-                            e.metadata
-                                .path
-                                .strip_prefix(install_dir)
-                                .map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_else(|_| relative.clone())
-                        } else if let Some(sf) = &e.source_file {
-                            format!("{relative}/{sf}")
-                        } else {
-                            relative.clone()
-                        };
-                        SkillState {
-                            name: e.metadata.name.clone(),
-                            relative_path: skill_relative,
-                            trusted: false,
-                            enabled: false,
-                        }
+                    .map(|e| SkillState {
+                        name: e.metadata.name.clone(),
+                        relative_path: plugin_skill_relative_path(e, install_dir, &relative),
+                        trusted: false,
+                        enabled: false,
                     })
                     .collect();
                 (meta, states)
@@ -399,6 +370,37 @@ pub fn default_install_dir() -> Result<PathBuf> {
     Ok(moltis_config::data_dir().join("installed-skills"))
 }
 
+/// Compute a per-skill `relative_path` for a plugin/marketplace entry.
+///
+/// - **SKILL.md entries** (`source_file` filename is `SKILL.md`):
+///   `metadata.path` already points at the directory containing the file,
+///   so we strip `install_dir` to get a relative directory path.
+/// - **Single `.md` file entries**: build a path to the `.md` file itself
+///   so the Plugin-as-file branch in `read_ops` can detect it.
+/// - **Fallback**: use `repo_relative` (the repo root).
+pub(crate) fn plugin_skill_relative_path(
+    entry: &PluginSkillEntry,
+    install_dir: &Path,
+    repo_relative: &str,
+) -> String {
+    let is_skill_md_entry = entry
+        .source_file
+        .as_ref()
+        .is_some_and(|f| Path::new(f).file_name().is_some_and(|n| n == "SKILL.md"));
+    if is_skill_md_entry {
+        entry
+            .metadata
+            .path
+            .strip_prefix(install_dir)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| repo_relative.to_string())
+    } else if let Some(sf) = &entry.source_file {
+        format!("{repo_relative}/{sf}")
+    } else {
+        repo_relative.to_string()
+    }
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
@@ -588,7 +590,6 @@ mod tests {
         let entries = scan_with_adapter(&target, format).unwrap().unwrap();
         assert_eq!(entries.len(), 2);
 
-        // Reproduce the logic from install_skill for non-Skill formats.
         let relative = target
             .strip_prefix(install_dir)
             .unwrap()
@@ -596,28 +597,11 @@ mod tests {
             .to_string();
         let states: Vec<SkillState> = entries
             .iter()
-            .map(|e| {
-                let is_skill_md_entry = e
-                    .source_file
-                    .as_ref()
-                    .is_some_and(|f| f.ends_with("SKILL.md"));
-                let skill_relative = if is_skill_md_entry {
-                    e.metadata
-                        .path
-                        .strip_prefix(install_dir)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| relative.clone())
-                } else if let Some(sf) = &e.source_file {
-                    format!("{relative}/{sf}")
-                } else {
-                    relative.clone()
-                };
-                SkillState {
-                    name: e.metadata.name.clone(),
-                    relative_path: skill_relative,
-                    trusted: false,
-                    enabled: false,
-                }
+            .map(|e| SkillState {
+                name: e.metadata.name.clone(),
+                relative_path: plugin_skill_relative_path(e, install_dir, &relative),
+                trusted: false,
+                enabled: false,
             })
             .collect();
 
@@ -692,28 +676,11 @@ mod tests {
             .to_string();
         let states: Vec<SkillState> = entries
             .iter()
-            .map(|e| {
-                let is_skill_md_entry = e
-                    .source_file
-                    .as_ref()
-                    .is_some_and(|f| f.ends_with("SKILL.md"));
-                let skill_relative = if is_skill_md_entry {
-                    e.metadata
-                        .path
-                        .strip_prefix(install_dir)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| relative.clone())
-                } else if let Some(sf) = &e.source_file {
-                    format!("{relative}/{sf}")
-                } else {
-                    relative.clone()
-                };
-                SkillState {
-                    name: e.metadata.name.clone(),
-                    relative_path: skill_relative,
-                    trusted: false,
-                    enabled: false,
-                }
+            .map(|e| SkillState {
+                name: e.metadata.name.clone(),
+                relative_path: plugin_skill_relative_path(e, install_dir, &relative),
+                trusted: false,
+                enabled: false,
             })
             .collect();
 
