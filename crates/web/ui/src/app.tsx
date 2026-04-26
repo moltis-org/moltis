@@ -22,6 +22,7 @@ import * as _channelsPage from "./pages/ChannelsPage";
 import { renderSessionProjectSelect } from "./project-combo";
 import { fetchProjects, renderProjectSelect } from "./projects";
 import * as _providers from "./providers";
+import { initModelLifecycleTracking } from "./providers";
 import { initPWA } from "./pwa";
 import { initInstallBanner } from "./pwa-install";
 import { mount, navigate, registerPage, sessionPath } from "./router";
@@ -658,6 +659,7 @@ function startApp(): void {
 	}
 	mount(path);
 	connect();
+	initModelLifecycleTracking();
 	fetchBootstrap();
 	initInstallBanner();
 }

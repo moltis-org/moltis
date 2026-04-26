@@ -35,7 +35,7 @@ export function initModelLifecycleTracking(): void {
 
 		const existing = modelStates[p.modelId];
 		if (existing) {
-			existing.is_loaded = p.state === "loaded" || p.state === "loading";
+			existing.is_loaded = p.state === "loaded";
 			existing.memory_bytes = p.modelSizeBytes ?? existing.memory_bytes;
 		}
 	});
