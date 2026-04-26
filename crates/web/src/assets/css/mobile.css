@@ -340,9 +340,24 @@ body {
   }
 
   .chat-toolbar #modelCombo {
-    flex: 1 1 auto;
     min-width: 0;
+    order: 0;
+  }
+
+  .chat-toolbar #reasoningCombo {
     order: 1;
+  }
+
+  .chat-toolbar .sandbox-toggle {
+    order: 2;
+  }
+
+  .chat-toolbar #sessionActionsMount {
+    order: 3;
+  }
+
+  .chat-toolbar #sessionHeaderToolbarMount {
+    order: 4;
   }
 
   .chat-toolbar #modelComboBtn {
@@ -644,6 +659,11 @@ body {
 
 @media (max-width: 767px) {
   .chat-badge-desktop-only {
+    display: none !important;
+  }
+
+  .chat-toolbar #sessionActionsMount button[title="Fork session"],
+  .chat-toolbar #sessionActionsMount button[title="Clear session"] {
     display: none !important;
   }
 
