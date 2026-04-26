@@ -236,7 +236,13 @@ export function sendChat(): void {
 	const hasFiles = hasPendingUploads();
 	if (!((text || hasImages || hasFiles) && S.connected)) return;
 	warmAudioPlayback();
-	if (tryHandleLocalSlashCommand(text, hasImages)) return;
+	if (tryHandleLocalSlashCommand(text, hasImages)) {
+		if (hasFiles) {
+			clearPendingUploads();
+			renderFilePreviewStrip();
+		}
+		return;
+	}
 	rememberChatHistory(text);
 	resetComposerAfterSend();
 	const outgoingText = normalizeOutgoingText(text, hasImages);
