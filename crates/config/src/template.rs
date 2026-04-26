@@ -222,6 +222,7 @@ port = {port}                           # Port number (auto-generated for this i
 # ── Local LLM ─────────────────────────────────────────────────
 # [providers.local-llm]
 # models = ["qwen2.5-coder-7b-q4_k_m"]        # Optional; configure local models in onboarding
+# idle_timeout_secs = 300                      # Auto-unload local models after 5 minutes of inactivity (per-model overrides in local-llm.json)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MODEL OVERRIDES (GLOBAL)

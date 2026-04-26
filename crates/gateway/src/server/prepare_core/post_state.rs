@@ -523,6 +523,15 @@ pub(super) async fn complete_startup(
     #[cfg(feature = "local-llm")]
     if let Some(svc) = &local_llm_service {
         svc.set_state(Arc::clone(&state));
+
+        // Register existing local models with the lifecycle manager and start idle checker.
+        let global_timeout = config
+            .providers
+            .get("local")
+            .or_else(|| config.providers.get("local-llm"))
+            .and_then(|e| e.idle_timeout_secs);
+        svc.populate_lifecycle(global_timeout).await;
+        svc.lifecycle().spawn_idle_checker();
     }
 
     provider_setup_service.set_broadcaster(Arc::new(crate::provider_setup::GatewayBroadcaster {

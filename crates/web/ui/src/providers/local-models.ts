@@ -10,8 +10,10 @@ import type {
 	BackendInfo,
 	HfSearchResult,
 	LocalLlmDownloadPayload,
+	LocalLlmLifecyclePayload,
 	LocalModelInfo,
 	ModelSelectorWrapper,
+	ModelStateEntry,
 	ModelsData,
 	ProviderInfo,
 	SystemInfo,
@@ -19,6 +21,95 @@ import type {
 
 // Store the selected backend for model configuration
 let selectedBackend: string | null = null;
+
+// ── Model lifecycle state tracking ──────────────────────────
+
+/** Cached model lifecycle states, keyed by model_id. */
+const modelStates: Record<string, ModelStateEntry> = {};
+
+/** Subscribe to lifecycle events. Call once on page load. */
+export function initModelLifecycleTracking(): void {
+	onEvent("local-llm.lifecycle", (payload: unknown) => {
+		const p = payload as LocalLlmLifecyclePayload;
+		if (!p.modelId) return;
+
+		const existing = modelStates[p.modelId];
+		if (existing) {
+			existing.is_loaded = p.state === "loaded" || p.state === "loading";
+			existing.memory_bytes = p.modelSizeBytes ?? existing.memory_bytes;
+		}
+	});
+
+	// Fetch initial state
+	refreshModelStates();
+}
+
+/** Fetch current model states from the gateway. */
+export async function refreshModelStates(): Promise<void> {
+	const res = await sendRpc<ModelStateEntry[]>("providers.local.model_states", {});
+	if (res?.ok && Array.isArray(res.payload)) {
+		for (const entry of res.payload) {
+			modelStates[entry.model_id] = entry;
+		}
+	}
+}
+
+/** Get the cached lifecycle state for a model. */
+export function getModelState(modelId: string): ModelStateEntry | undefined {
+	return modelStates[modelId];
+}
+
+/** Load a model into memory via RPC. */
+export async function loadModel(modelId: string): Promise<boolean> {
+	const res = await sendRpc<{ ok: boolean }>("providers.local.load", { modelId });
+	return !!res?.ok;
+}
+
+/** Unload a model from memory via RPC. */
+export async function unloadModel(modelId: string): Promise<boolean> {
+	const res = await sendRpc<{ ok: boolean }>("providers.local.unload", { modelId });
+	return !!res?.ok;
+}
+
+function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+/** Create a Load/Unload button for a model row. */
+export function createLifecycleButton(modelId: string, container: HTMLElement): void {
+	const state = modelStates[modelId];
+	const isLoaded = state?.is_loaded ?? false;
+
+	const btn = document.createElement("button");
+	btn.className = isLoaded ? "provider-btn-danger text-xs px-2 py-1" : "provider-btn-secondary text-xs px-2 py-1";
+	btn.textContent = isLoaded ? "Unload" : "Load";
+
+	if (isLoaded && state?.memory_bytes) {
+		const badge = document.createElement("span");
+		badge.className = "text-xs text-[var(--muted)] ml-2";
+		badge.textContent = formatBytes(state.memory_bytes);
+		container.appendChild(badge);
+	}
+
+	btn.addEventListener("click", async (e) => {
+		e.stopPropagation();
+		btn.disabled = true;
+		btn.textContent = isLoaded ? "Unloading..." : "Loading...";
+
+		const success = isLoaded ? await unloadModel(modelId) : await loadModel(modelId);
+		if (success) {
+			await refreshModelStates();
+		}
+		// Recreate button with new state
+		container.textContent = "";
+		createLifecycleButton(modelId, container);
+	});
+
+	container.appendChild(btn);
+}
 
 export function showLocalModelFlow(provider: ProviderInfo): void {
 	const m = els();

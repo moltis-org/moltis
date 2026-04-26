@@ -102,6 +102,21 @@ export interface LocalLlmDownloadPayload {
 	total?: number;
 }
 
+export interface LocalLlmLifecyclePayload {
+	modelId: string;
+	state: "loading" | "loaded" | "unloading" | "unloaded";
+	modelSizeBytes?: number;
+	totalLoadedBytes?: number;
+}
+
+export interface ModelStateEntry {
+	model_id: string;
+	is_loaded: boolean;
+	memory_bytes: number;
+	last_activity: number;
+	idle_timeout_secs: number | null;
+}
+
 export interface ProbeResult {
 	error?: string;
 	timeout?: boolean;

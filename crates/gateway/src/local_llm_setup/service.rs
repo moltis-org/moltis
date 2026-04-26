@@ -31,6 +31,8 @@ pub struct LiveLocalLlmService {
     status: Arc<RwLock<LocalLlmStatus>>,
     /// State reference for broadcasting progress (set after state is created).
     state: Arc<OnceCell<Arc<GatewayState>>>,
+    /// Model lifecycle manager for idle-timeout unloading and manual load/unload.
+    lifecycle: Arc<ModelLifecycleManager>,
 }
 
 impl LiveLocalLlmService {
@@ -41,13 +43,40 @@ impl LiveLocalLlmService {
                 LocalLlmConfig::load().as_ref(),
             ))),
             state: Arc::new(OnceCell::new()),
+            lifecycle: Arc::new(ModelLifecycleManager::new()),
         }
     }
 
     /// Set the gateway state reference for broadcasting progress updates.
     pub fn set_state(&self, state: Arc<GatewayState>) {
         // Ignore if already set (shouldn't happen in normal operation)
-        let _ = self.state.set(state);
+        let _ = self.state.set(state.clone());
+        self.lifecycle.set_state(state);
+    }
+
+    /// Get a reference to the lifecycle manager.
+    pub fn lifecycle(&self) -> &Arc<ModelLifecycleManager> {
+        &self.lifecycle
+    }
+
+    /// Register all saved local models with the lifecycle manager.
+    pub async fn populate_lifecycle(&self, global_timeout: Option<u64>) {
+        let Some(config) = LocalLlmConfig::load() else {
+            return;
+        };
+        for entry in &config.models {
+            let effective_timeout = entry.idle_timeout_secs.or(global_timeout);
+            match build_local_provider_entry(entry, None) {
+                Ok((_, provider)) => {
+                    self.lifecycle
+                        .register(entry.model_id.clone(), provider, effective_timeout)
+                        .await;
+                },
+                Err(error) => {
+                    warn!(model_id = %entry.model_id, %error, "failed to create provider for lifecycle manager");
+                },
+            }
+        }
     }
 
     /// Get model display info for JSON response.
@@ -298,6 +327,7 @@ impl LocalLlmService for LiveLocalLlmService {
             hf_filename: None,
             gpu_layers: 0,
             backend: backend.clone(),
+            idle_timeout_secs: None,
         };
         let mut config = LocalLlmConfig::load().unwrap_or_default();
         config.add_model(entry.clone());
@@ -310,6 +340,7 @@ impl LocalLlmService for LiveLocalLlmService {
         let status = Arc::clone(&self.status);
         let registry = Arc::clone(&self.registry);
         let state_cell = Arc::clone(&self.state);
+        let lifecycle = Arc::clone(&self.lifecycle);
         let cache_dir = local_gguf::models::default_models_dir();
         let display_name = model_def.display_name.to_string();
         let backend_for_download = backend.clone();
@@ -399,6 +430,13 @@ impl LocalLlmService for LiveLocalLlmService {
                     let mut reg = registry.write().await;
                     if let Err(error) = register_local_model_entry(&mut reg, &entry) {
                         tracing::error!(model = %model_id_clone, %error, "failed to register local model");
+                    }
+
+                    // Register with lifecycle manager
+                    if let Ok((_, provider)) = build_local_provider_entry(&entry, None) {
+                        lifecycle
+                            .register(entry.model_id.clone(), provider, entry.idle_timeout_secs)
+                            .await;
                     }
 
                     let mut s = status.write().await;
@@ -524,6 +562,7 @@ impl LocalLlmService for LiveLocalLlmService {
             hf_filename: hf_filename.clone(),
             gpu_layers: 0,
             backend: backend.clone(),
+            idle_timeout_secs: None,
         };
         let display_name = entry.display_name();
 
@@ -559,6 +598,7 @@ impl LocalLlmService for LiveLocalLlmService {
         let status = Arc::clone(&self.status);
         let registry = Arc::clone(&self.registry);
         let state_cell = Arc::clone(&self.state);
+        let lifecycle = Arc::clone(&self.lifecycle);
         let cache_dir = local_gguf::models::default_models_dir();
         let model_id_clone = model_id.clone();
         let hf_repo_for_download = hf_repo.clone();
@@ -656,6 +696,13 @@ impl LocalLlmService for LiveLocalLlmService {
                         tracing::error!(model = %entry.model_id, %error, "failed to register custom local model");
                     }
 
+                    // Register with lifecycle manager
+                    if let Ok((_, provider)) = build_local_provider_entry(&entry, None) {
+                        lifecycle
+                            .register(entry.model_id.clone(), provider, entry.idle_timeout_secs)
+                            .await;
+                    }
+
                     let mut s = status.write().await;
                     *s = LocalLlmStatus::Ready {
                         model_id: entry.model_id.clone(),
@@ -713,11 +760,12 @@ impl LocalLlmService for LiveLocalLlmService {
             .save()
             .map_err(|e| format!("failed to save config: {e}"))?;
 
-        // Remove from provider registry
+        // Remove from provider registry and lifecycle manager
         {
             let mut reg = self.registry.write().await;
             unregister_local_model_from_registry(&mut reg, local_model_id);
         }
+        self.lifecycle.unregister(local_model_id).await;
 
         let removed_current_model = {
             let status = self.status.read().await;
@@ -741,6 +789,39 @@ impl LocalLlmService for LiveLocalLlmService {
             "ok": true,
             "modelId": local_model_id,
         }))
+    }
+
+    async fn load_model(&self, params: Value) -> ServiceResult {
+        let model_id = params
+            .get("modelId")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'modelId' parameter".to_string())?;
+
+        self.lifecycle
+            .load_model(model_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({ "ok": true, "modelId": model_id }))
+    }
+
+    async fn unload_model(&self, params: Value) -> ServiceResult {
+        let model_id = params
+            .get("modelId")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "missing 'modelId' parameter".to_string())?;
+
+        self.lifecycle
+            .unload_model(model_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(serde_json::json!({ "ok": true, "modelId": model_id }))
+    }
+
+    async fn model_states(&self) -> ServiceResult {
+        let states = self.lifecycle.model_states().await;
+        Ok(serde_json::to_value(&states).unwrap_or_else(|_| serde_json::json!([])))
     }
 }
 

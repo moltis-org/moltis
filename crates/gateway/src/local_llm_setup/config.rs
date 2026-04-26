@@ -15,6 +15,10 @@ pub struct LocalModelEntry {
     /// Backend to use: "GGUF" or "MLX"
     #[serde(default = "default_backend")]
     pub backend: String,
+    /// Seconds of inactivity before auto-unloading this model.
+    /// `None` = use global default. `0` = never unload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_secs: Option<u64>,
 }
 
 pub(super) fn default_backend() -> String {
@@ -63,6 +67,7 @@ impl LocalLlmConfig {
                     hf_filename: None,
                     gpu_layers: legacy.gpu_layers,
                     backend: legacy.backend,
+                    idle_timeout_secs: None,
                 }],
             };
             // Save migrated config

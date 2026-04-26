@@ -13,6 +13,7 @@ var WsEventName = /* @__PURE__ */ ((WsEventName2) => {
   WsEventName2["SandboxHostProvision"] = "sandbox.host.provision";
   WsEventName2["BrowserImagePull"] = "browser.image.pull";
   WsEventName2["LocalLlmDownload"] = "local-llm.download";
+  WsEventName2["LocalLlmLifecycle"] = "local-llm.lifecycle";
   WsEventName2["ModelsUpdated"] = "models.updated";
   WsEventName2["LocationRequest"] = "location.request";
   WsEventName2["NetworkAuditEntry"] = "network.audit.entry";

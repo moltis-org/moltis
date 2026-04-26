@@ -1141,6 +1141,9 @@ pub trait LocalLlmService: Send + Sync {
     async fn search_hf(&self, params: Value) -> ServiceResult;
     async fn configure_custom(&self, params: Value) -> ServiceResult;
     async fn remove_model(&self, params: Value) -> ServiceResult;
+    async fn load_model(&self, params: Value) -> ServiceResult;
+    async fn unload_model(&self, params: Value) -> ServiceResult;
+    async fn model_states(&self) -> ServiceResult;
 }
 
 pub struct NoopLocalLlmService;
@@ -1172,6 +1175,18 @@ impl LocalLlmService for NoopLocalLlmService {
     }
 
     async fn remove_model(&self, _params: Value) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn load_model(&self, _params: Value) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn unload_model(&self, _params: Value) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn model_states(&self) -> ServiceResult {
         Err("local-llm feature not enabled".into())
     }
 }

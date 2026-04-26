@@ -1084,6 +1084,48 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
 
+    reg.register(
+        "providers.local.load",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .local_llm
+                    .load_model(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
+    reg.register(
+        "providers.local.unload",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .local_llm
+                    .unload_model(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
+    reg.register(
+        "providers.local.model_states",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .local_llm
+                    .model_states()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
     // Voicewake
     reg.register(
         "voicewake.get",
