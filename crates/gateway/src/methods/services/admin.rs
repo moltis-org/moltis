@@ -675,7 +675,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             cfg.voice.tts.elevenlabs.api_key = None;
                             cfg.voice.stt.elevenlabs.api_key = None;
                         },
-                        "openai" => {
+                        "openai" | "openai-tts" => {
                             cfg.voice.tts.openai.api_key = None;
                         },
                         "whisper" => {
