@@ -285,11 +285,14 @@ pub(super) fn unregister_local_model_ids_from_registry(
 pub(super) fn register_local_model_entry(
     registry: &mut ProviderRegistry,
     entry: &LocalModelEntry,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Arc<local_llm::LocalLlmProvider>> {
     let (info, provider) = build_local_provider_entry(entry, None)?;
     unregister_local_model_from_registry(registry, &entry.model_id);
-    registry.register(info, provider);
-    Ok(())
+    registry.register(
+        info,
+        Arc::clone(&provider) as Arc<dyn moltis_agents::model::LlmProvider>,
+    );
+    Ok(provider)
 }
 
 pub(super) fn register_local_model_entry_with_default_model_path(

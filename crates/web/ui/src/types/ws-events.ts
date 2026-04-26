@@ -200,6 +200,7 @@ export interface LocalLlmLifecyclePayload {
 	state: "loading" | "loaded" | "unloading" | "unloaded";
 	modelSizeBytes?: number;
 	totalLoadedBytes?: number;
+	reason?: "idle" | "manual";
 }
 
 export interface ModelsUpdatedPayload {

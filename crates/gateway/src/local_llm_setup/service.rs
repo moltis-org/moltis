@@ -60,14 +60,19 @@ impl LiveLocalLlmService {
     }
 
     /// Register all saved local models with the lifecycle manager.
+    ///
+    /// Re-registers providers in the registry so both share the same
+    /// `Arc<LocalLlmProvider>` — ensuring `last_activity` and `unload()`
+    /// affect the real instance used for inference.
     pub async fn populate_lifecycle(&self, global_timeout: Option<u64>) {
         let Some(config) = LocalLlmConfig::load() else {
             return;
         };
+        let mut reg = self.registry.write().await;
         for entry in &config.models {
             let effective_timeout = entry.idle_timeout_secs.or(global_timeout);
-            match build_local_provider_entry(entry, None) {
-                Ok((_, provider)) => {
+            match register_local_model_entry(&mut reg, entry) {
+                Ok(provider) => {
                     self.lifecycle
                         .register(entry.model_id.clone(), provider, effective_timeout)
                         .await;
@@ -425,18 +430,18 @@ impl LocalLlmService for LiveLocalLlmService {
                         .await;
                     }
 
-                    // Register the provider in the registry
-                    // Use LocalLlmProvider which auto-detects backend (GGUF or MLX)
+                    // Register the provider in the registry and lifecycle manager
+                    // (same Arc so last_activity and unload affect the real instance)
                     let mut reg = registry.write().await;
-                    if let Err(error) = register_local_model_entry(&mut reg, &entry) {
-                        tracing::error!(model = %model_id_clone, %error, "failed to register local model");
-                    }
-
-                    // Register with lifecycle manager
-                    if let Ok((_, provider)) = build_local_provider_entry(&entry, None) {
-                        lifecycle
-                            .register(entry.model_id.clone(), provider, entry.idle_timeout_secs)
-                            .await;
+                    match register_local_model_entry(&mut reg, &entry) {
+                        Ok(provider) => {
+                            lifecycle
+                                .register(entry.model_id.clone(), provider, entry.idle_timeout_secs)
+                                .await;
+                        },
+                        Err(error) => {
+                            tracing::error!(model = %model_id_clone, %error, "failed to register local model");
+                        },
                     }
 
                     let mut s = status.write().await;
@@ -692,15 +697,15 @@ impl LocalLlmService for LiveLocalLlmService {
                         &mut reg,
                         &superseded_model_ids_for_download,
                     );
-                    if let Err(error) = register_local_model_entry(&mut reg, &entry) {
-                        tracing::error!(model = %entry.model_id, %error, "failed to register custom local model");
-                    }
-
-                    // Register with lifecycle manager
-                    if let Ok((_, provider)) = build_local_provider_entry(&entry, None) {
-                        lifecycle
-                            .register(entry.model_id.clone(), provider, entry.idle_timeout_secs)
-                            .await;
+                    match register_local_model_entry(&mut reg, &entry) {
+                        Ok(provider) => {
+                            lifecycle
+                                .register(entry.model_id.clone(), provider, entry.idle_timeout_secs)
+                                .await;
+                        },
+                        Err(error) => {
+                            tracing::error!(model = %entry.model_id, %error, "failed to register custom local model");
+                        },
                     }
 
                     let mut s = status.write().await;

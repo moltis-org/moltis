@@ -4,6 +4,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use {
     serde::Serialize,
+    time::OffsetDateTime,
     tokio::sync::RwLock,
     tracing::{debug, info},
 };
@@ -76,23 +77,33 @@ impl ModelLifecycleManager {
 
     /// Manually load a model (calls `ensure_loaded`), broadcasting events.
     pub async fn load_model(&self, model_id: &str) -> anyhow::Result<()> {
-        let providers = self.providers.read().await;
-        let provider = providers
-            .get(model_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown model: {model_id}"))?;
+        let provider = {
+            let providers = self.providers.read().await;
+            Arc::clone(
+                providers
+                    .get(model_id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown model: {model_id}"))?,
+            )
+        };
 
         if provider.is_loaded().await {
             return Ok(());
         }
 
-        self.broadcast_lifecycle(model_id, "loading", 0, loaded_llama_model_bytes())
+        self.broadcast_lifecycle(model_id, "loading", 0, loaded_llama_model_bytes(), "manual")
             .await;
 
         provider.ensure_loaded().await?;
 
         let model_bytes = provider.model_size_bytes().await;
-        self.broadcast_lifecycle(model_id, "loaded", model_bytes, loaded_llama_model_bytes())
-            .await;
+        self.broadcast_lifecycle(
+            model_id,
+            "loaded",
+            model_bytes,
+            loaded_llama_model_bytes(),
+            "manual",
+        )
+        .await;
 
         info!(model = model_id, bytes = model_bytes, "model loaded");
         Ok(())
@@ -100,10 +111,14 @@ impl ModelLifecycleManager {
 
     /// Manually unload a model, broadcasting events.
     pub async fn unload_model(&self, model_id: &str) -> anyhow::Result<()> {
-        let providers = self.providers.read().await;
-        let provider = providers
-            .get(model_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown model: {model_id}"))?;
+        let provider = {
+            let providers = self.providers.read().await;
+            Arc::clone(
+                providers
+                    .get(model_id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown model: {model_id}"))?,
+            )
+        };
 
         let model_bytes = provider.model_size_bytes().await;
 
@@ -112,6 +127,7 @@ impl ModelLifecycleManager {
             "unloading",
             model_bytes,
             loaded_llama_model_bytes(),
+            "manual",
         )
         .await;
 
@@ -123,6 +139,7 @@ impl ModelLifecycleManager {
                 "unloaded",
                 model_bytes,
                 loaded_llama_model_bytes(),
+                "manual",
             )
             .await;
             info!(
@@ -168,21 +185,25 @@ impl ModelLifecycleManager {
 
     /// One pass of the idle checker.
     async fn check_idle_models(&self) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
+        let now = OffsetDateTime::now_utc().unix_timestamp();
 
-        let providers = self.providers.read().await;
-        let timeouts = self.timeouts.read().await;
+        // Snapshot provider Arcs and timeouts so we don't hold locks across awaits.
+        let snapshot: Vec<(String, Arc<local_llm::LocalLlmProvider>, u64)> = {
+            let providers = self.providers.read().await;
+            let timeouts = self.timeouts.read().await;
+            providers
+                .iter()
+                .filter_map(|(id, prov)| {
+                    let timeout = timeouts.get(id).copied().flatten()?;
+                    if timeout == 0 {
+                        return None; // 0 = never unload
+                    }
+                    Some((id.clone(), Arc::clone(prov), timeout))
+                })
+                .collect()
+        };
 
-        for (model_id, provider) in providers.iter() {
-            let timeout = match timeouts.get(model_id).copied().flatten() {
-                Some(0) => continue, // 0 = never unload
-                Some(t) => t,
-                None => continue, // None = no timeout configured
-            };
-
+        for (model_id, provider, timeout) in &snapshot {
             if !provider.is_loaded().await {
                 continue;
             }
@@ -193,12 +214,12 @@ impl ModelLifecycleManager {
             }
 
             let idle_secs = now.saturating_sub(last) as u64;
-            if idle_secs <= timeout {
+            if idle_secs <= *timeout {
                 continue;
             }
 
             debug!(
-                model = model_id,
+                model = model_id.as_str(),
                 idle_secs, timeout, "model idle timeout reached, unloading"
             );
 
@@ -208,6 +229,7 @@ impl ModelLifecycleManager {
                 "unloading",
                 model_bytes,
                 loaded_llama_model_bytes(),
+                "idle",
             )
             .await;
 
@@ -218,10 +240,11 @@ impl ModelLifecycleManager {
                     "unloaded",
                     model_bytes,
                     loaded_llama_model_bytes(),
+                    "idle",
                 )
                 .await;
                 info!(
-                    model = model_id,
+                    model = model_id.as_str(),
                     freed_bytes = model_bytes,
                     idle_secs,
                     "model auto-unloaded after idle timeout"
@@ -236,6 +259,7 @@ impl ModelLifecycleManager {
         state_name: &str,
         model_size_bytes: u64,
         total_loaded_bytes: u64,
+        reason: &str,
     ) {
         let Some(state) = self.state.get() else {
             return;
@@ -248,6 +272,7 @@ impl ModelLifecycleManager {
                 "state": state_name,
                 "modelSizeBytes": model_size_bytes,
                 "totalLoadedBytes": total_loaded_bytes,
+                "reason": reason,
             }),
             BroadcastOpts::default(),
         )

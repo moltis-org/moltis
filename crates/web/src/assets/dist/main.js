@@ -13863,7 +13863,8 @@ function handleLocalLlmLifecycle(raw) {
     const sizeStr = payload.modelSizeBytes ? ` (${(payload.modelSizeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB)` : "";
     chatAddMsg("system", `Model ${modelName} loaded${sizeStr}`);
   } else if (payload.state === "unloaded") {
-    chatAddMsg("system", `Model ${modelName} unloaded after inactivity`);
+    const msg = payload.reason === "idle" ? `Model ${modelName} unloaded after inactivity` : `Model ${modelName} unloaded`;
+    chatAddMsg("system", msg);
   }
 }
 function handleApprovalEvent(payload) {
