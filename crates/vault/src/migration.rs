@@ -131,7 +131,10 @@ pub async fn migrate_json_file<C: Cipher>(
 /// authoritative when the vault is unsealed; the plaintext serves as a
 /// fallback until all consumers are made vault-aware.
 ///
-/// Returns `true` when a new `.enc` file was written.
+/// Re-encrypts on every call so the `.enc` file stays in sync with the
+/// plaintext after key writes through sync code paths.
+///
+/// Returns `true` when the `.enc` file was (re-)written.
 pub async fn encrypt_json_file<C: Cipher>(
     vault: &Vault<C>,
     path: &Path,
@@ -139,8 +142,7 @@ pub async fn encrypt_json_file<C: Cipher>(
 ) -> Result<bool, VaultError> {
     let enc_path = path.with_extension("json.enc");
 
-    // Skip if plaintext doesn't exist or .enc is already up-to-date.
-    if !path.exists() || enc_path.exists() {
+    if !path.exists() {
         return Ok(false);
     }
 
@@ -204,6 +206,10 @@ pub async fn load_encrypted_or_plaintext<C: Cipher>(
 /// Write content to an encrypted `.enc` file if the vault is available,
 /// otherwise fall back to writing the plaintext `.json` file.
 ///
+/// When the vault is available the `.enc` file is written but the plaintext
+/// `.json` is **not** removed — sync consumers (e.g. `KeyStore`) still read
+/// the plaintext until they are made vault-aware.
+///
 /// This is the write counterpart to [`load_encrypted_or_plaintext`].
 pub async fn save_encrypted_or_plaintext<C: Cipher>(
     vault: Option<&Vault<C>>,
@@ -223,11 +229,7 @@ pub async fn save_encrypted_or_plaintext<C: Cipher>(
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&enc_path, std::fs::Permissions::from_mode(0o600));
         }
-        // Remove plaintext file if it still exists (post-migration cleanup).
-        if path.exists() {
-            let bak_path = path.with_extension("json.bak");
-            let _ = std::fs::rename(path, &bak_path);
-        }
+        // Plaintext is intentionally kept for sync consumers.
     } else {
         std::fs::write(path, content).map_err(|e| {
             VaultError::CipherError(format!("failed to write {}: {e}", path.display()))
@@ -429,9 +431,16 @@ mod tests {
             .unwrap();
         assert!(content.contains("sk-groq"));
 
-        // Running again is a no-op (.enc already exists).
+        // Update plaintext and re-encrypt — must pick up the new content.
+        std::fs::write(&json_path, r#"{"groq":{"apiKey":"sk-groq-v2"}}"#).unwrap();
         let created2 = encrypt_json_file(&vault, &json_path, "keys").await.unwrap();
-        assert!(!created2);
+        assert!(created2);
+
+        let content2 = load_encrypted_or_plaintext(Some(&vault), &json_path, "keys")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(content2.contains("sk-groq-v2"));
     }
 
     #[tokio::test]
@@ -441,11 +450,18 @@ mod tests {
         let json_path = tmp_dir.path().join("data.json");
         let enc_path = tmp_dir.path().join("data.json.enc");
 
-        // With vault: writes .enc
+        // Write a pre-existing plaintext file.
+        std::fs::write(&json_path, "pre-existing").unwrap();
+
+        // With vault: writes .enc but does NOT remove the plaintext.
         save_encrypted_or_plaintext(Some(&vault), &json_path, "data", r#"{"secret":"value"}"#)
             .await
             .unwrap();
         assert!(enc_path.exists());
+        assert!(
+            json_path.exists(),
+            "plaintext must be preserved for sync consumers"
+        );
 
         let decrypted = load_encrypted_or_plaintext(Some(&vault), &json_path, "data")
             .await
