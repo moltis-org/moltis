@@ -213,6 +213,13 @@ impl ChatRuntime for GatewayChatRuntime {
         }
     }
 
+    async fn ensure_local_model_loaded(&self, model_id: &str) -> error::Result<()> {
+        let params = serde_json::json!({ "modelId": model_id });
+        // load_model is a no-op if already loaded; broadcasts lifecycle events otherwise.
+        let _ = self.state.services.local_llm.load_model(params).await;
+        Ok(())
+    }
+
     // ── Remote nodes ────────────────────────────────────────────────────────
 
     async fn connected_nodes(&self) -> Vec<runtime::ConnectedNodeSummary> {

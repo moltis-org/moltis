@@ -533,7 +533,7 @@ impl LiveChatService {
             }
         };
 
-        // Check if this is a local model that needs downloading.
+        // Check if this is a local model that needs downloading/loading.
         // Only do this check for local-llm providers.
         #[cfg(feature = "local-llm")]
         if provider.name() == "local-llm" {
@@ -548,6 +548,11 @@ impl LiveChatService {
             );
             if let Err(e) = self.state.ensure_local_model_cached(&model_to_check).await {
                 return Err(format!("Failed to prepare local model: {}", e).into());
+            }
+            // Pre-load the model into RAM (broadcasts lifecycle events so the
+            // chat UI shows "Loading model X into memory..." before inference).
+            if let Err(e) = self.state.ensure_local_model_loaded(&model_to_check).await {
+                tracing::warn!(model = model_to_check, error = %e, "lifecycle pre-load failed, inference will still lazy-load");
             }
         }
 
