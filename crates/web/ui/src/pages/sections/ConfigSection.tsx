@@ -4,8 +4,10 @@ import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { Loading } from "../../components/forms";
 import { sendRpc } from "../../helpers";
+import { clearAllSessions } from "../../sessions";
 import { connected } from "../../signals";
 import { targetChecked, targetValue } from "../../typed-events";
+import { showToast } from "../../ui";
 import type { RpcResponse } from "./_shared";
 import { rerender } from "./_shared";
 
@@ -551,6 +553,56 @@ export function ConfigSection(): VNode {
 					This replaces the editor content with a fully documented template - copy your current values first if needed.
 				</p>
 			</div>
+
+			<DeleteAllSessionsCard />
+		</div>
+	);
+}
+
+function DeleteAllSessionsCard(): VNode {
+	const [deleting, setDeleting] = useState(false);
+
+	function onDelete(): void {
+		if (deleting) return;
+		setDeleting(true);
+		rerender();
+		clearAllSessions()
+			.then((res) => {
+				if (res?.ok && !res?.skipped) {
+					showToast("All sessions deleted", "success");
+				}
+			})
+			.finally(() => {
+				setDeleting(false);
+				rerender();
+			});
+	}
+
+	return (
+		<div
+			style={{
+				maxWidth: "800px",
+				marginTop: "16px",
+				paddingTop: "16px",
+				borderTop: "1px solid var(--border)",
+			}}
+		>
+			<div className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "6px" }}>
+				Danger zone
+			</div>
+			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: "0 0 10px" }}>
+				Permanently delete all chat sessions except the main session. This cannot be undone.
+			</p>
+			<button
+				type="button"
+				className="provider-btn provider-btn-sm inline-flex items-center gap-1.5"
+				style={{ background: "var(--error)", borderColor: "var(--error)", color: "#fff" }}
+				onClick={onDelete}
+				disabled={deleting}
+			>
+				<span className="icon icon-sm icon-x-circle shrink-0" />
+				{deleting ? "Deleting\u2026" : "Delete all sessions"}
+			</button>
 		</div>
 	);
 }

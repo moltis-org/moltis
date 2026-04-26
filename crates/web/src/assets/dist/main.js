@@ -6212,8 +6212,6 @@ function sendChat() {
   sendRpc("chat.send", chatParams).then((res) => handleChatSendRpcResponse(res, userEl));
   maybeRefreshFullContextFn == null ? void 0 : maybeRefreshFullContextFn();
 }
-let chatMoreModalKeydownHandler = null;
-let disposeSessionControlsVisibility = null;
 let promptMemoryToolbarRequestId = 0;
 function promptMemoryToolbarTitle(promptMemory) {
   if (!promptMemory) return "Prompt memory unavailable";
@@ -6699,7 +6697,7 @@ ${text}`);
     (_a2 = e.clipboardData) == null ? void 0 : _a2.setData("text/plain", lines.join("\n\n"));
   }
 }
-function mountSessionHeaderControls(closeChatMore) {
+function mountSessionHeaderControls() {
   const headerToolbarMount = $("sessionHeaderToolbarMount");
   if (headerToolbarMount) {
     R(
@@ -6707,36 +6705,19 @@ function mountSessionHeaderControls(closeChatMore) {
         SessionHeader,
         {
           showName: false,
+          showFork: false,
+          showShare: false,
+          showClear: false,
           showDelete: false,
           showArchive: false,
-          showStop: false,
-          actionButtonClass: "text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] text-[var(--muted)]"
+          showStop: false
         }
       ),
       headerToolbarMount
     );
   }
-  const headerModalMount = $("sessionHeaderModalMount");
-  if (headerModalMount) {
-    R(
-      /* @__PURE__ */ u(
-        SessionHeader,
-        {
-          showSelectors: false,
-          showStop: false,
-          showFork: false,
-          showShare: false,
-          showDelete: false,
-          showArchive: false,
-          nameOwnLine: true,
-          showRenameButton: true
-        }
-      ),
-      headerModalMount
-    );
-  }
-  const headerModalTopMount = $("sessionHeaderModalTopMount");
-  if (headerModalTopMount) {
+  const sessionActionsMount = $("sessionActionsMount");
+  if (sessionActionsMount) {
     R(
       /* @__PURE__ */ u(
         SessionHeader,
@@ -6744,82 +6725,14 @@ function mountSessionHeaderControls(closeChatMore) {
           showSelectors: false,
           showName: false,
           showStop: false,
-          showFork: false,
-          showShare: false,
-          showClear: false,
-          actionButtonClass: "provider-btn provider-btn-secondary provider-btn-sm",
-          onBeforeArchive: () => closeChatMore == null ? void 0 : closeChatMore(),
-          onBeforeDelete: () => closeChatMore == null ? void 0 : closeChatMore()
+          showDelete: false,
+          showArchive: false,
+          actionButtonClass: "text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] text-[var(--muted)]"
         }
       ),
-      headerModalTopMount
+      sessionActionsMount
     );
   }
-}
-function bindSessionControlsVisibility() {
-  const sec = $("sessionControlsSection");
-  if (!sec) return;
-  disposeSessionControlsVisibility == null ? void 0 : disposeSessionControlsVisibility();
-  disposeSessionControlsVisibility = j(() => {
-    const isMain = (sessionStore.activeSessionKey.value || "main") === "main";
-    sec.classList.toggle("hidden", isMain);
-  });
-}
-function bindChatMoreModal(debugModal, fullContextModal, closeDebugModal, closeFullContextModal) {
-  const chatMoreModal = $("chatMoreModal");
-  const chatMoreBtn = $("chatMoreBtn");
-  if (!(chatMoreModal && chatMoreBtn)) return null;
-  const closeChatMore = () => {
-    chatMoreModal.classList.add("hidden");
-    chatMoreBtn.classList.remove("active");
-  };
-  const openChatMore = () => {
-    setDebugModalOpen(false);
-    setFullContextModalOpen(false);
-    chatMoreModal.classList.remove("hidden");
-    chatMoreBtn.classList.add("active");
-  };
-  chatMoreBtn.addEventListener("click", openChatMore);
-  chatMoreModal.addEventListener("click", (e) => {
-    if (e.target === chatMoreModal) closeChatMore();
-  });
-  chatMoreModalKeydownHandler = (e) => {
-    if (e.key !== "Escape") return;
-    if (fullContextModal && !fullContextModal.classList.contains("hidden")) {
-      closeFullContextModal == null ? void 0 : closeFullContextModal();
-      return;
-    }
-    if (debugModal && !debugModal.classList.contains("hidden")) {
-      closeDebugModal == null ? void 0 : closeDebugModal();
-      return;
-    }
-    closeChatMore();
-  };
-  document.addEventListener("keydown", chatMoreModalKeydownHandler);
-  return closeChatMore;
-}
-function bindDeleteAllSessions(closeChatMore) {
-  const btn2 = $("chatMoreDeleteAllBtn");
-  if (!btn2) return;
-  const label2 = $("chatMoreDeleteAllLabel");
-  let inFlight = false;
-  btn2.addEventListener("click", () => {
-    if (inFlight) return;
-    inFlight = true;
-    btn2.disabled = true;
-    if (label2) label2.textContent = "Deleting…";
-    closeChatMore == null ? void 0 : closeChatMore();
-    clearAllSessions().then((res) => {
-      var _a2;
-      if ((res == null ? void 0 : res.ok) && !(res == null ? void 0 : res.skipped)) return;
-      if ((res == null ? void 0 : res.cancelled) || (res == null ? void 0 : res.skipped)) return;
-      chatAddMsg("error", ((_a2 = res == null ? void 0 : res.error) == null ? void 0 : _a2.message) || "Failed to clear sessions");
-    }).finally(() => {
-      inFlight = false;
-      btn2.disabled = false;
-      if (label2) label2.textContent = "Delete all sessions";
-    });
-  });
 }
 function bindChatComposer() {
   var _a2;
@@ -6935,7 +6848,7 @@ function initializeChatMediaDrop() {
   const inputArea = (_a2 = chatInput) == null ? void 0 : _a2.closest(".px-4.py-3");
   initMediaDrop(chatMsgBox, inputArea);
 }
-const chatPageHTML = '<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto auto;overflow:hidden"><div class="chat-toolbar h-12 px-4 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2" style="grid-row:1;"><div id="modelCombo" class="model-combo"><button id="modelComboBtn" class="model-combo-btn" type="button"><span id="modelComboLabel">loading…</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="modelDropdown" class="model-dropdown hidden"><input id="modelSearchInput" type="text" placeholder="Search models…" class="model-search-input" autocomplete="off" /><div id="modelDropdownList" class="model-dropdown-list"></div></div></div><div id="reasoningCombo" class="model-combo hidden"><button id="reasoningComboBtn" class="model-combo-btn" type="button" title="Reasoning effort"><span class="icon icon-sm icon-brain" style="flex-shrink:0;"></span><span id="reasoningComboLabel">Off</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="reasoningDropdown" class="model-dropdown hidden"><div id="reasoningDropdownList" class="model-dropdown-list"></div></div></div><div id="nodeCombo" class="model-combo hidden"><button id="nodeComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-server" style="flex-shrink:0;"></span><span id="nodeComboLabel">Local</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="nodeDropdown" class="model-dropdown hidden" tabindex="-1"><div id="nodeDropdownList" class="model-dropdown-list"></div></div></div><div id="projectCombo" class="model-combo hidden"><button id="projectComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-folder" style="flex-shrink:0;"></span><span id="projectComboLabel">No project</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="projectDropdown" class="model-dropdown hidden"><div id="projectDropdownList" class="model-dropdown-list"></div></div></div><div id="sessionHeaderToolbarMount" class="ml-auto flex items-center gap-1.5"></div><button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">sandboxed</span></button><div style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">ubuntu:25.10</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div><button id="mcpToggleBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle MCP tools for this session"><span class="icon icon-md icon-link shrink-0"></span><span id="mcpToggleLabel">MCP</span></button><button id="debugPanelBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show context debug info"><span class="icon icon-md icon-wrench shrink-0"></span><span id="debugPanelLabel">Debug</span></button><button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show full LLM context (system prompt + history)"><span class="icon icon-md icon-document shrink-0"></span><span id="fullContextLabel">Context</span></button><button id="chatMoreBtn" type="button" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="More controls" aria-label="More controls"><span class="icon icon-md icon-menu-dots-horizontal shrink-0"></span></button></div><div id="chatMoreModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:560px;max-width:92vw;"><div class="provider-modal-header"><div class="flex items-center gap-2"><button id="chatMoreDeleteAllBtn" type="button" class="provider-btn provider-btn-sm chat-session-btn-danger inline-flex items-center gap-1.5" style="background:var(--error);border-color:var(--error);color:#fff;"><span class="icon icon-sm icon-x-circle shrink-0"></span><span id="chatMoreDeleteAllLabel">Delete all sessions</span></button></div><div id="sessionHeaderModalTopMount" class="flex items-center gap-2"></div></div><div class="provider-modal-body flex flex-col gap-3"><div id="sessionControlsSection" class="pt-3"><div id="sessionHeaderModalMount" class="w-full"></div></div></div></div></div><div id="debugModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:min(980px,96vw);max-width:96vw;max-height:88vh;"><div class="provider-modal-header"><div class="provider-item-name">Debug context</div><button id="debugModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button></div><div class="provider-modal-body" style="padding:0;overflow:hidden;"><div id="debugPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div></div></div></div><div id="fullContextModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:min(1080px,96vw);max-width:96vw;max-height:88vh;"><div class="provider-modal-header"><div class="provider-item-name">Full context</div><button id="fullContextModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button></div><div class="provider-modal-body" style="padding:0;overflow:hidden;"><div id="fullContextPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div></div></div></div><div class="p-4 flex flex-col gap-2" id="messages" style="grid-row:3;overflow-y:auto;min-height:0"></div><div id="queuedMessages" class="queued-tray hidden" style="grid-row:4;"></div><div id="tokenBar" class="token-bar" style="grid-row:5;"></div><div class="chat-input-row px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end" style="grid-row:6;"><span id="chatCommandPrompt" class="chat-command-prompt chat-command-prompt-hidden" title="Command prompt symbol" aria-hidden="true">$</span><textarea id="chatInput" placeholder="Type a message..." rows="1" enterkeyhint="send" class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea><button id="micBtn" disabled title="Click to start recording" class="mic-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"><span class="icon icon-lg icon-microphone"></span></button><button id="vadBtn" disabled title="Conversation mode (VAD)" class="vad-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"><span class="icon icon-lg icon-waveform"></span></button><button id="sendBtn" disabled class="provider-btn min-h-[40px] disabled:opacity-40 disabled:cursor-default">Send</button></div></div>';
+const chatPageHTML = '<div style="position:absolute;inset:0;display:grid;grid-template-rows:auto auto 1fr auto auto auto;overflow:hidden"><div class="chat-toolbar h-12 px-4 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2" style="grid-row:1;"><div id="modelCombo" class="model-combo"><button id="modelComboBtn" class="model-combo-btn" type="button"><span id="modelComboLabel">loading…</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="modelDropdown" class="model-dropdown hidden"><input id="modelSearchInput" type="text" placeholder="Search models…" class="model-search-input" autocomplete="off" /><div id="modelDropdownList" class="model-dropdown-list"></div></div></div><div id="reasoningCombo" class="model-combo hidden"><button id="reasoningComboBtn" class="model-combo-btn" type="button" title="Reasoning effort"><span class="icon icon-sm icon-brain" style="flex-shrink:0;"></span><span id="reasoningComboLabel">Off</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="reasoningDropdown" class="model-dropdown hidden"><div id="reasoningDropdownList" class="model-dropdown-list"></div></div></div><div id="nodeCombo" class="model-combo hidden"><button id="nodeComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-server" style="flex-shrink:0;"></span><span id="nodeComboLabel">Local</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="nodeDropdown" class="model-dropdown hidden" tabindex="-1"><div id="nodeDropdownList" class="model-dropdown-list"></div></div></div><div id="projectCombo" class="model-combo hidden"><button id="projectComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-folder" style="flex-shrink:0;"></span><span id="projectComboLabel">No project</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="projectDropdown" class="model-dropdown hidden"><div id="projectDropdownList" class="model-dropdown-list"></div></div></div><div id="sessionHeaderToolbarMount" class="ml-auto flex items-center gap-1.5"></div><button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">sandboxed</span></button><div style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">ubuntu:25.10</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div><button id="mcpToggleBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle MCP tools for this session"><span class="icon icon-md icon-link shrink-0"></span><span id="mcpToggleLabel">MCP</span></button><button id="debugPanelBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show context debug info"><span class="icon icon-md icon-wrench shrink-0"></span><span id="debugPanelLabel">Debug</span></button><button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show full LLM context (system prompt + history)"><span class="icon icon-md icon-document shrink-0"></span><span id="fullContextLabel">Context</span></button><div id="sessionActionsMount" class="flex items-center gap-1.5"></div></div><div id="debugModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:min(980px,96vw);max-width:96vw;max-height:88vh;"><div class="provider-modal-header"><div class="provider-item-name">Debug context</div><button id="debugModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button></div><div class="provider-modal-body" style="padding:0;overflow:hidden;"><div id="debugPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div></div></div></div><div id="fullContextModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:min(1080px,96vw);max-width:96vw;max-height:88vh;"><div class="provider-modal-header"><div class="provider-item-name">Full context</div><button id="fullContextModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button></div><div class="provider-modal-body" style="padding:0;overflow:hidden;"><div id="fullContextPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div></div></div></div><div class="p-4 flex flex-col gap-2" id="messages" style="grid-row:3;overflow-y:auto;min-height:0"></div><div id="queuedMessages" class="queued-tray hidden" style="grid-row:4;"></div><div id="tokenBar" class="token-bar" style="grid-row:5;"></div><div class="chat-input-row px-4 py-3 border-t border-[var(--border)] bg-[var(--surface)] flex gap-2 items-end" style="grid-row:6;"><span id="chatCommandPrompt" class="chat-command-prompt chat-command-prompt-hidden" title="Command prompt symbol" aria-hidden="true">$</span><textarea id="chatInput" placeholder="Type a message..." rows="1" enterkeyhint="send" class="flex-1 bg-[var(--surface2)] border border-[var(--border)] text-[var(--text)] px-3 py-2 rounded-lg text-sm resize-none min-h-[40px] max-h-[120px] leading-relaxed focus:outline-none focus:border-[var(--border-strong)] focus:ring-1 focus:ring-[var(--accent-subtle)] transition-colors font-[var(--font-body)]"></textarea><button id="micBtn" disabled title="Click to start recording" class="mic-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"><span class="icon icon-lg icon-microphone"></span></button><button id="vadBtn" disabled title="Conversation mode (VAD)" class="vad-btn min-h-[40px] px-3 bg-[var(--surface2)] border border-[var(--border)] rounded-lg text-[var(--muted)] cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors hover:border-[var(--border-strong)] hover:text-[var(--text)]"><span class="icon icon-lg icon-waveform"></span></button><button id="sendBtn" disabled class="provider-btn min-h-[40px] disabled:opacity-40 disabled:cursor-default">Send</button></div></div>';
 let chatScrollHandler = null;
 registerPrefix(
   routes.chats,
@@ -6950,15 +6863,11 @@ registerPrefix(
     initializeChatControls();
     setSendChatFn(sendChat);
     setMaybeRefreshFullContextFn(maybeRefreshFullContext);
-    let closeChatMore = null;
-    mountSessionHeaderControls(() => closeChatMore == null ? void 0 : closeChatMore());
-    bindSessionControlsVisibility();
+    mountSessionHeaderControls();
     const mcpToggle = $("mcpToggleBtn");
     if (mcpToggle) mcpToggle.addEventListener("click", toggleMcp);
     updateMcpToggleUI(true);
-    const mb = bindContextModals();
-    closeChatMore = bindChatMoreModal(mb.debugModal, mb.fullContextModal, mb.closeDebugModal, mb.closeFullContextModal);
-    bindDeleteAllSessions(closeChatMore);
+    bindContextModals();
     const debugBtn = $("debugPanelBtn");
     if (debugBtn) debugBtn.addEventListener("click", toggleDebugPanel);
     (_a2 = $("fullContextBtn")) == null ? void 0 : _a2.addEventListener("click", toggleFullContextPanel);
@@ -6988,18 +6897,10 @@ registerPrefix(
     unbindReasoningToggle();
     unbindNodeEvents();
     slashHideMenu();
-    if (chatMoreModalKeydownHandler) {
-      document.removeEventListener("keydown", chatMoreModalKeydownHandler);
-      chatMoreModalKeydownHandler = null;
-    }
-    disposeSessionControlsVisibility == null ? void 0 : disposeSessionControlsVisibility();
-    disposeSessionControlsVisibility = null;
     const m1 = $("sessionHeaderToolbarMount");
     if (m1) R(null, m1);
-    const m2 = $("sessionHeaderModalMount");
+    const m2 = $("sessionActionsMount");
     if (m2) R(null, m2);
-    const m3 = $("sessionHeaderModalTopMount");
-    if (m3) R(null, m3);
     setChatMsgBox(null);
     setChatInput(null);
     setChatSendBtn(null);
@@ -28314,8 +28215,54 @@ function ConfigSection() {
     /* @__PURE__ */ u("div", { style: { maxWidth: "800px", marginTop: "8px", paddingTop: "16px", borderTop: "1px solid var(--border)" }, children: /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", children: [
       /* @__PURE__ */ u("strong", { children: "Tip:" }),
       ' Click "Load Template" to see all available configuration options with documentation. This replaces the editor content with a fully documented template - copy your current values first if needed.'
-    ] }) })
+    ] }) }),
+    /* @__PURE__ */ u(DeleteAllSessionsCard, {})
   ] });
+}
+function DeleteAllSessionsCard() {
+  const [deleting, setDeleting] = d(false);
+  function onDelete() {
+    if (deleting) return;
+    setDeleting(true);
+    rerender$1();
+    clearAllSessions().then((res) => {
+      if ((res == null ? void 0 : res.ok) && !(res == null ? void 0 : res.skipped)) {
+        showToast$4("All sessions deleted", "success");
+      }
+    }).finally(() => {
+      setDeleting(false);
+      rerender$1();
+    });
+  }
+  return /* @__PURE__ */ u(
+    "div",
+    {
+      style: {
+        maxWidth: "800px",
+        marginTop: "16px",
+        paddingTop: "16px",
+        borderTop: "1px solid var(--border)"
+      },
+      children: [
+        /* @__PURE__ */ u("div", { className: "text-sm font-medium text-[var(--text-strong)]", style: { marginBottom: "6px" }, children: "Danger zone" }),
+        /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { margin: "0 0 10px" }, children: "Permanently delete all chat sessions except the main session. This cannot be undone." }),
+        /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-sm inline-flex items-center gap-1.5",
+            style: { background: "var(--error)", borderColor: "var(--error)", color: "#fff" },
+            onClick: onDelete,
+            disabled: deleting,
+            children: [
+              /* @__PURE__ */ u("span", { className: "icon icon-sm icon-x-circle shrink-0" }),
+              deleting ? "Deleting…" : "Delete all sessions"
+            ]
+          }
+        )
+      ]
+    }
+  );
 }
 function EnvironmentSection() {
   const [envVars, setEnvVars] = d([]);
