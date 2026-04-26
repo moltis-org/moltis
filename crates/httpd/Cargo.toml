@@ -28,14 +28,12 @@ moltis-config         = { workspace = true }
 moltis-cron           = { workspace = true }
 moltis-gateway        = { workspace = true }
 moltis-graphql        = { optional = true, workspace = true }
-moltis-matrix         = { optional = true, workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-msteams        = { workspace = true }
 moltis-protocol       = { workspace = true }
 moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
-moltis-slack          = { optional = true, workspace = true }
 moltis-tls            = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-vault          = { optional = true, workspace = true }
@@ -64,39 +62,15 @@ webauthn-rs           = { features = ["danger-allow-state-serialisation"], works
 
 [features]
 default = [
-  "graphql",
-  "matrix",
-  "mdns",
   "metrics",
-  "nostr",
-  "prometheus",
-  "push-notifications",
-  "signal",
-  "slack",
-  "tailscale",
   "tls",
-  "trusted-network",
   "vault",
   "web-ui",
 ]
-graphql = [
-  "dep:async-graphql",
-  "dep:async-graphql-axum",
-  "dep:moltis-graphql",
-  "moltis-gateway/graphql",
-]
-matrix = ["dep:moltis-matrix", "moltis-gateway/matrix"]
-mdns = ["moltis-gateway/mdns"]
 metrics = ["dep:moltis-metrics", "moltis-gateway/metrics"]
 ngrok = ["dep:ngrok"]
-nostr = ["moltis-gateway/nostr"]
 prometheus = ["metrics", "moltis-gateway/prometheus"]
-push-notifications = ["dep:chrono", "moltis-gateway/push-notifications"]
-signal = ["moltis-gateway/signal"]
-slack = ["dep:moltis-slack", "moltis-gateway/slack"]
-tailscale = ["moltis-gateway/tailscale"]
 tls = ["dep:moltis-tls", "dep:rustls", "moltis-gateway/tls"]
-trusted-network = ["moltis-gateway/trusted-network"]
 vault = ["dep:moltis-vault", "moltis-gateway/vault"]
 web-ui = ["moltis-gateway/web-ui"]
 
