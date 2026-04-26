@@ -336,22 +336,6 @@ export function updatePendingUpload(index: number, updates: Partial<PendingFileU
 }
 
 // ── UI Helpers ───────────────────────────────���───────────────
-export function triggerFileSelect(accept?: string): void {
-	const input = document.createElement("input");
-	input.type = "file";
-	input.multiple = true;
-	input.accept = accept || "*/*";
-
-	input.addEventListener("change", async (event: Event) => {
-		const target = event.target as HTMLInputElement;
-		if (target.files && target.files.length > 0) {
-			await handleFileSelection(Array.from(target.files));
-		}
-	});
-
-	input.click();
-}
-
 /** Validate and stage files into pendingUploads (does NOT upload). */
 export function handleFileSelection(files: File[]): File[] {
 	const validFiles: File[] = [];
