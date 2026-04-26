@@ -630,11 +630,12 @@ function mountSessionHeaderControls(closeChatMore: () => void): void {
 		render(
 			<SessionHeader
 				showName={false}
-				showShare={false}
-				showFork={false}
-				showClear={false}
 				showDelete={false}
 				showArchive={false}
+				showStop={false}
+				actionButtonClass={
+					"text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] text-[var(--muted)]"
+				}
 			/>,
 			headerToolbarMount,
 		);
@@ -662,8 +663,10 @@ function mountSessionHeaderControls(closeChatMore: () => void): void {
 				showSelectors={false}
 				showName={false}
 				showStop={false}
+				showFork={false}
+				showShare={false}
+				showClear={false}
 				actionButtonClass={"provider-btn provider-btn-secondary provider-btn-sm"}
-				onBeforeShare={() => closeChatMore?.()}
 				onBeforeArchive={() => closeChatMore?.()}
 				onBeforeDelete={() => closeChatMore?.()}
 			/>,
