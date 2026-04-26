@@ -6213,6 +6213,7 @@ function sendChat() {
   maybeRefreshFullContextFn == null ? void 0 : maybeRefreshFullContextFn();
 }
 let promptMemoryToolbarRequestId = 0;
+let contextModalsKeydownHandler = null;
 function promptMemoryToolbarTitle(promptMemory) {
   if (!promptMemory) return "Prompt memory unavailable";
   const parts = [`Prompt memory: ${buildPromptMemorySummary(promptMemory)}`];
@@ -6819,6 +6820,17 @@ function bindContextModals() {
       if (e.target === fullContextModal) closeFullContextModal == null ? void 0 : closeFullContextModal();
     });
   }
+  contextModalsKeydownHandler = (e) => {
+    if (e.key !== "Escape") return;
+    if (fullContextModal && !fullContextModal.classList.contains("hidden")) {
+      closeFullContextModal == null ? void 0 : closeFullContextModal();
+      return;
+    }
+    if (debugModal && !debugModal.classList.contains("hidden")) {
+      closeDebugModal == null ? void 0 : closeDebugModal();
+    }
+  };
+  document.addEventListener("keydown", contextModalsKeydownHandler);
   return { debugModal, fullContextModal, closeDebugModal, closeFullContextModal };
 }
 function syncModelComboLabel() {
@@ -6897,6 +6909,10 @@ registerPrefix(
     unbindReasoningToggle();
     unbindNodeEvents();
     slashHideMenu();
+    if (contextModalsKeydownHandler) {
+      document.removeEventListener("keydown", contextModalsKeydownHandler);
+      contextModalsKeydownHandler = null;
+    }
     const m1 = $("sessionHeaderToolbarMount");
     if (m1) R(null, m1);
     const m2 = $("sessionActionsMount");

@@ -58,6 +58,7 @@ import {
 
 // ── Module state ─────────────────────────────────────────────
 let promptMemoryToolbarRequestId = 0;
+let contextModalsKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
 
 // ── Prompt memory toolbar helpers ─────────────────────────────
 
@@ -746,6 +747,17 @@ function bindContextModals(): {
 			if (e.target === fullContextModal) closeFullContextModal?.();
 		});
 	}
+	contextModalsKeydownHandler = (e: KeyboardEvent): void => {
+		if (e.key !== "Escape") return;
+		if (fullContextModal && !fullContextModal.classList.contains("hidden")) {
+			closeFullContextModal?.();
+			return;
+		}
+		if (debugModal && !debugModal.classList.contains("hidden")) {
+			closeDebugModal?.();
+		}
+	};
+	document.addEventListener("keydown", contextModalsKeydownHandler);
 	return { debugModal, fullContextModal, closeDebugModal, closeFullContextModal };
 }
 
@@ -866,6 +878,10 @@ registerPrefix(
 		unbindReasoningToggle();
 		unbindNodeEvents();
 		slashHideMenu();
+		if (contextModalsKeydownHandler) {
+			document.removeEventListener("keydown", contextModalsKeydownHandler);
+			contextModalsKeydownHandler = null;
+		}
 		const m1 = S.$("sessionHeaderToolbarMount");
 		if (m1) render(null, m1);
 		const m2 = S.$("sessionActionsMount");
