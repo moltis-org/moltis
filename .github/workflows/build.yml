@@ -1,0 +1,69 @@
+name: Build & Push
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/moltis-mini
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2025-11-30
+          components: clippy, rustfmt
+          targets: wasm32-wasip2
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: true
+
+      - name: Install just
+        run: cargo install just
+
+      - name: Build WASM tools
+        run: just wasm-tools
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Stage WASM artifacts
+        run: bash ./scripts/stage-wasm-package-assets.sh target/release
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
