@@ -676,15 +676,17 @@ body {
 
   .chat-toolbar .sandbox-toggle,
   .chat-toolbar #sessionActionsMount button {
-    font-size: 0.65rem;
-    padding: 2px 6px;
-    gap: 2px;
+    font-size: 0.7rem !important;
+    padding: 2px 6px !important;
+    gap: 2px !important;
+    min-height: 0 !important;
+    line-height: 1.2 !important;
   }
 
   .chat-toolbar .sandbox-toggle .icon,
   .chat-toolbar #sessionActionsMount .icon {
-    width: 12px;
-    height: 12px;
+    width: 12px !important;
+    height: 12px !important;
   }
 }
 
