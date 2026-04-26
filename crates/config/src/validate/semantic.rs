@@ -893,12 +893,24 @@ fn validate_context_window(value: Option<u32>, path: &str, diagnostics: &mut Vec
 /// or stored in the credential store (`provider_keys.json`), not hard-coded in
 /// `moltis.toml`.  The config file may be backed up, synced, or accidentally
 /// committed to version control.
+fn looks_like_env_var(value: &str) -> bool {
+    // ${VAR} or $VAR (POSIX)
+    if value.starts_with('$') {
+        return true;
+    }
+    // %VAR% (Windows)
+    if value.starts_with('%') && value.ends_with('%') && value.len() > 2 {
+        return true;
+    }
+    false
+}
+
 fn check_plaintext_api_keys(config: &MoltisConfig, diagnostics: &mut Vec<Diagnostic>) {
     // LLM provider keys
     for (name, entry) in &config.providers.providers {
         if let Some(ref key) = entry.api_key {
             let value = key.expose_secret();
-            if !value.is_empty() && !value.starts_with("${") {
+            if !value.is_empty() && !looks_like_env_var(value) {
                 diagnostics.push(Diagnostic {
                     severity: Severity::Warning,
                     category: "security",
@@ -926,7 +938,7 @@ fn check_plaintext_api_keys(config: &MoltisConfig, diagnostics: &mut Vec<Diagnos
     for (path, key) in voice_tts_keys {
         if let Some(k) = key {
             let value = k.expose_secret();
-            if !value.is_empty() && !value.starts_with("${") {
+            if !value.is_empty() && !looks_like_env_var(value) {
                 diagnostics.push(Diagnostic {
                     severity: Severity::Warning,
                     category: "security",
@@ -964,7 +976,7 @@ fn check_plaintext_api_keys(config: &MoltisConfig, diagnostics: &mut Vec<Diagnos
     for (path, key) in voice_stt_keys {
         if let Some(k) = key {
             let value = k.expose_secret();
-            if !value.is_empty() && !value.starts_with("${") {
+            if !value.is_empty() && !looks_like_env_var(value) {
                 diagnostics.push(Diagnostic {
                     severity: Severity::Warning,
                     category: "security",

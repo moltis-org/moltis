@@ -687,7 +687,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         "deepgram" => {
                             cfg.voice.stt.deepgram.api_key = None;
                         },
-                        "google" => {
+                        "google" | "google-tts" => {
                             cfg.voice.tts.google.api_key = None;
                             cfg.voice.stt.google.api_key = None;
                         },
