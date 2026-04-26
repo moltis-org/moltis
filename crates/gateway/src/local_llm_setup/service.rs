@@ -340,6 +340,15 @@ impl LocalLlmService for LiveLocalLlmService {
             .save()
             .map_err(|e| format!("failed to save config: {e}"))?;
 
+        // Resolve effective idle timeout: per-model override → global default → None.
+        let effective_timeout = entry.idle_timeout_secs.or_else(|| {
+            let cfg = moltis_config::loader::discover_and_load();
+            cfg.providers
+                .get("local")
+                .or_else(|| cfg.providers.get("local-llm"))
+                .and_then(|e| e.idle_timeout_secs)
+        });
+
         // Trigger model download in background with progress updates
         let model_id_clone = model_id.clone();
         let status = Arc::clone(&self.status);
@@ -436,7 +445,7 @@ impl LocalLlmService for LiveLocalLlmService {
                     match register_local_model_entry(&mut reg, &entry) {
                         Ok(provider) => {
                             lifecycle
-                                .register(entry.model_id.clone(), provider, entry.idle_timeout_secs)
+                                .register(entry.model_id.clone(), provider, effective_timeout)
                                 .await;
                         },
                         Err(error) => {
@@ -600,6 +609,15 @@ impl LocalLlmService for LiveLocalLlmService {
             };
         }
 
+        // Resolve effective idle timeout: per-model override → global default → None.
+        let effective_timeout = entry.idle_timeout_secs.or_else(|| {
+            let cfg = moltis_config::loader::discover_and_load();
+            cfg.providers
+                .get("local")
+                .or_else(|| cfg.providers.get("local-llm"))
+                .and_then(|e| e.idle_timeout_secs)
+        });
+
         let status = Arc::clone(&self.status);
         let registry = Arc::clone(&self.registry);
         let state_cell = Arc::clone(&self.state);
@@ -700,7 +718,7 @@ impl LocalLlmService for LiveLocalLlmService {
                     match register_local_model_entry(&mut reg, &entry) {
                         Ok(provider) => {
                             lifecycle
-                                .register(entry.model_id.clone(), provider, entry.idle_timeout_secs)
+                                .register(entry.model_id.clone(), provider, effective_timeout)
                                 .await;
                         },
                         Err(error) => {

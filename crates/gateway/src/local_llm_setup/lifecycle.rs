@@ -67,6 +67,12 @@ impl ModelLifecycleManager {
         self.timeouts.write().await.remove(model_id);
     }
 
+    /// Remove all models (used before re-populating after registry rebuild).
+    pub async fn clear(&self) {
+        self.providers.write().await.clear();
+        self.timeouts.write().await.clear();
+    }
+
     /// Update the idle timeout for a model.
     pub async fn set_timeout(&self, model_id: &str, timeout: Option<u64>) {
         self.timeouts
