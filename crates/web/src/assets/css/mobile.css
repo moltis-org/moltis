@@ -327,12 +327,19 @@ body {
 
   .chat-toolbar {
     flex-wrap: nowrap;
-    column-gap: 6px;
-    row-gap: 6px;
+    column-gap: 4px;
+    row-gap: 4px;
     min-width: 0;
+    height: 36px !important;
     padding-left: calc(6px + var(--safe-left)) !important;
     padding-right: calc(6px + var(--safe-right)) !important;
     border-radius: 0 !important;
+  }
+
+  .chat-toolbar .model-combo-btn {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    min-height: 0;
   }
 
   .chat-toolbar > * {
