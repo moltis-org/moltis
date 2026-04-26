@@ -3,6 +3,7 @@ import { useSignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import { sendRpc } from "../../helpers";
+import { showToast } from "../../ui";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -164,6 +165,7 @@ function DetailPanel({
 			const res = await sendRpc("skills.clawhub.install", { slug });
 			if (res?.ok) {
 				installed.value = true;
+				showToast("Installed — review and enable the skill in the Skills tab.", "success");
 				onInstalled();
 			} else {
 				error.value = String(res?.error || "Install failed");

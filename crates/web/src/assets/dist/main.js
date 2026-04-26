@@ -15490,6 +15490,7 @@ function DetailPanel({
       const res = await sendRpc("skills.clawhub.install", { slug });
       if (res == null ? void 0 : res.ok) {
         installed.value = true;
+        showToast$4("Installed — review and enable the skill in the Skills tab.", "success");
         onInstalled();
       } else {
         error2.value = String((res == null ? void 0 : res.error) || "Install failed");
