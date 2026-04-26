@@ -445,3 +445,31 @@ courier-run *ARGS:
 website-dev:
     node website/scripts/build-changelog.mjs
     node website/scripts/dev-server.mjs
+
+# === moltis-mini recipes ===
+
+# Quick check — no warnings expected.
+mini-check:
+    cargo check 2>&1 | grep -E '^(error|warning:.*check-cfg)' && exit 1 || echo "✓ clean"
+
+# Build release binary for moltis-mini (no WASM).
+mini-build:
+    cargo build --release
+
+# Full release build with WASM (same as CI).
+mini-build-full: wasm-tools
+    cargo build --release
+
+# Rebase onto upstream main and push.
+mini-sync:
+    git fetch upstream main
+    git rebase upstream/main
+    git push origin main --force-with-lease
+
+# Run tests for core crates only.
+mini-test:
+    cargo test --release -p moltis -p moltis-gateway -p moltis-chat -p moltis-httpd -p moltis-web
+
+# Update Cargo.lock after Cargo.toml changes.
+mini-lock:
+    cargo update -w

@@ -47,5 +47,11 @@ tls                = ["moltis-httpd/tls"]
 vault              = ["moltis-httpd/vault"]
 web-ui             = ["moltis-httpd/web-ui"]
 
+# Stub features — crates removed from moltis-mini.
+graphql            = []
+push-notifications = []
+tailscale          = []
+voice              = []
+
 [lints]
 workspace = true

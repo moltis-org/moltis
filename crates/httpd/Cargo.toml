@@ -74,6 +74,15 @@ tls = ["dep:moltis-tls", "dep:rustls", "moltis-gateway/tls"]
 vault = ["dep:moltis-vault", "moltis-gateway/vault"]
 web-ui = ["moltis-gateway/web-ui"]
 
+# Stub features — crates removed from moltis-mini.
+graphql            = []
+mdns               = []
+push-notifications = []
+slack              = []
+tailscale          = []
+trusted-network    = []
+voice              = []
+
 [dev-dependencies]
 moltis-code-index.workspace = true
 moltis-providers = { workspace = true }

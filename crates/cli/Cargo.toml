@@ -148,5 +148,23 @@ vault              = ["moltis-httpd/vault", "moltis-web?/vault"]
 wasm               = ["moltis-tools/wasm"]
 web-ui             = ["dep:moltis-web", "moltis-httpd/web-ui"]
 
+# Stub features — crates removed from moltis-mini. No-ops that suppress
+# 257 check-cfg warnings from #[cfg(feature = "...")] guards in kept source.
+caldav             = []
+firecrawl          = []
+graphql            = []
+matrix             = []
+mdns               = []
+nostr              = []
+openclaw-import    = []
+push-notifications = []
+qmd                = []
+signal             = []
+slack              = []
+tailscale          = []
+trusted-network    = []
+voice              = []
+whatsapp           = []
+
 [lints]
 workspace = true
