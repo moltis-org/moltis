@@ -28912,7 +28912,8 @@ function IdentitySection() {
     ] }),
     get("version") ? /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)]", style: { marginTop: "auto", paddingTop: "16px" }, children: [
       "v",
-      get("version")
+      get("version"),
+      "-mini"
     ] }) : null
   ] });
 }
