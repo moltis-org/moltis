@@ -735,24 +735,24 @@ test.describe("Session management", () => {
 		// Create a non-main session so it can be renamed.
 		await createSession(page);
 
-		// The session name should be visible in the toolbar mount.
+		// The session name should be visible in the toolbar (title="Click to rename").
 		const nameMount = page.locator("#sessionNameMount");
-		const nameEl = nameMount.locator(".chat-session-name");
+		const nameEl = nameMount.getByTitle("Click to rename");
 		await expect(nameEl).toBeVisible({ timeout: 5_000 });
 
 		// Click the name to start renaming.
 		await nameEl.click();
-		const renameInput = nameMount.locator(".chat-session-rename-input");
+		const renameInput = nameMount.getByRole("textbox");
 		await expect(renameInput).toBeVisible({ timeout: 5_000 });
 
-		// Type a new name and commit.
-		const newName = `Renamed ${Date.now()}`;
+		// Use a short name (under 20 chars) so truncation doesn't affect assertion.
+		const newName = "My Chat";
 		await renameInput.fill(newName);
 		await renameInput.press("Enter");
 
 		// The display name should update in the toolbar.
-		await expect(nameMount.locator(".chat-session-name")).toContainText(
-			newName.slice(0, 20),
+		await expect(nameMount.getByTitle("Click to rename")).toHaveText(
+			newName,
 			{ timeout: 5_000 },
 		);
 
