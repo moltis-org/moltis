@@ -183,7 +183,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                     let pid_owned = pid.clone();
                                     tokio::spawn(async move {
                                         jm.register_project(pid_owned.clone(), project_dir).await;
-                                        jm.spawn_index(pid_owned);
+                                        jm.spawn_index(pid_owned).await;
                                     });
                                 }
                             }

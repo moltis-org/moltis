@@ -70,13 +70,14 @@ pub struct IndexJobManager {
 impl IndexJobManager {
     /// Create a new IndexJobManager.
     pub fn new(code_index: Arc<CodeIndex>, config: IndexJobManagerConfig) -> Self {
+        let max_jobs = config.max_concurrent_jobs.max(1);
         Self {
             code_index,
             project_dirs: Mutex::new(HashMap::new()),
             active_jobs: Mutex::new(HashMap::new()),
             #[cfg(feature = "file-watcher")]
             watchers: Mutex::new(HashMap::new()),
-            semaphore: Arc::new(Semaphore::new(config.max_concurrent_jobs)),
+            semaphore: Arc::new(Semaphore::new(max_jobs)),
             cancel: CancellationToken::new(),
             config,
         }
@@ -106,8 +107,26 @@ impl IndexJobManager {
 
     /// Spawn an indexing job for a project (deduplicated, rate-limited).
     ///
-    /// Returns `true` if a job was spawned, `false` if one was already running.
-    pub fn spawn_index(self: &Arc<Self>, project_id: String) -> bool {
+    /// Returns `true` if a job was spawned, `false` if one was already running
+    /// for this project.
+    pub async fn spawn_index(self: &Arc<Self>, project_id: String) -> bool {
+        // Non-blocking check: if the per-project lock is held, a job is already
+        // running — skip spawning a duplicate.
+        let already_running = {
+            let jobs = self.active_jobs.lock().await;
+            if let Some(lock) = jobs.get(&project_id) {
+                lock.try_lock().is_err()
+            } else {
+                false
+            }
+        };
+
+        if already_running {
+            #[cfg(feature = "tracing")]
+            debug!(project_id = %project_id, "index job already running, skipping");
+            return false;
+        }
+
         let this = Arc::clone(self);
         let project_id_for_log = project_id.clone();
 
@@ -202,22 +221,15 @@ impl IndexJobManager {
         // Clone Arc<Self> for the watcher callback.
         let this = Arc::clone(self);
         let pid = project_id.to_string();
-        let proj_dir = project_dir.to_path_buf();
-        let index_clone = Arc::clone(&this.code_index);
 
-        let handler: crate::watcher::WatchHandler = Arc::new(move |_proj_id, changed_paths| {
-            let paths: Vec<std::path::PathBuf> = changed_paths.to_vec();
-            let idx = Arc::clone(&index_clone);
-            let proj_dir = proj_dir.clone();
+        let handler: crate::watcher::WatchHandler = Arc::new(move |_proj_id, _changed_paths| {
+            let mgr = Arc::clone(&this);
             let pid = pid.clone();
 
             tokio::spawn(async move {
-                // Re-index the entire project on any change (simpler approach).
-                // For large projects, a delta-based approach would be better.
-                if let Err(e) = idx.index_project(&pid, false, &proj_dir).await {
-                    #[cfg(feature = "tracing")]
-                    warn!(project_id = %pid, error = %e, "watcher reindex failed");
-                }
+                // Route through index_project_deduped to enforce semaphore and
+                // per-project deduplication (not direct index_project call).
+                mgr.index_project_deduped(&pid).await;
             });
         });
 
@@ -269,22 +281,28 @@ impl IndexJobManager {
     }
 
     /// Start the periodic re-index loop.
-    pub fn start_periodic_reindex_loop(
-        self: &Arc<Self>,
-        projects: Vec<(String, PathBuf)>,
-    ) -> JoinHandle<()> {
+    ///
+    /// Reads the current project list from `self.project_dirs` at each tick,
+    /// so projects registered/unregistered after startup are correctly handled.
+    pub fn start_periodic_reindex_loop(self: &Arc<Self>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         let interval = self.config.periodic_reindex_interval;
         let cancel = self.cancel.clone();
 
         tokio::spawn(async move {
-            let mut timer = tokio::time::interval(interval);
+            // Skip the first immediate tick — the initial index was just completed.
+            let start = tokio::time::Instant::now() + interval;
+            let mut timer = tokio::time::interval_at(start, interval);
             loop {
                 tokio::select! {
                     _ = timer.tick() => {
+                        // Derive current project list from live registry.
+                        let projs: Vec<(String, PathBuf)> = {
+                            let dirs = this.project_dirs.lock().await;
+                            dirs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                        };
                         #[cfg(feature = "tracing")]
-                        debug!("periodic re-index tick");
-                        let projs = projects.clone();
+                        debug!(count = projs.len(), "periodic re-index tick");
                         let mgr = Arc::clone(&this);
                         tokio::spawn(async move {
                             mgr.index_all_enabled_projects(projs).await;
