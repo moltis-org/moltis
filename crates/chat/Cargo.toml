@@ -23,7 +23,7 @@ moltis-providers      = { workspace = true }
 moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
-moltis-telegram       = { workspace = true }
+moltis-telegram       = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-voice          = { workspace = true }
 serde                 = { workspace = true }
@@ -46,6 +46,7 @@ local-llm          = []
 metrics            = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
 push-notifications = ["dep:chrono"]
 web-ui             = ["dep:chrono"]
+telegram           = ["dep:moltis-telegram"]
 
 default = ["llm-compaction"]
 
