@@ -1148,6 +1148,12 @@ fn detect_and_mark_repo_drift(
         };
 
         if current_sha != expected_sha {
+            tracing::warn!(
+                source = %repo.source,
+                expected_sha = %expected_sha,
+                current_sha = %current_sha,
+                "detect_and_mark_repo_drift: drift detected, resetting all skills"
+            );
             drifted.insert(repo.source.clone());
             repo.commit_sha = Some(current_sha);
             for skill in &mut repo.skills {
