@@ -1137,6 +1137,7 @@
   mask-size: contain;
   flex-shrink: 0;
 }
+.settings-nav-item[data-section="profile"]::before,
 .settings-nav-item[data-section="identity"]::before {
   -webkit-mask-image: url("../icons/masks/mask-1afa632eab17e6f8.svg");
   mask-image: url("../icons/masks/mask-1afa632eab17e6f8.svg");
