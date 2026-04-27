@@ -397,6 +397,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             payload: Some(moltis_cron::types::CronPayload::AgentTurn {
                                 message: prompt,
                                 model: patch.model.clone(),
+                                agent_id: patch.agent_id.clone(),
                                 timeout_secs: None,
                                 deliver: patch.deliver,
                                 channel: patch.channel.clone(),
@@ -431,6 +432,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             payload: moltis_cron::types::CronPayload::AgentTurn {
                                 message: prompt,
                                 model: patch.model.clone(),
+                                agent_id: patch.agent_id.clone(),
                                 timeout_secs: None,
                                 deliver: patch.deliver,
                                 channel: patch.channel.clone(),

@@ -139,6 +139,10 @@ pub struct MatrixAccountConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
 
+    /// Agent ID override for this account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+
     /// How streaming responses are delivered.
     pub stream_mode: StreamMode,
 
@@ -190,6 +194,7 @@ impl Default for MatrixAccountConfig {
             auto_join: AutoJoinPolicy::Always,
             model: None,
             model_provider: None,
+            agent_id: None,
             stream_mode: StreamMode::EditInPlace,
             edit_throttle_ms: 500,
             stream_min_initial_chars: 30,
@@ -222,6 +227,7 @@ impl std::fmt::Debug for MatrixAccountConfig {
             .field("auto_join", &self.auto_join)
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
+            .field("agent_id", &self.agent_id)
             .field("stream_mode", &self.stream_mode)
             .field("edit_throttle_ms", &self.edit_throttle_ms)
             .field("stream_min_initial_chars", &self.stream_min_initial_chars)
@@ -249,6 +255,7 @@ impl Serialize for RedactedConfig<'_> {
         count += c.device_display_name.is_some() as usize;
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
+        count += c.agent_id.is_some() as usize;
         count += !c.channel_overrides.is_empty() as usize;
         count += !c.user_overrides.is_empty() as usize;
         count += c.ack_reaction.is_some() as usize;
@@ -283,6 +290,9 @@ impl Serialize for RedactedConfig<'_> {
         }
         if c.model_provider.is_some() {
             s.serialize_field("model_provider", &c.model_provider)?;
+        }
+        if c.agent_id.is_some() {
+            s.serialize_field("agent_id", &c.agent_id)?;
         }
         s.serialize_field("stream_mode", &c.stream_mode)?;
         s.serialize_field("edit_throttle_ms", &c.edit_throttle_ms)?;
@@ -326,6 +336,10 @@ impl ChannelConfigView for MatrixAccountConfig {
 
     fn model_provider(&self) -> Option<&str> {
         self.model_provider.as_deref()
+    }
+
+    fn agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref()
     }
 
     fn channel_model(&self, channel_id: &str) -> Option<&str> {
