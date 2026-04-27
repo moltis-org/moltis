@@ -143,6 +143,29 @@ fn write_soul_for_agent(agent_id: &str, soul: Option<String>) -> Result<(), Erro
     Ok(())
 }
 
+/// Write the `.onboarded` sentinel when both agent name and user name are
+/// present — mirrors the old `onboarding.identity_update()` behavior so the
+/// onboarding wizard doesn't re-appear after identity is saved.
+fn mark_onboarded_if_ready(
+    identity: &moltis_config::schema::AgentIdentity,
+    params: &serde_json::Value,
+) {
+    let has_agent_name = identity.name.as_ref().is_some_and(|n| !n.is_empty());
+    let has_user_name = params
+        .get("user_name")
+        .and_then(|v| v.as_str())
+        .is_some_and(|n| !n.is_empty())
+        || moltis_config::resolve_user_profile()
+            .name
+            .as_ref()
+            .is_some_and(|n| !n.is_empty());
+
+    if has_agent_name && has_user_name {
+        let sentinel = moltis_config::data_dir().join(".onboarded");
+        let _ = std::fs::write(&sentinel, "");
+    }
+}
+
 /// Save user profile fields (user_name, user_timezone, user_location) from
 /// identity update params. These are persisted to `[user]` in `moltis.toml`
 /// and `USER.md`, independent of which agent is being updated.

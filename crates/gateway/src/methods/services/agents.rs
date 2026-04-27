@@ -72,6 +72,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 }
                 // Handle user profile fields (user_name, user_timezone, user_location).
                 save_user_profile_fields(&ctx.params)?;
+                // Mark onboarding complete when both agent name and user name are present
+                // (mirrors the old onboarding.identity_update behavior).
+                mark_onboarded_if_ready(&identity, &ctx.params);
                 // Sync persona DB row if persona store is available.
                 if let Some(ref store) = ctx.state.services.agent_persona_store {
                     let _ = store
@@ -425,6 +428,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     }
                     // Handle user profile fields.
                     save_user_profile_fields(&ctx.params)?;
+                    // Mark onboarding complete when both names are present.
+                    mark_onboarded_if_ready(&identity, &ctx.params);
                     // Sync persona DB row.
                     if let Some(ref store) = ctx.state.services.agent_persona_store {
                         let _ = store
