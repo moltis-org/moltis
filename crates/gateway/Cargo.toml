@@ -28,7 +28,7 @@ moltis-chat             = { workspace = true }
 moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
 moltis-cron             = { workspace = true }
-moltis-discord          = { workspace = true }
+moltis-discord          = { optional = true, workspace = true }
 moltis-home-assistant   = { optional = true, workspace = true }
 moltis-matrix           = { optional = true, workspace = true }
 moltis-mcp              = { workspace = true }
@@ -37,7 +37,7 @@ moltis-media            = { workspace = true }
 moltis-code-index       = { workspace = true }
 moltis-memory           = { workspace = true }
 moltis-metrics          = { optional = true, workspace = true }
-moltis-msteams          = { workspace = true }
+moltis-msteams          = { optional = true, workspace = true }
 moltis-network-filter   = { features = ["proxy", "service"], optional = true, workspace = true }
 moltis-nostr            = { optional = true, workspace = true }
 moltis-oauth            = { workspace = true }
@@ -102,6 +102,7 @@ default = [
   "caldav",
   "home-assistant",
   "code-index-builtin",
+  "discord",
   "file-watcher",
   "firecrawl",
   "fs-tools",
@@ -111,6 +112,7 @@ default = [
   "matrix",
   "mdns",
   "metrics",
+  "msteams",
   "nostr",
   "openclaw-import",
   "prometheus",
@@ -153,10 +155,10 @@ mdns = ["dep:mdns-sd"]
 metrics = [
   "dep:moltis-metrics",
   "moltis-chat/metrics",
-  "moltis-discord/metrics",
+  "moltis-discord?/metrics",
   "moltis-matrix/metrics",
   "moltis-metrics/sqlite",
-  "moltis-msteams/metrics",
+  "moltis-msteams?/metrics",
   "moltis-nostr?/metrics",
   "moltis-signal?/metrics",
 ]
@@ -175,6 +177,8 @@ voice = ["dep:moltis-voice"]
 wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
 telegram = ["dep:moltis-telegram", "moltis-chat/telegram"]
+discord = ["dep:moltis-discord", "moltis-discord/metrics"]
+msteams = ["dep:moltis-msteams", "moltis-msteams/metrics"]
 whatsapp = ["dep:moltis-whatsapp", "dep:qrcode", "moltis-whatsapp/metrics"]
 
 [dev-dependencies]
