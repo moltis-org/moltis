@@ -10,7 +10,7 @@ export interface SpaRoutes {
 	settings: string;
 	providers: string;
 	security: string;
-	identity: string;
+	profile: string;
 	config: string;
 	logs: string;
 	nodes: string;

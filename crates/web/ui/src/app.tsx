@@ -303,7 +303,7 @@ if (logoutBtn) {
 if (settingsBtn) {
 	settingsBtn.addEventListener("click", () => {
 		closeMobileMenu();
-		navigate(routes.identity as string);
+		navigate(routes.profile as string);
 	});
 }
 if (mobileMenuBtn) {
@@ -318,7 +318,7 @@ if (mobileMenuOverlay) {
 if (mobileMenuSettingsBtn) {
 	mobileMenuSettingsBtn.addEventListener("click", () => {
 		closeMobileMenu();
-		navigate(routes.identity as string);
+		navigate(routes.profile as string);
 	});
 }
 if (mobileMenuSessionsBtn) {

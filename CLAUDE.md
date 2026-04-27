@@ -68,14 +68,16 @@ cargo run / cargo run --release
 
 TypeScript/TSX source in `crates/web/ui/src/`, built with Vite to `crates/web/src/assets/dist/`.
 CSS and static assets in `crates/web/src/assets/`. Release mode embeds via `include_dir!`.
-Both `dist/` and `style.css` are committed (unminified) so `cargo build` works without Node.js
-and diffs merge cleanly. See `docs/src/frontend.md` for the full architecture guide.
+Generated assets (`dist/`, `css/style.css`, `style.css`, `sw.js`) are gitignored.
+Run `just build-web-assets` to generate them (requires Node.js).
+A `build.rs` check warns (debug) or fails (release/embedded-assets) if they are missing.
+See `docs/src/frontend.md` for the full architecture guide.
 
 ### Build Commands
 
 ```bash
 cd crates/web/ui
-npm run build          # Vite: TS/TSX → dist/ (MUST commit dist/ after)
+npm run build          # Vite: TS/TSX → dist/
 npm run build:css      # Tailwind: input.css → ../src/assets/css/style.css
 npm run build:sw       # esbuild: src/sw.ts → ../src/assets/sw.js
 npm run build:all      # All three above
@@ -87,7 +89,6 @@ npx tsc --noEmit       # Type check (strict, must be 0 errors)
 1. `biome check --write crates/web/ui/src/`
 2. `cd crates/web/ui && npm run build`
 3. `cd crates/web/ui && npx tsc --noEmit`
-4. Commit both the source changes AND the `dist/` output
 
 ### TypeScript Rules
 
