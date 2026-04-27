@@ -1,7 +1,7 @@
 // ── Settings > Agents page (Preact + JSX) ───────────────────
 //
-// CRUD UI for agent personas. "main" agent links to the
-// Identity settings section and cannot be deleted.
+// CRUD UI for agent personas. "main" agent is editable inline
+// and cannot be deleted.
 
 import type { VNode } from "preact";
 import { render } from "preact";
@@ -10,8 +10,6 @@ import { Loading, TabBar } from "../components/forms";
 import { EmojiPicker } from "../emoji-picker";
 import { refresh as refreshGon } from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
-import { navigate } from "../router";
-import { settingsPath } from "../routes";
 import { fetchSessions } from "../sessions";
 import { targetValue } from "../typed-events";
 import type { RpcResponse } from "../types";
@@ -379,34 +377,23 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCa
 					{isDefault && <span className="recommended-badge">Default</span>}
 				</div>
 				<div className="flex gap-2">
-					{isMain ? (
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+						onClick={() => onEdit(agent)}
+					>
+						Edit
+					</button>
+					{!isMain && (
 						<button
 							type="button"
-							className="provider-btn provider-btn-secondary"
+							className="provider-btn provider-btn-danger"
 							style={{ fontSize: "0.7rem", padding: "3px 8px" }}
-							onClick={() => navigate(settingsPath("identity"))}
+							onClick={() => onDelete(agent)}
 						>
-							Identity Settings
+							Delete
 						</button>
-					) : (
-						<>
-							<button
-								type="button"
-								className="provider-btn provider-btn-secondary"
-								style={{ fontSize: "0.7rem", padding: "3px 8px" }}
-								onClick={() => onEdit(agent)}
-							>
-								Edit
-							</button>
-							<button
-								type="button"
-								className="provider-btn provider-btn-danger"
-								style={{ fontSize: "0.7rem", padding: "3px 8px" }}
-								onClick={() => onDelete(agent)}
-							>
-								Delete
-							</button>
-						</>
 					)}
 					{!isDefault && (
 						<button

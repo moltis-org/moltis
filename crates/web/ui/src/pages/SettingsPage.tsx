@@ -56,8 +56,8 @@ import { VoiceSection } from "./sections/VoiceSection";
 const sections: SectionItem[] = [
 	{ group: "General" },
 	{
-		id: "identity",
-		label: "Identity",
+		id: "profile",
+		label: "User Profile",
 		icon: <span className="icon icon-person" />,
 	},
 	{
@@ -373,7 +373,7 @@ function SettingsPage(): VNode {
 							<PageSection key={`${section}:${subPath}`} initFn={ps.init} teardownFn={ps.teardown} subPath={subPath} />
 						)
 					) : null}
-					{section === "identity" ? <IdentitySection /> : null}
+					{section === "profile" ? <IdentitySection /> : null}
 					{section === "memory" ? <MemorySection /> : null}
 					{section === "environment" ? <EnvironmentSection /> : null}
 					{section === "tools" ? <ToolsSection /> : null}
@@ -404,7 +404,7 @@ function SettingsPage(): VNode {
 	);
 }
 
-const DEFAULT_SECTION = "identity";
+const DEFAULT_SECTION = "profile";
 
 registerPrefix(
 	routes.settings!,
@@ -415,7 +415,12 @@ registerPrefix(
 		container.style.cssText = "flex-direction:row;padding:0;overflow:hidden;";
 		const parts = (param || "").replace(/:/g, "/").split("/").filter(Boolean);
 		const requestedSection = parts[0] || "";
-		const requestedSectionAlias = requestedSection === "tailscale" ? "remote-access" : requestedSection;
+		const requestedSectionAlias =
+			requestedSection === "tailscale"
+				? "remote-access"
+				: requestedSection === "identity"
+					? "profile"
+					: requestedSection;
 		const subPath = parts.slice(1).join("/");
 		const isValidSection = requestedSectionAlias && getSectionItems().some((s) => s.id === requestedSectionAlias);
 		const section = isValidSection ? requestedSectionAlias : DEFAULT_SECTION;

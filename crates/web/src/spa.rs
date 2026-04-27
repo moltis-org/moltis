@@ -120,6 +120,6 @@ mod tests {
         assert!(is_non_page_path("/favicon.ico"));
         assert!(!is_non_page_path("/ws-hook"));
         assert!(!is_non_page_path("/does-not-exist"));
-        assert!(!is_non_page_path("/settings/identity"));
+        assert!(!is_non_page_path("/settings/profile"));
     }
 }

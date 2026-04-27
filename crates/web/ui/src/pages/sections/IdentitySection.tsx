@@ -222,7 +222,7 @@ export function IdentitySection(): VNode {
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<SectionHeading title="Identity" />
+			<SectionHeading title="User Profile" />
 			{isNew ? (
 				<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
 					Welcome! Set up your agent's identity to get started.

@@ -9290,6 +9290,8 @@ function EditChannelModal() {
   const error2 = useSignal("");
   const saving = useSignal(false);
   const editModel = useSignal("");
+  const editAgent = useSignal("");
+  const agentsList = useSignal([]);
   const allowlistItems = useSignal([]);
   const roomAllowlistItems = useSignal([]);
   const editCredential = useSignal("");
@@ -9309,29 +9311,38 @@ function EditChannelModal() {
   const editCategoryAllowlist = useSignal([]);
   const editAdvancedConfigPatch = useSignal("");
   y$1(() => {
-    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v;
     editModel.value = ((_a2 = ch == null ? void 0 : ch.config) == null ? void 0 : _a2.model) || "";
-    allowlistItems.value = ((_b2 = ch == null ? void 0 : ch.config) == null ? void 0 : _b2.allowlist) || ((_c = ch == null ? void 0 : ch.config) == null ? void 0 : _c.user_allowlist) || ((_d = ch == null ? void 0 : ch.config) == null ? void 0 : _d.allowed_pubkeys) || [];
-    roomAllowlistItems.value = ((_e = ch == null ? void 0 : ch.config) == null ? void 0 : _e.room_allowlist) || ((_f = ch == null ? void 0 : ch.config) == null ? void 0 : _f.group_allowlist) || [];
+    editAgent.value = ((_b2 = ch == null ? void 0 : ch.config) == null ? void 0 : _b2.agent_id) || "";
+    allowlistItems.value = ((_c = ch == null ? void 0 : ch.config) == null ? void 0 : _c.allowlist) || ((_d = ch == null ? void 0 : ch.config) == null ? void 0 : _d.user_allowlist) || ((_e = ch == null ? void 0 : ch.config) == null ? void 0 : _e.allowed_pubkeys) || [];
+    roomAllowlistItems.value = ((_f = ch == null ? void 0 : ch.config) == null ? void 0 : _f.room_allowlist) || ((_g = ch == null ? void 0 : ch.config) == null ? void 0 : _g.group_allowlist) || [];
     editCredential.value = "";
-    editWebhookSecret.value = ((_g = ch == null ? void 0 : ch.config) == null ? void 0 : _g.webhook_secret) || "";
-    editStreamMode.value = ((_h = ch == null ? void 0 : ch.config) == null ? void 0 : _h.stream_mode) || "edit_in_place";
-    editReplyStyle.value = ((_i = ch == null ? void 0 : ch.config) == null ? void 0 : _i.reply_style) || "top_level";
-    editWelcomeCard.value = ((_j = ch == null ? void 0 : ch.config) == null ? void 0 : _j.welcome_card) !== false;
-    editBotName.value = ((_k = ch == null ? void 0 : ch.config) == null ? void 0 : _k.bot_name) || "";
-    editMatrixAuthMode.value = ((_l = ch == null ? void 0 : ch.config) == null ? void 0 : _l.password) ? "password" : "access_token";
-    editMatrixDeviceDisplayName.value = ((_m = ch == null ? void 0 : ch.config) == null ? void 0 : _m.device_display_name) || "";
+    editWebhookSecret.value = ((_h = ch == null ? void 0 : ch.config) == null ? void 0 : _h.webhook_secret) || "";
+    editStreamMode.value = ((_i = ch == null ? void 0 : ch.config) == null ? void 0 : _i.stream_mode) || "edit_in_place";
+    editReplyStyle.value = ((_j = ch == null ? void 0 : ch.config) == null ? void 0 : _j.reply_style) || "top_level";
+    editWelcomeCard.value = ((_k = ch == null ? void 0 : ch.config) == null ? void 0 : _k.welcome_card) !== false;
+    editBotName.value = ((_l = ch == null ? void 0 : ch.config) == null ? void 0 : _l.bot_name) || "";
+    editMatrixAuthMode.value = ((_m = ch == null ? void 0 : ch.config) == null ? void 0 : _m.password) ? "password" : "access_token";
+    editMatrixDeviceDisplayName.value = ((_n = ch == null ? void 0 : ch.config) == null ? void 0 : _n.device_display_name) || "";
     editMatrixOwnershipMode.value = normalizeMatrixOwnershipMode(
-      ((_n = ch == null ? void 0 : ch.config) == null ? void 0 : _n.ownership_mode) || (((_o = ch == null ? void 0 : ch.config) == null ? void 0 : _o.password) ? "moltis_owned" : "user_managed")
+      ((_o = ch == null ? void 0 : ch.config) == null ? void 0 : _o.ownership_mode) || (((_p = ch == null ? void 0 : ch.config) == null ? void 0 : _p.password) ? "moltis_owned" : "user_managed")
     );
-    editMatrixOtpSelfApproval.value = ((_p = ch == null ? void 0 : ch.config) == null ? void 0 : _p.otp_self_approval) !== false;
-    editMatrixOtpCooldown.value = String(((_q = ch == null ? void 0 : ch.config) == null ? void 0 : _q.otp_cooldown_secs) || 300);
-    editSignalAccount.value = ((_r = ch == null ? void 0 : ch.config) == null ? void 0 : _r.account) || "";
-    editSignalHttpUrl.value = ((_s = ch == null ? void 0 : ch.config) == null ? void 0 : _s.http_url) || "http://127.0.0.1:8080";
-    editChannelNamePatterns.value = ((_t = ch == null ? void 0 : ch.config) == null ? void 0 : _t.channel_name_patterns) || [];
-    editCategoryAllowlist.value = ((_u = ch == null ? void 0 : ch.config) == null ? void 0 : _u.category_allowlist) || [];
+    editMatrixOtpSelfApproval.value = ((_q = ch == null ? void 0 : ch.config) == null ? void 0 : _q.otp_self_approval) !== false;
+    editMatrixOtpCooldown.value = String(((_r = ch == null ? void 0 : ch.config) == null ? void 0 : _r.otp_cooldown_secs) || 300);
+    editSignalAccount.value = ((_s = ch == null ? void 0 : ch.config) == null ? void 0 : _s.account) || "";
+    editSignalHttpUrl.value = ((_t = ch == null ? void 0 : ch.config) == null ? void 0 : _t.http_url) || "http://127.0.0.1:8080";
+    editChannelNamePatterns.value = ((_u = ch == null ? void 0 : ch.config) == null ? void 0 : _u.channel_name_patterns) || [];
+    editCategoryAllowlist.value = ((_v = ch == null ? void 0 : ch.config) == null ? void 0 : _v.category_allowlist) || [];
     editAdvancedConfigPatch.value = "";
   }, [ch]);
+  y$1(() => {
+    sendRpc("agents.list", {}).then((res) => {
+      if (res == null ? void 0 : res.ok) {
+        const payload = res.payload;
+        agentsList.value = (payload == null ? void 0 : payload.agents) || [];
+      }
+    });
+  }, []);
   if (!ch) return null;
   const cfg = ch.config || {};
   const chType = channelType(ch.type);
@@ -9347,6 +9358,11 @@ function EditChannelModal() {
     config.model = editModel.value;
     const found = models$1.value.find((x) => x.id === editModel.value);
     if (found == null ? void 0 : found.provider) config.model_provider = found.provider;
+  }
+  function addAgentToConfig(config) {
+    if (editAgent.value) {
+      config.agent_id = editAgent.value;
+    }
   }
   function addChannelCredentials(config, form) {
     var _a2, _b2, _c;
@@ -9417,6 +9433,7 @@ function EditChannelModal() {
     }
     addChannelCredentials(updateConfig, form);
     addModelToConfig(updateConfig);
+    addAgentToConfig(updateConfig);
     if (isTeams) {
       updateConfig.stream_mode = editStreamMode.value;
       updateConfig.reply_style = editReplyStyle.value;
@@ -9464,10 +9481,19 @@ function EditChannelModal() {
       title: `Edit ${channelLabel(ch.type)} Channel`,
       children: /* @__PURE__ */ u("div", { className: "channel-form", children: [
         /* @__PURE__ */ u("div", { className: "text-sm text-[var(--text-strong)]", children: ch.name || ch.account_id }),
-        isTelegram && ch.account_id && /* @__PURE__ */ u("a", { href: `https://t.me/${ch.account_id}`, target: "_blank", className: "text-xs text-[var(--accent)] underline", children: [
-          "t.me/",
-          ch.account_id
-        ] }),
+        isTelegram && ch.account_id && /* @__PURE__ */ u(
+          "a",
+          {
+            href: `https://t.me/${ch.account_id}`,
+            target: "_blank",
+            className: "text-xs text-[var(--accent)] underline",
+            rel: "noopener",
+            children: [
+              "t.me/",
+              ch.account_id
+            ]
+          }
+        ),
         isTeams && /* @__PURE__ */ u("div", { className: "flex flex-col gap-1", children: [
           /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "App Password (optional: leave blank to keep existing)" }),
           /* @__PURE__ */ u(
@@ -9881,6 +9907,24 @@ function EditChannelModal() {
               editModel.value = v;
             },
             placeholder: defaultPlaceholder
+          }
+        ),
+        /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "Agent" }),
+        /* @__PURE__ */ u(
+          "select",
+          {
+            className: "channel-select",
+            value: editAgent.value,
+            onChange: (e) => {
+              editAgent.value = targetValue(e);
+            },
+            children: [
+              /* @__PURE__ */ u("option", { value: "", children: "(default agent)" }),
+              agentsList.value.map((a) => /* @__PURE__ */ u("option", { value: a.id, children: [
+                a.emoji ? `${a.emoji} ` : "",
+                a.name
+              ] }, a.id))
+            ]
           }
         ),
         /* @__PURE__ */ u("label", { className: "text-xs text-[var(--muted)]", children: "DM Allowlist" }),
@@ -22200,37 +22244,26 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }) {
         isDefault && /* @__PURE__ */ u("span", { className: "recommended-badge", children: "Default" })
       ] }),
       /* @__PURE__ */ u("div", { className: "flex gap-2", children: [
-        isMain ? /* @__PURE__ */ u(
+        /* @__PURE__ */ u(
           "button",
           {
             type: "button",
             className: "provider-btn provider-btn-secondary",
             style: { fontSize: "0.7rem", padding: "3px 8px" },
-            onClick: () => navigate(settingsPath("identity")),
-            children: "Identity Settings"
+            onClick: () => onEdit(agent),
+            children: "Edit"
           }
-        ) : /* @__PURE__ */ u(S, { children: [
-          /* @__PURE__ */ u(
-            "button",
-            {
-              type: "button",
-              className: "provider-btn provider-btn-secondary",
-              style: { fontSize: "0.7rem", padding: "3px 8px" },
-              onClick: () => onEdit(agent),
-              children: "Edit"
-            }
-          ),
-          /* @__PURE__ */ u(
-            "button",
-            {
-              type: "button",
-              className: "provider-btn provider-btn-danger",
-              style: { fontSize: "0.7rem", padding: "3px 8px" },
-              onClick: () => onDelete(agent),
-              children: "Delete"
-            }
-          )
-        ] }),
+        ),
+        !isMain && /* @__PURE__ */ u(
+          "button",
+          {
+            type: "button",
+            className: "provider-btn provider-btn-danger",
+            style: { fontSize: "0.7rem", padding: "3px 8px" },
+            onClick: () => onDelete(agent),
+            children: "Delete"
+          }
+        ),
         !isDefault && /* @__PURE__ */ u(
           "button",
           {
@@ -27747,7 +27780,7 @@ function WebhookModal() {
 }
 const identity = y(null);
 const loading = y(true);
-const activeSection = y("identity");
+const activeSection = y("profile");
 const activeSubPath = y("");
 const mobileSidebarVisible = y(true);
 let _mounted = false;
@@ -28742,7 +28775,7 @@ function IdentitySection() {
     });
   }
   return /* @__PURE__ */ u("div", { className: "flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto", children: [
-    /* @__PURE__ */ u(SectionHeading, { title: "Identity" }),
+    /* @__PURE__ */ u(SectionHeading, { title: "User Profile" }),
     isNew ? /* @__PURE__ */ u("p", { className: "text-xs text-[var(--muted)] leading-relaxed", style: { maxWidth: "600px", margin: 0 }, children: "Welcome! Set up your agent's identity to get started." }) : null,
     /* @__PURE__ */ u("form", { onSubmit: onSave, style: { maxWidth: "600px", display: "flex", flexDirection: "column", gap: "16px" }, children: [
       /* @__PURE__ */ u("div", { children: [
@@ -33246,8 +33279,8 @@ function AddVoiceProviderModal({ unconfiguredProviders, voxtralReqs, onSaved }) 
 const sections = [
   { group: "General" },
   {
-    id: "identity",
-    label: "Identity",
+    id: "profile",
+    label: "User Profile",
     icon: /* @__PURE__ */ u("span", { className: "icon icon-person" })
   },
   {
@@ -33525,7 +33558,7 @@ function SettingsPage() {
           " environment variable if it is set."
         ] })
       ] }) : /* @__PURE__ */ u(PageSection, { initFn: ps.init, teardownFn: ps.teardown, subPath }, `${section}:${subPath}`) : null,
-      section === "identity" ? /* @__PURE__ */ u(IdentitySection, {}) : null,
+      section === "profile" ? /* @__PURE__ */ u(IdentitySection, {}) : null,
       section === "memory" ? /* @__PURE__ */ u(MemorySection, {}) : null,
       section === "environment" ? /* @__PURE__ */ u(EnvironmentSection, {}) : null,
       section === "tools" ? /* @__PURE__ */ u(ToolsSection, {}) : null,
@@ -33544,7 +33577,7 @@ function SettingsPage() {
     ] }) : null
   ] });
 }
-const DEFAULT_SECTION = "identity";
+const DEFAULT_SECTION = "profile";
 registerPrefix(
   routes.settings,
   (container, param) => {
@@ -33554,7 +33587,7 @@ registerPrefix(
     container.style.cssText = "flex-direction:row;padding:0;overflow:hidden;";
     const parts = (param || "").replace(/:/g, "/").split("/").filter(Boolean);
     const requestedSection = parts[0] || "";
-    const requestedSectionAlias = requestedSection === "tailscale" ? "remote-access" : requestedSection;
+    const requestedSectionAlias = requestedSection === "tailscale" ? "remote-access" : requestedSection === "identity" ? "profile" : requestedSection;
     const subPath = parts.slice(1).join("/");
     const isValidSection = requestedSectionAlias && getSectionItems().some((s) => s.id === requestedSectionAlias);
     const section = isValidSection ? requestedSectionAlias : DEFAULT_SECTION;
