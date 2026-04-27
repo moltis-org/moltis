@@ -29,6 +29,8 @@ export function EditChannelModal(): VNode | null {
 	const error = useSignal("");
 	const saving = useSignal(false);
 	const editModel = useSignal("");
+	const editAgent = useSignal("");
+	const agentsList = useSignal<Array<{ id: string; name: string; emoji?: string }>>([]);
 	const allowlistItems = useSignal<string[]>([]);
 	const roomAllowlistItems = useSignal<string[]>([]);
 	const editCredential = useSignal("");
@@ -50,6 +52,7 @@ export function EditChannelModal(): VNode | null {
 
 	useEffect(() => {
 		editModel.value = (ch?.config?.model as string) || "";
+		editAgent.value = (ch?.config?.agent_id as string) || "";
 		allowlistItems.value = (ch?.config?.allowlist ||
 			ch?.config?.user_allowlist ||
 			ch?.config?.allowed_pubkeys ||
@@ -75,6 +78,15 @@ export function EditChannelModal(): VNode | null {
 		editAdvancedConfigPatch.value = "";
 	}, [ch]);
 
+	useEffect(() => {
+		sendRpc("agents.list", {}).then((res) => {
+			if (res?.ok) {
+				const payload = res.payload as { agents?: Array<{ id: string; name: string; emoji?: string }> };
+				agentsList.value = payload?.agents || [];
+			}
+		});
+	}, []);
+
 	if (!ch) return null;
 
 	const cfg = ch.config || {};
@@ -92,6 +104,10 @@ export function EditChannelModal(): VNode | null {
 		config.model = editModel.value;
 		const found = modelsSig.value.find((x) => x.id === editModel.value);
 		if (found?.provider) config.model_provider = found.provider;
+	}
+
+	function addAgentToConfig(config: ChannelConfig): void {
+		config.agent_id = editAgent.value || null;
 	}
 
 	function addChannelCredentials(config: ChannelConfig, form: HTMLElement): void {
@@ -174,6 +190,7 @@ export function EditChannelModal(): VNode | null {
 		}
 		addChannelCredentials(updateConfig, form);
 		addModelToConfig(updateConfig);
+		addAgentToConfig(updateConfig);
 		if (isTeams) {
 			updateConfig.stream_mode = editStreamMode.value;
 			updateConfig.reply_style = editReplyStyle.value;
@@ -230,7 +247,12 @@ export function EditChannelModal(): VNode | null {
 			<div className="channel-form">
 				<div className="text-sm text-[var(--text-strong)]">{ch.name || ch.account_id}</div>
 				{isTelegram && ch.account_id && (
-					<a href={`https://t.me/${ch.account_id}`} target="_blank" className="text-xs text-[var(--accent)] underline">
+					<a
+						href={`https://t.me/${ch.account_id}`}
+						target="_blank"
+						className="text-xs text-[var(--accent)] underline"
+						rel="noopener"
+					>
 						t.me/{ch.account_id}
 					</a>
 				)}
@@ -616,6 +638,22 @@ export function EditChannelModal(): VNode | null {
 					}}
 					placeholder={defaultPlaceholder}
 				/>
+				<label className="text-xs text-[var(--muted)]">Agent</label>
+				<select
+					className="channel-select"
+					value={editAgent.value}
+					onChange={(e: Event) => {
+						editAgent.value = targetValue(e);
+					}}
+				>
+					<option value="">(default agent)</option>
+					{agentsList.value.map((a) => (
+						<option key={a.id} value={a.id}>
+							{a.emoji ? `${a.emoji} ` : ""}
+							{a.name}
+						</option>
+					))}
+				</select>
 				<label className="text-xs text-[var(--muted)]">DM Allowlist</label>
 				<AllowlistInput
 					value={allowlistItems.value}

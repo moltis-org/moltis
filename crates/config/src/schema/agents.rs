@@ -6,20 +6,21 @@ use {
 
 const DEFAULT_AGENT_PRESET: &str = "research";
 
-/// Agent spawn presets used by tools like `spawn_agent`.
+/// Agent presets configure identity, model, and tool policy for agents.
 ///
-/// **IMPORTANT:** Everything under `[agents.presets.*]` — including each
-/// preset's `tools.allow`/`tools.deny` — applies ONLY to sub-agents spawned
-/// via the `spawn_agent` tool. Preset tool policies have no effect on the
-/// main agent session. To filter tools for the main session, configure
-/// `[tools.policy]` (see `ToolPolicyConfig`).
+/// Each agent persona (including "main") can have a matching preset under
+/// `[agents.presets.<agent_id>]`. The preset's `tools.allow`/`tools.deny`
+/// applies to **all sessions belonging to that agent** — both the agent's
+/// own direct sessions and sub-agents spawned via `spawn_agent`.
+///
+/// MCP tools appear as `mcp__<server>__<tool>` and can be filtered per-agent
+/// via `tools.deny = ["mcp__home-assistant__*"]` on the agent's preset.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentsConfig {
-    /// Default preset name used when `spawn_agent.preset` is omitted.
-    ///
-    /// Applies ONLY to sub-agents spawned via the `spawn_agent` tool. It
-    /// does NOT configure tool policy, model, or identity for the main
+    /// Default preset name used when `spawn_agent.preset` is omitted and
+    /// for new sessions when no specific agent is selected. It does NOT
+    /// configure tool policy, model, or identity for the main
     /// agent session. For main-session tool allow/deny, use
     /// `[tools.policy]`.
     #[serde(default = "default_preset_name")]
@@ -191,10 +192,31 @@ fn builtin_agent_preset(
     }
 }
 
-/// Tool policy for a preset (allow/deny specific tools).
+/// Per-agent MCP server access control.
 ///
-/// When both `allow` and `deny` are specified, `allow` acts as a whitelist
-/// and `deny` further removes tools from that list.
+/// Excludes specific MCP servers' tools from this agent's sessions.
+/// Translates to tool policy deny patterns (`mcp__<server>__*`) at
+/// resolution time, so the agent never sees those tools in its context.
+///
+/// ```toml
+/// [agents.presets.my-agent.mcp]
+/// deny_servers = ["home-assistant"]  # exclude Home Assistant tools
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PresetMcpPolicy {
+    /// MCP servers to deny. Each entry generates a tool deny pattern
+    /// `mcp__<server>__*` that blocks all tools from that server.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub deny_servers: Vec<String>,
+}
+
+/// Tool policy for an agent preset (allow/deny specific tools).
+///
+/// Applied as Layer 3 in the 6-layer policy resolution for all sessions
+/// belonging to this agent. When both `allow` and `deny` are specified,
+/// `allow` acts as a whitelist and `deny` further removes from that list.
+/// Glob patterns are supported (e.g. `"mcp__*"` to deny all MCP tools).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PresetToolPolicy {
@@ -269,16 +291,16 @@ impl Default for SessionAccessPolicyConfig {
     }
 }
 
-/// Spawn policy preset for sub-agents.
+/// Agent preset configuration.
 ///
-/// Presets allow defining specialized agent configurations that can be
-/// selected when spawning sub-agents. Each preset can override identity,
-/// model, tool policies, and system prompt.
+/// Presets define identity, model, tool policies, and system prompt for an
+/// agent. When an agent persona has a matching preset (same ID), the preset's
+/// `tools.allow`/`tools.deny` filters tools for **all** sessions belonging
+/// to that agent — direct chat, channel messages, and spawned sub-agents.
 ///
-/// **IMPORTANT:** Presets apply ONLY to sub-agents spawned via the
-/// `spawn_agent` tool. The `tools.allow`/`tools.deny` fields on a preset
-/// do NOT filter tools for the main agent session — the main session's
-/// tool policy is controlled by the top-level `[tools.policy]` section.
+/// The global `[tools.policy]` (Layer 1) always applies first; the preset's
+/// tool policy (Layer 3) narrows further. MCP tools can be filtered using
+/// `tools.deny = ["mcp__<server>__*"]` patterns.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentPreset {
@@ -307,4 +329,11 @@ pub struct AgentPreset {
     /// OpenAI o-series). Higher values enable deeper reasoning but increase
     /// latency and token usage.
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// Per-agent MCP server access control.
+    ///
+    /// Controls which MCP servers are visible to this agent. When set, this
+    /// generates tool policy deny patterns for excluded servers, so the agent
+    /// never sees their tools in the prompt context.
+    #[serde(default)]
+    pub mcp: PresetMcpPolicy,
 }

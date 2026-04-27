@@ -13,7 +13,7 @@ use {
         DebounceEventResult, Debouncer, RecommendedCache, new_debouncer, notify::RecursiveMode,
     },
     tokio::sync::mpsc,
-    tracing::{debug, info, warn},
+    tracing::{debug, warn},
 };
 
 use crate::{
@@ -184,7 +184,7 @@ impl SkillWatcher {
         for spec in &specs {
             if spec.path.exists() {
                 watcher._debouncer.watch(&spec.path, spec.recursive_mode)?;
-                info!(
+                debug!(
                     path = %spec.path.display(),
                     recursive = matches!(spec.recursive_mode, RecursiveMode::Recursive),
                     "skill watcher: watching path"

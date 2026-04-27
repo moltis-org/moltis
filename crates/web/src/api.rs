@@ -668,7 +668,6 @@ async fn api_search_handler(
                 .to_lowercase();
             name.contains(&query) || display.contains(&query) || desc.contains(&query)
         })
-        .take(30)
         .collect();
 
     Json(serde_json::json!({ "skills": skills }))

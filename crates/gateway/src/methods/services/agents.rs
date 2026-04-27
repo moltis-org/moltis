@@ -42,15 +42,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         Box::new(|ctx| {
             Box::pin(async move {
                 let agent_id = resolve_session_agent_id_for_ctx(&ctx).await;
-                if agent_id == "main" {
-                    return ctx
-                        .state
-                        .services
-                        .onboarding
-                        .identity_update(ctx.params)
-                        .await
-                        .map_err(ErrorShape::from);
-                }
                 let identity = moltis_config::schema::AgentIdentity {
                     name: ctx
                         .params
@@ -70,6 +61,31 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 };
                 moltis_config::save_identity_for_agent(&agent_id, &identity)
                     .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                // Handle soul if present.
+                if let Some(soul_val) = ctx.params.get("soul") {
+                    let soul = if soul_val.is_null() {
+                        None
+                    } else {
+                        soul_val.as_str().map(str::to_string)
+                    };
+                    write_soul_for_agent(&agent_id, soul)?;
+                }
+                // Handle user profile fields (user_name, user_timezone, user_location).
+                save_user_profile_fields(&ctx.params)?;
+                // Mark onboarding complete when both agent name and user name are present
+                // (mirrors the old onboarding.identity_update behavior).
+                mark_onboarded_if_ready(&identity, &ctx.params);
+                // Sync persona DB row if persona store is available.
+                if let Some(ref store) = ctx.state.services.agent_persona_store {
+                    let _ = store
+                        .update(&agent_id, crate::agent_persona::UpdateAgentParams {
+                            name: identity.name.clone(),
+                            emoji: identity.emoji.clone(),
+                            theme: identity.theme.clone(),
+                            description: None,
+                        })
+                        .await;
+                }
                 Ok(read_identity_payload_for_agent(&agent_id))
             })
         }),
@@ -84,15 +100,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
                 let agent_id = resolve_session_agent_id_for_ctx(&ctx).await;
-                if agent_id == "main" {
-                    return ctx
-                        .state
-                        .services
-                        .onboarding
-                        .identity_update_soul(soul)
-                        .await
-                        .map_err(ErrorShape::from);
-                }
                 write_soul_for_agent(&agent_id, soul)?;
                 Ok(serde_json::json!({ "ok": true }))
             })
@@ -391,15 +398,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             Box::new(|ctx| {
                 Box::pin(async move {
                     let agent_id = resolve_requested_agent_id(&ctx, &ctx.params).await?;
-                    if agent_id == "main" {
-                        return ctx
-                            .state
-                            .services
-                            .onboarding
-                            .identity_update(ctx.params)
-                            .await
-                            .map_err(ErrorShape::from);
-                    }
                     let identity = moltis_config::schema::AgentIdentity {
                         name: ctx
                             .params
@@ -419,6 +417,30 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     };
                     moltis_config::save_identity_for_agent(&agent_id, &identity)
                         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                    // Handle soul if present.
+                    if let Some(soul_val) = ctx.params.get("soul") {
+                        let soul = if soul_val.is_null() {
+                            None
+                        } else {
+                            soul_val.as_str().map(str::to_string)
+                        };
+                        write_soul_for_agent(&agent_id, soul)?;
+                    }
+                    // Handle user profile fields.
+                    save_user_profile_fields(&ctx.params)?;
+                    // Mark onboarding complete when both names are present.
+                    mark_onboarded_if_ready(&identity, &ctx.params);
+                    // Sync persona DB row.
+                    if let Some(ref store) = ctx.state.services.agent_persona_store {
+                        let _ = store
+                            .update(&agent_id, crate::agent_persona::UpdateAgentParams {
+                                name: identity.name.clone(),
+                                emoji: identity.emoji.clone(),
+                                theme: identity.theme.clone(),
+                                description: None,
+                            })
+                            .await;
+                    }
                     // Sync identity into preset.
                     if let Some(ref agents_config) = ctx.state.services.agents_config {
                         let mut guard = agents_config.write().await;
@@ -426,7 +448,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             entry.identity = identity;
                         }
                     }
-                    Ok(serde_json::json!({ "ok": true }))
+                    Ok(read_identity_payload_for_agent(&agent_id))
                 })
             }),
         );
@@ -442,9 +464,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .map(str::to_string);
                     write_soul_for_agent(&agent_id, soul.clone())?;
                     // Sync soul into preset's system_prompt_suffix.
-                    if agent_id != "main"
-                        && let Some(ref agents_config) = ctx.state.services.agents_config
-                    {
+                    if let Some(ref agents_config) = ctx.state.services.agents_config {
                         let mut guard = agents_config.write().await;
                         if let Some(entry) = guard.presets.get_mut(&agent_id) {
                             entry.system_prompt_suffix = soul.filter(|s| !s.trim().is_empty());

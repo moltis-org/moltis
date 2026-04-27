@@ -1,7 +1,7 @@
 // ── Settings > Agents page (Preact + JSX) ───────────────────
 //
-// CRUD UI for agent personas. "main" agent links to the
-// Identity settings section and cannot be deleted.
+// CRUD UI for agent personas. "main" agent is editable inline
+// and cannot be deleted.
 
 import type { VNode } from "preact";
 import { render } from "preact";
@@ -10,8 +10,6 @@ import { Loading, TabBar } from "../components/forms";
 import { EmojiPicker } from "../emoji-picker";
 import { refresh as refreshGon } from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
-import { navigate } from "../router";
-import { settingsPath } from "../routes";
 import { fetchSessions } from "../sessions";
 import { targetValue } from "../typed-events";
 import type { RpcResponse } from "../types";
@@ -379,34 +377,23 @@ function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCa
 					{isDefault && <span className="recommended-badge">Default</span>}
 				</div>
 				<div className="flex gap-2">
-					{isMain ? (
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary"
+						style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+						onClick={() => onEdit(agent)}
+					>
+						Edit
+					</button>
+					{!isMain && (
 						<button
 							type="button"
-							className="provider-btn provider-btn-secondary"
+							className="provider-btn provider-btn-danger"
 							style={{ fontSize: "0.7rem", padding: "3px 8px" }}
-							onClick={() => navigate(settingsPath("identity"))}
+							onClick={() => onDelete(agent)}
 						>
-							Identity Settings
+							Delete
 						</button>
-					) : (
-						<>
-							<button
-								type="button"
-								className="provider-btn provider-btn-secondary"
-								style={{ fontSize: "0.7rem", padding: "3px 8px" }}
-								onClick={() => onEdit(agent)}
-							>
-								Edit
-							</button>
-							<button
-								type="button"
-								className="provider-btn provider-btn-danger"
-								style={{ fontSize: "0.7rem", padding: "3px 8px" }}
-								onClick={() => onDelete(agent)}
-							>
-								Delete
-							</button>
-						</>
 					)}
 					{!isDefault && (
 						<button
@@ -790,8 +777,8 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 					<div className="flex flex-col gap-1">
 						<h3 className="text-xs font-medium text-[var(--muted)]">Sub-Agent Presets</h3>
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-							Config roles already usable by spawn_agent for delegated work. Add one to chat only when you want that
-							preset to become a persistent chat agent with memory and sessions.
+							Defined in <code>[agents.presets]</code> in <code>moltis.toml</code>. These roles are usable by
+							spawn_agent for delegated work. Add one to chat to make it a persistent agent with memory and sessions.
 						</p>
 					</div>
 					{configPresets.length > 0 ? (
@@ -817,8 +804,9 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 					<div className="flex flex-col gap-1">
 						<h3 className="text-xs font-medium text-[var(--muted)]">Modes</h3>
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-							Temporary per-session prompt overlays. Use /mode in chat or any connected channel to switch how the
-							current agent should work without changing its identity, memory, or sub-agent presets.
+							Defined in <code>[modes]</code> in <code>moltis.toml</code>. Temporary per-session prompt overlays. Use
+							/mode in chat or any connected channel to switch how the current agent works without changing its
+							identity, memory, or presets.
 						</p>
 					</div>
 					{modes.length > 0 ? (

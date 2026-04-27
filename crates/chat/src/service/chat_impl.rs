@@ -998,8 +998,10 @@ impl ChatService for LiveChatService {
             .and_then(|entry| entry.mcp_disabled)
             .unwrap_or(false);
 
+        let raw_prompt_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
         // Build filtered tool registry.
-        let policy_ctx = build_policy_context("main", Some(&runtime_context), Some(&params));
+        let policy_ctx =
+            build_policy_context(&raw_prompt_agent_id, Some(&runtime_context), Some(&params));
         let filtered_registry = {
             let registry_guard = self.tool_registry.read().await;
             if tools_enabled {
@@ -1127,7 +1129,9 @@ impl ChatService for LiveChatService {
             .unwrap_or(false);
 
         // Build filtered tool registry.
-        let policy_ctx = build_policy_context("main", Some(&runtime_context), Some(&params));
+        let full_ctx_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
+        let policy_ctx =
+            build_policy_context(&full_ctx_agent_id, Some(&runtime_context), Some(&params));
         let filtered_registry = {
             let registry_guard = self.tool_registry.read().await;
             if tools_enabled {

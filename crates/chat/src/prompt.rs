@@ -86,9 +86,6 @@ pub(crate) fn resolve_prompt_agent_id(session_entry: Option<&SessionEntry>) -> S
     else {
         return "main".to_string();
     };
-    if agent_id == "main" {
-        return "main".to_string();
-    }
     if moltis_config::agent_workspace_dir(agent_id).exists() {
         return agent_id.to_string();
     }
@@ -127,18 +124,8 @@ pub(crate) fn load_prompt_persona_base_for_agent(agent_id: &str) -> PromptPerson
     let prompt_memory_mode = config.chat.prompt_memory_mode;
     let agent_write_mode = config.memory.agent_write_mode;
     let memory_style = config.memory.style;
-    let mut identity = config.identity.clone();
-    if let Some(file_identity) = moltis_config::load_identity_for_agent(agent_id) {
-        if file_identity.name.is_some() {
-            identity.name = file_identity.name;
-        }
-        if file_identity.emoji.is_some() {
-            identity.emoji = file_identity.emoji;
-        }
-        if file_identity.theme.is_some() {
-            identity.theme = file_identity.theme;
-        }
-    }
+    let identity =
+        moltis_config::load_identity_for_agent(agent_id).unwrap_or_else(|| config.identity.clone());
     let user = moltis_config::resolve_user_profile_from_config(&config);
     PromptPersona {
         config,

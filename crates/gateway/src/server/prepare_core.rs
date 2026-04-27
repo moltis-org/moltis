@@ -595,6 +595,9 @@ pub async fn prepare_gateway_core(
     if let Err(e) = agent_persona_store.ensure_main_workspace_seeded() {
         tracing::warn!(error = %e, "failed to seed main agent workspace");
     }
+    if let Err(e) = agent_persona_store.ensure_main_row().await {
+        tracing::warn!(error = %e, "failed to ensure main agent DB row");
+    }
 
     let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
         Arc::new(tokio::sync::OnceCell::new());

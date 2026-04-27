@@ -62,6 +62,7 @@ async fn test_add_and_list() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -99,6 +100,7 @@ async fn test_add_validates_session_target() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -132,6 +134,7 @@ async fn test_update_job() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -174,6 +177,7 @@ async fn test_remove_job() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -224,6 +228,7 @@ async fn test_force_run() {
             payload: CronPayload::AgentTurn {
                 message: "go".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -261,6 +266,7 @@ async fn test_run_disabled_fails_without_force() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -344,6 +350,7 @@ async fn test_one_shot_disabled_after_run() {
             payload: CronPayload::AgentTurn {
                 message: "once".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -394,6 +401,7 @@ async fn test_rate_limiting() {
         payload: CronPayload::AgentTurn {
             message: "hi".into(),
             model: None,
+            agent_id: None,
             timeout_secs: None,
             deliver: false,
             channel: None,
@@ -487,6 +495,7 @@ async fn test_start_executes_due_jobs_and_records_runs() {
             payload: CronPayload::AgentTurn {
                 message: "tick".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -537,6 +546,7 @@ async fn test_clear_stuck_jobs_handles_future_running_at_without_overflow() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -585,6 +595,7 @@ async fn test_wake_sets_next_run_at_now() {
         payload: CronPayload::AgentTurn {
             message: "heartbeat".into(),
             model: None,
+            agent_id: None,
             timeout_secs: None,
             deliver: false,
             channel: None,
@@ -626,6 +637,7 @@ async fn test_wake_noop_when_running() {
         payload: CronPayload::AgentTurn {
             message: "heartbeat".into(),
             model: None,
+            agent_id: None,
             timeout_secs: None,
             deliver: false,
             channel: None,
@@ -673,6 +685,7 @@ async fn test_wake_noop_when_disabled() {
         payload: CronPayload::AgentTurn {
             message: "heartbeat".into(),
             model: None,
+            agent_id: None,
             timeout_secs: None,
             deliver: false,
             channel: None,
@@ -727,6 +740,7 @@ async fn test_deliver_requires_channel_and_to() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: true,
                 channel: None,
@@ -764,6 +778,7 @@ async fn test_deliver_with_both_fields_succeeds() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: true,
                 channel: Some("telegram_bot".into()),
@@ -796,6 +811,7 @@ async fn test_deliver_false_allows_missing_channel() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -828,6 +844,7 @@ async fn test_deliver_empty_string_channel_fails() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: true,
                 channel: Some(String::new()),
@@ -946,6 +963,7 @@ async fn make_heartbeat_svc_with_cooldown(cooldown_ms: u64) -> Arc<CronService> 
         payload: CronPayload::AgentTurn {
             message: "heartbeat".into(),
             model: None,
+            agent_id: None,
             timeout_secs: None,
             deliver: false,
             channel: None,

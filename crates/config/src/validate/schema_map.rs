@@ -528,6 +528,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("enabled", Leaf),
                 ("every", Leaf),
                 ("model", Leaf),
+                ("agent_id", Leaf),
                 ("prompt", Leaf),
                 ("ack_max_chars", Leaf),
                 ("active_hours", active_hours()),

@@ -67,6 +67,7 @@ pub(crate) fn cron_delivery_request() -> moltis_cron::service::AgentTurnRequest 
     moltis_cron::service::AgentTurnRequest {
         message: "Run background summary".to_string(),
         model: None,
+        agent_id: None,
         timeout_secs: None,
         deliver: true,
         channel: Some("bot-main".to_string()),

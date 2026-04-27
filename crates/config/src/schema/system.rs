@@ -164,6 +164,8 @@ pub struct HeartbeatConfig {
     pub every: String,
     /// Provider/model override for heartbeat turns (e.g. "anthropic/claude-sonnet-4-20250514").
     pub model: Option<String>,
+    /// Agent ID override for heartbeat turns.
+    pub agent_id: Option<String>,
     /// Custom prompt override. If empty, the built-in default is used.
     pub prompt: Option<String>,
     /// Max characters for an acknowledgment reply before truncation. Defaults to 300.
@@ -194,6 +196,7 @@ impl Default for HeartbeatConfig {
             enabled: true,
             every: "30m".into(),
             model: None,
+            agent_id: None,
             prompt: None,
             ack_max_chars: 300,
             active_hours: ActiveHoursConfig::default(),

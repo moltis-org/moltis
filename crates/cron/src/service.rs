@@ -108,6 +108,7 @@ impl RateLimiter {
 pub struct AgentTurnRequest {
     pub message: String,
     pub model: Option<String>,
+    pub agent_id: Option<String>,
     pub timeout_secs: Option<u64>,
     pub deliver: bool,
     pub channel: Option<String>,
@@ -602,6 +603,7 @@ impl CronService {
             CronPayload::AgentTurn {
                 message,
                 model,
+                agent_id,
                 timeout_secs,
                 deliver,
                 channel,
@@ -610,6 +612,7 @@ impl CronService {
                 let req = AgentTurnRequest {
                     message: message.clone(),
                     model: model.clone(),
+                    agent_id: agent_id.clone(),
                     timeout_secs: *timeout_secs,
                     deliver: *deliver,
                     channel: channel.clone(),

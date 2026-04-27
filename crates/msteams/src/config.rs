@@ -121,6 +121,10 @@ pub struct MsTeamsAccountConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
 
+    /// Agent ID override for this account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+
     // ── Retry configuration ─────────────────────────────────────────────
     /// Maximum retry attempts for failed sends (default: 3).
     pub max_retries: u32,
@@ -194,6 +198,7 @@ impl std::fmt::Debug for MsTeamsAccountConfig {
             )
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
+            .field("agent_id", &self.agent_id)
             .field("stream_mode", &self.stream_mode)
             .field("reply_style", &self.reply_style)
             .field("welcome_card", &self.welcome_card)
@@ -212,6 +217,7 @@ impl Serialize for RedactedConfig<'_> {
         count += c.webhook_secret.is_some() as usize;
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
+        count += c.agent_id.is_some() as usize;
         count += c.bot_name.is_some() as usize;
         count += c.graph_tenant_id.is_some() as usize;
         count += !c.prompt_starters.is_empty() as usize;
@@ -235,6 +241,9 @@ impl Serialize for RedactedConfig<'_> {
         }
         if c.model_provider.is_some() {
             s.serialize_field("model_provider", &c.model_provider)?;
+        }
+        if c.agent_id.is_some() {
+            s.serialize_field("agent_id", &c.agent_id)?;
         }
         s.serialize_field("stream_mode", &c.stream_mode)?;
         s.serialize_field("reply_style", &c.reply_style)?;
@@ -281,6 +290,10 @@ impl ChannelConfigView for MsTeamsAccountConfig {
         self.model_provider.as_deref()
     }
 
+    fn agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref()
+    }
+
     fn channel_model(&self, channel_id: &str) -> Option<&str> {
         // Check per-team/per-channel overrides.
         for team_config in self.teams.values() {
@@ -321,6 +334,7 @@ impl Default for MsTeamsAccountConfig {
             webhook_secret: None,
             model: None,
             model_provider: None,
+            agent_id: None,
             max_retries: 3,
             retry_base_delay_ms: 250,
             retry_max_delay_ms: 10_000,

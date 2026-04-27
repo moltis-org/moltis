@@ -758,6 +758,7 @@ pub(super) async fn finalize_prepared_gateway(
                     payload: Some(CronPayload::AgentTurn {
                         message: prompt,
                         model: hb.model.clone(),
+                        agent_id: hb.agent_id.clone(),
                         timeout_secs: None,
                         deliver: hb.deliver,
                         channel: hb.channel.clone(),
@@ -787,6 +788,7 @@ pub(super) async fn finalize_prepared_gateway(
                     payload: CronPayload::AgentTurn {
                         message: prompt,
                         model: hb.model.clone(),
+                        agent_id: hb.agent_id.clone(),
                         timeout_secs: None,
                         deliver: hb.deliver,
                         channel: hb.channel.clone(),
