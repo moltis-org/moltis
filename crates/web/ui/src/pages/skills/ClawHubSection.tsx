@@ -168,7 +168,7 @@ function DetailPanel({
 				showToast("Installed — review and enable the skill in the Skills tab.", "success");
 				onInstalled();
 			} else {
-				error.value = String(res?.error || "Install failed");
+				error.value = res?.error?.message || "Install failed";
 			}
 		} finally {
 			installing.value = false;

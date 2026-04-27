@@ -1409,10 +1409,20 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
             .map(|s| s.trusted)
             .ok_or_else(|| format!("skill '{skill_name}' not found in repo '{source}'"))?;
         if !trusted {
-            return Err(format!(
-                "skill '{skill_name}' is not trusted. Review it and run skills.skill.trust before enabling"
-            )
-            .into());
+            if !manifest.set_skill_trusted(source, skill_name, true) {
+                return Err(
+                    format!("skill '{skill_name}' not found in repo '{source}'").into(),
+                );
+            }
+            security_audit(
+                "skills.skill.trust",
+                serde_json::json!({
+                    "source": source,
+                    "skill": skill_name,
+                    "trusted": true,
+                    "auto": true,
+                }),
+            );
         }
     }
 
