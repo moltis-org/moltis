@@ -383,6 +383,9 @@ pub struct GatewayState {
     /// Code index for workspace codebase intelligence (discover, filter, status, peek).
     /// Always initialized in config-only mode; search is deferred to QMD backend.
     pub code_index: Arc<moltis_code_index::CodeIndex>,
+    /// Index job manager for coordinating auto-indexing operations.
+    #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+    pub index_job_manager: Arc<moltis_code_index::IndexJobManager>,
     /// Whether the server is bound to a loopback address (localhost/127.0.0.1/::1).
     pub localhost_only: bool,
     /// Whether the server is known to be behind a reverse proxy.

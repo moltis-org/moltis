@@ -37,6 +37,10 @@ pub mod search;
 #[cfg(any(feature = "qmd", feature = "builtin"))]
 pub mod tools;
 
+// Index job manager (coordinates auto-indexing operations).
+#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+pub mod index_job_manager;
+
 // Re-exports for convenience.
 pub use {
     config::CodeIndexConfig,
@@ -45,6 +49,9 @@ pub use {
     index::CodeIndex,
     types::{IndexStatus, SearchResult},
 };
+
+#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+pub use index_job_manager::{IndexJobManager, IndexJobManagerConfig};
 
 /// Utility function to sanitize a project ID for use as a QMD collection name.
 pub fn sanitize_project_id(project_id: &str) -> String {
