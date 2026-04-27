@@ -149,8 +149,11 @@ function emergencyDisableAllSkills(): void {
 }
 
 function fetchAll(): void {
+	fetchAllAsync().catch(console.error);
+}
+function fetchAllAsync(): Promise<void> {
 	loading.value = true;
-	fetch("/api/skills")
+	return fetch("/api/skills")
 		.then((r) => r.json())
 		.then((data) => {
 			if (data.skills) enabledSkills.value = data.skills;
@@ -676,19 +679,23 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 		});
 		if (!yes) return;
 		installingAll.value = true;
-		let failed = 0;
+		const succeeded = new Set<string>();
 		for (const sk of unenabled) {
 			const r = await sendRpc("skills.skill.enable", { source: repo.source, skill: sk.name });
-			if (!r?.ok) {
+			if (r?.ok) {
+				succeeded.add(sk.name);
+			} else {
 				showToast(`Failed to install ${sk.name}: ${r?.error?.message || "unknown"}`, "error");
-				failed++;
 			}
 		}
 		installingAll.value = false;
-		allSkills.value = allSkills.value.map((s) => ({ ...s, enabled: true }));
-		fetchAll();
-		const installed = unenabled.length - failed;
-		if (installed > 0) showToast(`Installed ${installed} skills`, "success");
+		if (succeeded.size > 0) {
+			showToast(`Installed ${succeeded.size} skill${succeeded.size > 1 ? "s" : ""}`, "success");
+		}
+		// Re-fetch both the skill list and repo summary from the server
+		// so counts are accurate (no optimistic update).
+		const [freshSkills] = await Promise.all([searchSkills(repo.source, ""), fetchAllAsync()]);
+		allSkills.value = freshSkills;
 	}
 	const displayed = searchQuery.value.trim() ? searchResults.value : allSkills.value;
 	const unenabledCount =
