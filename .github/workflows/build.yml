@@ -32,11 +32,20 @@ jobs:
       - name: Install just
         run: cargo install just
 
+      - name: Read mini version
+        id: version
+        run: |
+          MINI_VER=$(cat .mini-version | grep -v '^#' | grep -v '^$' | head -1)
+          echo "mini_version=$MINI_VER" >> $GITHUB_OUTPUT
+          echo "Using mini version: $MINI_VER"
+
       - name: Build WASM tools
         run: just wasm-tools
 
       - name: Build release binary
         run: cargo build --release
+        env:
+          MOLTIS_MINI_VERSION: ${{ steps.version.outputs.mini_version }}
 
       - name: Stage WASM artifacts
         run: bash ./scripts/stage-wasm-package-assets.sh target/release

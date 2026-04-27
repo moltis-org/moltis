@@ -389,7 +389,7 @@ export function IdentitySection(): VNode {
 			</form>
 			{gon.get("version") ? (
 				<p className="text-xs text-[var(--muted)]" style={{ marginTop: "auto", paddingTop: "16px" }}>
-					v{gon.get("version")}-mini
+					v{gon.get("version")}
 				</p>
 			) : null}
 		</div>

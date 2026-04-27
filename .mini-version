@@ -1,0 +1,9 @@
+# Moltis-Mini Version Tracking
+# Format: UPSTREAM_VERSION-mini.NN
+# Example: 20260426.01-mini.01
+#
+# When upstream moltis-org/moltis releases a new version, update UPSTREAM_VERSION.
+# When packaging a new mini release based on the same upstream version, increment NN.
+# When updating to a new upstream version, reset NN to 01.
+
+20260426.03-mini.01
