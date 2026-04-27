@@ -131,6 +131,11 @@ impl CodeIndex {
         }
     }
 
+    /// Get a reference to the code index configuration.
+    pub fn config(&self) -> &CodeIndexConfig {
+        &self.config
+    }
+
     /// List the indexable files for a project directory.
     ///
     /// Discovers git-tracked files and applies extension/size/path filters.

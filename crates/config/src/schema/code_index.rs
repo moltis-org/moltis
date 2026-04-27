@@ -40,10 +40,34 @@ pub struct CodeIndexTomlConfig {
     /// When unset, defaults to `<data_dir>/code-index/`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_dir: Option<String>,
+    /// Automatically index all enabled projects at startup. Default: `true`.
+    #[serde(default = "default_true")]
+    pub auto_index_on_startup: bool,
+    /// Automatically index a project when created or enabled. Default: `true`.
+    #[serde(default = "default_true")]
+    pub auto_index_on_create: bool,
+    /// Periodic re-index interval. Human-friendly: `"30m"`, `"1h"`. Default: `"30m"`.
+    #[serde(default = "default_reindex_interval")]
+    pub periodic_reindex_interval: String,
+    /// Maximum concurrent indexing jobs. Default: `2`.
+    #[serde(default = "default_max_concurrent_jobs")]
+    pub max_concurrent_jobs: u32,
 }
 
 fn default_max_file_size() -> String {
     "1MB".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_reindex_interval() -> String {
+    "30m".to_string()
+}
+
+fn default_max_concurrent_jobs() -> u32 {
+    2
 }
 
 impl Default for CodeIndexTomlConfig {
@@ -55,6 +79,10 @@ impl Default for CodeIndexTomlConfig {
             skip_binary: true,
             skip_paths: Vec::new(),
             data_dir: None,
+            auto_index_on_startup: default_true(),
+            auto_index_on_create: default_true(),
+            periodic_reindex_interval: default_reindex_interval(),
+            max_concurrent_jobs: default_max_concurrent_jobs(),
         }
     }
 }
@@ -94,6 +122,38 @@ pub fn parse_byte_size(s: &str) -> Result<u64, String> {
     }
 
     Ok(bytes as u64)
+}
+
+/// Parse a human-friendly duration string into a `Duration`.
+///
+/// Supports: `"30s"`, `"5m"`, `"1h"`, `"1d"`.
+/// Case-insensitive.
+///
+/// # Errors
+///
+/// Returns a descriptive error for unknown suffixes or non-numeric input.
+pub fn parse_duration(s: &str) -> Result<std::time::Duration, String> {
+    let s = s.trim();
+    let (num_part, suffix) = if let Some(pos) = s.find(|c: char| c.is_ascii_alphabetic()) {
+        let (n, suf) = s.split_at(pos);
+        (n, suf.trim())
+    } else {
+        (s, "s") // default to seconds if no suffix
+    };
+
+    let value: u64 = num_part
+        .parse()
+        .map_err(|_| format!("invalid duration number: {num_part}"))?;
+
+    let multiplier: u64 = match suffix.to_ascii_lowercase().as_str() {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
+        other => return Err(format!("unknown duration suffix: {other}")),
+    };
+
+    Ok(std::time::Duration::from_secs(value * multiplier))
 }
 
 #[allow(clippy::unwrap_used)]
@@ -142,11 +202,31 @@ enabled = false
 extensions = ["rs", "py"]
 max_file_size = "2MB"
 skip_paths = ["generated/"]
+auto_index_on_startup = false
+auto_index_on_create = true
+periodic_reindex_interval = "1h"
+max_concurrent_jobs = 4
 "#;
         let cfg: CodeIndexTomlConfig = toml::from_str(toml).unwrap();
         assert!(!cfg.enabled);
         assert_eq!(cfg.extensions, vec!["rs", "py"]);
         assert_eq!(cfg.max_file_size, "2MB");
         assert_eq!(cfg.skip_paths, vec!["generated/"]);
+        assert!(!cfg.auto_index_on_startup);
+        assert!(cfg.auto_index_on_create);
+        assert_eq!(cfg.periodic_reindex_interval, "1h");
+        assert_eq!(cfg.max_concurrent_jobs, 4);
+    }
+
+    #[test]
+    fn test_parse_duration() {
+        use std::time::Duration;
+        assert_eq!(parse_duration("30s").unwrap(), Duration::from_secs(30));
+        assert_eq!(parse_duration("5m").unwrap(), Duration::from_secs(300));
+        assert_eq!(parse_duration("1h").unwrap(), Duration::from_secs(3600));
+        assert_eq!(parse_duration("1d").unwrap(), Duration::from_secs(86400));
+        assert_eq!(parse_duration("30m").unwrap(), Duration::from_secs(1800));
+        assert_eq!(parse_duration("1h30m").is_err(), true); // complex not supported
+        assert_eq!(parse_duration("abc").is_err(), true);
     }
 }
