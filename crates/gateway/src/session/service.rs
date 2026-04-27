@@ -152,10 +152,6 @@ impl LiveSessionService {
             return fallback;
         };
 
-        if agent_id == "main" {
-            return "main".to_string();
-        }
-
         if let Some(ref store) = self.agent_persona_store {
             match store.get(agent_id).await {
                 Ok(Some(_)) => {
