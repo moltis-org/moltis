@@ -152,7 +152,13 @@ const MOLTIS_CLIENT_URI: &str = "https://moltis.org/";
 
 fn is_loopback_uri(uri: &Url) -> bool {
     let host = uri.host_str().unwrap_or_default();
-    host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost")
+    if host == "localhost" || host == "::1" || host.ends_with(".localhost") {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+        return ip.is_loopback();
+    }
+    false
 }
 
 /// Rewrite loopback redirect URIs from `https://` to `http://`.
@@ -176,10 +182,17 @@ fn build_client_metadata(redirect_uri: &Url) -> ChannelResult<ClientMetadata> {
         .parse()
         .map_err(|error| ChannelError::external("matrix oidc parse client uri", error))?;
     let client_uri = Localized::new(client_uri_url, std::iter::empty());
-    let registration_redirect = normalize_loopback_redirect(redirect_uri);
+    let is_loopback = is_loopback_uri(redirect_uri);
+    let registration_redirect = if is_loopback && redirect_uri.scheme() == "https" {
+        let mut normalized = redirect_uri.clone();
+        let _ = normalized.set_scheme("http");
+        normalized
+    } else {
+        redirect_uri.clone()
+    };
     // MAS requires `Native` for loopback redirect URIs (RFC 8252) and `Web`
     // for non-loopback URIs (e.g. behind a reverse proxy).
-    let app_type = if is_loopback_uri(redirect_uri) {
+    let app_type = if is_loopback {
         ApplicationType::Native
     } else {
         ApplicationType::Web
@@ -513,6 +526,30 @@ mod tests {
             ApplicationType::Native,
             "loopback redirect_uri must use ApplicationType::Native"
         );
+    }
+
+    #[test]
+    fn is_loopback_uri_covers_full_127_range() {
+        let url_127_0_0_2: Url = "http://127.0.0.2:8080/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            is_loopback_uri(&url_127_0_0_2),
+            "127.0.0.2 is in 127.0.0.0/8 and must be treated as loopback"
+        );
+
+        let url_127_255: Url = "http://127.255.255.255:8080/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            is_loopback_uri(&url_127_255),
+            "127.255.255.255 is in 127.0.0.0/8 and must be treated as loopback"
+        );
+
+        let url_external: Url = "https://10.0.0.1:8080/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(!is_loopback_uri(&url_external), "10.0.0.1 is not loopback");
     }
 
     #[test]
