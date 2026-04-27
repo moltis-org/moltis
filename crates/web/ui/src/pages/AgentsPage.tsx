@@ -777,8 +777,8 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 					<div className="flex flex-col gap-1">
 						<h3 className="text-xs font-medium text-[var(--muted)]">Sub-Agent Presets</h3>
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-							Config roles already usable by spawn_agent for delegated work. Add one to chat only when you want that
-							preset to become a persistent chat agent with memory and sessions.
+							Defined in <code>[agents.presets]</code> in <code>moltis.toml</code>. These roles are usable by
+							spawn_agent for delegated work. Add one to chat to make it a persistent agent with memory and sessions.
 						</p>
 					</div>
 					{configPresets.length > 0 ? (
@@ -804,8 +804,9 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 					<div className="flex flex-col gap-1">
 						<h3 className="text-xs font-medium text-[var(--muted)]">Modes</h3>
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-							Temporary per-session prompt overlays. Use /mode in chat or any connected channel to switch how the
-							current agent should work without changing its identity, memory, or sub-agent presets.
+							Defined in <code>[modes]</code> in <code>moltis.toml</code>. Temporary per-session prompt overlays.
+							Use /mode in chat or any connected channel to switch how the current agent works without changing its
+							identity, memory, or presets.
 						</p>
 					</div>
 					{modes.length > 0 ? (
