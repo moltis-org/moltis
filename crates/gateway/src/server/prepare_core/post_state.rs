@@ -1460,7 +1460,7 @@ pub(super) async fn complete_startup(
                             "starting auto-index for enabled projects"
                         );
                         jm.index_all_enabled_projects(enabled.clone()).await;
-                        jm.start_periodic_reindex_loop(enabled);
+                        jm.start_periodic_reindex_loop();
                     },
                     Err(e) => {
                         warn!(error = %e, "failed to list projects for auto-index");
