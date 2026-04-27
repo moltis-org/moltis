@@ -155,11 +155,20 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Install npm dependencies
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+      - name: Build web assets
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
+          TAILWINDCSS=./tailwindcss-linux-x64 ./scripts/build-web-assets.sh
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
@@ -222,11 +231,15 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      - name: Build Tailwind CSS
+      - name: Install npm dependencies
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+      - name: Build web assets
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
+          TAILWINDCSS=./tailwindcss-linux-x64 ./scripts/build-web-assets.sh
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: cargo nextest run --all-features --profile ci
 
@@ -250,16 +263,6 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Build Tailwind CSS
-        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
-        run: |
-          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
-
-      - name: Build moltis binary
-        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
-        run: cargo build --bin moltis
-
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
@@ -270,6 +273,16 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         working-directory: crates/web/ui
         run: npm ci
+
+      - name: Build web assets
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: |
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
+          TAILWINDCSS=./tailwindcss-linux-x64 ./scripts/build-web-assets.sh
+
+      - name: Build moltis binary
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: cargo build --bin moltis
 
       - name: Install Playwright browsers
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
@@ -340,12 +353,21 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
           ./scripts/download-tailwindcss-cli.sh "$TW"
-          cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+          TAILWINDCSS=./$TW ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         run: |
@@ -434,12 +456,21 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
           ./scripts/download-tailwindcss-cli.sh "$TW"
-          cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+          TAILWINDCSS=./$TW ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         run: |
@@ -513,12 +544,21 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
           ./scripts/download-tailwindcss-cli.sh "$TW"
-          cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+          TAILWINDCSS=./$TW ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         run: |
@@ -621,12 +661,21 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
           ./scripts/download-tailwindcss-cli.sh "$TW"
-          cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+          TAILWINDCSS=./$TW ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         run: |
@@ -807,7 +856,16 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           OS=$(uname -s)
           ARCH=$(uname -m)
@@ -818,7 +876,7 @@ jobs:
             Darwin-x86_64) TW="tailwindcss-macos-x64";;
           esac
           ./scripts/download-tailwindcss-cli.sh "$TW"
-          cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+          TAILWINDCSS=./$TW ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         run: |
@@ -894,10 +952,19 @@ jobs:
       - name: Install Swift build dependencies
         run: brew install xcodegen cbindgen
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-macos-arm64
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-macos-arm64 ./build.sh
+          TAILWINDCSS=./tailwindcss-macos-arm64 ./scripts/build-web-assets.sh
 
       - name: Install cosign
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
@@ -1086,11 +1153,20 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "PERL=$strawberryPerl"
           & $strawberryPerl -v
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         shell: bash
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-windows-x64.exe
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-windows-x64.exe ./build.sh
+          TAILWINDCSS=./tailwindcss-windows-x64.exe ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         shell: bash

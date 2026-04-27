@@ -549,11 +549,11 @@ fi
 # Verify Cargo.lock is in sync (same as CI's `cargo fetch --locked`).
 run_check "local/lockfile" "cargo fetch --locked"
 
-# Ensure generated CSS exists (Tailwind output is not committed; worktrees and
-# fresh clones won't have it).
-if [[ ! -f crates/web/src/assets/style.css ]]; then
-  echo "style.css missing — building CSS with Tailwind..."
-  run_check "local/build-css" "just build-css"
+# Ensure generated web assets exist (not committed; worktrees and fresh clones
+# won't have them).
+if [[ ! -f crates/web/src/assets/style.css || ! -f crates/web/src/assets/dist/main.js || ! -f crates/web/src/assets/sw.js ]]; then
+  echo "Web assets missing — building with just build-web-assets..."
+  run_check "local/build-web-assets" "just build-web-assets"
 fi
 
 # Lint runs first to warm the cargo build cache (clippy compiles all targets).

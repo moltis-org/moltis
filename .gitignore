@@ -23,6 +23,12 @@ apps/ios/local.xcconfig
 crates/web/ui/node_modules/
 crates/web/ui/playwright-report/
 crates/web/ui/test-results/
+
+# Generated web assets (run `just build-web-assets` to regenerate)
+crates/web/src/assets/dist/
+crates/web/src/assets/css/style.css
+crates/web/src/assets/style.css
+crates/web/src/assets/sw.js
 website/node_modules/
 website/.playwright-mcp/
 crates/web/src/assets/js/vendor/shiki.mjs

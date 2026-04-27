@@ -36,9 +36,9 @@ else
 fi
 
 if [[ "${1:-}" == "--watch" ]]; then
-  exec $TAILWIND -i input.css -o ../src/assets/style.css --watch
+  exec $TAILWIND -i input.css -o ../src/assets/css/style.css --watch
 else
-  # Unminified so the committed output is diffable (one rule per line).
-  # Release builds compress assets via include_dir! and HTTP gzip anyway.
-  exec $TAILWIND -i input.css -o ../src/assets/style.css
+  $TAILWIND -i input.css -o ../src/assets/css/style.css
+  # Templates reference /assets/style.css (root level), so copy there too.
+  cp ../src/assets/css/style.css ../src/assets/style.css
 fi

@@ -25,11 +25,6 @@ use {
 #[cfg(feature = "embedded-assets")]
 static ASSETS: include_dir::Dir = include_dir::include_dir!("$CARGO_MANIFEST_DIR/src/assets");
 
-// Fail compilation with a clear message if style.css hasn't been generated.
-// Run `just build-css` (or `cd crates/web/ui && ./build.sh`) to generate it.
-#[cfg(feature = "embedded-assets")]
-const _: &str = include_str!("assets/css/style.css");
-
 // ── Asset source resolution ─────────────────────────────────────────────────
 
 /// Resolved asset source, checked once at startup.

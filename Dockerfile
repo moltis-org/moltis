@@ -32,12 +32,19 @@ RUN apt-get update -qq && \
     apt-get install -yqq --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
     rm -rf /var/lib/apt/lists/*
 
-# Build Tailwind CSS (style.css is gitignored — must be generated before cargo build)
+# Install Node.js for Vite/esbuild builds (web assets are gitignored)
+RUN apt-get update -qq && \
+    apt-get install -yqq --no-install-recommends ca-certificates curl gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -yqq --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build all web assets (Vite JS + Tailwind CSS + service worker)
 RUN ARCH=$(uname -m) && \
     case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac && \
     curl -sLO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/$TW" && \
     chmod +x "$TW" && \
-    cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+    TAILWINDCSS="./$TW" ./scripts/build-web-assets.sh
 
 # Install WASM target and build WASM components (embedded via include_bytes!)
 RUN rustup target add wasm32-wasip2 && \
