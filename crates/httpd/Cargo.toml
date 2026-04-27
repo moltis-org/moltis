@@ -28,12 +28,14 @@ moltis-config         = { workspace = true }
 moltis-cron           = { workspace = true }
 moltis-gateway        = { workspace = true }
 moltis-graphql        = { optional = true, workspace = true }
+# moltis-matrix — stripped from moltis-mini
 moltis-metrics        = { optional = true, workspace = true }
-moltis-msteams        = { workspace = true }
+moltis-msteams        = { optional = true, workspace = true }
 moltis-protocol       = { workspace = true }
 moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
+# moltis-slack — stripped from moltis-mini
 moltis-tls            = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-vault          = { optional = true, workspace = true }
@@ -62,26 +64,31 @@ webauthn-rs           = { features = ["danger-allow-state-serialisation"], works
 
 [features]
 default = [
+  "discord",
   "metrics",
+  "msteams",
   "tls",
   "vault",
   "web-ui",
 ]
+discord = ["moltis-gateway/discord"]
+graphql = ["moltis-gateway/graphql"] # stub
+telegram = ["moltis-gateway/telegram"]
+matrix = ["moltis-gateway/matrix"] # stub
+mdns = ["moltis-gateway/mdns"] # stub
 metrics = ["dep:moltis-metrics", "moltis-gateway/metrics"]
 ngrok = ["dep:ngrok"]
+nostr = ["moltis-gateway/nostr"] # stub
 prometheus = ["metrics", "moltis-gateway/prometheus"]
+push-notifications = ["moltis-gateway/push-notifications"] # stub
+signal = ["moltis-gateway/signal"] # stub
+slack = ["moltis-gateway/slack"] # stub
+tailscale = ["moltis-gateway/tailscale"] # stub
 tls = ["dep:moltis-tls", "dep:rustls", "moltis-gateway/tls"]
+trusted-network = ["moltis-gateway/trusted-network"] # stub
 vault = ["dep:moltis-vault", "moltis-gateway/vault"]
 web-ui = ["moltis-gateway/web-ui"]
-
-# Stub features — crates removed from moltis-mini.
-graphql            = []
-mdns               = []
-push-notifications = []
-slack              = []
-tailscale          = []
-trusted-network    = []
-voice              = []
+msteams = ["moltis-gateway/msteams"]
 
 [dev-dependencies]
 moltis-code-index.workspace = true

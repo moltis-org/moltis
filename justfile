@@ -343,19 +343,18 @@ changelog-release version:
 ship commit_message='' pr_title='' pr_body='':
     ./scripts/ship-pr.sh {{ quote(commit_message) }} {{ quote(pr_title) }} {{ quote(pr_body) }}
 
-# Run all tests (nightly to share build cache with clippy/lint, OS-aware).
+# Run all tests — moltis-mini scope (default-members only, skips web/voice/llm).
 # On macOS: single nextest run using default features (includes Metal, not CUDA).
 # On Linux: --all-features (includes CUDA).
-# Builds first so codesign can run before test execution (prevents Little Snitch prompts).
 test:
     #!/usr/bin/env bash
     set -euo pipefail
     if [ "$(uname -s)" = "Darwin" ]; then
-        cargo +{{nightly_toolchain}} build --workspace --all-targets
+        cargo +{{nightly_toolchain}} build --workspace --default-members --all-targets
         just codesign-debug
-        cargo +{{nightly_toolchain}} nextest run --workspace
+        cargo +{{nightly_toolchain}} nextest run --workspace --default-members
     else
-        cargo +{{nightly_toolchain}} nextest run --workspace --all-features
+        cargo +{{nightly_toolchain}} nextest run --workspace --default-members --all-features
     fi
 
 # Run contract test suites (channel, provider, memory, tools)
@@ -478,9 +477,14 @@ mini-sync:
     git rebase upstream/main
     git push origin main --force-with-lease
 
-# Run tests for core crates only.
+# Run tests for core crates only (debug, fast iteration).
 mini-test:
-    cargo test --release -p moltis -p moltis-gateway -p moltis-chat -p moltis-httpd -p moltis-web
+    cargo test -p moltis-common -p moltis-config -p moltis-auth -p moltis-channels \
+        -p moltis-chat -p moltis-cron -p moltis-gateway -p moltis-httpd \
+        -p moltis-mcp -p moltis-memory -p moltis-plugins -p moltis-protocol \
+        -p moltis-providers -p moltis-routing -p moltis-secret-store \
+        -p moltis-sessions -p moltis-skills -p moltis-tools -p moltis-webhooks \
+        -p moltis-service-traits -p moltis-agents
 
 # Update Cargo.lock after Cargo.toml changes.
 mini-lock:
