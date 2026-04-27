@@ -2167,6 +2167,171 @@
   }
 }
 
+/* ── Command Palette ──────────────────────────────────────────────── */
+
+.cmd-palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: min(20vh, 120px);
+}
+
+.cmd-palette {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  max-height: min(60vh, 480px);
+  display: flex;
+  flex-direction: column;
+  animation: 0.12s ease-out msg-in;
+  overflow: hidden;
+}
+
+.cmd-palette-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cmd-palette-search-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.cmd-palette-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 0.9rem;
+  color: var(--text);
+  font-family: inherit;
+}
+
+.cmd-palette-input::placeholder {
+  color: var(--muted);
+}
+
+.cmd-palette-kbd {
+  font-size: 0.65rem;
+  font-family: inherit;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  background: var(--surface2);
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.cmd-palette-list {
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.cmd-palette-group {
+  padding: 8px 14px 4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cmd-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--text);
+  transition: background 0.08s;
+}
+
+.cmd-palette-item:hover,
+.cmd-palette-item-active {
+  background: var(--bg-hover);
+}
+
+.cmd-palette-item .icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.cmd-palette-item-active .icon {
+  color: var(--accent);
+}
+
+.cmd-palette-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmd-palette-item-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+  flex-shrink: 1;
+}
+
+.cmd-palette-fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+
+.cmd-palette-empty {
+  padding: 20px 14px;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* Header button kbd badge */
+.cmd-palette-header-kbd {
+  font-size: 0.6rem;
+  font-family: inherit;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--muted);
+  background: var(--surface2);
+  line-height: 1;
+  margin-left: 2px;
+}
+
+@media (max-width: 767px) {
+  .cmd-palette {
+    width: calc(100vw - 16px);
+    max-height: 70vh;
+  }
+
+  .cmd-palette-backdrop {
+    padding-top: 48px;
+  }
+
+  .cmd-palette-header-kbd {
+    display: none;
+  }
+}
+
 /* ── Animations ───────────────────────────────────────────────────── */
 
 @keyframes pulse {

@@ -72,6 +72,12 @@
     <span class="icon icon-md icon-burger-mobile"></span>
   </button>
 
+  <button id="commandPaletteBtn" class="header-link-btn" title="Command palette">
+    <span class="icon icon-search"></span>
+    <kbd class="cmd-palette-header-kbd" id="cmdPaletteKbd"></kbd>
+  </button>
+  <script nonce="{{ nonce }}">!function(){var k=document.getElementById("cmdPaletteKbd");if(k)k.textContent=/Mac|iPhone|iPad/.test(navigator.platform||navigator.userAgent)?"\u2318K":"Ctrl+K"}()</script>
+
   <div class="header-actions">
     <button id="settingsBtn" class="header-link-btn" title="Settings">
       <span class="icon icon-settings"></span>

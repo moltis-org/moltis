@@ -4,6 +4,7 @@ import type { Signal } from "@preact/signals";
 import { signal } from "@preact/signals";
 import type { ComponentChildren, VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { CommandPalette } from "./components/CommandPalette";
 import { t } from "./i18n";
 
 // ── Toast notifications ──────────────────────────────────────
@@ -386,6 +387,7 @@ export function GlobalDialogs(): VNode {
 			<VanillaConfirmDialog />
 			<ShareVisibilityDialog />
 			<ShareLinkDialog />
+			<CommandPalette />
 		</>
 	);
 }

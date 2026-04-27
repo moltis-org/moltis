@@ -31,6 +31,7 @@ import { updateSandboxImageUI, updateSandboxUI } from "./sandbox";
 import * as _sessions from "./sessions";
 import { fetchSessions, refreshWelcomeCardIfNeeded, removeSessionFromClientState, renderSessionList } from "./sessions";
 import * as S from "./state";
+import { togglePalette } from "./stores/command-store";
 import * as modelStore from "./stores/model-store";
 import * as _modelStore from "./stores/model-store";
 import * as _nodeStore from "./stores/node-store";
@@ -264,6 +265,12 @@ onEvent("tick", (_payload: unknown) => {
 	applyMemory(payload.mem as MemInfo | null);
 });
 
+// Command palette button — wire up click handler.
+const commandPaletteBtn = document.getElementById("commandPaletteBtn");
+if (commandPaletteBtn) {
+	commandPaletteBtn.addEventListener("click", () => togglePalette());
+}
+
 // Logout button — wire up click handler once.
 const logoutBtn = document.getElementById("logoutBtn");
 const settingsBtn = document.getElementById("settingsBtn");
@@ -337,6 +344,10 @@ window.addEventListener("resize", () => {
 });
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") closeMobileMenu();
+	if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+		e.preventDefault();
+		togglePalette();
+	}
 });
 document.addEventListener("click", (e) => {
 	if (!mobileMenuPanel?.classList.contains("open")) return;
