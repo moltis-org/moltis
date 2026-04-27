@@ -170,6 +170,79 @@ test.describe("Skills page", () => {
 		expect(result.newWay).toBe("Failed: skill 'xlsx' is not trusted");
 	});
 
+	test("Install All button shown when repo has unenabled skills", async ({ page }) => {
+		await page.route("**/api/skills/search?*", async (route) => {
+			await route.fulfill({
+				contentType: "application/json",
+				body: JSON.stringify({
+					skills: [
+						{ name: "skill-a", display_name: "Skill A", description: "First", enabled: false },
+						{ name: "skill-b", display_name: "Skill B", description: "Second", enabled: false },
+						{ name: "skill-c", display_name: "Skill C", description: "Third", enabled: true },
+					],
+				}),
+			});
+		});
+		await page.route("**/api/skills", async (route) => {
+			await route.fulfill({
+				contentType: "application/json",
+				body: JSON.stringify({
+					skills: [],
+					repos: [
+						{ source: "test-org/multi", skill_count: 3, enabled_count: 1, trusted_count: 1 },
+					],
+				}),
+			});
+		});
+
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/skills");
+
+		await page.getByRole("tab", { name: /Repositories/ }).click();
+		// Install All button should be visible in the repo header (2 unenabled out of 3)
+		await expect(page.getByRole("button", { name: "Install All", exact: true })).toBeVisible();
+
+		// Expand to verify skill list loaded
+		await page.getByText("1/3 enabled", { exact: true }).click();
+		await expect(page.locator(".skills-ac-item").filter({ hasText: "Skill A" })).toBeVisible();
+		await expect(page.locator(".skills-ac-item").filter({ hasText: "Skill C" })).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("Install All button hidden when all skills are enabled", async ({ page }) => {
+		await page.route("**/api/skills/search?*", async (route) => {
+			await route.fulfill({
+				contentType: "application/json",
+				body: JSON.stringify({
+					skills: [
+						{ name: "only-skill", display_name: "Only Skill", description: "All enabled", enabled: true },
+					],
+				}),
+			});
+		});
+		await page.route("**/api/skills", async (route) => {
+			await route.fulfill({
+				contentType: "application/json",
+				body: JSON.stringify({
+					skills: [],
+					repos: [
+						{ source: "test-org/all-enabled", skill_count: 1, enabled_count: 1, trusted_count: 1 },
+					],
+				}),
+			});
+		});
+
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/skills");
+
+		await page.getByRole("tab", { name: /Repositories/ }).click();
+		// All skills are enabled, so Install All should not be visible
+		await expect(page.getByRole("button", { name: "Install All", exact: true })).not.toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("imported repos show bundle actions and provenance", async ({ page }) => {
 		await page.route("**/api/skills/search?*", async (route) => {
 			await route.fulfill({

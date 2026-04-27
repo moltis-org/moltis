@@ -662,7 +662,39 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 			} else showToast(`Failed: ${r?.error?.message || "unknown"}`, "error");
 		});
 	}
+	const installingAll = useSignal(false);
+	async function installAllSkills(): Promise<void> {
+		let skills = allSkills.value;
+		if (!skills.length) {
+			skills = await searchSkills(repo.source, "");
+			allSkills.value = skills;
+		}
+		const unenabled = skills.filter((sk) => !sk.enabled);
+		if (!unenabled.length) return;
+		const yes = await requestConfirm(`You are about to enable ${unenabled.length} skills, are you sure?`, {
+			confirmLabel: "Install All",
+		});
+		if (!yes) return;
+		installingAll.value = true;
+		let failed = 0;
+		for (const sk of unenabled) {
+			const r = await sendRpc("skills.skill.enable", { source: repo.source, skill: sk.name });
+			if (!r?.ok) {
+				showToast(`Failed to install ${sk.name}: ${r?.error?.message || "unknown"}`, "error");
+				failed++;
+			}
+		}
+		installingAll.value = false;
+		allSkills.value = allSkills.value.map((s) => ({ ...s, enabled: true }));
+		fetchAll();
+		const installed = unenabled.length - failed;
+		if (installed > 0) showToast(`Installed ${installed} skills`, "success");
+	}
 	const displayed = searchQuery.value.trim() ? searchResults.value : allSkills.value;
+	const unenabledCount =
+		allSkills.value.length > 0
+			? allSkills.value.filter((sk) => !sk.enabled).length
+			: repo.skill_count - repo.enabled_count;
 	return (
 		<div className="skills-repo-card">
 			<div className="skills-repo-header" onClick={toggle}>
@@ -728,6 +760,19 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 					)}
 				</div>
 				<div style={{ display: "flex", gap: "6px" }}>
+					{!isOrphan && unenabledCount > 0 && (
+						<button
+							type="button"
+							className="provider-btn provider-btn-sm"
+							disabled={installingAll.value}
+							onClick={(e) => {
+								e.stopPropagation();
+								installAllSkills();
+							}}
+						>
+							{installingAll.value ? "Installing\u2026" : "Install All"}
+						</button>
+					)}
 					{!isOrphan && (
 						<button
 							className="provider-btn provider-btn-sm provider-btn-secondary"
