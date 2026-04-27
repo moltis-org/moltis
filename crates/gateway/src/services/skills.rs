@@ -1372,6 +1372,8 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
         .and_then(|v| v.as_str())
         .ok_or_else(|| "missing 'skill' parameter".to_string())?;
 
+    tracing::info!(source, skill_name, enabled, "toggle_skill: called");
+
     let manifest_path =
         moltis_skills::manifest::ManifestStore::default_path().map_err(ServiceError::message)?;
     let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
@@ -1444,6 +1446,7 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
         }),
     );
 
+    tracing::info!(source, skill_name, enabled, auto_trusted, "toggle_skill: success");
     Ok(serde_json::json!({ "source": source, "skill": skill_name, "enabled": enabled }))
 }
 

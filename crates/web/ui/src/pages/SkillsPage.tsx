@@ -673,6 +673,15 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 			allSkills.value = skills;
 		}
 		const unenabled = skills.filter((sk) => !sk.enabled);
+		console.log(
+			"[installAll] source:",
+			repo.source,
+			"total:",
+			skills.length,
+			"unenabled:",
+			unenabled.length,
+			unenabled.map((s) => s.name),
+		);
 		if (!unenabled.length) return;
 		const yes = await requestConfirm(`You are about to enable ${unenabled.length} skills, are you sure?`, {
 			confirmLabel: "Install All",
@@ -681,7 +690,9 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 		installingAll.value = true;
 		const succeeded = new Set<string>();
 		for (const sk of unenabled) {
+			console.log("[installAll] enabling:", sk.name, "source:", repo.source);
 			const r = await sendRpc("skills.skill.enable", { source: repo.source, skill: sk.name });
+			console.log("[installAll] result for", sk.name, ":", JSON.stringify(r));
 			if (r?.ok) {
 				succeeded.add(sk.name);
 			} else {
@@ -689,6 +700,7 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 			}
 		}
 		installingAll.value = false;
+		console.log("[installAll] done, succeeded:", succeeded.size, "of", unenabled.length);
 		if (succeeded.size > 0) {
 			showToast(`Installed ${succeeded.size} skill${succeeded.size > 1 ? "s" : ""}`, "success");
 		}
@@ -696,6 +708,7 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 		// so counts are accurate (no optimistic update).
 		const [freshSkills] = await Promise.all([searchSkills(repo.source, ""), fetchAllAsync()]);
 		allSkills.value = freshSkills;
+		console.log("[installAll] refreshed, unenabled now:", freshSkills.filter((s: SkillSummary) => !s.enabled).length);
 	}
 	const displayed = searchQuery.value.trim() ? searchResults.value : allSkills.value;
 	const unenabledCount =
@@ -774,7 +787,7 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 							disabled={installingAll.value}
 							onClick={(e) => {
 								e.stopPropagation();
-								installAllSkills();
+								installAllSkills().catch(console.error);
 							}}
 						>
 							{installingAll.value ? "Installing\u2026" : "Install All"}
