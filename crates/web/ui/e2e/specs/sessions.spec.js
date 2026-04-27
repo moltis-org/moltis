@@ -728,6 +728,37 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("session name is visible and clickable to rename", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		// Create a non-main session so it can be renamed.
+		await createSession(page);
+
+		// The session name should be visible in the toolbar mount.
+		const nameMount = page.locator("#sessionNameMount");
+		const nameEl = nameMount.locator(".chat-session-name");
+		await expect(nameEl).toBeVisible({ timeout: 5_000 });
+
+		// Click the name to start renaming.
+		await nameEl.click();
+		const renameInput = nameMount.locator(".chat-session-rename-input");
+		await expect(renameInput).toBeVisible({ timeout: 5_000 });
+
+		// Type a new name and commit.
+		const newName = `Renamed ${Date.now()}`;
+		await renameInput.fill(newName);
+		await renameInput.press("Enter");
+
+		// The display name should update in the toolbar.
+		await expect(nameMount.locator(".chat-session-name")).toContainText(
+			newName.slice(0, 20),
+			{ timeout: 5_000 },
+		);
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test.skip("channel-bound session can be renamed", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/");
