@@ -142,8 +142,16 @@ impl SkillsService for NoopSkillsService {
             .iter()
             .filter(|repo| !moltis_skills::clawhub::is_clawhub_source(&repo.source))
             .map(|repo| {
-                let enabled = repo.skills.iter().filter(|s| s.enabled).count();
-                let trusted = repo.skills.iter().filter(|s| s.trusted).count();
+                // Deduplicate skills by name to avoid counting test fixtures.
+                let mut seen = HashSet::new();
+                let unique_skills: Vec<_> = repo
+                    .skills
+                    .iter()
+                    .filter(|s| seen.insert(s.name.clone()))
+                    .collect();
+                let enabled = unique_skills.iter().filter(|s| s.enabled).count();
+                let trusted = unique_skills.iter().filter(|s| s.trusted).count();
+                let skill_count = unique_skills.len();
                 // Re-detect format for repos that predate the formats module
                 let format = if repo.format == moltis_skills::formats::PluginFormat::Skill {
                     let repo_dir = install_dir.join(&repo.repo_name);
@@ -161,7 +169,7 @@ impl SkillsService for NoopSkillsService {
                     "provenance": repo.provenance,
                     "drifted": drifted_sources.contains(&repo.source),
                     "format": format,
-                    "skill_count": repo.skills.len(),
+                    "skill_count": skill_count,
                     "enabled_count": enabled,
                     "trusted_count": trusted,
                 })
@@ -204,14 +212,8 @@ impl SkillsService for NoopSkillsService {
             moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
         let manifest_path = moltis_skills::manifest::ManifestStore::default_path()
             .map_err(ServiceError::message)?;
-        tracing::info!(manifest_path = %manifest_path.display(), "repos_list_full: loading manifest");
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
         let mut manifest = store.load().map_err(ServiceError::message)?;
-        for repo in &manifest.repos {
-            let enabled = repo.skills.iter().filter(|s| s.enabled).count();
-            let total = repo.skills.len();
-            tracing::info!(source = %repo.source, enabled, total, "repos_list_full: repo state from manifest");
-        }
         let (drift_changed, drifted_sources) =
             detect_and_mark_repo_drift(&mut manifest, &install_dir);
         if drift_changed {
@@ -238,9 +240,14 @@ impl SkillsService for NoopSkillsService {
                         .and_then(|r| r.ok()),
                 };
 
+                // Deduplicate skills by name — test fixtures or re-scans can
+                // produce duplicate entries with different relative_path.
+                // Keep the first (usually the real) entry for each name.
+                let mut seen_names = HashSet::new();
                 let skills: Vec<_> = repo
                     .skills
                     .iter()
+                    .filter(|s| seen_names.insert(s.name.clone()))
                     .map(|s| {
                         // If we have adapter entries, match by name for enriched data.
                         if let Some(ref entries) = adapter_entries {
@@ -1386,7 +1393,6 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
 
     let manifest_path =
         moltis_skills::manifest::ManifestStore::default_path().map_err(ServiceError::message)?;
-    tracing::info!(source, skill_name, enabled, manifest_path = %manifest_path.display(), "toggle_skill: called");
     let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
     let mut manifest = store.load().map_err(ServiceError::message)?;
 
@@ -1394,7 +1400,6 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
         moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
     let (drift_changed, drifted_sources) = detect_and_mark_repo_drift(&mut manifest, &install_dir);
     if drift_changed {
-        tracing::warn!(source, skill_name, "toggle_skill: drift detected, saving reset manifest");
         store.save(&manifest).map_err(ServiceError::message)?;
     }
 
@@ -1458,25 +1463,6 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
         }),
     );
 
-    // Verify the save persisted by re-reading the file
-    let verify = store.load().map_err(ServiceError::message)?;
-    let verify_enabled = verify
-        .find_repo(source)
-        .map(|r| r.skills.iter().filter(|s| s.enabled).count())
-        .unwrap_or(0);
-    let verify_total = verify
-        .find_repo(source)
-        .map(|r| r.skills.len())
-        .unwrap_or(0);
-    tracing::info!(
-        source,
-        skill_name,
-        enabled,
-        auto_trusted,
-        verify_enabled,
-        verify_total,
-        "toggle_skill: success (verified from disk)"
-    );
     Ok(serde_json::json!({ "source": source, "skill": skill_name, "enabled": enabled }))
 }
 

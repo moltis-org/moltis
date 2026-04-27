@@ -308,6 +308,25 @@ pub async fn scan_repo_skills(
             if !subdir.is_dir() {
                 continue;
             }
+            // Skip directories that are unlikely to contain real skills.
+            let dir_name = subdir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if matches!(
+                dir_name,
+                "test"
+                    | "tests"
+                    | "fixtures"
+                    | "examples"
+                    | "node_modules"
+                    | ".git"
+                    | "__pycache__"
+                    | "vendor"
+                    | "target"
+            ) {
+                continue;
+            }
             let skill_md = subdir.join("SKILL.md");
             if skill_md.is_file() {
                 let content = match tokio::fs::read_to_string(&skill_md).await {
