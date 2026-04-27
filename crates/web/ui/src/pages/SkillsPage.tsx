@@ -649,7 +649,10 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 	}
 	const installingSkill = useSignal<string | null>(null);
 	function quickInstall(sk: SkillSummary): void {
-		if (installingSkill.value) return;
+		if (installingSkill.value) {
+			showToast("Another install is in progress, please wait\u2026", "error");
+			return;
+		}
 		installingSkill.value = sk.name;
 		sendRpc("skills.skill.enable", { source: repo.source, skill: sk.name }).then((r) => {
 			installingSkill.value = null;
@@ -832,7 +835,15 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 									className="skills-ac-item"
 									style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
 								>
-									<div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => loadDetail(sk)}>
+									<div
+										role="button"
+										tabIndex={0}
+										style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+										onClick={() => loadDetail(sk)}
+										onKeyDown={(e) => {
+											if (e.key === "Enter" || e.key === " ") loadDetail(sk);
+										}}
+									>
 										<span style={{ fontFamily: "var(--font-mono)", fontWeight: 500, color: "var(--text-strong)" }}>
 											{sk.display_name || sk.name}
 										</span>
@@ -844,6 +855,7 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 									</div>
 									<div style={{ display: "flex", gap: "4px", flexShrink: 0, marginLeft: "8px" }}>
 										<button
+											type="button"
 											className="provider-btn provider-btn-sm provider-btn-secondary"
 											onClick={() => loadDetail(sk)}
 										>
@@ -851,6 +863,7 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 										</button>
 										{!sk.enabled && (
 											<button
+												type="button"
 												className="provider-btn provider-btn-sm"
 												disabled={installingSkill.value === sk.name}
 												onClick={(e) => {

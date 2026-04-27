@@ -1384,6 +1384,7 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
         store.save(&manifest).map_err(ServiceError::message)?;
     }
 
+    let mut auto_trusted = false;
     if enabled {
         let quarantined = manifest
             .find_repo(source)
@@ -1414,15 +1415,7 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
                     format!("skill '{skill_name}' not found in repo '{source}'").into(),
                 );
             }
-            security_audit(
-                "skills.skill.trust",
-                serde_json::json!({
-                    "source": source,
-                    "skill": skill_name,
-                    "trusted": true,
-                    "auto": true,
-                }),
-            );
+            auto_trusted = true;
         }
     }
 
@@ -1431,6 +1424,17 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
     }
     store.save(&manifest).map_err(ServiceError::message)?;
 
+    if auto_trusted {
+        security_audit(
+            "skills.skill.trust",
+            serde_json::json!({
+                "source": source,
+                "skill": skill_name,
+                "trusted": true,
+                "auto": true,
+            }),
+        );
+    }
     security_audit(
         "skills.skill.toggle",
         serde_json::json!({
