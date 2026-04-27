@@ -13,7 +13,7 @@ use {
         DebounceEventResult, Debouncer, RecommendedCache, new_debouncer, notify::RecursiveMode,
     },
     tokio::sync::mpsc,
-    tracing::{debug, info, warn},
+    tracing::{debug, warn},
 };
 
 use crate::{

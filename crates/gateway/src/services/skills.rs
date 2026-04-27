@@ -204,8 +204,14 @@ impl SkillsService for NoopSkillsService {
             moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
         let manifest_path = moltis_skills::manifest::ManifestStore::default_path()
             .map_err(ServiceError::message)?;
+        tracing::info!(manifest_path = %manifest_path.display(), "repos_list_full: loading manifest");
         let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
         let mut manifest = store.load().map_err(ServiceError::message)?;
+        for repo in &manifest.repos {
+            let enabled = repo.skills.iter().filter(|s| s.enabled).count();
+            let total = repo.skills.len();
+            tracing::info!(source = %repo.source, enabled, total, "repos_list_full: repo state from manifest");
+        }
         let (drift_changed, drifted_sources) =
             detect_and_mark_repo_drift(&mut manifest, &install_dir);
         if drift_changed {
@@ -1378,10 +1384,9 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
         .and_then(|v| v.as_str())
         .ok_or_else(|| "missing 'skill' parameter".to_string())?;
 
-    tracing::info!(source, skill_name, enabled, "toggle_skill: called");
-
     let manifest_path =
         moltis_skills::manifest::ManifestStore::default_path().map_err(ServiceError::message)?;
+    tracing::info!(source, skill_name, enabled, manifest_path = %manifest_path.display(), "toggle_skill: called");
     let store = moltis_skills::manifest::ManifestStore::new(manifest_path);
     let mut manifest = store.load().map_err(ServiceError::message)?;
 
@@ -1389,6 +1394,7 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
         moltis_skills::install::default_install_dir().map_err(ServiceError::message)?;
     let (drift_changed, drifted_sources) = detect_and_mark_repo_drift(&mut manifest, &install_dir);
     if drift_changed {
+        tracing::warn!(source, skill_name, "toggle_skill: drift detected, saving reset manifest");
         store.save(&manifest).map_err(ServiceError::message)?;
     }
 
