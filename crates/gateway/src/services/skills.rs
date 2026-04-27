@@ -1458,7 +1458,25 @@ fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {
         }),
     );
 
-    tracing::info!(source, skill_name, enabled, auto_trusted, "toggle_skill: success");
+    // Verify the save persisted by re-reading the file
+    let verify = store.load().map_err(ServiceError::message)?;
+    let verify_enabled = verify
+        .find_repo(source)
+        .map(|r| r.skills.iter().filter(|s| s.enabled).count())
+        .unwrap_or(0);
+    let verify_total = verify
+        .find_repo(source)
+        .map(|r| r.skills.len())
+        .unwrap_or(0);
+    tracing::info!(
+        source,
+        skill_name,
+        enabled,
+        auto_trusted,
+        verify_enabled,
+        verify_total,
+        "toggle_skill: success (verified from disk)"
+    );
     Ok(serde_json::json!({ "source": source, "skill": skill_name, "enabled": enabled }))
 }
 
