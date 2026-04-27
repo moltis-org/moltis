@@ -538,6 +538,7 @@ impl HookRegistry {
                 let result = handler.handle(event, &payload).await;
                 let latency = start.elapsed();
                 match &result {
+                    // Security: Ok includes Block — see dispatch_sequential.
                     Ok(_) => stats.record_success(latency),
                     Err(_) => stats.record_failure(latency),
                 }
@@ -1196,8 +1197,8 @@ mod tests {
     }
 
     /// GH #547: Security hooks that return Block must never trip the circuit
-    /// breaker. Exit 1 from a shell hook maps to Ok(Block), which is recorded
-    /// as a success so consecutive_failures stays at 0.
+    /// breaker (async path). Exit 1 from a shell hook maps to Ok(Block),
+    /// which is recorded as a success so consecutive_failures stays at 0.
     #[tokio::test]
     async fn blocking_hooks_never_trip_circuit_breaker() {
         let mut registry = HookRegistry::new().with_circuit_breaker(2, Duration::from_millis(100));
@@ -1219,6 +1220,33 @@ mod tests {
         assert!(
             !stats.disabled.load(Ordering::Relaxed),
             "security hook must not be disabled by blocks"
+        );
+        assert_eq!(stats.consecutive_failures.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.failure_count.load(Ordering::Relaxed), 0);
+        assert_eq!(stats.call_count.load(Ordering::Relaxed), 10);
+    }
+
+    /// GH #547: Same invariant as above, but for the synchronous dispatch path.
+    #[test]
+    fn blocking_hooks_never_trip_circuit_breaker_sync() {
+        let mut registry = HookRegistry::new().with_circuit_breaker(2, Duration::from_millis(100));
+        registry.register(Arc::new(BlockingPriorityHandler {
+            handler_name: "security-filter-sync".into(),
+            handler_priority: 0,
+            subscribed: vec![HookEvent::BeforeToolCall],
+        }));
+
+        let payload = modifying_payload();
+
+        for _ in 0..10 {
+            let result = registry.dispatch_sync(&payload).unwrap();
+            assert!(matches!(result, HookAction::Block(_)));
+        }
+
+        let stats = registry.handler_stats("security-filter-sync").unwrap();
+        assert!(
+            !stats.disabled.load(Ordering::Relaxed),
+            "security hook must not be disabled by blocks (sync)"
         );
         assert_eq!(stats.consecutive_failures.load(Ordering::Relaxed), 0);
         assert_eq!(stats.failure_count.load(Ordering::Relaxed), 0);
