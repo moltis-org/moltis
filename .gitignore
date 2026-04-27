@@ -6,34 +6,28 @@ prompts
 .env
 .env.*
 .DS_Store
-.claude/worktrees/
-.entire/
-.playwright-mcp/
-features/
-.moltis/
-docs/book/
-apps/macos/Generated/
-apps/macos/Moltis.xcodeproj/
-apps/macos/.derivedData*/
-apps/ios/MoltisCompanion.xcodeproj/
-apps/ios/Moltis.xcodeproj/
-apps/ios/.derivedData*/
-apps/ios/.tools/
-apps/ios/local.xcconfig
+
+# Node modules
+crates/*/ui/node_modules/
+crates/*/ui/playwright-report/
+crates/*/ui/test-results/
 crates/web/ui/node_modules/
-crates/web/ui/playwright-report/
-crates/web/ui/test-results/
-website/node_modules/
-website/.playwright-mcp/
-crates/web/src/assets/js/vendor/shiki.mjs
 crates/gateway/ui/node_modules/
-crates/gateway/ui/playwright-report/
-crates/gateway/ui/test-results/
+
+# Build/vendor artifacts
+crates/web/src/assets/js/vendor/shiki.mjs
+
+# Directories removed from moltis-mini fork
+apps/
+website/
+.beads/
+plans/
+presentations/
 
 # Local validation cache
 .local-validate-ok
 
-# Dolt database files (added by bd init)
+# Database/cache files
 .dolt/
 *.db
 .codesight/

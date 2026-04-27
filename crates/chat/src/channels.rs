@@ -522,7 +522,8 @@ async fn deliver_channel_replies_to_targets(
                             // When telegram feature is disabled, this evaluates to false and we
                             // send voice + follow-up text.
                             #[cfg(feature = "telegram")]
-                            let fits_in_caption = transcript.len() <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT;
+                            let fits_in_caption = transcript.len()
+                                <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT;
                             #[cfg(not(feature = "telegram"))]
                             let fits_in_caption = false;
 
