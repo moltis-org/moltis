@@ -427,6 +427,22 @@ pub(super) async fn complete_startup(
     #[allow(unused_variables)]
     let code_index_for_tools_builtin = Arc::clone(&code_index);
 
+    // Create IndexJobManager for coordinating auto-index operations.
+    #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+    let index_job_manager = {
+        use moltis_code_index::IndexJobManagerConfig;
+        let jm_config = IndexJobManagerConfig {
+            auto_index_on_startup: config.code_index.auto_index_on_startup,
+            auto_index_on_create: config.code_index.auto_index_on_create,
+            periodic_reindex_interval: config.code_index.periodic_reindex_interval,
+            max_concurrent_jobs: config.code_index.max_concurrent_jobs,
+        };
+        Arc::new(moltis_code_index::IndexJobManager::new(
+            Arc::clone(&code_index),
+            jm_config,
+        ))
+    };
+
     let state = GatewayState::with_options(
         resolved_auth,
         services,
@@ -440,6 +456,8 @@ pub(super) async fn complete_startup(
         hook_registry.clone(),
         memory_manager.clone(),
         code_index,
+        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+        index_job_manager,
         port,
         config.server.ws_request_logs,
         deploy_platform.clone(),
@@ -1421,6 +1439,36 @@ pub(super) async fn complete_startup(
             },
         }
     };
+
+    // Start auto-indexing for enabled projects if configured.
+    #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+    {
+        use std::path::PathBuf;
+        if config.code_index.auto_index_on_startup {
+            let jm = Arc::clone(&state.index_job_manager);
+            let projects_store = Arc::clone(&inputs.project_store);
+            tokio::spawn(async move {
+                match projects_store.list().await {
+                    Ok(projects) => {
+                        let enabled: Vec<(String, PathBuf)> = projects
+                            .iter()
+                            .filter(|p| p.code_index_enabled)
+                            .map(|p| (p.id.clone(), p.directory.clone()))
+                            .collect();
+                        info!(
+                            count = enabled.len(),
+                            "starting auto-index for enabled projects"
+                        );
+                        jm.index_all_enabled_projects(enabled.clone()).await;
+                        jm.start_periodic_reindex_loop(enabled);
+                    },
+                    Err(e) => {
+                        warn!(error = %e, "failed to list projects for auto-index");
+                    },
+                }
+            });
+        }
+    }
 
     startup_mem_probe.checkpoint("prepare_gateway.ready");
 
