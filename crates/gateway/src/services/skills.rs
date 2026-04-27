@@ -498,6 +498,10 @@ impl SkillsService for NoopSkillsService {
     }
 
     async fn skill_enable(&self, params: Value) -> ServiceResult {
+        let source = params.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        if source == "bundled" {
+            return toggle_bundled_skill(&params, true);
+        }
         toggle_skill(&params, true)
     }
 
@@ -507,6 +511,10 @@ impl SkillsService for NoopSkillsService {
         // Personal/project skills live as files — delete the directory to disable.
         if source == "personal" || source == "project" {
             return delete_discovered_skill(source, &params);
+        }
+
+        if source == "bundled" {
+            return toggle_bundled_skill(&params, false);
         }
 
         toggle_skill(&params, false)
@@ -1262,6 +1270,15 @@ fn skill_detail_bundled(skill_name: &str) -> ServiceResult {
 
     let elig = check_requirements(meta);
 
+    let config = moltis_config::discover_and_load();
+    let enabled = meta.category.as_deref().is_none_or(|cat| {
+        !config
+            .skills
+            .disabled_bundled_categories
+            .iter()
+            .any(|c| c == cat)
+    });
+
     Ok(serde_json::json!({
         "name": meta.name,
         "description": meta.description,
@@ -1275,12 +1292,74 @@ fn skill_detail_bundled(skill_name: &str) -> ServiceResult {
         "missing_bins": elig.missing_bins,
         "install_options": elig.install_options,
         "trusted": true,
-        "enabled": true,
+        "enabled": enabled,
         "protected": true,
         "body": body,
         "body_html": markdown_to_html(&body),
         "source": "bundled",
     }))
+}
+
+/// Toggle a bundled skill by adding/removing its category from
+/// `disabled_bundled_categories` in config. Bundled skills are not tracked
+/// in the manifest, so `toggle_skill()` cannot handle them.
+fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResult {
+    let skill_name = params
+        .get("skill")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing 'skill' parameter".to_string())?;
+
+    // Find the category for this bundled skill.
+    #[cfg(feature = "bundled-skills")]
+    {
+        let store = moltis_skills::bundled::BundledSkillStore::new();
+        let skills = store.discover();
+        let skill = skills
+            .iter()
+            .find(|s| s.name == skill_name)
+            .ok_or_else(|| format!("bundled skill '{skill_name}' not found"))?;
+        let category = skill
+            .category
+            .clone()
+            .ok_or_else(|| format!("bundled skill '{skill_name}' has no category"))?;
+
+        let cat_clone = category.clone();
+        if let Err(e) = moltis_config::update_config(|cfg| {
+            if enabled {
+                cfg.skills
+                    .disabled_bundled_categories
+                    .retain(|c| c != &cat_clone);
+            } else if !cfg
+                .skills
+                .disabled_bundled_categories
+                .iter()
+                .any(|c| c == &cat_clone)
+            {
+                cfg.skills.disabled_bundled_categories.push(cat_clone);
+            }
+        }) {
+            return Err(format!("failed to save config: {e}").into());
+        }
+
+        security_audit(
+            "skills.skill.toggle",
+            serde_json::json!({
+                "source": "bundled",
+                "skill": skill_name,
+                "category": category,
+                "enabled": enabled,
+            }),
+        );
+
+        Ok(
+            serde_json::json!({ "source": "bundled", "skill": skill_name, "category": category, "enabled": enabled }),
+        )
+    }
+    #[cfg(not(feature = "bundled-skills"))]
+    {
+        let _ = (skill_name, enabled);
+        Err("bundled skills are not available in this build".into())
+    }
 }
 
 fn toggle_skill(params: &Value, enabled: bool) -> ServiceResult {

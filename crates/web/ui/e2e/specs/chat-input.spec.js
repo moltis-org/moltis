@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, openChatMoreModal, waitForWsConnected, watchPageErrors } = require("../helpers");
+const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 function isRetryableRpcError(message) {
 	if (typeof message !== "string") return false;
@@ -196,7 +196,6 @@ async function fullContextPanelState(copyBtn, copiedBtn, downloadBtn, llmOutputB
 }
 
 async function openFullContextWithRetry(page) {
-	const chatMoreModal = page.locator("#chatMoreModal");
 	const fullContextModal = page.locator("#fullContextModal");
 	const toggleBtn = page.locator("#fullContextBtn");
 	const panel = page.locator("#fullContextPanel");
@@ -210,10 +209,8 @@ async function openFullContextWithRetry(page) {
 		await waitForWsConnectedIfPossible(page);
 		await closeFullContextIfOpen(page, fullContextModal);
 
-		await openChatMoreModal(page);
 		await expect(toggleBtn).toBeVisible({ timeout: 8_000 });
 		await toggleBtn.click();
-		await expect(chatMoreModal).toBeHidden({ timeout: 8_000 });
 		await expect(fullContextModal).toBeVisible({ timeout: 8_000 });
 		await expect(panel).toBeVisible();
 

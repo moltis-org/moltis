@@ -13,6 +13,7 @@ export enum WsEventName {
 	SandboxHostProvision = "sandbox.host.provision",
 	BrowserImagePull = "browser.image.pull",
 	LocalLlmDownload = "local-llm.download",
+	LocalLlmLifecycle = "local-llm.lifecycle",
 	ModelsUpdated = "models.updated",
 	LocationRequest = "location.request",
 	NetworkAuditEntry = "network.audit.entry",
@@ -194,6 +195,14 @@ export interface LocalLlmDownloadPayload {
 	total?: number;
 }
 
+export interface LocalLlmLifecyclePayload {
+	modelId: string;
+	state: "loading" | "loaded" | "unloading" | "unloaded";
+	modelSizeBytes?: number;
+	totalLoadedBytes?: number;
+	reason?: "idle" | "manual";
+}
+
 export interface ModelsUpdatedPayload {
 	phase?: string;
 	[key: string]: unknown;
@@ -247,6 +256,7 @@ export interface WsEventPayloadMap {
 	[WsEventName.SandboxHostProvision]: SandboxPhasePayload;
 	[WsEventName.BrowserImagePull]: SandboxPhasePayload;
 	[WsEventName.LocalLlmDownload]: LocalLlmDownloadPayload;
+	[WsEventName.LocalLlmLifecycle]: LocalLlmLifecyclePayload;
 	[WsEventName.ModelsUpdated]: ModelsUpdatedPayload;
 	[WsEventName.LocationRequest]: LocationRequestPayload;
 	[WsEventName.NetworkAuditEntry]: Record<string, unknown>;

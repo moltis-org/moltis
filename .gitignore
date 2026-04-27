@@ -12,7 +12,15 @@ crates/*/ui/node_modules/
 crates/*/ui/playwright-report/
 crates/*/ui/test-results/
 crates/web/ui/node_modules/
+crates/web/ui/playwright-report/
+crates/web/ui/test-results/
 crates/gateway/ui/node_modules/
+
+# Generated web assets (run `just build-web-assets` to regenerate)
+crates/web/src/assets/dist/
+crates/web/src/assets/css/style.css
+crates/web/src/assets/style.css
+crates/web/src/assets/sw.js
 
 # Build/vendor artifacts
 crates/web/src/assets/js/vendor/shiki.mjs

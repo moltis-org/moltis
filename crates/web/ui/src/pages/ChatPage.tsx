@@ -8,7 +8,6 @@
 // The original JS file documents this explicitly. The eslint-disable comment
 // is preserved from the original source.
 
-import { effect } from "@preact/signals";
 import { render } from "preact";
 import { chatAddMsg, hideNewContentIndicator, isChatAtBottom, smartScrollToBottom } from "../chat-ui";
 import { SessionHeader } from "../components/SessionHeader";
@@ -22,9 +21,8 @@ import { bindReasoningToggle, unbindReasoningToggle } from "../reasoning-toggle"
 import { registerPrefix, sessionPath } from "../router";
 import { routes } from "../routes";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "../sandbox";
-import { clearAllSessions, switchSession } from "../sessions";
+import { switchSession } from "../sessions";
 import * as S from "../state";
-import { sessionStore } from "../stores/session-store";
 import { initVadButton, initVoiceInput, teardownVoiceInput } from "../voice-input";
 import {
 	chatAutoResize,
@@ -59,9 +57,8 @@ import {
 } from "./chat/slash-commands";
 
 // ── Module state ─────────────────────────────────────────────
-let chatMoreModalKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
-let disposeSessionControlsVisibility: (() => void) | null = null;
 let promptMemoryToolbarRequestId = 0;
+let contextModalsKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
 
 // ── Prompt memory toolbar helpers ─────────────────────────────
 
@@ -624,131 +621,52 @@ function handleChatCopy(e: ClipboardEvent): void {
 
 // ── Session header controls ──────────────────────────────────
 
-function mountSessionHeaderControls(closeChatMore: () => void): void {
+function mountSessionHeaderControls(): void {
+	const sessionNameMount = S.$("sessionNameMount");
+	if (sessionNameMount) {
+		render(
+			<SessionHeader
+				showSelectors={false}
+				showName={true}
+				showShare={false}
+				showFork={false}
+				showStop={false}
+				showClear={false}
+				showDelete={false}
+				showArchive={false}
+			/>,
+			sessionNameMount,
+		);
+	}
 	const headerToolbarMount = S.$("sessionHeaderToolbarMount");
 	if (headerToolbarMount) {
 		render(
 			<SessionHeader
 				showName={false}
-				showShare={false}
 				showFork={false}
+				showShare={false}
 				showClear={false}
 				showDelete={false}
 				showArchive={false}
+				showStop={false}
 			/>,
 			headerToolbarMount,
 		);
 	}
-	const headerModalMount = S.$("sessionHeaderModalMount");
-	if (headerModalMount) {
-		render(
-			<SessionHeader
-				showSelectors={false}
-				showStop={false}
-				showFork={false}
-				showShare={false}
-				showDelete={false}
-				showArchive={false}
-				nameOwnLine={true}
-				showRenameButton={true}
-			/>,
-			headerModalMount,
-		);
-	}
-	const headerModalTopMount = S.$("sessionHeaderModalTopMount");
-	if (headerModalTopMount) {
+	const sessionActionsMount = S.$("sessionActionsMount");
+	if (sessionActionsMount) {
 		render(
 			<SessionHeader
 				showSelectors={false}
 				showName={false}
 				showStop={false}
-				actionButtonClass={"provider-btn provider-btn-secondary provider-btn-sm"}
-				onBeforeShare={() => closeChatMore?.()}
-				onBeforeArchive={() => closeChatMore?.()}
-				onBeforeDelete={() => closeChatMore?.()}
+				actionButtonClass={
+					"text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] text-[var(--muted)]"
+				}
 			/>,
-			headerModalTopMount,
+			sessionActionsMount,
 		);
 	}
-}
-
-function bindSessionControlsVisibility(): void {
-	const sec = S.$("sessionControlsSection") as HTMLElement | null;
-	if (!sec) return;
-	disposeSessionControlsVisibility?.();
-	disposeSessionControlsVisibility = effect(() => {
-		const isMain = (sessionStore.activeSessionKey.value || "main") === "main";
-		sec.classList.toggle("hidden", isMain);
-	});
-}
-
-function bindChatMoreModal(
-	debugModal: HTMLElement | null,
-	fullContextModal: HTMLElement | null,
-	closeDebugModal: (() => void) | null,
-	closeFullContextModal: (() => void) | null,
-): (() => void) | null {
-	const chatMoreModal = S.$("chatMoreModal") as HTMLElement | null;
-	const chatMoreBtn = S.$("chatMoreBtn") as HTMLElement | null;
-	if (!(chatMoreModal && chatMoreBtn)) return null;
-	const closeChatMore = (): void => {
-		chatMoreModal.classList.add("hidden");
-		chatMoreBtn.classList.remove("active");
-		if (S.sandboxImageDropdown) S.sandboxImageDropdown.classList.add("hidden");
-	};
-	const openChatMore = (): void => {
-		setDebugModalOpen(false);
-		setFullContextModalOpen(false);
-		chatMoreModal.classList.remove("hidden");
-		chatMoreBtn.classList.add("active");
-	};
-	chatMoreBtn.addEventListener("click", openChatMore);
-	chatMoreModal.addEventListener("click", (e: MouseEvent) => {
-		if (e.target === chatMoreModal) closeChatMore();
-	});
-	for (const id of ["debugPanelBtn", "fullContextBtn"]) {
-		const b = S.$(id);
-		if (b) b.addEventListener("click", closeChatMore);
-	}
-	chatMoreModalKeydownHandler = (e: KeyboardEvent): void => {
-		if (e.key !== "Escape") return;
-		if (fullContextModal && !fullContextModal.classList.contains("hidden")) {
-			closeFullContextModal?.();
-			return;
-		}
-		if (debugModal && !debugModal.classList.contains("hidden")) {
-			closeDebugModal?.();
-			return;
-		}
-		closeChatMore();
-	};
-	document.addEventListener("keydown", chatMoreModalKeydownHandler);
-	return closeChatMore;
-}
-
-function bindDeleteAllSessions(closeChatMore: (() => void) | null): void {
-	const btn = S.$("chatMoreDeleteAllBtn") as HTMLButtonElement | null;
-	if (!btn) return;
-	const label = S.$("chatMoreDeleteAllLabel") as HTMLElement | null;
-	let inFlight = false;
-	btn.addEventListener("click", () => {
-		if (inFlight) return;
-		inFlight = true;
-		btn.disabled = true;
-		if (label) label.textContent = "Deleting\u2026";
-		closeChatMore?.();
-		clearAllSessions()
-			.then((res: any) => {
-				if (res?.ok && !res?.skipped) return;
-				if (res?.cancelled || res?.skipped) return;
-				chatAddMsg("error", res?.error?.message || "Failed to clear sessions");
-			})
-			.finally(() => {
-				inFlight = false;
-				btn.disabled = false;
-				if (label) label.textContent = "Delete all sessions";
-			});
-	});
 }
 
 function bindChatComposer(): void {
@@ -842,6 +760,17 @@ function bindContextModals(): {
 			if (e.target === fullContextModal) closeFullContextModal?.();
 		});
 	}
+	contextModalsKeydownHandler = (e: KeyboardEvent): void => {
+		if (e.key !== "Escape") return;
+		if (fullContextModal && !fullContextModal.classList.contains("hidden")) {
+			closeFullContextModal?.();
+			return;
+		}
+		if (debugModal && !debugModal.classList.contains("hidden")) {
+			closeDebugModal?.();
+		}
+	};
+	document.addEventListener("keydown", contextModalsKeydownHandler);
 	return { debugModal, fullContextModal, closeDebugModal, closeFullContextModal };
 }
 
@@ -884,9 +813,14 @@ const chatPageHTML =
 	'<div id="reasoningCombo" class="model-combo hidden"><button id="reasoningComboBtn" class="model-combo-btn" type="button" title="Reasoning effort"><span class="icon icon-sm icon-brain" style="flex-shrink:0;"></span><span id="reasoningComboLabel">Off</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="reasoningDropdown" class="model-dropdown hidden"><div id="reasoningDropdownList" class="model-dropdown-list"></div></div></div>' +
 	'<div id="nodeCombo" class="model-combo hidden"><button id="nodeComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-server" style="flex-shrink:0;"></span><span id="nodeComboLabel">Local</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="nodeDropdown" class="model-dropdown hidden" tabindex="-1"><div id="nodeDropdownList" class="model-dropdown-list"></div></div></div>' +
 	'<div id="projectCombo" class="model-combo hidden"><button id="projectComboBtn" class="model-combo-btn" type="button"><span class="icon icon-sm icon-folder" style="flex-shrink:0;"></span><span id="projectComboLabel">No project</span><span class="icon icon-sm icon-chevron-down model-combo-chevron"></span></button><div id="projectDropdown" class="model-dropdown hidden"><div id="projectDropdownList" class="model-dropdown-list"></div></div></div>' +
-	'<div id="sessionHeaderToolbarMount" class="ml-auto flex items-center gap-1.5"></div>' +
-	'<button id="chatMoreBtn" type="button" class="model-combo-btn" title="More controls" aria-label="More controls"><span class="icon icon-lg icon-menu-dots-horizontal"></span></button></div>' +
-	'<div id="chatMoreModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:560px;max-width:92vw;"><div class="provider-modal-header"><div class="flex items-center gap-2"><button id="chatMoreDeleteAllBtn" type="button" class="provider-btn provider-btn-sm chat-session-btn-danger inline-flex items-center gap-1.5" style="background:var(--error);border-color:var(--error);color:#fff;"><span class="icon icon-sm icon-x-circle shrink-0"></span><span id="chatMoreDeleteAllLabel">Delete all sessions</span></button></div><div id="sessionHeaderModalTopMount" class="flex items-center gap-2"></div></div><div class="provider-modal-body flex flex-col gap-3"><div class="flex flex-wrap items-center gap-2"><button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">sandboxed</span></button><div style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">ubuntu:25.10</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div><button id="mcpToggleBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle MCP tools for this session"><span class="icon icon-md icon-link shrink-0"></span><span id="mcpToggleLabel">MCP</span></button><button id="debugPanelBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show context debug info"><span class="icon icon-md icon-wrench shrink-0"></span><span id="debugPanelLabel">Debug</span></button><button id="fullContextBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show full LLM context (system prompt + history)"><span class="icon icon-md icon-document shrink-0"></span><span id="fullContextLabel">Context</span></button></div><div id="sessionControlsSection" class="border-t border-[var(--border)] pt-3"><div id="sessionHeaderModalMount" class="w-full"></div></div></div></div></div>' +
+	'<div id="sessionNameMount" class="ml-auto flex items-center min-w-0"></div>' +
+	'<div id="sessionHeaderToolbarMount" class="flex items-center gap-1.5"></div>' +
+	'<button id="sandboxToggle" class="sandbox-toggle text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle sandbox mode"><span class="icon icon-md icon-lock shrink-0"></span><span id="sandboxLabel">sandboxed</span></button>' +
+	'<div class="chat-badge-desktop-only" style="position:relative;display:inline-block"><button id="sandboxImageBtn" class="text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Sandbox image"><span class="icon icon-md icon-cube shrink-0"></span><span id="sandboxImageLabel" class="max-w-[120px] truncate">ubuntu:25.10</span></button><div id="sandboxImageDropdown" class="hidden" style="position:absolute;top:100%;left:0;z-index:50;margin-top:4px;min-width:200px;max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.15);"></div></div>' +
+	'<button id="mcpToggleBtn" class="chat-badge-desktop-only text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1" title="Toggle MCP tools for this session"><span class="icon icon-md icon-link shrink-0"></span><span id="mcpToggleLabel">MCP</span></button>' +
+	'<button id="debugPanelBtn" class="chat-badge-desktop-only text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show context debug info"><span class="icon icon-md icon-wrench shrink-0"></span><span id="debugPanelLabel">Debug</span></button>' +
+	'<button id="fullContextBtn" class="chat-badge-desktop-only text-xs border border-[var(--border)] px-2 py-1 rounded-md transition-colors cursor-pointer bg-transparent font-[var(--font-body)] inline-flex items-center gap-1 text-[var(--muted)]" title="Show full LLM context (system prompt + history)"><span class="icon icon-md icon-document shrink-0"></span><span id="fullContextLabel">Context</span></button>' +
+	'<div id="sessionActionsMount" class="flex items-center gap-1.5"></div></div>' +
 	'<div id="debugModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:min(980px,96vw);max-width:96vw;max-height:88vh;"><div class="provider-modal-header"><div class="provider-item-name">Debug context</div><button id="debugModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button></div><div class="provider-modal-body" style="padding:0;overflow:hidden;"><div id="debugPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div></div></div></div>' +
 	'<div id="fullContextModal" class="provider-modal-backdrop hidden"><div class="provider-modal" style="width:min(1080px,96vw);max-width:96vw;max-height:88vh;"><div class="provider-modal-header"><div class="provider-item-name">Full context</div><button id="fullContextModalCloseBtn" type="button" class="provider-btn provider-btn-secondary provider-btn-sm">Close</button></div><div class="provider-modal-body" style="padding:0;overflow:hidden;"><div id="fullContextPanel" class="px-4 py-3 overflow-y-auto" style="max-height:72vh;"></div></div></div></div>' +
 	'<div class="p-4 flex flex-col gap-2" id="messages" style="grid-row:3;overflow-y:auto;min-height:0"></div>' +
@@ -918,17 +852,13 @@ registerPrefix(
 		setSendChatFn(sendChat);
 		setMaybeRefreshFullContextFn(maybeRefreshFullContext);
 
-		let closeChatMore: (() => void) | null = null;
-		mountSessionHeaderControls(() => closeChatMore?.());
-		bindSessionControlsVisibility();
+		mountSessionHeaderControls();
 
 		const mcpToggle = S.$("mcpToggleBtn");
 		if (mcpToggle) mcpToggle.addEventListener("click", toggleMcp);
 		updateMcpToggleUI(true);
 
-		const mb = bindContextModals();
-		closeChatMore = bindChatMoreModal(mb.debugModal, mb.fullContextModal, mb.closeDebugModal, mb.closeFullContextModal);
-		bindDeleteAllSessions(closeChatMore);
+		bindContextModals();
 
 		const debugBtn = S.$("debugPanelBtn");
 		if (debugBtn) debugBtn.addEventListener("click", toggleDebugPanel);
@@ -962,18 +892,16 @@ registerPrefix(
 		unbindReasoningToggle();
 		unbindNodeEvents();
 		slashHideMenu();
-		if (chatMoreModalKeydownHandler) {
-			document.removeEventListener("keydown", chatMoreModalKeydownHandler);
-			chatMoreModalKeydownHandler = null;
+		if (contextModalsKeydownHandler) {
+			document.removeEventListener("keydown", contextModalsKeydownHandler);
+			contextModalsKeydownHandler = null;
 		}
-		disposeSessionControlsVisibility?.();
-		disposeSessionControlsVisibility = null;
+		const m0 = S.$("sessionNameMount");
+		if (m0) render(null, m0);
 		const m1 = S.$("sessionHeaderToolbarMount");
 		if (m1) render(null, m1);
-		const m2 = S.$("sessionHeaderModalMount");
+		const m2 = S.$("sessionActionsMount");
 		if (m2) render(null, m2);
-		const m3 = S.$("sessionHeaderModalTopMount");
-		if (m3) render(null, m3);
 		S.setChatMsgBox(null);
 		S.setChatInput(null);
 		S.setChatSendBtn(null);

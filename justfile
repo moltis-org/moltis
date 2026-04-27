@@ -37,6 +37,18 @@ lint: lockfile-check
 build-css:
     cd crates/web/ui && ./build.sh
 
+# Build Vite frontend JS (TS/TSX -> dist/).
+build-frontend:
+    cd crates/web/ui && npm run build
+
+# Build the service worker (sw.ts -> sw.js).
+build-sw:
+    cd crates/web/ui && npm run build:sw
+
+# Build all web assets (Vite JS + Tailwind CSS + service worker).
+build-web-assets:
+    ./scripts/build-web-assets.sh
+
 # Ad-hoc codesign debug binaries (macOS only, requires MACOS_CODESIGN_IDENTITY).
 # Signs the main binary and all test binaries in target/debug/deps/ so Little
 # Snitch doesn't prompt on every rebuild during local dev.
@@ -55,7 +67,7 @@ codesign-debug:
     done
 
 # Build the project
-build: build-css
+build: build-web-assets
     cargo build
     just codesign-debug
 
@@ -238,12 +250,12 @@ flatpak:
     cd flatpak && flatpak-builder --repo=repo --force-clean builddir org.moltbot.Moltis.yml
 
 # Run all CI checks (format, lint, build, test)
-ci: format-check lint i18n-check build-css build test
+ci: format-check lint i18n-check build-web-assets build test
 
 # Compile once, then run Rust tests and E2E tests in parallel.
 # Uses the same nightly toolchain as clippy/local-validate so the build cache
 # is shared — no double-compilation.
-build-test: build-css
+build-test: build-web-assets
     #!/usr/bin/env bash
     set -euo pipefail
     echo "==> Building all workspace targets (bins + tests)..."

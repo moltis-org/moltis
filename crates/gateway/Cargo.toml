@@ -27,7 +27,7 @@ moltis-chat             = { workspace = true }
 moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
 moltis-cron             = { workspace = true }
-moltis-discord          = { workspace = true }
+moltis-discord          = { optional = true, workspace = true }
 moltis-home-assistant   = { optional = true, workspace = true }
 moltis-mcp              = { workspace = true }
 moltis-mcp-agent-bridge = { workspace = true }
@@ -35,7 +35,7 @@ moltis-media            = { workspace = true }
 moltis-code-index       = { workspace = true }
 moltis-memory           = { workspace = true }
 moltis-metrics          = { optional = true, workspace = true }
-moltis-msteams          = { workspace = true }
+moltis-msteams          = { optional = true, workspace = true }
 moltis-oauth            = { workspace = true }
 moltis-onboarding       = { workspace = true }
 moltis-plugins          = { workspace = true }
@@ -48,6 +48,8 @@ moltis-secret-store     = { workspace = true }
 moltis-service-traits   = { workspace = true }
 moltis-sessions         = { workspace = true }
 moltis-skills           = { workspace = true }
+moltis-slack            = { optional = true, workspace = true }
+moltis-tailscale        = { optional = true, workspace = true }
 moltis-telegram         = { optional = true, workspace = true }
 moltis-tools            = { workspace = true }
 moltis-vault            = { optional = true, workspace = true }
@@ -114,17 +116,17 @@ local-llm-vulkan = ["local-llm", "moltis-providers/local-llm-vulkan"]
 metrics = [
   "dep:moltis-metrics",
   "moltis-chat/metrics",
-  "moltis-discord/metrics",
+  "moltis-discord?/metrics",
   "moltis-metrics/sqlite",
-  "moltis-msteams/metrics",
+  "moltis-msteams?/metrics",
 ]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 tls = []
-vault = ["dep:moltis-vault", "moltis-auth/vault", "moltis-secret-store/vault"]
+discord = ["dep:moltis-discord", "moltis-discord/metrics"]
+msteams = ["dep:moltis-msteams", "moltis-msteams/metrics"]
+vault = ["dep:moltis-vault", "moltis-auth/vault", "moltis-provider-setup/vault", "moltis-secret-store/vault"]
 wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
-telegram = ["dep:moltis-telegram"]
-
 # Stub features — crates removed from moltis-mini.
 caldav             = []
 firecrawl          = []

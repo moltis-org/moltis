@@ -820,6 +820,18 @@ impl moltis_service_traits::LocalLlmService for MockLocalLlm {
     async fn remove_model(&self, p: Value) -> ServiceResult {
         self.0.call("providers.local.remove_model", p)
     }
+
+    async fn load_model(&self, p: Value) -> ServiceResult {
+        self.0.call("providers.local.load_model", p)
+    }
+
+    async fn unload_model(&self, p: Value) -> ServiceResult {
+        self.0.call("providers.local.unload_model", p)
+    }
+
+    async fn model_states(&self) -> ServiceResult {
+        self.0.call("providers.local.model_states", json!({}))
+    }
 }
 
 #[async_trait::async_trait]

@@ -10,8 +10,10 @@ import type {
 	BackendInfo,
 	HfSearchResult,
 	LocalLlmDownloadPayload,
+	LocalLlmLifecyclePayload,
 	LocalModelInfo,
 	ModelSelectorWrapper,
+	ModelStateEntry,
 	ModelsData,
 	ProviderInfo,
 	SystemInfo,
@@ -19,6 +21,43 @@ import type {
 
 // Store the selected backend for model configuration
 let selectedBackend: string | null = null;
+
+// ── Model lifecycle state tracking ──────────────────────────
+
+/** Cached model lifecycle states, keyed by model_id. */
+const modelStates: Record<string, ModelStateEntry> = {};
+
+/** Subscribe to lifecycle events. Call once on page load. */
+export function initModelLifecycleTracking(): void {
+	onEvent("local-llm.lifecycle", (payload: unknown) => {
+		const p = payload as LocalLlmLifecyclePayload;
+		if (!p.modelId) return;
+
+		const existing = modelStates[p.modelId];
+		if (existing) {
+			existing.is_loaded = p.state === "loaded";
+			existing.memory_bytes = p.modelSizeBytes ?? existing.memory_bytes;
+		}
+	});
+
+	// Fetch initial state
+	refreshModelStates();
+}
+
+/** Fetch current model states from the gateway. */
+async function refreshModelStates(): Promise<void> {
+	const res = await sendRpc<ModelStateEntry[]>("providers.local.model_states", {});
+	if (res?.ok && Array.isArray(res.payload)) {
+		for (const entry of res.payload) {
+			modelStates[entry.model_id] = entry;
+		}
+	}
+}
+
+/** Get the cached lifecycle state for a model. */
+export function getModelState(modelId: string): ModelStateEntry | undefined {
+	return modelStates[modelId];
+}
 
 export function showLocalModelFlow(provider: ProviderInfo): void {
 	const m = els();

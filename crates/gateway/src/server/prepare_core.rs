@@ -113,6 +113,12 @@ pub async fn prepare_gateway_core(
     }
     let base_provider_config = config.providers.clone();
 
+    // Migrate voice API keys from moltis.toml to the credential store on
+    // first run after upgrade.  This is idempotent — once keys are in the
+    // store the TOML entries are cleared and subsequent runs are a no-op.
+    #[cfg(feature = "voice")]
+    crate::voice::migrate_voice_keys_to_key_store(&config);
+
     // Merge any previously saved API keys into the provider config so they
     // survive gateway restarts without requiring env vars.
     let key_store = crate::provider_setup::KeyStore::new();

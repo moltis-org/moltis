@@ -845,6 +845,10 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         });
     }
 
+    // Warn about literal API keys in config (should use env var substitution
+    // or the credential store instead).
+    check_plaintext_api_keys(config, diagnostics);
+
     // tools: overflow_ratio must be greater than compaction_ratio
     if config.tools.tool_result_compaction_ratio > 0
         && config.tools.preemptive_overflow_ratio <= config.tools.tool_result_compaction_ratio
@@ -880,6 +884,110 @@ fn validate_context_window(value: Option<u32>, path: &str, diagnostics: &mut Vec
             path: path.into(),
             message: format!("context_window is {cw}, which is unusually large (> 10M)"),
         });
+    }
+}
+
+/// Warn about literal (non-env-var) API keys stored directly in the config.
+///
+/// API keys should be supplied via environment variables (e.g. `${{ANTHROPIC_API_KEY}}`)
+/// or stored in the credential store (`provider_keys.json`), not hard-coded in
+/// `moltis.toml`.  The config file may be backed up, synced, or accidentally
+/// committed to version control.
+fn looks_like_env_var(value: &str) -> bool {
+    // ${VAR} or $VAR (POSIX)
+    if value.starts_with('$') {
+        return true;
+    }
+    // %VAR% (Windows)
+    if value.starts_with('%') && value.ends_with('%') && value.len() > 2 {
+        return true;
+    }
+    false
+}
+
+fn check_plaintext_api_keys(config: &MoltisConfig, diagnostics: &mut Vec<Diagnostic>) {
+    // LLM provider keys
+    for (name, entry) in &config.providers.providers {
+        if let Some(ref key) = entry.api_key {
+            let value = key.expose_secret();
+            if !value.is_empty() && !looks_like_env_var(value) {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    category: "security",
+                    path: format!("providers.{name}.api_key"),
+                    message: format!(
+                        "API key for provider '{name}' is stored as plain text in the config file. \
+                         Use an environment variable (api_key = \"${{{}}}\") or save it via the \
+                         web UI so it is stored in the credential store instead.",
+                        name.to_uppercase().replace('-', "_") + "_API_KEY"
+                    ),
+                });
+            }
+        }
+    }
+
+    // Voice TTS keys
+    let voice_tts_keys: &[(&str, &Option<secrecy::Secret<String>>)] = &[
+        (
+            "voice.tts.elevenlabs.api_key",
+            &config.voice.tts.elevenlabs.api_key,
+        ),
+        ("voice.tts.openai.api_key", &config.voice.tts.openai.api_key),
+        ("voice.tts.google.api_key", &config.voice.tts.google.api_key),
+    ];
+    for (path, key) in voice_tts_keys {
+        if let Some(k) = key {
+            let value = k.expose_secret();
+            if !value.is_empty() && !looks_like_env_var(value) {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    category: "security",
+                    path: (*path).into(),
+                    message: format!(
+                        "Voice API key at {path} is stored as plain text in the config file. \
+                         Save it via the web UI so it is stored in the credential store instead."
+                    ),
+                });
+            }
+        }
+    }
+
+    // Voice STT keys
+    let voice_stt_keys: &[(&str, &Option<secrecy::Secret<String>>)] = &[
+        (
+            "voice.stt.whisper.api_key",
+            &config.voice.stt.whisper.api_key,
+        ),
+        ("voice.stt.groq.api_key", &config.voice.stt.groq.api_key),
+        (
+            "voice.stt.deepgram.api_key",
+            &config.voice.stt.deepgram.api_key,
+        ),
+        ("voice.stt.google.api_key", &config.voice.stt.google.api_key),
+        (
+            "voice.stt.mistral.api_key",
+            &config.voice.stt.mistral.api_key,
+        ),
+        (
+            "voice.stt.elevenlabs.api_key",
+            &config.voice.stt.elevenlabs.api_key,
+        ),
+    ];
+    for (path, key) in voice_stt_keys {
+        if let Some(k) = key {
+            let value = k.expose_secret();
+            if !value.is_empty() && !looks_like_env_var(value) {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    category: "security",
+                    path: (*path).into(),
+                    message: format!(
+                        "Voice API key at {path} is stored as plain text in the config file. \
+                         Save it via the web UI so it is stored in the credential store instead."
+                    ),
+                });
+            }
+        }
     }
 }
 

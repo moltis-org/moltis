@@ -255,7 +255,7 @@ impl KeyStore {
     }
 
     /// Load a provider's API key.
-    pub(crate) fn load(&self, provider: &str) -> Option<String> {
+    pub fn load(&self, provider: &str) -> Option<String> {
         self.load_all_configs()
             .get(provider)
             .and_then(|c| c.api_key.clone())
@@ -267,7 +267,7 @@ impl KeyStore {
     }
 
     /// Remove a provider's configuration.
-    pub(crate) fn remove(&self, provider: &str) -> crate::error::Result<()> {
+    pub fn remove(&self, provider: &str) -> crate::error::Result<()> {
         let guard = self.lock();
         let mut configs = Self::load_all_configs_from_path(&guard.path);
         configs.remove(provider);
@@ -294,6 +294,104 @@ impl KeyStore {
         models: Option<Vec<String>>,
     ) -> crate::error::Result<()> {
         self.save_config_with_display_name(provider, api_key, base_url, models, None)
+    }
+
+    /// Load all provider configs from vault-encrypted storage, falling back to
+    /// plaintext when the vault is unavailable or when the plaintext file is
+    /// newer than the encrypted copy (indicating a sync write occurred since
+    /// the last vault-unseal encryption).
+    #[cfg(feature = "vault")]
+    pub async fn load_all_configs_encrypted<C: moltis_vault::Cipher>(
+        &self,
+        vault: Option<&moltis_vault::Vault<C>>,
+    ) -> HashMap<String, ProviderConfig> {
+        let path = self.path();
+
+        // If the plaintext is newer than the .enc file, a sync write happened
+        // after the last vault-unseal encryption.  Prefer the fresher plaintext
+        // so we don't silently return stale data.
+        let enc_path = path.with_extension("json.enc");
+        if path.exists() && enc_path.exists() {
+            let json_mod = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            let enc_mod = std::fs::metadata(&enc_path).and_then(|m| m.modified()).ok();
+            if let (Some(j), Some(e)) = (json_mod, enc_mod)
+                && j > e
+            {
+                return Self::load_all_configs_from_path(&path);
+            }
+        }
+
+        match moltis_vault::migration::load_encrypted_or_plaintext(vault, &path, "provider_keys")
+            .await
+        {
+            Ok(Some(content)) => {
+                if let Ok(configs) =
+                    serde_json::from_str::<HashMap<String, ProviderConfig>>(&content)
+                {
+                    return configs;
+                }
+                // Fall back to old format migration
+                if let Ok(old_format) = serde_json::from_str::<HashMap<String, String>>(&content) {
+                    return old_format
+                        .into_iter()
+                        .map(|(k, v)| {
+                            (k, ProviderConfig {
+                                api_key: Some(v),
+                                base_url: None,
+                                models: Vec::new(),
+                                display_name: None,
+                            })
+                        })
+                        .collect();
+                }
+                warn!("encrypted provider key store is invalid JSON");
+                HashMap::new()
+            },
+            Ok(None) => HashMap::new(),
+            Err(moltis_vault::VaultError::Sealed) => {
+                warn!("vault sealed, falling back to plaintext provider key store");
+                Self::load_all_configs_from_path(&path)
+            },
+            Err(e) => {
+                warn!(error = %e, "failed to decrypt provider key store, falling back to plaintext");
+                Self::load_all_configs_from_path(&path)
+            },
+        }
+    }
+
+    /// Save all provider configs with vault encryption when available,
+    /// falling back to plaintext.
+    ///
+    /// Always writes the plaintext `.json` too so sync callers continue to
+    /// work until the full async migration is complete.
+    #[cfg(feature = "vault")]
+    pub async fn save_all_configs_encrypted<C: moltis_vault::Cipher>(
+        &self,
+        vault: Option<&moltis_vault::Vault<C>>,
+        configs: &HashMap<String, ProviderConfig>,
+    ) -> crate::error::Result<()> {
+        let path = self.path();
+        // Always write the plaintext file for sync consumers.
+        Self::save_all_configs_to_path(&path, configs)?;
+
+        // Write encrypted copy when vault is available.
+        if let Some(vault) = vault {
+            let data = serde_json::to_string_pretty(configs).map_err(|error| {
+                warn!(error = %error, "failed to serialize provider key store");
+                error
+            })?;
+            if let Err(e) = moltis_vault::migration::save_encrypted_or_plaintext(
+                Some(vault),
+                &path,
+                "provider_keys",
+                &data,
+            )
+            .await
+            {
+                warn!(error = %e, "failed to write encrypted provider key store");
+            }
+        }
+        Ok(())
     }
 
     /// Save a provider's full configuration, including an optional display name.

@@ -523,6 +523,15 @@ pub(super) async fn complete_startup(
     #[cfg(feature = "local-llm")]
     if let Some(svc) = &local_llm_service {
         svc.set_state(Arc::clone(&state));
+
+        // Register existing local models with the lifecycle manager and start idle checker.
+        let global_timeout = config
+            .providers
+            .get("local")
+            .or_else(|| config.providers.get("local-llm"))
+            .and_then(|e| e.idle_timeout_secs);
+        svc.populate_lifecycle(global_timeout).await;
+        svc.lifecycle().spawn_idle_checker();
     }
 
     provider_setup_service.set_broadcaster(Arc::new(crate::provider_setup::GatewayBroadcaster {
@@ -588,6 +597,14 @@ pub(super) async fn complete_startup(
         let provider_config_for_registry_rebuild = provider_config_for_startup_discovery.clone();
         let global_cw_overrides = moltis_providers::extract_cw_overrides(&config.models);
         let env_overrides_for_startup_discovery = config_env_overrides.clone();
+        #[cfg(feature = "local-llm")]
+        let local_llm_svc_for_discovery = local_llm_service.clone();
+        #[cfg(feature = "local-llm")]
+        let global_timeout_for_discovery = config
+            .providers
+            .get("local")
+            .or_else(|| config.providers.get("local-llm"))
+            .and_then(|e| e.idle_timeout_secs);
         tokio::spawn(async move {
             let startup_discovery_started = std::time::Instant::now();
             let prefetched = match tokio::task::spawn_blocking(move || {
@@ -635,6 +652,14 @@ pub(super) async fn complete_startup(
             {
                 let mut reg = registry_for_startup_discovery.write().await;
                 *reg = new_registry;
+            }
+
+            // Re-populate the lifecycle manager so it tracks the same
+            // Arcs the rebuilt registry uses for inference.
+            #[cfg(feature = "local-llm")]
+            if let Some(svc) = &local_llm_svc_for_discovery {
+                svc.lifecycle().clear().await;
+                svc.populate_lifecycle(global_timeout_for_discovery).await;
             }
 
             info!(

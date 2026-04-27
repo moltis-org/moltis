@@ -3,7 +3,7 @@
 import { chatAddMsg, smartScrollToBottom } from "../chat-ui";
 import { currentPrefix } from "../router";
 import * as S from "../state";
-import type { LocalLlmDownloadPayload, SandboxPhasePayload } from "../types/ws-events";
+import type { LocalLlmDownloadPayload, LocalLlmLifecyclePayload, SandboxPhasePayload } from "../types/ws-events";
 import { clearChatEmptyState } from "./shared";
 
 /** Subset of SandboxInfo relevant to the building flag. */
@@ -195,4 +195,35 @@ export function handleLocalLlmDownload(payload: LocalLlmDownloadPayload): void {
 			textEl.textContent = `${downloadedMb} MB`;
 		}
 	}
+}
+
+// ── Local LLM lifecycle handler ──────────────────────────────
+
+let lifecycleIndicatorEl: HTMLElement | null = null;
+
+export function handleLocalLlmLifecycle(raw: Record<string, unknown>): void {
+	const isChatPage = currentPrefix === "/chats";
+	if (!isChatPage) return;
+
+	const payload = raw as unknown as LocalLlmLifecyclePayload;
+	const modelName = payload.modelId || "model";
+
+	if (payload.state === "loading") {
+		if (lifecycleIndicatorEl) {
+			lifecycleIndicatorEl.remove();
+		}
+		lifecycleIndicatorEl = chatAddMsg("system", `Loading model ${modelName} into memory\u2026`);
+	} else if (payload.state === "loaded") {
+		if (lifecycleIndicatorEl) {
+			lifecycleIndicatorEl.remove();
+			lifecycleIndicatorEl = null;
+		}
+		const sizeStr = payload.modelSizeBytes ? ` (${(payload.modelSizeBytes / (1024 * 1024 * 1024)).toFixed(1)} GB)` : "";
+		chatAddMsg("system", `Model ${modelName} loaded${sizeStr}`);
+	} else if (payload.state === "unloaded") {
+		const msg =
+			payload.reason === "idle" ? `Model ${modelName} unloaded after inactivity` : `Model ${modelName} unloaded`;
+		chatAddMsg("system", msg);
+	}
+	// "unloading" state is transient — no need to show in chat
 }

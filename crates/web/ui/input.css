@@ -1,4 +1,5 @@
 @import "tailwindcss" source("../src/assets/");
+@source "./src/";
 
 /* ── Theme variables (clawdbot-inspired) ──────────────────────────── */
 
@@ -2023,8 +2024,8 @@
   }
 
   .icon-waveform {
-    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='black' stroke-width='1.5' stroke-linecap='round' d='M3 12h1M7 8v8M11 5v14M15 8v8M19 10v4M23 12h-1'%2F%3E%3C/svg%3E");
-    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24'%3E%3Cpath stroke='black' stroke-width='1.5' stroke-linecap='round' d='M3 12h1M7 8v8M11 5v14M15 8v8M19 10v4M23 12h-1'%2F%3E%3C/svg%3E");
+    -webkit-mask-image: url("./icons/masks/mask-waveform.svg");
+    mask-image: url("./icons/masks/mask-waveform.svg");
   }
 
   /* Status icons */

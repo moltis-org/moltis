@@ -15,6 +15,10 @@ pub struct LocalModelEntry {
     /// Backend to use: "GGUF" or "MLX"
     #[serde(default = "default_backend")]
     pub backend: String,
+    /// Seconds of inactivity before auto-unloading this model.
+    /// `None` = use global default. `0` = never unload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_secs: Option<u64>,
 }
 
 pub(super) fn default_backend() -> String {
@@ -63,6 +67,7 @@ impl LocalLlmConfig {
                     hf_filename: None,
                     gpu_layers: legacy.gpu_layers,
                     backend: legacy.backend,
+                    idle_timeout_secs: None,
                 }],
             };
             // Save migrated config
@@ -280,11 +285,14 @@ pub(super) fn unregister_local_model_ids_from_registry(
 pub(super) fn register_local_model_entry(
     registry: &mut ProviderRegistry,
     entry: &LocalModelEntry,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Arc<local_llm::LocalLlmProvider>> {
     let (info, provider) = build_local_provider_entry(entry, None)?;
     unregister_local_model_from_registry(registry, &entry.model_id);
-    registry.register(info, provider);
-    Ok(())
+    registry.register(
+        info,
+        Arc::clone(&provider) as Arc<dyn moltis_agents::model::LlmProvider>,
+    );
+    Ok(provider)
 }
 
 pub(super) fn register_local_model_entry_with_default_model_path(

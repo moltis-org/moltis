@@ -19,6 +19,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260426.05] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+- [web-ui] Show chat status badges in visible toolbar row (#886)
+- [local-llm] On-demand model loading/unloading with idle timeout (#884)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Removed
+- Remove needless return in skills toggle_bundled_skill
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+- [gateway] Handle bundled skill disable/enable via config (#877)
+- [gateway] Derive bundled skill enabled state from config (#878)
+- [tests] Increase watcher test timeout to accommodate debounce + FSEvents latency
+- [web-ui] Stop auto-enabling all skills on repository import (#882)
+- [skills] Store per-skill relative paths for marketplace repos (#883)
+- [tests] Mark flaky FSEvents watcher test as ignored
+- [tests] Use PollWatcher in watcher tests for reliable cross-platform behavior
+- Use if-let instead of single-arm match in poll watcher test
+- [security] Store voice API keys in credential store, not moltis.toml (#885)
+- [e2e] Update session tests for inline action buttons (#886 follow-up)
+- [tests] Add missing LocalLlmService trait methods to MockLocalLlm
+- Collapse nested if-let in key_store timestamp check
+- Derive Default for ModelLifecycleManager
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260426.04] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
 ## [20260426.03] - 2026-04-26
 ### Added
 - [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)

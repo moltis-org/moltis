@@ -68,6 +68,11 @@ pub trait LocalBackend: Send + Sync {
     /// Get the context window size.
     fn context_window(&self) -> u32;
 
+    /// Approximate model size in bytes (for display and lifecycle events).
+    fn model_size_bytes(&self) -> u64 {
+        0
+    }
+
     /// Whether this backend supports grammar-constrained tool calling.
     fn supports_tools(&self) -> bool {
         false
@@ -506,6 +511,10 @@ pub mod gguf {
 
         fn context_window(&self) -> u32 {
             self.context_size
+        }
+
+        fn model_size_bytes(&self) -> u64 {
+            self.model.model_size_bytes
         }
 
         fn supports_tools(&self) -> bool {

@@ -5,16 +5,23 @@
 
 export { openModelSelectorForProvider, showApiKeyForm, showOAuthFlow } from "./providers/auth-flow";
 export { showCustomProviderForm } from "./providers/custom-provider";
-export { showLocalModelFlow, showModelDownloadProgress } from "./providers/local-models";
+export {
+	getModelState,
+	initModelLifecycleTracking,
+	showLocalModelFlow,
+	showModelDownloadProgress,
+} from "./providers/local-models";
 export { closeProviderModal, getProviderModal, openProviderModal } from "./providers/shared";
 export type {
 	AddCustomPayload,
 	BackendInfo,
 	HfSearchResult,
 	LocalLlmDownloadPayload,
+	LocalLlmLifecyclePayload,
 	LocalModelInfo,
 	ModelEntry,
 	ModelSelectorWrapper,
+	ModelStateEntry,
 	ModelsData,
 	ProbeResult,
 	ProviderInfo,
