@@ -107,9 +107,7 @@ export function EditChannelModal(): VNode | null {
 	}
 
 	function addAgentToConfig(config: ChannelConfig): void {
-		if (editAgent.value) {
-			config.agent_id = editAgent.value;
-		}
+		config.agent_id = editAgent.value || null;
 	}
 
 	function addChannelCredentials(config: ChannelConfig, form: HTMLElement): void {
