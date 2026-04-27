@@ -497,6 +497,8 @@ impl GatewayState {
         hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
         memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
         code_index: Arc<moltis_code_index::CodeIndex>,
+        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+        index_job_manager: Arc<moltis_code_index::IndexJobManager>,
         port: u16,
         ws_request_logs: bool,
         deploy_platform: Option<String>,
@@ -521,6 +523,8 @@ impl GatewayState {
             pairing_store,
             memory_manager,
             code_index,
+            #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+            index_job_manager,
             localhost_only,
             behind_proxy,
             tls_active,

@@ -1,239 +1,122 @@
-# Tasks 007: Code Index Auto-Trigger
+# Tasks 007: Code Index Auto-Trigger - Implementation Status
 
-## Phase 1: Foundation
+## Status Summary
 
-### Task 1.1 — Extend CodeIndexConfig with auto-index fields
-**Files:** `crates/code-index/src/config.rs`, `crates/config/src/schema/code_index.rs`, `crates/config/src/validate.rs`
-
-Add fields:
-- `auto_index_on_startup: bool` (default: `true`)
-- `auto_index_on_create: bool` (default: `true`)
-- `periodic_reindex_interval: Duration` (default: 30 min)
-- `max_concurrent_jobs: usize` (default: 2)
-
-TOML config gets stringly-typed equivalents (`periodic_reindex_interval: String` → parsed to `Duration`).
-
-Update `build_schema_map()` in validate.rs.
-
-**Tests:** Config parsing, defaults, serde round-trip.
-
-**[P]** Independent of other tasks.
+**Phase 1: Foundation** ✅ COMPLETE  (2026-04-27)
+**Phase 2: Integration** 🔄 IN PROGRESS  
+**Phase 3: File Watcher Activation** ⏳ PENDING  
+**Phase 4: Periodic Re-Index** ⏳ PENDING  
+**Phase 5: Validation & Polish** ⏳ PENDING
 
 ---
 
-### Task 1.2 — Create IndexJobManager struct
-**File:** `crates/code-index/src/index_job_manager.rs` (NEW)
+## Task Tracking
 
+| Task | Status | Commit | Notes |
+|------|--------|--------|-------|
+| 1.1 Config fields | ✅ Done | 63b6cc59 | CodeIndexTomlConfig + CodeIndexConfig extended |
+| 1.2 IndexJobManager | ✅ Done | 63b6cc59 | Full implementation with dedup, semaphore, watchers |
+| 2.1 Wire to gateway | 🔄 In Progress | - | GatewayState field added, wiring pending |
+| 2.2 Startup auto-index | ⏳ Pending | - | Depends on 2.1 |
+| 2.3 Upsert/delete triggers | ⏳ Pending | - | Depends on 2.1 |
+| 3.1 Watcher auto-start | ⏳ Pending | - | Implemented in IndexJobManager, needs feature gate |
+| 3.2 Watcher stop on delete | ⏳ Pending | - | unregister_project() implemented |
+| 4.1 Periodic loop | ⏳ Pending | - | Implemented in IndexJobManager |
+| 5.1 Graceful shutdown | ⏳ Pending | - | shutdown() implemented |
+| 5.2 E2E test | ⏳ Pending | - | Final validation |
+
+---
+
+## Remaining Work - Phase 2
+
+### Task 2.1: Wire IndexJobManager into gateway
+
+**Files to modify:**
+1. `crates/gateway/src/server/prepare_core/post_state.rs` - Create IndexJobManager after CodeIndex init
+2. `crates/gateway/src/state.rs` - ✅ Field already added
+3. `crates/gateway/src/server/prepare_core.rs` - Pass config, wire into state construction
+
+**Implementation:**
 ```rust
-pub struct IndexJobManager {
-    code_index: Arc<CodeIndex>,
-    project_dirs: Mutex<HashMap<String, PathBuf>>,
-    active_jobs: Mutex<HashMap<String, Arc<Mutex<()>>>>,
-    watchers: Mutex<HashMap<String, FileWatcher>>,
-    max_concurrent: usize,
-    semaphore: Arc<Semaphore>,
-    cancel: CancellationToken,
-    config: IndexJobManagerConfig,
-}
+// In post_state.rs after line ~426 where code_index is available:
+#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+let code_index_config_for_jm = code_index.config().clone();
+#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+let job_manager_config = IndexJobManagerConfig {
+    auto_index_on_startup: code_index_config_for_jm.auto_index_on_startup,
+    auto_index_on_create: code_index_config_for_jm.auto_index_on_create,
+    periodic_reindex_interval: code_index_config_for_jm.periodic_reindex_interval,
+    max_concurrent_jobs: code_index_config_for_jm.max_concurrent_jobs,
+};
+#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+let job_manager = Arc::new(IndexJobManager::new(Arc::clone(&code_index), job_manager_config));
 ```
 
-Methods:
-- `new(code_index, config) -> Self`
-- `register_project(project_id, project_dir)` — remembers project directory
-- `unregister_project(project_id)` — stops watcher, removes from maps
-- `spawn_index(project_id)` — deduplicated, semaphore-limited background index
-- `index_all_enabled_projects(projects: Vec<(String, PathBuf)>)` — batch startup index
-- `start_periodic_reindex(projects: Vec<(String, PathBuf)>) -> JoinHandle`
-- `shutdown()` — cancels all jobs, stops all watchers
+Then pass `job_manager` to GatewayState constructor.
 
-**Tests:** Unit tests with mock code_index. Test dedup, concurrency limit.
+### Task 2.2: Startup auto-index trigger
 
-**Depends on:** Task 1.1
-
----
-
-## Phase 2: Integration
-
-### Task 2.1 — Wire IndexJobManager into gateway state
-**Files:** `crates/gateway/src/state.rs`, `crates/gateway/src/server/prepare_core/post_state.rs`, `crates/gateway/src/server/init_code_index.rs`
-
-- `init_code_index.rs` returns `(Arc<CodeIndex>, Arc<IndexJobManager>)` or job manager is created in `post_state.rs` after code index init.
-- Add `IndexJobManager` to `GatewayState`.
-- Gate behind `#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]`.
-
-**Tests:** Compilation check. Existing tests still pass.
-
-**Depends on:** Task 1.2
-
----
-
-### Task 2.2 — Startup auto-index
 **File:** `crates/gateway/src/server/prepare_core.rs`
 
-After project store is initialized and state is assembled:
+After state is assembled (near end of `prepare_core_state()`), spawn background task:
 
 ```rust
 #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
 {
-    if code_index_config.auto_index_on_startup {
-        let jm = Arc::clone(&job_manager);
-        let projects = project_store.list().await.unwrap_or_default();
-        let enabled: Vec<(String, PathBuf)> = projects.iter()
-            .filter(|p| p.code_index_enabled)
-            .map(|p| (p.id.clone(), p.directory.clone()))
-            .collect();
+    if config.code_index.auto_index_on_startup {
+        let jm = Arc::clone(&state.index_job_manager);
+        let projects_state = Arc::clone(&state.services.project);
         tokio::spawn(async move {
-            jm.index_all_enabled_projects(enabled).await;
-            jm.start_periodic_reindex_loop(enabled).await;
+            let projects = projects_state.list().await.unwrap_or_default();
+            let enabled: Vec<(String, PathBuf)> = projects.iter()
+                .filter(|p| p.code_index_enabled)
+                .map(|p| (p.id.clone(), p.directory.clone()))
+                .collect();
+            jm.index_all_enabled_projects(enabled.clone()).await;
+            jm.start_periodic_reindex_loop(enabled);
         });
     }
 }
 ```
 
-**Tests:** Integration test with temp project store. Verify `index_project` called for enabled projects only.
+### Task 2.3: Project upsert/delete triggers
 
-**Depends on:** Task 2.1
-
-**[P]** Independent of Task 2.3.
-
----
-
-### Task 2.3 — Project upsert/delete triggers
 **File:** `crates/gateway/src/methods/services/admin.rs`
 
-Extend the existing `projects.upsert` handler:
-1. After upsert, if `code_index_enabled = true`, call `job_manager.spawn_index(project_id)`
-2. Register project dir with `job_manager.register_project(project_id, dir)`
-3. If `code_index_enabled` transitions `true → false`, call `job_manager.stop_watcher(project_id)`
-
-Extend `projects.delete` handler:
-1. Call `job_manager.unregister_project(project_id)`
-
-Access `IndexJobManager` via `ctx.state`.
-
-**Tests:** Test upsert triggers index. Test delete stops watcher. Test disable stops watcher.
-
-**Depends on:** Task 2.1
-
-**[P]** Independent of Task 2.2.
-
----
-
-## Phase 3: File Watcher Activation
-
-### Task 3.1 — Auto-start file watcher after successful index
-**File:** `crates/code-index/src/index_job_manager.rs`
-
-In `spawn_index()`, after `index_project()` succeeds:
+In `projects.upsert` handler, after the existing off→on transition logic (around line 200), add:
 
 ```rust
-#[cfg(feature = "file-watcher")]
+#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
 {
-    if let Ok(()) = self.code_index.start_watcher(project_id, project_dir) {
-        // Watcher registered
-    }
-}
-```
-
-Handle the `Arc<Self>` requirement for `start_watcher` by structuring `IndexJobManager` as `Arc<IndexJobManagerInner>` or using `Arc<Self>` pattern.
-
-**Tests:** Test watcher starts after index. Test watcher doesn't start on failed index.
-
-**Depends on:** Task 1.2
-
----
-
-### Task 3.2 — Stop watcher on project disable/delete
-**File:** `crates/code-index/src/index_job_manager.rs`
-
-- `unregister_project()` calls `self.code_index.stop_watcher(project_id)`
-- Expose method for RPC handler to call
-
-**Tests:** Test watcher stops. Test cleanup on delete.
-
-**Depends on:** Task 3.1
-
----
-
-## Phase 4: Periodic Re-Index
-
-### Task 4.1 — Periodic re-index loop
-**File:** `crates/code-index/src/index_job_manager.rs`
-
-```rust
-pub async fn start_periodic_reindex_loop(self: &Arc<Self>, projects: Vec<(String, PathBuf)>) {
-    let interval = self.config.periodic_reindex_interval;
-    loop {
-        tokio::select! {
-            _ = tokio::time::sleep(interval) => {
-                self.index_all_enabled_projects(projects.clone()).await;
+    // Register project with job manager and trigger index if enabled
+    if new_enabled == Some(true) {
+        if let Some(ref pid) = project_id {
+            if let Ok(proj) = ctx.state.services.project.get(json!({ "id": pid })).await {
+                ctx.state.index_job_manager
+                    .register_project(pid.clone(), proj.directory.clone()).await;
+                ctx.state.index_job_manager.spawn_index(pid.clone());
             }
-            _ = self.cancel.cancelled() => break,
         }
     }
 }
 ```
 
-Uses incremental indexing (`force = false`). Catches changes missed by watcher.
+In `projects.delete` handler (need to add if not present, or extend existing):
 
-**Tests:** Test loop runs. Test cancellation. Test interval respected.
-
-**Depends on:** Task 1.2
-
----
-
-## Phase 5: Validation & Polish
-
-### Task 5.1 — Graceful shutdown
-**Files:** `crates/code-index/src/index_job_manager.rs`, `crates/gateway/src/server/prepare_core.rs`
-
-Wire `IndexJobManager::shutdown()` into gateway shutdown flow.
-Cancels CancellationToken → all background tasks stop → watchers stop.
-
-**Tests:** Test in-flight jobs cancelled on shutdown.
-
-**Depends on:** Task 2.1
-
----
-
-### Task 5.2 — End-to-end integration test
-**File:** `crates/code-index/tests/integration_auto_index.rs` (NEW)
-
-Full flow:
-1. Create temp git repos
-2. Init CodeIndex with builtin backend
-3. Create IndexJobManager
-4. Call `index_all_enabled_projects()`
-5. Verify indexed via `codebase_search`
-6. Modify a file
-7. Trigger watcher reindex
-8. Verify search returns updated content
-9. Call `shutdown()`
-10. Verify watchers stopped
-
-**Depends on:** All prior tasks.
-
----
-
-## Dependency Graph
-
-```
-1.1 ──► 1.2 ──► 2.1 ──► 2.2 (startup auto-index)
-                  │      └──► 2.3 (upsert/delete triggers)
-                  │
-                  ├──► 3.1 ──► 3.2 (watcher lifecycle)
-                  ├──► 4.1 (periodic re-index)
-                  └──► 5.1 (graceful shutdown)
-
-All ──► 5.2 (e2e test)
+```rust
+#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+{
+    if let Some(pid) = project_id {
+        ctx.state.index_job_manager.unregister_project(&pid).await;
+    }
+}
 ```
 
-## Execution Order
+---
 
-| Phase | Tasks | Parallelizable |
-|-------|-------|---------------|
-| 1 | 1.1, then 1.2 | Sequential (1.2 depends on 1.1) |
-| 2 | 2.1, then 2.2 + 2.3 | 2.2 and 2.3 parallel after 2.1 |
-| 3 | 3.1, then 3.2 | Sequential |
-| 4 | 4.1 | Independent (can run with Phase 3) |
-| 5 | 5.1, then 5.2 | After all prior |
+## Notes
+
+- All IndexJobManager methods are already implemented in Phase 1
+- Remaining work is purely wiring into existing gateway infrastructure
+- Feature gates (`#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]`) must be consistent
+- No new dependencies required
