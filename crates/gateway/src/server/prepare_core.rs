@@ -1297,6 +1297,7 @@ pub async fn prepare_gateway_core(
     )
     .await;
     services = channel_result.services;
+    #[cfg(feature = "msteams")]
     let msteams_webhook_plugin = channel_result.msteams_webhook_plugin;
     #[cfg(feature = "slack")]
     let slack_webhook_plugin = channel_result.slack_webhook_plugin;
@@ -1415,6 +1416,7 @@ pub async fn prepare_gateway_core(
         discovered_hooks_info,
         persisted_disabled,
         agents_config,
+        #[cfg(feature = "msteams")]
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,

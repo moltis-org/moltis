@@ -80,6 +80,7 @@ pub async fn prepare_gateway(
         state,
         methods,
         webauthn_registry,
+        #[cfg(feature = "msteams")]
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,
@@ -153,6 +154,7 @@ pub async fn prepare_gateway(
 
     let mut app = finalize_gateway_app(router, app_state, config.server.http_request_logs);
 
+    #[cfg(feature = "msteams")]
     {
         let teams_plugin_for_webhook = Arc::clone(&msteams_webhook_plugin);
         let state_for_teams_webhook = Arc::clone(&state);

@@ -240,7 +240,7 @@ fn is_public_path(path: &str) -> bool {
             | "/ws"
     ) || path.starts_with("/api/auth/")
         || path.starts_with("/api/public/")
-        || path.starts_with("/api/channels/msteams/")
+        || cfg!(feature = "msteams") && path.starts_with("/api/channels/msteams/")
         || path.starts_with("/api/webhooks/ingest/")
         || path.starts_with("/assets/")
         || path.starts_with("/share/")

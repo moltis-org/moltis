@@ -21,6 +21,7 @@ mdns-sd                 = { optional = true, workspace = true }
 moltis-agents           = { workspace = true }
 moltis-auth             = { workspace = true }
 moltis-browser          = { workspace = true }
+# moltis-caldav — stripped from moltis-mini; feature is a no-op stub
 moltis-canvas           = { workspace = true }
 moltis-channels         = { workspace = true }
 moltis-chat             = { workspace = true }
@@ -29,6 +30,7 @@ moltis-config           = { workspace = true }
 moltis-cron             = { workspace = true }
 moltis-discord          = { optional = true, workspace = true }
 moltis-home-assistant   = { optional = true, workspace = true }
+# moltis-matrix — stripped from moltis-mini; feature is a no-op stub
 moltis-mcp              = { workspace = true }
 moltis-mcp-agent-bridge = { workspace = true }
 moltis-media            = { workspace = true }
@@ -36,26 +38,35 @@ moltis-code-index       = { workspace = true }
 moltis-memory           = { workspace = true }
 moltis-metrics          = { optional = true, workspace = true }
 moltis-msteams          = { optional = true, workspace = true }
+# moltis-network-filter — stripped from moltis-mini; feature is a no-op stub
+# moltis-nostr — stripped from moltis-mini; feature is a no-op stub
 moltis-oauth            = { workspace = true }
 moltis-onboarding       = { workspace = true }
+# moltis-openclaw-import — stripped from moltis-mini
 moltis-plugins          = { workspace = true }
 moltis-projects         = { workspace = true }
 moltis-protocol         = { workspace = true }
 moltis-provider-setup   = { workspace = true }
 moltis-providers        = { workspace = true }
+# moltis-qmd — stripped from moltis-mini
 moltis-routing          = { workspace = true }
 moltis-secret-store     = { workspace = true }
 moltis-service-traits   = { workspace = true }
 moltis-sessions         = { workspace = true }
+# moltis-signal — stripped from moltis-mini; feature is a no-op stub
 moltis-skills           = { workspace = true }
-moltis-slack            = { optional = true, workspace = true }
-moltis-tailscale        = { optional = true, workspace = true }
+# moltis-slack — stripped from moltis-mini; feature is a no-op stub
+# moltis-tailscale — stripped from moltis-mini; feature is a no-op stub
 moltis-telegram         = { optional = true, workspace = true }
 moltis-tools            = { workspace = true }
 moltis-vault            = { optional = true, workspace = true }
+# moltis-voice — stripped from moltis-mini; feature is a no-op stub
 moltis-webhooks         = { workspace = true }
+# moltis-whatsapp — stripped from moltis-mini; feature is a no-op stub
+# p256 — stripped from moltis-mini (was push-notifications dep)
 portable-pty            = { optional = true, workspace = true }
 pulldown-cmark          = { features = ["html"], workspace = true }
+# qrcode — stripped from moltis-mini (was whatsapp dep)
 rand                    = { workspace = true }
 reqwest                 = { workspace = true }
 secrecy                 = { workspace = true }
@@ -76,21 +87,25 @@ tracing-subscriber      = { workspace = true }
 url                     = { workspace = true }
 urlencoding             = { workspace = true }
 uuid                    = { workspace = true }
+# web-push — stripped from moltis-mini (was push-notifications dep)
 webauthn-rs             = { features = ["danger-allow-state-serialisation"], workspace = true }
 which                   = { optional = true, workspace = true }
 
 [features]
 agent = []
 bundled-skills = ["moltis-chat/bundled-skills", "moltis-skills/bundled-skills", "moltis-tools/bundled-skills"]
+caldav = [] # stub — crate stripped
 home-assistant = ["dep:moltis-home-assistant"]
 default = [
   "agent",
   "bundled-skills",
+  "discord",
   "home-assistant",
   "code-index-builtin",
   "file-watcher",
   "fs-tools",
   "metrics",
+  "msteams",
   "tls",
   "vault",
   "wasm",
@@ -102,7 +117,9 @@ file-watcher = [
   "moltis-skills/file-watcher",
   "moltis-code-index/file-watcher",
 ]
+firecrawl = [] # stub — crate stripped
 fs-tools = ["moltis-tools/fs-tools"]
+graphql = []
 llm-compaction = ["moltis-chat/llm-compaction"]
 local-embeddings = ["moltis-memory/local-embeddings"]
 local-llm = [
@@ -113,6 +130,8 @@ local-llm = [
 local-llm-cuda = ["local-llm", "moltis-providers/local-llm-cuda"]
 local-llm-metal = ["local-llm", "moltis-providers/local-llm-metal"]
 local-llm-vulkan = ["local-llm", "moltis-providers/local-llm-vulkan"]
+matrix = [] # stub — crate stripped
+mdns = [] # stub — crate stripped
 metrics = [
   "dep:moltis-metrics",
   "moltis-chat/metrics",
@@ -120,29 +139,24 @@ metrics = [
   "moltis-metrics/sqlite",
   "moltis-msteams?/metrics",
 ]
-prometheus = ["metrics", "moltis-metrics/prometheus"]
-tls = []
 discord = ["dep:moltis-discord", "moltis-discord/metrics"]
-msteams = ["dep:moltis-msteams", "moltis-msteams/metrics"]
+nostr = [] # stub — crate stripped
+openclaw-import = [] # stub — crate stripped
+prometheus = ["metrics", "moltis-metrics/prometheus"]
+push-notifications = [] # stub — crate stripped
+qmd = [] # stub — crate stripped
+signal = [] # stub — crate stripped
+slack = [] # stub — crate stripped
+tailscale = [] # stub — crate stripped
+tls = []
+trusted-network = [] # stub — crate stripped
 vault = ["dep:moltis-vault", "moltis-auth/vault", "moltis-provider-setup/vault", "moltis-secret-store/vault"]
+voice = [] # stub — crate stripped
 wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
-# Stub features — crates removed from moltis-mini.
-caldav             = []
-firecrawl          = []
-graphql            = []
-matrix             = []
-mdns               = []
-nostr              = []
-openclaw-import    = []
-push-notifications = []
-qmd                = []
-signal             = []
-slack              = []
-tailscale          = []
-trusted-network    = []
-voice              = []
-whatsapp           = []
+telegram = ["dep:moltis-telegram", "moltis-chat/telegram"]
+msteams = ["dep:moltis-msteams", "moltis-msteams/metrics"]
+whatsapp = [] # stub — crate stripped
 
 [dev-dependencies]
 
