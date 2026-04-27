@@ -59,14 +59,17 @@ pub(crate) async fn init_channels(
     // Create plugins and register with the registry.
     let mut registry = ChannelRegistry::new();
 
-    let tg_plugin = Arc::new(tokio::sync::RwLock::new(
-        moltis_telegram::TelegramPlugin::new()
-            .with_message_log(Arc::clone(&message_log))
-            .with_event_sink(Arc::clone(&channel_sink)),
-    ));
-    registry
-        .register(tg_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
-        .await;
+    #[cfg(feature = "telegram")]
+    {
+        let tg_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_telegram::TelegramPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(Arc::clone(&channel_sink)),
+        ));
+        registry
+            .register(tg_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
+            .await;
+    }
 
     let msteams_plugin = Arc::new(tokio::sync::RwLock::new(
         moltis_msteams::MsTeamsPlugin::new()

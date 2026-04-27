@@ -517,71 +517,80 @@ async fn deliver_channel_replies_to_targets(
                                     "failed to send logbook follow-up: {e}"
                                 );
                             }
-                        } else if transcript.len()
-                            <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT
-                        {
-                            // Short transcript fits as a caption on the voice message.
-                            payload.text = transcript;
-                            if let Err(e) = outbound
-                                .send_media(&target.account_id, &to, &payload, reply_to)
-                                .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send channel voice reply: {e}"
-                                );
-                            }
-                            // Send logbook as a follow-up if present.
-                            if !logbook_html.is_empty()
-                                && let Err(e) = outbound
-                                    .send_html(&target.account_id, &to, &logbook_html, None)
-                                    .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send logbook follow-up: {e}"
-                                );
-                            }
                         } else {
-                            // Transcript too long for a caption — send voice
-                            // without caption, then the full text as a follow-up.
-                            if let Err(e) = outbound
-                                .send_media(&target.account_id, &to, &payload, reply_to)
-                                .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send channel voice reply: {e}"
-                                );
-                            }
-                            let text_result = if logbook_html.is_empty() {
-                                outbound
-                                    .send_text(&target.account_id, &to, &transcript, None)
+                            // Check if transcript fits as Telegram caption (when feature enabled).
+                            // When telegram feature is disabled, this evaluates to false and we
+                            // send voice + follow-up text.
+                            #[cfg(feature = "telegram")]
+                            let fits_in_caption = transcript.len()
+                                <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT;
+                            #[cfg(not(feature = "telegram"))]
+                            let fits_in_caption = false;
+
+                            if fits_in_caption {
+                                // Short transcript fits as a caption on the voice message.
+                                payload.text = transcript;
+                                if let Err(e) = outbound
+                                    .send_media(&target.account_id, &to, &payload, reply_to)
                                     .await
+                                {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send channel voice reply: {e}"
+                                    );
+                                }
+                                // Send logbook as a follow-up if present.
+                                if !logbook_html.is_empty()
+                                    && let Err(e) = outbound
+                                        .send_html(&target.account_id, &to, &logbook_html, None)
+                                        .await
+                                {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send logbook follow-up: {e}"
+                                    );
+                                }
                             } else {
-                                outbound
-                                    .send_text_with_suffix(
-                                        &target.account_id,
-                                        &to,
-                                        &transcript,
-                                        &logbook_html,
-                                        None,
-                                    )
+                                // Transcript too long for a caption — send voice
+                                // without caption, then the full text as a follow-up.
+                                if let Err(e) = outbound
+                                    .send_media(&target.account_id, &to, &payload, reply_to)
                                     .await
-                            };
-                            if let Err(e) = text_result {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send transcript follow-up: {e}"
-                                );
+                                {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send channel voice reply: {e}"
+                                    );
+                                }
+                                let text_result = if logbook_html.is_empty() {
+                                    outbound
+                                        .send_text(&target.account_id, &to, &transcript, None)
+                                        .await
+                                } else {
+                                    outbound
+                                        .send_text_with_suffix(
+                                            &target.account_id,
+                                            &to,
+                                            &transcript,
+                                            &logbook_html,
+                                            None,
+                                        )
+                                        .await
+                                };
+                                if let Err(e) = text_result {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send transcript follow-up: {e}"
+                                    );
+                                }
                             }
                         }
                     },

@@ -57,7 +57,7 @@ moltis-signal           = { optional = true, workspace = true }
 moltis-skills           = { workspace = true }
 moltis-slack            = { optional = true, workspace = true }
 moltis-tailscale        = { optional = true, workspace = true }
-moltis-telegram         = { workspace = true }
+moltis-telegram         = { optional = true, workspace = true }
 moltis-tools            = { workspace = true }
 moltis-vault            = { optional = true, workspace = true }
 moltis-voice            = { optional = true, workspace = true }
@@ -173,6 +173,7 @@ vault = ["dep:moltis-vault", "moltis-auth/vault", "moltis-provider-setup/vault",
 voice = ["dep:moltis-voice"]
 wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
+telegram = ["dep:moltis-telegram"]
 whatsapp = ["dep:moltis-whatsapp", "dep:qrcode", "moltis-whatsapp/metrics"]
 
 [dev-dependencies]
