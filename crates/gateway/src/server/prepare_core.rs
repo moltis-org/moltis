@@ -602,6 +602,11 @@ pub async fn prepare_gateway_core(
     let voice_persona_store = Arc::new(crate::voice_persona::VoicePersonaStore::new(
         db_pool.clone(),
     ));
+    match voice_persona_store.seed_defaults().await {
+        Ok(0) => {},
+        Ok(n) => tracing::info!(count = n, "seeded default voice personas"),
+        Err(e) => tracing::warn!(error = %e, "failed to seed default voice personas"),
+    }
 
     let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
         Arc::new(tokio::sync::OnceCell::new());

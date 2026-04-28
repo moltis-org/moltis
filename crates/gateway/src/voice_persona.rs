@@ -335,7 +335,149 @@ impl VoicePersonaStore {
             None => Ok(None),
         }
     }
+
+    /// Seed built-in default personas on first run.
+    ///
+    /// Only inserts personas whose IDs don't already exist, so users who
+    /// delete or rename a default won't get it re-created on restart.
+    pub async fn seed_defaults(&self) -> Result<usize> {
+        let mut seeded = 0usize;
+        for def in DEFAULT_PERSONAS {
+            let exists =
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM voice_personas WHERE id = ?")
+                    .bind(def.id)
+                    .fetch_one(&self.pool)
+                    .await?;
+
+            if exists > 0 {
+                continue;
+            }
+
+            let prompt = VoicePersonaPrompt {
+                profile: Some(def.profile.to_string()),
+                style: Some(def.style.to_string()),
+                accent: def.accent.map(str::to_string),
+                pacing: def.pacing.map(str::to_string),
+                scene: None,
+                constraints: Vec::new(),
+            };
+            let prompt_json = serde_json::to_string(&prompt)?;
+            let bindings_json = serde_json::to_string(&def.bindings())?;
+            let now = now_ms();
+
+            sqlx::query(
+                r"INSERT OR IGNORE INTO voice_personas (id, label, description, provider, fallback_policy, prompt_json, bindings_json, is_active, created_at, updated_at)
+                  VALUES (?, ?, ?, ?, 'preserve-persona', ?, ?, 0, ?, ?)",
+            )
+            .bind(def.id)
+            .bind(def.label)
+            .bind(def.description)
+            .bind(def.provider)
+            .bind(&prompt_json)
+            .bind(&bindings_json)
+            .bind(now)
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+
+            seeded += 1;
+        }
+        Ok(seeded)
+    }
 }
+
+// ── Built-in default personas ──────────────────────────────────────────────
+
+struct DefaultPersona {
+    id: &'static str,
+    label: &'static str,
+    description: &'static str,
+    provider: &'static str,
+    profile: &'static str,
+    style: &'static str,
+    accent: Option<&'static str>,
+    pacing: Option<&'static str>,
+    openai_voice: &'static str,
+    elevenlabs_voice: &'static str,
+}
+
+impl DefaultPersona {
+    fn bindings(&self) -> Vec<VoicePersonaProviderBinding> {
+        vec![
+            VoicePersonaProviderBinding {
+                provider: TtsProviderId::OpenAi,
+                voice_id: Some(self.openai_voice.to_string()),
+                model: Some("gpt-4o-mini-tts".to_string()),
+                speed: None,
+                stability: None,
+                similarity_boost: None,
+                speaking_rate: None,
+                pitch: None,
+            },
+            VoicePersonaProviderBinding {
+                provider: TtsProviderId::ElevenLabs,
+                voice_id: Some(self.elevenlabs_voice.to_string()),
+                model: None,
+                speed: None,
+                stability: Some(0.5),
+                similarity_boost: Some(0.75),
+                speaking_rate: None,
+                pitch: None,
+            },
+        ]
+    }
+}
+
+const DEFAULT_PERSONAS: &[DefaultPersona] = &[
+    DefaultPersona {
+        id: "assistant",
+        label: "Assistant",
+        description: "Friendly, clear, and helpful — the default voice",
+        provider: "openai",
+        profile: "A warm, knowledgeable assistant. Clear and approachable.",
+        style: "Conversational, friendly, and concise",
+        accent: None,
+        pacing: Some("Natural, moderate pace"),
+        openai_voice: "alloy",
+        elevenlabs_voice: "21m00Tcm4TlvDq8ikWAM", // Rachel
+    },
+    DefaultPersona {
+        id: "narrator",
+        label: "Narrator",
+        description: "Rich storytelling voice for long-form content",
+        provider: "openai",
+        profile: "A captivating narrator with a deep, resonant voice",
+        style: "Dramatic, engaging, and expressive",
+        accent: None,
+        pacing: Some("Measured, with intentional pauses for emphasis"),
+        openai_voice: "onyx",
+        elevenlabs_voice: "29vD33N1CtxCmqQRPOHJ", // Drew
+    },
+    DefaultPersona {
+        id: "casual",
+        label: "Casual",
+        description: "Relaxed and upbeat for informal conversations",
+        provider: "openai",
+        profile: "A laid-back, friendly personality. Like chatting with a friend.",
+        style: "Relaxed, warm, occasionally playful",
+        accent: None,
+        pacing: Some("Quick and natural, like everyday conversation"),
+        openai_voice: "nova",
+        elevenlabs_voice: "EXAVITQu4vr4xnSDxMaL", // Bella
+    },
+    DefaultPersona {
+        id: "professional",
+        label: "Professional",
+        description: "Authoritative and precise for business or technical content",
+        provider: "openai",
+        profile: "A polished professional. Confident and precise.",
+        style: "Authoritative, clear, and structured",
+        accent: Some("Neutral, broadcast-quality"),
+        pacing: Some("Steady and deliberate"),
+        openai_voice: "echo",
+        elevenlabs_voice: "pNInz6obpgDQGcFmaJgB", // Adam
+    },
+];
 
 /// Resolve which voice persona should be used for a TTS call.
 ///
@@ -763,5 +905,55 @@ mod tests {
             })
             .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_seed_defaults() {
+        let pool = test_pool().await;
+        let store = VoicePersonaStore::new(pool);
+
+        // First seed — should create all defaults.
+        let seeded = store.seed_defaults().await.unwrap();
+        assert_eq!(seeded, DEFAULT_PERSONAS.len());
+
+        let all = store.list().await.unwrap();
+        assert_eq!(all.len(), DEFAULT_PERSONAS.len());
+        assert!(all.iter().any(|p| p.persona.id == "assistant"));
+        assert!(all.iter().any(|p| p.persona.id == "narrator"));
+        assert!(all.iter().any(|p| p.persona.id == "casual"));
+        assert!(all.iter().any(|p| p.persona.id == "professional"));
+
+        // Second seed — idempotent, no new rows.
+        let seeded2 = store.seed_defaults().await.unwrap();
+        assert_eq!(seeded2, 0);
+        assert_eq!(store.list().await.unwrap().len(), DEFAULT_PERSONAS.len());
+    }
+
+    #[tokio::test]
+    async fn test_seed_defaults_skips_existing() {
+        let pool = test_pool().await;
+        let store = VoicePersonaStore::new(pool);
+
+        // Create one persona manually with the same ID as a default.
+        store
+            .create(CreateVoicePersonaParams {
+                id: "assistant".into(),
+                label: "My Custom Assistant".into(),
+                description: None,
+                provider: None,
+                fallback_policy: None,
+                prompt: None,
+                provider_bindings: None,
+            })
+            .await
+            .unwrap();
+
+        // Seed — should skip "assistant" and create the rest.
+        let seeded = store.seed_defaults().await.unwrap();
+        assert_eq!(seeded, DEFAULT_PERSONAS.len() - 1);
+
+        // Verify the custom one wasn't overwritten.
+        let assistant = store.get("assistant").await.unwrap().unwrap();
+        assert_eq!(assistant.persona.label, "My Custom Assistant");
     }
 }
