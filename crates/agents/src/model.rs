@@ -154,6 +154,33 @@ impl ChatMessage {
         }
     }
 
+    /// Sanitize a user name for the OpenAI `name` field.
+    ///
+    /// OpenAI requires `name` to match `^[a-zA-Z0-9_-]+$` with a max length of
+    /// 256 characters. Spaces are replaced with `_`, non-matching characters are
+    /// stripped, and the result is truncated to 64 chars.  Returns `None` if the
+    /// sanitized result is empty.
+    #[must_use]
+    pub fn sanitize_message_name(name: &str) -> Option<String> {
+        let sanitized: String = name
+            .chars()
+            .map(|c| {
+                if c == ' ' {
+                    '_'
+                } else {
+                    c
+                }
+            })
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+            .take(64)
+            .collect();
+        if sanitized.is_empty() {
+            None
+        } else {
+            Some(sanitized)
+        }
+    }
+
     /// Convert to OpenAI-compatible JSON format.
     ///
     /// Used by providers that speak the OpenAI Chat Completions API:
@@ -188,8 +215,9 @@ impl ChatMessage {
                         serde_json::json!({ "role": "user", "content": blocks })
                     },
                 };
-                if let Some(n) = name {
-                    msg["name"] = serde_json::Value::String(n.clone());
+                if let Some(sanitized) = name.as_ref().and_then(|n| Self::sanitize_message_name(n))
+                {
+                    msg["name"] = serde_json::Value::String(sanitized);
                 }
                 msg
             },
@@ -1279,6 +1307,36 @@ mod tests {
         assert_eq!(val["role"], "user");
         assert_eq!(val["content"], "hi");
         assert_eq!(val["name"], "Alice");
+    }
+
+    #[test]
+    fn to_openai_value_sanitizes_name_with_spaces() {
+        let msg = ChatMessage::user_named("hi", "Alice Smith");
+        let val = msg.to_openai_value();
+        assert_eq!(val["name"], "Alice_Smith");
+    }
+
+    #[test]
+    fn to_openai_value_sanitizes_name_with_unicode() {
+        let msg = ChatMessage::user_named("hi", "Алексей");
+        let val = msg.to_openai_value();
+        // All non-ASCII stripped → empty → name field omitted
+        assert!(val.get("name").is_none());
+    }
+
+    #[test]
+    fn to_openai_value_sanitizes_name_mixed_chars() {
+        let msg = ChatMessage::user_named("hi", "José García 🎉");
+        let val = msg.to_openai_value();
+        // Only ASCII alphanumeric, underscore, hyphen survive; spaces → _
+        assert_eq!(val["name"], "Jos_Garca_");
+    }
+
+    #[test]
+    fn sanitize_message_name_truncates_to_64_chars() {
+        let long_name = "a".repeat(100);
+        let result = ChatMessage::sanitize_message_name(&long_name);
+        assert_eq!(result.as_deref(), Some(&"a".repeat(64)[..]));
     }
 
     #[test]
