@@ -142,7 +142,15 @@ pub fn import_credentials(detection: &HermesDetection, config_dir: &Path) -> Cat
                 format!("failed to create config directory: {e}"),
             );
         }
-        let json = serde_json::to_string_pretty(&existing).unwrap_or_default();
+        let json = match serde_json::to_string_pretty(&existing) {
+            Ok(j) => j,
+            Err(e) => {
+                return CategoryReport::failed(
+                    ImportCategory::Providers,
+                    format!("failed to serialize provider keys: {e}"),
+                );
+            },
+        };
         if let Err(e) = std::fs::write(&keys_path, json) {
             return CategoryReport::failed(
                 ImportCategory::Providers,

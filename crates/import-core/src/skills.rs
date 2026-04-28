@@ -82,11 +82,7 @@ pub fn create_skill_from_command(
 
     let description =
         first_paragraph(markdown_content).unwrap_or_else(|| format!("Imported command {name}"));
-    let truncated = if description.len() > 180 {
-        &description[..180]
-    } else {
-        &description
-    };
+    let truncated = truncate_to_char_boundary(&description, 180);
 
     let content = format!(
         "---\nname: {name}\ndescription: {desc}\n---\n\n<!-- Imported from: {source_label} -->\n\n{body}\n",
@@ -117,6 +113,19 @@ fn first_paragraph(content: &str) -> Option<String> {
         .split("\n\n")
         .map(|part| part.split_whitespace().collect::<Vec<_>>().join(" "))
         .find(|part| !part.is_empty())
+}
+
+/// Truncate a string to at most `max_bytes` bytes on a valid char boundary.
+fn truncate_to_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    // Walk backwards from max_bytes to find a char boundary
+    let mut end = max_bytes;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 /// Recursively copy a directory.
