@@ -515,6 +515,19 @@ port = {port}                           # Port number (auto-generated for this i
 # enabled = true
 # providers = ["openai", "elevenlabs"]  # UI allowlist (empty = show all)
 
+# Voice personas — named voice identities injected into TTS calls.
+# Personas are managed via the web UI (Settings > Voice > Voice Personas)
+# and stored in the database. Example via TOML for reference:
+#
+# Configure personas in the web UI, or use the RPC API:
+#   voice.personas.create  — create a new persona
+#   voice.personas.list    — list all personas
+#   voice.personas.set_active — activate a persona
+#
+# Providers that support instructions (OpenAI gpt-4o-mini-tts) will receive
+# the persona's profile/style/accent as voice direction. Other providers
+# use the persona's provider-specific bindings (voice_id, model overrides).
+
 # [voice.stt]
 # enabled = true
 # providers = ["whisper", "mistral", "elevenlabs"]  # UI allowlist (empty = show all)

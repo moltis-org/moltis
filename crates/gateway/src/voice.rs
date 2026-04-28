@@ -565,7 +565,7 @@ impl TtsService for LiveTtsService {
             .map(AudioFormat::from_short_name)
             .unwrap_or(AudioFormat::Mp3);
 
-        let request = SynthesizeRequest {
+        let mut request = SynthesizeRequest {
             text,
             voice_id: params
                 .get("voiceId")
@@ -588,7 +588,30 @@ impl TtsService for LiveTtsService {
                 .get("similarityBoost")
                 .and_then(|v| v.as_f64())
                 .map(|v| v as f32),
+            instructions: params
+                .get("instructions")
+                .and_then(|v| v.as_str())
+                .map(String::from),
         };
+
+        // Apply voice persona overrides if a persona is supplied inline.
+        if let Some(persona_json) = params.get("persona") {
+            if let Ok(persona) =
+                serde_json::from_value::<moltis_voice::VoicePersona>(persona_json.clone())
+            {
+                if let Err(policy) = crate::voice_persona::apply_persona_to_request(
+                    &mut request,
+                    &persona,
+                    provider_id,
+                ) {
+                    return Err(format!(
+                        "persona fallback policy {:?} blocked provider '{}'",
+                        policy, provider_id
+                    )
+                    .into());
+                }
+            }
+        }
 
         let output = provider.synthesize(request).await.map_err(|e| {
             warn!(provider = %provider_id, error = %e, "TTS synthesis failed");

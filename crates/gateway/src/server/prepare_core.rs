@@ -599,6 +599,10 @@ pub async fn prepare_gateway_core(
         tracing::warn!(error = %e, "failed to ensure main agent DB row");
     }
 
+    let voice_persona_store = Arc::new(crate::voice_persona::VoicePersonaStore::new(
+        db_pool.clone(),
+    ));
+
     let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
         Arc::new(tokio::sync::OnceCell::new());
 
@@ -1309,6 +1313,7 @@ pub async fn prepare_gateway_core(
     services = services.with_session_store(Arc::clone(&session_store));
     services = services.with_session_share_store(Arc::clone(&session_share_store));
     services = services.with_agent_persona_store(Arc::clone(&agent_persona_store));
+    services = services.with_voice_persona_store(Arc::clone(&voice_persona_store));
     startup_mem_probe.checkpoint("channels.initialized");
 
     let agents_config = Arc::new(tokio::sync::RwLock::new(config.agents.clone()));
@@ -1353,6 +1358,7 @@ pub async fn prepare_gateway_core(
                 .with_share_store(Arc::clone(&session_share_store))
                 .with_sandbox_router(Arc::clone(&sandbox_router))
                 .with_agent_persona_store(Arc::clone(&agent_persona_store))
+                .with_voice_persona_store(Arc::clone(&voice_persona_store))
                 .with_project_store(Arc::clone(&project_store))
                 .with_state_store(Arc::clone(&session_state_store))
                 .with_browser_service(Arc::clone(&services.browser));

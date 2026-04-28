@@ -73,11 +73,21 @@ impl LiveSessionService {
             .into());
         }
 
+        // Resolve active voice persona (if any) and include it in the TTS call.
+        let mut convert_params = serde_json::json!({
+            "text": sanitized,
+            "format": "ogg",
+        });
+        if let Some(ref vp_store) = self.voice_persona_store {
+            if let Ok(Some(active)) = vp_store.get_active().await {
+                if let Ok(persona_value) = serde_json::to_value(&active.persona) {
+                    convert_params["persona"] = persona_value;
+                }
+            }
+        }
+
         let convert_value = tts
-            .convert(serde_json::json!({
-                "text": sanitized,
-                "format": "ogg",
-            }))
+            .convert(convert_params)
             .await
             .map_err(|e| format!("TTS convert failed: {e}"))?;
         let convert: TtsConvertPayload = serde_json::from_value(convert_value)

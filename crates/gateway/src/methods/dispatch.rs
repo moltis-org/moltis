@@ -116,6 +116,8 @@ const READ_METHODS: &[&str] = &[
     "voice.config.voxtral_requirements",
     "voice.providers.all",
     "voice.elevenlabs.catalog",
+    "voice.personas.list",
+    "voice.personas.get",
     #[cfg(feature = "graphql")]
     "graphql.config.get",
     "memory.status",
@@ -242,6 +244,10 @@ const WRITE_METHODS: &[&str] = &[
     "voice.override.session.clear",
     "voice.override.channel.set",
     "voice.override.channel.clear",
+    "voice.personas.create",
+    "voice.personas.update",
+    "voice.personas.delete",
+    "voice.personas.set_active",
     #[cfg(feature = "graphql")]
     "graphql.config.set",
     "memory.config.update",

@@ -1049,10 +1049,44 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "tts.convert",
             Box::new(|ctx| {
                 Box::pin(async move {
+                    let mut params = ctx.params.clone();
+
+                    // Resolve voice persona: explicit personaId param, or active persona.
+                    if params.get("persona").is_none() {
+                        let persona = if let Some(persona_id) =
+                            params.get("personaId").and_then(|v| v.as_str())
+                        {
+                            // Explicit persona ID.
+                            if let Some(ref store) = ctx.state.services.voice_persona_store {
+                                store
+                                    .get(persona_id)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .map(|r| r.persona)
+                            } else {
+                                None
+                            }
+                        } else {
+                            // Fall back to active persona.
+                            if let Some(ref store) = ctx.state.services.voice_persona_store {
+                                store.get_active().await.ok().flatten().map(|r| r.persona)
+                            } else {
+                                None
+                            }
+                        };
+
+                        if let Some(persona) = persona {
+                            if let Ok(persona_value) = serde_json::to_value(&persona) {
+                                params["persona"] = persona_value;
+                            }
+                        }
+                    }
+
                     ctx.state
                         .services
                         .tts
-                        .convert(ctx.params.clone())
+                        .convert(params)
                         .await
                         .map_err(ErrorShape::from)
                 })

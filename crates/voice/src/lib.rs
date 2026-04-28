@@ -9,10 +9,11 @@ pub mod tts;
 
 pub use {
     config::{
-        CoquiTtsConfig, DeepgramConfig, ElevenLabsConfig, ElevenLabsSttConfig, GoogleSttConfig,
-        GoogleTtsConfig, GroqSttConfig, MistralSttConfig, OpenAiTtsConfig, PiperTtsConfig,
-        SherpaOnnxConfig, SttConfig, SttProviderId, TtsAutoMode, TtsConfig, TtsProviderId,
-        VoiceConfig, VoxtralLocalConfig, WhisperCliConfig, WhisperConfig,
+        CoquiTtsConfig, DeepgramConfig, ElevenLabsConfig, ElevenLabsSttConfig, FallbackPolicy,
+        GoogleSttConfig, GoogleTtsConfig, GroqSttConfig, MistralSttConfig, OpenAiTtsConfig,
+        PiperTtsConfig, SherpaOnnxConfig, SttConfig, SttProviderId, TtsAutoMode, TtsConfig,
+        TtsProviderId, VoiceConfig, VoicePersona, VoicePersonaPrompt, VoicePersonaProviderBinding,
+        VoxtralLocalConfig, WhisperCliConfig, WhisperConfig,
     },
     stt::{
         DeepgramStt, ElevenLabsStt, GoogleStt, GroqStt, MistralStt, SherpaOnnxStt, SttProvider,

@@ -118,6 +118,12 @@ pub struct SynthesizeRequest {
     pub stability: Option<f32>,
     /// Similarity boost (ElevenLabs-specific, 0.0 - 1.0).
     pub similarity_boost: Option<f32>,
+    /// Voice persona instructions injected into providers that support them.
+    ///
+    /// OpenAI `gpt-4o-mini-tts` uses this as the `instructions` field to control
+    /// voice tone, accent, pacing and character. Other providers ignore it or
+    /// map it to provider-specific mechanisms.
+    pub instructions: Option<String>,
 }
 
 /// Audio output from TTS synthesis.

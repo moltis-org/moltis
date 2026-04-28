@@ -115,6 +115,90 @@ export function transcribeAudio(sessionKey: string, providerId: string, audioBlo
 	);
 }
 
+// ── Voice Persona RPC wrappers ────────────────────────────────
+
+export interface VoicePersonaPrompt {
+	profile?: string;
+	style?: string;
+	accent?: string;
+	pacing?: string;
+	scene?: string;
+	constraints?: string[];
+}
+
+export interface VoicePersonaProviderBinding {
+	provider: string;
+	voice_id?: string;
+	model?: string;
+	speed?: number;
+	stability?: number;
+	similarity_boost?: number;
+	speaking_rate?: number;
+	pitch?: number;
+}
+
+export interface VoicePersona {
+	id: string;
+	label: string;
+	description?: string;
+	provider?: string;
+	fallback_policy: string;
+	prompt: VoicePersonaPrompt;
+	provider_bindings: VoicePersonaProviderBinding[];
+}
+
+export interface VoicePersonaResponse {
+	persona: VoicePersona;
+	is_active: boolean;
+	created_at: number;
+	updated_at: number;
+}
+
+export function listVoicePersonas(): Promise<{ personas: VoicePersonaResponse[]; active: string | null }> {
+	return sendRpc("voice.personas.list", {}) as Promise<{ personas: VoicePersonaResponse[]; active: string | null }>;
+}
+
+export function getVoicePersona(id: string): Promise<VoicePersonaResponse> {
+	return sendRpc("voice.personas.get", { id }) as Promise<VoicePersonaResponse>;
+}
+
+export function createVoicePersona(params: {
+	id: string;
+	label: string;
+	description?: string;
+	provider?: string;
+	fallbackPolicy?: string;
+	prompt?: VoicePersonaPrompt;
+	providerBindings?: VoicePersonaProviderBinding[];
+}): Promise<VoicePersonaResponse> {
+	return sendRpc("voice.personas.create", params) as Promise<VoicePersonaResponse>;
+}
+
+export function updateVoicePersona(
+	id: string,
+	params: {
+		label?: string;
+		description?: string;
+		provider?: string;
+		fallbackPolicy?: string;
+		prompt?: VoicePersonaPrompt;
+		providerBindings?: VoicePersonaProviderBinding[];
+	},
+): Promise<VoicePersonaResponse> {
+	return sendRpc("voice.personas.update", { id, ...params }) as Promise<VoicePersonaResponse>;
+}
+
+export function deleteVoicePersona(id: string): Promise<{ ok: boolean }> {
+	return sendRpc("voice.personas.delete", { id }) as Promise<{ ok: boolean }>;
+}
+
+export function setActiveVoicePersona(id: string | null): Promise<{ ok: boolean; active: string | null }> {
+	return sendRpc("voice.personas.set_active", { id: id ?? "none" }) as Promise<{
+		ok: boolean;
+		active: string | null;
+	}>;
+}
+
 /**
  * Decode a base64 (or base64url) string to a Uint8Array, tolerating
  * whitespace, URL-safe characters, and missing padding.

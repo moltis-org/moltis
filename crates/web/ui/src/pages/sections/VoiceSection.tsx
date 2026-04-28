@@ -12,13 +12,20 @@ import { targetChecked, targetValue } from "../../typed-events";
 import { Modal } from "../../ui";
 import { getPttKey, getVadSensitivity, setPttKey, setVadSensitivity } from "../../voice-input";
 import {
+	createVoicePersona,
 	decodeBase64Safe,
+	deleteVoicePersona,
 	fetchVoiceProviders,
+	listVoicePersonas,
 	saveVoiceKey,
 	saveVoiceSettings,
+	setActiveVoicePersona,
 	testTts,
 	toggleVoiceProvider,
 	transcribeAudio,
+	updateVoicePersona,
+	type VoicePersonaPrompt,
+	type VoicePersonaResponse,
 } from "../../voice-utils";
 import type { RpcResponse } from "./_shared";
 import { rerender } from "./_shared";
@@ -133,6 +140,11 @@ export function VoiceSection(): VNode {
 	const [activeRecorder, setActiveRecorder] = useState<MediaRecorder | null>(null);
 	const [voiceTestResults, setVoiceTestResults] = useState<Record<string, VoiceTestResult>>({});
 
+	// Voice personas
+	const [personas, setPersonas] = useState<VoicePersonaResponse[]>([]);
+	const [activePersonaId, setActivePersonaId] = useState<string | null>(null);
+	const [personaEditing, setPersonaEditing] = useState<string | null>(null);
+
 	// PTT key configuration
 	const [pttKeyValue, setPttKeyValue] = useState(getPttKey());
 	const [pttListening, setPttListening] = useState(false);
@@ -160,8 +172,21 @@ export function VoiceSection(): VNode {
 			});
 	}
 
+	async function fetchPersonas(): Promise<void> {
+		try {
+			const result = await listVoicePersonas();
+			setPersonas(result.personas || []);
+			setActivePersonaId(result.active);
+		} catch (_err) {
+			/* ignore */
+		}
+	}
+
 	useEffect(() => {
-		if (connected.value) fetchVoiceStatus();
+		if (connected.value) {
+			fetchVoiceStatus();
+			fetchPersonas();
+		}
 	}, [connected.value]);
 
 	function onToggleProvider(provider: VoiceProviderData, enabled: boolean, providerType: string): void {
@@ -425,6 +450,112 @@ export function VoiceSection(): VNode {
 						})}
 					</div>
 				</div>
+
+				{/* Voice Personas */}
+				<div>
+					<h3 className="text-sm font-medium text-[var(--text-strong)] mb-1">Voice Personas</h3>
+					<p className="text-xs text-[var(--muted)] mb-3" style={{ margin: "0 0 12px 0" }}>
+						Named voice identities injected into every TTS call. Instead of improvising tone per-message, a persona
+						defines a stable spoken character.
+					</p>
+					{personas.length === 0 ? (
+						<p className="text-xs text-[var(--muted)] italic">No personas configured yet.</p>
+					) : (
+						<div className="flex flex-col gap-2">
+							{personas.map((pr) => (
+								<div
+									key={pr.persona.id}
+									className={`flex items-center gap-3 p-3 rounded border ${pr.is_active ? "border-[var(--accent)]" : "border-[var(--border)]"}`}
+									style={{ background: "var(--surface)" }}
+								>
+									<div className="flex-1 min-w-0">
+										<div className="flex items-center gap-2">
+											<span className="text-sm font-medium text-[var(--text-strong)]">{pr.persona.label}</span>
+											{pr.is_active ? (
+												<span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)] text-white">active</span>
+											) : null}
+											{pr.persona.provider ? (
+												<span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-alt)] text-[var(--muted)]">
+													{pr.persona.provider}
+												</span>
+											) : null}
+										</div>
+										{pr.persona.description ? (
+											<p className="text-xs text-[var(--muted)] mt-0.5 truncate" style={{ margin: "2px 0 0 0" }}>
+												{pr.persona.description}
+											</p>
+										) : null}
+										{pr.persona.prompt.profile ? (
+											<p
+												className="text-[10px] text-[var(--muted)] mt-0.5 truncate italic"
+												style={{ margin: "2px 0 0 0" }}
+											>
+												{pr.persona.prompt.profile}
+											</p>
+										) : null}
+									</div>
+									<div className="flex items-center gap-1.5">
+										{pr.is_active ? (
+											<button
+												type="button"
+												className="provider-btn-sm"
+												onClick={async () => {
+													await setActiveVoicePersona(null);
+													fetchPersonas();
+												}}
+											>
+												Deactivate
+											</button>
+										) : (
+											<button
+												type="button"
+												className="provider-btn-sm"
+												onClick={async () => {
+													await setActiveVoicePersona(pr.persona.id);
+													fetchPersonas();
+												}}
+											>
+												Activate
+											</button>
+										)}
+										<button
+											type="button"
+											className="provider-btn-sm provider-btn-danger"
+											onClick={async () => {
+												await deleteVoicePersona(pr.persona.id);
+												fetchPersonas();
+											}}
+										>
+											Remove
+										</button>
+									</div>
+								</div>
+							))}
+						</div>
+					)}
+					<button
+						type="button"
+						className="provider-btn-secondary mt-2"
+						style={{ marginTop: "8px" }}
+						onClick={() => setPersonaEditing("__new__")}
+					>
+						+ Add Persona
+					</button>
+
+					{personaEditing !== null ? (
+						<PersonaEditModal
+							editingId={personaEditing}
+							existingPersona={
+								personaEditing !== "__new__" ? (personas.find((p) => p.persona.id === personaEditing) ?? null) : null
+							}
+							onClose={() => setPersonaEditing(null)}
+							onSaved={() => {
+								setPersonaEditing(null);
+								fetchPersonas();
+							}}
+						/>
+					) : null}
+				</div>
 			</div>
 
 			{/* Push-to-Talk Configuration */}
@@ -487,6 +618,146 @@ export function VoiceSection(): VNode {
 				}}
 			/>
 		</div>
+	);
+}
+
+// Voice persona edit modal
+
+interface PersonaEditModalProps {
+	editingId: string;
+	existingPersona: VoicePersonaResponse | null;
+	onClose: () => void;
+	onSaved: () => void;
+}
+
+function PersonaEditModal({ editingId, existingPersona, onClose, onSaved }: PersonaEditModalProps): VNode {
+	const isNew = editingId === "__new__";
+	const [id, setId] = useState(existingPersona?.persona.id ?? "");
+	const [label, setLabel] = useState(existingPersona?.persona.label ?? "");
+	const [description, setDescription] = useState(existingPersona?.persona.description ?? "");
+	const [profile, setProfile] = useState(existingPersona?.persona.prompt.profile ?? "");
+	const [style, setStyle] = useState(existingPersona?.persona.prompt.style ?? "");
+	const [accent, setAccent] = useState(existingPersona?.persona.prompt.accent ?? "");
+	const [pacing, setPacing] = useState(existingPersona?.persona.prompt.pacing ?? "");
+	const [saving, setSaving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	async function handleSave(): Promise<void> {
+		setSaving(true);
+		setError(null);
+		try {
+			const prompt: VoicePersonaPrompt = {};
+			if (profile) prompt.profile = profile;
+			if (style) prompt.style = style;
+			if (accent) prompt.accent = accent;
+			if (pacing) prompt.pacing = pacing;
+
+			if (isNew) {
+				if (!(id && label)) {
+					setError("ID and Label are required.");
+					setSaving(false);
+					return;
+				}
+				await createVoicePersona({ id, label, description: description || undefined, prompt });
+			} else {
+				await updateVoicePersona(editingId, {
+					label: label || undefined,
+					description: description || undefined,
+					prompt,
+				});
+			}
+			onSaved();
+		} catch (err: unknown) {
+			setError(err instanceof Error ? err.message : String(err));
+		} finally {
+			setSaving(false);
+		}
+	}
+
+	return (
+		<Modal show onClose={onClose} title={isNew ? "New Voice Persona" : `Edit ${label}`}>
+			<div className="channel-form" style={{ display: "flex", flexDirection: "column", gap: "12px", padding: "16px" }}>
+				{isNew ? (
+					<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
+						ID (lowercase, no spaces)
+						<input
+							className="provider-key-input w-full"
+							placeholder="alfred"
+							value={id}
+							onInput={(e) => setId(targetValue(e))}
+						/>
+					</label>
+				) : null}
+				<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
+					Display Name
+					<input
+						className="provider-key-input w-full"
+						placeholder="Alfred the Butler"
+						value={label}
+						onInput={(e) => setLabel(targetValue(e))}
+					/>
+				</label>
+				<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
+					Description
+					<input
+						className="provider-key-input w-full"
+						placeholder="A wise British butler with dry wit"
+						value={description}
+						onInput={(e) => setDescription(targetValue(e))}
+					/>
+				</label>
+				<hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "4px 0" }} />
+				<p className="text-xs text-[var(--muted)]" style={{ margin: 0 }}>
+					Voice direction fields — controls how the voice sounds on providers that support instructions (e.g., OpenAI
+					gpt-4o-mini-tts).
+				</p>
+				<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
+					Character Profile
+					<input
+						className="provider-key-input w-full"
+						placeholder="A wise British butler, dry wit, formal"
+						value={profile}
+						onInput={(e) => setProfile(targetValue(e))}
+					/>
+				</label>
+				<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
+					Delivery Style
+					<input
+						className="provider-key-input w-full"
+						placeholder="Measured, deliberate, slightly amused"
+						value={style}
+						onInput={(e) => setStyle(targetValue(e))}
+					/>
+				</label>
+				<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
+					Accent
+					<input
+						className="provider-key-input w-full"
+						placeholder="Received Pronunciation"
+						value={accent}
+						onInput={(e) => setAccent(targetValue(e))}
+					/>
+				</label>
+				<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
+					Pacing
+					<input
+						className="provider-key-input w-full"
+						placeholder="Unhurried, with dramatic pauses"
+						value={pacing}
+						onInput={(e) => setPacing(targetValue(e))}
+					/>
+				</label>
+				{error ? <div className="text-xs text-[var(--error)]">{error}</div> : null}
+				<div className="flex gap-2 justify-end" style={{ marginTop: "8px" }}>
+					<button type="button" className="provider-btn-secondary" onClick={onClose}>
+						Cancel
+					</button>
+					<button type="button" className="provider-btn" disabled={saving} onClick={handleSave}>
+						{saving ? "Saving..." : isNew ? "Create" : "Save"}
+					</button>
+				</div>
+			</div>
+		</Modal>
 	);
 }
 
