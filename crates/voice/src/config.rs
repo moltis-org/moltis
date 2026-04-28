@@ -177,8 +177,8 @@ pub struct TtsConfig {
     /// Enable TTS globally.
     pub enabled: bool,
 
-    /// Default provider: "elevenlabs", "openai", "google", "piper", "coqui".
-    pub provider: String,
+    /// Preferred provider. `None` means auto-select the first configured.
+    pub provider: Option<TtsProviderId>,
 
     /// Auto-speak mode.
     pub auto: TtsAutoMode,
@@ -206,7 +206,7 @@ impl Default for TtsConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            provider: "elevenlabs".into(),
+            provider: None,
             auto: TtsAutoMode::Off,
             max_text_length: 2000,
             elevenlabs: ElevenLabsConfig::default(),
@@ -813,7 +813,7 @@ mod tests {
     fn test_default_tts_config() {
         let config = TtsConfig::default();
         assert!(!config.enabled);
-        assert_eq!(config.provider, "elevenlabs");
+        assert_eq!(config.provider, None);
         assert_eq!(config.auto, TtsAutoMode::Off);
         assert_eq!(config.max_text_length, 2000);
     }
@@ -966,7 +966,7 @@ mod tests {
         let config = VoiceConfig {
             tts: TtsConfig {
                 enabled: true,
-                provider: "openai".into(),
+                provider: Some(TtsProviderId::OpenAi),
                 auto: TtsAutoMode::Inbound,
                 max_text_length: 1000,
                 elevenlabs: ElevenLabsConfig {
@@ -985,7 +985,7 @@ mod tests {
         let parsed: VoiceConfig = serde_json::from_str(&json).unwrap();
 
         assert!(parsed.tts.enabled);
-        assert_eq!(parsed.tts.provider, "openai");
+        assert_eq!(parsed.tts.provider, Some(TtsProviderId::OpenAi));
         assert_eq!(parsed.tts.auto, TtsAutoMode::Inbound);
     }
 }

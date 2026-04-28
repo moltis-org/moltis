@@ -417,7 +417,8 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "cloud",
             config.voice.tts.elevenlabs.api_key.is_some() || env_elevenlabs_key.is_some(),
-            config.voice.tts.provider == "elevenlabs" && config.voice.tts.enabled,
+            config.voice.tts.provider == Some(moltis_config::VoiceTtsProvider::ElevenLabs)
+                && config.voice.tts.enabled,
             key_source(
                 config.voice.tts.elevenlabs.api_key.is_some(),
                 env_elevenlabs_key.is_some(),
@@ -436,7 +437,8 @@ pub(super) async fn detect_voice_providers(
                 || env_openai_key.is_some()
                 || llm_openai_key.is_some()
                 || llm_openai_base_url.is_some(),
-            config.voice.tts.provider == "openai" && config.voice.tts.enabled,
+            config.voice.tts.provider == Some(moltis_config::VoiceTtsProvider::OpenAi)
+                && config.voice.tts.enabled,
             key_source(
                 config.voice.tts.openai.api_key.is_some()
                     || config.voice.tts.openai.base_url.is_some(),
@@ -452,7 +454,8 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "cloud",
             config.voice.tts.google.api_key.is_some() || env_google_key.is_some(),
-            config.voice.tts.provider == "google" && config.voice.tts.enabled,
+            config.voice.tts.provider == Some(moltis_config::VoiceTtsProvider::Google)
+                && config.voice.tts.enabled,
             key_source(
                 config.voice.tts.google.api_key.is_some(),
                 env_google_key.is_some(),
@@ -467,7 +470,8 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "local",
             piper_available.is_some() && config.voice.tts.piper.model_path.is_some(),
-            config.voice.tts.provider == "piper" && config.voice.tts.enabled,
+            config.voice.tts.provider == Some(moltis_config::VoiceTtsProvider::Piper)
+                && config.voice.tts.enabled,
             None,
             piper_available.clone(),
             if piper_available.is_none() {
@@ -488,7 +492,8 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "local",
             coqui_server_running,
-            config.voice.tts.provider == "coqui" && config.voice.tts.enabled,
+            config.voice.tts.provider == Some(moltis_config::VoiceTtsProvider::Coqui)
+                && config.voice.tts.enabled,
             None,
             tts_server_binary,
             if !coqui_server_running {
@@ -1134,20 +1139,19 @@ pub(super) fn toggle_voice_provider(
                     "google-tts" => "google",
                     other => other,
                 };
+                let tts_provider = moltis_config::VoiceTtsProvider::parse(config_provider);
                 if enabled {
                     // Set as preferred only if no preferred is set yet or if
                     // the preferred matches this provider. This allows multiple
                     // providers to be configured and available for fallback
                     // without toggling one off when another is toggled on.
-                    if cfg.voice.tts.provider.is_empty()
-                        || cfg.voice.tts.provider == config_provider
-                    {
-                        cfg.voice.tts.provider = config_provider.to_string();
+                    if cfg.voice.tts.provider.is_none() || cfg.voice.tts.provider == tts_provider {
+                        cfg.voice.tts.provider = tts_provider;
                     }
                     cfg.voice.tts.enabled = true;
-                } else if cfg.voice.tts.provider == config_provider {
+                } else if cfg.voice.tts.provider == tts_provider {
                     // Clear preferred provider — auto-select will pick the next configured.
-                    cfg.voice.tts.provider = String::new();
+                    cfg.voice.tts.provider = None;
                 }
             },
             "stt" => {

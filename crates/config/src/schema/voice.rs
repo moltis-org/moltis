@@ -17,9 +17,8 @@ pub struct VoiceConfig {
 pub struct VoiceTtsConfig {
     /// Enable TTS globally.
     pub enabled: bool,
-    /// Active provider: "openai", "elevenlabs", "google", "piper", "coqui".
-    /// Empty string means auto-select the first configured provider.
-    pub provider: String,
+    /// Preferred TTS provider. `None` means auto-select the first configured.
+    pub provider: Option<VoiceTtsProvider>,
     /// Provider IDs to list in the UI. Empty means list all.
     pub providers: Vec<String>,
     /// ElevenLabs-specific settings.
@@ -38,7 +37,7 @@ impl Default for VoiceTtsConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            provider: String::new(),
+            provider: None,
             providers: Vec::new(),
             elevenlabs: VoiceElevenLabsConfig::default(),
             openai: VoiceOpenAiConfig::default(),
@@ -199,6 +198,52 @@ impl Default for VoiceSttConfig {
             whisper_cli: VoiceWhisperCliConfig::default(),
             sherpa_onnx: VoiceSherpaOnnxConfig::default(),
         }
+    }
+}
+
+/// Text-to-Speech provider identifier for the config schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VoiceTtsProvider {
+    #[serde(rename = "elevenlabs")]
+    ElevenLabs,
+    #[serde(rename = "openai")]
+    OpenAi,
+    #[serde(rename = "google")]
+    Google,
+    #[serde(rename = "piper")]
+    Piper,
+    #[serde(rename = "coqui")]
+    Coqui,
+}
+
+impl VoiceTtsProvider {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ElevenLabs => "elevenlabs",
+            Self::OpenAi => "openai",
+            Self::Google => "google",
+            Self::Piper => "piper",
+            Self::Coqui => "coqui",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "elevenlabs" => Some(Self::ElevenLabs),
+            "openai" | "openai-tts" => Some(Self::OpenAi),
+            "google" | "google-tts" => Some(Self::Google),
+            "piper" => Some(Self::Piper),
+            "coqui" => Some(Self::Coqui),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for VoiceTtsProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 

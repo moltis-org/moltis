@@ -322,7 +322,11 @@ impl LiveTtsService {
         let cfg = load_voice_config();
         TtsConfig {
             enabled: cfg.voice.tts.enabled,
-            provider: cfg.voice.tts.provider.clone(),
+            provider: cfg
+                .voice
+                .tts
+                .provider
+                .and_then(|p| TtsProviderId::parse(p.as_str())),
             auto: moltis_voice::TtsAutoMode::Off,
             max_text_length: 8000,
             elevenlabs: moltis_voice::ElevenLabsConfig {
@@ -429,9 +433,9 @@ impl LiveTtsService {
     }
 
     /// Resolve the active provider: explicit config value, or first configured.
-    fn resolve_provider(config_provider: &str) -> Option<TtsProviderId> {
-        if !config_provider.is_empty() {
-            return TtsProviderId::parse(config_provider);
+    fn resolve_provider(config_provider: Option<TtsProviderId>) -> Option<TtsProviderId> {
+        if let Some(id) = config_provider {
+            return Some(id);
         }
         // Auto-select: first configured provider
         Self::list_providers()
@@ -443,7 +447,7 @@ impl LiveTtsService {
     /// Parse provider from JSON params, falling back to config/auto-select.
     fn resolve_from_params(
         params: &Value,
-        config_provider: &str,
+        config_provider: Option<TtsProviderId>,
     ) -> Result<TtsProviderId, ServiceError> {
         match params.get("provider").and_then(|v| v.as_str()) {
             Some(s) => TtsProviderId::parse(s)
@@ -461,7 +465,7 @@ impl TtsService for LiveTtsService {
         let config = Self::load_config();
         let providers = Self::list_providers();
         let any_configured = providers.iter().any(|(_, configured)| *configured);
-        let resolved = Self::resolve_provider(&config.provider);
+        let resolved = Self::resolve_provider(config.provider);
 
         Ok(json!({
             "enabled": config.enabled && any_configured,
@@ -489,7 +493,7 @@ impl TtsService for LiveTtsService {
 
     async fn enable(&self, params: Value) -> ServiceResult {
         let config = Self::load_config();
-        let provider_id = Self::resolve_from_params(&params, &config.provider)?;
+        let provider_id = Self::resolve_from_params(&params, config.provider)?;
 
         if Self::create_provider(provider_id).is_none() {
             return Err(format!("provider '{}' not configured", provider_id).into());
@@ -497,7 +501,8 @@ impl TtsService for LiveTtsService {
 
         // Update config file
         moltis_config::update_config(|cfg| {
-            cfg.voice.tts.provider = provider_id.to_string();
+            cfg.voice.tts.provider =
+                moltis_config::VoiceTtsProvider::parse(&provider_id.to_string());
             cfg.voice.tts.enabled = true;
         })
         .map_err(|e| format!("failed to update config: {}", e))?;
@@ -582,7 +587,7 @@ impl TtsService for LiveTtsService {
         {
             prov
         } else {
-            Self::resolve_provider(&config.provider)
+            Self::resolve_provider(config.provider)
                 .ok_or_else(|| ServiceError::message("no TTS provider configured"))?
         };
 
@@ -759,7 +764,8 @@ impl TtsService for LiveTtsService {
         }
 
         moltis_config::update_config(|cfg| {
-            cfg.voice.tts.provider = provider_id.to_string();
+            cfg.voice.tts.provider =
+                moltis_config::VoiceTtsProvider::parse(&provider_id.to_string());
         })
         .map_err(|e| format!("failed to update config: {}", e))?;
 
@@ -1241,11 +1247,11 @@ mod tests {
     #[test]
     fn test_live_tts_resolve_provider_handles_explicit_and_auto_selection() {
         assert_eq!(
-            LiveTtsService::resolve_provider("openai"),
+            LiveTtsService::resolve_provider(Some(TtsProviderId::OpenAi)),
             Some(TtsProviderId::OpenAi)
         );
-        assert_eq!(LiveTtsService::resolve_provider("unknown"), None);
-        assert!(LiveTtsService::resolve_provider("").is_some());
+        // None means auto-select — returns first configured.
+        assert!(LiveTtsService::resolve_provider(None).is_some());
     }
 
     #[test]
