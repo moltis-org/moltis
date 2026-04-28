@@ -536,13 +536,14 @@ pub(crate) async fn compact_session(
     session_key: &str,
     config: &moltis_config::CompactionConfig,
     provider: Option<&dyn moltis_agents::model::LlmProvider>,
+    summary_provider: Option<&dyn moltis_agents::model::LlmProvider>,
 ) -> error::Result<compaction_run::CompactionOutcome> {
     let history = store
         .read(session_key)
         .await
         .map_err(|source| error::Error::external("failed to read session history", source))?;
 
-    let mut outcome = compaction_run::run_compaction(&history, config, provider)
+    let mut outcome = compaction_run::run_compaction(&history, config, provider, summary_provider)
         .await
         .map_err(|e| error::Error::message(e.to_string()))?;
 

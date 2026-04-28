@@ -107,64 +107,6 @@ fn iterative_instructions(previous_summary: &str) -> String {
     )
 }
 
-/// Default value of `max_summary_tokens` the user can leave untouched.
-/// Mirrors `default_compaction_max_summary_tokens` in `moltis_config::schema`
-/// so we can detect when the user has explicitly set something different.
-const DEFAULT_MAX_SUMMARY_TOKENS: u32 = 4_096;
-
-/// State shared across runs so the "summary_model is not wired yet"
-/// warning is emitted at most once per configuration, not on every
-/// compaction. Without this guard a long session that compacts ten
-/// times would spam the log ten times with the same notice.
-#[allow(clippy::type_complexity)]
-static WARNED_UNUSED_AUXILIARY_CONFIG: std::sync::OnceLock<
-    std::sync::Mutex<Option<(Option<String>, u32)>>,
-> = std::sync::OnceLock::new();
-
-/// Emit a one-shot runtime WARN when the user has set `summary_model`
-/// or a non-default `max_summary_tokens` but the `structured` strategy
-/// doesn't wire them yet.
-///
-/// The auxiliary-model subsystem is tracked by beads issue `moltis-8me`.
-/// Until that ships, `structured` always uses the session's primary
-/// provider regardless of these fields. Users who configured a cheap
-/// auxiliary model (e.g. "openrouter/google/gemini-2.5-flash") would
-/// otherwise silently fall through to the frontier model they use for
-/// coding, with a nasty billing surprise. The warning names the exact
-/// fields and the tracking issue so operators can either disable the
-/// config or wait for the feature to land.
-///
-/// The one-shot guard is keyed on the (model, max_tokens) tuple so
-/// mid-session config reloads that change the values re-emit the
-/// warning.
-fn warn_if_unused_auxiliary_model_config(config: &CompactionConfig) {
-    let model_set = config.summary_model.is_some();
-    let tokens_overridden = config.max_summary_tokens != DEFAULT_MAX_SUMMARY_TOKENS;
-    if !(model_set || tokens_overridden) {
-        return;
-    }
-
-    let state = WARNED_UNUSED_AUXILIARY_CONFIG.get_or_init(Default::default);
-    let key = (config.summary_model.clone(), config.max_summary_tokens);
-    let mut guard = match state.lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    if guard.as_ref() == Some(&key) {
-        return;
-    }
-    *guard = Some(key);
-    drop(guard);
-
-    tracing::warn!(
-        summary_model = ?config.summary_model,
-        max_summary_tokens = config.max_summary_tokens,
-        "chat.compact: chat.compaction.summary_model / max_summary_tokens are reserved \
-         for the auxiliary-model subsystem (beads issue moltis-8me) and have no effect \
-         on the structured strategy yet — the session's primary provider will be used"
-    );
-}
-
 /// Extract the body of the most recent previous-compaction summary in
 /// `history`, if any exists.
 ///
@@ -196,6 +138,11 @@ fn extract_previous_summary(history: &[Value]) -> Option<&str> {
 
 /// Run the structured LLM-summary strategy against `history`.
 ///
+/// `provider` is the LLM to use for the summary call. This is already
+/// resolved upstream: if `chat.compaction.summary_model` is configured
+/// and the model exists in the registry, the caller passes that provider;
+/// otherwise the session's primary provider is forwarded.
+///
 /// Falls back to [`recency_preserving::run`] on LLM stream error or
 /// empty summary, so compaction never silently drops information. When
 /// the fallback fires, the returned outcome reports
@@ -207,13 +154,6 @@ pub(super) async fn run(
     context_window: u32,
     provider: &dyn LlmProvider,
 ) -> Result<CompactionOutcome, CompactionRunError> {
-    // Warn once if the user configured `summary_model` or a non-default
-    // `max_summary_tokens`: those fields are reserved for the auxiliary
-    // model subsystem tracked by beads issue moltis-8me and will not
-    // affect this run. The warning points at the tracking issue so users
-    // aren't misled by the field appearing in the config template.
-    warn_if_unused_auxiliary_model_config(config);
-
     let bounds = compute_boundaries(history, config, context_window);
     let HeadTailBounds {
         head_end,
@@ -286,13 +226,11 @@ pub(super) async fn run(
         }
     }
 
-    // `config.max_summary_tokens` / `config.summary_model` aren't wired
-    // into the provider stream yet — tracked by beads issue moltis-8me.
-    // The warn-on-configured check runs at the top of this function so
-    // users don't silently get default behaviour when they expected a
-    // cheaper auxiliary model.
+    // `max_summary_tokens` is informational only at this layer; the
+    // caller resolved the summary provider from the config, so the model
+    // is already correct. The field exists for forward-compatibility
+    // with provider-level max-tokens overrides.
     let _ = config.max_summary_tokens;
-    let _ = config.summary_model.as_deref();
 
     if let Some(err) = stream_error {
         tracing::warn!(
@@ -371,7 +309,7 @@ mod tests {
             mode: CompactionMode::Structured,
             ..Default::default()
         };
-        let err = super::super::run_compaction(&history, &config, None)
+        let err = super::super::run_compaction(&history, &config, None, None)
             .await
             .unwrap_err();
         match err {
@@ -396,7 +334,7 @@ mod tests {
         };
         let provider =
             StubProvider::new_ok("## Goal\nTest compaction\n## Progress\n### Done\nAll the things");
-        let outcome = super::super::run_compaction(&history, &config, Some(&provider))
+        let outcome = super::super::run_compaction(&history, &config, Some(&provider), None)
             .await
             .expect("structured succeeds with stub provider");
 
@@ -459,7 +397,7 @@ mod tests {
             ..Default::default()
         };
         let provider = StubProvider::new_ok("## Goal\nstub output").with_needle(NEEDLE);
-        let _ = super::super::run_compaction(&history, &config, Some(&provider))
+        let _ = super::super::run_compaction(&history, &config, Some(&provider), None)
             .await
             .expect("structured succeeds with stub provider");
 
@@ -484,7 +422,7 @@ mod tests {
             ..Default::default()
         };
         let provider = StubProvider::new_error("simulated provider outage");
-        let outcome = super::super::run_compaction(&history, &config, Some(&provider))
+        let outcome = super::super::run_compaction(&history, &config, Some(&provider), None)
             .await
             .expect("structured falls back to recency_preserving on llm error");
 
@@ -526,7 +464,7 @@ mod tests {
             ..Default::default()
         };
         let provider = StubProvider::new_empty_summary();
-        let outcome = super::super::run_compaction(&history, &config, Some(&provider))
+        let outcome = super::super::run_compaction(&history, &config, Some(&provider), None)
             .await
             .expect("structured falls back on empty summary");
         assert_eq!(outcome.effective_mode, CompactionMode::RecencyPreserving);

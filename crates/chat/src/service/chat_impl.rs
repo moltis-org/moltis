@@ -215,6 +215,23 @@ impl ChatService for LiveChatService {
         let user_content = UserContent::text(&text);
         let active_event_forwarders = Arc::new(RwLock::new(HashMap::new()));
         let terminal_runs = Arc::new(RwLock::new(HashSet::new()));
+
+        // Resolve summary provider for compaction if configured.
+        let summary_provider = if let Some(ref model_id) = persona.config.chat.compaction.summary_model {
+            let reg = self.providers.read().await;
+            let resolved = reg.get(model_id);
+            if resolved.is_none() {
+                tracing::warn!(
+                    summary_model = %model_id,
+                    "send_sync: configured summary_model not found in provider registry, \
+                     falling back to primary provider for compaction"
+                );
+            }
+            resolved
+        } else {
+            None
+        };
+
         let result = if stream_only {
             run_streaming(
                 persona,
@@ -271,6 +288,7 @@ impl ChatService for LiveChatService {
                 &active_event_forwarders,
                 &terminal_runs,
                 None, // send_sync: no sender name
+                summary_provider,
             )
             .await
         };
@@ -551,8 +569,28 @@ impl ChatService for LiveChatService {
         // error in that case.
         let provider_arc = self.resolve_provider(&session_key, &history).await.ok();
 
+        // Resolve the summary model if configured. Falls back to None
+        // (which causes run_compaction to use the primary provider) when
+        // summary_model is not set or the model ID is not in the registry.
+        let summary_provider_arc = if let Some(ref model_id) = compaction_config.summary_model {
+            let reg = self.providers.read().await;
+            let resolved = reg.get(model_id);
+            if resolved.is_none() {
+                tracing::warn!(
+                    summary_model = %model_id,
+                    "chat.compact: configured summary_model not found in provider registry, \
+                     falling back to primary provider"
+                );
+            }
+            resolved
+        } else {
+            None
+        };
+
         let outcome =
-            compaction_run::run_compaction(&history, compaction_config, provider_arc.as_deref())
+            compaction_run::run_compaction(
+                &history, compaction_config, provider_arc.as_deref(), summary_provider_arc.as_deref(),
+            )
                 .await
                 .map_err(|e| ServiceError::message(e.to_string()))?;
 

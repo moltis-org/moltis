@@ -188,10 +188,17 @@ pub(crate) fn extract_summary_body(compacted: &[Value]) -> String {
 /// [`CompactionRunError::ProviderRequired`] when called without one (or
 /// [`CompactionRunError::FeatureDisabled`] when the `llm-compaction`
 /// cargo feature is off).
+///
+/// `summary_provider` is an optional auxiliary model for LLM-backed
+/// compaction modes (structured, llm_replace). When set, it is used for
+/// the summary LLM call instead of the session's primary provider.
+/// Falls back to `provider` when `None` or when the configured
+/// `summary_model` could not be resolved in the registry.
 pub(crate) async fn run_compaction(
     history: &[Value],
     config: &CompactionConfig,
     provider: Option<&dyn LlmProvider>,
+    summary_provider: Option<&dyn LlmProvider>,
 ) -> Result<CompactionOutcome, CompactionRunError> {
     if history.is_empty() {
         return Err(CompactionRunError::EmptyHistory);
@@ -231,11 +238,14 @@ pub(crate) async fn run_compaction(
                 let provider =
                     provider.ok_or(CompactionRunError::ProviderRequired { mode: "structured" })?;
                 let context_window = provider.context_window();
-                structured::run(history, config, context_window, provider).await
+                // Use the summary provider if available, otherwise fall
+                // back to the session's primary provider.
+                let summary = summary_provider.unwrap_or(provider);
+                structured::run(history, config, context_window, summary).await
             }
             #[cfg(not(feature = "llm-compaction"))]
             {
-                let _ = (config, provider);
+                let _ = (config, provider, summary_provider);
                 Err(CompactionRunError::FeatureDisabled { mode: "structured" })
             }
         },
@@ -245,11 +255,12 @@ pub(crate) async fn run_compaction(
                 let provider = provider.ok_or(CompactionRunError::ProviderRequired {
                     mode: "llm_replace",
                 })?;
-                llm_replace::run(history, config, provider).await
+                let summary = summary_provider.unwrap_or(provider);
+                llm_replace::run(history, config, summary).await
             }
             #[cfg(not(feature = "llm-compaction"))]
             {
-                let _ = (config, provider);
+                let _ = (config, provider, summary_provider);
                 Err(CompactionRunError::FeatureDisabled {
                     mode: "llm_replace",
                 })
@@ -279,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn empty_history_returns_empty_history_error() {
         let config = CompactionConfig::default();
-        let err = run_compaction(&[], &config, None).await.unwrap_err();
+        let err = run_compaction(&[], &config, None, None).await.unwrap_err();
         assert!(matches!(err, CompactionRunError::EmptyHistory));
     }
 
@@ -290,7 +301,7 @@ mod tests {
             mode: CompactionMode::LlmReplace,
             ..Default::default()
         };
-        let err = run_compaction(&sample_history(), &config, None)
+        let err = run_compaction(&sample_history(), &config, None, None)
             .await
             .unwrap_err();
         match err {
@@ -306,7 +317,7 @@ mod tests {
             mode: CompactionMode::Structured,
             ..Default::default()
         };
-        let err = run_compaction(&sample_history(), &config, None)
+        let err = run_compaction(&sample_history(), &config, None, None)
             .await
             .unwrap_err();
         match err {
