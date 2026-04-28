@@ -146,6 +146,9 @@ export function VoiceSection(): VNode {
 	// Tab state
 	const [activeTab, setActiveTab] = useState("stt");
 
+	// Per-persona test state: persona id → "testing" | "playing" | null
+	const [personaTesting, setPersonaTesting] = useState<Record<string, string>>({});
+
 	// Voice personas
 	const [personas, setPersonas] = useState<VoicePersonaResponse[]>([]);
 	const [personaEditing, setPersonaEditing] = useState<string | null>(null);
@@ -515,7 +518,10 @@ export function VoiceSection(): VNode {
 											<button
 												type="button"
 												className="provider-btn provider-btn-secondary text-xs !py-1 !px-2.5"
+												disabled={!!personaTesting[pr.persona.id]}
 												onClick={async () => {
+													setPersonaTesting((prev) => ({ ...prev, [pr.persona.id]: "testing" }));
+													rerender();
 													try {
 														const identity = gon.get("identity") as { user_name?: string; name?: string } | undefined;
 														const user = identity?.user_name || "friend";
@@ -528,22 +534,35 @@ export function VoiceSection(): VNode {
 																mimeType?: string;
 															};
 															if (payload?.audio) {
+																setPersonaTesting((prev) => ({ ...prev, [pr.persona.id]: "playing" }));
+																rerender();
 																const bytes = decodeBase64Safe(payload.audio);
 																const blob = new Blob([bytes as BlobPart], {
 																	type: payload.mimeType || "audio/mpeg",
 																});
 																const url = URL.createObjectURL(blob);
 																const audio = new Audio(url);
-																audio.onended = () => URL.revokeObjectURL(url);
+																audio.onended = () => {
+																	URL.revokeObjectURL(url);
+																	setPersonaTesting((prev) => ({ ...prev, [pr.persona.id]: "" }));
+																	rerender();
+																};
 																audio.play().catch((e: Error) => console.error("[TTS]", e));
+																return;
 															}
 														}
 													} catch (_e) {
 														/* ignore */
 													}
+													setPersonaTesting((prev) => ({ ...prev, [pr.persona.id]: "" }));
+													rerender();
 												}}
 											>
-												Test
+												{personaTesting[pr.persona.id] === "testing"
+													? "Testing\u2026"
+													: personaTesting[pr.persona.id] === "playing"
+														? "Playing\u2026"
+														: "Test"}
 											</button>
 											<button
 												type="button"
