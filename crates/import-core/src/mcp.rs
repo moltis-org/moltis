@@ -56,7 +56,15 @@ pub fn merge_mcp_servers(
 
     let mut existing: HashMap<String, serde_json::Value> = if dest_path.is_file() {
         match std::fs::read_to_string(dest_path) {
-            Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
+            Ok(content) => match serde_json::from_str(&content) {
+                Ok(map) => map,
+                Err(e) => {
+                    return CategoryReport::failed(
+                        ImportCategory::McpServers,
+                        format!("existing mcp-servers.json is malformed: {e}"),
+                    );
+                },
+            },
             Err(_) => HashMap::new(),
         }
     } else {
@@ -199,5 +207,25 @@ mod tests {
         let dest = tmp.path().join("mcp-servers.json");
         let report = merge_mcp_servers(&HashMap::new(), &dest);
         assert_eq!(report.status, ImportStatus::Skipped);
+    }
+
+    #[test]
+    fn malformed_existing_file_returns_failed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("mcp-servers.json");
+        std::fs::write(&dest, "not valid json {{{").unwrap();
+
+        let mut servers = HashMap::new();
+        servers.insert("new".to_string(), ImportMcpServer {
+            command: "new-server".to_string(),
+            ..Default::default()
+        });
+
+        let report = merge_mcp_servers(&servers, &dest);
+        assert_eq!(report.status, ImportStatus::Failed);
+        assert!(!report.errors.is_empty());
+        // Original file should not be overwritten
+        let content = std::fs::read_to_string(&dest).unwrap();
+        assert_eq!(content, "not valid json {{{");
     }
 }
