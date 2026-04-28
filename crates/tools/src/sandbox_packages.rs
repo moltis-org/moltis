@@ -412,6 +412,7 @@ impl AgentTool for SandboxPackagesTool {
             .map(|(name, desc)| ((*name).to_string(), Value::String((*desc).to_string())))
             .collect();
         if !go_tools.is_empty() {
+            visible_total += go_tools.len();
             categories.insert(
                 "Data archiving (Go binaries)".to_string(),
                 Value::Object(go_tools),
@@ -482,7 +483,8 @@ mod tests {
 
         let result = tool.execute(json!({})).await.unwrap();
 
-        assert_eq!(result["total"], 5);
+        let go_count = GO_PREINSTALLED_TOOLS.len();
+        assert_eq!(result["total"], 5 + go_count);
 
         let cats = result["categories"].as_object().unwrap();
         assert!(cats.contains_key("Networking"));
@@ -515,7 +517,7 @@ mod tests {
         // Only curl should remain (libvips-tools is filtered by is_infrastructure_package
         // because it starts with "lib")
         let cats = result["categories"].as_object().unwrap();
-        assert_eq!(result["total"], 1);
+        assert_eq!(result["total"], 1 + GO_PREINSTALLED_TOOLS.len());
         assert!(cats.contains_key("Networking"));
         assert!(!cats.contains_key("Image processing"));
     }
@@ -530,7 +532,7 @@ mod tests {
 
         let result = tool.execute(json!({})).await.unwrap();
 
-        assert_eq!(result["total"], 3);
+        assert_eq!(result["total"], 3 + GO_PREINSTALLED_TOOLS.len());
         let cats = result["categories"].as_object().unwrap();
         assert!(cats.contains_key("Other"));
 
@@ -609,6 +611,10 @@ mod tests {
         assert!(go_cat.contains_key("gogcli"));
         assert!(go_cat.contains_key("discrawl"));
         assert!(go_cat.contains_key("slacrawl"));
+
+        // total must include both APT packages and Go tools
+        let go_count = GO_PREINSTALLED_TOOLS.len();
+        assert_eq!(result["total"], 1 + go_count); // 1 APT (curl) + Go tools
     }
 
     #[test]
