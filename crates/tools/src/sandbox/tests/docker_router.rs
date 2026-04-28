@@ -531,6 +531,17 @@ fn test_sandbox_image_dockerfile_installs_gogcli() {
 }
 
 #[test]
+fn test_sandbox_image_dockerfile_installs_crawl_tools() {
+    let dockerfile = sandbox_image_dockerfile("ubuntu:25.10", &["curl".into()]);
+    for (module, version, _bin) in GO_TOOL_INSTALLS {
+        assert!(
+            dockerfile.contains(&format!("go install {module}@{version}")),
+            "Dockerfile should install {module}"
+        );
+    }
+}
+
+#[test]
 fn test_sandbox_image_dockerfile_adds_nodesource_for_nodejs() {
     let dockerfile = sandbox_image_dockerfile("ubuntu:25.10", &["curl".into(), "nodejs".into()]);
     assert!(dockerfile.contains("nodesource.gpg"));

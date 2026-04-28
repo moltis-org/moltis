@@ -372,6 +372,26 @@ pub(crate) fn canonical_sandbox_packages(packages: &[String]) -> Vec<String> {
 pub(crate) const SANDBOX_HOME_DIR: &str = "/home/sandbox";
 pub(crate) const GOGCLI_MODULE_PATH: &str = "github.com/steipete/gogcli/cmd/gog";
 pub(crate) const GOGCLI_VERSION: &str = "latest";
+
+/// Additional Go-based CLI tools installed via `go install` in the sandbox image.
+/// Each entry is `(module_path, version, binary_name)`.
+pub(crate) const GO_TOOL_INSTALLS: &[(&str, &str, &str)] = &[
+    (
+        "github.com/steipete/wacrawl/cmd/wacrawl",
+        "latest",
+        "wacrawl",
+    ),
+    (
+        "github.com/steipete/discrawl/cmd/discrawl",
+        "latest",
+        "discrawl",
+    ),
+    (
+        "github.com/vincentkoc/slacrawl/cmd/slacrawl",
+        "latest",
+        "slacrawl",
+    ),
+];
 #[cfg(any(target_os = "macos", test))]
 pub(crate) const APPLE_CONTAINER_SAFE_WORKDIR: &str = "/tmp";
 

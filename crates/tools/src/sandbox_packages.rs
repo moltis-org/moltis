@@ -153,6 +153,9 @@ const CATEGORY_MAP: &[(&str, &[&str])] = &[
     ]),
     ("Newsgroups (NNTP)", &["tin", "slrn"]),
     ("Messaging APIs", &["python3-discord"]),
+    ("Data archiving", &[
+        "gogcli", "wacrawl", "discrawl", "slacrawl",
+    ]),
 ];
 
 /// Returns `true` for packages that are infrastructure/library deps and should
