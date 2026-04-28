@@ -201,9 +201,13 @@ impl Default for VoiceSttConfig {
     }
 }
 
-/// Text-to-Speech provider identifier for the config schema.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Text-to-Speech provider identifier.
+///
+/// Canonical definition used across moltis-config, moltis-voice, and
+/// moltis-gateway. Re-exported as `TtsProviderId` from `moltis-voice`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum VoiceTtsProvider {
+    #[default]
     #[serde(rename = "elevenlabs")]
     ElevenLabs,
     #[serde(rename = "openai")]
@@ -239,6 +243,30 @@ impl VoiceTtsProvider {
             _ => None,
         }
     }
+
+    /// Human-readable provider name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ElevenLabs => "ElevenLabs",
+            Self::OpenAi => "OpenAI TTS",
+            Self::Google => "Google Cloud TTS",
+            Self::Piper => "Piper",
+            Self::Coqui => "Coqui TTS",
+        }
+    }
+
+    /// All TTS provider IDs.
+    #[must_use]
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::ElevenLabs,
+            Self::OpenAi,
+            Self::Google,
+            Self::Piper,
+            Self::Coqui,
+        ]
+    }
 }
 
 impl std::fmt::Display for VoiceTtsProvider {
@@ -248,8 +276,12 @@ impl std::fmt::Display for VoiceTtsProvider {
 }
 
 /// Speech-to-Text provider identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Canonical definition used across moltis-config, moltis-voice, and
+/// moltis-gateway. Re-exported as `SttProviderId` from `moltis-voice`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum VoiceSttProvider {
+    #[default]
     #[serde(rename = "whisper")]
     Whisper,
     #[serde(rename = "groq")]
@@ -300,6 +332,38 @@ impl VoiceSttProvider {
             "sherpa-onnx" => Some(Self::SherpaOnnx),
             _ => None,
         }
+    }
+
+    /// Human-readable provider name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Whisper => "OpenAI Whisper",
+            Self::Groq => "Groq",
+            Self::Deepgram => "Deepgram",
+            Self::Google => "Google Cloud",
+            Self::Mistral => "Mistral AI",
+            Self::VoxtralLocal => "Voxtral (Local)",
+            Self::WhisperCli => "whisper.cpp",
+            Self::SherpaOnnx => "sherpa-onnx",
+            Self::ElevenLabs => "ElevenLabs Scribe",
+        }
+    }
+
+    /// All STT provider IDs.
+    #[must_use]
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Whisper,
+            Self::Groq,
+            Self::Deepgram,
+            Self::Google,
+            Self::Mistral,
+            Self::VoxtralLocal,
+            Self::WhisperCli,
+            Self::SherpaOnnx,
+            Self::ElevenLabs,
+        ]
     }
 }
 

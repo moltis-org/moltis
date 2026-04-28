@@ -28,27 +28,9 @@ use crate::services::TtsService;
 #[cfg(feature = "voice")]
 use crate::services::{ServiceError, ServiceResult};
 
-#[cfg(feature = "voice")]
-trait IntoVoiceSttProvider {
-    fn into_voice_stt_provider(self) -> moltis_config::VoiceSttProvider;
-}
-
-#[cfg(feature = "voice")]
-impl IntoVoiceSttProvider for SttProviderId {
-    fn into_voice_stt_provider(self) -> moltis_config::VoiceSttProvider {
-        match self {
-            SttProviderId::Whisper => moltis_config::VoiceSttProvider::Whisper,
-            SttProviderId::Groq => moltis_config::VoiceSttProvider::Groq,
-            SttProviderId::Deepgram => moltis_config::VoiceSttProvider::Deepgram,
-            SttProviderId::Google => moltis_config::VoiceSttProvider::Google,
-            SttProviderId::Mistral => moltis_config::VoiceSttProvider::Mistral,
-            SttProviderId::VoxtralLocal => moltis_config::VoiceSttProvider::VoxtralLocal,
-            SttProviderId::WhisperCli => moltis_config::VoiceSttProvider::WhisperCli,
-            SttProviderId::SherpaOnnx => moltis_config::VoiceSttProvider::SherpaOnnx,
-            SttProviderId::ElevenLabs => moltis_config::VoiceSttProvider::ElevenLabs,
-        }
-    }
-}
+// TTS/STT provider IDs are defined once in moltis-config (VoiceTtsProvider,
+// VoiceSttProvider) and re-exported through moltis-voice as TtsProviderId /
+// SttProviderId. Same type everywhere — no conversion needed.
 
 /// Load config with voice API keys merged from the credential store.
 ///
@@ -322,11 +304,7 @@ impl LiveTtsService {
         let cfg = load_voice_config();
         TtsConfig {
             enabled: cfg.voice.tts.enabled,
-            provider: cfg
-                .voice
-                .tts
-                .provider
-                .and_then(|p| TtsProviderId::parse(p.as_str())),
+            provider: cfg.voice.tts.provider,
             auto: moltis_voice::TtsAutoMode::Off,
             max_text_length: 8000,
             elevenlabs: moltis_voice::ElevenLabsConfig {
@@ -501,8 +479,7 @@ impl TtsService for LiveTtsService {
 
         // Update config file
         moltis_config::update_config(|cfg| {
-            cfg.voice.tts.provider =
-                moltis_config::VoiceTtsProvider::parse(&provider_id.to_string());
+            cfg.voice.tts.provider = Some(provider_id);
             cfg.voice.tts.enabled = true;
         })
         .map_err(|e| format!("failed to update config: {}", e))?;
@@ -764,8 +741,7 @@ impl TtsService for LiveTtsService {
         }
 
         moltis_config::update_config(|cfg| {
-            cfg.voice.tts.provider =
-                moltis_config::VoiceTtsProvider::parse(&provider_id.to_string());
+            cfg.voice.tts.provider = Some(provider_id);
         })
         .map_err(|e| format!("failed to update config: {}", e))?;
 
@@ -1159,7 +1135,7 @@ impl SttService for LiveSttService {
 
         // Update config file
         moltis_config::update_config(|cfg| {
-            cfg.voice.stt.provider = Some(provider_id.into_voice_stt_provider());
+            cfg.voice.stt.provider = Some(provider_id);
         })
         .map_err(|e| format!("failed to update config: {}", e))?;
 

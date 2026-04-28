@@ -37,6 +37,7 @@ fields need updates in `check_semantic_warnings()`.
 - Use concrete types (`struct`/`enum`) over `serde_json::Value` wherever shape is known.
 - **Match on types, never strings.** Only convert to strings at serialization/display boundaries.
 - Prefer `From`/`Into`/`TryFrom`/`TryInto` over manual conversions. Ask before adding manual conversion paths.
+- **DRY cross-crate types:** When two crates need the same enum/struct, define it once in the lower-level crate and re-export via `pub type Alias = other_crate::Type` from the higher-level one. Never duplicate enums across crates or round-trip through strings (`parse(&id.to_string())`) to convert between mirror types.
 - Prefer streaming over non-streaming API calls.
 - Run independent async work concurrently (`tokio::join!`, `futures::join_all`).
 - Never use `block_on` inside async context.

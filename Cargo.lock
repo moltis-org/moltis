@@ -8439,6 +8439,7 @@ dependencies = [
  "bytes",
  "dirs",
  "futures",
+ "moltis-config",
  "reqwest 0.13.2",
  "secrecy 0.8.0",
  "serde",
