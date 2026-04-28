@@ -463,13 +463,13 @@ export function VoiceSection(): VNode {
 							{personas.map((pr) => (
 								<div
 									key={pr.persona.id}
-									className={`flex items-center gap-3 p-3 rounded border ${pr.is_active ? "border-[var(--accent)]" : "border-[var(--border)]"}`}
+									className={`flex items-center gap-3 p-3 rounded border ${pr.isActive ? "border-[var(--accent)]" : "border-[var(--border)]"}`}
 									style={{ background: "var(--surface)" }}
 								>
 									<div className="flex-1 min-w-0">
 										<div className="flex items-center gap-2">
 											<span className="text-sm font-medium text-[var(--text-strong)]">{pr.persona.label}</span>
-											{pr.is_active ? (
+											{pr.isActive ? (
 												<span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)] text-white">active</span>
 											) : null}
 											{pr.persona.provider ? (
@@ -493,7 +493,10 @@ export function VoiceSection(): VNode {
 										) : null}
 									</div>
 									<div className="flex items-center gap-1.5">
-										{pr.is_active ? (
+										<button type="button" className="provider-btn-sm" onClick={() => setPersonaEditing(pr.persona.id)}>
+											Edit
+										</button>
+										{pr.isActive ? (
 											<button
 												type="button"
 												className="provider-btn-sm"

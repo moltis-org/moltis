@@ -149,9 +149,9 @@ export interface VoicePersona {
 
 export interface VoicePersonaResponse {
 	persona: VoicePersona;
-	is_active: boolean;
-	created_at: number;
-	updated_at: number;
+	isActive: boolean;
+	createdAt: number;
+	updatedAt: number;
 }
 
 interface PersonaListPayload {
