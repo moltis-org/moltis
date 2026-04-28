@@ -5,11 +5,16 @@ use {
     std::collections::HashMap,
 };
 
-/// Canonical list of known LLM provider names.
+/// Canonical list of known LLM provider names and accepted config-key aliases.
 ///
 /// This is the **single source of truth** for provider name validation.
 /// Config validation (`semantic.rs`) uses this to detect typos, and
 /// `moltis-providers` cross-validates its registrations against it.
+///
+/// The list includes both canonical provider names (used in registration)
+/// and config-key aliases that users may write in `[providers.<name>]`
+/// sections (e.g. `"local"` is an alias for `"local-llm"`, mapped at
+/// runtime by `ProvidersConfig::provider_entry`).
 ///
 /// When adding a new provider, add its config name here.  A compile-time
 /// test in `moltis-providers` will fail if a registered provider is
