@@ -15,6 +15,13 @@ export default {
 	voiceTranscriptionError: "Transcription error",
 	voiceTranscriptionFailed: "Transcription failed: {{error}}",
 	voiceUploadFailed: "Upload failed: {{error}}",
+	fileUploadTooltip: "Upload files",
+	fileUploadSelectFiles: "Select files to upload",
+	fileUploadMaxSize: "Maximum file size: {{size}} MB",
+	fileUploadFailed: "File upload failed: {{error}}",
+	fileTypeNotSupported: "File type not supported: {{type}}",
+	fileTypeBlocked: "File type blocked for security: {{extension}}",
+	fileTooLarge: "File too large ({{size}} MB, max {{max}} MB)",
 
 	// ── Slash commands ───────────────────────────────────────
 	slashClear: "Clear conversation history",

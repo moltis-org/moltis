@@ -1572,6 +1572,75 @@
 
 /* ── Microphone Button ── */
 
+/* ── File Upload Button ── */
+.file-upload-btn {
+  font-size: 1.2rem;
+  font-weight: 300;
+  line-height: 1;
+}
+
+/* ── File Preview Strip ── */
+.file-preview-strip {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px;
+  overflow-x: auto;
+}
+.file-preview-strip.hidden {
+  display: none;
+}
+.file-preview-item {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 4px 8px;
+}
+.file-preview-icon {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.file-preview-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+.file-preview-name {
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-preview-size {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+.file-preview-remove {
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 4px;
+  transition: color 0.15s;
+}
+.file-preview-remove:hover {
+  color: var(--error);
+}
+
 .mic-btn.recording {
   background: var(--error) !important;
   border-color: var(--error) !important;
