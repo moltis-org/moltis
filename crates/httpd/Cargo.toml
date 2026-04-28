@@ -79,6 +79,7 @@ default = [
   "tls",
   "trusted-network",
   "vault",
+  "voice",
   "web-ui",
 ]
 graphql = [
@@ -102,6 +103,7 @@ tailscale = ["moltis-gateway/tailscale"]
 tls = ["dep:moltis-tls", "dep:rustls", "moltis-gateway/tls"]
 trusted-network = ["moltis-gateway/trusted-network"]
 vault = ["dep:moltis-vault", "moltis-gateway/vault"]
+voice = ["moltis-gateway/voice"]
 web-ui = ["moltis-gateway/web-ui"]
 
 [dev-dependencies]
