@@ -485,4 +485,56 @@ mod tests {
             "accounts/fireworks/routers/kimi-k2p5-turbo"
         ));
     }
+
+    /// Cross-validate that every provider registered in this crate appears in
+    /// the canonical `KNOWN_PROVIDER_NAMES` list in `moltis-config`.
+    ///
+    /// If this test fails, you added a provider to `moltis-providers` without
+    /// updating `crates/config/src/schema/providers.rs::KNOWN_PROVIDER_NAMES`.
+    #[test]
+    fn all_registered_providers_in_canonical_known_list() {
+        use moltis_config::schema::KNOWN_PROVIDER_NAMES;
+
+        // Built-in providers
+        let mut provider_names: Vec<&str> = vec!["anthropic", "openai"];
+
+        // OpenAI-compatible table-driven providers
+        for def in OPENAI_COMPAT_PROVIDERS {
+            provider_names.push(def.config_name);
+        }
+
+        // Feature-gated providers (always check names, regardless of feature)
+        provider_names.extend_from_slice(&[
+            "github-copilot",
+            "kimi-code",
+            "local-llm",
+            "openai-codex",
+            "groq",
+            "xai",
+        ]);
+
+        for name in &provider_names {
+            assert!(
+                KNOWN_PROVIDER_NAMES.contains(name),
+                "provider \"{name}\" is registered in moltis-providers but missing from \
+                 KNOWN_PROVIDER_NAMES in crates/config/src/schema/providers.rs — add it there"
+            );
+        }
+    }
+
+    /// Ensure `KNOWN_PROVIDER_NAMES` has no duplicates.
+    #[test]
+    fn canonical_known_list_has_no_duplicates() {
+        use moltis_config::schema::KNOWN_PROVIDER_NAMES;
+
+        let mut sorted: Vec<&str> = KNOWN_PROVIDER_NAMES.to_vec();
+        sorted.sort();
+        for window in sorted.windows(2) {
+            assert_ne!(
+                window[0], window[1],
+                "duplicate entry \"{0}\" in KNOWN_PROVIDER_NAMES",
+                window[0]
+            );
+        }
+    }
 }

@@ -1,22 +1,9 @@
-use {super::*, crate::schema::MoltisConfig, secrecy::ExposeSecret, std::path::Path};
-
-const KNOWN_PROVIDER_NAMES: &[&str] = &[
-    "anthropic",
-    "openai",
-    "gemini",
-    "groq",
-    "xai",
-    "deepseek",
-    "fireworks",
-    "mistral",
-    "openrouter",
-    "cerebras",
-    "minimax",
-    "moonshot",
-    "venice",
-    "ollama",
-    "lmstudio",
-];
+use {
+    super::*,
+    crate::schema::{KNOWN_PROVIDER_NAMES, MoltisConfig},
+    secrecy::ExposeSecret,
+    std::path::Path,
+};
 
 const PROVIDERS_META_KEYS: &[&str] = &["offered", "show_legacy_models"];
 

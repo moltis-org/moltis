@@ -224,4 +224,38 @@ mod tests {
             Some("env:PROVIDER+API_KEY")
         );
     }
+
+    /// Every alias in `normalize_provider_name` must map to a canonical name
+    /// that exists in `KNOWN_PROVIDER_NAMES`.
+    #[test]
+    fn normalize_alias_outputs_are_in_canonical_list() {
+        use crate::schema::KNOWN_PROVIDER_NAMES;
+
+        let aliases = [
+            "claude",
+            "google",
+            "google-gemini",
+            "grok",
+            "local",
+            "z-ai",
+            "z.ai",
+            "zhipu",
+            "zhipu-ai",
+            "zai-code",
+            "zai-coding",
+            "zhipu-code",
+            "alibaba",
+            "alibaba-coding",
+            "dashscope-coding",
+        ];
+
+        for alias in aliases {
+            let canonical = normalize_provider_name(alias)
+                .unwrap_or_else(|| panic!("normalize_provider_name({alias:?}) returned None"));
+            assert!(
+                KNOWN_PROVIDER_NAMES.contains(&canonical.as_str()),
+                "alias \"{alias}\" normalizes to \"{canonical}\" which is not in KNOWN_PROVIDER_NAMES"
+            );
+        }
+    }
 }
