@@ -200,9 +200,16 @@ pub async fn perform_update(
         return Err(UpdateError::AlreadyInProgress);
     }
 
-    let result = perform_update_inner(client, releases_url, requested_version).await;
-    UPDATE_IN_PROGRESS.store(false, Ordering::SeqCst);
-    result
+    // Drop guard ensures the flag is cleared even on panic.
+    struct UpdateGuard;
+    impl Drop for UpdateGuard {
+        fn drop(&mut self) {
+            UPDATE_IN_PROGRESS.store(false, Ordering::SeqCst);
+        }
+    }
+    let _guard = UpdateGuard;
+
+    perform_update_inner(client, releases_url, requested_version).await
 }
 
 async fn perform_update_inner(
@@ -325,22 +332,16 @@ async fn do_binary_update(
     let tarball_path = tmp.path().join(&tarball_name);
     download_file(client, &tarball_url, &tarball_path).await?;
 
-    // Download and verify checksum
+    // Download and verify checksum — hard fail if missing or mismatched.
     let checksum_path = tmp.path().join("checksum.sha256");
-    if download_file(client, &checksum_url, &checksum_path)
-        .await
-        .is_ok()
-    {
-        let checksum_content = std::fs::read_to_string(&checksum_path)
-            .map_err(|e| UpdateError::Download(format!("failed to read checksum file: {e}")))?;
-        let expected = checksum_content
-            .split_whitespace()
-            .next()
-            .unwrap_or_default();
-        verify_sha256(&tarball_path, expected)?;
-    } else {
-        tracing::warn!("could not download checksum file, skipping verification");
-    }
+    download_file(client, &checksum_url, &checksum_path).await?;
+    let checksum_content = std::fs::read_to_string(&checksum_path)
+        .map_err(|e| UpdateError::Download(format!("failed to read checksum file: {e}")))?;
+    let expected = checksum_content
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
+    verify_sha256(&tarball_path, expected)?;
 
     // Extract binary from tarball
     let extracted = extract_binary_from_tarball(&tarball_path, tmp.path())?;
