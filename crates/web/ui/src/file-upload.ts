@@ -31,7 +31,6 @@ const ALLOWED_TYPES: Record<string, string[]> = {
 	// Raw .sh/.rb extensions are blocked in BLOCKED_EXTENSIONS as a safety net.
 	"text/x-rust": [".rs"],
 	"text/x-python": [".py"],
-	"text/javascript": [".js"],
 	"text/typescript": [".ts", ".tsx"],
 	"text/x-java": [".java"],
 	"text/x-c++": [".cpp", ".cc", ".cxx", ".h", ".hpp"],
@@ -93,6 +92,8 @@ const BLOCKED_EXTENSIONS = new Set([
 	".pptm", // Office with macros
 	".jar",
 	".war", // Java archives
+	".js",
+	".mjs", // JavaScript (XSS risk — served from same origin)
 ]);
 
 // ── Upload Response Types ────────────────────────────────────
@@ -454,6 +455,10 @@ export function initFileUpload(btn: HTMLButtonElement | null, inputRow: HTMLElem
 		btn.addEventListener("click", () => fileInputRef?.click());
 	}
 
+	// Append hidden file input to DOM — iOS Safari silently ignores .click()
+	// on detached <input type="file"> elements.
+	document.body.appendChild(fileInputRef);
+
 	// Create preview strip above the input row (same pattern as media-drop)
 	filePreviewStrip = document.createElement("div");
 	filePreviewStrip.className = "file-preview-strip hidden";
@@ -470,6 +475,9 @@ export function teardownFileUpload(): void {
 		filePreviewStrip.parentElement.removeChild(filePreviewStrip);
 	}
 	filePreviewStrip = null;
+	if (fileInputRef?.parentElement) {
+		fileInputRef.parentElement.removeChild(fileInputRef);
+	}
 	fileInputRef = null;
 	clearPendingUploads();
 }

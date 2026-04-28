@@ -257,22 +257,28 @@ export function sendChat(): void {
 	// Files are sent via `_document_files` (matching the channel attachment
 	// pipeline) rather than as image_url content parts.
 	if (hasFiles) {
-		uploadPendingFiles().then((docFiles) => {
-			const msg = buildChatMessageWithImages(outgoingText, seq, text, snapshotImages);
-			const chatParams = msg.params;
-			if (docFiles.length > 0) {
-				chatParams._document_files = docFiles;
-			}
-			const userEl = msg.el;
-			if (userEl) highlightCodeBlocks(userEl);
-			applySelectedModelToChatParams(chatParams);
-			bumpSessionCount(S.activeSessionKey, 1);
-			cacheOutgoingUserMessage(S.activeSessionKey, chatParams);
-			seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
-			setSessionReplying(S.activeSessionKey, true);
-			sendRpc<ChatSendPayload>("chat.send", chatParams).then((res) => handleChatSendRpcResponse(res, userEl));
-			maybeRefreshFullContextFn?.();
-		});
+		uploadPendingFiles()
+			.then((docFiles) => {
+				const msg = buildChatMessageWithImages(outgoingText, seq, text, snapshotImages);
+				const chatParams = msg.params;
+				if (docFiles.length > 0) {
+					chatParams._document_files = docFiles;
+				}
+				const userEl = msg.el;
+				if (userEl) highlightCodeBlocks(userEl);
+				applySelectedModelToChatParams(chatParams);
+				bumpSessionCount(S.activeSessionKey, 1);
+				cacheOutgoingUserMessage(S.activeSessionKey, chatParams);
+				seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
+				setSessionReplying(S.activeSessionKey, true);
+				sendRpc<ChatSendPayload>("chat.send", chatParams).then((res) => handleChatSendRpcResponse(res, userEl));
+				maybeRefreshFullContextFn?.();
+			})
+			.catch((err: unknown) => {
+				console.error("[chat-send] file upload failed:", err);
+				setSessionReplying(S.activeSessionKey, false);
+				chatAddMsg("error", err instanceof Error ? err.message : "File upload failed");
+			});
 		return;
 	}
 
