@@ -181,7 +181,7 @@ pub fn import_skills(detection: &ClaudeDetection, dest_skills_dir: &Path) -> Cat
 
     if report.items_imported > 0 && report.warnings.is_empty() {
         report.status = ImportStatus::Success;
-    } else if report.items_imported > 0 && !report.warnings.is_empty() {
+    } else if !report.warnings.is_empty() {
         report.status = ImportStatus::Partial;
     }
 
