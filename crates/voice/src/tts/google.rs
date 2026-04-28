@@ -260,13 +260,13 @@ impl GoogleTts {
             })
         });
 
-        // Build the generation config.
+        // Build the generation config (Gemini API uses camelCase).
         let mut generation_config = serde_json::json!({
-            "response_modalities": ["AUDIO"],
-            "response_mime_type": "audio/mp3",
+            "responseModalities": ["AUDIO"],
+            "responseMimeType": "audio/mp3",
         });
         if let Some(sc) = speech_config {
-            generation_config["speech_config"] = sc;
+            generation_config["speechConfig"] = sc;
         }
 
         // Build the request body.
@@ -279,7 +279,7 @@ impl GoogleTts {
 
         // Inject persona instructions as a system instruction.
         if let Some(ref instructions) = request.instructions {
-            body["system_instruction"] = serde_json::json!({
+            body["systemInstruction"] = serde_json::json!({
                 "parts": [{ "text": instructions }]
             });
         }
