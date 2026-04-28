@@ -802,6 +802,24 @@ mod tests {
         );
     }
 
+    /// Custom-named provider pointing at Mistral URL also strips name.
+    #[test]
+    fn mistral_url_detection_strips_user_name() {
+        let p = provider(
+            "mistral-small-latest",
+            "my-mistral-eu",
+            "https://api.mistral.ai/v1",
+        );
+        assert!(!p.supports_user_name);
+
+        let messages = vec![ChatMessage::user_named("hello", "rokku")];
+        let serialized = p.serialize_messages_for_request(&messages);
+        assert!(
+            serialized[0].get("name").is_none(),
+            "Mistral URL-based detection must strip name field"
+        );
+    }
+
     /// OpenAI provider must preserve the (sanitized) `name` field.
     #[test]
     fn openai_provider_preserves_user_name() {

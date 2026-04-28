@@ -47,7 +47,8 @@ impl OpenAiProvider {
         base_url: String,
         provider_name: String,
     ) -> Self {
-        let supports_user_name = !provider_name.eq_ignore_ascii_case("mistral");
+        let supports_user_name = !provider_name.eq_ignore_ascii_case("mistral")
+            && !base_url.to_ascii_lowercase().contains("mistral.ai");
         Self {
             api_key,
             model,

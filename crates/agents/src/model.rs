@@ -157,7 +157,7 @@ impl ChatMessage {
     /// Sanitize a user name for the OpenAI `name` field.
     ///
     /// OpenAI requires `name` to match `^[a-zA-Z0-9_-]+$` with a max length of
-    /// 256 characters. Spaces are replaced with `_`, non-matching characters are
+    /// 64 characters. Spaces are replaced with `_`, non-matching characters are
     /// stripped, and the result is truncated to 64 chars.  Returns `None` if the
     /// sanitized result is empty.
     #[must_use]
