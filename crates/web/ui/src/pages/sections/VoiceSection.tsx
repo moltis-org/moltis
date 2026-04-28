@@ -765,7 +765,7 @@ function PersonaEditModal({ editingId, existingPersona, onClose, onSaved }: Pers
 				</label>
 				{error ? <div className="text-xs text-[var(--error)]">{error}</div> : null}
 				<div className="flex gap-2 justify-end" style={{ marginTop: "8px" }}>
-					<button type="button" className="provider-btn-secondary" onClick={onClose}>
+					<button type="button" className="provider-btn provider-btn-secondary" onClick={onClose}>
 						Cancel
 					</button>
 					<button type="button" className="provider-btn" disabled={saving} onClick={handleSave}>
