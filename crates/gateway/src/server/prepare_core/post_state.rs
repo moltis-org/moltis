@@ -1463,12 +1463,20 @@ pub(super) async fn complete_startup(
                             "starting auto-index for enabled projects"
                         );
                         jm.index_all_enabled_projects(enabled.clone()).await;
-                        jm.start_periodic_reindex_loop();
                     },
                     Err(e) => {
                         warn!(error = %e, "failed to list projects for auto-index");
                     },
                 }
+            });
+        }
+
+        // Start the periodic re-index loop independently of the startup batch.
+        // A user may set auto_index_on_startup=false but still want periodic refreshes.
+        if config.code_index.periodic_reindex_interval > std::time::Duration::ZERO {
+            let jm = Arc::clone(&state.index_job_manager);
+            tokio::spawn(async move {
+                jm.start_periodic_reindex_loop();
             });
         }
     }

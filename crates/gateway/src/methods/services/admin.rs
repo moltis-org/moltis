@@ -156,21 +156,33 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     if let Some(ref pid) = project_id {
                         // Fetch old project to check previous state.
                         // For NEW projects, get() returns Err — treat as old_enabled=false.
-                        let old_enabled = ctx
+                        let old_result = ctx
                             .state
                             .services
                             .project
                             .get(serde_json::json!({ "id": pid }))
                             .await
-                            .ok()
+                            .ok();
+
+                        let old_enabled = old_result
+                            .as_ref()
                             .and_then(|old| old.get("code_index_enabled").and_then(|v| v.as_bool()))
                             .unwrap_or(false);
 
+                        // Prefer directory from the upsert params; fall back to the
+                        // existing record's directory for toggle-only calls (e.g. just
+                        // flipping code_index_enabled without re-sending directory).
                         let project_dir = ctx
                             .params
                             .get("directory")
                             .and_then(|v| v.as_str())
-                            .map(PathBuf::from);
+                            .map(PathBuf::from)
+                            .or_else(|| {
+                                old_result
+                                    .as_ref()
+                                    .and_then(|old| old.get("directory").and_then(|v| v.as_str()))
+                                    .map(PathBuf::from)
+                            });
 
                         // Handle off → on transition (including new project creation):
                         // - existing project: old_enabled=false, new_enabled=true
