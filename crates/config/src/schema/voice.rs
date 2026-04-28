@@ -99,8 +99,11 @@ pub struct VoiceGoogleTtsConfig {
         deserialize_with = "crate::schema::deserialize_option_secret"
     )]
     pub api_key: Option<Secret<String>>,
-    /// Voice name (e.g., "en-US-Neural2-A", "en-US-Wavenet-D").
+    /// Voice name (e.g., "en-US-Neural2-A", "Algieba" for Gemini TTS).
     pub voice: Option<String>,
+    /// Model to use. Set to a `gemini-*` value for Gemini TTS
+    /// (e.g., `"gemini-2.5-flash-preview-tts"`). Omit for standard Cloud TTS v1.
+    pub model: Option<String>,
     /// Language code (e.g., "en-US", "fr-FR").
     pub language_code: Option<String>,
     /// Speaking rate (0.25 - 4.0, default 1.0).

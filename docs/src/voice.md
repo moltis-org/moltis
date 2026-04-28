@@ -345,8 +345,9 @@ voice "flair" per-message, a persona defines a stable spoken character.
 | Provider | Instructions support | Notes |
 |----------|---------------------|-------|
 | OpenAI (`gpt-4o-mini-tts`) | Full | Persona prompt rendered as `instructions` field |
+| Google Gemini TTS (`gemini-*`) | Full | Persona prompt as `system_instruction`; set `model = "gemini-2.5-flash-preview-tts"` |
 | ElevenLabs | Partial | Uses provider binding overrides (voice_id, stability) |
-| Google Cloud TTS | Partial | Uses provider binding overrides (voice, speaking_rate, pitch) |
+| Google Cloud TTS v1 | Partial | Uses provider binding overrides (voice, speaking_rate, pitch) |
 | Piper / Coqui | None | Local providers ignore instructions |
 
 #### Agent Tool Integration
@@ -361,6 +362,22 @@ The `speak()` agent tool accepts an optional `persona` parameter:
 ```
 
 When omitted, the active persona is used automatically.
+
+#### Agent ↔ Persona Link
+
+Each agent persona can optionally reference a voice persona via the
+`voice_persona_id` field. Set it when creating or updating an agent:
+
+```json
+{
+  "id": "butler",
+  "name": "Butler Agent",
+  "voice_persona_id": "alfred"
+}
+```
+
+This links the agent's identity to its voice — the UI can use this
+to auto-switch the active voice persona when switching agents.
 
 ### Auto-Speak Modes
 
@@ -710,4 +727,4 @@ The voice feature integrates with the web UI:
 - **VoiceWake**: Wake word detection and continuous listening
 - **Audio playback**: Play TTS responses directly in the chat
 - **Channel Integration**: Auto-transcribe Telegram voice messages
-- **Agent ↔ Persona Link**: Bind a voice persona to an agent so switching agents automatically switches voice
+- **Automatic Persona Switching**: Auto-activate the linked voice persona when the active agent changes

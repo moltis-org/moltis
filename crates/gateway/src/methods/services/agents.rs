@@ -83,6 +83,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             emoji: identity.emoji.clone(),
                             theme: identity.theme.clone(),
                             description: None,
+                            voice_persona_id: None,
                         })
                         .await;
                 }
@@ -438,6 +439,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 emoji: identity.emoji.clone(),
                                 theme: identity.theme.clone(),
                                 description: None,
+                                voice_persona_id: None,
                             })
                             .await;
                     }

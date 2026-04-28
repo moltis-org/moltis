@@ -342,6 +342,7 @@ impl LiveTtsService {
             google: moltis_voice::GoogleTtsConfig {
                 api_key: cfg.voice.tts.google.api_key.clone(),
                 voice: cfg.voice.tts.google.voice.clone(),
+                model: cfg.voice.tts.google.model.clone(),
                 language_code: cfg.voice.tts.google.language_code.clone(),
                 speaking_rate: cfg.voice.tts.google.speaking_rate,
                 pitch: cfg.voice.tts.google.pitch,
@@ -387,7 +388,8 @@ impl LiveTtsService {
                 }
             },
             TtsProviderId::Google => config.google.api_key.as_ref().map(|_| {
-                Box::new(GoogleTts::new(&config.google)) as Box<dyn TtsProvider + Send + Sync>
+                Box::new(GoogleTts::new(&config.google).with_model(config.google.model.clone()))
+                    as Box<dyn TtsProvider + Send + Sync>
             }),
             TtsProviderId::Piper => {
                 let piper = PiperTts::new(&config.piper);

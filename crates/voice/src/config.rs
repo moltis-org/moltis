@@ -287,6 +287,10 @@ pub struct OpenAiTtsConfig {
 }
 
 /// Google Cloud TTS provider configuration.
+///
+/// Supports both standard Cloud TTS v1 voices and Gemini TTS models.
+/// Set `model` to a `gemini-*` value (e.g., `"gemini-2.5-flash-preview-tts"`)
+/// to use Gemini TTS with voice persona instruction support.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GoogleTtsConfig {
@@ -299,8 +303,12 @@ pub struct GoogleTtsConfig {
     )]
     pub api_key: Option<Secret<String>>,
 
-    /// Voice name (e.g., "en-US-Neural2-A", "en-US-Wavenet-D").
+    /// Voice name (e.g., "en-US-Neural2-A", "Algieba" for Gemini).
     pub voice: Option<String>,
+
+    /// Model to use. Set to a `gemini-*` value for Gemini TTS
+    /// (e.g., `"gemini-2.5-flash-preview-tts"`).
+    pub model: Option<String>,
 
     /// Language code (e.g., "en-US", "fr-FR").
     pub language_code: Option<String>,
