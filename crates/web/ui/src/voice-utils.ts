@@ -154,12 +154,22 @@ export interface VoicePersonaResponse {
 	updated_at: number;
 }
 
-export function listVoicePersonas(): Promise<{ personas: VoicePersonaResponse[]; active: string | null }> {
-	return sendRpc("voice.personas.list", {}) as Promise<{ personas: VoicePersonaResponse[]; active: string | null }>;
+interface PersonaListPayload {
+	personas: VoicePersonaResponse[];
+	active: string | null;
+}
+
+interface SetActivePayload {
+	ok: boolean;
+	active: string | null;
+}
+
+export function listVoicePersonas(): Promise<PersonaListPayload> {
+	return sendRpc("voice.personas.list", {}).then((r) => r.payload as PersonaListPayload);
 }
 
 export function getVoicePersona(id: string): Promise<VoicePersonaResponse> {
-	return sendRpc("voice.personas.get", { id }) as Promise<VoicePersonaResponse>;
+	return sendRpc("voice.personas.get", { id }).then((r) => r.payload as VoicePersonaResponse);
 }
 
 export function createVoicePersona(params: {
@@ -171,7 +181,7 @@ export function createVoicePersona(params: {
 	prompt?: VoicePersonaPrompt;
 	providerBindings?: VoicePersonaProviderBinding[];
 }): Promise<VoicePersonaResponse> {
-	return sendRpc("voice.personas.create", params) as Promise<VoicePersonaResponse>;
+	return sendRpc("voice.personas.create", params).then((r) => r.payload as VoicePersonaResponse);
 }
 
 export function updateVoicePersona(
@@ -185,18 +195,15 @@ export function updateVoicePersona(
 		providerBindings?: VoicePersonaProviderBinding[];
 	},
 ): Promise<VoicePersonaResponse> {
-	return sendRpc("voice.personas.update", { id, ...params }) as Promise<VoicePersonaResponse>;
+	return sendRpc("voice.personas.update", { id, ...params }).then((r) => r.payload as VoicePersonaResponse);
 }
 
 export function deleteVoicePersona(id: string): Promise<{ ok: boolean }> {
-	return sendRpc("voice.personas.delete", { id }) as Promise<{ ok: boolean }>;
+	return sendRpc("voice.personas.delete", { id }).then((r) => r.payload as { ok: boolean });
 }
 
-export function setActiveVoicePersona(id: string | null): Promise<{ ok: boolean; active: string | null }> {
-	return sendRpc("voice.personas.set_active", { id: id ?? "none" }) as Promise<{
-		ok: boolean;
-		active: string | null;
-	}>;
+export function setActiveVoicePersona(id: string | null): Promise<SetActivePayload> {
+	return sendRpc("voice.personas.set_active", { id: id ?? "none" }).then((r) => r.payload as SetActivePayload);
 }
 
 /**
