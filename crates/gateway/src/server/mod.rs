@@ -38,8 +38,9 @@ pub use {
     prepare_core::prepare_gateway_core,
     prepared::PreparedGatewayCore,
     startup::{
-        openclaw_detected_for_ui, start_browser_warmup_after_listener,
-        start_openclaw_background_tasks, sync_runtime_webauthn_host_and_notice,
+        claude_detected_for_ui, hermes_detected_for_ui, openclaw_detected_for_ui,
+        start_browser_warmup_after_listener, start_openclaw_background_tasks,
+        sync_runtime_webauthn_host_and_notice,
     },
     workspace::sync_persona_into_preset,
 };

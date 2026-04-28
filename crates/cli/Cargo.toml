@@ -169,8 +169,8 @@ lang-toml       = ["moltis-memory/lang-toml"]
 lang-typescript = ["moltis-memory/lang-typescript"]
 # jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
-claude-import      = ["dep:moltis-claude-import"]
-hermes-import      = ["dep:moltis-hermes-import"]
+claude-import      = ["dep:moltis-claude-import", "moltis-gateway/claude-import"]
+hermes-import      = ["dep:moltis-hermes-import", "moltis-gateway/hermes-import"]
 lightweight        = ["jemalloc", "tls", "web-ui"]
 local-llm          = ["moltis-gateway/local-llm"]
 local-llm-cuda     = ["local-llm", "moltis-gateway/local-llm-cuda"]
