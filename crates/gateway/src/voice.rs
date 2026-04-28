@@ -564,6 +564,10 @@ impl TtsService for LiveTtsService {
         };
 
         // Provider resolution: explicit param → directive → persona's provider → config default.
+        // Track if the provider was explicitly chosen (disables fallback on failure).
+        let explicit_provider = params.get("provider").and_then(|v| v.as_str()).is_some()
+            || directives.provider.is_some();
+
         let provider_id = if let Some(s) = params.get("provider").and_then(|v| v.as_str()) {
             TtsProviderId::parse(s)
                 .ok_or_else(|| ServiceError::message(format!("unknown TTS provider '{s}'")))?
@@ -670,10 +674,15 @@ impl TtsService for LiveTtsService {
 
         // Provider fallback chain: try the selected provider, then fall through
         // to other configured providers if synthesis fails.
+        // Explicit provider selection disables fallback — fail immediately.
         let mut attempted_providers = vec![provider_id];
 
         let output = match provider.synthesize(request.clone()).await {
             Ok(output) => output,
+            Err(e) if explicit_provider => {
+                warn!(provider = %provider_id, error = %e, "TTS synthesis failed (explicit provider, no fallback)");
+                return Err(format!("TTS synthesis failed: {e}").into());
+            },
             Err(e) => {
                 warn!(provider = %provider_id, error = %e, "TTS synthesis failed, trying fallback providers");
                 let mut last_error = e.to_string();

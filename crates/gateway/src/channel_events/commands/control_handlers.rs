@@ -726,6 +726,7 @@ pub(in crate::channel_events) async fn handle_peek(
 /// - `/tts persona off|none` — deactivate persona
 pub(in crate::channel_events) async fn handle_tts(
     state: &Arc<GatewayState>,
+    session_key: &str,
     args: &str,
 ) -> ChannelResult<String> {
     let sub = args.split_whitespace().next().unwrap_or("");
@@ -733,6 +734,8 @@ pub(in crate::channel_events) async fn handle_tts(
 
     match sub {
         "persona" => handle_tts_persona(state, sub_args).await,
+        "provider" => handle_tts_provider(state, sub_args).await,
+        "chat" => handle_tts_chat(state, sub_args, session_key).await,
         "" => {
             // Show TTS status summary.
             let status = state
@@ -771,7 +774,8 @@ pub(in crate::channel_events) async fn handle_tts(
             ))
         },
         other => Err(ChannelError::invalid_input(format!(
-            "unknown /tts subcommand: {other}\nUsage: /tts persona [<id>|off]"
+            "unknown /tts subcommand: {other}\n\
+             Usage:\n  /tts persona [<id>|off]\n  /tts provider [<id>]\n  /tts chat [on|off|default]"
         ))),
     }
 }
@@ -844,5 +848,108 @@ async fn handle_tts_persona(state: &Arc<GatewayState>, args: &str) -> ChannelRes
                 ))),
             }
         },
+    }
+}
+
+/// Handle `/tts provider [<id>]` — list or set the preferred TTS provider.
+async fn handle_tts_provider(state: &Arc<GatewayState>, args: &str) -> ChannelResult<String> {
+    let providers = state
+        .services
+        .tts
+        .providers()
+        .await
+        .map_err(ChannelError::unavailable)?;
+    let provider_list: Vec<serde_json::Value> = providers.as_array().cloned().unwrap_or_default();
+
+    if args.is_empty() {
+        let status = state
+            .services
+            .tts
+            .status()
+            .await
+            .map_err(ChannelError::unavailable)?;
+        let current = status
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto");
+
+        let mut lines = vec!["TTS Providers:".to_string()];
+        for p in &provider_list {
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+            let configured = p
+                .get("configured")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let marker = if id == current {
+                " (active)"
+            } else {
+                ""
+            };
+            let status_str = if configured {
+                ""
+            } else {
+                " [not configured]"
+            };
+            lines.push(format!("  {name} ({id}){marker}{status_str}"));
+        }
+        lines.push(String::new());
+        lines.push("Set: /tts provider <id>".to_string());
+        return Ok(lines.join("\n"));
+    }
+
+    let id = args.split_whitespace().next().unwrap_or("");
+    state
+        .services
+        .tts
+        .set_provider(serde_json::json!({ "provider": id }))
+        .await
+        .map_err(ChannelError::unavailable)?;
+    Ok(format!("TTS provider set to: {id}"))
+}
+
+/// Handle `/tts chat [on|off|default]` — per-session auto-speak toggle.
+async fn handle_tts_chat(
+    state: &Arc<GatewayState>,
+    args: &str,
+    session_key: &str,
+) -> ChannelResult<String> {
+    let mode = args.split_whitespace().next().unwrap_or("");
+
+    match mode {
+        "on" => {
+            let mut inner = state.inner.write().await;
+            inner.tts_session_overrides.insert(
+                session_key.to_string(),
+                crate::state::TtsRuntimeOverride {
+                    provider: None,
+                    voice_id: None,
+                    model: None,
+                },
+            );
+            // We use the override presence as a signal that auto-speak is on
+            // for this session. The actual auto mode is handled at synthesis time.
+            Ok("Auto-speak enabled for this session.".to_string())
+        },
+        "off" => {
+            let mut inner = state.inner.write().await;
+            inner.tts_session_overrides.remove(session_key);
+            Ok("Auto-speak disabled for this session.".to_string())
+        },
+        "default" | "" => {
+            let inner = state.inner.read().await;
+            let has_override = inner.tts_session_overrides.contains_key(session_key);
+            Ok(format!(
+                "Session auto-speak: {}",
+                if has_override {
+                    "on (override)"
+                } else {
+                    "default (from config)"
+                }
+            ))
+        },
+        other => Err(ChannelError::invalid_input(format!(
+            "unknown /tts chat mode: {other}\nUsage: /tts chat [on|off|default]"
+        ))),
     }
 }

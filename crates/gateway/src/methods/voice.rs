@@ -1129,20 +1129,25 @@ pub(super) fn toggle_voice_provider(
     moltis_config::update_config(|cfg| {
         match provider_type {
             "tts" => {
+                let config_provider = match provider {
+                    "openai-tts" => "openai",
+                    "google-tts" => "google",
+                    other => other,
+                };
                 if enabled {
-                    // Map provider id to config provider name
-                    let config_provider = match provider {
-                        "openai-tts" => "openai",
-                        "google-tts" => "google",
-                        other => other,
-                    };
-                    cfg.voice.tts.provider = config_provider.to_string();
+                    // Set as preferred only if no preferred is set yet or if
+                    // the preferred matches this provider. This allows multiple
+                    // providers to be configured and available for fallback
+                    // without toggling one off when another is toggled on.
+                    if cfg.voice.tts.provider.is_empty()
+                        || cfg.voice.tts.provider == config_provider
+                    {
+                        cfg.voice.tts.provider = config_provider.to_string();
+                    }
                     cfg.voice.tts.enabled = true;
-                } else if cfg.voice.tts.provider == provider
-                    || (provider == "openai-tts" && cfg.voice.tts.provider == "openai")
-                    || (provider == "google-tts" && cfg.voice.tts.provider == "google")
-                {
-                    cfg.voice.tts.enabled = false;
+                } else if cfg.voice.tts.provider == config_provider {
+                    // Clear preferred provider — auto-select will pick the next configured.
+                    cfg.voice.tts.provider = String::new();
                 }
             },
             "stt" => {
