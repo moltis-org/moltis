@@ -7,6 +7,7 @@ prompts
 .env.*
 .DS_Store
 .claude/worktrees/
+CLAUDE.local.md
 .entire/
 .playwright-mcp/
 features/
