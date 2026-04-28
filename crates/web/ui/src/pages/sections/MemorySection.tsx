@@ -687,7 +687,7 @@ export function MemorySection(): VNode {
 							rerender();
 						}}
 					>
-						<option value="on-new-or-reset">On /new and /reset</option>
+						<option value="on-new-or-reset">On session change</option>
 						<option value="off">Off</option>
 					</select>
 				</div>

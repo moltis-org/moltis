@@ -66,6 +66,31 @@ fn resolve_hook_channel_binding(
     (!binding.is_empty()).then_some(binding)
 }
 
+/// Dispatch a [`HookPayload::Command`] event (e.g. "new" or "reset") for the
+/// given session.  This is called from every code-path that creates or clears a
+/// session so that the `SessionMemoryHook` can export the conversation before
+/// the history is lost.
+pub(crate) async fn dispatch_command_hook(
+    hook_registry: &HookRegistry,
+    session_key: &str,
+    action: &str,
+    sender_id: Option<&str>,
+) {
+    let payload = moltis_common::hooks::HookPayload::Command {
+        session_key: session_key.to_string(),
+        action: action.to_string(),
+        sender_id: sender_id.map(str::to_string),
+    };
+    if let Err(e) = hook_registry.dispatch(&payload).await {
+        warn!(
+            session = %session_key,
+            action = %action,
+            error = %e,
+            "Command hook dispatch failed"
+        );
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TtsStatusPayload {

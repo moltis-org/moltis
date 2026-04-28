@@ -40,6 +40,8 @@ export const slashCommands: SlashCommand[] = [
 	{ name: "compact", description: "Summarize conversation to save tokens" },
 	{ name: "context", description: "Show session context and project info" },
 	{ name: "mode", description: "Switch session mode" },
+	{ name: "new", description: "Start a new session" },
+	{ name: "reset", description: "Clear conversation history" },
 	{ name: "sh", description: "Enter command mode (/sh off or Esc to exit)" },
 ];
 
@@ -335,6 +337,15 @@ export function handleSlashCommand(cmdName: string, cmdArgs: string): void {
 	}
 	if (cmdName === "mode") {
 		handleModeCommand(cmdArgs);
+		return;
+	}
+	if (cmdName === "new") {
+		const newKey = `session:${crypto.randomUUID()}`;
+		switchSession(newKey);
+		return;
+	}
+	if (cmdName === "reset") {
+		clearActiveSession();
 		return;
 	}
 	if (cmdName === "sh") {
