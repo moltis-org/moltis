@@ -153,9 +153,18 @@ const CATEGORY_MAP: &[(&str, &[&str])] = &[
     ]),
     ("Newsgroups (NNTP)", &["tin", "slrn"]),
     ("Messaging APIs", &["python3-discord"]),
-    ("Data archiving", &[
-        "gogcli", "wacrawl", "discrawl", "slacrawl",
-    ]),
+];
+
+/// Go-based CLI tools installed via `go install` (not APT), surfaced as a
+/// separate section so the LLM knows they exist. These won't appear in
+/// `dpkg-query` output.
+const GO_PREINSTALLED_TOOLS: &[(&str, &str)] = &[
+    (
+        "gogcli",
+        "Google Suite CLI (Gmail, Calendar, Drive, Docs, Sheets, Contacts)",
+    ),
+    ("discrawl", "Discord guild archive and search"),
+    ("slacrawl", "Slack workspace archive and search"),
 ];
 
 /// Returns `true` for packages that are infrastructure/library deps and should
@@ -397,6 +406,18 @@ impl AgentTool for SandboxPackagesTool {
             );
         }
 
+        // Include pre-installed Go tools that don't come from APT.
+        let go_tools: serde_json::Map<String, Value> = GO_PREINSTALLED_TOOLS
+            .iter()
+            .map(|(name, desc)| ((*name).to_string(), Value::String((*desc).to_string())))
+            .collect();
+        if !go_tools.is_empty() {
+            categories.insert(
+                "Data archiving (Go binaries)".to_string(),
+                Value::Object(go_tools),
+            );
+        }
+
         let mut result = json!({
             "total": visible_total,
             "categories": categories
@@ -572,6 +593,22 @@ mod tests {
         assert!(!is_infrastructure_package("ffmpeg"));
         assert!(!is_infrastructure_package("pandoc"));
         assert!(!is_infrastructure_package("imagemagick"));
+    }
+
+    #[tokio::test]
+    async fn test_go_tools_surfaced_in_response() {
+        let tool = make_tool(vec!["curl".into()]);
+        let result = tool.execute(json!({})).await.unwrap();
+
+        let cats = result["categories"].as_object().unwrap();
+        assert!(
+            cats.contains_key("Data archiving (Go binaries)"),
+            "Go tools category missing from response"
+        );
+        let go_cat = cats["Data archiving (Go binaries)"].as_object().unwrap();
+        assert!(go_cat.contains_key("gogcli"));
+        assert!(go_cat.contains_key("discrawl"));
+        assert!(go_cat.contains_key("slacrawl"));
     }
 
     #[test]

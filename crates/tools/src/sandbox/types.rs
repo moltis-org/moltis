@@ -375,12 +375,10 @@ pub(crate) const GOGCLI_VERSION: &str = "latest";
 
 /// Additional Go-based CLI tools installed via `go install` in the sandbox image.
 /// Each entry is `(module_path, version, binary_name)`.
+///
+/// Only tools that work inside a Linux container belong here. macOS-only tools
+/// (e.g. wacrawl) are host-only and install via their skill's `requires.install`.
 pub(crate) const GO_TOOL_INSTALLS: &[(&str, &str, &str)] = &[
-    (
-        "github.com/steipete/wacrawl/cmd/wacrawl",
-        "latest",
-        "wacrawl",
-    ),
     (
         "github.com/steipete/discrawl/cmd/discrawl",
         "latest",
