@@ -142,7 +142,6 @@ export function VoiceSection(): VNode {
 
 	// Voice personas
 	const [personas, setPersonas] = useState<VoicePersonaResponse[]>([]);
-	const [activePersonaId, setActivePersonaId] = useState<string | null>(null);
 	const [personaEditing, setPersonaEditing] = useState<string | null>(null);
 
 	// PTT key configuration
@@ -176,7 +175,6 @@ export function VoiceSection(): VNode {
 		try {
 			const result = await listVoicePersonas();
 			setPersonas(result.personas || []);
-			setActivePersonaId(result.active);
 		} catch (_err) {
 			/* ignore */
 		}

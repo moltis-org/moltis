@@ -560,6 +560,13 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query(
+            r"CREATE UNIQUE INDEX IF NOT EXISTS uix_voice_personas_active
+              ON voice_personas (is_active) WHERE is_active = 1",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         pool
     }
 
