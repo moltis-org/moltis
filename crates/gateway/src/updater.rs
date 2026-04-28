@@ -20,6 +20,7 @@ use crate::update_check;
 static UPDATE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 const GITHUB_REPO: &str = "moltis-org/moltis";
+const GPG_KEY_URL: &str = "https://pen.so/gpg.asc";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -343,6 +344,11 @@ async fn do_binary_update(
         .unwrap_or_default();
     verify_sha256(&tarball_path, expected)?;
 
+    // Best-effort GPG signature verification (informational only).
+    let sig_url = format!("{tarball_url}.asc");
+    let sig_path = tmp.path().join(format!("{tarball_name}.asc"));
+    verify_gpg_signature(client, &sig_url, &sig_path, &tarball_path).await;
+
     // Extract binary from tarball
     let extracted = extract_binary_from_tarball(&tarball_path, tmp.path())?;
 
@@ -415,6 +421,91 @@ fn verify_sha256(path: &Path, expected: &str) -> Result<(), UpdateError> {
         return Err(UpdateError::ChecksumMismatch);
     }
     Ok(())
+}
+
+/// Best-effort GPG signature verification.
+///
+/// Downloads the detached `.asc` signature and the maintainer's public key,
+/// imports the key into a temporary keyring, and runs `gpg --verify`.
+/// Logs the result but never fails the update — GPG may not be installed,
+/// or the release may not have been GPG-signed yet (CI creates Sigstore
+/// signatures; GPG signing is a separate manual step).
+async fn verify_gpg_signature(
+    client: &reqwest::Client,
+    sig_url: &str,
+    sig_path: &Path,
+    artifact_path: &Path,
+) {
+    // Download .asc signature
+    if download_file(client, sig_url, sig_path).await.is_err() {
+        tracing::debug!("no GPG signature available for this release");
+        return;
+    }
+
+    // Check that gpg is available
+    if std::process::Command::new("gpg")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_err()
+    {
+        tracing::debug!("gpg not found, skipping signature verification");
+        return;
+    }
+
+    // Create a temporary GNUPG home to avoid polluting the user's keyring
+    let gnupg_home = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+
+    // Import the maintainer's public key
+    let key_url = GPG_KEY_URL;
+    let key_path = gnupg_home.path().join("maintainer.asc");
+    if download_file(client, key_url, &key_path).await.is_err() {
+        tracing::debug!("could not fetch maintainer GPG key");
+        return;
+    }
+
+    let import = std::process::Command::new("gpg")
+        .args(["--homedir"])
+        .arg(gnupg_home.path())
+        .args(["--batch", "--quiet", "--import"])
+        .arg(&key_path)
+        .output();
+
+    if import.is_err() || !import.is_ok_and(|o| o.status.success()) {
+        tracing::debug!("failed to import maintainer GPG key");
+        return;
+    }
+
+    // Verify the signature
+    let verify = std::process::Command::new("gpg")
+        .args(["--homedir"])
+        .arg(gnupg_home.path())
+        .args(["--batch", "--verify"])
+        .arg(sig_path)
+        .arg(artifact_path)
+        .output();
+
+    match verify {
+        Ok(output) if output.status.success() => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let signer = stderr
+                .lines()
+                .find(|l| l.contains("Good signature"))
+                .unwrap_or("verified");
+            tracing::info!("GPG signature verified: {signer}");
+        },
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!("GPG signature verification failed: {stderr}");
+        },
+        Err(e) => {
+            tracing::debug!("gpg verify command failed: {e}");
+        },
+    }
 }
 
 fn extract_binary_from_tarball(tarball: &Path, dest_dir: &Path) -> Result<PathBuf, UpdateError> {
