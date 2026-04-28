@@ -20,7 +20,7 @@ use moltis_voice::{
     AudioFormat, CoquiTts, DeepgramStt, ElevenLabsStt, ElevenLabsTts, GoogleStt, GoogleTts,
     GroqStt, MistralStt, OpenAiTts, PiperTts, SherpaOnnxStt, SttProvider, SttProviderId,
     SynthesizeRequest, TranscribeRequest, TtsConfig, TtsProvider, TtsProviderId, VoxtralLocalStt,
-    WhisperCliStt, WhisperStt, strip_ssml_tags,
+    WhisperCliStt, WhisperStt, parse_tts_directives, strip_ssml_tags,
 };
 
 #[cfg(feature = "voice")]
@@ -529,24 +529,64 @@ impl TtsService for LiveTtsService {
             return Err("TTS is not enabled".into());
         }
 
-        let text = params
+        let raw_text = params
             .get("text")
             .and_then(|v| v.as_str())
             .ok_or("missing 'text' parameter")?;
 
-        if text.len() > config.max_text_length {
+        if raw_text.len() > config.max_text_length {
             return Err(format!(
                 "text exceeds max length ({} > {})",
-                text.len(),
+                raw_text.len(),
                 config.max_text_length
             )
             .into());
         }
 
-        let provider_id = Self::resolve_from_params(&params, &config.provider)?;
+        // Parse [[tts:persona=... provider=...]] directives from message text.
+        let (text_after_directives, directives) = parse_tts_directives(raw_text);
+
+        // Parse persona early so its preferred provider can influence provider selection.
+        // Directive persona overrides the JSON persona param.
+        // Directive persona overrides the JSON persona param.
+        let persona: Option<moltis_voice::VoicePersona> = if let Some(ref dir_persona) =
+            directives.persona
+        {
+            // Directive-specified persona — match against the resolved persona object.
+            params
+                .get("persona")
+                .and_then(|v| serde_json::from_value::<moltis_voice::VoicePersona>(v.clone()).ok())
+                .filter(|p| p.id == *dir_persona)
+        } else {
+            params
+                .get("persona")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+        };
+
+        // Provider resolution: explicit param → directive → persona's provider → config default.
+        let provider_id = if let Some(s) = params.get("provider").and_then(|v| v.as_str()) {
+            TtsProviderId::parse(s)
+                .ok_or_else(|| ServiceError::message(format!("unknown TTS provider '{s}'")))?
+        } else if let Some(ref dp) = directives.provider
+            && let Some(id) = TtsProviderId::parse(dp)
+            && Self::create_provider(id).is_some()
+        {
+            id
+        } else if let Some(ref p) = persona
+            && let Some(prov) = p.provider
+            && Self::create_provider(prov).is_some()
+        {
+            prov
+        } else {
+            Self::resolve_provider(&config.provider)
+                .ok_or_else(|| ServiceError::message("no TTS provider configured"))?
+        };
+
+        let text = text_after_directives.as_ref();
 
         info!(
             provider = %provider_id,
+            persona = ?persona.as_ref().map(|p| &p.id),
             text_len = text.len(),
             "TTS convert request"
         );
@@ -596,12 +636,10 @@ impl TtsService for LiveTtsService {
                 .map(String::from),
         };
 
-        // Apply voice persona overrides if a persona is supplied inline.
-        if let Some(persona_json) = params.get("persona")
-            && let Ok(persona) =
-                serde_json::from_value::<moltis_voice::VoicePersona>(persona_json.clone())
+        // Apply voice persona overrides (voice_id, model, speed, instructions).
+        if let Some(ref persona) = persona
             && let Err(policy) =
-                crate::voice_persona::apply_persona_to_request(&mut request, &persona, provider_id)
+                crate::voice_persona::apply_persona_to_request(&mut request, persona, provider_id)
         {
             return Err(format!(
                 "persona fallback policy {:?} blocked provider '{}'",

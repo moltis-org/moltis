@@ -337,6 +337,59 @@ impl VoicePersonaStore {
     }
 }
 
+/// Resolve which voice persona should be used for a TTS call.
+///
+/// Resolution chain (first match wins):
+/// 1. Explicit persona ID passed in the request
+/// 2. Session's agent has a `voice_persona_id` link
+/// 3. Global active persona in the store
+/// 4. None
+pub async fn resolve_persona(
+    store: &VoicePersonaStore,
+    agent_persona_store: Option<&crate::agent_persona::AgentPersonaStore>,
+    explicit_persona_id: Option<&str>,
+    session_key: Option<&str>,
+    session_metadata: Option<&moltis_sessions::metadata::SqliteSessionMetadata>,
+) -> Option<VoicePersona> {
+    // 1. Explicit persona ID from request params.
+    if let Some(id) = explicit_persona_id
+        && let Ok(Some(r)) = store.get(id).await
+    {
+        return Some(r.persona);
+    }
+
+    // 2. Session's agent → agent's voice_persona_id.
+    if let (Some(key), Some(meta), Some(agent_store)) =
+        (session_key, session_metadata, agent_persona_store)
+    {
+        let vp_id = resolve_agent_voice_persona_id(meta, agent_store, key).await;
+        if let Some(ref id) = vp_id
+            && let Ok(Some(r)) = store.get(id).await
+        {
+            return Some(r.persona);
+        }
+    }
+
+    // 3. Global active persona.
+    if let Ok(Some(r)) = store.get_active().await {
+        return Some(r.persona);
+    }
+
+    None
+}
+
+/// Look up the session's agent and return its voice_persona_id (if set).
+async fn resolve_agent_voice_persona_id(
+    meta: &moltis_sessions::metadata::SqliteSessionMetadata,
+    agent_store: &crate::agent_persona::AgentPersonaStore,
+    session_key: &str,
+) -> Option<String> {
+    let entry = meta.get(session_key).await?;
+    let agent_id = entry.agent_id.as_deref().filter(|s| !s.is_empty())?;
+    let agent = agent_store.get(agent_id).await.ok().flatten()?;
+    agent.voice_persona_id
+}
+
 /// Apply persona overrides to a `SynthesizeRequest`.
 ///
 /// This is the core resolution logic: given an active persona and the

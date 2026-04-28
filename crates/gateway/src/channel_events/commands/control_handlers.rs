@@ -717,3 +717,132 @@ pub(in crate::channel_events) async fn handle_peek(
         Err(e) => Err(ChannelError::external("peek", e)),
     }
 }
+
+/// Handle `/tts` commands.
+///
+/// Subcommands:
+/// - `/tts persona` — list all personas and show active
+/// - `/tts persona <id>` — set active persona
+/// - `/tts persona off|none` — deactivate persona
+pub(in crate::channel_events) async fn handle_tts(
+    state: &Arc<GatewayState>,
+    args: &str,
+) -> ChannelResult<String> {
+    let sub = args.split_whitespace().next().unwrap_or("");
+    let sub_args = args[sub.len()..].trim();
+
+    match sub {
+        "persona" => handle_tts_persona(state, sub_args).await,
+        "" => {
+            // Show TTS status summary.
+            let status = state
+                .services
+                .tts
+                .status()
+                .await
+                .map_err(ChannelError::unavailable)?;
+            let enabled = status
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let provider = status
+                .get("provider")
+                .and_then(|v| v.as_str())
+                .unwrap_or("none");
+
+            let persona_line = if let Some(ref store) = state.services.voice_persona_store
+                && let Ok(Some(active)) = store.get_active().await
+            {
+                format!(
+                    "\nPersona: {} ({})",
+                    active.persona.label, active.persona.id
+                )
+            } else {
+                "\nPersona: none".to_string()
+            };
+
+            Ok(format!(
+                "TTS: {}\nProvider: {provider}{persona_line}",
+                if enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+            ))
+        },
+        other => Err(ChannelError::invalid_input(format!(
+            "unknown /tts subcommand: {other}\nUsage: /tts persona [<id>|off]"
+        ))),
+    }
+}
+
+async fn handle_tts_persona(state: &Arc<GatewayState>, args: &str) -> ChannelResult<String> {
+    let Some(ref store) = state.services.voice_persona_store else {
+        return Err(ChannelError::unavailable("voice personas not available"));
+    };
+
+    if args.is_empty() {
+        // List all personas with active indicator.
+        let personas = store
+            .list()
+            .await
+            .map_err(|e| ChannelError::external("list personas", e))?;
+
+        if personas.is_empty() {
+            return Ok(
+                "No voice personas configured.\nCreate them in Settings > Voice > Voice Personas."
+                    .to_string(),
+            );
+        }
+
+        let mut lines = vec!["Voice Personas:".to_string()];
+        for p in &personas {
+            let marker = if p.is_active {
+                " (active)"
+            } else {
+                ""
+            };
+            let desc = p
+                .persona
+                .description
+                .as_deref()
+                .map(|d| format!(" — {d}"))
+                .unwrap_or_default();
+            lines.push(format!(
+                "  {} ({}){marker}{desc}",
+                p.persona.label, p.persona.id
+            ));
+        }
+        lines.push(String::new());
+        lines.push("Set: /tts persona <id>".to_string());
+        lines.push("Clear: /tts persona off".to_string());
+        return Ok(lines.join("\n"));
+    }
+
+    // Set or clear active persona.
+    let id = args.split_whitespace().next().unwrap_or("");
+    match id {
+        "off" | "none" | "default" => {
+            store
+                .set_active(None)
+                .await
+                .map_err(|e| ChannelError::external("deactivate persona", e))?;
+            Ok("Voice persona deactivated.".to_string())
+        },
+        _ => {
+            let result = store
+                .set_active(Some(id))
+                .await
+                .map_err(|e| ChannelError::external("set persona", e))?;
+            match result {
+                Some(r) => Ok(format!(
+                    "Voice persona set to: {} ({})",
+                    r.persona.label, r.persona.id
+                )),
+                None => Err(ChannelError::invalid_input(format!(
+                    "persona '{id}' not found"
+                ))),
+            }
+        },
+    }
+}
