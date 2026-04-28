@@ -549,6 +549,7 @@ pub fn restart_process() {
 // ── Tests ────────────────────────────────────────────────────
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -597,9 +598,9 @@ mod tests {
 
     #[test]
     fn verify_sha256_correct() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("test.bin");
-        std::fs::write(&path, b"hello world").unwrap();
+        std::fs::write(&path, b"hello world").expect("write test file");
         // SHA-256 of "hello world"
         let expected = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
         assert!(verify_sha256(&path, expected).is_ok());
@@ -607,9 +608,9 @@ mod tests {
 
     #[test]
     fn verify_sha256_mismatch() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("test.bin");
-        std::fs::write(&path, b"hello world").unwrap();
+        std::fs::write(&path, b"hello world").expect("write test file");
         assert!(verify_sha256(&path, "0000000000000000").is_err());
     }
 
