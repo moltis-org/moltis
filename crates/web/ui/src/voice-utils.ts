@@ -101,6 +101,13 @@ export function testTts(text: string, providerId: string): Promise<unknown> {
 }
 
 /**
+ * Convert text to speech using a specific voice persona.
+ */
+export function testTtsWithPersona(text: string, personaId: string): Promise<unknown> {
+	return sendRpc("tts.convert", { text, personaId });
+}
+
+/**
  * Upload an audio blob for STT transcription.
  * Returns raw fetch Response.
  */

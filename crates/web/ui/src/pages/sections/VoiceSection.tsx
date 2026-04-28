@@ -22,10 +22,12 @@ import {
 	saveVoiceSettings,
 	setActiveVoicePersona,
 	testTts,
+	testTtsWithPersona,
 	toggleVoiceProvider,
 	transcribeAudio,
 	updateVoicePersona,
 	type VoicePersonaPrompt,
+	type VoicePersonaProviderBinding,
 	type VoicePersonaResponse,
 } from "../../voice-utils";
 import type { RpcResponse } from "./_shared";
@@ -481,18 +483,22 @@ export function VoiceSection(): VNode {
 										style={{ background: "var(--surface)" }}
 									>
 										<div className="flex-1 min-w-0">
-											<div className="flex items-center gap-2">
+											<div className="flex items-center gap-2 flex-wrap">
 												<span className="text-sm font-medium text-[var(--text-strong)]">{pr.persona.label}</span>
 												{pr.isActive ? (
 													<span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)] text-white">
 														active
 													</span>
 												) : null}
-												{pr.persona.provider ? (
-													<span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-alt)] text-[var(--muted)]">
-														{pr.persona.provider}
+												{pr.persona.provider_bindings.map((b) => (
+													<span
+														key={b.provider}
+														className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-alt)] text-[var(--muted)]"
+													>
+														{b.provider}
+														{b.voice_id ? `: ${b.voice_id}` : ""}
 													</span>
-												) : null}
+												))}
 											</div>
 											{pr.persona.description ? (
 												<p className="text-xs text-[var(--muted)] truncate" style={{ margin: "2px 0 0 0" }}>
@@ -506,6 +512,39 @@ export function VoiceSection(): VNode {
 											) : null}
 										</div>
 										<div className="flex items-center gap-1.5">
+											<button
+												type="button"
+												className="provider-btn provider-btn-secondary text-xs !py-1 !px-2.5"
+												onClick={async () => {
+													try {
+														const identity = gon.get("identity") as { user_name?: string; name?: string } | undefined;
+														const user = identity?.user_name || "friend";
+														const bot = identity?.name || "Moltis";
+														const text = await fetchPhrase("settings", user, bot);
+														const res = (await testTtsWithPersona(text, pr.persona.id)) as RpcResponse;
+														if (res?.ok) {
+															const payload = res.payload as {
+																audio?: string;
+																mimeType?: string;
+															};
+															if (payload?.audio) {
+																const bytes = decodeBase64Safe(payload.audio);
+																const blob = new Blob([bytes as BlobPart], {
+																	type: payload.mimeType || "audio/mpeg",
+																});
+																const url = URL.createObjectURL(blob);
+																const audio = new Audio(url);
+																audio.onended = () => URL.revokeObjectURL(url);
+																audio.play().catch((e: Error) => console.error("[TTS]", e));
+															}
+														}
+													} catch (_e) {
+														/* ignore */
+													}
+												}}
+											>
+												Test
+											</button>
 											<button
 												type="button"
 												className="provider-btn provider-btn-secondary text-xs !py-1 !px-2.5"
@@ -656,7 +695,31 @@ function PersonaEditModal({ editingId, existingPersona, onClose, onSaved }: Pers
 	const [accent, setAccent] = useState(existingPersona?.persona.prompt.accent ?? "");
 	const [pacing, setPacing] = useState(existingPersona?.persona.prompt.pacing ?? "");
 	const [saving, setSaving] = useState(false);
+	const [testing, setTesting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+
+	// Provider bindings state
+	const existingBindings = existingPersona?.persona.provider_bindings ?? [];
+	const findBinding = (prov: string): VoicePersonaProviderBinding | undefined =>
+		existingBindings.find((b) => b.provider === prov);
+	const [openaiVoice, setOpenaiVoice] = useState(findBinding("openai")?.voice_id ?? "");
+	const [openaiModel, setOpenaiModel] = useState(findBinding("openai")?.model ?? "gpt-4o-mini-tts");
+	const [elevenVoice, setElevenVoice] = useState(findBinding("elevenlabs")?.voice_id ?? "");
+
+	function buildBindings(): VoicePersonaProviderBinding[] {
+		const bindings: VoicePersonaProviderBinding[] = [];
+		if (openaiVoice || openaiModel) {
+			bindings.push({
+				provider: "openai",
+				voice_id: openaiVoice || undefined,
+				model: openaiModel || undefined,
+			});
+		}
+		if (elevenVoice) {
+			bindings.push({ provider: "elevenlabs", voice_id: elevenVoice });
+		}
+		return bindings;
+	}
 
 	async function handleSave(): Promise<void> {
 		setSaving(true);
@@ -667,6 +730,7 @@ function PersonaEditModal({ editingId, existingPersona, onClose, onSaved }: Pers
 			if (style) prompt.style = style;
 			if (accent) prompt.accent = accent;
 			if (pacing) prompt.pacing = pacing;
+			const providerBindings = buildBindings();
 
 			if (isNew) {
 				if (!(id && label)) {
@@ -674,12 +738,19 @@ function PersonaEditModal({ editingId, existingPersona, onClose, onSaved }: Pers
 					setSaving(false);
 					return;
 				}
-				await createVoicePersona({ id, label, description: description || undefined, prompt });
+				await createVoicePersona({
+					id,
+					label,
+					description: description || undefined,
+					prompt,
+					providerBindings,
+				});
 			} else {
 				await updateVoicePersona(editingId, {
 					label: label || undefined,
 					description: description || undefined,
 					prompt,
+					providerBindings,
 				});
 			}
 			onSaved();
@@ -690,9 +761,74 @@ function PersonaEditModal({ editingId, existingPersona, onClose, onSaved }: Pers
 		}
 	}
 
+	async function handleTest(): Promise<void> {
+		setTesting(true);
+		try {
+			const personaIdToTest = isNew ? undefined : editingId;
+			const identity = gon.get("identity") as { user_name?: string; name?: string } | undefined;
+			const user = identity?.user_name || "friend";
+			const bot = label || identity?.name || "Moltis";
+			const text = await fetchPhrase("settings", user, bot);
+
+			let res: RpcResponse;
+			if (personaIdToTest) {
+				// Save first so latest changes are used, then test.
+				await handleSave();
+				res = (await testTtsWithPersona(text, personaIdToTest)) as RpcResponse;
+			} else {
+				// New persona not yet saved — test with raw tts.convert and manual instructions.
+				const prompt: VoicePersonaPrompt = {};
+				if (profile) prompt.profile = profile;
+				if (style) prompt.style = style;
+				if (accent) prompt.accent = accent;
+				if (pacing) prompt.pacing = pacing;
+				const instructions = [
+					`Persona: ${label || "Test"}`,
+					prompt.profile ? `Profile: ${prompt.profile}` : "",
+					prompt.style ? `Style: ${prompt.style}` : "",
+					prompt.accent ? `Accent: ${prompt.accent}` : "",
+					prompt.pacing ? `Pacing: ${prompt.pacing}` : "",
+				]
+					.filter(Boolean)
+					.join("\n");
+				const params: Record<string, unknown> = { text };
+				if (instructions) params.instructions = instructions;
+				if (openaiVoice) params.voiceId = openaiVoice;
+				if (openaiModel) params.model = openaiModel;
+				res = (await sendRpc("tts.convert", params)) as RpcResponse;
+			}
+
+			if (res?.ok) {
+				const payload = res.payload as { audio?: string; mimeType?: string };
+				if (payload?.audio) {
+					const bytes = decodeBase64Safe(payload.audio);
+					const blob = new Blob([bytes as BlobPart], { type: payload.mimeType || "audio/mpeg" });
+					const url = URL.createObjectURL(blob);
+					const audio = new Audio(url);
+					audio.onended = () => URL.revokeObjectURL(url);
+					audio.play().catch((e: Error) => console.error("[TTS]", e));
+				}
+			}
+		} catch (_e) {
+			/* ignore */
+		} finally {
+			setTesting(false);
+		}
+	}
+
 	return (
 		<Modal show onClose={onClose} title={isNew ? "New Voice Persona" : `Edit ${label}`}>
-			<div className="channel-form" style={{ display: "flex", flexDirection: "column", gap: "12px", padding: "16px" }}>
+			<div
+				className="channel-form"
+				style={{
+					display: "flex",
+					flexDirection: "column",
+					gap: "12px",
+					padding: "16px",
+					maxHeight: "70vh",
+					overflowY: "auto",
+				}}
+			>
 				{isNew ? (
 					<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
 						ID (lowercase, no spaces)
@@ -722,10 +858,10 @@ function PersonaEditModal({ editingId, existingPersona, onClose, onSaved }: Pers
 						onInput={(e) => setDescription(targetValue(e))}
 					/>
 				</label>
+
 				<hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "4px 0" }} />
 				<p className="text-xs text-[var(--muted)]" style={{ margin: 0 }}>
-					Voice direction fields — controls how the voice sounds on providers that support instructions (e.g., OpenAI
-					gpt-4o-mini-tts).
+					Voice direction — controls tone on providers that support instructions (OpenAI gpt-4o-mini-tts, Gemini TTS).
 				</p>
 				<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
 					Character Profile
@@ -763,8 +899,56 @@ function PersonaEditModal({ editingId, existingPersona, onClose, onSaved }: Pers
 						onInput={(e) => setPacing(targetValue(e))}
 					/>
 				</label>
+
+				<hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "4px 0" }} />
+				<p className="text-xs text-[var(--muted)]" style={{ margin: 0 }}>
+					Provider bindings — voice and model overrides per TTS provider.
+				</p>
+				<div
+					className="flex flex-col gap-2 p-2 rounded border border-[var(--border)]"
+					style={{ background: "var(--surface)" }}
+				>
+					<span className="text-xs font-medium text-[var(--text-strong)]">OpenAI TTS</span>
+					<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
+						Voice (alloy, echo, fable, onyx, nova, shimmer, coral, cedar, ...)
+						<input
+							className="provider-key-input w-full"
+							placeholder="alloy"
+							value={openaiVoice}
+							onInput={(e) => setOpenaiVoice(targetValue(e))}
+						/>
+					</label>
+					<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
+						Model
+						<input
+							className="provider-key-input w-full"
+							placeholder="gpt-4o-mini-tts"
+							value={openaiModel}
+							onInput={(e) => setOpenaiModel(targetValue(e))}
+						/>
+					</label>
+				</div>
+				<div
+					className="flex flex-col gap-2 p-2 rounded border border-[var(--border)]"
+					style={{ background: "var(--surface)" }}
+				>
+					<span className="text-xs font-medium text-[var(--text-strong)]">ElevenLabs</span>
+					<label className="text-xs text-[var(--muted)] flex flex-col gap-1">
+						Voice ID
+						<input
+							className="provider-key-input w-full"
+							placeholder="21m00Tcm4TlvDq8ikWAM"
+							value={elevenVoice}
+							onInput={(e) => setElevenVoice(targetValue(e))}
+						/>
+					</label>
+				</div>
+
 				{error ? <div className="text-xs text-[var(--error)]">{error}</div> : null}
 				<div className="flex gap-2 justify-end" style={{ marginTop: "8px" }}>
+					<button type="button" className="provider-btn provider-btn-secondary" disabled={testing} onClick={handleTest}>
+						{testing ? "Testing..." : "Test Voice"}
+					</button>
 					<button type="button" className="provider-btn provider-btn-secondary" onClick={onClose}>
 						Cancel
 					</button>
