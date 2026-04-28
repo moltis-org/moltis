@@ -3,6 +3,7 @@
 import { signal } from "@preact/signals";
 import type { VNode } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { TabBar } from "../../components/forms/Tabs";
 import * as gon from "../../gon";
 import { sendRpc } from "../../helpers";
 import { connected } from "../../signals";
@@ -139,6 +140,9 @@ export function VoiceSection(): VNode {
 	const [voiceTesting, setVoiceTesting] = useState<VoiceTesting | null>(null);
 	const [activeRecorder, setActiveRecorder] = useState<MediaRecorder | null>(null);
 	const [voiceTestResults, setVoiceTestResults] = useState<Record<string, VoiceTestResult>>({});
+
+	// Tab state
+	const [activeTab, setActiveTab] = useState("stt");
 
 	// Voice personas
 	const [personas, setPersonas] = useState<VoicePersonaResponse[]>([]);
@@ -387,225 +391,236 @@ export function VoiceSection(): VNode {
 		);
 	}
 
+	const voiceTabs = [
+		{ id: "stt", label: "Speech-to-Text" },
+		{ id: "tts", label: "Text-to-Speech" },
+		{ id: "personas", label: "Voice Personas" },
+		{ id: "input", label: "Input Settings" },
+	];
+
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">Voice</h2>
-			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
-				Configure text-to-speech (TTS) and speech-to-text (STT) providers. STT lets you use the microphone button in
-				chat to record voice input. TTS lets you hear responses as audio.
-			</p>
 
 			{voiceMsg ? <div className="text-xs text-[var(--accent)]">{voiceMsg}</div> : null}
 			{voiceErr ? <div className="text-xs text-[var(--error)]">{voiceErr}</div> : null}
 
-			<div style={{ maxWidth: "700px", display: "flex", flexDirection: "column", gap: "24px" }}>
-				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)] mb-3">Speech-to-Text (Voice Input)</h3>
-					<div className="flex flex-col gap-2">
-						{allProviders.stt.map((prov) => {
-							const meta = prov;
-							const testState = voiceTesting?.id === prov.id && voiceTesting?.type === "stt" ? voiceTesting : null;
-							const testResult = voiceTestResults[prov.id] || null;
-							return (
-								<VoiceProviderRow
-									key={prov.id}
-									provider={prov}
-									meta={meta}
-									type="stt"
-									saving={savingProvider === prov.id}
-									testState={testState}
-									testResult={testResult}
-									onToggle={(enabled: boolean) => onToggleProvider(prov, enabled, "stt")}
-									onConfigure={() => onConfigureProvider(prov.id, prov)}
-									onTest={() => testVoiceProvider(prov.id, "stt")}
-								/>
-							);
-						})}
-					</div>
-				</div>
+			<TabBar tabs={voiceTabs} active={activeTab} onChange={setActiveTab} />
 
-				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)] mb-3">Text-to-Speech (Audio Responses)</h3>
-					<div className="flex flex-col gap-2">
-						{allProviders.tts.map((prov) => {
-							const meta = prov;
-							const testState = voiceTesting?.id === prov.id && voiceTesting?.type === "tts" ? voiceTesting : null;
-							const testResult = voiceTestResults[prov.id] || null;
-							return (
-								<VoiceProviderRow
-									key={prov.id}
-									provider={prov}
-									meta={meta}
-									type="tts"
-									saving={savingProvider === prov.id}
-									testState={testState}
-									testResult={testResult}
-									onToggle={(enabled: boolean) => onToggleProvider(prov, enabled, "tts")}
-									onConfigure={() => onConfigureProvider(prov.id, prov)}
-									onTest={() => testVoiceProvider(prov.id, "tts")}
-								/>
-							);
-						})}
-					</div>
-				</div>
-
-				{/* Voice Personas */}
-				<div>
-					<h3 className="text-sm font-medium text-[var(--text-strong)] mb-1">Voice Personas</h3>
-					<p className="text-xs text-[var(--muted)] mb-3" style={{ margin: "0 0 12px 0" }}>
-						Named voice identities injected into every TTS call. Instead of improvising tone per-message, a persona
-						defines a stable spoken character.
-					</p>
-					{personas.length === 0 ? (
-						<p className="text-xs text-[var(--muted)] italic">No personas configured yet.</p>
-					) : (
+			<div style={{ maxWidth: "700px", display: "flex", flexDirection: "column", gap: "16px" }}>
+				{activeTab === "stt" && (
+					<div className="flex flex-col gap-3">
+						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
+							STT lets you use the microphone button in chat to record voice input.
+						</p>
 						<div className="flex flex-col gap-2">
-							{personas.map((pr) => (
-								<div
-									key={pr.persona.id}
-									className={`flex items-center gap-3 p-3 rounded border ${pr.isActive ? "border-[var(--accent)]" : "border-[var(--border)]"}`}
-									style={{ background: "var(--surface)" }}
-								>
-									<div className="flex-1 min-w-0">
-										<div className="flex items-center gap-2">
-											<span className="text-sm font-medium text-[var(--text-strong)]">{pr.persona.label}</span>
-											{pr.isActive ? (
-												<span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)] text-white">active</span>
+							{allProviders.stt.map((prov) => {
+								const testState = voiceTesting?.id === prov.id && voiceTesting?.type === "stt" ? voiceTesting : null;
+								const testResult = voiceTestResults[prov.id] || null;
+								return (
+									<VoiceProviderRow
+										key={prov.id}
+										provider={prov}
+										meta={prov}
+										type="stt"
+										saving={savingProvider === prov.id}
+										testState={testState}
+										testResult={testResult}
+										onToggle={(enabled: boolean) => onToggleProvider(prov, enabled, "stt")}
+										onConfigure={() => onConfigureProvider(prov.id, prov)}
+										onTest={() => testVoiceProvider(prov.id, "stt")}
+									/>
+								);
+							})}
+						</div>
+					</div>
+				)}
+
+				{activeTab === "tts" && (
+					<div className="flex flex-col gap-3">
+						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
+							TTS lets you hear responses as audio. Configure providers and test voices.
+						</p>
+						<div className="flex flex-col gap-2">
+							{allProviders.tts.map((prov) => {
+								const testState = voiceTesting?.id === prov.id && voiceTesting?.type === "tts" ? voiceTesting : null;
+								const testResult = voiceTestResults[prov.id] || null;
+								return (
+									<VoiceProviderRow
+										key={prov.id}
+										provider={prov}
+										meta={prov}
+										type="tts"
+										saving={savingProvider === prov.id}
+										testState={testState}
+										testResult={testResult}
+										onToggle={(enabled: boolean) => onToggleProvider(prov, enabled, "tts")}
+										onConfigure={() => onConfigureProvider(prov.id, prov)}
+										onTest={() => testVoiceProvider(prov.id, "tts")}
+									/>
+								);
+							})}
+						</div>
+					</div>
+				)}
+
+				{activeTab === "personas" && (
+					<div className="flex flex-col gap-3">
+						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
+							Named voice identities injected into every TTS call. Instead of improvising tone per-message, a persona
+							defines a stable spoken character.
+						</p>
+						{personas.length === 0 ? (
+							<p className="text-xs text-[var(--muted)] italic">No personas configured yet.</p>
+						) : (
+							<div className="flex flex-col gap-2">
+								{personas.map((pr) => (
+									<div
+										key={pr.persona.id}
+										className={`flex items-center gap-3 p-3 rounded border ${pr.isActive ? "border-[var(--accent)]" : "border-[var(--border)]"}`}
+										style={{ background: "var(--surface)" }}
+									>
+										<div className="flex-1 min-w-0">
+											<div className="flex items-center gap-2">
+												<span className="text-sm font-medium text-[var(--text-strong)]">{pr.persona.label}</span>
+												{pr.isActive ? (
+													<span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)] text-white">
+														active
+													</span>
+												) : null}
+												{pr.persona.provider ? (
+													<span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-alt)] text-[var(--muted)]">
+														{pr.persona.provider}
+													</span>
+												) : null}
+											</div>
+											{pr.persona.description ? (
+												<p className="text-xs text-[var(--muted)] truncate" style={{ margin: "2px 0 0 0" }}>
+													{pr.persona.description}
+												</p>
 											) : null}
-											{pr.persona.provider ? (
-												<span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-alt)] text-[var(--muted)]">
-													{pr.persona.provider}
-												</span>
+											{pr.persona.prompt.profile ? (
+												<p className="text-[10px] text-[var(--muted)] truncate italic" style={{ margin: "2px 0 0 0" }}>
+													{pr.persona.prompt.profile}
+												</p>
 											) : null}
 										</div>
-										{pr.persona.description ? (
-											<p className="text-xs text-[var(--muted)] mt-0.5 truncate" style={{ margin: "2px 0 0 0" }}>
-												{pr.persona.description}
-											</p>
-										) : null}
-										{pr.persona.prompt.profile ? (
-											<p
-												className="text-[10px] text-[var(--muted)] mt-0.5 truncate italic"
-												style={{ margin: "2px 0 0 0" }}
-											>
-												{pr.persona.prompt.profile}
-											</p>
-										) : null}
-									</div>
-									<div className="flex items-center gap-1.5">
-										<button type="button" className="provider-btn-sm" onClick={() => setPersonaEditing(pr.persona.id)}>
-											Edit
-										</button>
-										{pr.isActive ? (
+										<div className="flex items-center gap-1.5">
 											<button
 												type="button"
 												className="provider-btn-sm"
-												onClick={async () => {
-													await setActiveVoicePersona(null);
-													fetchPersonas();
-												}}
+												onClick={() => setPersonaEditing(pr.persona.id)}
 											>
-												Deactivate
+												Edit
 											</button>
-										) : (
+											{pr.isActive ? (
+												<button
+													type="button"
+													className="provider-btn-sm"
+													onClick={async () => {
+														await setActiveVoicePersona(null);
+														fetchPersonas();
+													}}
+												>
+													Deactivate
+												</button>
+											) : (
+												<button
+													type="button"
+													className="provider-btn-sm"
+													onClick={async () => {
+														await setActiveVoicePersona(pr.persona.id);
+														fetchPersonas();
+													}}
+												>
+													Activate
+												</button>
+											)}
 											<button
 												type="button"
-												className="provider-btn-sm"
+												className="provider-btn-sm provider-btn-danger"
 												onClick={async () => {
-													await setActiveVoicePersona(pr.persona.id);
+													await deleteVoicePersona(pr.persona.id);
 													fetchPersonas();
 												}}
 											>
-												Activate
+												Remove
 											</button>
-										)}
-										<button
-											type="button"
-											className="provider-btn-sm provider-btn-danger"
-											onClick={async () => {
-												await deleteVoicePersona(pr.persona.id);
-												fetchPersonas();
-											}}
-										>
-											Remove
-										</button>
+										</div>
 									</div>
-								</div>
-							))}
+								))}
+							</div>
+						)}
+						<button type="button" className="provider-btn" onClick={() => setPersonaEditing("__new__")}>
+							+ Add Persona
+						</button>
+
+						{personaEditing !== null ? (
+							<PersonaEditModal
+								editingId={personaEditing}
+								existingPersona={
+									personaEditing !== "__new__" ? (personas.find((p) => p.persona.id === personaEditing) ?? null) : null
+								}
+								onClose={() => setPersonaEditing(null)}
+								onSaved={() => {
+									setPersonaEditing(null);
+									fetchPersonas();
+								}}
+							/>
+						) : null}
+					</div>
+				)}
+
+				{activeTab === "input" && (
+					<div className="flex flex-col gap-6">
+						<div className="flex flex-col gap-3">
+							<h3 className="text-sm font-medium text-[var(--text-strong)]">Push-to-Talk</h3>
+							<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
+								Hold a keyboard key to record voice input. Release to send. Function keys (F1–F24) work even when
+								focused in an input field.
+							</p>
+							<div className="flex items-center gap-3">
+								<span className="text-xs text-[var(--muted)]">PTT Key:</span>
+								<PttKeyPicker
+									pttListening={pttListening}
+									setPttListening={setPttListening}
+									pttKeyValue={pttKeyValue}
+									setPttKeyValue={setPttKeyValue}
+								/>
+							</div>
 						</div>
-					)}
-					<button
-						type="button"
-						className="provider-btn-secondary mt-2"
-						style={{ marginTop: "8px" }}
-						onClick={() => setPersonaEditing("__new__")}
-					>
-						+ Add Persona
-					</button>
 
-					{personaEditing !== null ? (
-						<PersonaEditModal
-							editingId={personaEditing}
-							existingPersona={
-								personaEditing !== "__new__" ? (personas.find((p) => p.persona.id === personaEditing) ?? null) : null
-							}
-							onClose={() => setPersonaEditing(null)}
-							onSaved={() => {
-								setPersonaEditing(null);
-								fetchPersonas();
-							}}
-						/>
-					) : null}
-				</div>
-			</div>
-
-			{/* Push-to-Talk Configuration */}
-			<div style={{ maxWidth: "700px", display: "flex", flexDirection: "column", gap: "12px" }}>
-				<h3 className="text-sm font-medium text-[var(--text-strong)]">Push-to-Talk</h3>
-				<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-					Hold a keyboard key to record voice input. Release to send. Function keys (F1–F24) work even when focused in
-					an input field.
-				</p>
-				<div className="flex items-center gap-3">
-					<span className="text-xs text-[var(--muted)]">PTT Key:</span>
-					<PttKeyPicker
-						pttListening={pttListening}
-						setPttListening={setPttListening}
-						pttKeyValue={pttKeyValue}
-						setPttKeyValue={setPttKeyValue}
-					/>
-				</div>
-			</div>
-
-			{/* VAD Sensitivity */}
-			<div style={{ maxWidth: "700px", display: "flex", flexDirection: "column", gap: "12px" }}>
-				<h3 className="text-sm font-medium text-[var(--text-strong)]">Conversation Mode (VAD)</h3>
-				<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-					Adjust how sensitive the voice activity detection is. Higher values pick up softer speech but may trigger on
-					background noise.
-				</p>
-				<div className="flex items-center gap-3">
-					<span className="text-xs text-[var(--muted)]" style={{ minWidth: "80px" }}>
-						Sensitivity:
-					</span>
-					<input
-						type="range"
-						min="0"
-						max="100"
-						step="5"
-						value={vadSens}
-						style={{ flex: 1, maxWidth: "200px", accentColor: "var(--accent)" }}
-						onInput={(e) => {
-							const val = parseInt(targetValue(e), 10);
-							setVadSens(val);
-							setVadSensitivity(val);
-							rerender();
-						}}
-					/>
-					<span className="text-xs text-[var(--muted)]" style={{ minWidth: "35px", textAlign: "right" }}>
-						{vadSens}%
-					</span>
-				</div>
+						<div className="flex flex-col gap-3">
+							<h3 className="text-sm font-medium text-[var(--text-strong)]">Conversation Mode (VAD)</h3>
+							<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
+								Adjust how sensitive the voice activity detection is. Higher values pick up softer speech but may
+								trigger on background noise.
+							</p>
+							<div className="flex items-center gap-3">
+								<span className="text-xs text-[var(--muted)]" style={{ minWidth: "80px" }}>
+									Sensitivity:
+								</span>
+								<input
+									type="range"
+									min="0"
+									max="100"
+									step="5"
+									value={vadSens}
+									style={{ flex: 1, maxWidth: "200px", accentColor: "var(--accent)" }}
+									onInput={(e) => {
+										const val = parseInt(targetValue(e), 10);
+										setVadSens(val);
+										setVadSensitivity(val);
+										rerender();
+									}}
+								/>
+								<span className="text-xs text-[var(--muted)]" style={{ minWidth: "35px", textAlign: "right" }}>
+									{vadSens}%
+								</span>
+							</div>
+						</div>
+					</div>
+				)}
 			</div>
 
 			<AddVoiceProviderModal
