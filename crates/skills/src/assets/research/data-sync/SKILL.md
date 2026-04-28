@@ -15,7 +15,7 @@ Orchestrate data archiving tools to sync external platform data into Moltis memo
 | Discord | `discrawl` | `DISCORD_BOT_TOKEN` |
 | Slack | `slacrawl` | `SLACK_BOT_TOKEN` |
 | Twitter/X | `birdclaw` | Optional (`xurl` for API) |
-| Google Suite | `gogcli` | Google OAuth2 |
+| Google Suite | `gog` | Google OAuth2 |
 
 ## Workflow
 
@@ -35,7 +35,7 @@ memory/
   discord/YYYY-MM-DD.md     # discrawl digests
   slack/YYYY-MM-DD.md       # slacrawl digests
   twitter/YYYY-MM-DD.md     # birdclaw digests
-  google/YYYY-MM-DD.md      # gogcli digests
+  google/YYYY-MM-DD.md      # gog digests
 ```
 
 ## Daily Digest Format
@@ -87,15 +87,15 @@ birdclaw search "query" --json --after YYYY-MM-DD
 
 ### Google
 ```bash
-gogcli gmail list --query "after:YYYY/MM/DD" --json --limit 50
-gogcli calendar events --from YYYY-MM-DD --to YYYY-MM-DD --json
+gog gmail list --query "after:YYYY/MM/DD" --json --limit 50
+gog calendar events --from YYYY-MM-DD --to YYYY-MM-DD --json
 ```
 
 ## Full Sync Example
 
 When the user asks to "sync all my messages" or "update my data":
 
-1. Check which tools are installed: `which wacrawl discrawl slacrawl birdclaw gogcli`
+1. Check which tools are installed: `which wacrawl discrawl slacrawl birdclaw gog`
 2. For each available tool, run doctor to check auth
 3. Sync each authenticated source
 4. Search for today's data with `--json`
