@@ -78,12 +78,11 @@ impl LiveSessionService {
             "text": sanitized,
             "format": "ogg",
         });
-        if let Some(ref vp_store) = self.voice_persona_store {
-            if let Ok(Some(active)) = vp_store.get_active().await {
-                if let Ok(persona_value) = serde_json::to_value(&active.persona) {
-                    convert_params["persona"] = persona_value;
-                }
-            }
+        if let Some(ref vp_store) = self.voice_persona_store
+            && let Ok(Some(active)) = vp_store.get_active().await
+            && let Ok(persona_value) = serde_json::to_value(&active.persona)
+        {
+            convert_params["persona"] = persona_value;
         }
 
         let convert_value = tts

@@ -597,22 +597,17 @@ impl TtsService for LiveTtsService {
         };
 
         // Apply voice persona overrides if a persona is supplied inline.
-        if let Some(persona_json) = params.get("persona") {
-            if let Ok(persona) =
+        if let Some(persona_json) = params.get("persona")
+            && let Ok(persona) =
                 serde_json::from_value::<moltis_voice::VoicePersona>(persona_json.clone())
-            {
-                if let Err(policy) = crate::voice_persona::apply_persona_to_request(
-                    &mut request,
-                    &persona,
-                    provider_id,
-                ) {
-                    return Err(format!(
-                        "persona fallback policy {:?} blocked provider '{}'",
-                        policy, provider_id
-                    )
-                    .into());
-                }
-            }
+            && let Err(policy) =
+                crate::voice_persona::apply_persona_to_request(&mut request, &persona, provider_id)
+        {
+            return Err(format!(
+                "persona fallback policy {:?} blocked provider '{}'",
+                policy, provider_id
+            )
+            .into());
         }
 
         let output = provider.synthesize(request).await.map_err(|e| {

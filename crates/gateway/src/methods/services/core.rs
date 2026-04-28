@@ -1076,10 +1076,10 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             }
                         };
 
-                        if let Some(persona) = persona {
-                            if let Ok(persona_value) = serde_json::to_value(&persona) {
-                                params["persona"] = persona_value;
-                            }
+                        if let Some(persona) = persona
+                            && let Ok(persona_value) = serde_json::to_value(&persona)
+                        {
+                            params["persona"] = persona_value;
                         }
                     }
 
