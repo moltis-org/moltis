@@ -376,20 +376,8 @@ impl AgentTool for SandboxPackagesTool {
 
         let packages = &router.config().packages;
 
-        if packages.is_empty() {
-            #[cfg(feature = "metrics")]
-            {
-                counter!("tools_sandbox_packages_total").increment(1);
-                histogram!("tools_sandbox_packages_duration_seconds")
-                    .record(start.elapsed().as_secs_f64());
-            }
-            return Ok(json!({
-                "total": 0,
-                "categories": {}
-            }));
-        }
-
-        // Build categorized config list.
+        // Build categorized config list (empty list is fine — Go tools are
+        // still installed unconditionally via the Dockerfile).
         let grouped = categorize_packages(packages);
 
         let mut categories = serde_json::Map::new();
@@ -549,13 +537,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_empty_packages() {
+    async fn test_empty_packages_still_shows_go_tools() {
         let tool = make_tool(vec![]);
         let result = tool.execute(json!({})).await.unwrap();
 
-        assert_eq!(result["total"], 0);
+        // No APT packages, but Go tools are always present.
+        let go_count = GO_PREINSTALLED_TOOLS.len();
+        assert_eq!(result["total"], go_count);
         let cats = result["categories"].as_object().unwrap();
-        assert!(cats.is_empty());
+        assert!(cats.contains_key("Data archiving (Go binaries)"));
     }
 
     #[test]
