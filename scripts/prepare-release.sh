@@ -37,6 +37,57 @@ if [[ ! -f Cargo.toml || ! -f CHANGELOG.md || ! -f cliff.toml ]]; then
   exit 1
 fi
 
+latest_changelog_version() {
+  awk '
+    /^## \[[0-9]{8}\.[0-9]{1,2}\]/ {
+      version = $2
+      gsub(/^\[/, "", version)
+      gsub(/\]$/, "", version)
+      print version
+      exit
+    }
+  ' CHANGELOG.md
+}
+
+release_commit_for_version() {
+  local version="$1"
+  git log \
+    --format=%H \
+    --fixed-strings \
+    --grep="chore: prepare release ${version}" \
+    --max-count=1
+}
+
+resolve_release_base_ref() {
+  local previous_version="$1"
+
+  if [[ -z "$previous_version" ]]; then
+    return 0
+  fi
+
+  if git rev-parse --verify --quiet "refs/tags/${previous_version}^{commit}" >/dev/null; then
+    printf '%s\n' "$previous_version"
+    return 0
+  fi
+
+  local commit
+  commit="$(release_commit_for_version "$previous_version")"
+  if [[ -n "$commit" ]]; then
+    printf '%s\n' "$commit"
+    return 0
+  fi
+
+  cat >&2 <<EOF
+could not find a tag or release-prep commit for previous changelog version $previous_version
+
+Create the missing tag, or make sure the commit subject is exactly:
+  chore: prepare release $previous_version
+EOF
+  exit 1
+}
+
+previous_changelog_version="$(latest_changelog_version)"
+
 # Compute or validate version
 if [[ $# -eq 1 ]]; then
   new_version="$1"
@@ -47,10 +98,24 @@ if [[ $# -eq 1 ]]; then
 else
   # Auto-compute: today's date + next sequence number
   today="$(date -u +%Y%m%d)"
-  # Find highest existing seq for today's tags
+  # Find highest existing seq for today's tags and changelog sections.
   max_seq=0
-  for tag in $(git tag -l "${today}.*" 2>/dev/null); do
-    seq="${tag#"${today}."}"
+  for version in $(
+    {
+      git tag -l "${today}.*" 2>/dev/null
+      awk -v today="$today" '
+        /^## \[[0-9]{8}\.[0-9]{1,2}\]/ {
+          version = $2
+          gsub(/^\[/, "", version)
+          gsub(/\]$/, "", version)
+          if (index(version, today ".") == 1) {
+            print version
+          }
+        }
+      ' CHANGELOG.md
+    } | sort -u
+  ); do
+    seq="${version#"${today}."}"
     if [[ "$seq" =~ ^[0-9]+$ ]] && [[ "10#$seq" -gt "10#$max_seq" ]]; then
       max_seq="$seq"
     fi
@@ -61,6 +126,7 @@ else
 fi
 
 release_date="$(echo "$new_version" | sed 's/^\([0-9]\{4\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)\..*/\1-\2-\3/')"
+release_base_ref="$(resolve_release_base_ref "$previous_changelog_version")"
 
 if rg -q "^## \\[$new_version\\]" CHANGELOG.md; then
   echo "CHANGELOG.md already contains version $new_version" >&2
@@ -68,12 +134,14 @@ if rg -q "^## \\[$new_version\\]" CHANGELOG.md; then
 fi
 
 release_section_tmp="$(mktemp)"
-if ! git-cliff \
-  --config cliff.toml \
-  --unreleased \
-  --tag "$new_version" \
-  --strip all \
-  > "$release_section_tmp"; then
+git_cliff_args=(--config cliff.toml --tag "$new_version" --strip all)
+if [[ -n "$release_base_ref" ]]; then
+  git_cliff_args+=("${release_base_ref}..HEAD")
+else
+  git_cliff_args+=(--unreleased)
+fi
+
+if ! git-cliff "${git_cliff_args[@]}" > "$release_section_tmp"; then
   rm -f "$release_section_tmp"
   echo "failed to generate release notes via git-cliff" >&2
   exit 1

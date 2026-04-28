@@ -35,6 +35,99 @@ function versionSlug(text) {
 	return match ? match[1] : text.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
+function splitSections(markdown) {
+	const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+	const preamble = [];
+	const sections = [];
+	let current = null;
+
+	for (const line of lines) {
+		const heading = line.match(/^## \[([0-9]{8}\.[0-9]{1,2}|Unreleased)\]/);
+		if (heading) {
+			current = { version: heading[1], heading: line, lines: [] };
+			sections.push(current);
+			continue;
+		}
+
+		if (current) {
+			current.lines.push(line);
+		} else {
+			preamble.push(line);
+		}
+	}
+
+	return { preamble, sections };
+}
+
+function releaseItems(lines) {
+	return new Set(lines.map((line) => line.trim()).filter((line) => line.startsWith("- ")));
+}
+
+function removeEmptyCategories(lines, duplicateItems) {
+	const output = [];
+	let index = 0;
+
+	while (index < lines.length) {
+		const line = lines[index];
+		if (!line.startsWith("### ")) {
+			output.push(line);
+			index += 1;
+			continue;
+		}
+
+		const heading = line;
+		const body = [];
+		index += 1;
+		while (index < lines.length && !lines[index].startsWith("### ")) {
+			const bodyLine = lines[index];
+			if (!duplicateItems.has(bodyLine.trim())) {
+				body.push(bodyLine);
+			}
+			index += 1;
+		}
+
+		if (body.some((bodyLine) => bodyLine.trim() !== "")) {
+			output.push(heading, ...body);
+		}
+	}
+
+	return output;
+}
+
+function hasReleaseContent(lines) {
+	return lines.some((line) => {
+		const text = line.trim();
+		return text !== "" && !text.startsWith("### ");
+	});
+}
+
+function normalizeReleaseDeltas(markdown) {
+	const { preamble, sections } = splitSections(markdown);
+	if (sections.length === 0) return markdown;
+
+	const normalized = [];
+	for (let index = 0; index < sections.length; index += 1) {
+		const section = sections[index];
+		let lines = section.lines;
+
+		if (section.version !== "Unreleased") {
+			const previousRelease = sections.slice(index + 1).find((candidate) => candidate.version !== "Unreleased");
+			if (previousRelease) {
+				// Compare against the raw older section: cumulative changelogs become deltas
+				// by subtracting that raw prior snapshot.
+				lines = removeEmptyCategories(section.lines, releaseItems(previousRelease.lines));
+			}
+			if (!hasReleaseContent(lines)) {
+				lines = ["", "No notable changes."];
+			}
+		}
+
+		normalized.push(section.heading, ...lines);
+	}
+
+	return [...preamble, ...normalized].join("\n");
+}
+
 const categoryClasses = {
 	added: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400",
 	fixed: "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400",
@@ -49,7 +142,6 @@ function renderMarkdown(markdown) {
 	const html = [];
 	let paragraph = [];
 	let inList = false;
-	let isUnreleased = false;
 
 	const flushParagraph = () => {
 		if (paragraph.length === 0) return;
@@ -78,8 +170,6 @@ function renderMarkdown(markdown) {
 
 			if (level === 2) {
 				const slug = versionSlug(text);
-				// Check if this is the Unreleased section
-				isUnreleased = text.includes("Unreleased");
 				const display = text.replace(/^\[([^\]]+)\]/, "$1");
 				html.push(`<div class="mt-8 first:mt-0 border-t border-gray-200 dark:border-gray-800" id="${escapeHtml(slug)}"></div>`);
 				html.push(`<div class="sticky top-14 z-10 bg-white/95 dark:bg-gray-950/95 backdrop-blur-sm py-2 -mx-4 px-4 sm:-mx-6 sm:px-6">`);
@@ -234,7 +324,7 @@ function buildHtml(contentHtml) {
 
 async function main() {
 	const markdown = await readFile(sourcePath, "utf8");
-	const contentHtml = renderMarkdown(markdown);
+	const contentHtml = renderMarkdown(normalizeReleaseDeltas(markdown));
 	const html = buildHtml(contentHtml);
 	await mkdir(outputDir, { recursive: true });
 	await writeFile(outputPath, html, "utf8");
