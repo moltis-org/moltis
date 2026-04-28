@@ -508,7 +508,7 @@ export function VoiceSection(): VNode {
 										<div className="flex items-center gap-1.5">
 											<button
 												type="button"
-												className="provider-btn-sm"
+												className="provider-btn provider-btn-secondary text-xs !py-1 !px-2.5"
 												onClick={() => setPersonaEditing(pr.persona.id)}
 											>
 												Edit
@@ -516,7 +516,7 @@ export function VoiceSection(): VNode {
 											{pr.isActive ? (
 												<button
 													type="button"
-													className="provider-btn-sm"
+													className="provider-btn provider-btn-secondary text-xs !py-1 !px-2.5"
 													onClick={async () => {
 														await setActiveVoicePersona(null);
 														fetchPersonas();
@@ -527,7 +527,7 @@ export function VoiceSection(): VNode {
 											) : (
 												<button
 													type="button"
-													className="provider-btn-sm"
+													className="provider-btn provider-btn-secondary text-xs !py-1 !px-2.5"
 													onClick={async () => {
 														await setActiveVoicePersona(pr.persona.id);
 														fetchPersonas();
@@ -538,7 +538,7 @@ export function VoiceSection(): VNode {
 											)}
 											<button
 												type="button"
-												className="provider-btn-sm provider-btn-danger"
+												className="provider-btn text-xs !py-1 !px-2.5 !bg-[var(--error)] hover:!bg-red-700"
 												onClick={async () => {
 													await deleteVoicePersona(pr.persona.id);
 													fetchPersonas();
