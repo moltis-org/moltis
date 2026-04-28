@@ -1,7 +1,7 @@
 ---
 name: birdclaw
 description: Local-first Twitter/X workspace for archiving, searching, and triaging tweets, DMs, likes, bookmarks, and mentions. Includes a web UI for inbox triage and AI scoring.
-platforms: [linux, macos]
+platforms: [darwin]
 homepage: https://github.com/steipete/birdclaw
 requires:
   any_bins: [birdclaw]
