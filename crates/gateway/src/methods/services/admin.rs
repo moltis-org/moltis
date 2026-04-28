@@ -139,7 +139,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "projects.upsert",
         Box::new(|ctx| {
             Box::pin(async move {
-                // Check if code_index_enabled is transitioning from off → on
+                // Check if code_index_enabled is transitioning and trigger IndexJobManager
                 #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
                 {
                     let project_id = ctx
@@ -153,49 +153,65 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .get("code_index_enabled")
                         .and_then(|v| v.as_bool());
 
-                    if new_enabled == Some(true)
-                        && let Some(ref pid) = project_id
-                    {
-                        // Fetch old project to check previous state
-                        if let Ok(old) = ctx
+                    if let Some(ref pid) = project_id {
+                        // Fetch old project to check previous state.
+                        // For NEW projects, get() returns Err — treat as old_enabled=false.
+                        let old_result = ctx
                             .state
                             .services
                             .project
                             .get(serde_json::json!({ "id": pid }))
                             .await
-                        {
-                            let old_enabled = old
-                                .get("code_index_enabled")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(true);
+                            .ok();
 
-                            if !old_enabled {
-                                let dir = old
-                                    .get("directory")
-                                    .and_then(|v| v.as_str())
-                                    .map(PathBuf::from);
+                        let old_enabled = old_result
+                            .as_ref()
+                            .and_then(|old| old.get("code_index_enabled").and_then(|v| v.as_bool()))
+                            .unwrap_or(false);
 
-                                if let Some(project_dir) = dir {
-                                    info!(
-                                        project_id = %pid,
-                                        "code-index: re-indexing project (enabled by user)"
-                                    );
-                                    let code_index = Arc::clone(&ctx.state.code_index);
-                                    let pid_owned = pid.clone();
-                                    tokio::spawn(async move {
-                                        if let Err(e) = code_index
-                                            .index_project(&pid_owned, true, &project_dir)
-                                            .await
-                                        {
-                                            tracing::warn!(
-                                                project_id = %pid_owned,
-                                                error = %e,
-                                                "code-index: background re-index failed"
-                                            );
-                                        }
-                                    });
-                                }
+                        // Prefer directory from the upsert params; fall back to the
+                        // existing record's directory for toggle-only calls (e.g. just
+                        // flipping code_index_enabled without re-sending directory).
+                        let project_dir = ctx
+                            .params
+                            .get("directory")
+                            .and_then(|v| v.as_str())
+                            .map(PathBuf::from)
+                            .or_else(|| {
+                                old_result
+                                    .as_ref()
+                                    .and_then(|old| old.get("directory").and_then(|v| v.as_str()))
+                                    .map(PathBuf::from)
+                            });
+
+                        // Handle off → on transition (including new project creation):
+                        // - existing project: old_enabled=false, new_enabled=true
+                        // - new project: old_enabled=false (from Err), new_enabled=true
+                        if new_enabled == Some(true) && !old_enabled {
+                            if let Some(dir) = project_dir {
+                                info!(
+                                    project_id = %pid,
+                                    "code-index: registering project and triggering index"
+                                );
+                                let jm = Arc::clone(&ctx.state.index_job_manager);
+                                let pid_owned = pid.clone();
+                                tokio::spawn(async move {
+                                    jm.register_project(pid_owned.clone(), dir).await;
+                                    jm.spawn_index(pid_owned).await;
+                                });
                             }
+                        }
+                        // Handle on → off transition (existing project only)
+                        else if new_enabled == Some(false) && old_enabled {
+                            info!(
+                                project_id = %pid,
+                                "code-index: disabling project indexing"
+                            );
+                            let jm = Arc::clone(&ctx.state.index_job_manager);
+                            let pid_owned = pid.clone();
+                            tokio::spawn(async move {
+                                jm.unregister_project(&pid_owned).await;
+                            });
                         }
                     }
                 }
@@ -213,6 +229,23 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "projects.delete",
         Box::new(|ctx| {
             Box::pin(async move {
+                // Unregister from IndexJobManager before deleting
+                #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+                {
+                    let project_id = ctx
+                        .params
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    if let Some(pid) = project_id {
+                        let jm = Arc::clone(&ctx.state.index_job_manager);
+                        tokio::spawn(async move {
+                            jm.unregister_project(&pid).await;
+                        });
+                    }
+                }
+
                 ctx.state
                     .services
                     .project

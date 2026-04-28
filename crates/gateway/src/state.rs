@@ -383,6 +383,9 @@ pub struct GatewayState {
     /// Code index for workspace codebase intelligence (discover, filter, status, peek).
     /// Always initialized in config-only mode; search is deferred to QMD backend.
     pub code_index: Arc<moltis_code_index::CodeIndex>,
+    /// Index job manager for coordinating auto-indexing operations.
+    #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+    pub index_job_manager: Arc<moltis_code_index::IndexJobManager>,
     /// Whether the server is bound to a loopback address (localhost/127.0.0.1/::1).
     pub localhost_only: bool,
     /// Whether the server is known to be behind a reverse proxy.
@@ -494,6 +497,8 @@ impl GatewayState {
         hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
         memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
         code_index: Arc<moltis_code_index::CodeIndex>,
+        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+        index_job_manager: Arc<moltis_code_index::IndexJobManager>,
         port: u16,
         ws_request_logs: bool,
         deploy_platform: Option<String>,
@@ -518,6 +523,8 @@ impl GatewayState {
             pairing_store,
             memory_manager,
             code_index,
+            #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+            index_job_manager,
             localhost_only,
             behind_proxy,
             tls_active,

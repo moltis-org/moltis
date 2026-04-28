@@ -1,6 +1,6 @@
 //! Configuration for codebase indexing.
 
-use std::{path::PathBuf, sync::LazyLock};
+use std::{path::PathBuf, sync::LazyLock, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
@@ -115,6 +115,14 @@ pub struct CodeIndexConfig {
     /// Defaults to `<moltis_data_dir>/code-index/` when `None`.
     #[serde(skip)]
     pub data_dir: Option<PathBuf>,
+    /// Automatically index all enabled projects at startup.
+    pub auto_index_on_startup: bool,
+    /// Automatically index a project when created or enabled.
+    pub auto_index_on_create: bool,
+    /// Periodic re-index interval.
+    pub periodic_reindex_interval: Duration,
+    /// Maximum concurrent indexing jobs.
+    pub max_concurrent_jobs: usize,
 }
 
 impl Default for CodeIndexConfig {
@@ -126,6 +134,10 @@ impl Default for CodeIndexConfig {
             skip_binary: true,
             skip_paths: DEFAULT_SKIP_PATHS.clone(),
             data_dir: None,
+            auto_index_on_startup: true,
+            auto_index_on_create: true,
+            periodic_reindex_interval: Duration::from_secs(1800), // 30 minutes
+            max_concurrent_jobs: 2,
         }
     }
 }
@@ -143,6 +155,19 @@ impl From<&moltis_config::CodeIndexTomlConfig> for CodeIndexConfig {
                 #[cfg(not(feature = "tracing"))]
                 let _ = (&toml.max_file_size, &e);
                 DEFAULT_MAX_FILE_SIZE_BYTES
+            });
+
+        let periodic_reindex_interval = moltis_config::parse_duration(&toml.periodic_reindex_interval)
+            .unwrap_or_else(|e| {
+                #[cfg(feature = "tracing")]
+                tracing::warn!(
+                    interval = %toml.periodic_reindex_interval,
+                    error = %e,
+                    "code-index: invalid periodic_reindex_interval, falling back to 30m"
+                );
+                #[cfg(not(feature = "tracing"))]
+                let _ = (&toml.periodic_reindex_interval, &e);
+                Duration::from_secs(1800)
             });
 
         Self {
@@ -163,6 +188,10 @@ impl From<&moltis_config::CodeIndexTomlConfig> for CodeIndexConfig {
                 paths
             },
             data_dir: toml.data_dir.as_ref().map(PathBuf::from),
+            auto_index_on_startup: toml.auto_index_on_startup,
+            auto_index_on_create: toml.auto_index_on_create,
+            periodic_reindex_interval,
+            max_concurrent_jobs: toml.max_concurrent_jobs as usize,
         }
     }
 }
