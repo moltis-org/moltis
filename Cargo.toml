@@ -8,19 +8,22 @@ default-members = [
   "crates/browser",
   "crates/caldav",
   "crates/canvas",
-  "crates/ctl",
   "crates/channels",
   "crates/chat",
-  "crates/code-index",
+  "crates/claude-import",
   "crates/cli",
+  "crates/code-index",
   "crates/common",
   "crates/config",
   "crates/cron",
+  "crates/ctl",
   "crates/discord",
   "crates/gateway",
   "crates/graphql",
+  "crates/hermes-import",
   "crates/home-assistant",
   "crates/httpd",
+  "crates/import-core",
   "crates/matrix",
   "crates/mcp",
   "crates/mcp-agent-bridge",
@@ -73,16 +76,19 @@ members = [
   "crates/canvas",
   "crates/channels",
   "crates/chat",
-  "crates/code-index",
+  "crates/claude-import",
   "crates/cli",
+  "crates/code-index",
   "crates/common",
-  "crates/ctl",
   "crates/config",
   "crates/cron",
+  "crates/ctl",
   "crates/gateway",
   "crates/graphql",
+  "crates/hermes-import",
   "crates/home-assistant",
   "crates/httpd",
+  "crates/import-core",
   "crates/matrix",
   "crates/mcp",
   "crates/media",
@@ -197,8 +203,8 @@ tokio-util   = "0.7"
 serde_yaml        = "0.9"
 tokio-tungstenite = "0.26"
 toml              = "0.8"
-zip               = { default-features = false, features = ["deflate"], version = "2" }
 toml_edit         = "0.22"
+zip               = { default-features = false, features = ["deflate"], version = "2" }
 # LLM provider crates (optional, behind feature flags)
 async-openai    = { features = ["chat-completion"], version = "0.32" }
 base64          = "0.22"
@@ -318,10 +324,10 @@ shell-words           = "1"
 tar                   = "0.4"
 tempfile              = "3"
 walkdir               = "2"
-wiremock              = "0.6"
 wasmtime              = { features = ["component-model"], version = "36" }
 wasmtime-wasi         = "36"
 which                 = "8"
+wiremock              = "0.6"
 wit-bindgen           = "0.41"
 wit-bindgen-rt        = { features = ["bitflags"], version = "0.41" }
 # CalDAV / iCalendar
@@ -341,15 +347,18 @@ moltis-caldav           = { path = "crates/caldav" }
 moltis-canvas           = { path = "crates/canvas" }
 moltis-channels         = { path = "crates/channels" }
 moltis-chat             = { path = "crates/chat" }
-moltis-code-index      = { path = "crates/code-index" }
+moltis-claude-import    = { path = "crates/claude-import" }
+moltis-code-index       = { path = "crates/code-index" }
 moltis-common           = { path = "crates/common" }
 moltis-config           = { path = "crates/config" }
 moltis-cron             = { path = "crates/cron" }
 moltis-discord          = { path = "crates/discord" }
 moltis-gateway          = { default-features = false, path = "crates/gateway" }
 moltis-graphql          = { path = "crates/graphql" }
+moltis-hermes-import    = { path = "crates/hermes-import" }
 moltis-home-assistant   = { path = "crates/home-assistant" }
 moltis-httpd            = { default-features = false, path = "crates/httpd" }
+moltis-import-core      = { path = "crates/import-core" }
 moltis-matrix           = { path = "crates/matrix" }
 moltis-mcp              = { path = "crates/mcp" }
 moltis-mcp-agent-bridge = { path = "crates/mcp-agent-bridge" }

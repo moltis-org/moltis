@@ -13,6 +13,7 @@ pub mod channels;
 pub mod detect;
 pub mod error;
 pub mod identity;
+pub mod mcp_servers;
 pub mod memory;
 pub mod providers;
 pub mod report;
@@ -43,6 +44,7 @@ pub struct ImportSelection {
     pub channels: bool,
     pub sessions: bool,
     pub workspace_files: bool,
+    pub mcp_servers: bool,
 }
 
 impl ImportSelection {
@@ -56,6 +58,7 @@ impl ImportSelection {
             channels: true,
             sessions: true,
             workspace_files: true,
+            mcp_servers: true,
         }
     }
 }
@@ -85,6 +88,7 @@ pub struct ImportScan {
     pub workspace_files_available: bool,
     pub workspace_files_count: usize,
     pub workspace_files_found: Vec<String>,
+    pub mcp_servers_available: bool,
 }
 
 /// Scan an OpenClaw installation without importing anything.
@@ -130,6 +134,7 @@ pub fn scan(detection: &OpenClawDetection) -> ImportScan {
         workspace_files_available: detection.has_workspace_files,
         workspace_files_count: detection.workspace_files_found.len(),
         workspace_files_found: detection.workspace_files_found.clone(),
+        mcp_servers_available: detection.has_mcp_servers,
     }
 }
 
@@ -283,6 +288,12 @@ pub fn import(
             &memory_sessions_dir,
             &agent_id_mapping,
         ));
+    }
+
+    // MCP Servers
+    if selection.mcp_servers {
+        let mcp_path = data_dir.join("mcp-servers.json");
+        report.add_category(mcp_servers::import_mcp_servers(detection, &mcp_path));
     }
 
     // Convert non-default agents into spawn presets
@@ -662,6 +673,13 @@ mod tests {
         )
         .unwrap();
 
+        // MCP servers
+        std::fs::write(
+            dir.join("mcp-servers.json"),
+            r#"{"test-mcp":{"command":"test-mcp","args":["--port","3000"],"env":{},"enabled":true}}"#,
+        )
+        .unwrap();
+
         // Auth profiles
         let agent_dir = dir.join("agents").join("main").join("agent");
         std::fs::create_dir_all(agent_dir.join("sessions")).unwrap();
@@ -718,6 +736,7 @@ mod tests {
         assert_eq!(scan_result.sessions_count, 1);
         assert!(scan_result.workspace_files_available);
         assert_eq!(scan_result.workspace_files_count, 3);
+        assert!(scan_result.mcp_servers_available);
     }
 
     #[test]
@@ -790,10 +809,11 @@ mod tests {
         let report = import(&detection, &ImportSelection::all(), &config_dir, &data_dir);
 
         // Check that all categories have a report
-        assert!(report.categories.len() >= 7);
+        assert!(report.categories.len() >= 8);
 
         // Check specific imports
         assert!(config_dir.join("provider_keys.json").is_file());
+        assert!(data_dir.join("mcp-servers.json").is_file());
         assert!(data_dir.join("MEMORY.md").is_file());
         assert!(
             data_dir

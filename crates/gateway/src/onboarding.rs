@@ -335,6 +335,10 @@ impl OnboardingService for GatewayOnboardingService {
                 .get("workspace_files")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false),
+            mcp_servers: params
+                .get("mcp_servers")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         };
 
         let config_dir = moltis_config::config_dir()

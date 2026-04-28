@@ -65,11 +65,14 @@ clap                   = { workspace = true }
 dotenvy                = { workspace = true }
 moltis-agents          = { workspace = true }
 moltis-browser         = { workspace = true }
+moltis-claude-import   = { optional = true, workspace = true }
 moltis-common          = { workspace = true }
 moltis-config          = { workspace = true }
 moltis-cron            = { workspace = true }
 moltis-gateway         = { workspace = true }
+moltis-hermes-import   = { optional = true, workspace = true }
 moltis-httpd           = { workspace = true }
+moltis-import-core     = { workspace = true }
 moltis-memory          = { workspace = true }
 moltis-node-host       = { workspace = true }
 moltis-oauth           = { workspace = true }
@@ -101,21 +104,24 @@ tikv-jemallocator = { optional = true, workspace = true }
 tempfile = { workspace = true }
 
 [features]
-agent  = ["moltis-gateway/agent", "moltis-web?/agent"]
-caldav = ["moltis-gateway/caldav"]
+agent          = ["moltis-gateway/agent", "moltis-web?/agent"]
+caldav         = ["moltis-gateway/caldav"]
 home-assistant = ["moltis-gateway/home-assistant"]
 # User-facing integrations stay default-on in the CLI crate per workspace policy,
 # even when the underlying implementation remains feature-gated in lower crates.
+bundled-skills = ["moltis-gateway/bundled-skills", "moltis-web?/bundled-skills"]
 default = [
   "agent",
   "bundled-skills",
   "caldav",
-  "home-assistant",
+  "claude-import",
   "code-splitter",
   "file-watcher",
   "firecrawl",
   "fs-tools",
   "graphql",
+  "hermes-import",
+  "home-assistant",
   "jemalloc",
   "llm-compaction",
   "local-llm",
@@ -139,7 +145,6 @@ default = [
   "web-ui",
   "whatsapp",
 ]
-bundled-skills  = ["moltis-gateway/bundled-skills", "moltis-web?/bundled-skills"]
 llm-compaction = ["moltis-gateway/llm-compaction"]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
@@ -164,6 +169,8 @@ lang-toml       = ["moltis-memory/lang-toml"]
 lang-typescript = ["moltis-memory/lang-typescript"]
 # jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
+claude-import      = ["dep:moltis-claude-import"]
+hermes-import      = ["dep:moltis-hermes-import"]
 lightweight        = ["jemalloc", "tls", "web-ui"]
 local-llm          = ["moltis-gateway/local-llm"]
 local-llm-cuda     = ["local-llm", "moltis-gateway/local-llm-cuda"]

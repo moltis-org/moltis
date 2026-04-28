@@ -1,0 +1,17 @@
+[package]
+description       = "Shared types and utilities for multi-source import into Moltis"
+edition.workspace = true
+license.workspace = true
+name              = "moltis-import-core"
+version.workspace = true
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+tracing    = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
