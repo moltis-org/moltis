@@ -179,7 +179,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     crate::session::summary::run_session_summary_if_enabled(&ctx.state, key).await;
 
                     // Export the session before the reset destroys its history.
-                    if let Some(ref hooks) = ctx.state.inner.read().await.hook_registry {
+                    let hooks = ctx.state.inner.read().await.hook_registry.clone();
+                    if let Some(ref hooks) = hooks {
                         crate::session::dispatch_command_hook(hooks, key, "reset", None).await;
                     }
                 }

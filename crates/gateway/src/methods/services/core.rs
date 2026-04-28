@@ -636,10 +636,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         Box::new(|ctx| {
             Box::pin(async move {
                 // Export the session before the clear destroys its history.
-                if let Some(session_key) = active_session_key_for_ctx(&ctx).await
-                    && let Some(ref hooks) = ctx.state.inner.read().await.hook_registry
-                {
-                    crate::session::dispatch_command_hook(hooks, &session_key, "reset", None).await;
+                if let Some(session_key) = active_session_key_for_ctx(&ctx).await {
+                    let hooks = ctx.state.inner.read().await.hook_registry.clone();
+                    if let Some(ref hooks) = hooks {
+                        crate::session::dispatch_command_hook(hooks, &session_key, "reset", None)
+                            .await;
+                    }
                 }
 
                 let mut params = ctx.params.clone();
@@ -840,12 +842,17 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 // Mark the session as seen so unread state clears.
                 ctx.state.services.session.mark_seen(key).await;
 
-                // Export the previous session before the user moves on.
+                // Export the previous session when the user creates a brand-new
+                // session (e.g. "+" button or /new).  Switching between two
+                // *existing* sessions intentionally skips export — only new-
+                // session creation signals the end of the previous conversation.
                 if !was_existing_session
                     && let Some(prev_key) = previous_active_key.as_deref().filter(|pk| *pk != key)
-                    && let Some(ref hooks) = ctx.state.inner.read().await.hook_registry
                 {
-                    crate::session::dispatch_command_hook(hooks, prev_key, "new", None).await;
+                    let hooks = ctx.state.inner.read().await.hook_registry.clone();
+                    if let Some(ref hooks) = hooks {
+                        crate::session::dispatch_command_hook(hooks, prev_key, "new", None).await;
+                    }
                 }
 
                 if let Some(pid) = ctx.params.get("project_id").and_then(|v| v.as_str()) {

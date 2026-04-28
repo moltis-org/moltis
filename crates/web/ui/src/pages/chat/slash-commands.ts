@@ -345,7 +345,12 @@ export function handleSlashCommand(cmdName: string, cmdArgs: string): void {
 		return;
 	}
 	if (cmdName === "reset") {
-		clearActiveSession();
+		// Use sessions.reset (not chat.clear) so the session summary also runs.
+		chatAddMsg("system", "Resetting session\u2026");
+		sendRpc("sessions.reset", { key: S.activeSessionKey }).then((res) => {
+			if (res.ok) switchSession(S.activeSessionKey);
+			else chatAddMsg("error", res.error?.message || "Reset failed");
+		});
 		return;
 	}
 	if (cmdName === "sh") {

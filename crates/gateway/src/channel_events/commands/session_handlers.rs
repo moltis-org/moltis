@@ -106,7 +106,12 @@ pub(in crate::channel_events) async fn handle_new(
     );
 
     // Export the old session before the user moves on.
-    if let Some(ref hooks) = state.inner.read().await.hook_registry {
+    // NOTE: The active-session pointer has already been updated above, so the
+    // hook reads history by session_key directly rather than via the active
+    // mapping.  If export fails it is logged and swallowed — the old session's
+    // data remains in the store and can be exported manually.
+    let hooks = state.inner.read().await.hook_registry.clone();
+    if let Some(ref hooks) = hooks {
         crate::session::dispatch_command_hook(hooks, session_key, "new", sender_id).await;
     }
 
