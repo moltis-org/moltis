@@ -192,6 +192,10 @@ fn build_api_routes() -> Router<AppState> {
             "/api/restart",
             axum::routing::post(moltis_httpd::tools_routes::restart),
         )
+        .route(
+            "/api/system/update",
+            axum::routing::post(moltis_httpd::tools_routes::update),
+        )
         .route("/api/sessions", get(api::api_sessions_handler))
         .route(
             "/api/sessions/{session_key}/history",

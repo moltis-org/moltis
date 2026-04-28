@@ -450,6 +450,8 @@ Default `tool_overrides` entries:
 |-----|------|---------|-------------|
 | `enabled` | bool | `true` | Whether browser support is enabled. |
 | `chrome_path` | optional string | `null` | Path to Chrome/Chromium binary (auto-detected if not set). |
+| `obscura_path` | optional string | `null` | Path to the Obscura binary for `browser = "obscura"` requests (auto-detected from `OBSCURA` or `PATH` if not set). |
+| `lightpanda_path` | optional string | `null` | Path to the Lightpanda binary for `browser = "lightpanda"` requests (auto-detected from `LIGHTPANDA` or `PATH` if not set). |
 | `headless` | bool | `true` | Whether to run in headless mode. |
 | `viewport_width` | integer | `2560` | Default viewport width in pixels. |
 | `viewport_height` | integer | `1440` | Default viewport height in pixels. |

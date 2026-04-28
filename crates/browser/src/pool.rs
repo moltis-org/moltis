@@ -22,7 +22,7 @@ use {
 use crate::{
     container::{BrowserContainer, browserless_session_timeout_ms},
     error::Error,
-    types::{BrowserConfig, BrowserPreference, BrowserlessApiVersion},
+    types::{BrowserConfig, BrowserKind, BrowserPreference, BrowserlessApiVersion},
 };
 
 pub(crate) const MAX_BROWSER_INSTANCE_LIFETIME: Duration = Duration::from_secs(30 * 60);
@@ -104,6 +104,11 @@ struct BrowserInstance {
     /// Container for sandboxed instances (None for host browser).
     #[allow(dead_code)]
     container: Option<BrowserContainer>,
+    /// Child process for lightweight sidecar instances. Killed on drop.
+    #[allow(dead_code)]
+    child_process: Option<tokio::process::Child>,
+    /// The browser kind used for this instance.
+    kind: Option<BrowserKind>,
 }
 
 /// Pool of browser instances for reuse.
@@ -356,6 +361,14 @@ impl BrowserPool {
         self.instances.read().await.len()
     }
 
+    /// Get the browser kind for a session, if known.
+    pub async fn browser_kind(&self, session_id: &str) -> Option<BrowserKind> {
+        let instances = self.instances.read().await;
+        let instance = instances.get(session_id)?;
+        let inst = instance.lock().await;
+        inst.kind
+    }
+
     /// Launch a new browser instance.
     async fn launch_browser(
         &self,
@@ -363,6 +376,10 @@ impl BrowserPool {
         sandbox: bool,
         browser: Option<BrowserPreference>,
     ) -> Result<BrowserInstance, Error> {
+        if let Some(spec) = browser.and_then(sidecar_browser_spec) {
+            return self.launch_sidecar_browser(session_id, spec).await;
+        }
+
         if sandbox {
             self.launch_sandboxed_browser(session_id).await
         } else {
@@ -538,6 +555,8 @@ impl BrowserPool {
             created_at: Instant::now(),
             sandboxed: true,
             container: Some(container),
+            child_process: None,
+            kind: None,
         })
     }
 
@@ -711,8 +730,313 @@ impl BrowserPool {
             created_at: Instant::now(),
             sandboxed: false,
             container: None,
+            child_process: None,
+            kind: Some(selected.kind),
         })
     }
+
+    /// Launch a lightweight headless browser as a sidecar process and connect via CDP.
+    ///
+    /// Uses a retry loop to handle TOCTOU races on port selection: if a
+    /// picked port is stolen between bind-to-0 and browser startup, we try
+    /// again with a fresh port (up to [`SIDECAR_PORT_RETRIES`] times).
+    async fn launch_sidecar_browser(
+        &self,
+        session_id: &str,
+        spec: SidecarBrowserSpec,
+    ) -> Result<BrowserInstance, Error> {
+        let browser_path = spec.detect(&self.config).ok_or_else(|| {
+            Error::LaunchFailed(format!(
+                "{} binary not found. Install it from {} or set \
+                 [tools.browser] {} in config.",
+                spec.display_name, spec.install_url, spec.config_key
+            ))
+        })?;
+
+        let mut last_error = String::new();
+
+        for attempt in 0..SIDECAR_PORT_RETRIES {
+            // Pick a random port for the CDP server.
+            let port = pick_available_port().ok_or_else(|| {
+                Error::LaunchFailed(format!(
+                    "no available TCP port for {} CDP server",
+                    spec.display_name
+                ))
+            })?;
+
+            info!(
+                session_id,
+                port,
+                attempt,
+                browser = %spec.kind,
+                path = %browser_path.display(),
+                "launching browser sidecar"
+            );
+
+            match self
+                .try_launch_sidecar(session_id, spec, &browser_path, port)
+                .await
+            {
+                Ok(instance) => return Ok(instance),
+                Err(e) => {
+                    warn!(
+                        session_id,
+                        port,
+                        attempt,
+                        error = %e,
+                        browser = %spec.kind,
+                        "browser sidecar launch attempt failed, retrying with new port"
+                    );
+                    last_error = e.to_string();
+                },
+            }
+        }
+
+        Err(Error::LaunchFailed(format!(
+            "{} failed to start after {SIDECAR_PORT_RETRIES} attempts: {last_error}",
+            spec.display_name
+        )))
+    }
+
+    /// Single attempt to spawn a sidecar browser on a given port and connect via CDP.
+    async fn try_launch_sidecar(
+        &self,
+        session_id: &str,
+        spec: SidecarBrowserSpec,
+        browser_path: &std::path::Path,
+        port: u16,
+    ) -> Result<BrowserInstance, Error> {
+        let mut command = tokio::process::Command::new(browser_path);
+        command
+            .arg("serve")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        for arg in spec.serve_args(port) {
+            command.arg(arg);
+        }
+        let mut child = command.spawn().map_err(|e| {
+            Error::LaunchFailed(format!(
+                "failed to spawn {} at {}: {e}",
+                spec.display_name,
+                browser_path.display()
+            ))
+        })?;
+
+        // Poll until the CDP endpoint is ready (or the process exits).
+        let ws_url = spec.websocket_url(port);
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+        let deadline = Instant::now() + Duration::from_secs(10);
+
+        loop {
+            // Check that the child hasn't exited.
+            if let Ok(Some(status)) = child.try_wait() {
+                let stderr = drain_child_stderr(&mut child).await;
+                if !stderr.is_empty() {
+                    warn!(
+                        session_id,
+                        port,
+                        stderr,
+                        browser = %spec.kind,
+                        "browser sidecar stderr before exit"
+                    );
+                }
+                return Err(Error::LaunchFailed(format!(
+                    "{} exited immediately with status {status}: {stderr}",
+                    spec.display_name
+                )));
+            }
+
+            // Try a TCP connect to see if the server is listening.
+            if tokio::time::timeout(
+                Duration::from_millis(200),
+                tokio::net::TcpStream::connect(addr),
+            )
+            .await
+            .is_ok_and(|r| r.is_ok())
+            {
+                break;
+            }
+
+            if Instant::now() >= deadline {
+                let stderr = drain_child_stderr(&mut child).await;
+                if !stderr.is_empty() {
+                    warn!(
+                        session_id,
+                        port,
+                        stderr,
+                        browser = %spec.kind,
+                        "browser sidecar stderr at timeout"
+                    );
+                }
+                let _ = child.kill().await;
+                return Err(Error::LaunchFailed(format!(
+                    "{} CDP server did not become ready within 10 seconds: {stderr}",
+                    spec.display_name
+                )));
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Connect via CDP using the existing chromiumoxide client.
+        let handler_config = HandlerConfig {
+            request_timeout: Duration::from_millis(self.config.navigation_timeout_ms),
+            viewport: Some(chromiumoxide::handler::viewport::Viewport {
+                width: self.config.viewport_width,
+                height: self.config.viewport_height,
+                device_scale_factor: Some(self.config.device_scale_factor),
+                emulating_mobile: false,
+                is_landscape: true,
+                has_touch: false,
+            }),
+            ..Default::default()
+        };
+
+        let (browser, mut handler) = Browser::connect_with_config(&ws_url, handler_config)
+            .await
+            .map_err(|e| {
+                Error::LaunchFailed(format!(
+                    "failed to connect to {} CDP at {ws_url}: {e}",
+                    spec.display_name
+                ))
+            })?;
+
+        // Spawn handler to process browser events.
+        let session_id_clone = session_id.to_string();
+        tokio::spawn(async move {
+            while let Some(event) = handler.next().await {
+                debug!(
+                    session_id = session_id_clone,
+                    ?event,
+                    browser = %spec.kind,
+                    "sidecar browser event"
+                );
+            }
+            debug!(
+                session_id = session_id_clone,
+                browser = %spec.kind,
+                "sidecar browser event handler exited"
+            );
+        });
+
+        info!(
+            session_id,
+            port,
+            browser = %spec.kind,
+            "browser sidecar connected via CDP"
+        );
+
+        Ok(BrowserInstance {
+            browser,
+            pages: HashMap::new(),
+            last_used: Instant::now(),
+            created_at: Instant::now(),
+            sandboxed: false,
+            container: None,
+            child_process: Some(child),
+            kind: Some(spec.kind),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SidecarBrowserSpec {
+    kind: BrowserKind,
+    display_name: &'static str,
+    config_key: &'static str,
+    install_url: &'static str,
+}
+
+impl SidecarBrowserSpec {
+    fn detect(self, config: &BrowserConfig) -> Option<PathBuf> {
+        match self.kind {
+            BrowserKind::Obscura => crate::detect::detect_obscura(config.obscura_path.as_deref()),
+            BrowserKind::Lightpanda => {
+                crate::detect::detect_lightpanda(config.lightpanda_path.as_deref())
+            },
+            _ => None,
+        }
+    }
+
+    fn serve_args(self, port: u16) -> Vec<String> {
+        match self.kind {
+            BrowserKind::Obscura => vec!["--port".to_string(), port.to_string()],
+            BrowserKind::Lightpanda => vec![
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                port.to_string(),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn websocket_url(self, port: u16) -> String {
+        match self.kind {
+            BrowserKind::Obscura => format!("ws://127.0.0.1:{port}/devtools/browser"),
+            BrowserKind::Lightpanda => format!("ws://127.0.0.1:{port}"),
+            _ => format!("ws://127.0.0.1:{port}"),
+        }
+    }
+}
+
+fn sidecar_browser_spec(preference: BrowserPreference) -> Option<SidecarBrowserSpec> {
+    match preference {
+        BrowserPreference::Obscura => Some(SidecarBrowserSpec {
+            kind: BrowserKind::Obscura,
+            display_name: "Obscura",
+            config_key: "obscura_path",
+            install_url: "https://github.com/h4ckf0r0day/obscura",
+        }),
+        BrowserPreference::Lightpanda => Some(SidecarBrowserSpec {
+            kind: BrowserKind::Lightpanda,
+            display_name: "Lightpanda",
+            config_key: "lightpanda_path",
+            install_url: "https://github.com/lightpanda-io/browser",
+        }),
+        _ => None,
+    }
+}
+
+/// Maximum number of port-selection retries when launching a sidecar browser.
+const SIDECAR_PORT_RETRIES: usize = 3;
+
+/// Find an available TCP port by binding to port 0.
+fn pick_available_port() -> Option<u16> {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())
+}
+
+/// Read whatever stderr the child has produced so far (non-blocking).
+async fn drain_child_stderr(child: &mut tokio::process::Child) -> String {
+    use tokio::io::AsyncReadExt;
+
+    let Some(stderr) = child.stderr.as_mut() else {
+        return String::new();
+    };
+    let mut output = Vec::with_capacity(4096);
+    let mut chunk = [0; 4096];
+
+    loop {
+        match tokio::time::timeout(Duration::from_millis(10), stderr.read(&mut chunk)).await {
+            Ok(Ok(0)) | Err(_) => break,
+            Ok(Ok(read)) => {
+                output.extend_from_slice(&chunk[..read]);
+                if output.len() >= 64 * 1024 {
+                    break;
+                }
+            },
+            Ok(Err(error)) => {
+                warn!(%error, "failed to drain browser sidecar stderr");
+                break;
+            },
+        }
+    }
+
+    String::from_utf8_lossy(&output).trim().to_string()
 }
 
 impl Drop for BrowserPool {
@@ -892,6 +1216,35 @@ mod tests {
     #[test]
     fn low_memory_args_disabled_when_threshold_zero() {
         assert!(low_memory_chrome_args(512, 0).is_empty());
+    }
+
+    #[test]
+    fn lightpanda_sidecar_uses_host_port_args_and_root_ws_endpoint() {
+        let spec = sidecar_browser_spec(BrowserPreference::Lightpanda)
+            .unwrap_or_else(|| panic!("expected Lightpanda sidecar spec"));
+
+        assert_eq!(spec.serve_args(9222), vec![
+            "--host".to_string(),
+            "127.0.0.1".to_string(),
+            "--port".to_string(),
+            "9222".to_string(),
+        ]);
+        assert_eq!(spec.websocket_url(9222), "ws://127.0.0.1:9222");
+    }
+
+    #[test]
+    fn obscura_sidecar_uses_browser_ws_endpoint() {
+        let spec = sidecar_browser_spec(BrowserPreference::Obscura)
+            .unwrap_or_else(|| panic!("expected Obscura sidecar spec"));
+
+        assert_eq!(spec.serve_args(9222), vec![
+            "--port".to_string(),
+            "9222".to_string()
+        ]);
+        assert_eq!(
+            spec.websocket_url(9222),
+            "ws://127.0.0.1:9222/devtools/browser"
+        );
     }
 
     #[test]

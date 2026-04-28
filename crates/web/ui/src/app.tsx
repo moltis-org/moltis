@@ -194,6 +194,7 @@ try {
 gon.onChange("update", showUpdateBanner as (v: unknown) => void);
 onEvent("update.available", showUpdateBanner as (payload: unknown) => void);
 initUpdateBannerDismiss();
+initUpdateNowButton();
 showVaultBanner(gon.get("vault_status") as string | null);
 gon.onChange("vault_status", showVaultBanner as (v: unknown) => void);
 
@@ -488,6 +489,43 @@ function initUpdateBannerDismiss(): void {
 		}
 		const el = document.getElementById("updateBanner");
 		if (el) el.style.display = "none";
+	});
+}
+
+function initUpdateNowButton(): void {
+	const btn = S.$<HTMLButtonElement>("updateNowBtn");
+	if (!btn || btn.dataset.bound === "1") return;
+	btn.dataset.bound = "1";
+	btn.addEventListener("click", async () => {
+		btn.textContent = "Updating\u2026";
+		btn.disabled = true;
+		try {
+			const resp = await fetch("/api/system/update", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			});
+			const data = await resp.json();
+			if (data.restarting) {
+				btn.textContent = "Restarting\u2026";
+			} else if (data.status === "manual_required" && data.command) {
+				btn.textContent = "Manual update";
+				btn.disabled = false;
+				window.alert(`Run this command to update:\n\n${data.command}`);
+			} else if (data.status === "already_up_to_date") {
+				btn.textContent = "Up to date";
+			} else if (data.error) {
+				btn.textContent = "Update now";
+				btn.disabled = false;
+				window.alert(`Update failed: ${data.error}`);
+			} else {
+				btn.textContent = "Update now";
+				btn.disabled = false;
+			}
+		} catch {
+			btn.textContent = "Update now";
+			btn.disabled = false;
+		}
 	});
 }
 

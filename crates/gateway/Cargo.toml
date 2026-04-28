@@ -12,6 +12,7 @@ bytes                   = { workspace = true }
 chrono                  = { features = ["serde"], optional = true, workspace = true }
 chrono-tz               = { workspace = true }
 dashmap                 = { workspace = true }
+flate2                  = { workspace = true }
 futures                 = { workspace = true }
 gix                     = { workspace = true }
 hostname                = { workspace = true }
@@ -75,6 +76,7 @@ serde_json              = { workspace = true }
 sha2                    = { workspace = true }
 sqlx                    = { workspace = true }
 sysinfo                 = { workspace = true }
+tar                     = { workspace = true }
 tempfile                = { workspace = true }
 thiserror               = { workspace = true }
 time                    = { workspace = true }

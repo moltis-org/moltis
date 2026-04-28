@@ -114,6 +114,7 @@ pub(in crate::channel_events) async fn dispatch_command(
         "sh" => control_handlers::handle_sh(state, &session_key, args).await,
         "stop" => control_handlers::handle_stop(state, &session_key).await,
         "peek" => control_handlers::handle_peek(state, &session_key).await,
+        "update" => control_handlers::handle_update(state, &reply_to, sender_id, args).await,
         _ => Err(ChannelError::invalid_input(format!(
             "unknown command: /{cmd}"
         ))),
@@ -152,6 +153,7 @@ mod tests {
             "sh",
             "stop",
             "peek",
+            "update",
         ];
 
         for cmd in moltis_channels::commands::all_commands() {

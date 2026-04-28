@@ -155,7 +155,7 @@ impl AgentTool for BrowserTool {
          {\"action\": \"navigate\", \"url\": \"https://example.com\"}\n\n\
          Actions: navigate, screenshot, snapshot, click, type, scroll, evaluate, wait, close\n\n\
          BROWSER CHOICE: optionally set \"browser\" to choose one (auto, chrome, chromium, \
-         edge, brave, opera, vivaldi, arc). If no browser is installed, Moltis will try \
+         edge, brave, opera, vivaldi, arc, obscura, lightpanda). If no browser is installed, Moltis will try \
          to auto-install one.\n\n\
          SESSION: The browser session is automatically tracked per chat session. \
          After 'navigate', subsequent actions in the same chat will reuse the same \
@@ -184,8 +184,8 @@ impl AgentTool for BrowserTool {
                 },
                 "browser": {
                     "type": "string",
-                    "enum": ["auto", "chrome", "chromium", "edge", "brave", "opera", "vivaldi", "arc"],
-                    "description": "Browser to use for host mode. Default: auto (first installed browser)."
+                    "enum": ["auto", "chrome", "chromium", "edge", "brave", "opera", "vivaldi", "arc", "obscura", "lightpanda"],
+                    "description": "Browser to use. Default: auto (first installed browser). Use 'obscura' or 'lightpanda' for lightweight headless browsing (no screenshots)."
                 },
                 "url": {
                     "type": "string",
@@ -356,6 +356,11 @@ mod tests {
         assert!(
             required.iter().any(|v| v == "action"),
             "action should be in required fields"
+        );
+        let browser_values = schema["properties"]["browser"]["enum"].as_array().unwrap();
+        assert!(
+            browser_values.iter().any(|v| v == "lightpanda"),
+            "lightpanda should be a selectable browser"
         );
     }
 
