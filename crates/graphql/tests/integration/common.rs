@@ -456,6 +456,34 @@ impl moltis_service_traits::SkillsService for MockSkills {
     async fn skill_save(&self, p: Value) -> ServiceResult {
         self.0.call("skills.skill.save", p)
     }
+
+    async fn bundled_categories(&self) -> ServiceResult {
+        self.0.call("skills.bundled.categories", json!({}))
+    }
+
+    async fn bundled_toggle_category(&self, p: Value) -> ServiceResult {
+        self.0.call("skills.bundled.toggle_category", p)
+    }
+
+    async fn recipe(&self, p: Value) -> ServiceResult {
+        self.0.call("skills.recipe", p)
+    }
+
+    async fn clawhub_search(&self, p: Value) -> ServiceResult {
+        self.0.call("skills.clawhub.search", p)
+    }
+
+    async fn clawhub_install(&self, p: Value) -> ServiceResult {
+        self.0.call("skills.clawhub.install", p)
+    }
+
+    async fn clawhub_info(&self, p: Value) -> ServiceResult {
+        self.0.call("skills.clawhub.info", p)
+    }
+
+    async fn clawhub_scan(&self, p: Value) -> ServiceResult {
+        self.0.call("skills.clawhub.scan", p)
+    }
 }
 
 #[async_trait::async_trait]
@@ -791,6 +819,18 @@ impl moltis_service_traits::LocalLlmService for MockLocalLlm {
 
     async fn remove_model(&self, p: Value) -> ServiceResult {
         self.0.call("providers.local.remove_model", p)
+    }
+
+    async fn load_model(&self, p: Value) -> ServiceResult {
+        self.0.call("providers.local.load_model", p)
+    }
+
+    async fn unload_model(&self, p: Value) -> ServiceResult {
+        self.0.call("providers.local.unload_model", p)
+    }
+
+    async fn model_states(&self) -> ServiceResult {
+        self.0.call("providers.local.model_states", json!({}))
     }
 }
 

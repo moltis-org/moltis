@@ -23,7 +23,7 @@ moltis-providers      = { workspace = true }
 moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
-moltis-telegram       = { workspace = true }
+moltis-telegram       = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-voice          = { workspace = true }
 serde                 = { workspace = true }
@@ -40,11 +40,13 @@ uuid                  = { workspace = true }
 # Default-on so users get full compaction out of the box. Disabling this
 # removes the streaming-summary path and LLM modes become a runtime config
 # error; the `deterministic` and `recency_preserving` modes remain available.
+bundled-skills     = ["moltis-skills/bundled-skills"]
 llm-compaction     = []
 local-llm          = []
 metrics            = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
 push-notifications = ["dep:chrono"]
 web-ui             = ["dep:chrono"]
+telegram           = ["dep:moltis-telegram"]
 
 default = ["llm-compaction"]
 

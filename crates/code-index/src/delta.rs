@@ -266,7 +266,20 @@ pub fn build_snapshot_from_filtered(filtered: &[FilteredFile]) -> HashSnapshot {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
+
+    /// Return the workspace repo root if `.git` exists (i.e. a real clone,
+    /// not an archive checkout in CI).
+    fn repo_root_if_git() -> Option<&'static Path> {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        root.join(".git").exists().then_some(root)
+    }
 
     fn test_config() -> CodeIndexConfig {
         CodeIndexConfig::default()
@@ -274,12 +287,10 @@ mod tests {
 
     #[test]
     fn test_compute_delta_empty_previous() {
-        // With an empty previous snapshot, all files should be "added".
-        let repo_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
+        let Some(repo_dir) = repo_root_if_git() else {
+            eprintln!("skipping: no .git directory (archive checkout)");
+            return;
+        };
 
         let config = test_config();
         let previous = HashSnapshot::new();
@@ -301,12 +312,10 @@ mod tests {
 
     #[test]
     fn test_compute_delta_identical_snapshot() {
-        // With the current snapshot as previous, nothing should change.
-        let repo_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
+        let Some(repo_dir) = repo_root_if_git() else {
+            eprintln!("skipping: no .git directory (archive checkout)");
+            return;
+        };
 
         let config = test_config();
 
@@ -332,13 +341,10 @@ mod tests {
 
     #[test]
     fn test_compute_delta_simulated_removal() {
-        // With a previous snapshot containing a fake extra file, it should
-        // show up as "removed" since it doesn't exist on disk.
-        let repo_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
+        let Some(repo_dir) = repo_root_if_git() else {
+            eprintln!("skipping: no .git directory (archive checkout)");
+            return;
+        };
 
         let config = test_config();
         let mut previous = build_initial_snapshot(repo_dir, &config).unwrap();
@@ -359,11 +365,10 @@ mod tests {
 
     #[test]
     fn test_build_initial_snapshot_populates_hashes() {
-        let repo_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
+        let Some(repo_dir) = repo_root_if_git() else {
+            eprintln!("skipping: no .git directory (archive checkout)");
+            return;
+        };
 
         let config = test_config();
         let snapshot = build_initial_snapshot(repo_dir, &config).unwrap();

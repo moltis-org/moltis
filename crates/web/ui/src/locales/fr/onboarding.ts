@@ -7,6 +7,7 @@ export default {
 		identity: "Identity",
 		llm: "LLM",
 		voice: "Voice",
+		skills: "Skills",
 		remoteAccess: "Accès distant",
 		channel: "Channel",
 		summary: "Summary",
@@ -181,6 +182,15 @@ export default {
 		usernameHint: "One username per line, without the @ sign. These users can DM your bot.",
 		connecting: "Connecting\u2026",
 		connectBot: "Connect Bot",
+	},
+
+	// ── Skills step ──────────────────────────────────────────
+	skills: {
+		title: "Skills inclus",
+		description:
+			"Moltis inclut des compétences dans de nombreux domaines. Désactivez les catégories dont vous n'avez pas besoin pour garder l'agent concentré. Vous pouvez modifier cela plus tard dans les Paramètres.",
+		enableAll: "Tout activer",
+		disableAll: "Tout désactiver",
 	},
 
 	// ── Summary step ─────────────────────────────────────────

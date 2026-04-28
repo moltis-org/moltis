@@ -1,5 +1,6 @@
 // ── Context card rendering ───────────────────────────────────
 
+import { smartScrollToBottom } from "../../chat-ui";
 import { formatBytes, formatTokens } from "../../helpers";
 import * as S from "../../state";
 import { slashInjectStyles } from "./slash-commands";
@@ -352,5 +353,5 @@ export function renderContextCard(data: ContextData): void {
 	renderContextPromptMemorySection(card, data);
 	renderContextTokensSection(card, data);
 	S.chatMsgBox.appendChild(card);
-	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+	smartScrollToBottom();
 }

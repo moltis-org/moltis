@@ -173,6 +173,12 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "sessions.reset",
         Box::new(|ctx| {
             Box::pin(async move {
+                // Run session-end memory summary before clearing, if enabled.
+                let key = ctx.params.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                if !key.is_empty() {
+                    crate::session::summary::run_session_summary_if_enabled(&ctx.state, key).await;
+                }
+
                 ctx.state
                     .services
                     .session

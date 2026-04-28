@@ -169,7 +169,7 @@ OLLAMA_HOST="${OLLAMA_BIND}" OLLAMA_MODELS="${OLLAMA_MODELS_DIR}" ollama pull "$
 if [[ -n "${BINARY}" ]]; then
 	"${BINARY}" --no-tls --bind 127.0.0.1 --port "${PORT}" &
 else
-	cargo +nightly-2025-11-30 run --bin moltis -- --no-tls --bind 127.0.0.1 --port "${PORT}" &
+	cargo run --bin moltis -- --no-tls --bind 127.0.0.1 --port "${PORT}" &
 fi
 GATEWAY_PID="$!"
 wait "${GATEWAY_PID}"

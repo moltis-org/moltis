@@ -102,6 +102,16 @@ export interface LocalLlmDownloadPayload {
 	total?: number;
 }
 
+export type { LocalLlmLifecyclePayload } from "../types/ws-events";
+
+export interface ModelStateEntry {
+	model_id: string;
+	is_loaded: boolean;
+	memory_bytes: number;
+	last_activity: number;
+	idle_timeout_secs: number | null;
+}
+
 export interface ProbeResult {
 	error?: string;
 	timeout?: boolean;

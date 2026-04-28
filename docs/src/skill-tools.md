@@ -5,15 +5,16 @@ tools, enabling the system to extend its own capabilities during a conversation.
 
 ## Overview
 
-Three agent tools manage personal skills by default:
+Four agent tools manage personal skills by default:
 
 | Tool | Description |
 |------|-------------|
 | `create_skill` | Write a new `SKILL.md` to `<data_dir>/skills/<name>/` |
 | `update_skill` | Overwrite an existing skill's `SKILL.md` |
+| `patch_skill` | Apply surgical find/replace patches to an existing `SKILL.md` |
 | `delete_skill` | Remove a skill directory |
 
-When `skills.enable_agent_sidecar_files = true`, a fourth tool becomes
+When `skills.enable_agent_sidecar_files = true`, a fifth tool becomes
 available:
 
 | Tool | Description |
@@ -94,6 +95,26 @@ Safety rules:
   "content": "# summarize-pr\n\nUpdated instructions..."
 }
 ```
+
+## Patching a Skill
+
+The `patch_skill` tool applies surgical find/replace operations without
+rewriting the full body. This reduces hallucination risk and token cost when
+fixing a few lines:
+
+```json
+{
+  "name": "summarize-pr",
+  "patches": [
+    { "find": "key changes", "replace": "key changes and risks" },
+    { "find": "review notes", "replace": "review action items" }
+  ],
+  "description": "Optional: update the frontmatter description too"
+}
+```
+
+Patches are applied sequentially. If a `find` string is not found, the tool
+returns an error and no changes are written.
 
 ## Deleting a Skill
 

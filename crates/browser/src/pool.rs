@@ -391,6 +391,15 @@ impl BrowserPool {
         let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), session_id);
         let container_host = self.config.container_host.clone();
 
+        info!(
+            session_id,
+            image = %image,
+            container_host = %container_host,
+            profile_dir = ?profile_dir,
+            session_timeout_ms,
+            "launching sandboxed browser container"
+        );
+
         let container = tokio::task::spawn_blocking(move || {
             // Check container runtime availability (Docker, Podman, or Apple Container)
             if !container::is_container_available() {

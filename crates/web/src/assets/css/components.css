@@ -930,6 +930,42 @@
   background: var(--bg-hover);
 }
 
+.skills-category-pill {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.skills-category-pill:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.skills-category-pill.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.skills-category-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 0.65rem;
+  font-weight: 400;
+  font-family: var(--font-sans, sans-serif);
+  vertical-align: middle;
+}
+
 .skill-editor-form {
   display: flex;
   flex-direction: column;
@@ -1101,6 +1137,7 @@
   mask-size: contain;
   flex-shrink: 0;
 }
+.settings-nav-item[data-section="profile"]::before,
 .settings-nav-item[data-section="identity"]::before {
   -webkit-mask-image: url("../icons/masks/mask-1afa632eab17e6f8.svg");
   mask-image: url("../icons/masks/mask-1afa632eab17e6f8.svg");
@@ -1555,6 +1592,30 @@
 @keyframes mic-pulse {
   0%, 100% { transform: scale(1); }
   50% { transform: scale(1.05); }
+}
+
+/* -- VAD Button States -- */
+.vad-btn.vad-active {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+.vad-btn.vad-listening {
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+  animation: vad-glow 2s ease-in-out infinite;
+}
+
+.vad-btn.vad-speech {
+  background: var(--error) !important;
+  border-color: var(--error) !important;
+  color: #fff !important;
+  animation: mic-pulse 1s infinite;
+}
+
+@keyframes vad-glow {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
 }
 
 /* ── Toggle Switch ── */

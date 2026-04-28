@@ -77,6 +77,8 @@ pub async fn prepare_gateway_core(
     let resolved_auth = auth::resolve_auth(token, password.clone());
 
     // Load config file (moltis.toml / .yaml / .json) if present.
+    // Note: initialize_config() is called once at CLI startup (main.rs)
+    // or by the swift-bridge before reaching here.
     let mut config = moltis_config::discover_and_load();
     info!(
         offered_channels = ?config.channels.offered,
@@ -110,6 +112,12 @@ pub async fn prepare_gateway_core(
         );
     }
     let base_provider_config = config.providers.clone();
+
+    // Migrate voice API keys from moltis.toml to the credential store on
+    // first run after upgrade.  This is idempotent — once keys are in the
+    // store the TOML entries are cleared and subsequent runs are a no-op.
+    #[cfg(feature = "voice")]
+    crate::voice::migrate_voice_keys_to_key_store(&config);
 
     // Merge any previously saved API keys into the provider config so they
     // survive gateway restarts without requiring env vars.
@@ -468,6 +476,19 @@ pub async fn prepare_gateway_core(
             config_env_overrides.clone()
         },
     };
+
+    // GH-770: Re-resolve ${VAR} placeholders using DB-stored env vars.
+    // At initial config load, only process env vars were available.  Now
+    // that the credential store has been read, re-substitute so that TOML
+    // values like `api_key = "${OPENROUTER_API_KEY}"` resolve against UI
+    // env vars too.
+    config = moltis_config::resubstitute_config(&config, &runtime_env_overrides).unwrap_or_else(
+        |error| {
+            warn!(%error, "failed to resubstitute config with runtime env overrides");
+            config
+        },
+    );
+
     live_mcp
         .manager()
         .set_env_overrides(runtime_env_overrides.clone())
@@ -541,6 +562,13 @@ pub async fn prepare_gateway_core(
                         .set_project_id(&entry.key, entry.project_id.clone())
                         .await;
                 }
+                if entry.mode_id.is_some()
+                    && let Err(e) = sqlite_meta
+                        .set_mode_id(&entry.key, entry.mode_id.as_deref())
+                        .await
+                {
+                    tracing::warn!("failed to migrate session mode for {}: {e}", entry.key);
+                }
             }
         }
         let bak = metadata_json_path.with_extension("json.bak");
@@ -566,6 +594,9 @@ pub async fn prepare_gateway_core(
     ));
     if let Err(e) = agent_persona_store.ensure_main_workspace_seeded() {
         tracing::warn!(error = %e, "failed to seed main agent workspace");
+    }
+    if let Err(e) = agent_persona_store.ensure_main_row().await {
+        tracing::warn!(error = %e, "failed to ensure main agent DB row");
     }
 
     let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
@@ -795,6 +826,21 @@ pub async fn prepare_gateway_core(
         window_ms: config.cron.rate_limit_window_secs * 1000,
     };
 
+    let default_cooldown_ms = moltis_cron::service::DEFAULT_WAKE_COOLDOWN_MS;
+    let wake_cooldown_ms =
+        match moltis_cron::parse::parse_duration_ms(&config.heartbeat.wake_cooldown) {
+            Ok(ms) => ms,
+            Err(e) => {
+                tracing::warn!(
+                    raw = %config.heartbeat.wake_cooldown,
+                    error = %e,
+                    fallback_ms = default_cooldown_ms,
+                    "invalid [heartbeat].wake_cooldown, using default"
+                );
+                default_cooldown_ms
+            },
+        };
+
     let cron_store_for_pruning = Arc::clone(&cron_store);
     let cron_service = moltis_cron::service::CronService::with_events_queue(
         cron_store,
@@ -802,6 +848,7 @@ pub async fn prepare_gateway_core(
         on_agent_turn,
         Some(on_cron_notify),
         rate_limit_config,
+        wake_cooldown_ms,
         events_queue,
     );
 
@@ -1330,7 +1377,7 @@ pub async fn prepare_gateway_core(
     startup_mem_probe.checkpoint("memory_manager.initialized");
 
     // ── Code index initialization ──────────────────────────────────────
-    let code_index = init_code_index::init_code_index(&data_dir).await;
+    let code_index = init_code_index::init_code_index(&data_dir, &config).await;
     startup_mem_probe.checkpoint("code_index.initialized");
 
     post_state::complete_startup(post_state::PostStateInputs {
@@ -1387,6 +1434,8 @@ pub async fn prepare_gateway_core(
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
         code_index,
+        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+        project_store: Arc::clone(&project_store),
     })
     .await
 }

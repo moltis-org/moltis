@@ -62,13 +62,6 @@ async function ensureLanguageLoaded(lang: string): Promise<boolean> {
 	return highlighter.getLoadedLanguages().includes(lang);
 }
 
-function applyShikiStylesToPre(codeEl: HTMLElement, shikiPre: HTMLElement): void {
-	const parentPre = codeEl.parentElement;
-	if (!(parentPre && parentPre.tagName === "PRE")) return;
-	// Copy Shiki's style attribute to the parent <pre> for theming.
-	parentPre.style.cssText = shikiPre.style.cssText;
-}
-
 function applyShikiMarkupToCode(codeEl: HTMLElement, shikiPre: HTMLElement): void {
 	const shikiCode = shikiPre.querySelector("code");
 	if (!shikiCode) return;
@@ -111,7 +104,6 @@ async function highlightCodeElement(codeEl: HTMLElement): Promise<void> {
 		});
 		const shikiPre = parseShikiPre(highlightedHtml ?? "");
 		if (!shikiPre) return;
-		applyShikiStylesToPre(codeEl, shikiPre);
 		applyShikiMarkupToCode(codeEl, shikiPre);
 	} catch (_err) {
 		// Highlighting failed for this block -- leave it as plain text.

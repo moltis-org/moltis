@@ -571,6 +571,9 @@ pub async fn api_skills_handler(State(state): State<AppState>) -> impl IntoRespo
         .and_then(|v| v.as_array().cloned())
         .unwrap_or_default();
 
+    let config = moltis_config::discover_and_load();
+    let disabled_cats = &config.skills.disabled_bundled_categories;
+
     let mut skills = enabled_from_manifest(moltis_skills::manifest::ManifestStore::default_path());
 
     {
@@ -586,15 +589,38 @@ pub async fn api_skills_handler(State(state): State<AppState>) -> impl IntoRespo
                 moltis_skills::types::SkillSource::Project,
             ),
         ];
-        let discoverer = FsSkillDiscoverer::new(search_paths);
-        if let Ok(discovered) = discoverer.discover().await {
+        let fs_discoverer = FsSkillDiscoverer::new(search_paths);
+
+        #[cfg(feature = "bundled-skills")]
+        let discovered = {
+            let bundled = std::sync::Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+            let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
+                Box::new(fs_discoverer),
+                bundled,
+            );
+            composite.discover().await
+        };
+        #[cfg(not(feature = "bundled-skills"))]
+        let discovered = fs_discoverer.discover().await;
+
+        if let Ok(discovered) = discovered {
             for s in discovered {
                 let protected = moltis_gateway::services::is_protected_discovered_skill(&s.name);
+                let is_bundled = s.source == Some(moltis_skills::types::SkillSource::Bundled);
+                let enabled = if is_bundled {
+                    // Bundled skills are enabled unless their category is disabled.
+                    s.category
+                        .as_deref()
+                        .is_none_or(|cat| !disabled_cats.iter().any(|d| d == cat))
+                } else {
+                    true
+                };
                 skills.push(serde_json::json!({
                     "name": s.name,
                     "description": s.description,
+                    "category": s.category,
                     "source": s.source,
-                    "enabled": true,
+                    "enabled": enabled,
                     "protected": protected,
                 }));
             }
@@ -642,7 +668,6 @@ async fn api_search_handler(
                 .to_lowercase();
             name.contains(&query) || display.contains(&query) || desc.contains(&query)
         })
-        .take(30)
         .collect();
 
     Json(serde_json::json!({ "skills": skills }))

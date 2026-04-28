@@ -37,12 +37,11 @@ impl ImportWatcher {
     pub fn start(
         sessions_dir: PathBuf,
     ) -> Result<(Self, mpsc::UnboundedReceiver<ImportWatchEvent>)> {
+        let debounce = std::time::Duration::from_secs(5);
         let (tx, rx) = mpsc::unbounded_channel();
 
-        let debouncer = new_debouncer(
-            std::time::Duration::from_secs(5),
-            None,
-            move |result: DebounceEventResult| match result {
+        let debouncer = new_debouncer(debounce, None, move |result: DebounceEventResult| {
+            match result {
                 Ok(events) => {
                     let mut changed = false;
                     for event in events {
@@ -71,8 +70,8 @@ impl ImportWatcher {
                         warn!(error = %e, "openclaw session watcher error");
                     }
                 },
-            },
-        )?;
+            }
+        })?;
 
         let mut watcher = Self {
             _debouncer: debouncer,
@@ -92,14 +91,61 @@ impl ImportWatcher {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        notify_debouncer_full::{
+            new_debouncer_opt,
+            notify::{Config, PollWatcher},
+        },
+    };
+
+    /// Create a watcher backed by `PollWatcher` so tests don't depend on
+    /// OS-level event delivery (macOS FSEvents has unpredictable latency).
+    fn start_poll_watcher(
+        sessions_dir: PathBuf,
+    ) -> Result<(
+        Debouncer<PollWatcher, RecommendedCache>,
+        mpsc::UnboundedReceiver<ImportWatchEvent>,
+    )> {
+        let (tx, rx) = mpsc::unbounded_channel();
+
+        let poll_interval = std::time::Duration::from_millis(250);
+        let debounce = std::time::Duration::from_millis(500);
+
+        let config = Config::default().with_poll_interval(poll_interval);
+
+        let mut debouncer = new_debouncer_opt::<_, PollWatcher, RecommendedCache>(
+            debounce,
+            None,
+            move |result: DebounceEventResult| {
+                if let Ok(events) = result {
+                    let changed = events.iter().any(|event| {
+                        use notify_debouncer_full::notify::EventKind;
+                        matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_))
+                            && event
+                                .paths
+                                .iter()
+                                .any(|p| p.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+                    });
+                    if changed {
+                        let _ = tx.send(ImportWatchEvent::SessionChanged);
+                    }
+                }
+            },
+            RecommendedCache::default(),
+            config,
+        )?;
+
+        debouncer.watch(&sessions_dir, RecursiveMode::NonRecursive)?;
+        Ok((debouncer, rx))
+    }
 
     #[tokio::test]
     async fn watcher_detects_new_jsonl_file() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_path_buf();
 
-        let (_watcher, mut rx) = ImportWatcher::start(dir.clone()).unwrap();
+        let (_watcher, mut rx) = start_poll_watcher(dir.clone()).unwrap();
 
         // Write a new JSONL file — the watcher should fire
         std::fs::write(
@@ -121,12 +167,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().to_path_buf();
 
-        let (_watcher, mut rx) = ImportWatcher::start(dir.clone()).unwrap();
+        let (_watcher, mut rx) = start_poll_watcher(dir.clone()).unwrap();
 
         // Write a non-JSONL file — the watcher should NOT fire
         std::fs::write(dir.join("notes.txt"), "some text").unwrap();
 
-        let result = tokio::time::timeout(std::time::Duration::from_secs(8), rx.recv()).await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await;
 
         assert!(result.is_err(), "expected timeout, no event should fire");
     }

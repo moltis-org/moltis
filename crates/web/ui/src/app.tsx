@@ -10,6 +10,7 @@ import { SessionList } from "./components/SessionList";
 import * as _events from "./events";
 import { onEvent } from "./events";
 import * as gon from "./gon";
+import "./github-stats";
 import * as _helpers from "./helpers";
 import * as _i18n from "./i18n";
 import { init as initI18n, translateStaticElements } from "./i18n";
@@ -21,6 +22,7 @@ import * as _channelsPage from "./pages/ChannelsPage";
 import { renderSessionProjectSelect } from "./project-combo";
 import { fetchProjects, renderProjectSelect } from "./projects";
 import * as _providers from "./providers";
+import { initModelLifecycleTracking } from "./providers";
 import { initPWA } from "./pwa";
 import { initInstallBanner } from "./pwa-install";
 import { mount, navigate, registerPage, sessionPath } from "./router";
@@ -301,7 +303,7 @@ if (logoutBtn) {
 if (settingsBtn) {
 	settingsBtn.addEventListener("click", () => {
 		closeMobileMenu();
-		navigate(routes.identity as string);
+		navigate(routes.profile as string);
 	});
 }
 if (mobileMenuBtn) {
@@ -316,7 +318,7 @@ if (mobileMenuOverlay) {
 if (mobileMenuSettingsBtn) {
 	mobileMenuSettingsBtn.addEventListener("click", () => {
 		closeMobileMenu();
-		navigate(routes.identity as string);
+		navigate(routes.profile as string);
 	});
 }
 if (mobileMenuSessionsBtn) {
@@ -582,6 +584,10 @@ function fetchBootstrap(): void {
 				S.setProjects(bootProjects);
 				renderProjectSelect();
 				renderSessionProjectSelect();
+				// Show/hide project combo — matches fetchProjects() pattern
+				if (S.projectCombo) {
+					S.projectCombo.classList.toggle("hidden", bootProjects.length === 0);
+				}
 			}
 			S.setSandboxInfo(boot.sandbox || null);
 			// Re-apply sandbox UI now that we know the backend status.
@@ -653,6 +659,7 @@ function startApp(): void {
 	}
 	mount(path);
 	connect();
+	initModelLifecycleTracking();
 	fetchBootstrap();
 	initInstallBanner();
 }

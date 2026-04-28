@@ -113,6 +113,11 @@ export default {
 	dismiss: "Dismiss",
 	disableAllThirdParty: "Disable all third-party skills",
 
+	// ── Bundled categories ──────────────────────────────────
+	bundledTitle: "Catégories de compétences intégrées",
+	bundledDescription:
+		"Activez ou désactivez les catégories de compétences intégrées. Les catégories désactivées sont exclues du contexte de l'agent.",
+
 	// ── Featured skill descriptions ─────────────────────────
 	featuredOpenClaw: "Community skills from ClawdHub",
 	featuredAnthropic: "Official Anthropic agent skills",

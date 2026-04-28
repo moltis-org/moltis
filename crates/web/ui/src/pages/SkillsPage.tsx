@@ -6,19 +6,31 @@ import { computed, signal, useSignal } from "@preact/signals";
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
+import { TabBar } from "../components/forms/Tabs";
 import { onEvent } from "../events";
 import { sendRpc } from "../helpers";
+import { t } from "../i18n";
 import { updateNavCount } from "../nav-counts";
 import { registerPage } from "../router";
 import { routes } from "../routes";
 import * as S from "../state";
+import {
+	type BundledCategory,
+	CATEGORY_META,
+	categoryLabel,
+	isDiscoveredSource,
+	isRepoSource,
+	SkillSource,
+} from "../types/skill-source";
 import { ConfirmDialog, requestConfirm } from "../ui";
+import { ClawHubSection } from "./skills/ClawHubSection";
 
 // ── Types ────────────────────────────────────────────────────
 
 interface SkillSummary {
 	name: string;
 	description?: string;
+	category?: string;
 	source?: string;
 	enabled?: boolean;
 	protected?: boolean;
@@ -52,6 +64,7 @@ interface RepoSummary {
 	source: string;
 	skill_count: number;
 	enabled_count: number;
+	trusted_count?: number;
 	commit_sha?: string;
 	quarantined?: boolean;
 	drifted?: boolean;
@@ -126,7 +139,7 @@ function emergencyDisableAllSkills(): void {
 		if (!yes) return;
 		sendRpc("skills.emergency_disable", {}).then((res) => {
 			if (!res?.ok) {
-				showToast(`Emergency disable failed: ${res?.error || "unknown"}`, "error");
+				showToast(`Emergency disable failed: ${res?.error?.message || "unknown"}`, "error");
 				return;
 			}
 			showToast(`Disabled ${(res.payload as Record<string, number>)?.skills_disabled || 0} skills`, "success");
@@ -136,8 +149,11 @@ function emergencyDisableAllSkills(): void {
 }
 
 function fetchAll(): void {
+	fetchAllAsync().catch(console.error);
+}
+function fetchAllAsync(): Promise<void> {
 	loading.value = true;
-	fetch("/api/skills")
+	return fetch("/api/skills")
 		.then((r) => r.json())
 		.then((data) => {
 			if (data.skills) enabledSkills.value = data.skills;
@@ -157,29 +173,17 @@ function doInstall(source: string): Promise<void> {
 	}
 	const opId = `skills-install-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 	const pid = startInstallProgress(source, opId);
-	return sendRpc("skills.install", { source, op_id: opId }).then((res) => {
+	return sendRpc("skills.install", { source, op_id: opId }).then(async (res) => {
 		if (res?.ok) {
 			const p = (res.payload || {}) as Record<string, unknown[]>;
-			showToast(`Installed ${source} (${(p.installed || []).length} skills)`, "success");
+			const installed = (p.installed || []) as Array<{ name?: string }>;
+			showToast(`Installed ${source} (${installed.length} skills) — review and enable the skills you need.`, "success");
 			fetchAll();
 			stopInstallProgress(pid, true);
 		} else {
-			showToast(`Failed: ${res?.error || "unknown error"}`, "error");
+			showToast(`Failed: ${res?.error?.message || "unknown error"}`, "error");
 			stopInstallProgress(pid, false);
 		}
-	});
-}
-function doImportBundle(path: string): Promise<void> {
-	if (!(path && S.connected)) {
-		if (!S.connected) showToast("Not connected.", "error");
-		return Promise.resolve();
-	}
-	return sendRpc("skills.repos.import", { path }).then((res) => {
-		if (res?.ok) {
-			const p = (res.payload || {}) as Record<string, unknown>;
-			showToast(`Imported ${p.repo_name || "bundle"} (${p.skill_count || 0} skills)`, "success");
-			fetchAll();
-		} else showToast(`Failed: ${res?.error || "unknown"}`, "error");
 	});
 }
 function doExportBundle(source: string, path: string | null): Promise<void> {
@@ -188,7 +192,7 @@ function doExportBundle(source: string, path: string | null): Promise<void> {
 	if (path) params.path = path;
 	return sendRpc("skills.repos.export", params).then((res) => {
 		if (res?.ok) showToast(`Exported ${source}`, "success");
-		else showToast(`Failed: ${res?.error || "unknown"}`, "error");
+		else showToast(`Failed: ${res?.error?.message || "unknown"}`, "error");
 	});
 }
 export function doUnquarantine(source: string): Promise<void> {
@@ -197,7 +201,7 @@ export function doUnquarantine(source: string): Promise<void> {
 		if (res?.ok) {
 			showToast(`Cleared quarantine for ${source}`, "success");
 			fetchAll();
-		} else showToast(`Failed: ${res?.error || "unknown"}`, "error");
+		} else showToast(`Failed: ${res?.error?.message || "unknown"}`, "error");
 	});
 }
 function searchSkills(source: string, query: string): Promise<SkillSummary[]> {
@@ -258,44 +262,6 @@ function InstallProgressBar(): VNode | null {
 	);
 }
 
-function SecurityWarning(): VNode | null {
-	const dismissed = useSignal(!!localStorage.getItem("moltis-skills-warning-dismissed"));
-	if (dismissed.value) return null;
-	return (
-		<div className="skills-warn">
-			<div className="skills-warn-title">{"\u26a0\ufe0f"} Skills run code on your machine</div>
-			<div>
-				Skills are community-authored instructions the agent follows <strong>with your full system privileges</strong>.
-			</div>
-			<div style={{ marginTop: "6px", color: "var(--success, #4a4)" }}>
-				With sandbox mode enabled, execution is isolated.
-			</div>
-			<div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-				<button
-					onClick={() => {
-						localStorage.setItem("moltis-skills-warning-dismissed", "1");
-						dismissed.value = true;
-					}}
-					style={{
-						background: "none",
-						border: "1px solid var(--border)",
-						borderRadius: "var(--radius-sm)",
-						fontSize: ".72rem",
-						padding: "3px 10px",
-						cursor: "pointer",
-						color: "var(--muted)",
-					}}
-				>
-					Dismiss
-				</button>
-				<button className="provider-btn provider-btn-danger provider-btn-sm" onClick={emergencyDisableAllSkills}>
-					Disable all
-				</button>
-			</div>
-		</div>
-	);
-}
-
 function InstallBox(): VNode {
 	const ref = useRef<HTMLInputElement>(null);
 	const installing = useSignal(false);
@@ -325,47 +291,74 @@ function InstallBox(): VNode {
 		</div>
 	);
 }
-function BundleTransferBox(): VNode {
-	const ref = useRef<HTMLInputElement>(null);
-	const importing = useSignal(false);
-	function go(): void {
-		const p = ref.current?.value.trim();
-		if (!p) return;
-		importing.value = true;
-		doImportBundle(p).finally(() => {
-			importing.value = false;
-		});
-	}
-	return (
-		<div className="skills-install-box">
-			<input
-				ref={ref}
-				type="text"
-				placeholder="/path/to/skill-bundle.tar.gz"
-				className="skills-install-input"
-				onKeyDown={(e) => {
-					if ((e as KeyboardEvent).key === "Enter") go();
-				}}
-			/>
-			<button className="provider-btn provider-btn-secondary" onClick={go} disabled={importing.value}>
-				{importing.value ? "Importing\u2026" : "Import Bundle"}
-			</button>
-		</div>
-	);
+interface FeaturedSkill {
+	repo: string;
+	desc: string;
+	hasRecipe?: boolean;
 }
-
-const featuredSkills = [
-	{ repo: "openclaw/skills", desc: "Community skills from ClawdHub" },
+const featuredSkills: FeaturedSkill[] = [
 	{ repo: "anthropics/skills", desc: "Official Anthropic agent skills" },
 	{ repo: "vercel-labs/agent-skills", desc: "Vercel agent skills collection" },
 	{ repo: "vercel-labs/skills", desc: "Vercel skills toolkit" },
+	{
+		repo: "garrytan/gbrain",
+		desc: "Knowledge graph with hybrid search for agent memory",
+		hasRecipe: true,
+	},
 ];
-function FeaturedCard({ skill: f }: { skill: { repo: string; desc: string } }): VNode {
+
+/** After installing a repo with a recipe, fetch and display the post-install instructions. */
+async function checkPostInstallRecipe(source: string): Promise<void> {
+	const res = await sendRpc("skills.recipe", { source });
+	if (!res?.ok) return;
+	const payload = res.payload as Record<string, unknown> | undefined;
+	if (!payload?.found) return;
+	const recipe = payload.recipe as { title?: string; instructions?: string } | undefined;
+	if (!recipe?.instructions) return;
+	showToast(
+		`${recipe.title || "Setup available"} \u2014 ask the agent: \u201Crun the ${source.split("/").pop() || source} setup recipe\u201D`,
+		"success",
+	);
+}
+
+/** Derive the GitHub avatar URL for an org/user from the repo identifier. */
+/** GitHub avatar URL — github.com/{owner}.png redirects to the correct avatar
+ *  for both users and organizations. CSP img-src allows both domains. */
+function orgAvatarUrl(repo: string): string {
+	if (repo.startsWith("clawhub:")) {
+		return "https://clawhub.ai/favicon.ico";
+	}
+	const owner = repo.split("/")[0];
+	return `https://github.com/${owner}.png?size=40`;
+}
+
+/** Build the correct external link for a repo source. */
+function repoHref(source: string): string | null {
+	if (source.startsWith("clawhub:")) {
+		const slug = source.slice("clawhub:".length);
+		return `https://clawhub.ai/skills/${slug}`;
+	}
+	if (/^https?:\/\//.test(source)) return source;
+	return `https://github.com/${source}`;
+}
+
+function FeaturedCard({ skill: f }: { skill: FeaturedSkill }): VNode {
 	const installing = useSignal(false);
 	const href = /^https?:\/\//.test(f.repo) ? f.repo : `https://github.com/${f.repo}`;
+	const isInstalled = repos.value.some((r) => r.source === f.repo);
 	return (
 		<div className="skills-featured-card">
-			<div>
+			<img
+				src={orgAvatarUrl(f.repo)}
+				alt=""
+				style={{
+					width: "24px",
+					height: "24px",
+					borderRadius: "var(--radius-sm)",
+					flexShrink: 0,
+				}}
+			/>
+			<div style={{ flex: 1, minWidth: 0 }}>
 				<a
 					href={href}
 					target="_blank"
@@ -384,24 +377,31 @@ function FeaturedCard({ skill: f }: { skill: { repo: string; desc: string } }): 
 			</div>
 			<button
 				onClick={() => {
+					if (isInstalled) return;
 					installing.value = true;
-					doInstall(f.repo).then(() => {
-						installing.value = false;
-					});
+					doInstall(f.repo)
+						.then(() => {
+							if (f.hasRecipe) checkPostInstallRecipe(f.repo).catch(console.error);
+						})
+						.catch((err) => console.error("install failed", err))
+						.finally(() => {
+							installing.value = false;
+						});
 				}}
-				disabled={installing.value}
+				disabled={isInstalled || installing.value}
 				style={{
 					background: "var(--surface2)",
 					border: "1px solid var(--border)",
-					color: "var(--text)",
+					color: isInstalled ? "var(--success, #22c55e)" : "var(--text)",
 					borderRadius: "var(--radius-sm)",
 					fontSize: ".72rem",
 					padding: "4px 10px",
-					cursor: "pointer",
+					cursor: isInstalled ? "default" : "pointer",
 					whiteSpace: "nowrap",
+					opacity: isInstalled ? 0.8 : 1,
 				}}
 			>
-				{installing.value ? "Installing\u2026" : "Install"}
+				{isInstalled ? "Installed" : installing.value ? "Installing\u2026" : "Install"}
 			</button>
 		</div>
 	);
@@ -481,7 +481,7 @@ function SkillDetailPanel({
 		}
 	}, [d?.body_html]);
 	if (!d) return null;
-	const isDisc = d.source === "personal" || d.source === "project";
+	const isDisc = isDiscoveredSource(d.source);
 	function doToggle(): void {
 		actionBusy.value = true;
 		sendRpc(d.enabled ? "skills.skill.disable" : "skills.skill.enable", { source: repoSource, skill: d.name }).then(
@@ -491,7 +491,7 @@ function SkillDetailPanel({
 					if (isDisc) onClose();
 					fetchAll();
 					onReload?.();
-				} else showToast(`Failed: ${r?.error || "unknown"}`, "error");
+				} else showToast(`Failed: ${r?.error?.message || "unknown"}`, "error");
 			},
 		);
 	}
@@ -524,10 +524,12 @@ function SkillDetailPanel({
 						className={
 							isDisc && d.enabled
 								? "provider-btn provider-btn-sm provider-btn-danger"
-								: "provider-btn provider-btn-sm provider-btn-secondary"
+								: d.enabled
+									? "provider-btn provider-btn-sm provider-btn-secondary"
+									: "provider-btn provider-btn-sm"
 						}
 					>
-						{actionBusy.value ? "..." : isDisc && d.enabled ? "Delete" : d.enabled ? "Disable" : "Enable"}
+						{actionBusy.value ? "..." : isDisc && d.enabled ? "Delete" : d.enabled ? "Disable" : "Install"}
 					</button>
 					<button
 						onClick={onClose}
@@ -610,7 +612,7 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 	const unquarantiningRepo = useSignal(false);
 	const isOrphan = repo.orphaned === true;
 	const sourceLabel = isOrphan ? repo.repo_name : repo.source;
-	const href = isOrphan ? null : /^https?:\/\//.test(repo.source) ? repo.source : `https://github.com/${repo.source}`;
+	const href = isOrphan ? null : repoHref(repo.source);
 	function toggle(): void {
 		const w = !expanded.value;
 		expanded.value = w;
@@ -645,10 +647,61 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 		sendRpc("skills.skill.detail", { source: repo.source, skill: s.name }).then((r) => {
 			detailLoading.value = false;
 			if (r?.ok) activeDetail.value = r.payload as SkillDetail;
-			else showToast(`Failed: ${r?.error || "unknown"}`, "error");
+			else showToast(`Failed: ${r?.error?.message || "unknown"}`, "error");
 		});
 	}
+	const installingSkill = useSignal<string | null>(null);
+	function quickInstall(sk: SkillSummary): void {
+		if (installingSkill.value) {
+			showToast("Another install is in progress, please wait\u2026", "error");
+			return;
+		}
+		installingSkill.value = sk.name;
+		sendRpc("skills.skill.enable", { source: repo.source, skill: sk.name }).then((r) => {
+			installingSkill.value = null;
+			if (r?.ok) {
+				allSkills.value = allSkills.value.map((s) => (s.name === sk.name ? { ...s, enabled: true } : s));
+				fetchAll();
+			} else showToast(`Failed: ${r?.error?.message || "unknown"}`, "error");
+		});
+	}
+	const installingAll = useSignal(false);
+	async function installAllSkills(): Promise<void> {
+		let skills = allSkills.value;
+		if (!skills.length) {
+			skills = await searchSkills(repo.source, "");
+			allSkills.value = skills;
+		}
+		const unenabled = skills.filter((sk) => !sk.enabled);
+		if (!unenabled.length) return;
+		const yes = await requestConfirm(`You are about to enable ${unenabled.length} skills, are you sure?`, {
+			confirmLabel: "Install All",
+		});
+		if (!yes) return;
+		installingAll.value = true;
+		const succeeded = new Set<string>();
+		for (const sk of unenabled) {
+			const r = await sendRpc("skills.skill.enable", { source: repo.source, skill: sk.name });
+			if (r?.ok) {
+				succeeded.add(sk.name);
+			} else {
+				showToast(`Failed to install ${sk.name}: ${r?.error?.message || "unknown"}`, "error");
+			}
+		}
+		installingAll.value = false;
+		if (succeeded.size > 0) {
+			showToast(`Installed ${succeeded.size} skill${succeeded.size > 1 ? "s" : ""}`, "success");
+		}
+		// Re-fetch both the skill list and repo summary from the server
+		// so counts are accurate (no optimistic update).
+		const [freshSkills] = await Promise.all([searchSkills(repo.source, ""), fetchAllAsync()]);
+		allSkills.value = freshSkills;
+	}
 	const displayed = searchQuery.value.trim() ? searchResults.value : allSkills.value;
+	const unenabledCount =
+		allSkills.value.length > 0
+			? allSkills.value.filter((sk) => !sk.enabled).length
+			: repo.skill_count - repo.enabled_count;
 	return (
 		<div className="skills-repo-card">
 			<div className="skills-repo-header" onClick={toggle}>
@@ -656,6 +709,13 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 					<span style={{ fontSize: ".65rem", color: "var(--muted)", transform: expanded.value ? "rotate(90deg)" : "" }}>
 						{"\u25B6"}
 					</span>
+					{!isOrphan && (
+						<img
+							src={orgAvatarUrl(repo.source)}
+							alt=""
+							style={{ width: "20px", height: "20px", borderRadius: "var(--radius-sm)" }}
+						/>
+					)}
 					{href ? (
 						<a
 							href={href}
@@ -687,8 +747,39 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 					<span style={{ fontSize: ".72rem", color: "var(--muted)" }}>
 						{repo.enabled_count}/{repo.skill_count} enabled
 					</span>
+					{repo.trusted_count != null && repo.skill_count > 0 && (
+						<span
+							style={{
+								fontSize: ".68rem",
+								padding: "1px 5px",
+								borderRadius: "var(--radius-sm)",
+								background:
+									repo.trusted_count === repo.skill_count
+										? "var(--success-bg, rgba(34,197,94,.12))"
+										: "var(--warning-bg, rgba(234,179,8,.12))",
+								color: repo.trusted_count === repo.skill_count ? "var(--success, #22c55e)" : "var(--warning, #eab308)",
+							}}
+						>
+							{repo.trusted_count === repo.skill_count
+								? "trusted"
+								: `${repo.trusted_count}/${repo.skill_count} trusted`}
+						</span>
+					)}
 				</div>
 				<div style={{ display: "flex", gap: "6px" }}>
+					{!isOrphan && unenabledCount > 0 && (
+						<button
+							type="button"
+							className="provider-btn provider-btn-sm"
+							disabled={installingAll.value}
+							onClick={(e) => {
+								e.stopPropagation();
+								installAllSkills().catch(console.error);
+							}}
+						>
+							{installingAll.value ? "Installing\u2026" : "Install All"}
+						</button>
+					)}
 					{!isOrphan && (
 						<button
 							className="provider-btn provider-btn-sm provider-btn-secondary"
@@ -734,7 +825,7 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 							sendRpc("skills.repos.remove", { source: repo.source }).then((r) => {
 								removingRepo.value = false;
 								if (r?.ok) fetchAll();
-								else showToast(`Failed: ${r?.error || "unknown"}`, "error");
+								else showToast(`Failed: ${r?.error?.message || "unknown"}`, "error");
 							});
 						}}
 					>
@@ -791,15 +882,64 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 					{!activeDetail.value && displayed.length > 0 && (
 						<div className="skills-browse-list">
 							{displayed.map((sk) => (
-								<div key={sk.name} className="skills-ac-item" onClick={() => loadDetail(sk)}>
-									<span style={{ fontFamily: "var(--font-mono)", fontWeight: 500, color: "var(--text-strong)" }}>
-										{sk.display_name || sk.name}
-									</span>
-									{sk.description && (
-										<span style={{ color: "var(--muted)", fontSize: ".72rem", marginLeft: "6px" }}>
-											{sk.description}
+								<div
+									key={sk.name}
+									className="skills-ac-item"
+									style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+								>
+									{/* biome-ignore lint/a11y/useSemanticElements: complex layout requires div wrapper */}
+									<div
+										role="button"
+										tabIndex={0}
+										style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+										onClick={() => loadDetail(sk)}
+										onKeyDown={(e) => {
+											if (e.key === "Enter" || e.key === " ") loadDetail(sk);
+										}}
+									>
+										<span style={{ fontFamily: "var(--font-mono)", fontWeight: 500, color: "var(--text-strong)" }}>
+											{sk.display_name || sk.name}
 										</span>
-									)}
+										{sk.description && (
+											<span style={{ color: "var(--muted)", fontSize: ".72rem", marginLeft: "6px" }}>
+												{sk.description}
+											</span>
+										)}
+									</div>
+									<div style={{ display: "flex", gap: "4px", flexShrink: 0, marginLeft: "8px" }}>
+										<button
+											type="button"
+											className="provider-btn provider-btn-sm provider-btn-secondary"
+											onClick={() => loadDetail(sk)}
+										>
+											View
+										</button>
+										{!sk.enabled && (
+											<button
+												type="button"
+												className="provider-btn provider-btn-sm"
+												disabled={installingSkill.value === sk.name}
+												onClick={(e) => {
+													e.stopPropagation();
+													quickInstall(sk);
+												}}
+											>
+												{installingSkill.value === sk.name ? "Installing\u2026" : "Install"}
+											</button>
+										)}
+										{sk.enabled && (
+											<span
+												style={{
+													fontSize: ".72rem",
+													padding: "4px 8px",
+													color: "var(--success, #22c55e)",
+													fontWeight: 500,
+												}}
+											>
+												Installed
+											</span>
+										)}
+									</div>
 								</div>
 							))}
 						</div>
@@ -819,6 +959,94 @@ function RepoCard({ repo }: { repo: RepoSummary }): VNode {
 					)}
 				</div>
 			)}
+		</div>
+	);
+}
+
+const bundledCategories = signal<BundledCategory[]>([]);
+const bundledTotal = signal(0);
+
+function fetchBundledCategories(): void {
+	sendRpc("skills.bundled.categories", {}).then((res) => {
+		if (res?.ok) {
+			const payload = res.payload as { categories?: BundledCategory[]; total_skills?: number };
+			bundledCategories.value = payload.categories || [];
+			bundledTotal.value = payload.total_skills || 0;
+		}
+	});
+}
+
+function BundledCategoriesSection(): VNode {
+	const cats = bundledCategories.value;
+	const toggling = useSignal<string | null>(null);
+
+	useEffect(() => {
+		fetchBundledCategories();
+	}, []);
+
+	if (!cats.length) return <></>;
+
+	function toggle(cat: BundledCategory): void {
+		if (toggling.value) return;
+		const newEnabled = !cat.enabled;
+		toggling.value = cat.name;
+		sendRpc("skills.bundled.toggle_category", { category: cat.name, enabled: newEnabled }).then((res) => {
+			toggling.value = null;
+			if (res?.ok) {
+				bundledCategories.value = bundledCategories.value.map((c) =>
+					c.name === cat.name ? { ...c, enabled: newEnabled } : c,
+				);
+				fetchAll();
+			} else {
+				showToast(`Failed: ${res?.error?.message || "unknown"}`, "error");
+			}
+		});
+	}
+
+	const enabledCount = cats.filter((c) => c.enabled).length;
+
+	return (
+		<div className="skills-section">
+			<div className="flex items-center gap-3 mb-2">
+				<h3 className="skills-section-title" style={{ margin: 0 }}>
+					{t("skills:bundledTitle")}
+					<span className="ml-2 text-xs font-normal text-[var(--muted)]">
+						({enabledCount}/{cats.length} enabled)
+					</span>
+				</h3>
+			</div>
+			<p className="text-xs text-[var(--muted)] mb-3">{t("skills:bundledDescription")}</p>
+			<div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+				{cats.map((cat) => {
+					const meta = CATEGORY_META[cat.name];
+					const icon = meta?.icon || "\uD83D\uDCE6";
+					return (
+						<button
+							key={cat.name}
+							type="button"
+							onClick={() => toggle(cat)}
+							disabled={toggling.value === cat.name}
+							className={`flex items-center gap-2 px-3 py-2 rounded-md border text-left cursor-pointer transition-colors ${
+								cat.enabled
+									? "border-[var(--accent)] bg-[var(--accent-bg,rgba(var(--accent-rgb,59,130,246),0.08))]"
+									: "border-[var(--border)] bg-[var(--surface)] opacity-60"
+							}`}
+						>
+							<span className="text-base shrink-0">{icon}</span>
+							<div className="flex-1 min-w-0">
+								<span className="text-xs font-medium text-[var(--text-strong)]">{categoryLabel(cat.name)}</span>
+								<span className="text-xs text-[var(--muted)] ml-1">({cat.count})</span>
+								{meta?.desc && <div className="text-xs text-[var(--muted)] truncate">{meta.desc}</div>}
+							</div>
+							{cat.enabled ? (
+								<span className="icon icon-check-circle text-[var(--accent)] shrink-0" />
+							) : (
+								<span className="w-4 h-4 rounded-full border-2 border-[var(--border)] inline-block shrink-0" />
+							)}
+						</button>
+					);
+				})}
+			</div>
 		</div>
 	);
 }
@@ -845,9 +1073,31 @@ function EnabledSkillsTable(): VNode | null {
 	const activeDetail = useSignal<SkillDetail | null>(null);
 	const detailLoading = useSignal(false);
 	const pending = useSignal<string | null>(null);
+	const activeCategory = useSignal<string | null>(null);
+	const searchQuery = useSignal("");
 	if (!s?.length) return null;
+
+	// Build sorted category list from skills
+	const categories = computed(() => {
+		const cats = new Set<string>();
+		for (const sk of enabledSkills.value) {
+			cats.add(sk.category || "other");
+		}
+		return Array.from(cats).sort();
+	});
+
+	// Filter skills by search query and active category
+	const filtered = s.filter((sk) => {
+		if (activeCategory.value && (sk.category || "other") !== activeCategory.value) return false;
+		if (searchQuery.value) {
+			const q = searchQuery.value.toLowerCase();
+			return sk.name.toLowerCase().includes(q) || (sk.description || "").toLowerCase().includes(q);
+		}
+		return true;
+	});
+
 	function isDisc(sk: SkillSummary): boolean {
-		return sk.source === "personal" || sk.source === "project";
+		return isDiscoveredSource(sk.source);
 	}
 	function doDisable(sk: SkillSummary): void {
 		pending.value = sk.name;
@@ -857,7 +1107,7 @@ function EnabledSkillsTable(): VNode | null {
 				activeDetail.value = null;
 				showToast(isDisc(sk) ? `Deleted ${sk.name}` : `Disabled ${sk.name}`, "success");
 				fetchAll();
-			} else showToast(`Failed: ${r?.error || "unknown"}`, "error");
+			} else showToast(`Failed: ${r?.error?.message || "unknown"}`, "error");
 		});
 	}
 	function onDisable(sk: SkillSummary): void {
@@ -887,7 +1137,51 @@ function EnabledSkillsTable(): VNode | null {
 	}
 	return (
 		<div className="skills-section">
-			<h3 className="skills-section-title">Enabled Skills</h3>
+			<div className="flex items-center gap-3 mb-2">
+				<h3 className="skills-section-title" style={{ margin: 0 }}>
+					Enabled Skills
+					<span className="ml-2 text-xs font-normal text-[var(--muted)]">
+						({filtered.length}
+						{filtered.length !== s.length ? ` of ${s.length}` : ""})
+					</span>
+				</h3>
+				<input
+					type="text"
+					placeholder="Search skills..."
+					value={searchQuery.value}
+					onInput={(e) => {
+						searchQuery.value = (e.target as HTMLInputElement).value;
+					}}
+					className="skills-install-input"
+					style={{ maxWidth: "240px", fontSize: ".78rem", padding: "4px 8px" }}
+				/>
+			</div>
+			{categories.value.length > 1 && (
+				<div className="flex flex-wrap gap-1.5 mb-3">
+					<button
+						className={`skills-category-pill ${activeCategory.value === null ? "active" : ""}`}
+						onClick={() => {
+							activeCategory.value = null;
+						}}
+					>
+						All ({s.length})
+					</button>
+					{categories.value.map((cat) => {
+						const count = s.filter((sk) => (sk.category || "other") === cat).length;
+						return (
+							<button
+								key={cat}
+								className={`skills-category-pill ${activeCategory.value === cat ? "active" : ""}`}
+								onClick={() => {
+									activeCategory.value = activeCategory.value === cat ? null : cat;
+								}}
+							>
+								{cat} ({count})
+							</button>
+						);
+					})}
+				</div>
+			)}
 			<div className="skills-table-wrap">
 				<table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".82rem" }}>
 					<thead>
@@ -932,67 +1226,101 @@ function EnabledSkillsTable(): VNode | null {
 						</tr>
 					</thead>
 					<tbody>
-						{s.map((sk) => (
-							<tr
-								key={sk.name}
-								className="cursor-pointer"
-								style={{ borderBottom: "1px solid var(--border)" }}
-								onClick={() => loadDetail(sk)}
-							>
-								<td
-									style={{
-										padding: "8px 12px",
-										fontWeight: 500,
-										color: "var(--accent)",
-										fontFamily: "var(--font-mono)",
-									}}
-								>
-									{sk.name}
-								</td>
-								<td style={{ padding: "8px 12px" }}>{sk.description || "\u2014"}</td>
-								<td style={{ padding: "8px 12px" }}>
-									<span className={sk.source?.includes("/") ? "tier-badge" : "recommended-badge"}>{sk.source}</span>
-								</td>
-								<td style={{ padding: "8px 12px", textAlign: "right" }}>
-									<button
-										disabled={(isDisc(sk) && sk.protected === true) || pending.value === sk.name}
-										className={
-											isDisc(sk)
-												? "provider-btn provider-btn-sm provider-btn-danger"
-												: "provider-btn provider-btn-sm provider-btn-secondary"
-										}
-										onClick={(e) => {
-											e.stopPropagation();
-											onDisable(sk);
+						{filtered.map((sk) => {
+							const isActive = activeDetail.value?.name === sk.name;
+							return (
+								<>
+									<tr
+										key={sk.name}
+										className="cursor-pointer"
+										style={{
+											borderBottom: isActive ? "none" : "1px solid var(--border)",
+											background: isActive ? "var(--bg-hover)" : undefined,
 										}}
+										onClick={() => loadDetail(sk)}
 									>
-										{pending.value === sk.name ? "..." : isDisc(sk) ? "Delete" : "Disable"}
-									</button>
-								</td>
-							</tr>
-						))}
+										<td
+											style={{
+												padding: "8px 12px",
+												fontWeight: 500,
+												color: "var(--accent)",
+												fontFamily: "var(--font-mono)",
+											}}
+										>
+											{sk.name}
+											{sk.category && !activeCategory.value && (
+												<span className="skills-category-badge">{sk.category}</span>
+											)}
+										</td>
+										<td style={{ padding: "8px 12px" }}>{sk.description || "\u2014"}</td>
+										<td style={{ padding: "8px 12px" }}>
+											<span className={isRepoSource(sk.source) ? "tier-badge" : "recommended-badge"}>{sk.source}</span>
+										</td>
+										<td style={{ padding: "8px 12px", textAlign: "right" }}>
+											{sk.source !== SkillSource.Bundled && (
+												<button
+													disabled={(isDisc(sk) && sk.protected === true) || pending.value === sk.name}
+													className={
+														isDisc(sk)
+															? "provider-btn provider-btn-sm provider-btn-danger"
+															: "provider-btn provider-btn-sm provider-btn-secondary"
+													}
+													onClick={(e) => {
+														e.stopPropagation();
+														onDisable(sk);
+													}}
+												>
+													{pending.value === sk.name ? "..." : isDisc(sk) ? "Delete" : "Disable"}
+												</button>
+											)}
+										</td>
+									</tr>
+									{isActive && activeDetail.value && (
+										<tr key={`${sk.name}-detail`}>
+											<td colSpan={4} style={{ padding: 0, borderBottom: "1px solid var(--border)" }}>
+												<SkillDetailPanel
+													detail={activeDetail.value}
+													repoSource={activeDetail.value.source}
+													onClose={() => {
+														activeDetail.value = null;
+													}}
+													onReload={() =>
+														loadDetail({
+															name: activeDetail.value?.name,
+															source: activeDetail.value?.source,
+														} as SkillSummary)
+													}
+												/>
+											</td>
+										</tr>
+									)}
+								</>
+							);
+						})}
 					</tbody>
 				</table>
 			</div>
-			{activeDetail.value && (
-				<SkillDetailPanel
-					detail={activeDetail.value}
-					repoSource={activeDetail.value.source}
-					onClose={() => {
-						activeDetail.value = null;
-					}}
-					onReload={() =>
-						loadDetail({ name: activeDetail.value?.name, source: activeDetail.value?.source } as SkillSummary)
-					}
-				/>
-			)}
 		</div>
 	);
 }
 
+const activeTab = signal("skills");
+
+const skillsTabs = computed(() => {
+	const enabledCats = bundledCategories.value.filter((c) => c.enabled).length;
+	const totalCats = bundledCategories.value.length;
+	return [
+		{ id: "skills", label: "Skills", badge: enabledSkills.value.length || undefined },
+		{ id: "categories", label: "Categories", badge: totalCats ? `${enabledCats}/${totalCats}` : undefined },
+		{ id: "clawhub", label: "ClawHub" },
+		{ id: "repositories", label: "Repositories", badge: repos.value.length || undefined },
+	];
+});
+
 function SkillsPageComponent(): VNode {
 	useEffect(() => {
 		ensurePrefetch().then(() => fetchAll());
+		fetchBundledCategories();
 		const off = onEvent("skills.install.progress", (p: unknown) => {
 			const d = p as Record<string, string>;
 			if (!d?.op_id) return;
@@ -1024,16 +1352,31 @@ function SkillsPageComponent(): VNode {
 					How to write a skill?
 				</a>
 			</p>
-			<SecurityWarning />
-			<InstallBox />
-			<BundleTransferBox />
-			<InstallProgressBar />
-			<FeaturedSection />
-			<ReposSection />
-			{loading.value && !enabledSkills.value.length && !repos.value.length && (
-				<div style={{ padding: "24px", textAlign: "center", color: "var(--muted)" }}>Loading skills...</div>
+			<TabBar
+				tabs={skillsTabs.value}
+				active={activeTab.value}
+				onChange={(id) => {
+					activeTab.value = id;
+				}}
+			/>
+			{activeTab.value === "skills" && (
+				<>
+					{loading.value && !enabledSkills.value.length && (
+						<div style={{ padding: "24px", textAlign: "center", color: "var(--muted)" }}>Loading skills...</div>
+					)}
+					<EnabledSkillsTable />
+				</>
 			)}
-			<EnabledSkillsTable />
+			{activeTab.value === "categories" && <BundledCategoriesSection />}
+			{activeTab.value === "clawhub" && <ClawHubSection onChanged={fetchAll} />}
+			{activeTab.value === "repositories" && (
+				<>
+					<InstallBox />
+					<InstallProgressBar />
+					<FeaturedSection />
+					<ReposSection />
+				</>
+			)}
 		</div>
 	);
 }

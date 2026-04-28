@@ -18,6 +18,7 @@ fn restore_saved_local_llm_models_rehydrates_custom_models_after_registry_rebuil
         hf_filename: Some("Qwen3-4B-Q4_K_M.gguf".into()),
         gpu_layers: 0,
         backend: "GGUF".into(),
+        idle_timeout_secs: None,
     };
     crate::local_llm_setup::LocalLlmConfig {
         models: vec![saved_entry.clone()],
@@ -77,6 +78,7 @@ fn restore_saved_local_llm_models_skips_when_local_provider_is_disabled() {
         hf_filename: Some("Qwen3-4B-Q4_K_M.gguf".into()),
         gpu_layers: 0,
         backend: "GGUF".into(),
+        idle_timeout_secs: None,
     };
     crate::local_llm_setup::LocalLlmConfig {
         models: vec![saved_entry.clone()],

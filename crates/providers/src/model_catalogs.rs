@@ -58,6 +58,15 @@ pub(crate) const ZAI_MODELS: &[(&str, &str)] = &[
     ("glm-4-32b-0414-128k", "GLM-4 32B 128K"),
 ];
 
+/// Whether a model is a Fireworks Fire Pass router for Kimi/Moonshot.
+///
+/// These models proxy through Fireworks to Moonshot's Kimi API, which has
+/// different schema and message requirements (no strict tools, needs
+/// `reasoning_content`). Issue #810.
+pub(crate) fn is_fireworks_kimi_router(def: &OpenAiCompatDef, model_id: &str) -> bool {
+    def.config_name == "fireworks" && model_id.contains("/routers/") && model_id.contains("kimi")
+}
+
 /// Known Fireworks models.
 pub(crate) const FIREWORKS_MODELS: &[(&str, &str)] = &[
     (
@@ -108,7 +117,8 @@ pub(crate) const DEEPSEEK_MODELS: &[(&str, &str)] = &[
 ];
 
 /// Known Moonshot models.
-pub(crate) const MOONSHOT_MODELS: &[(&str, &str)] = &[("kimi-k2.5", "Kimi K2.5")];
+pub(crate) const MOONSHOT_MODELS: &[(&str, &str)] =
+    &[("kimi-k2.5", "Kimi K2.5"), ("kimi-k2.6", "Kimi K2.6")];
 
 /// Known Google Gemini models.
 /// See: <https://ai.google.dev/gemini-api/docs/models>
@@ -434,5 +444,45 @@ mod tests {
             "expected 'localhost' in Ollama default_base_url, got: {}",
             ollama.default_base_url,
         );
+    }
+
+    #[test]
+    fn is_fireworks_kimi_router_detects_router_model() {
+        let fireworks = OPENAI_COMPAT_PROVIDERS
+            .iter()
+            .find(|d| d.config_name == "fireworks")
+            .expect("fireworks entry must exist");
+        assert!(is_fireworks_kimi_router(
+            fireworks,
+            "accounts/fireworks/routers/kimi-k2p5-turbo"
+        ));
+    }
+
+    #[test]
+    fn is_fireworks_kimi_router_rejects_native_model() {
+        let fireworks = OPENAI_COMPAT_PROVIDERS
+            .iter()
+            .find(|d| d.config_name == "fireworks")
+            .expect("fireworks entry must exist");
+        assert!(!is_fireworks_kimi_router(
+            fireworks,
+            "accounts/fireworks/models/deepseek-v3p2"
+        ));
+        assert!(!is_fireworks_kimi_router(
+            fireworks,
+            "accounts/fireworks/models/kimi-k2-instruct-0905"
+        ));
+    }
+
+    #[test]
+    fn is_fireworks_kimi_router_rejects_other_providers() {
+        let deepseek = OPENAI_COMPAT_PROVIDERS
+            .iter()
+            .find(|d| d.config_name == "deepseek")
+            .expect("deepseek entry must exist");
+        assert!(!is_fireworks_kimi_router(
+            deepseek,
+            "accounts/fireworks/routers/kimi-k2p5-turbo"
+        ));
     }
 }

@@ -291,11 +291,11 @@ jobs:
         working-directory: crates/web/ui
         run: npm ci
 
-      - name: Build Tailwind CSS
+      - name: Build web assets
         if: env.SKIP != 'true'
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
+          TAILWINDCSS=./tailwindcss-linux-x64 ./scripts/build-web-assets.sh
 
       - name: Build moltis binary
         if: env.SKIP != 'true'
@@ -372,10 +372,10 @@ jobs:
         working-directory: crates/web/ui
         run: npm ci
 
-      - name: Build Tailwind CSS
+      - name: Build web assets
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
+          TAILWINDCSS=./tailwindcss-linux-x64 ./scripts/build-web-assets.sh
 
       - name: Build moltis binary
         run: cargo build --bin moltis

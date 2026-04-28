@@ -270,10 +270,10 @@ cargo test -p moltis-gateway
 cargo test -p moltis-gateway -- session
 
 # Format check
-cargo +nightly-2025-11-30 fmt --all -- --check
+cargo +nightly-2026-04-24 fmt --all -- --check
 
 # Clippy
-cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings
+cargo +nightly-2026-04-24 clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings
 
 # E2E tests (wire format regression)
 cd crates/gateway/ui && npx playwright test

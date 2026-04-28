@@ -203,6 +203,28 @@ pub static MODEL_REGISTRY: &[LocalModelDef] = &[
     },
     // ── 32GB tier (Large) ──────────────────────────────────────────────────
     LocalModelDef {
+        id: "qwen3.6-35b-a3b-q4_k_m",
+        display_name: "Qwen 3.6 35B-A3B MoE (Q4_K_M)",
+        gguf_repo: "unsloth/Qwen3.6-35B-A3B-GGUF",
+        gguf_filename: "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+        mlx_repo: Some("mlx-community/Qwen3.6-35B-A3B-4bit"),
+        min_ram_gb: 32,
+        context_window: 262_144,
+        chat_template: Some(ChatTemplateHint::ChatML),
+        format: ModelFormat::Gguf,
+    },
+    LocalModelDef {
+        id: "qwen3.6-27b-q4_k_m",
+        display_name: "Qwen 3.6 27B (Q4_K_M)",
+        gguf_repo: "unsloth/Qwen3.6-27B-GGUF",
+        gguf_filename: "Qwen3.6-27B-Q4_K_M.gguf",
+        mlx_repo: Some("mlx-community/Qwen3.6-27B-4bit"),
+        min_ram_gb: 32,
+        context_window: 262_144,
+        chat_template: Some(ChatTemplateHint::ChatML),
+        format: ModelFormat::Gguf,
+    },
+    LocalModelDef {
         id: "qwen2.5-coder-32b-q4_k_m",
         display_name: "Qwen 2.5 Coder 32B (Q4_K_M)",
         gguf_repo: "Qwen/Qwen2.5-Coder-32B-Instruct-GGUF",

@@ -43,7 +43,7 @@ use crate::{
         apply_request_runtime_context, apply_runtime_tool_filters, build_policy_context,
         build_prompt_runtime_context, clear_prompt_memory_snapshot, discover_skills_if_enabled,
         load_prompt_persona_for_agent, load_prompt_persona_for_session,
-        prompt_build_limits_from_config, resolve_prompt_agent_id,
+        prompt_build_limits_from_config, resolve_prompt_agent_id, resolve_prompt_mode_context,
     },
     run_with_tools::run_with_tools,
     service::build_persisted_assistant_message,
@@ -158,6 +158,7 @@ impl ChatService for LiveChatService {
             session_entry.as_ref(),
         )
         .await;
+        runtime_context.mode = resolve_prompt_mode_context(&persona.config, session_entry.as_ref());
         apply_request_runtime_context(&mut runtime_context.host, &params);
 
         // Load conversation history (excluding the message we just appended).
@@ -1018,6 +1019,7 @@ impl ChatService for LiveChatService {
             session_entry.as_ref(),
         )
         .await;
+        runtime_context.mode = resolve_prompt_mode_context(&persona.config, session_entry.as_ref());
         apply_request_runtime_context(&mut runtime_context.host, &params);
 
         // Resolve project context.
@@ -1034,8 +1036,10 @@ impl ChatService for LiveChatService {
             .and_then(|entry| entry.mcp_disabled)
             .unwrap_or(false);
 
+        let raw_prompt_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
         // Build filtered tool registry.
-        let policy_ctx = build_policy_context("main", Some(&runtime_context), Some(&params));
+        let policy_ctx =
+            build_policy_context(&raw_prompt_agent_id, Some(&runtime_context), Some(&params));
         let filtered_registry = {
             let registry_guard = self.tool_registry.read().await;
             if tools_enabled {
@@ -1145,6 +1149,7 @@ impl ChatService for LiveChatService {
             session_entry.as_ref(),
         )
         .await;
+        runtime_context.mode = resolve_prompt_mode_context(&persona.config, session_entry.as_ref());
         apply_request_runtime_context(&mut runtime_context.host, &params);
 
         // Resolve project context.
@@ -1162,7 +1167,9 @@ impl ChatService for LiveChatService {
             .unwrap_or(false);
 
         // Build filtered tool registry.
-        let policy_ctx = build_policy_context("main", Some(&runtime_context), Some(&params));
+        let full_ctx_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
+        let policy_ctx =
+            build_policy_context(&full_ctx_agent_id, Some(&runtime_context), Some(&params));
         let filtered_registry = {
             let registry_guard = self.tool_registry.read().await;
             if tools_enabled {

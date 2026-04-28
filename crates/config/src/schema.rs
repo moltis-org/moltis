@@ -11,10 +11,14 @@ use {
 mod agents;
 #[path = "schema/chat.rs"]
 mod chat;
+#[path = "schema/code_index.rs"]
+mod code_index;
 #[path = "schema/hooks.rs"]
 mod hooks;
 #[path = "schema/memory.rs"]
 mod memory;
+#[path = "schema/modes.rs"]
+mod modes;
 #[path = "schema/providers.rs"]
 mod providers;
 #[path = "schema/runtime.rs"]
@@ -27,8 +31,8 @@ mod tools;
 mod voice;
 
 pub use {
-    agents::*, chat::*, hooks::*, memory::*, providers::*, runtime::*, system::*, tools::*,
-    voice::*,
+    agents::*, chat::*, code_index::*, hooks::*, memory::*, modes::*, providers::*, runtime::*,
+    system::*, tools::*, voice::*,
 };
 
 // ── Reasoning effort ──────────────────────────────────────────────────────
@@ -48,7 +52,7 @@ pub enum ReasoningEffort {
 }
 
 /// Agent identity (name, emoji, theme).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentIdentity {
     pub name: Option<String>,
@@ -231,6 +235,7 @@ pub struct MoltisConfig {
     pub chat: ChatConfig,
     pub tools: ToolsConfig,
     pub agents: AgentsConfig,
+    pub modes: ModesConfig,
     pub skills: SkillsConfig,
     pub mcp: McpConfig,
     pub channels: ChannelsConfig,
@@ -248,7 +253,10 @@ pub struct MoltisConfig {
     pub voice: VoiceConfig,
     pub cron: CronConfig,
     pub caldav: CalDavConfig,
+    pub home_assistant: HomeAssistantConfig,
     pub webhooks: WebhooksConfig,
+    /// Code-index configuration for codebase search tools.
+    pub code_index: CodeIndexTomlConfig,
     /// Per-model overrides that apply across all providers.
     ///
     /// Keys are normalized model IDs. Provider-scoped overrides

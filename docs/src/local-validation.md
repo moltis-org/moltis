@@ -50,7 +50,7 @@ checks in the PR.
   packages first, for example `libvulkan-dev` and `glslang-tools` on Debian/Ubuntu
   (on Ubuntu 22.04, install `glslang-tools` from the LunarG Vulkan SDK).
 - `local/lint` uses the same clippy flags as CI and release:
-  `cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`.
+  `cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings` (uses the nightly pinned in `rust-toolchain.toml`).
 - `zizmor` is installed automatically (Homebrew on macOS, apt on Linux) when
   not already available.
 - `zizmor` is advisory in local runs and does not block lint/test execution.

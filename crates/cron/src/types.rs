@@ -45,6 +45,8 @@ pub enum CronPayload {
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         timeout_secs: Option<u64>,
         #[serde(default)]
         deliver: bool,
@@ -297,6 +299,7 @@ mod tests {
         let p = CronPayload::AgentTurn {
             message: "check emails".into(),
             model: None,
+            agent_id: None,
             timeout_secs: Some(120),
             deliver: true,
             channel: Some("slack".into()),
@@ -479,6 +482,7 @@ mod tests {
             payload: CronPayload::AgentTurn {
                 message: "go".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,

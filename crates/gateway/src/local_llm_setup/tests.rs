@@ -47,6 +47,7 @@ mod tests {
             hf_filename: None,
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         });
         let json = serde_json::to_string(&config).unwrap();
         assert!(json.contains("qwen2.5-coder-7b-q4_k_m"));
@@ -67,6 +68,7 @@ mod tests {
             hf_filename: Some("Qwen3-4B-Q4_K_M.gguf".into()),
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
         let second = LocalModelEntry {
             model_id: custom_gguf_model_id(repo, "Qwen3-4B-Q6_K.gguf"),
@@ -75,6 +77,7 @@ mod tests {
             hf_filename: Some("Qwen3-4B-Q6_K.gguf".into()),
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
 
         config.add_model(first.clone());
@@ -114,6 +117,7 @@ mod tests {
             hf_filename: None,
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         });
         config.add_model(LocalModelEntry {
             model_id: "model-2".into(),
@@ -122,6 +126,7 @@ mod tests {
             hf_filename: None,
             gpu_layers: 0,
             backend: "MLX".into(),
+            idle_timeout_secs: None,
         });
         assert_eq!(config.models.len(), 2);
 
@@ -402,6 +407,7 @@ mod tests {
                     hf_filename: None,
                     gpu_layers: 0,
                     backend: "GGUF".into(),
+                    idle_timeout_secs: None,
                 },
                 LocalModelEntry {
                     model_id: "custom-stale".into(),
@@ -410,6 +416,7 @@ mod tests {
                     hf_filename: Some(filename.into()),
                     gpu_layers: 0,
                     backend: "GGUF".into(),
+                    idle_timeout_secs: None,
                 },
                 LocalModelEntry {
                     model_id: custom_gguf_model_id(repo, "Qwen3-4B-Q6_K.gguf"),
@@ -418,6 +425,7 @@ mod tests {
                     hf_filename: Some("Qwen3-4B-Q6_K.gguf".into()),
                     gpu_layers: 0,
                     backend: "GGUF".into(),
+                    idle_timeout_secs: None,
                 },
             ],
         };
@@ -450,6 +458,7 @@ mod tests {
             hf_filename: Some("Qwen3-4B-Q4_K_M.gguf".into()),
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
 
         let resolved = entry.resolved_model_path(None, cache_dir).unwrap();
@@ -476,6 +485,7 @@ mod tests {
             hf_filename: Some("Qwen3-4B-Q4_K_M.gguf".into()),
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
 
         let resolved = entry.resolved_model_path(None, cache_dir).unwrap();
@@ -503,6 +513,7 @@ mod tests {
             hf_filename: None,
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
 
         let resolved = entry
@@ -521,6 +532,7 @@ mod tests {
             hf_filename: Some("Qwen3-4B-Q4_K_M.gguf".into()),
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
 
         assert_eq!(entry.display_name(), "Qwen3-4B-Q4_K_M.gguf");
@@ -541,6 +553,7 @@ mod tests {
             hf_filename: Some("Qwen3-4B-Q4_K_M.gguf".into()),
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
         let config = LocalLlmConfig {
             models: vec![entry.clone()],
@@ -590,6 +603,7 @@ mod tests {
             hf_filename: None,
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
 
         register_local_model_entry(&mut registry, &entry).unwrap();
@@ -618,6 +632,7 @@ mod tests {
             hf_filename: None,
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
         let stale_entry = LocalModelEntry {
             model_id: "custom-stale".into(),
@@ -626,6 +641,7 @@ mod tests {
             hf_filename: None,
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
         let active_entry = LocalModelEntry {
             model_id: custom_gguf_model_id(repo, "Qwen3-4B-Q6_K.gguf"),
@@ -634,6 +650,7 @@ mod tests {
             hf_filename: None,
             gpu_layers: 0,
             backend: "GGUF".into(),
+            idle_timeout_secs: None,
         };
 
         let mut registry = ProviderRegistry::empty();

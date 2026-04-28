@@ -22,7 +22,7 @@ const TEST_MODEL: &str = "kimi-k2.5";
 
 /// Known Moonshot models we catalog. Keep in sync with `MOONSHOT_MODELS` in
 /// `crates/providers/src/lib.rs`.
-const KNOWN_MODELS: &[&str] = &["kimi-k2.5"];
+const KNOWN_MODELS: &[&str] = &["kimi-k2.5", "kimi-k2.6"];
 
 fn api_key() -> Secret<String> {
     let key = std::env::var("MOONSHOT_API_KEY")

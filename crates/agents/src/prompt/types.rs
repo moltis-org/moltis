@@ -98,23 +98,35 @@ pub struct PromptNodesRuntimeContext {
     pub default_node_id: Option<String>,
 }
 
+/// Active session mode prompt overlay.
+#[derive(Debug, Clone)]
+pub struct PromptModeRuntimeContext {
+    pub id: String,
+    pub name: String,
+    pub prompt: String,
+}
+
 /// Combined runtime context injected into the system prompt.
 #[derive(Debug, Clone, Default)]
 pub struct PromptRuntimeContext {
     pub host: PromptHostRuntimeContext,
     pub sandbox: Option<PromptSandboxRuntimeContext>,
     pub nodes: Option<PromptNodesRuntimeContext>,
+    pub mode: Option<PromptModeRuntimeContext>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct PromptBuildLimits {
     pub workspace_file_max_chars: usize,
+    /// Inject skill self-improvement guidance into the system prompt.
+    pub enable_skill_self_improvement: bool,
 }
 
 impl Default for PromptBuildLimits {
     fn default() -> Self {
         Self {
             workspace_file_max_chars: DEFAULT_WORKSPACE_FILE_MAX_CHARS,
+            enable_skill_self_improvement: true,
         }
     }
 }

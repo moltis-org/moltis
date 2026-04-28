@@ -20,6 +20,7 @@ moltis-agents    = { optional = true, workspace = true }
 moltis-memory    = { optional = true, workspace = true }
 moltis-qmd       = { optional = true, workspace = true }
 moltis-config    = { workspace = true }
+moltis-splitter  = { workspace = true }
 moltis-tools     = { workspace = true }
 notify-debouncer-full = { optional = true, workspace = true }
 serde            = { workspace = true }
@@ -34,10 +35,6 @@ tokio-util       = { workspace = true, optional = true }
 tracing          = { workspace = true, optional = true }
 metrics          = { workspace = true, optional = true }
 
-# Future dependencies (add when wiring P5+ features):
-# moltis-memory    = { workspace = true }
-# moltis-projects  = { workspace = true }
-# regex            = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

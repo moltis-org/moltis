@@ -20,6 +20,7 @@ import { handleChatEvent } from "./ws/chat-handlers";
 import {
 	handleBrowserImagePull,
 	handleLocalLlmDownload,
+	handleLocalLlmLifecycle,
 	handleSandboxHostProvision,
 	handleSandboxImageBuild,
 	handleSandboxImageProvision,
@@ -64,6 +65,7 @@ const eventHandlers: Record<string, (payload: Record<string, unknown>, streamMet
 	"sandbox.host.provision": handleSandboxHostProvision as (payload: Record<string, unknown>) => void,
 	"browser.image.pull": handleBrowserImagePull as (payload: Record<string, unknown>) => void,
 	"local-llm.download": handleLocalLlmDownload as (payload: Record<string, unknown>) => void,
+	"local-llm.lifecycle": handleLocalLlmLifecycle,
 	"models.updated": handleModelsUpdated as (payload: Record<string, unknown>) => void,
 	"location.request": handleLocationRequest as (payload: Record<string, unknown>) => void,
 	"network.audit.entry": handleNetworkAuditEntry as (payload: Record<string, unknown>) => void,

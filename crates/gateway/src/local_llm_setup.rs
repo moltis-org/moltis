@@ -32,6 +32,7 @@ use crate::{
 
 mod cache;
 mod config;
+mod lifecycle;
 mod service;
 #[cfg(test)]
 mod tests;
@@ -39,5 +40,6 @@ mod tests;
 pub use {
     cache::{LocalModelCacheError, LocalModelCacheResult, ensure_local_model_cached},
     config::{LocalLlmConfig, LocalModelEntry, register_saved_local_models},
+    lifecycle::ModelLifecycleManager,
     service::{LiveLocalLlmService, LocalLlmStatus},
 };

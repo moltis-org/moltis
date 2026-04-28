@@ -21,8 +21,7 @@ use {
     moltis_channels::{
         ChannelEvent, ChannelType, Error as ChannelError, InboundMediaDownloader,
         InboundMediaSource, Result as ChannelsResult,
-        config_view::ChannelConfigView,
-        gating::DmPolicy,
+        gating::{DmPolicy, MentionMode},
         message_log::MessageLogEntry,
         otp::{
             OtpInitResult, OtpVerifyResult, approve_sender_via_otp, emit_otp_challenge,
@@ -683,6 +682,21 @@ impl EventHandler for Handler {
         let sender_name = msg.author.global_name.clone().or_else(|| username.clone());
         let chat_id = msg.channel_id.to_string();
 
+        // Resolve channel name and category from cache (guild channels only).
+        let (channel_name, category_id) = if let Some(guild_id) = msg.guild_id {
+            ctx.cache
+                .guild(guild_id)
+                .and_then(|guild| {
+                    guild
+                        .channels
+                        .get(&msg.channel_id)
+                        .map(|ch| (Some(ch.name.clone()), ch.parent_id.map(|id| id.to_string())))
+                })
+                .unwrap_or((None, None))
+        } else {
+            (None, None)
+        };
+
         // Check if the bot is mentioned in a guild message.
         let bot_mentioned =
             bot_user_id.is_some_and(|bot_id| msg.mentions.iter().any(|u| u.id == bot_id));
@@ -737,16 +751,63 @@ impl EventHandler for Handler {
             moltis_common::types::ChatType::Dm
         };
         let guild_id_str = msg.guild_id.map(|g| g.to_string());
-        let policy_allowed = access::check_access(
+        let basic_access = access::check_access(
             &config,
             &chat_type,
             &peer_id,
             username.as_deref(),
             guild_id_str.as_deref(),
             bot_mentioned,
-        )
-        .is_ok();
-        let access_granted = policy_allowed;
+        );
+
+        // For guild messages, pattern overrides and channel filters can
+        // override the mention-mode check and restrict which channels the
+        // bot responds in.
+        let policy_allowed = if is_guild {
+            match basic_access {
+                Ok(()) => true,
+                Err(access::AccessDenied::NotMentioned) => {
+                    // A channel matching the name/category filter implicitly
+                    // gets mention_mode=always (active monitoring).
+                    let filter_active = !config.channel_name_patterns.is_empty()
+                        || !config.category_allowlist.is_empty();
+                    let filter_match = filter_active
+                        && access::channel_matches_filter(
+                            &config,
+                            channel_name.as_deref(),
+                            category_id.as_deref(),
+                        );
+
+                    // A pattern override with mention_mode=always also allows.
+                    let override_always = config
+                        .find_pattern_override(channel_name.as_deref(), category_id.as_deref())
+                        .and_then(|po| po.mention_mode.as_ref())
+                        .is_some_and(|mm| *mm == MentionMode::Always);
+
+                    filter_match || override_always
+                },
+                Err(_) => false,
+            }
+        } else {
+            basic_access.is_ok()
+        };
+
+        // Apply channel name / category filter (if active).
+        let access_granted = if policy_allowed && is_guild {
+            let filter_active =
+                !config.channel_name_patterns.is_empty() || !config.category_allowlist.is_empty();
+            if filter_active {
+                access::channel_matches_filter(
+                    &config,
+                    channel_name.as_deref(),
+                    category_id.as_deref(),
+                )
+            } else {
+                true
+            }
+        } else {
+            policy_allowed
+        };
 
         // Emit inbound message event.
         if let Some(sink) = event_sink.as_ref() {
@@ -987,9 +1048,21 @@ impl EventHandler for Handler {
             username,
             sender_id: Some(peer_id.clone()),
             message_kind: Some(inferred_kind),
-            model: config.resolve_model(&chat_id, &peer_id).map(String::from),
+            model: config
+                .resolve_model_with_pattern(
+                    &chat_id,
+                    &peer_id,
+                    channel_name.as_deref(),
+                    category_id.as_deref(),
+                )
+                .map(String::from),
             agent_id: config
-                .resolve_agent_id(&chat_id, &peer_id)
+                .resolve_agent_with_pattern(
+                    &chat_id,
+                    &peer_id,
+                    channel_name.as_deref(),
+                    category_id.as_deref(),
+                )
                 .map(String::from),
             audio_filename,
             documents: None,

@@ -156,7 +156,7 @@ Once Phase 3 decisions are implemented:
    - Full-feature Linux/macOS build.
    - Default-feature Windows build (target baseline).
    - Optional OpenSSL-feature build job to prevent bitrot if those features remain supported.
-3. Keep local validation aligned with CI toolchain (`nightly-2025-11-30` for fmt/clippy steps that use nightly).
+3. Keep local validation aligned with CI toolchain (`nightly-2026-04-24` for fmt/clippy steps that use nightly).
 
 ## Risks and Mitigations
 

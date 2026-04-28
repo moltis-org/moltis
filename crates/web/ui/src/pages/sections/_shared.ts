@@ -36,7 +36,7 @@ export interface SectionItem {
 
 export const identity = signal<IdentityData | null>(null);
 export const loading = signal(true);
-export const activeSection = signal("identity");
+export const activeSection = signal("profile");
 export const activeSubPath = signal("");
 export const mobileSidebarVisible = signal(true);
 

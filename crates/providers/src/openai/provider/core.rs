@@ -34,6 +34,7 @@ impl OpenAiProvider {
             reasoning_effort: None,
             cache_retention: moltis_config::CacheRetention::Short,
             strict_tools_override: None,
+            reasoning_content_override: None,
             context_window_global: std::collections::HashMap::new(),
             context_window_provider: std::collections::HashMap::new(),
         }
@@ -58,6 +59,7 @@ impl OpenAiProvider {
             reasoning_effort: None,
             cache_retention: moltis_config::CacheRetention::Short,
             strict_tools_override: None,
+            reasoning_content_override: None,
             context_window_global: std::collections::HashMap::new(),
             context_window_provider: std::collections::HashMap::new(),
         }
@@ -90,6 +92,12 @@ impl OpenAiProvider {
     #[must_use]
     pub fn with_strict_tools(mut self, strict: bool) -> Self {
         self.strict_tools_override = Some(strict);
+        self
+    }
+
+    #[must_use]
+    pub fn with_reasoning_content(mut self, required: bool) -> Self {
+        self.reasoning_content_override = Some(required);
         self
     }
 
@@ -190,6 +198,7 @@ impl LlmProvider for OpenAiProvider {
             context_window_global: self.context_window_global.clone(),
             context_window_provider: self.context_window_provider.clone(),
             strict_tools_override: self.strict_tools_override,
+            reasoning_content_override: self.reasoning_content_override,
         }))
     }
 

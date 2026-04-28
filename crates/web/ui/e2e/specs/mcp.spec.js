@@ -150,6 +150,89 @@ test.describe("MCP page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	// Issue #851: MCP OAuth re-auth button missing from UI
+	// When a server has auth_state "awaiting_browser" or "failed", the UI
+	// should display a "Re-auth" button so users can trigger OAuth again.
+	test("re-auth button shown when server auth_state is awaiting_browser", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.route("**/api/mcp", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify([
+					{
+						name: "hubspot",
+						state: "stopped",
+						enabled: true,
+						tool_count: 0,
+						transport: "sse",
+						url: "https://mcp.hubspot.com",
+						auth_state: "awaiting_browser",
+					},
+				]),
+			});
+		});
+
+		await navigateAndWait(page, "/settings/mcp");
+		await expect(page.getByText("hubspot", { exact: true })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Re-auth", exact: true })).toBeVisible();
+		await expect(page.getByText("OAuth required", { exact: false })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("re-auth button shown when server auth_state is failed", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.route("**/api/mcp", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify([
+					{
+						name: "hubspot-fail",
+						state: "dead",
+						enabled: true,
+						tool_count: 0,
+						transport: "sse",
+						url: "https://mcp.hubspot.com",
+						auth_state: "failed",
+					},
+				]),
+			});
+		});
+
+		await navigateAndWait(page, "/settings/mcp");
+		await expect(page.getByText("hubspot-fail", { exact: true })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Re-auth", exact: true })).toBeVisible();
+		await expect(page.getByText("Auth failed", { exact: false })).toBeVisible();
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("no re-auth button when server auth_state is authenticated", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.route("**/api/mcp", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify([
+					{
+						name: "hubspot-ok",
+						state: "running",
+						enabled: true,
+						tool_count: 3,
+						transport: "sse",
+						url: "https://mcp.hubspot.com",
+						auth_state: "authenticated",
+					},
+				]),
+			});
+		});
+
+		await navigateAndWait(page, "/settings/mcp");
+		await expect(page.getByText("hubspot-ok", { exact: true })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Re-auth", exact: true })).toHaveCount(0);
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("page has no JS errors", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/mcp");

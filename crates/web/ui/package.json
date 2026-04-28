@@ -19,11 +19,13 @@
     "@preact/signals": "^2.0.0",
     "i18next": "^24.2.2",
     "luxon": "^3.5.0",
+    "marked": "^18.0.0",
     "preact": "^10.25.0",
     "pretty-bytes": "^6.1.1",
     "uplot": "^1.6.31"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.6",
     "@playwright/test": "^1.50.0",
     "@preact/preset-vite": "^2.9.0",
     "@tailwindcss/cli": "^4.1.0",

@@ -9,7 +9,6 @@ use {
     tracing::{debug, info, warn},
 };
 
-#[cfg(feature = "wasm")]
 use secrecy::ExposeSecret;
 
 use {
@@ -71,6 +70,8 @@ pub(super) struct PostStateInputs {
     pub live_mcp: Arc<crate::mcp_service::LiveMcpService>,
     pub memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
     pub code_index: Arc<moltis_code_index::CodeIndex>,
+    #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+    pub project_store: Arc<dyn moltis_projects::ProjectStore>,
     pub credential_store: Arc<auth::CredentialStore>,
     pub db_pool: sqlx::SqlitePool,
     pub session_store: Arc<SessionStore>,
@@ -106,21 +107,75 @@ pub(super) struct PostStateInputs {
 
 struct CredentialEnvVarProvider {
     store: Arc<auth::CredentialStore>,
+    /// Gateway URL for sandbox-to-gateway communication via `moltis-ctl`.
+    gateway_url: Option<String>,
+    /// Auto-generated API key for sandbox use (scoped to operator.read + operator.write).
+    sandbox_api_key: Option<Secret<String>>,
 }
 
 #[async_trait]
 impl moltis_tools::exec::EnvVarProvider for CredentialEnvVarProvider {
     async fn get_env_vars(&self) -> Vec<(String, Secret<String>)> {
-        match self.store.get_all_env_values().await {
+        let mut vars = match self.store.get_all_env_values().await {
             Ok(values) => values
                 .into_iter()
+                // Filter out internal keys that should not leak into sandbox env.
+                .filter(|(key, _)| !key.starts_with("__MOLTIS_"))
                 .map(|(key, value)| (key, Secret::new(value)))
                 .collect(),
             Err(error) => {
                 warn!(error = %error, "failed to load runtime env overrides for tools");
                 Vec::new()
             },
+        };
+
+        // Inject gateway connection details for moltis-ctl inside sandboxes.
+        // Only injected when the gateway URL is set (skipped for blocked network).
+        if let Some(ref url) = self.gateway_url {
+            vars.push(("MOLTIS_GATEWAY_URL".into(), Secret::new(url.clone())));
         }
+        if let Some(ref key) = self.sandbox_api_key {
+            vars.push((
+                "MOLTIS_API_KEY".into(),
+                Secret::new(key.expose_secret().clone()),
+            ));
+        }
+
+        vars
+    }
+}
+
+/// Create (or reuse) a scoped API key for sandbox-to-gateway communication.
+///
+/// Looks for an existing key labelled `"sandbox-ctl"`. If none exists, creates
+/// one with `operator.read` + `operator.write` scopes. Returns the raw key.
+async fn ensure_sandbox_api_key(store: &auth::CredentialStore) -> Option<String> {
+    // Check if we already have a sandbox-ctl key stored in env vars.
+    if let Ok(vals) = store.get_all_env_values().await
+        && let Some((_, key)) = vals.iter().find(|(k, _)| k == "__MOLTIS_SANDBOX_API_KEY")
+    {
+        return Some(key.clone());
+    }
+
+    // Create a new API key scoped for sandbox use.
+    let scopes = vec!["operator.read".to_string(), "operator.write".to_string()];
+    match store.create_api_key("sandbox-ctl", Some(&scopes)).await {
+        Ok((_id, raw_key)) => {
+            // Persist the raw key so we can retrieve it on restart without
+            // creating a new one each time.
+            if let Err(e) = store
+                .set_env_var("__MOLTIS_SANDBOX_API_KEY", &raw_key)
+                .await
+            {
+                warn!(error = %e, "failed to persist sandbox API key");
+            }
+            info!("created sandbox-ctl API key for moltis-ctl");
+            Some(raw_key)
+        },
+        Err(e) => {
+            warn!(error = %e, "failed to create sandbox API key");
+            None
+        },
     }
 }
 
@@ -307,6 +362,8 @@ pub(super) async fn complete_startup(
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
         code_index,
+        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+        project_store,
     } = inputs;
 
     let openclaw_startup_status = deferred_openclaw_status();
@@ -466,6 +523,15 @@ pub(super) async fn complete_startup(
     #[cfg(feature = "local-llm")]
     if let Some(svc) = &local_llm_service {
         svc.set_state(Arc::clone(&state));
+
+        // Register existing local models with the lifecycle manager and start idle checker.
+        let global_timeout = config
+            .providers
+            .get("local")
+            .or_else(|| config.providers.get("local-llm"))
+            .and_then(|e| e.idle_timeout_secs);
+        svc.populate_lifecycle(global_timeout).await;
+        svc.lifecycle().spawn_idle_checker();
     }
 
     provider_setup_service.set_broadcaster(Arc::new(crate::provider_setup::GatewayBroadcaster {
@@ -531,6 +597,14 @@ pub(super) async fn complete_startup(
         let provider_config_for_registry_rebuild = provider_config_for_startup_discovery.clone();
         let global_cw_overrides = moltis_providers::extract_cw_overrides(&config.models);
         let env_overrides_for_startup_discovery = config_env_overrides.clone();
+        #[cfg(feature = "local-llm")]
+        let local_llm_svc_for_discovery = local_llm_service.clone();
+        #[cfg(feature = "local-llm")]
+        let global_timeout_for_discovery = config
+            .providers
+            .get("local")
+            .or_else(|| config.providers.get("local-llm"))
+            .and_then(|e| e.idle_timeout_secs);
         tokio::spawn(async move {
             let startup_discovery_started = std::time::Instant::now();
             let prefetched = match tokio::task::spawn_blocking(move || {
@@ -580,6 +654,14 @@ pub(super) async fn complete_startup(
                 *reg = new_registry;
             }
 
+            // Re-populate the lifecycle manager so it tracks the same
+            // Arcs the rebuilt registry uses for inference.
+            #[cfg(feature = "local-llm")]
+            if let Some(svc) = &local_llm_svc_for_discovery {
+                svc.lifecycle().clear().await;
+                svc.populate_lifecycle(global_timeout_for_discovery).await;
+            }
+
             info!(
                 provider_summary = %provider_summary,
                 models = model_count,
@@ -613,9 +695,35 @@ pub(super) async fn complete_startup(
     {
         let broadcaster: Arc<dyn moltis_tools::exec::ApprovalBroadcaster> =
             Arc::new(GatewayApprovalBroadcaster::new(Arc::clone(&state)));
+        // Build gateway URL for sandbox-to-gateway communication.
+        // Only inject when the sandbox network policy allows host access
+        // (Trusted or Bypass). With NetworkPolicy::Blocked the container
+        // has --network=none and host.docker.internal won't resolve.
+        let sandbox_network_allows_host = !matches!(
+            sandbox_router.config().network,
+            moltis_tools::sandbox::NetworkPolicy::Blocked
+        );
+        let sandbox_gateway_url = if sandbox_network_allows_host {
+            let scheme = if tls_enabled_for_gateway {
+                "https"
+            } else {
+                "http"
+            };
+            Some(format!("{scheme}://host.docker.internal:{port}"))
+        } else {
+            None
+        };
+        let sandbox_api_key = if sandbox_network_allows_host {
+            ensure_sandbox_api_key(&credential_store).await
+        } else {
+            None
+        };
+
         let env_provider: Arc<dyn moltis_tools::exec::EnvVarProvider> =
             Arc::new(CredentialEnvVarProvider {
                 store: Arc::clone(&credential_store),
+                gateway_url: sandbox_gateway_url,
+                sandbox_api_key: sandbox_api_key.map(Secret::new),
             });
         let eq = cron_service.events_queue().clone();
         let cs = Arc::clone(&cron_service);
@@ -624,8 +732,9 @@ pub(super) async fn complete_startup(
             let eq = Arc::clone(&eq);
             let cs = Arc::clone(&cs);
             tokio::spawn(async move {
-                eq.enqueue(summary, "exec-event".into()).await;
-                cs.wake("exec-event").await;
+                eq.enqueue(summary, moltis_cron::WAKE_REASON_EXEC_EVENT.into())
+                    .await;
+                cs.wake(moltis_cron::WAKE_REASON_EXEC_EVENT).await;
             });
         });
         let mut exec_tool = moltis_tools::exec::ExecTool::default()
@@ -763,6 +872,25 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(crate::channel_agent_tools::SendMessageTool::new(
             Arc::clone(&state.services.channel),
         )));
+        // MCP management tools — let agents add/remove/restart MCP servers directly.
+        {
+            let mcp = Arc::clone(&state.services.mcp);
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpListTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpAddTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpRemoveTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpStatusTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpRestartTool::new(
+                Arc::clone(&mcp),
+            )));
+        }
         {
             let tp = Arc::clone(&msteams_webhook_plugin);
             tool_registry.register(Box::new(
@@ -832,6 +960,15 @@ pub(super) async fn complete_startup(
             }
         }
 
+        #[cfg(feature = "home-assistant")]
+        {
+            if let Some(t) =
+                moltis_home_assistant::tool::HomeAssistantTool::from_config(&config.home_assistant)
+            {
+                tool_registry.register(Box::new(t));
+            }
+        }
+
         if let Some(ref mm) = memory_manager {
             tool_registry.register(Box::new(moltis_memory::tools::MemorySearchTool::new(
                 Arc::clone(mm),
@@ -855,14 +992,31 @@ pub(super) async fn complete_startup(
         // ── Code index tools ─────────────────────────────────────────────
         #[cfg(feature = "qmd")]
         {
-            moltis_code_index::tools::register_tools(&mut tool_registry, code_index_for_tools);
+            use crate::project_aware_tools::ProjectAwareCodeIndexTool;
+            moltis_code_index::tools::register_tools_wrapped(
+                &mut tool_registry,
+                code_index_for_tools,
+                |tool| {
+                    Box::new(ProjectAwareCodeIndexTool::new(
+                        tool,
+                        Arc::clone(&project_store),
+                    ))
+                },
+            );
         }
 
         #[cfg(all(feature = "code-index-builtin", not(feature = "qmd")))]
         {
-            moltis_code_index::tools::register_tools(
+            use crate::project_aware_tools::ProjectAwareCodeIndexTool;
+            moltis_code_index::tools::register_tools_wrapped(
                 &mut tool_registry,
                 code_index_for_tools_builtin,
+                |tool| {
+                    Box::new(ProjectAwareCodeIndexTool::new(
+                        tool,
+                        Arc::clone(&project_store),
+                    ))
+                },
             );
         }
 
@@ -1056,15 +1210,39 @@ pub(super) async fn complete_startup(
             tool_registry.register(Box::new(moltis_tools::skill_tools::UpdateSkillTool::new(
                 data_dir.clone(),
             )));
+            tool_registry.register(Box::new(moltis_tools::skill_tools::PatchSkillTool::new(
+                data_dir.clone(),
+            )));
             tool_registry.register(Box::new(moltis_tools::skill_tools::DeleteSkillTool::new(
                 data_dir.clone(),
             )));
-            let read_discoverer = Arc::new(FsSkillDiscoverer::new(
-                FsSkillDiscoverer::default_paths_for(&data_dir),
-            ));
-            tool_registry.register(Box::new(moltis_tools::skill_tools::ReadSkillTool::new(
-                read_discoverer,
-            )));
+
+            let fs_discoverer =
+                FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths_for(&data_dir));
+
+            #[cfg(feature = "bundled-skills")]
+            {
+                let bundled_store = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+                let read_discoverer: Arc<dyn moltis_skills::discover::SkillDiscoverer> =
+                    Arc::new(moltis_skills::discover::CompositeSkillDiscoverer::new(
+                        Box::new(fs_discoverer),
+                        Arc::clone(&bundled_store),
+                    ));
+                tool_registry.register(Box::new(
+                    moltis_tools::skill_tools::ReadSkillTool::with_bundled(
+                        read_discoverer,
+                        bundled_store,
+                    ),
+                ));
+            }
+            #[cfg(not(feature = "bundled-skills"))]
+            {
+                let read_discoverer = Arc::new(fs_discoverer);
+                tool_registry.register(Box::new(moltis_tools::skill_tools::ReadSkillTool::new(
+                    read_discoverer,
+                )));
+            }
+
             if config.skills.enable_agent_sidecar_files {
                 tool_registry.register(Box::new(
                     moltis_tools::skill_tools::WriteSkillFilesTool::new(data_dir.clone()),

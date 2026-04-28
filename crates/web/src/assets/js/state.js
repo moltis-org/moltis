@@ -120,6 +120,7 @@ export function setNodeComboBtn(v) { S.setNodeComboBtn?.(v); nodeComboBtn = v; }
 export function setNodeComboLabel(v) { S.setNodeComboLabel?.(v); nodeComboLabel = v; }
 export function setNodeDropdown(v) { S.setNodeDropdown?.(v); nodeDropdown = v; }
 export function setNodeDropdownList(v) { S.setNodeDropdownList?.(v); nodeDropdownList = v; }
+export function setAutoScrollMode(v) { S.setAutoScrollMode?.(v); }
 
 // DOM shorthand
 export function $(id) { return S.$?.(id) ?? document.getElementById(id); }

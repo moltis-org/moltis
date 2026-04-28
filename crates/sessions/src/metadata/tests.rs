@@ -776,6 +776,30 @@ fn test_agent_id() {
 }
 
 #[test]
+fn test_mode_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("meta.json");
+    let mut meta = SessionMetadata::load(path.clone()).unwrap();
+
+    meta.upsert("main", None);
+    assert!(meta.get("main").unwrap().mode_id.is_none());
+
+    meta.set_mode_id("main", Some("review".to_string()));
+    assert_eq!(meta.get("main").unwrap().mode_id.as_deref(), Some("review"));
+
+    meta.set_mode_id("main", None);
+    assert!(meta.get("main").unwrap().mode_id.is_none());
+
+    meta.set_mode_id("main", Some("concise".to_string()));
+    meta.save().unwrap();
+    let reloaded = SessionMetadata::load(path).unwrap();
+    assert_eq!(
+        reloaded.get("main").unwrap().mode_id.as_deref(),
+        Some("concise")
+    );
+}
+
+#[test]
 fn test_list_by_agent_id() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("meta.json");
@@ -847,6 +871,24 @@ async fn test_sqlite_agent_id() {
 }
 
 #[tokio::test]
+async fn test_sqlite_mode_id() {
+    let pool = sqlite_pool().await;
+    let meta = SqliteSessionMetadata::new(pool);
+
+    meta.upsert("main", None).await.unwrap();
+    assert!(meta.get("main").await.unwrap().mode_id.is_none());
+
+    meta.set_mode_id("main", Some("review")).await.unwrap();
+    assert_eq!(
+        meta.get("main").await.unwrap().mode_id.as_deref(),
+        Some("review")
+    );
+
+    meta.set_mode_id("main", None).await.unwrap();
+    assert!(meta.get("main").await.unwrap().mode_id.is_none());
+}
+
+#[tokio::test]
 async fn test_sqlite_list_by_agent_id() {
     let pool = sqlite_pool().await;
     let meta = SqliteSessionMetadata::new(pool);
@@ -905,7 +947,7 @@ async fn test_sqlite_delete_by_agent_id() {
 
 #[test]
 fn test_agent_id_serde_compat() {
-    // Existing metadata without agent_id should deserialize fine.
+    // Existing metadata without agent_id or mode_id should deserialize fine.
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("meta.json");
     fs::write(
@@ -915,4 +957,5 @@ fn test_agent_id_serde_compat() {
     .unwrap();
     let meta = SessionMetadata::load(path).unwrap();
     assert!(meta.get("main").unwrap().agent_id.is_none());
+    assert!(meta.get("main").unwrap().mode_id.is_none());
 }

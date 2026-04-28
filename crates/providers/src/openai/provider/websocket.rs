@@ -190,15 +190,15 @@ impl OpenAiProvider {
                             yield StreamEvent::Delta(delta.to_string());
                         }
                     }
-                    "response.output_item.added" => {
-                        if evt["item"]["type"].as_str() == Some("function_call") {
-                            let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
-                            let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
-                            let index = responses_output_index(&evt, current_tool_index);
-                            current_tool_index = current_tool_index.max(index + 1);
-                            tool_calls.insert(index, (id.clone(), name.clone()));
-                            yield StreamEvent::ToolCallStart { id, name, index, metadata: None };
-                        }
+                    "response.output_item.added"
+                        if evt["item"]["type"].as_str() == Some("function_call") =>
+                    {
+                        let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
+                        let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
+                        let index = responses_output_index(&evt, current_tool_index);
+                        current_tool_index = current_tool_index.max(index + 1);
+                        tool_calls.insert(index, (id.clone(), name.clone()));
+                        yield StreamEvent::ToolCallStart { id, name, index, metadata: None };
                     }
                     "response.function_call_arguments.delta" => {
                         if let Some(delta) = evt["delta"].as_str()

@@ -150,6 +150,17 @@ async fn load_oidc_session(account_id: &str) -> ChannelResult<Option<PersistedOi
 /// MAS validates this URL and rejects loopback addresses.
 const MOLTIS_CLIENT_URI: &str = "https://moltis.org/";
 
+fn is_loopback_uri(uri: &Url) -> bool {
+    let host = uri.host_str().unwrap_or_default();
+    if host == "localhost" || host == "::1" || host.ends_with(".localhost") {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<std::net::Ipv4Addr>() {
+        return ip.is_loopback();
+    }
+    false
+}
+
 /// Rewrite loopback redirect URIs from `https://` to `http://`.
 ///
 /// MAS follows RFC 8252 §7.3 and requires native/loopback redirect URIs to
@@ -157,10 +168,7 @@ const MOLTIS_CLIENT_URI: &str = "https://moltis.org/";
 /// HTTP-to-HTTPS redirect (or HSTS) will still deliver the callback to the
 /// HTTPS server, so the OAuth code+state arrive correctly.
 fn normalize_loopback_redirect(redirect_uri: &Url) -> Url {
-    let host = redirect_uri.host_str().unwrap_or_default();
-    let is_loopback =
-        host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost");
-    if is_loopback && redirect_uri.scheme() == "https" {
+    if is_loopback_uri(redirect_uri) && redirect_uri.scheme() == "https" {
         let mut normalized = redirect_uri.clone();
         let _ = normalized.set_scheme("http");
         normalized
@@ -174,9 +182,23 @@ fn build_client_metadata(redirect_uri: &Url) -> ChannelResult<ClientMetadata> {
         .parse()
         .map_err(|error| ChannelError::external("matrix oidc parse client uri", error))?;
     let client_uri = Localized::new(client_uri_url, std::iter::empty());
-    let registration_redirect = normalize_loopback_redirect(redirect_uri);
+    let is_loopback = is_loopback_uri(redirect_uri);
+    let registration_redirect = if is_loopback && redirect_uri.scheme() == "https" {
+        let mut normalized = redirect_uri.clone();
+        let _ = normalized.set_scheme("http");
+        normalized
+    } else {
+        redirect_uri.clone()
+    };
+    // MAS requires `Native` for loopback redirect URIs (RFC 8252) and `Web`
+    // for non-loopback URIs (e.g. behind a reverse proxy).
+    let app_type = if is_loopback {
+        ApplicationType::Native
+    } else {
+        ApplicationType::Web
+    };
     Ok(ClientMetadata::new(
-        ApplicationType::Native,
+        app_type,
         vec![OAuthGrantType::AuthorizationCode {
             redirect_uris: vec![registration_redirect],
         }],
@@ -468,6 +490,66 @@ mod tests {
             normalize_loopback_redirect(&url).as_str(),
             "http://localhost:8080/auth/callback"
         );
+    }
+
+    #[test]
+    fn build_client_metadata_uses_web_application_type_for_reverse_proxy() {
+        let redirect: Url = "https://moltis.example.com/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        let metadata = build_client_metadata(&redirect).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            metadata.application_type,
+            ApplicationType::Web,
+            "non-loopback redirect_uri must use ApplicationType::Web for MAS compatibility"
+        );
+        match &metadata.grant_types[0] {
+            OAuthGrantType::AuthorizationCode { redirect_uris } => {
+                assert_eq!(
+                    redirect_uris[0].as_str(),
+                    "https://moltis.example.com/auth/callback",
+                    "non-loopback redirect_uri must be preserved as-is"
+                );
+            },
+            other => panic!("expected AuthorizationCode, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_client_metadata_uses_native_application_type_for_loopback() {
+        let redirect: Url = "http://localhost:8080/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        let metadata = build_client_metadata(&redirect).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(
+            metadata.application_type,
+            ApplicationType::Native,
+            "loopback redirect_uri must use ApplicationType::Native"
+        );
+    }
+
+    #[test]
+    fn is_loopback_uri_covers_full_127_range() {
+        let url_127_0_0_2: Url = "http://127.0.0.2:8080/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            is_loopback_uri(&url_127_0_0_2),
+            "127.0.0.2 is in 127.0.0.0/8 and must be treated as loopback"
+        );
+
+        let url_127_255: Url = "http://127.255.255.255:8080/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(
+            is_loopback_uri(&url_127_255),
+            "127.255.255.255 is in 127.0.0.0/8 and must be treated as loopback"
+        );
+
+        let url_external: Url = "https://10.0.0.1:8080/auth/callback"
+            .parse()
+            .unwrap_or_else(|error| panic!("{error}"));
+        assert!(!is_loopback_uri(&url_external), "10.0.0.1 is not loopback");
     }
 
     #[test]

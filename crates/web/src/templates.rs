@@ -23,7 +23,7 @@ pub(crate) struct SpaRoutes {
     settings: &'static str,
     providers: &'static str,
     security: &'static str,
-    identity: &'static str,
+    profile: &'static str,
     config: &'static str,
     logs: &'static str,
     nodes: &'static str,
@@ -40,7 +40,7 @@ pub(crate) static SPA_ROUTES: SpaRoutes = SpaRoutes {
     settings: "/settings",
     providers: "/settings/providers",
     security: "/settings/security",
-    identity: "/settings/identity",
+    profile: "/settings/profile",
     config: "/settings/config",
     logs: "/settings/logs",
     nodes: "/settings/nodes",
@@ -887,7 +887,7 @@ pub(crate) async fn render_spa_template(
         "default-src 'self'; \
          script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'; \
          style-src 'self' 'unsafe-inline'; \
-         img-src 'self' data: blob:; \
+         img-src 'self' data: blob: https://github.com https://avatars.githubusercontent.com https://clawhub.ai; \
          media-src 'self' blob:; \
          font-src 'self'; \
          connect-src 'self' ws: wss:; \

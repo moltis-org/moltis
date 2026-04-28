@@ -151,16 +151,16 @@ detect_nightly_toolchain() {
     return
   fi
 
-  if [[ -f justfile ]]; then
-    local justfile_toolchain
-    justfile_toolchain="$(sed -nE 's/^nightly_toolchain := "([^"]+)"/\1/p' justfile | head -n1)"
-    if [[ -n "$justfile_toolchain" ]]; then
-      printf '%s' "$justfile_toolchain"
+  if [[ -f rust-toolchain.toml ]]; then
+    local toml_toolchain
+    toml_toolchain="$(sed -nE 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)"/\1/p' rust-toolchain.toml | head -n1)"
+    if [[ -n "$toml_toolchain" ]]; then
+      printf '%s' "$toml_toolchain"
       return
     fi
   fi
 
-  printf '%s' "nightly-2025-11-30"
+  printf '%s' "nightly"
 }
 
 nightly_toolchain="$(detect_nightly_toolchain)"
@@ -193,7 +193,7 @@ fi
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
 ollama_qwen_e2e_cmd="${LOCAL_VALIDATE_OLLAMA_QWEN_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && MOLTIS_E2E_OLLAMA_QWEN_LIVE=1 npx playwright test --project=ollama-qwen-live e2e/specs/ollama-qwen-live.spec.js}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo +${nightly_toolchain} llvm-cov --workspace --all-features --html}"
-macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate build}"
+macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate CODE_SIGNING_ALLOWED=NO build}"
 ios_app_cmd="${LOCAL_VALIDATE_IOS_APP_CMD:-cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination \"generic/platform=iOS\" CODE_SIGNING_ALLOWED=NO build}"
 build_cmd="${LOCAL_VALIDATE_BUILD_CMD:-cargo +${nightly_toolchain} build --workspace --all-features --all-targets}"
 
@@ -549,11 +549,11 @@ fi
 # Verify Cargo.lock is in sync (same as CI's `cargo fetch --locked`).
 run_check "local/lockfile" "cargo fetch --locked"
 
-# Ensure generated CSS exists (Tailwind output is not committed; worktrees and
-# fresh clones won't have it).
-if [[ ! -f crates/web/src/assets/style.css ]]; then
-  echo "style.css missing — building CSS with Tailwind..."
-  run_check "local/build-css" "just build-css"
+# Ensure generated web assets exist (not committed; worktrees and fresh clones
+# won't have them).
+if [[ ! -f crates/web/src/assets/style.css || ! -f crates/web/src/assets/dist/main.js || ! -f crates/web/src/assets/sw.js ]]; then
+  echo "Web assets missing — building with just build-web-assets..."
+  run_check "local/build-web-assets" "just build-web-assets"
 fi
 
 # Lint runs first to warm the cargo build cache (clippy compiles all targets).

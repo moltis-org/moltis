@@ -7,8 +7,7 @@ use crate::{
     ollama::normalize_ollama_api_base_url,
     openai_compat::{
         parse_openai_compat_usage_from_payload, parse_tool_calls,
-        split_responses_instructions_and_input, strip_think_tags, to_openai_tools,
-        to_responses_api_tools,
+        split_responses_instructions_and_input, strip_think_tags, to_responses_api_tools,
     },
     raw_model_id,
 };
@@ -225,8 +224,7 @@ impl OpenAiProvider {
         self.apply_system_prompt_rewrite(&mut body);
 
         if !tools.is_empty() {
-            body["tools"] =
-                serde_json::Value::Array(to_openai_tools(tools, self.needs_strict_tools()));
+            body["tools"] = serde_json::Value::Array(self.prepare_chat_tools(tools));
         }
 
         self.apply_reasoning_effort_chat(&mut body);
@@ -398,12 +396,12 @@ impl OpenAiProvider {
                         text_buf.push_str(delta);
                     }
                 },
-                "response.output_item.added" => {
-                    if evt["item"]["type"].as_str() == Some("function_call") {
-                        fn_call_ids.push(evt["item"]["call_id"].as_str().unwrap_or("").to_string());
-                        fn_call_names.push(evt["item"]["name"].as_str().unwrap_or("").to_string());
-                        fn_call_args.push(String::new());
-                    }
+                "response.output_item.added"
+                    if evt["item"]["type"].as_str() == Some("function_call") =>
+                {
+                    fn_call_ids.push(evt["item"]["call_id"].as_str().unwrap_or("").to_string());
+                    fn_call_names.push(evt["item"]["name"].as_str().unwrap_or("").to_string());
+                    fn_call_args.push(String::new());
                 },
                 "response.function_call_arguments.delta" => {
                     if let Some(delta) = evt["delta"].as_str()

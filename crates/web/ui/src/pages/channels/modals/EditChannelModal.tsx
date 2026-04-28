@@ -29,6 +29,8 @@ export function EditChannelModal(): VNode | null {
 	const error = useSignal("");
 	const saving = useSignal(false);
 	const editModel = useSignal("");
+	const editAgent = useSignal("");
+	const agentsList = useSignal<Array<{ id: string; name: string; emoji?: string }>>([]);
 	const allowlistItems = useSignal<string[]>([]);
 	const roomAllowlistItems = useSignal<string[]>([]);
 	const editCredential = useSignal("");
@@ -42,15 +44,20 @@ export function EditChannelModal(): VNode | null {
 	const editMatrixOwnershipMode = useSignal("user_managed");
 	const editMatrixOtpSelfApproval = useSignal(true);
 	const editMatrixOtpCooldown = useSignal("300");
+	const editSignalAccount = useSignal("");
+	const editSignalHttpUrl = useSignal("http://127.0.0.1:8080");
+	const editChannelNamePatterns = useSignal<string[]>([]);
+	const editCategoryAllowlist = useSignal<string[]>([]);
 	const editAdvancedConfigPatch = useSignal("");
 
 	useEffect(() => {
 		editModel.value = (ch?.config?.model as string) || "";
+		editAgent.value = (ch?.config?.agent_id as string) || "";
 		allowlistItems.value = (ch?.config?.allowlist ||
 			ch?.config?.user_allowlist ||
 			ch?.config?.allowed_pubkeys ||
 			[]) as string[];
-		roomAllowlistItems.value = (ch?.config?.room_allowlist || []) as string[];
+		roomAllowlistItems.value = (ch?.config?.room_allowlist || ch?.config?.group_allowlist || []) as string[];
 		editCredential.value = "";
 		editWebhookSecret.value = (ch?.config?.webhook_secret as string) || "";
 		editStreamMode.value = (ch?.config?.stream_mode as string) || "edit_in_place";
@@ -64,8 +71,21 @@ export function EditChannelModal(): VNode | null {
 		);
 		editMatrixOtpSelfApproval.value = ch?.config?.otp_self_approval !== false;
 		editMatrixOtpCooldown.value = String(ch?.config?.otp_cooldown_secs || 300);
+		editSignalAccount.value = (ch?.config?.account as string) || "";
+		editSignalHttpUrl.value = (ch?.config?.http_url as string) || "http://127.0.0.1:8080";
+		editChannelNamePatterns.value = (ch?.config?.channel_name_patterns || []) as string[];
+		editCategoryAllowlist.value = (ch?.config?.category_allowlist || []) as string[];
 		editAdvancedConfigPatch.value = "";
 	}, [ch]);
+
+	useEffect(() => {
+		sendRpc("agents.list", {}).then((res) => {
+			if (res?.ok) {
+				const payload = res.payload as { agents?: Array<{ id: string; name: string; emoji?: string }> };
+				agentsList.value = payload?.agents || [];
+			}
+		});
+	}, []);
 
 	if (!ch) return null;
 
@@ -77,12 +97,17 @@ export function EditChannelModal(): VNode | null {
 	const isTelegram = chType === ChannelType.Telegram;
 	const isMatrix = chType === ChannelType.Matrix;
 	const isNostr = chType === ChannelType.Nostr;
+	const isSignal = chType === ChannelType.Signal;
 
 	function addModelToConfig(config: ChannelConfig): void {
 		if (!editModel.value) return;
 		config.model = editModel.value;
 		const found = modelsSig.value.find((x) => x.id === editModel.value);
 		if (found?.provider) config.model_provider = found.provider;
+	}
+
+	function addAgentToConfig(config: ChannelConfig): void {
+		config.agent_id = editAgent.value || null;
 	}
 
 	function addChannelCredentials(config: ChannelConfig, form: HTMLElement): void {
@@ -101,6 +126,9 @@ export function EditChannelModal(): VNode | null {
 				.split(",")
 				.map((r) => r.trim())
 				.filter(Boolean);
+		} else if (isSignal) {
+			config.account = editSignalAccount.value.trim();
+			config.http_url = editSignalHttpUrl.value.trim() || "http://127.0.0.1:8080";
 		} else if (isMatrix) {
 			config.homeserver =
 				(form.querySelector("[data-field=homeserver]") as HTMLInputElement)?.value || cfg.homeserver || "";
@@ -123,7 +151,8 @@ export function EditChannelModal(): VNode | null {
 
 	function buildUpdateConfig(form: HTMLElement): ChannelConfig {
 		const updateConfig: ChannelConfig = {};
-		updateConfig.dm_policy = (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement)?.value || "open";
+		const dmFallback = isWhatsApp ? "open" : "allowlist";
+		updateConfig.dm_policy = (form.querySelector("[data-field=dmPolicy]") as HTMLSelectElement)?.value || dmFallback;
 		updateConfig.allowlist = allowlistItems.value;
 		if (isMatrix) {
 			updateConfig.user_allowlist = allowlistItems.value;
@@ -141,12 +170,27 @@ export function EditChannelModal(): VNode | null {
 			updateConfig.otp_self_approval = cfg.otp_self_approval !== false;
 			updateConfig.otp_cooldown_secs = cfg.otp_cooldown_secs ?? 300;
 		}
+		if (isSignal) {
+			updateConfig.group_policy =
+				(form.querySelector("[data-field=groupPolicy]") as HTMLSelectElement)?.value || cfg.group_policy || "disabled";
+			updateConfig.group_allowlist = roomAllowlistItems.value;
+			updateConfig.otp_self_approval = cfg.otp_self_approval !== false;
+			updateConfig.otp_cooldown_secs = cfg.otp_cooldown_secs ?? 300;
+			updateConfig.ignore_stories = cfg.ignore_stories !== false;
+			updateConfig.text_chunk_limit = (cfg.text_chunk_limit as number) || 4000;
+			if (cfg.account_uuid) updateConfig.account_uuid = cfg.account_uuid as string;
+		}
 		if (!(isWhatsApp || isNostr)) {
 			updateConfig.mention_mode =
 				(form.querySelector("[data-field=mentionMode]") as HTMLSelectElement)?.value || "mention";
 		}
+		if (isDiscord) {
+			updateConfig.channel_name_patterns = editChannelNamePatterns.value;
+			updateConfig.category_allowlist = editCategoryAllowlist.value;
+		}
 		addChannelCredentials(updateConfig, form);
 		addModelToConfig(updateConfig);
+		addAgentToConfig(updateConfig);
 		if (isTeams) {
 			updateConfig.stream_mode = editStreamMode.value;
 			updateConfig.reply_style = editReplyStyle.value;
@@ -203,7 +247,12 @@ export function EditChannelModal(): VNode | null {
 			<div className="channel-form">
 				<div className="text-sm text-[var(--text-strong)]">{ch.name || ch.account_id}</div>
 				{isTelegram && ch.account_id && (
-					<a href={`https://t.me/${ch.account_id}`} target="_blank" className="text-xs text-[var(--accent)] underline">
+					<a
+						href={`https://t.me/${ch.account_id}`}
+						target="_blank"
+						className="text-xs text-[var(--accent)] underline"
+						rel="noopener"
+					>
 						t.me/{ch.account_id}
 					</a>
 				)}
@@ -300,6 +349,33 @@ export function EditChannelModal(): VNode | null {
 						/>
 					</div>
 				)}
+				{isDiscord && (
+					<>
+						<label className="text-xs text-[var(--muted)]">Channel Name Patterns (optional)</label>
+						<AllowlistInput
+							value={editChannelNamePatterns.value}
+							onChange={(v) => {
+								editChannelNamePatterns.value = v;
+							}}
+							placeholder="e.g. ticket-* (glob patterns, Enter to add)"
+						/>
+						<div className="text-xs text-[var(--muted)] -mt-1">
+							When set, the bot only responds in guild channels whose name matches a pattern. Matched channels do not
+							require @mention. Supports * wildcards.
+						</div>
+						<label className="text-xs text-[var(--muted)]">Category IDs (optional)</label>
+						<AllowlistInput
+							value={editCategoryAllowlist.value}
+							onChange={(v) => {
+								editCategoryAllowlist.value = v;
+							}}
+							placeholder="Discord category ID (Enter to add)"
+						/>
+						<div className="text-xs text-[var(--muted)] -mt-1">
+							Only respond in channels under these Discord categories. Combined with name patterns via OR.
+						</div>
+					</>
+				)}
 				{isNostr && (
 					<>
 						<div className="flex flex-col gap-1">
@@ -321,6 +397,34 @@ export function EditChannelModal(): VNode | null {
 								type="text"
 								className="channel-input w-full"
 								defaultValue={((cfg.relays as string[]) || []).join(", ")}
+							/>
+						</div>
+					</>
+				)}
+				{isSignal && (
+					<>
+						<div className="flex flex-col gap-1">
+							<label className="text-xs text-[var(--muted)]">Signal Account</label>
+							<input
+								type="text"
+								className="channel-input w-full"
+								value={editSignalAccount.value}
+								onInput={(e) => {
+									editSignalAccount.value = targetValue(e);
+								}}
+								placeholder="+15551234567"
+							/>
+						</div>
+						<div className="flex flex-col gap-1">
+							<label className="text-xs text-[var(--muted)]">signal-cli Daemon URL</label>
+							<input
+								type="url"
+								className="channel-input w-full"
+								value={editSignalHttpUrl.value}
+								onInput={(e) => {
+									editSignalHttpUrl.value = targetValue(e);
+								}}
+								placeholder="http://127.0.0.1:8080"
 							/>
 						</div>
 					</>
@@ -511,6 +615,20 @@ export function EditChannelModal(): VNode | null {
 						</select>
 					</>
 				)}
+				{isSignal && (
+					<>
+						<label className="text-xs text-[var(--muted)]">Group Policy</label>
+						<select
+							data-field="groupPolicy"
+							className="channel-select"
+							value={(cfg.group_policy as string) || "disabled"}
+						>
+							<option value="disabled">Disabled</option>
+							<option value="allowlist">Allowlist only</option>
+							<option value="open">Open (any group)</option>
+						</select>
+					</>
+				)}
 				<label className="text-xs text-[var(--muted)]">Default Model</label>
 				<ModelSelect
 					models={modelsSig.value}
@@ -520,6 +638,22 @@ export function EditChannelModal(): VNode | null {
 					}}
 					placeholder={defaultPlaceholder}
 				/>
+				<label className="text-xs text-[var(--muted)]">Agent</label>
+				<select
+					className="channel-select"
+					value={editAgent.value}
+					onChange={(e: Event) => {
+						editAgent.value = targetValue(e);
+					}}
+				>
+					<option value="">(default agent)</option>
+					{agentsList.value.map((a) => (
+						<option key={a.id} value={a.id}>
+							{a.emoji ? `${a.emoji} ` : ""}
+							{a.name}
+						</option>
+					))}
+				</select>
 				<label className="text-xs text-[var(--muted)]">DM Allowlist</label>
 				<AllowlistInput
 					value={allowlistItems.value}
@@ -534,6 +668,17 @@ export function EditChannelModal(): VNode | null {
 						<AllowlistInput
 							value={roomAllowlistItems.value}
 							preserveAt={true}
+							onChange={(v) => {
+								roomAllowlistItems.value = v;
+							}}
+						/>
+					</>
+				)}
+				{isSignal && (
+					<>
+						<label className="text-xs text-[var(--muted)]">Group Allowlist</label>
+						<AllowlistInput
+							value={roomAllowlistItems.value}
 							onChange={(v) => {
 								roomAllowlistItems.value = v;
 							}}

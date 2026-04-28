@@ -10,6 +10,8 @@ pub enum ConfigAction {
         #[arg(long)]
         verbose: bool,
     },
+    /// Strip default values from moltis.toml, keeping only user overrides.
+    Compact,
     /// Get a config value (not yet implemented).
     Get { key: Option<String> },
     /// Set a config value (not yet implemented).
@@ -21,6 +23,7 @@ pub enum ConfigAction {
 pub async fn handle_config(action: ConfigAction) -> Result<()> {
     match action {
         ConfigAction::Check { verbose } => check(verbose),
+        ConfigAction::Compact => compact(),
         ConfigAction::Get { .. } | ConfigAction::Set { .. } | ConfigAction::Edit => {
             eprintln!("not yet implemented");
             Ok(())
@@ -34,6 +37,19 @@ const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
 const RESET: &str = "\x1b[0m";
+
+fn compact() -> Result<()> {
+    let (before, after) = moltis_config::compact_config()?;
+    if before == after {
+        eprintln!("Already compact — no default values to strip.");
+    } else {
+        eprintln!(
+            "Compacted: {before} → {after} keys ({} default values removed)",
+            before - after
+        );
+    }
+    Ok(())
+}
 
 fn check(verbose: bool) -> Result<()> {
     let result = validate::validate(None);

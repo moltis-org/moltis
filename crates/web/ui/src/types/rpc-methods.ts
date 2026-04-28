@@ -122,6 +122,10 @@ export interface RpcMethodMap {
 	"projects.list": unknown;
 	"projects.upsert": unknown;
 
+	// ── Modes ──────────────────────────────────────────────────
+	"modes.list": unknown;
+	"modes.set_session": unknown;
+
 	// ── Providers ───────────────────────────────────────────────
 	"providers.add_custom": unknown;
 	"providers.available": unknown;
@@ -152,6 +156,34 @@ export interface RpcMethodMap {
 	"skills.repos.unquarantine": unknown;
 	"skills.skill.detail": unknown;
 	"skills.skill.disable": unknown;
+	"skills.bundled.categories": unknown;
+	"skills.bundled.toggle_category": unknown;
+	"skills.clawhub.search": {
+		results: Array<{
+			score: number;
+			slug: string;
+			displayName?: string;
+			summary?: string;
+			updatedAt?: number;
+			version?: string;
+			downloads?: number;
+			ownerHandle?: string;
+			stars?: number;
+		}>;
+	};
+	"skills.clawhub.info": unknown;
+	"skills.clawhub.scan": unknown;
+	"skills.clawhub.install": { installed: Array<{ name: string; description?: string }> };
+	"skills.recipe": {
+		found: boolean;
+		recipe?: {
+			source: string;
+			title: string;
+			instructions: string;
+			mcp_servers: unknown[];
+			skills_to_enable: string[];
+		};
+	};
 
 	// ── STT (Speech-to-Text) ────────────────────────────────────
 	"stt.status": unknown;

@@ -164,6 +164,8 @@ pub struct HeartbeatConfig {
     pub every: String,
     /// Provider/model override for heartbeat turns (e.g. "anthropic/claude-sonnet-4-20250514").
     pub model: Option<String>,
+    /// Agent ID override for heartbeat turns.
+    pub agent_id: Option<String>,
     /// Custom prompt override. If empty, the built-in default is used.
     pub prompt: Option<String>,
     /// Max characters for an acknowledgment reply before truncation. Defaults to 300.
@@ -182,6 +184,10 @@ pub struct HeartbeatConfig {
     pub sandbox_enabled: bool,
     /// Override sandbox image for heartbeat. If `None`, uses the default image.
     pub sandbox_image: Option<String>,
+    /// Minimum duration between exec-triggered heartbeat wakes (e.g. "5m", "0").
+    /// Prevents exec-completion callbacks from re-waking the heartbeat in a tight loop.
+    /// Defaults to "5m". Set to "0" to disable.
+    pub wake_cooldown: String,
 }
 
 impl Default for HeartbeatConfig {
@@ -190,6 +196,7 @@ impl Default for HeartbeatConfig {
             enabled: true,
             every: "30m".into(),
             model: None,
+            agent_id: None,
             prompt: None,
             ack_max_chars: 300,
             active_hours: ActiveHoursConfig::default(),
@@ -198,6 +205,7 @@ impl Default for HeartbeatConfig {
             to: None,
             sandbox_enabled: true,
             sandbox_image: None,
+            wake_cooldown: "5m".into(),
         }
     }
 }
@@ -351,6 +359,94 @@ impl std::fmt::Debug for CalDavAccountConfig {
 
 fn default_caldav_timeout() -> u64 {
     30
+}
+
+/// Home Assistant integration configuration.
+///
+/// ```toml
+/// [home_assistant]
+/// enabled = true
+/// default_instance = "home"
+///
+/// [home_assistant.instances.home]
+/// url = "http://homeassistant.local:8123"
+/// token = "eyJ..."
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HomeAssistantConfig {
+    /// Whether Home Assistant integration is enabled.
+    pub enabled: bool,
+    /// Default instance name when none is specified.
+    pub default_instance: Option<String>,
+    /// Named HA instances.
+    #[serde(default)]
+    pub instances: HashMap<String, HomeAssistantAccountConfig>,
+}
+
+impl HomeAssistantConfig {
+    /// Resolve which account to use given an optional explicit name.
+    ///
+    /// Resolution order: explicit `instance` → `default_instance` →
+    /// sole instance if only one exists.
+    #[must_use]
+    pub fn resolve_account<'a>(
+        &'a self,
+        instance: Option<&'a str>,
+    ) -> Option<(&'a str, &'a HomeAssistantAccountConfig)> {
+        let name = instance.or(self.default_instance.as_deref()).or_else(|| {
+            if self.instances.len() == 1 {
+                self.instances.keys().next().map(String::as_str)
+            } else {
+                None
+            }
+        })?;
+
+        self.instances.get(name).map(|a| (name, a))
+    }
+}
+
+/// Configuration for a single Home Assistant instance.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HomeAssistantAccountConfig {
+    /// HA instance URL (e.g. "http://homeassistant.local:8123").
+    pub url: Option<String>,
+    /// Long-lived access token.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub token: Option<Secret<String>>,
+    /// HTTP request timeout in seconds.
+    #[serde(default = "default_ha_timeout")]
+    pub timeout_seconds: u64,
+}
+
+impl Default for HomeAssistantAccountConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            token: None,
+            timeout_seconds: default_ha_timeout(),
+        }
+    }
+}
+
+impl std::fmt::Debug for HomeAssistantAccountConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HomeAssistantAccountConfig")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "[REDACTED]"))
+            .field("timeout_seconds", &self.timeout_seconds)
+            .finish()
+    }
+}
+
+fn default_ha_timeout() -> u64 {
+    10
 }
 
 /// Tailscale Serve/Funnel configuration.

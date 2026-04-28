@@ -1,5 +1,5 @@
 use super::{
-    Diagnostic, MoltisConfig, Severity, ValidationResult, levenshtein,
+    Diagnostic, MoltisConfig, Severity, ValidationResult, check_shadowed_defaults, levenshtein,
     schema_map::{KnownKeys, build_schema_map},
     semantic::should_suppress_deprecated_conflict_type_error,
     suggest, validate_toml_str,
@@ -11,6 +11,8 @@ mod agents;
 mod channels;
 #[path = "tests/common.rs"]
 mod common;
+#[path = "tests/defaults.rs"]
+mod defaults;
 #[path = "tests/memory.rs"]
 mod memory;
 #[path = "tests/providers.rs"]

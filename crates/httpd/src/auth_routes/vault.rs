@@ -108,6 +108,29 @@ pub(super) async fn run_vault_env_migration(state: &AuthState) {
                 tracing::warn!(error = %e, "ssh key migration failed");
             },
         }
+
+        // Migrate provider_keys.json (LLM + voice API keys) to encrypted storage.
+        // This uses `encrypt_json_file` which creates a `.enc` alongside the
+        // original instead of renaming it, so sync callers (KeyStore) can still
+        // read the plaintext until KeyStore gains a vault-aware read path.
+        if let Some(config_dir) = moltis_config::config_dir() {
+            let provider_keys_path = config_dir.join("provider_keys.json");
+            match moltis_vault::migration::encrypt_json_file(
+                vault,
+                &provider_keys_path,
+                "provider_keys",
+            )
+            .await
+            {
+                Ok(true) => {
+                    tracing::info!("encrypted provider_keys.json to vault storage");
+                },
+                Ok(false) => {},
+                Err(e) => {
+                    tracing::warn!(error = %e, "provider_keys.json encryption failed");
+                },
+            }
+        }
     }
 }
 

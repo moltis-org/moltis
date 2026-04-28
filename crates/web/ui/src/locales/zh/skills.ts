@@ -109,6 +109,10 @@ export default {
 	dismiss: "忽略",
 	disableAllThirdParty: "禁用所有第三方技能",
 
+	// ── Bundled categories ──────────────────────────────────
+	bundledTitle: "内置技能类别",
+	bundledDescription: "切换内置技能类别。已禁用的类别将从代理上下文中排除。",
+
 	// ── Featured skill descriptions ─────────────────────────
 	featuredOpenClaw: "来自 ClawdHub 的社区技能",
 	featuredAnthropic: "Anthropic 官方代理技能",

@@ -14,6 +14,15 @@ use crate::{
     agent_loop::ChannelReplyTargetKey, compaction_run, error, runtime::ChatRuntime, types::*,
 };
 
+/// Build the SPA URL for a push notification click-through.
+///
+/// Must match the frontend `sessionPath()` in `router.ts`:
+/// `/chats/${key.replace(/:/g, "/")}`.
+#[cfg(any(feature = "push-notifications", test))]
+pub(crate) fn push_notification_url(session_key: &str) -> String {
+    format!("/chats/{}", session_key.replace(':', "/"))
+}
+
 #[cfg(feature = "push-notifications")]
 pub(crate) async fn send_chat_push_notification(
     state: &Arc<dyn ChatRuntime>,
@@ -28,7 +37,7 @@ pub(crate) async fn send_chat_push_notification(
     };
 
     let title = "Message received";
-    let url = format!("/chat/{session_key}");
+    let url = push_notification_url(session_key);
 
     match state
         .send_push_notification(title, &summary, Some(&url), Some(session_key))
@@ -508,71 +517,80 @@ async fn deliver_channel_replies_to_targets(
                                     "failed to send logbook follow-up: {e}"
                                 );
                             }
-                        } else if transcript.len()
-                            <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT
-                        {
-                            // Short transcript fits as a caption on the voice message.
-                            payload.text = transcript;
-                            if let Err(e) = outbound
-                                .send_media(&target.account_id, &to, &payload, reply_to)
-                                .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send channel voice reply: {e}"
-                                );
-                            }
-                            // Send logbook as a follow-up if present.
-                            if !logbook_html.is_empty()
-                                && let Err(e) = outbound
-                                    .send_html(&target.account_id, &to, &logbook_html, None)
-                                    .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send logbook follow-up: {e}"
-                                );
-                            }
                         } else {
-                            // Transcript too long for a caption — send voice
-                            // without caption, then the full text as a follow-up.
-                            if let Err(e) = outbound
-                                .send_media(&target.account_id, &to, &payload, reply_to)
-                                .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send channel voice reply: {e}"
-                                );
-                            }
-                            let text_result = if logbook_html.is_empty() {
-                                outbound
-                                    .send_text(&target.account_id, &to, &transcript, None)
+                            // Check if transcript fits as Telegram caption (when feature enabled).
+                            // When telegram feature is disabled, this evaluates to false and we
+                            // send voice + follow-up text.
+                            #[cfg(feature = "telegram")]
+                            let fits_in_caption = transcript.len()
+                                <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT;
+                            #[cfg(not(feature = "telegram"))]
+                            let fits_in_caption = false;
+
+                            if fits_in_caption {
+                                // Short transcript fits as a caption on the voice message.
+                                payload.text = transcript;
+                                if let Err(e) = outbound
+                                    .send_media(&target.account_id, &to, &payload, reply_to)
                                     .await
+                                {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send channel voice reply: {e}"
+                                    );
+                                }
+                                // Send logbook as a follow-up if present.
+                                if !logbook_html.is_empty()
+                                    && let Err(e) = outbound
+                                        .send_html(&target.account_id, &to, &logbook_html, None)
+                                        .await
+                                {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send logbook follow-up: {e}"
+                                    );
+                                }
                             } else {
-                                outbound
-                                    .send_text_with_suffix(
-                                        &target.account_id,
-                                        &to,
-                                        &transcript,
-                                        &logbook_html,
-                                        None,
-                                    )
+                                // Transcript too long for a caption — send voice
+                                // without caption, then the full text as a follow-up.
+                                if let Err(e) = outbound
+                                    .send_media(&target.account_id, &to, &payload, reply_to)
                                     .await
-                            };
-                            if let Err(e) = text_result {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send transcript follow-up: {e}"
-                                );
+                                {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send channel voice reply: {e}"
+                                    );
+                                }
+                                let text_result = if logbook_html.is_empty() {
+                                    outbound
+                                        .send_text(&target.account_id, &to, &transcript, None)
+                                        .await
+                                } else {
+                                    outbound
+                                        .send_text_with_suffix(
+                                            &target.account_id,
+                                            &to,
+                                            &transcript,
+                                            &logbook_html,
+                                            None,
+                                        )
+                                        .await
+                                };
+                                if let Err(e) = text_result {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send transcript follow-up: {e}"
+                                    );
+                                }
                             }
                         }
                     },
@@ -1302,5 +1320,29 @@ pub(crate) async fn send_location_to_channels(
         if let Err(e) = task.await {
             warn!(error = %e, "channel location task join failed");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_notification_url_uses_chats_prefix_and_replaces_colons() {
+        // Must match frontend sessionPath(): `/chats/${key.replace(/:/g, "/")}`
+        assert_eq!(push_notification_url("session:42"), "/chats/session/42");
+    }
+
+    #[test]
+    fn push_notification_url_handles_nested_session_keys() {
+        assert_eq!(
+            push_notification_url("telegram:bot123:chat456"),
+            "/chats/telegram/bot123/chat456"
+        );
+    }
+
+    #[test]
+    fn push_notification_url_handles_key_without_colons() {
+        assert_eq!(push_notification_url("main"), "/chats/main");
     }
 }

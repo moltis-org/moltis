@@ -230,6 +230,14 @@ pub struct ProviderEntry {
     /// ```
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub model_overrides: HashMap<String, ModelOverride>,
+
+    /// Seconds of inactivity before auto-unloading local models.
+    ///
+    /// Only meaningful for `[providers.local-llm]`. Per-model values in
+    /// `local-llm.json` override this global default. `0` = never unload.
+    /// `None` (default) = models stay loaded indefinitely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_secs: Option<u64>,
 }
 
 impl std::fmt::Debug for ProviderEntry {
@@ -268,6 +276,7 @@ impl Default for ProviderEntry {
             strict_tools: None,
             policy: None,
             model_overrides: HashMap::new(),
+            idle_timeout_secs: None,
         }
     }
 }

@@ -47,6 +47,8 @@
   - [`chat.compaction`](#chatcompaction)
   - [`agents`](#agents)
   - [`agents.presets.<name>`](#agentspresetsname)
+  - [`modes`](#modes)
+  - [`modes.presets.<name>`](#modespresetsname)
   - [`skills`](#skills)
 - **Tools — Execution**
   - [`tools.exec`](#toolsexec)
@@ -284,8 +286,8 @@ User profile collected during onboarding.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `default_preset` | optional string | `null` | Default preset name used when `spawn_agent.preset` is omitted. Applies only to sub-agents. |
-| `presets` | map of `AgentPreset` | `{}` | Named spawn presets, keyed by name. |
+| `default_preset` | optional string | `"research"` | Default preset name used when `spawn_agent.preset` is omitted. Applies only to sub-agents. |
+| `presets` | map of `AgentPreset` | built-in presets | Named spawn presets, keyed by name. Built-ins: `research`, `coder`, `reviewer`, `qa`, `ux`, `docs`, `coordinator`. |
 
 
 ### `agents.presets.<name>` — AgentPreset
@@ -327,6 +329,23 @@ User profile collected during onboarding.
 | `scope` | enum: `user`, `project`, `local` | `"user"` | Memory scope: `user` stores in `~/.moltis/agent-memory/<preset>/`, `project` in `.moltis/agent-memory/<preset>/`, `local` in `.moltis/agent-memory-local/<preset>/`. |
 | `max_lines` | integer | `200` | Maximum lines to load from `MEMORY.md`. |
 
+### `modes` — ModesConfig
+
+Modes are temporary per-session prompt overlays selected with `/mode`. They do
+not create chat agents, change memory, or affect `spawn_agent` presets.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `presets` | map of `ModePreset` | built-in presets | Named mode presets. Built-ins: `concise`, `technical`, `creative`, `teacher`, `plan`, `build`, `review`, `research`, `elevated`. |
+
+### `modes.presets.<name>` — ModePreset
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | optional string | `null` | Display name shown in the UI and `/mode` list. |
+| `description` | optional string | `null` | Short user-facing summary. |
+| `prompt` | string | `""` | Prompt overlay injected into the active session while this mode is selected. |
+
 
 ### `skills` — SkillsConfig
 
@@ -336,6 +355,7 @@ User profile collected during onboarding.
 | `search_paths` | array | `[]` | Extra directories to search for skills. |
 | `auto_load` | array | `[]` | Skills to always load (by name) without explicit activation. |
 | `enable_agent_sidecar_files` | bool | `false` | Whether agents may write supplementary files inside personal skill directories. |
+| `enable_self_improvement` | bool | `true` | Include system prompt guidance encouraging the agent to autonomously create and update skills after complex tasks. |
 
 ---
 
@@ -552,7 +572,7 @@ Default `tool_overrides` entries:
 | agent_auto_continue_min_tool_calls | integer | `3` | Minimum tool calls in the current run before auto-continue can trigger. |
 | max_tool_result_bytes | integer | `50000` (50 KB) | Maximum bytes for a single tool result before truncation. |
 | registry_mode | string (enum) | `"full"` | How tool schemas are presented to the model. One of: `full` (all schemas sent every turn), `lazy` (only `tool_search` sent; model discovers tools on demand). |
-| agent_loop_detector_window | integer | `3` | Window size for the tool-call reflex-loop detector. When this many consecutive tool calls share the same tool + (args or error), the runner injects a directive intervention message. Set to 0 to disable. |
+| agent_loop_detector_window | integer | `2` | Window size for the tool-call reflex-loop detector. When this many consecutive tool calls share the same tool + (args or error), the runner injects a directive intervention message. Set to 0 to disable. |
 | agent_loop_detector_strip_tools_on_second_fire | bool | `true` | When the loop detector fires a second time (stage 2), strip the tool schema list for a single LLM turn so the model is forced to respond in text. |
 
 ---
@@ -567,8 +587,8 @@ Default `tool_overrides` entries:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `offered` | array of string | `["telegram", "msteams", "discord", "slack", "matrix", "nostr"]` | Which channel types are offered in the web UI (onboarding + channels page). Add `"whatsapp"` to opt in. |
-| `<channel_type>` | map of `serde_json::Value` | `{}` | Account configs keyed by account name. Known types: `telegram`, `whatsapp`, `msteams`, `discord`, `slack`, `nostr`. Additional types accepted via flatten. |
+| `offered` | array of string | `["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]` | Which channel types are offered in the web UI (onboarding + channels page). |
+| `<channel_type>` | map of `serde_json::Value` | `{}` | Account configs keyed by account name. Known types: `telegram`, `whatsapp`, `msteams`, `discord`, `slack`, `matrix`, `nostr`, `signal`. Additional types accepted via flatten. |
 
 Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary JSON object that may contain provider-specific keys plus a `tools` sub-block (see below).
 
@@ -727,6 +747,7 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | `to` | optional string | — | Destination chat/recipient id for heartbeat delivery. |
 | `sandbox_enabled` | bool | `true` | Whether heartbeat runs inside a sandbox. |
 | `sandbox_image` | optional string | — | Override sandbox image for heartbeat. |
+| `wake_cooldown` | string | `"5m"` | Minimum duration between exec-triggered heartbeat wakes. Use `"0"` to disable the guard. |
 
 
 ### `heartbeat.active_hours`
@@ -1093,4 +1114,3 @@ context_window = 1_000_000
 
 
 ---
-

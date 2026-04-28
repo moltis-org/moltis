@@ -158,11 +158,18 @@ pub fn resolve_effective_policy(
         }
     }
 
-    // Layer 3: Per-agent preset — [agents.presets.<agent_id>.tools]
+    // Layer 3: Per-agent preset — [agents.presets.<agent_id>.tools] + [....mcp]
     if let Some(preset) = config.agents.get_preset(&context.agent_id) {
+        let mut deny = preset.tools.deny.clone();
+
+        // Translate MCP server deny list into tool deny patterns.
+        for server in &preset.mcp.deny_servers {
+            deny.push(format!("mcp__{server}__*"));
+        }
+
         let p = ToolPolicy {
             allow: preset.tools.allow.clone(),
-            deny: preset.tools.deny.clone(),
+            deny,
         };
         if !p.allow.is_empty() || !p.deny.is_empty() {
             effective = effective.merge_with(&p);
@@ -501,6 +508,34 @@ mod tests {
         assert!(policy_sandboxed.is_allowed("exec"));
         assert!(!policy_sandboxed.is_allowed("browser")); // Denied by sandbox layer.
         assert!(!policy_sandboxed.is_allowed("web_search")); // Not in sandbox allow list.
+    }
+
+    #[test]
+    fn test_resolve_agent_mcp_deny_servers() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.policy.allow = vec!["*".into()];
+        cfg.agents
+            .presets
+            .insert("restricted".into(), moltis_config::schema::AgentPreset {
+                mcp: moltis_config::schema::PresetMcpPolicy {
+                    deny_servers: vec!["home-assistant".into()],
+                },
+                ..Default::default()
+            });
+
+        let ctx = PolicyContext {
+            agent_id: "restricted".into(),
+            ..Default::default()
+        };
+        let policy = resolve_effective_policy(&cfg, &ctx);
+        // Regular tools still allowed.
+        assert!(policy.is_allowed("exec"));
+        assert!(policy.is_allowed("web_search"));
+        // MCP tools from allowed servers still work.
+        assert!(policy.is_allowed("mcp__github__list_repos"));
+        // MCP tools from denied server are blocked.
+        assert!(!policy.is_allowed("mcp__home-assistant__turn_on"));
+        assert!(!policy.is_allowed("mcp__home-assistant__get_state"));
     }
 
     #[test]

@@ -66,6 +66,7 @@ project for local Ollama/Qwen validation:
 | `settings-nav.spec.js` | 17 | Settings subsection routing and rendering |
 | `theme.spec.js` | 3 | Theme toggle, dark mode, localStorage persistence |
 | `providers.spec.js` | 5 | Provider page load, add/detect buttons, guidance |
+| `gemini-tool-signature.spec.js` | 1 | Mock Gemini-compatible provider verifies tool-call `thought_signature` survives a web chat tool round trip |
 | `cron.spec.js` | 4 | Cron jobs page, heartbeat tab, create button |
 | `skills.spec.js` | 4 | Skills page, install input, featured repos |
 | `projects.spec.js` | 4 | Projects page, add input, auto-detect |

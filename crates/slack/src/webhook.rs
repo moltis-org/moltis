@@ -550,6 +550,54 @@ fn url_decode(input: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    use std::sync::Mutex;
+
+    use moltis_channels::{ChannelEvent, ChannelMessageMeta, Result as ChannelResult};
+
+    /// Mock sink that records the command string passed to `dispatch_command`.
+    struct RecordingSink {
+        commands: Mutex<Vec<String>>,
+    }
+
+    impl RecordingSink {
+        fn new() -> Self {
+            Self {
+                commands: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChannelEventSink for RecordingSink {
+        async fn emit(&self, _event: ChannelEvent) {}
+
+        async fn dispatch_to_chat(
+            &self,
+            _text: &str,
+            _reply_to: ChannelReplyTarget,
+            _meta: ChannelMessageMeta,
+        ) {
+        }
+
+        async fn dispatch_command(
+            &self,
+            command: &str,
+            _reply_to: ChannelReplyTarget,
+            _sender_id: Option<&str>,
+        ) -> ChannelResult<String> {
+            self.commands.lock().unwrap().push(command.to_string());
+            Ok("ok".to_string())
+        }
+
+        async fn request_disable_account(
+            &self,
+            _channel_type: &str,
+            _account_id: &str,
+            _reason: &str,
+        ) {
+        }
+    }
+
     #[test]
     fn verify_valid_signature() {
         let secret = "8f742231b10e8888abcd99yez67543";
@@ -686,5 +734,72 @@ mod tests {
         let result = handle_verified_command_webhook("acct1", body, &accounts).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Channel not configured");
+    }
+
+    /// Regression test for https://github.com/moltis-org/moltis/issues/798
+    ///
+    /// Slack sends command fields like `/new`, `/clear` (with leading slash).
+    /// The full_command passed to dispatch_command must strip the slash so the
+    /// gateway doesn't produce "unknown command: //new".
+    #[tokio::test]
+    async fn slash_command_strips_leading_slash() {
+        let sink = Arc::new(RecordingSink::new());
+        let accounts: AccountStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        {
+            let mut accts = accounts.write().unwrap();
+            accts.insert("acct1".to_string(), AccountState {
+                account_id: "acct1".to_string(),
+                config: SlackAccountConfig::default(),
+                message_log: None,
+                event_sink: Some(sink.clone()),
+                cancel: tokio_util::sync::CancellationToken::new(),
+                bot_user_id: Some("B123".to_string()),
+                pending_threads: std::collections::HashMap::new(),
+            });
+        }
+
+        // Slack sends `/new` URL-encoded as %2Fnew
+        let body = b"command=%2Fnew&text=&user_id=U123&channel_id=C456";
+        let result = handle_verified_command_webhook("acct1", body, &accounts).await;
+        assert!(result.is_ok(), "dispatch failed: {:?}", result);
+
+        let dispatched = sink.commands.lock().unwrap();
+        assert_eq!(dispatched.len(), 1);
+        assert_eq!(
+            dispatched[0], "/new",
+            "webhook should pass the raw command (slash-stripping is gateway's job)"
+        );
+    }
+
+    /// Regression test for https://github.com/moltis-org/moltis/issues/798
+    ///
+    /// Verify that commands with arguments also work correctly.
+    #[tokio::test]
+    async fn slash_command_with_args_preserves_text() {
+        let sink = Arc::new(RecordingSink::new());
+        let accounts: AccountStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        {
+            let mut accts = accounts.write().unwrap();
+            accts.insert("acct1".to_string(), AccountState {
+                account_id: "acct1".to_string(),
+                config: SlackAccountConfig::default(),
+                message_log: None,
+                event_sink: Some(sink.clone()),
+                cancel: tokio_util::sync::CancellationToken::new(),
+                bot_user_id: Some("B123".to_string()),
+                pending_threads: std::collections::HashMap::new(),
+            });
+        }
+
+        // Slack sends `/model` with text "gpt-4o"
+        let body = b"command=%2Fmodel&text=gpt-4o&user_id=U123&channel_id=C456";
+        let result = handle_verified_command_webhook("acct1", body, &accounts).await;
+        assert!(result.is_ok(), "dispatch failed: {:?}", result);
+
+        let dispatched = sink.commands.lock().unwrap();
+        assert_eq!(dispatched.len(), 1);
+        assert_eq!(dispatched[0], "/model gpt-4o");
     }
 }

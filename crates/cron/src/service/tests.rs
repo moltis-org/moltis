@@ -62,6 +62,7 @@ async fn test_add_and_list() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -99,6 +100,7 @@ async fn test_add_validates_session_target() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -132,6 +134,7 @@ async fn test_update_job() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -174,6 +177,7 @@ async fn test_remove_job() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -224,6 +228,7 @@ async fn test_force_run() {
             payload: CronPayload::AgentTurn {
                 message: "go".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -261,6 +266,7 @@ async fn test_run_disabled_fails_without_force() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -344,6 +350,7 @@ async fn test_one_shot_disabled_after_run() {
             payload: CronPayload::AgentTurn {
                 message: "once".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -381,6 +388,7 @@ async fn test_rate_limiting() {
             max_per_window: 3,
             window_ms: 60_000,
         },
+        DEFAULT_WAKE_COOLDOWN_MS,
     );
 
     let create_job = || CronJobCreate {
@@ -393,6 +401,7 @@ async fn test_rate_limiting() {
         payload: CronPayload::AgentTurn {
             message: "hi".into(),
             model: None,
+            agent_id: None,
             timeout_secs: None,
             deliver: false,
             channel: None,
@@ -435,6 +444,7 @@ async fn test_rate_limiting_skips_system_jobs() {
             max_per_window: 1,
             window_ms: 60_000,
         },
+        DEFAULT_WAKE_COOLDOWN_MS,
     );
 
     let create_system_job = || CronJobCreate {
@@ -485,6 +495,7 @@ async fn test_start_executes_due_jobs_and_records_runs() {
             payload: CronPayload::AgentTurn {
                 message: "tick".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -535,6 +546,7 @@ async fn test_clear_stuck_jobs_handles_future_running_at_without_overflow() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -583,6 +595,7 @@ async fn test_wake_sets_next_run_at_now() {
         payload: CronPayload::AgentTurn {
             message: "heartbeat".into(),
             model: None,
+            agent_id: None,
             timeout_secs: None,
             deliver: false,
             channel: None,
@@ -624,6 +637,7 @@ async fn test_wake_noop_when_running() {
         payload: CronPayload::AgentTurn {
             message: "heartbeat".into(),
             model: None,
+            agent_id: None,
             timeout_secs: None,
             deliver: false,
             channel: None,
@@ -671,6 +685,7 @@ async fn test_wake_noop_when_disabled() {
         payload: CronPayload::AgentTurn {
             message: "heartbeat".into(),
             model: None,
+            agent_id: None,
             timeout_secs: None,
             deliver: false,
             channel: None,
@@ -725,6 +740,7 @@ async fn test_deliver_requires_channel_and_to() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: true,
                 channel: None,
@@ -762,6 +778,7 @@ async fn test_deliver_with_both_fields_succeeds() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: true,
                 channel: Some("telegram_bot".into()),
@@ -794,6 +811,7 @@ async fn test_deliver_false_allows_missing_channel() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -826,6 +844,7 @@ async fn test_deliver_empty_string_channel_fails() {
             payload: CronPayload::AgentTurn {
                 message: "hi".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: true,
                 channel: Some(String::new()),
@@ -844,5 +863,184 @@ async fn test_deliver_empty_string_channel_fails() {
         err.unwrap_err()
             .to_string()
             .contains("deliver=true requires")
+    );
+}
+
+#[tokio::test]
+async fn test_wake_noop_within_cooldown_after_last_run() {
+    let svc = make_heartbeat_svc().await;
+
+    // Set last_run_at_ms to 1 minute ago (within 5-min cooldown).
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 60_000);
+    })
+    .await;
+
+    let next_before = get_hb_next_run(&svc).await;
+
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
+
+    // next_run_at_ms should NOT have been updated — wake was skipped.
+    assert_eq!(get_hb_next_run(&svc).await, next_before);
+}
+
+#[tokio::test]
+async fn test_wake_allowed_after_cooldown_expires() {
+    let svc = make_heartbeat_svc().await;
+
+    // Set last_run_at_ms to 10 minutes ago (beyond 5-min cooldown).
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 10 * 60 * 1000);
+    })
+    .await;
+
+    let pre_wake = now_ms();
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
+    let post_wake = now_ms();
+
+    let new_next = get_hb_next_run(&svc).await.unwrap();
+    assert!(
+        new_next >= pre_wake && new_next <= post_wake,
+        "next_run_at_ms should be set to ~now, got {new_next}"
+    );
+}
+
+#[tokio::test]
+async fn test_wake_allowed_when_no_last_run() {
+    let svc = make_heartbeat_svc().await;
+
+    // No last_run_at_ms set — first-ever wake should proceed.
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
+
+    assert!(get_hb_next_run(&svc).await.is_some());
+}
+
+#[tokio::test]
+async fn test_wake_cron_event_bypasses_cooldown() {
+    let svc = make_heartbeat_svc().await;
+
+    // Set last_run_at_ms to 1 minute ago (within cooldown).
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 60_000);
+    })
+    .await;
+
+    let pre_wake = now_ms();
+    svc.wake(WAKE_REASON_CRON_EVENT).await;
+    let post_wake = now_ms();
+
+    // CronWakeMode::Now wakes must never be suppressed.
+    let new_next = get_hb_next_run(&svc).await.unwrap();
+    assert!(
+        new_next >= pre_wake && new_next <= post_wake,
+        "cron-event wake should not be suppressed by cooldown, got {new_next}"
+    );
+}
+
+/// Helper: create a service with a single heartbeat job and a far-future schedule.
+async fn make_heartbeat_svc() -> Arc<CronService> {
+    make_heartbeat_svc_with_cooldown(DEFAULT_WAKE_COOLDOWN_MS).await
+}
+
+/// Helper: create a service with a single heartbeat job, custom wake cooldown.
+async fn make_heartbeat_svc_with_cooldown(cooldown_ms: u64) -> Arc<CronService> {
+    let store = Arc::new(InMemoryStore::new());
+    let svc = CronService::with_config(
+        store,
+        noop_system_event(),
+        noop_agent_turn(),
+        None,
+        RateLimitConfig::default(),
+        cooldown_ms,
+    );
+    svc.add(CronJobCreate {
+        id: Some("__heartbeat__".into()),
+        name: "__heartbeat__".into(),
+        schedule: CronSchedule::Every {
+            every_ms: 999_999_999,
+            anchor_ms: None,
+        },
+        payload: CronPayload::AgentTurn {
+            message: "heartbeat".into(),
+            model: None,
+            agent_id: None,
+            timeout_secs: None,
+            deliver: false,
+            channel: None,
+            to: None,
+        },
+        session_target: SessionTarget::Named("heartbeat".into()),
+        delete_after_run: false,
+        enabled: true,
+        system: true,
+        sandbox: CronSandboxConfig::default(),
+        wake_mode: CronWakeMode::default(),
+    })
+    .await
+    .unwrap();
+    svc
+}
+
+/// Helper: get the heartbeat job's next_run_at_ms.
+async fn get_hb_next_run(svc: &Arc<CronService>) -> Option<u64> {
+    svc.list()
+        .await
+        .iter()
+        .find(|j| j.id == "__heartbeat__")
+        .and_then(|j| j.state.next_run_at_ms)
+}
+
+#[tokio::test]
+async fn test_custom_wake_cooldown_propagates_through_constructor() {
+    let svc = make_heartbeat_svc_with_cooldown(30_000).await;
+
+    // last_run 15 seconds ago — within 30s custom cooldown → wake suppressed.
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 15_000);
+    })
+    .await;
+
+    let next_before = get_hb_next_run(&svc).await;
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
+    assert_eq!(
+        get_hb_next_run(&svc).await,
+        next_before,
+        "wake should be suppressed within custom 30s cooldown"
+    );
+
+    // last_run 45 seconds ago — beyond 30s custom cooldown → wake proceeds.
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 45_000);
+    })
+    .await;
+
+    let pre_wake = now_ms();
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
+    let post_wake = now_ms();
+    let new_next = get_hb_next_run(&svc).await.unwrap();
+    assert!(
+        new_next >= pre_wake && new_next <= post_wake,
+        "wake should proceed after custom 30s cooldown expires"
+    );
+}
+
+#[tokio::test]
+async fn test_zero_wake_cooldown_disables_guard() {
+    let svc = make_heartbeat_svc_with_cooldown(0).await;
+
+    // last_run just 1 second ago — would be suppressed with any nonzero cooldown.
+    svc.update_job_state("__heartbeat__", |state| {
+        state.last_run_at_ms = Some(now_ms() - 1_000);
+    })
+    .await;
+
+    let pre_wake = now_ms();
+    svc.wake(WAKE_REASON_EXEC_EVENT).await;
+    let post_wake = now_ms();
+
+    let new_next = get_hb_next_run(&svc).await.unwrap();
+    assert!(
+        new_next >= pre_wake && new_next <= post_wake,
+        "wake should proceed when cooldown is zero (disabled)"
     );
 }

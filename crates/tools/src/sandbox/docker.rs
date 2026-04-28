@@ -2,7 +2,7 @@
 
 use {
     async_trait::async_trait,
-    std::collections::HashSet,
+    std::{collections::HashSet, sync::OnceLock},
     tokio::sync::Mutex,
     tracing::{debug, info, warn},
 };
@@ -51,7 +51,7 @@ pub(crate) enum BackendKind {
 /// behaviour branching without string comparisons.
 pub struct DockerSandbox {
     pub config: SandboxConfig,
-    kind: BackendKind,
+    pub(crate) kind: BackendKind,
     cli: &'static str,
     backend_label: &'static str,
     /// Container names that have already been provisioned in this process.
@@ -98,7 +98,7 @@ impl DockerSandbox {
         format!("{}-{}", self.container_prefix(), id.key)
     }
 
-    fn image_repo(&self) -> &str {
+    pub(crate) fn image_repo(&self) -> &str {
         self.container_prefix()
     }
 
@@ -220,27 +220,46 @@ impl DockerSandbox {
         // (serial numbers, BIOS/UEFI data, disk models, LUKS UUIDs).
         // Empty read-only tmpfs overlays hide the underlying sysfs entries.
         //
-        // Podman is excluded: its OCI runtime performs "tmpcopyup" on sysfs
+        // Skipped for Podman: its OCI runtime performs "tmpcopyup" on sysfs
         // tmpfs mounts, copying directory contents into the tmpfs first.
         // With --cap-drop ALL some sysfs files are permission-denied even for
         // root, causing the mount (and container startup) to fail.  Podman
         // already masks /sys/firmware via its built-in OCI MaskedPaths.
         if kind != BackendKind::Podman {
-            args.extend([
-                "--tmpfs".to_string(),
-                "/sys/firmware:ro,nosuid".to_string(),
-                "--tmpfs".to_string(),
-                "/sys/class/dmi:ro,nosuid".to_string(),
-                "--tmpfs".to_string(),
-                "/sys/devices/virtual/dmi:ro,nosuid".to_string(),
-                "--tmpfs".to_string(),
-                "/sys/class/block:ro,nosuid".to_string(),
-            ]);
+            for path in sysfs_paths_to_mask() {
+                args.extend(["--tmpfs".to_string(), format!("{path}:ro,nosuid")]);
+            }
         }
         if is_prebuilt {
             args.push("--read-only".to_string());
         }
         args
+    }
+
+    /// Mount the host `moltis-ctl` binary into the sandbox at `/usr/local/bin/moltis-ctl`.
+    ///
+    /// Locates the binary next to the current executable (same directory as `moltis`),
+    /// and if found, bind-mounts it read-only. This allows skills to call `moltis-ctl`
+    /// inside sandboxes to communicate with the gateway.
+    fn moltis_ctl_mount_args() -> Vec<String> {
+        let Ok(current_exe) = std::env::current_exe() else {
+            return Vec::new();
+        };
+        let Some(exe_dir) = current_exe.parent() else {
+            return Vec::new();
+        };
+        let ctl_binary = exe_dir.join("moltis-ctl");
+        if !ctl_binary.is_file() {
+            tracing::debug!(
+                path = %ctl_binary.display(),
+                "moltis-ctl binary not found next to server, skipping sandbox mount"
+            );
+            return Vec::new();
+        }
+        vec![
+            "-v".to_string(),
+            format!("{}:/usr/local/bin/moltis-ctl:ro", ctl_binary.display()),
+        ]
     }
 
     pub(crate) fn workspace_args(&self) -> Vec<String> {
@@ -306,6 +325,82 @@ impl DockerSandbox {
         };
         Ok(result.tag)
     }
+
+    /// Export an image from BuildKit's cache into the Podman store.
+    ///
+    /// When Podman delegates `podman build` to a BuildKit daemon the image may
+    /// land only in BuildKit's internal cache.  This method re-runs the build
+    /// with `--output type=docker,dest=<file>` (a BuildKit cache-hit, so
+    /// essentially free) and pipes the tarball into `podman load`.
+    async fn export_buildkit_image_to_store(
+        &self,
+        tag: &str,
+        dockerfile_path: &std::path::Path,
+        context_dir: &std::path::Path,
+    ) -> Result<()> {
+        let tar_path = std::env::temp_dir().join(format!(
+            "moltis-sandbox-export-{}.tar",
+            uuid::Uuid::new_v4()
+        ));
+
+        // Re-build with docker-archive output.  The `-t` flag embeds the
+        // correct tag in the archive so `podman load` names it correctly.
+        // BuildKit's layer cache makes this a near-instant cache hit for the
+        // same Dockerfile.
+        let export_output = tokio::process::Command::new(self.cli)
+            .args([
+                "build",
+                "--output",
+                &format!("type=docker,dest={}", tar_path.display()),
+                "-t",
+                tag,
+                "-f",
+            ])
+            .arg(dockerfile_path)
+            .arg(context_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await?;
+
+        if !export_output.status.success() {
+            let _ = std::fs::remove_file(&tar_path);
+            let stderr = String::from_utf8_lossy(&export_output.stderr);
+            return Err(Error::message(format!(
+                "podman build --output failed for {tag}: {}",
+                stderr.trim()
+            )));
+        }
+
+        // Load the tarball into the Podman store.
+        let load_output = tokio::process::Command::new(self.cli)
+            .args(["load", "-i"])
+            .arg(&tar_path)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await?;
+
+        let _ = std::fs::remove_file(&tar_path);
+
+        if !load_output.status.success() {
+            let stderr = String::from_utf8_lossy(&load_output.stderr);
+            return Err(Error::message(format!(
+                "podman load failed for {tag}: {}",
+                stderr.trim()
+            )));
+        }
+
+        // Final verification.
+        if !sandbox_image_exists(self.cli, tag).await {
+            return Err(Error::message(format!(
+                "image {tag} still missing from podman store after BuildKit export"
+            )));
+        }
+
+        info!(tag, "successfully exported BuildKit image to podman store");
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -356,6 +451,7 @@ impl Sandbox for DockerSandbox {
         args.extend(Self::hardening_args(is_prebuilt, self.kind));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
+        args.extend(Self::moltis_ctl_mount_args());
 
         args.push(image.clone());
         args.extend(["sleep".to_string(), "infinity".to_string()]);
@@ -443,11 +539,9 @@ impl Sandbox for DockerSandbox {
             .output()
             .await;
 
-        // Clean up temp dir regardless of result.
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-
         let output = output?;
         if !output.status.success() {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
             warn!(
@@ -466,6 +560,26 @@ impl Sandbox for DockerSandbox {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         debug!(tag, output = %tail_lines(&stdout, 20), "docker build output");
+
+        // Podman with BuildKit: the build may succeed (exit 0) but leave the
+        // image in BuildKit's internal cache instead of the Podman store.
+        // Verify the image is actually present and recover if not.
+        if self.kind == BackendKind::Podman && !sandbox_image_exists(self.cli, &tag).await {
+            warn!(
+                tag,
+                "podman build succeeded but image missing from store \
+                 (likely BuildKit delegation), exporting via tarball"
+            );
+            let export_result = self
+                .export_buildkit_image_to_store(&tag, &dockerfile_path, &tmp_dir)
+                .await;
+            // Clean up temp dir regardless of export result.
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            export_result?;
+        } else {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+        }
+
         info!(tag, "pre-built sandbox image ready");
         Ok(Some(BuildImageResult { tag, built: true }))
     }
@@ -638,6 +752,62 @@ impl Sandbox for NoSandbox {
     async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
         Ok(())
     }
+}
+
+/// Sysfs paths to mask with empty read-only tmpfs overlays.
+///
+/// On Linux, Docker shares the host kernel's sysfs.  Paths that don't exist
+/// on the host (ARM devices without DMI, WSL2, etc.) would cause Docker to
+/// fail with "mkdirat: read-only file system" when it tries to create
+/// mountpoints on the read-only sysfs.  We probe each path and only mount
+/// the ones that actually exist.
+///
+/// On non-Linux hosts (macOS), Docker Desktop runs in a Linux VM with full
+/// sysfs, so all paths are included unconditionally — the host `/sys` layout
+/// is irrelevant.
+pub(crate) const SYSFS_MASK_PATHS: &[&str] = &[
+    "/sys/firmware",
+    "/sys/class/dmi",
+    "/sys/devices/virtual/dmi",
+    "/sys/class/block",
+];
+
+pub(crate) fn sysfs_paths_to_mask() -> Vec<&'static str> {
+    static PATHS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    PATHS
+        .get_or_init(|| {
+            let paths = sysfs_paths_to_mask_from("/sys");
+            let skipped = SYSFS_MASK_PATHS.len() - paths.len();
+            if skipped > 0 {
+                warn!(
+                    skipped,
+                    "some sysfs mask paths do not exist on this host and will be skipped"
+                );
+            }
+            paths
+        })
+        .clone()
+}
+
+/// Testable inner helper: probes each `SYSFS_MASK_PATHS` entry and returns
+/// only those that exist under `sysfs_root`.  If `sysfs_root` itself doesn't
+/// exist (macOS), all paths are returned — Docker Desktop's VM will have them.
+pub(crate) fn sysfs_paths_to_mask_from(sysfs_root: &str) -> Vec<&'static str> {
+    let root = std::path::Path::new(sysfs_root);
+    if !root.exists() {
+        // Non-Linux host (macOS): Docker runs in a VM with full sysfs.
+        return SYSFS_MASK_PATHS.to_vec();
+    }
+    SYSFS_MASK_PATHS
+        .iter()
+        .copied()
+        .filter(|p| {
+            // Strip the canonical "/sys/" prefix so the path is relative,
+            // then probe under the supplied root (real or test tempdir).
+            let rel = p.strip_prefix("/sys/").unwrap_or(p);
+            root.join(rel).exists()
+        })
+        .collect()
 }
 
 /// Return `true` when the installed Podman version supports `host-gateway`

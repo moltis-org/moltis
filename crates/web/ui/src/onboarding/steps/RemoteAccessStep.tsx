@@ -2,6 +2,7 @@
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
+import { TabBar } from "../../components/forms/Tabs";
 import { t } from "../../i18n";
 import { targetValue } from "../../typed-events";
 import { ErrorPanel } from "../shared";
@@ -75,6 +76,7 @@ export function preferredPublicBaseUrl({
 
 // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: onboarding remote access manages two public endpoint integrations
 export function RemoteAccessStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }): VNode {
+	const [remoteTab, setRemoteTab] = useState("tailscale");
 	const [authReady, setAuthReady] = useState(false);
 	const [tsStatus, setTsStatus] = useState<TailscaleStatus | null>(null);
 	const [tsError, setTsError] = useState<string | null>(null);
@@ -260,140 +262,153 @@ export function RemoteAccessStep({ onNext, onBack }: { onNext: () => void; onBac
 				</div>
 			)}
 
-			<section className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-col gap-4">
-				<div className="flex flex-col gap-1">
-					<h3 className="text-base font-medium text-[var(--text-strong)]">Tailscale Funnel</h3>
+			<TabBar
+				tabs={[
+					{
+						id: "tailscale",
+						label: "Tailscale",
+						badge: tsLoading ? undefined : tailscaleFunnelEnabled ? "funnel" : undefined,
+					},
+					{ id: "ngrok", label: "ngrok", badge: ngLoading ? undefined : ngForm.enabled ? "on" : undefined },
+				]}
+				active={remoteTab}
+				onChange={setRemoteTab}
+			/>
+
+			{remoteTab === "tailscale" && (
+				<div className="flex flex-col gap-4">
 					<p className="text-xs text-[var(--muted)] leading-relaxed">
 						Public HTTPS through Tailscale. Tailscale Serve is tailnet-only, so Teams webhooks need Funnel instead.
 					</p>
+					{tsLoading ? (
+						<div className="text-xs text-[var(--muted)]">Loading Tailscale status&hellip;</div>
+					) : (
+						<div className="text-sm text-[var(--text-strong)]">
+							Tailscale Funnel is {tailscaleFunnelEnabled ? "enabled" : "disabled"}.
+						</div>
+					)}
+					{tsStatus?.url && tailscaleFunnelEnabled ? (
+						<a
+							href={tsStatus.url}
+							target="_blank"
+							rel="noopener"
+							className="text-sm text-[var(--accent)] underline break-all"
+						>
+							{tsStatus.url}
+						</a>
+					) : null}
+					{tsError ? <ErrorPanel message={tsError} /> : null}
+					{tsWarning ? <div className="alert-warning-text max-w-form">{tsWarning}</div> : null}
+					{tsStatus?.installed === false ? (
+						<a
+							href="https://tailscale.com/download"
+							target="_blank"
+							rel="noopener"
+							className="provider-btn self-start no-underline"
+						>
+							Install Tailscale
+						</a>
+					) : null}
+					{tsStatus?.tailscale_up === false ? (
+						<div className="alert-warning-text max-w-form">
+							<span className="alert-label-warn">Warning:</span> Start Tailscale before enabling Funnel.
+						</div>
+					) : null}
+					{authReady ? null : (
+						<div className="alert-warning-text max-w-form">
+							<span className="alert-label-warn">Warning:</span> Funnel can be enabled now, but remote visitors will see
+							the setup-required page until authentication is configured.
+						</div>
+					)}
+					<button
+						type="button"
+						className="provider-btn self-start"
+						disabled={tsLoading || configuringTailscale || tailscaleBlocked}
+						onClick={toggleTailscaleFunnel}
+					>
+						{configuringTailscale ? "Applying\u2026" : tailscaleFunnelEnabled ? "Disable Funnel" : "Enable Funnel"}
+					</button>
 				</div>
-				{tsLoading ? (
-					<div className="text-xs text-[var(--muted)]">Loading Tailscale status&hellip;</div>
-				) : (
-					<div className="text-sm text-[var(--text-strong)]">
-						Tailscale Funnel is {tailscaleFunnelEnabled ? "enabled" : "disabled"}.
-					</div>
-				)}
-				{tsStatus?.url && tailscaleFunnelEnabled ? (
-					<a
-						href={tsStatus.url}
-						target="_blank"
-						rel="noopener"
-						className="text-sm text-[var(--accent)] underline break-all"
-					>
-						{tsStatus.url}
-					</a>
-				) : null}
-				{tsError ? <ErrorPanel message={tsError} /> : null}
-				{tsWarning ? <div className="alert-warning-text max-w-form">{tsWarning}</div> : null}
-				{tsStatus?.installed === false ? (
-					<a
-						href="https://tailscale.com/download"
-						target="_blank"
-						rel="noopener"
-						className="provider-btn self-start no-underline"
-					>
-						Install Tailscale
-					</a>
-				) : null}
-				{tsStatus?.tailscale_up === false ? (
-					<div className="alert-warning-text max-w-form">
-						<span className="alert-label-warn">Warning:</span> Start Tailscale before enabling Funnel.
-					</div>
-				) : null}
-				{authReady ? null : (
-					<div className="alert-warning-text max-w-form">
-						<span className="alert-label-warn">Warning:</span> Funnel can be enabled now, but remote visitors will see
-						the setup-required page until authentication is configured.
-					</div>
-				)}
-				<button
-					type="button"
-					className="provider-btn self-start"
-					disabled={tsLoading || configuringTailscale || tailscaleBlocked}
-					onClick={toggleTailscaleFunnel}
-				>
-					{configuringTailscale ? "Applying\u2026" : tailscaleFunnelEnabled ? "Disable Funnel" : "Enable Funnel"}
-				</button>
-			</section>
+			)}
 
-			<section className="rounded-[var(--radius)] border border-[var(--border)] bg-[var(--surface)] p-4 flex flex-col gap-4">
-				<div className="flex flex-col gap-1">
-					<h3 className="text-base font-medium text-[var(--text-strong)]">ngrok</h3>
+			{remoteTab === "ngrok" && (
+				<div className="flex flex-col gap-4">
 					<p className="text-xs text-[var(--muted)] leading-relaxed">
 						Public HTTPS without installing an external binary. This is useful for demos, shared testing, and Teams.
 					</p>
-				</div>
-				{ngLoading ? (
-					<div className="text-xs text-[var(--muted)]">Loading ngrok status&hellip;</div>
-				) : (
-					<div className="text-sm text-[var(--text-strong)]">ngrok is {ngForm.enabled ? "enabled" : "disabled"}.</div>
-				)}
-				{ngStatus?.public_url ? (
-					<a
-						href={ngStatus.public_url}
-						target="_blank"
-						rel="noopener"
-						className="text-sm text-[var(--accent)] underline break-all"
-					>
-						{ngStatus.public_url}
-					</a>
-				) : null}
-				{ngError ? <ErrorPanel message={ngError} /> : null}
-				{ngStatus?.passkey_warning ? (
-					<div className="alert-warning-text max-w-form">{ngStatus.passkey_warning}</div>
-				) : null}
-				<div className="flex flex-col gap-1">
-					<label className="text-xs text-[var(--muted)]" htmlFor="onboarding-ngrok-authtoken">
-						Authtoken
-					</label>
-					<input
-						id="onboarding-ngrok-authtoken"
-						type="password"
-						className="provider-key-input w-full"
-						placeholder={
-							ngStatus?.authtoken_source ? "Leave blank to keep the current token" : "Paste your ngrok authtoken"
-						}
-						value={ngForm.authtoken}
-						onInput={(e) => setNgForm({ ...ngForm, authtoken: targetValue(e) })}
-					/>
-					<div className="text-xs text-[var(--muted)]">
-						Create or copy an authtoken from{" "}
+					{ngLoading ? (
+						<div className="text-xs text-[var(--muted)]">Loading ngrok status&hellip;</div>
+					) : (
+						<div className="text-sm text-[var(--text-strong)]">ngrok is {ngForm.enabled ? "enabled" : "disabled"}.</div>
+					)}
+					{ngStatus?.public_url ? (
 						<a
-							href="https://dashboard.ngrok.com/get-started/your-authtoken"
+							href={ngStatus.public_url}
 							target="_blank"
 							rel="noopener"
-							className="text-[var(--accent)] underline"
+							className="text-sm text-[var(--accent)] underline break-all"
 						>
-							ngrok dashboard
+							{ngStatus.public_url}
 						</a>
-						.
+					) : null}
+					{ngError ? <ErrorPanel message={ngError} /> : null}
+					{ngStatus?.passkey_warning ? (
+						<div className="alert-warning-text max-w-form">{ngStatus.passkey_warning}</div>
+					) : null}
+					<div className="flex flex-col gap-1">
+						<label className="text-xs text-[var(--muted)]" htmlFor="onboarding-ngrok-authtoken">
+							Authtoken
+						</label>
+						<input
+							id="onboarding-ngrok-authtoken"
+							type="password"
+							className="provider-key-input w-full"
+							placeholder={
+								ngStatus?.authtoken_source ? "Leave blank to keep the current token" : "Paste your ngrok authtoken"
+							}
+							value={ngForm.authtoken}
+							onInput={(e) => setNgForm({ ...ngForm, authtoken: targetValue(e) })}
+						/>
+						<div className="text-xs text-[var(--muted)]">
+							Create or copy an authtoken from{" "}
+							<a
+								href="https://dashboard.ngrok.com/get-started/your-authtoken"
+								target="_blank"
+								rel="noopener"
+								className="text-[var(--accent)] underline"
+							>
+								ngrok dashboard
+							</a>
+							.
+						</div>
 					</div>
+					<div className="flex flex-col gap-1">
+						<label className="text-xs text-[var(--muted)]" htmlFor="onboarding-ngrok-domain">
+							Reserved domain (optional)
+						</label>
+						<input
+							id="onboarding-ngrok-domain"
+							type="text"
+							className="provider-key-input w-full"
+							placeholder="team-gateway.ngrok.app"
+							value={ngForm.domain}
+							onInput={(e) => setNgForm({ ...ngForm, domain: targetValue(e) })}
+						/>
+						<div className="text-xs text-[var(--muted)]">
+							Use a reserved domain if you want a stable public hostname.
+						</div>
+					</div>
+					{ngMsg ? <div className="text-xs text-[var(--ok)]">{ngMsg}</div> : null}
+					<button
+						type="button"
+						className="provider-btn self-start"
+						disabled={!ngrokAvailable || ngLoading || ngSaving}
+						onClick={toggleNgrokEnabled}
+					>
+						{ngSaving ? "Applying\u2026" : ngForm.enabled ? "Disable ngrok" : "Enable ngrok"}
+					</button>
 				</div>
-				<div className="flex flex-col gap-1">
-					<label className="text-xs text-[var(--muted)]" htmlFor="onboarding-ngrok-domain">
-						Reserved domain (optional)
-					</label>
-					<input
-						id="onboarding-ngrok-domain"
-						type="text"
-						className="provider-key-input w-full"
-						placeholder="team-gateway.ngrok.app"
-						value={ngForm.domain}
-						onInput={(e) => setNgForm({ ...ngForm, domain: targetValue(e) })}
-					/>
-					<div className="text-xs text-[var(--muted)]">Use a reserved domain if you want a stable public hostname.</div>
-				</div>
-				{ngMsg ? <div className="text-xs text-[var(--ok)]">{ngMsg}</div> : null}
-				<button
-					type="button"
-					className="provider-btn self-start"
-					disabled={!ngrokAvailable || ngLoading || ngSaving}
-					onClick={toggleNgrokEnabled}
-				>
-					{ngSaving ? "Applying\u2026" : ngForm.enabled ? "Disable ngrok" : "Enable ngrok"}
-				</button>
-			</section>
+			)}
 
 			<div className="flex flex-wrap items-center gap-3 mt-1">
 				<button type="button" className="provider-btn provider-btn-secondary" onClick={onBack}>

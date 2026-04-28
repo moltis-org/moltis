@@ -715,14 +715,12 @@ impl LlmProvider for OpenAiCodexProvider {
                             text_buf.push_str(delta);
                         }
                     },
-                    "response.output_item.added" => {
-                        if evt["item"]["type"].as_str() == Some("function_call") {
-                            fn_call_ids
-                                .push(evt["item"]["call_id"].as_str().unwrap_or("").to_string());
-                            fn_call_names
-                                .push(evt["item"]["name"].as_str().unwrap_or("").to_string());
-                            fn_call_args.push(String::new());
-                        }
+                    "response.output_item.added"
+                        if evt["item"]["type"].as_str() == Some("function_call") =>
+                    {
+                        fn_call_ids.push(evt["item"]["call_id"].as_str().unwrap_or("").to_string());
+                        fn_call_names.push(evt["item"]["name"].as_str().unwrap_or("").to_string());
+                        fn_call_args.push(String::new());
                     },
                     "response.function_call_arguments.delta" => {
                         if let Some(delta) = evt["delta"].as_str()
@@ -937,16 +935,15 @@ impl LlmProvider for OpenAiCodexProvider {
                                     }
                                 }
                             }
-                            "response.output_item.added" => {
-                                // New output item - could be text or function_call
-                                if evt["item"]["type"].as_str() == Some("function_call") {
-                                    let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
-                                    let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
-                                    let index = current_tool_index;
-                                    current_tool_index += 1;
-                                    tool_calls.insert(index, (id.clone(), name.clone()));
-                                    yield StreamEvent::ToolCallStart { id, name, index, metadata: None };
-                                }
+                            "response.output_item.added"
+                                if evt["item"]["type"].as_str() == Some("function_call") =>
+                            {
+                                let id = evt["item"]["call_id"].as_str().unwrap_or("").to_string();
+                                let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
+                                let index = current_tool_index;
+                                current_tool_index += 1;
+                                tool_calls.insert(index, (id.clone(), name.clone()));
+                                yield StreamEvent::ToolCallStart { id, name, index, metadata: None };
                             }
                             "response.function_call_arguments.delta" => {
                                 if let Some(delta) = evt["delta"].as_str() {

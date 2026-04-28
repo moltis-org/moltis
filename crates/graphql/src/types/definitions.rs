@@ -329,6 +329,8 @@ pub struct Project {
     #[serde(default)]
     pub detected: Option<bool>,
     #[serde(default)]
+    pub code_index_enabled: Option<bool>,
+    #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,

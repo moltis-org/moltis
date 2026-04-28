@@ -89,7 +89,7 @@ test.describe("Provider setup page", () => {
 		const providerNames = page.locator("#providerModalBody .provider-item .provider-item-name");
 		await expect(providerNames.first()).toBeVisible();
 		const names = await providerNames.allTextContents();
-		const preferredOrder = ["Local LLM (Offline)", "GitHub Copilot", "OpenAI", "Anthropic", "Ollama"];
+		const preferredOrder = ["Anthropic", "OpenAI", "Ollama", "GitHub Copilot", "Local LLM (Offline)"];
 		const expectedVisible = preferredOrder.filter((name) => names.includes(name));
 		const actualVisible = names.filter((name) => expectedVisible.includes(name));
 		expect(actualVisible).toEqual(expectedVisible);

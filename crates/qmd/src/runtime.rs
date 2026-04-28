@@ -44,7 +44,7 @@ impl QmdMemoryRuntime {
     }
 
     async fn refresh_qmd_index(&self) -> anyhow::Result<()> {
-        Ok(self.manager.refresh_index(!self.disable_rag).await?)
+        self.manager.refresh_index(!self.disable_rag).await
     }
 
     async fn resolve_result_path(&self, result: &QmdSearchResult) -> anyhow::Result<String> {

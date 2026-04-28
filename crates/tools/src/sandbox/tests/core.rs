@@ -36,10 +36,16 @@ fn test_docker_hardening_args_prebuilt() {
         "sandbox",
         "--hostname value should be 'sandbox'"
     );
-    assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    // Sysfs masks are present (actual set depends on host — macOS includes
+    // all because /sys doesn't exist; Linux includes only existing paths).
+    // On macOS CI all four are present.
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    }
 }
 
 #[test]
@@ -53,7 +59,7 @@ fn test_docker_hardening_args_not_prebuilt() {
     assert!(!args.contains(&"--read-only".to_string()));
     // tmpfs mounts still present
     assert!(args.contains(&"/tmp:rw,nosuid,size=256m".to_string()));
-    // Host metadata isolation still present — all 4 sysfs masks + hostname
+    // Host metadata isolation still present — hostname
     let hostname_pos = args
         .iter()
         .position(|a| a == "--hostname")
@@ -63,10 +69,13 @@ fn test_docker_hardening_args_not_prebuilt() {
         "sandbox",
         "--hostname value should be 'sandbox'"
     );
-    assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    }
 }
 
 #[test]
@@ -95,6 +104,45 @@ fn test_docker_hardening_args_podman() {
     assert!(!args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
     assert!(!args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
     assert!(!args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+}
+
+#[test]
+fn test_sysfs_paths_to_mask_no_sysfs_root_returns_all() {
+    // When /sys doesn't exist (macOS), all paths should be returned because
+    // Docker Desktop runs in a Linux VM with full sysfs.
+    let paths = sysfs_paths_to_mask_from("/nonexistent/sysfs/root");
+    assert_eq!(paths, vec![
+        "/sys/firmware",
+        "/sys/class/dmi",
+        "/sys/devices/virtual/dmi",
+        "/sys/class/block",
+    ]);
+}
+
+#[test]
+fn test_sysfs_paths_to_mask_filters_missing_paths() {
+    // Simulate a Linux host where the sysfs root exists but specific
+    // subtrees are missing (e.g. ARM without DMI, or WSL2).
+    let dir = tempfile::tempdir().unwrap();
+    let sysfs_root = dir.path().join("sys");
+    // Create only /sys/firmware and /sys/class/block, skip DMI paths
+    // (simulates Raspberry Pi / ARM which lacks DMI).
+    std::fs::create_dir_all(sysfs_root.join("firmware")).unwrap();
+    std::fs::create_dir_all(sysfs_root.join("class/block")).unwrap();
+
+    let paths = sysfs_paths_to_mask_from(sysfs_root.to_str().unwrap());
+    // Only the two paths that exist under the tempdir sysfs root are returned.
+    assert_eq!(paths, vec!["/sys/firmware", "/sys/class/block"]);
+}
+
+#[test]
+fn test_sysfs_mask_paths_constant_contains_expected_entries() {
+    // Guard against accidentally removing paths from the constant.
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/firmware"));
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/class/dmi"));
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/devices/virtual/dmi"));
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/class/block"));
+    assert_eq!(SYSFS_MASK_PATHS.len(), 4);
 }
 
 #[test]
@@ -599,6 +647,20 @@ async fn test_provisioning_guard_independent_containers() {
     let guard = docker.provisioned.lock().await;
     assert!(guard.contains("container-a"));
     assert!(!guard.contains("container-b"));
+}
+
+#[test]
+fn test_podman_build_verifies_image_in_store() {
+    // The Podman constructor must set `kind = BackendKind::Podman` so the
+    // post-build verification branch in `build_image` activates.
+    let sandbox = DockerSandbox::podman(SandboxConfig::default());
+    assert_eq!(sandbox.kind, BackendKind::Podman);
+    assert_eq!(sandbox.backend_name(), "podman");
+
+    // Docker constructor must NOT be Podman.
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    assert_eq!(docker.kind, BackendKind::Docker);
+    assert_ne!(docker.kind, BackendKind::Podman);
 }
 
 #[test]

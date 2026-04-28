@@ -1,4 +1,5 @@
 // ── Helpers ──────────────────────────────────────────────────
+import { Marked, Renderer, type Token } from "marked";
 import { hasTranslation, t } from "./i18n";
 import * as S from "./state";
 import type { RpcResponse } from "./types";
@@ -8,11 +9,6 @@ declare global {
 	interface Window {
 		webkitAudioContext?: typeof AudioContext;
 	}
-}
-
-interface CodeBlock {
-	lang: string;
-	code: string;
 }
 
 interface TableParseResult {
@@ -187,39 +183,6 @@ function buildTableHtml(headerCells: string[], bodyRows: string[][]): string {
 	return `<div class="msg-table-wrap"><table class="msg-table">${thead}${tbody}</table></div>`;
 }
 
-function isMarkdownPipeRow(line: string): boolean {
-	if (!stripAnsi(line).includes("|")) return false;
-	return splitPipeCells(line).length >= 2;
-}
-
-function isMarkdownSeparatorRow(line: string, expectedCols: number): boolean {
-	const cells = splitPipeCells(line);
-	if (cells.length !== expectedCols) return false;
-	return cells.every((cell) => /^:?-{3,}:?$/.test(cell));
-}
-
-function parseMarkdownTable(lines: string[], start: number): TableParseResult | null {
-	if (start + 1 >= lines.length) return null;
-	if (!isMarkdownPipeRow(lines[start])) return null;
-	const headerCells = splitPipeCells(lines[start]);
-	if (headerCells.length < 2) return null;
-	if (!isMarkdownSeparatorRow(lines[start + 1], headerCells.length)) return null;
-
-	const bodyRows: string[][] = [];
-	let next = start + 2;
-	while (next < lines.length) {
-		const candidate = lines[next];
-		if (!candidate.trim()) break;
-		if (!isMarkdownPipeRow(candidate)) break;
-		bodyRows.push(splitPipeCells(candidate));
-		next++;
-	}
-	return {
-		html: buildTableHtml(headerCells, bodyRows),
-		next: next,
-	};
-}
-
 function isAsciiBorderRow(line: string): boolean {
 	return /^\+(?:[-=]+\+)+$/.test(stripAnsi(line).trim());
 }
@@ -251,48 +214,66 @@ function parseAsciiTable(lines: string[], start: number): TableParseResult | nul
 	};
 }
 
-function renderTables(s: string): string {
+/** Convert ASCII-bordered tables (+---+---+ style) to HTML. Pipe tables are handled by marked. */
+/** Extract ASCII tables into placeholders, returning the modified text and table HTML map. */
+function extractAsciiTables(s: string): { text: string; tables: string[] } {
 	const lines = s.split("\n");
 	const out: string[] = [];
+	const tables: string[] = [];
 	for (let i = 0; i < lines.length; ) {
-		const markdownTable = parseMarkdownTable(lines, i);
-		if (markdownTable) {
-			out.push(markdownTable.html);
-			i = markdownTable.next;
-			continue;
-		}
-
 		const asciiTable = parseAsciiTable(lines, i);
 		if (asciiTable) {
-			out.push(asciiTable.html);
+			out.push(`@@MOLTIS_ASCII_TABLE_${tables.length}@@`);
+			tables.push(asciiTable.html);
 			i = asciiTable.next;
 			continue;
 		}
-
 		out.push(lines[i]);
 		i++;
 	}
-	return out.join("\n");
+	return { text: out.join("\n"), tables };
 }
 
+/** Only allow safe URL protocols for rendered links. */
+function sanitizeHref(href: string): string {
+	const trimmed = href.trim();
+	if (/^(https?:|mailto:|#)/i.test(trimmed)) return trimmed;
+	return "#";
+}
+
+/** Custom marked renderer that applies our CSS classes. */
+const mdRenderer = new Renderer();
+mdRenderer.code = ({ text, lang }) => {
+	const langAttr = lang ? ` data-lang="${esc(lang)}"` : "";
+	const badge = lang ? `<div class="code-lang-badge">${esc(lang)}</div>` : "";
+	return `<pre class="code-block">${badge}<code${langAttr}>${esc(text)}</code></pre>\n`;
+};
+mdRenderer.table = function (token) {
+	const renderCell = (cell: { tokens: Token[] }) => this.parser.parseInline(cell.tokens);
+	const header = token.header.map((cell: { tokens: Token[] }) => `<th>${renderCell(cell)}</th>`).join("");
+	const body = token.rows
+		.map(
+			(row: { tokens: Token[] }[]) =>
+				`<tr>${row.map((cell: { tokens: Token[] }) => `<td>${renderCell(cell)}</td>`).join("")}</tr>`,
+		)
+		.join("");
+	return `<div class="msg-table-wrap"><table class="msg-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table></div>\n`;
+};
+mdRenderer.link = ({ href, text }) => {
+	return `<a href="${sanitizeHref(href)}" target="_blank" rel="noopener noreferrer">${text}</a>`;
+};
+
+mdRenderer.html = ({ text }) => esc(text);
+
+const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
+
 export function renderMarkdown(raw: string): string {
-	let s = esc(raw);
-	const codeBlocks: CodeBlock[] = [];
-	s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_: string, lang: string, code: string) => {
-		codeBlocks.push({ lang: lang, code: code });
-		return `@@MOLTIS_CODE_BLOCK_${codeBlocks.length - 1}@@`;
-	});
-	s = renderTables(s);
-	s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
-	s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-	s = s.replace(/@@MOLTIS_CODE_BLOCK_(\d+)@@/g, (_: string, idx: string) => {
-		const block = codeBlocks[Number(idx)];
-		if (!block) return "";
-		const langAttr = block.lang ? ` data-lang="${block.lang}"` : "";
-		const badge = block.lang ? `<div class="code-lang-badge">${block.lang}</div>` : "";
-		return `<pre class="code-block">${badge}<code${langAttr}>${block.code}</code></pre>`;
-	});
-	return s;
+	// Extract ASCII tables as placeholders before marked processes the text.
+	// Re-insert after marked is done so the HTML doesn't get escaped.
+	const { text, tables } = extractAsciiTables(raw);
+	let result = markedInstance.parse(text) as string;
+	result = result.replace(/@@MOLTIS_ASCII_TABLE_(\d+)@@/g, (_: string, idx: string) => tables[Number(idx)] || "");
+	return result;
 }
 
 export function sendRpc<T = unknown>(method: string, params: unknown): Promise<RpcResponse<T>> {

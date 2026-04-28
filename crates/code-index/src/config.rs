@@ -1,8 +1,6 @@
 //! Configuration for codebase indexing.
 
-use std::sync::LazyLock;
-
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::LazyLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -128,6 +126,43 @@ impl Default for CodeIndexConfig {
             skip_binary: true,
             skip_paths: DEFAULT_SKIP_PATHS.clone(),
             data_dir: None,
+        }
+    }
+}
+
+impl From<&moltis_config::CodeIndexTomlConfig> for CodeIndexConfig {
+    fn from(toml: &moltis_config::CodeIndexTomlConfig) -> Self {
+        let max_file_size_bytes = moltis_config::parse_byte_size(&toml.max_file_size)
+            .unwrap_or_else(|e| {
+                #[cfg(feature = "tracing")]
+                tracing::warn!(
+                    max_file_size = %toml.max_file_size,
+                    error = %e,
+                    "code-index: invalid max_file_size, falling back to 1MB"
+                );
+                #[cfg(not(feature = "tracing"))]
+                let _ = (&toml.max_file_size, &e);
+                DEFAULT_MAX_FILE_SIZE_BYTES
+            });
+
+        Self {
+            enabled: toml.enabled,
+            extensions: if toml.extensions.is_empty() {
+                DEFAULT_EXTENSIONS.clone()
+            } else {
+                toml.extensions.clone()
+            },
+            max_file_size_bytes,
+            skip_binary: toml.skip_binary,
+            skip_paths: if toml.skip_paths.is_empty() {
+                DEFAULT_SKIP_PATHS.clone()
+            } else {
+                // Prepend defaults so user paths are appended, not replaced.
+                let mut paths = DEFAULT_SKIP_PATHS.clone();
+                paths.extend(toml.skip_paths.iter().cloned());
+                paths
+            },
+            data_dir: toml.data_dir.as_ref().map(PathBuf::from),
         }
     }
 }

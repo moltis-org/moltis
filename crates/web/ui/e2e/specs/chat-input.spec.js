@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, openChatMoreModal, waitForWsConnected, watchPageErrors } = require("../helpers");
+const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 function isRetryableRpcError(message) {
 	if (typeof message !== "string") return false;
@@ -196,7 +196,6 @@ async function fullContextPanelState(copyBtn, copiedBtn, downloadBtn, llmOutputB
 }
 
 async function openFullContextWithRetry(page) {
-	const chatMoreModal = page.locator("#chatMoreModal");
 	const fullContextModal = page.locator("#fullContextModal");
 	const toggleBtn = page.locator("#fullContextBtn");
 	const panel = page.locator("#fullContextPanel");
@@ -210,10 +209,8 @@ async function openFullContextWithRetry(page) {
 		await waitForWsConnectedIfPossible(page);
 		await closeFullContextIfOpen(page, fullContextModal);
 
-		await openChatMoreModal(page);
 		await expect(toggleBtn).toBeVisible({ timeout: 8_000 });
 		await toggleBtn.click();
-		await expect(chatMoreModal).toBeHidden({ timeout: 8_000 });
 		await expect(fullContextModal).toBeVisible({ timeout: 8_000 });
 		await expect(panel).toBeVisible();
 
@@ -356,6 +353,7 @@ test.describe("Chat input and slash commands", () => {
 			})
 			.toBeGreaterThan(0);
 		await expect(slashMenu).toContainText("/sh");
+		await expect(slashMenu).toContainText("/mode");
 	});
 
 	test("slash menu filters as user types", async ({ page }) => {
@@ -436,6 +434,33 @@ test.describe("Chat input and slash commands", () => {
 		await expect(prompt).toBeHidden();
 		await expect(chatInput).toHaveAttribute("placeholder", "Type a message...");
 		await expect(tokenBar).not.toContainText("/sh mode");
+	});
+
+	test("/mode switches the active session mode", async ({ page }) => {
+		const chatInput = page.locator("#chatInput");
+		try {
+			await chatInput.fill("/mode concise");
+			await chatInput.press("Enter");
+			await expect(page.locator("#messages")).toContainText("Mode:", { timeout: 10_000 });
+			await expect
+				.poll(
+					async () => {
+						const response = await sendRpcFromPage(page, "sessions.list", {});
+						const payload = response?.payload;
+						const sessions = Array.isArray(payload)
+							? payload
+							: Array.isArray(payload?.sessions)
+								? payload.sessions
+								: [];
+						const main = sessions.find((session) => session?.key === "main");
+						return main?.mode_id || main?.modeId || "";
+					},
+					{ timeout: 10_000 },
+				)
+				.toBe("concise");
+		} finally {
+			await sendRpcFromPage(page, "modes.set_session", { session_key: "main", mode_id: null });
+		}
 	});
 
 	test("command mode prefixes outgoing user message with /sh", async ({ page }) => {

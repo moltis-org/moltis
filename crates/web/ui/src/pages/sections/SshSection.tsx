@@ -3,6 +3,7 @@
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { Badge, EmptyState, Loading } from "../../components/forms";
+import { TabBar } from "../../components/forms/Tabs";
 import * as gon from "../../gon";
 import { localizedApiErrorMessage } from "../../helpers";
 import { targetChecked, targetValue } from "../../typed-events";
@@ -409,34 +410,35 @@ export function SshSection(): VNode {
 			.catch((error: Error) => setError(error.message));
 	}
 
+	const [sshTab, setSshTab] = useState("keys");
+
+	const sshTabs = [
+		{ id: "keys", label: "Deploy Keys", badge: keys.length || undefined },
+		{ id: "targets", label: "Targets", badge: targets.length || undefined },
+	];
+
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">SSH</h2>
-			<div className="rounded border border-[var(--border)] bg-[var(--surface2)] p-3 max-w-[760px]">
-				<p className="text-xs text-[var(--muted)] m-0 mb-1.5 leading-relaxed">
-					Manage outbound SSH keys and named remote exec targets. Generated deploy keys use{" "}
-					<strong className="text-[var(--text)]">Ed25519</strong>, the private half stays inside Moltis, and the public
-					half is shown so you can install it in <code className="text-[var(--text)]">authorized_keys</code>.
-				</p>
-				<p className="text-xs text-[var(--muted)] m-0 leading-relaxed">
-					Current auth path:
-					<strong className="text-[var(--text)]">
-						{vaultStatus === "unsealed"
-							? " vault-backed managed keys are available"
-							: vaultStatus === "sealed"
-								? " vault is locked, managed keys cannot be used until unlocked"
-								: " system OpenSSH remains available, managed keys stay plaintext until the vault is enabled"}
-					</strong>
-				</p>
-			</div>
+			<p className="text-xs text-[var(--muted)] leading-relaxed max-w-[760px]" style={{ margin: 0 }}>
+				Manage outbound SSH keys and named remote exec targets. Current auth path:
+				<strong className="text-[var(--text)]">
+					{vaultStatus === "unsealed"
+						? " vault-backed managed keys are available"
+						: vaultStatus === "sealed"
+							? " vault is locked, managed keys cannot be used until unlocked"
+							: " system OpenSSH remains available, managed keys stay plaintext until the vault is enabled"}
+				</strong>
+			</p>
 
 			{sshMsg ? <div className="text-xs text-[var(--accent)]">{sshMsg}</div> : null}
 			{sshErr ? <div className="text-xs text-[var(--error)]">{sshErr}</div> : null}
 
-			<div className="grid gap-4 lg:grid-cols-2 max-w-[1100px]">
-				<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
-					<h3 className="text-sm font-medium text-[var(--text-strong)] m-0 mb-2">Deploy Keys</h3>
-					<p className="text-xs text-[var(--muted)] m-0 mb-3">
+			<TabBar tabs={sshTabs} active={sshTab} onChange={setSshTab} />
+
+			{sshTab === "keys" && (
+				<div className="flex flex-col gap-4 max-w-[760px]">
+					<p className="text-xs text-[var(--muted)] m-0">
 						Generate a new keypair for a host, or import an existing private key. Passphrase-protected imports are
 						decrypted once and then stored under Moltis control.
 					</p>
@@ -533,12 +535,12 @@ export function SshSection(): VNode {
 						)}
 					</div>
 				</div>
+			)}
 
-				<div className="rounded border border-[var(--border)] bg-[var(--surface)] p-4">
-					<h3 className="text-sm font-medium text-[var(--text-strong)] m-0 mb-2">SSH Targets</h3>
-					<p className="text-xs text-[var(--muted)] m-0 mb-3">
-						Add named hosts for remote execution. Targets can use your system OpenSSH setup or one of the managed keys
-						above.
+			{sshTab === "targets" && (
+				<div className="flex flex-col gap-4 max-w-[760px]">
+					<p className="text-xs text-[var(--muted)] m-0">
+						Add named hosts for remote execution. Targets can use your system OpenSSH setup or one of the managed keys.
 					</p>
 					<form onSubmit={onCreateTarget} className="flex flex-col gap-2 mb-4">
 						<input
@@ -725,7 +727,7 @@ export function SshSection(): VNode {
 						)}
 					</div>
 				</div>
-			</div>
+			)}
 		</div>
 	);
 }

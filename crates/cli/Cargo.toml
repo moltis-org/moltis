@@ -103,11 +103,14 @@ tempfile = { workspace = true }
 [features]
 agent  = ["moltis-gateway/agent", "moltis-web?/agent"]
 caldav = ["moltis-gateway/caldav"]
+home-assistant = ["moltis-gateway/home-assistant"]
 # User-facing integrations stay default-on in the CLI crate per workspace policy,
 # even when the underlying implementation remains feature-gated in lower crates.
 default = [
   "agent",
+  "bundled-skills",
   "caldav",
+  "home-assistant",
   "code-splitter",
   "file-watcher",
   "firecrawl",
@@ -126,6 +129,7 @@ default = [
   "prometheus",
   "push-notifications",
   "qmd",
+  "signal",
   "slack",
   "tailscale",
   "tls",
@@ -135,6 +139,7 @@ default = [
   "web-ui",
   "whatsapp",
 ]
+bundled-skills  = ["moltis-gateway/bundled-skills", "moltis-web?/bundled-skills"]
 llm-compaction = ["moltis-gateway/llm-compaction"]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
@@ -173,6 +178,7 @@ openclaw-import    = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-imp
 prometheus         = ["moltis-httpd/prometheus"]
 push-notifications = ["moltis-httpd/push-notifications", "moltis-web?/push-notifications"]
 qmd                = ["moltis-gateway/qmd"]
+signal             = ["moltis-httpd/signal"]
 slack              = ["moltis-httpd/slack"]
 tailscale          = ["moltis-httpd/tailscale", "moltis-web?/tailscale"]
 tls                = ["moltis-httpd/tls"]

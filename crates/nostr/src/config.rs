@@ -63,6 +63,10 @@ pub struct NostrAccountConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
 
+    /// Agent ID override for this account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+
     /// Enable OTP self-approval for non-allowlisted DM users.
     pub otp_self_approval: bool,
 
@@ -81,6 +85,7 @@ impl Default for NostrAccountConfig {
             profile: None,
             model: None,
             model_provider: None,
+            agent_id: None,
             otp_self_approval: true,
             otp_cooldown_secs: 300,
         }
@@ -106,6 +111,7 @@ impl std::fmt::Debug for NostrAccountConfig {
             .field("profile", &self.profile)
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
+            .field("agent_id", &self.agent_id)
             .field("otp_self_approval", &self.otp_self_approval)
             .field("otp_cooldown_secs", &self.otp_cooldown_secs)
             .finish()
@@ -118,7 +124,9 @@ pub struct RedactedConfig<'a>(pub &'a NostrAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut s = serializer.serialize_struct("NostrAccountConfig", 10)?;
+        let mut count = 10;
+        count += c.agent_id.is_some() as usize;
+        let mut s = serializer.serialize_struct("NostrAccountConfig", count)?;
         s.serialize_field("secret_key", "[REDACTED]")?;
         s.serialize_field("relays", &c.relays)?;
         s.serialize_field("dm_policy", &c.dm_policy)?;
@@ -127,6 +135,9 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("profile", &c.profile)?;
         s.serialize_field("model", &c.model)?;
         s.serialize_field("model_provider", &c.model_provider)?;
+        if c.agent_id.is_some() {
+            s.serialize_field("agent_id", &c.agent_id)?;
+        }
         s.serialize_field("otp_self_approval", &c.otp_self_approval)?;
         s.serialize_field("otp_cooldown_secs", &c.otp_cooldown_secs)?;
         s.end()
@@ -157,6 +168,10 @@ impl ChannelConfigView for NostrAccountConfig {
 
     fn model_provider(&self) -> Option<&str> {
         self.model_provider.as_deref()
+    }
+
+    fn agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref()
     }
 }
 

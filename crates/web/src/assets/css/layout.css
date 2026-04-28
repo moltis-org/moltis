@@ -98,7 +98,27 @@
   height: 14px;
 }
 
+.header-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  line-height: 1;
+  min-width: 16px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  background: var(--border);
+  color: var(--muted);
+  font-weight: 500;
+  text-align: center;
+}
+
+.header-badge:empty {
+  display: none;
+}
+
 /* ── Model Dropdown ── */
+
+/* Toolbar needs a stacking context so dropdowns render above the messages grid row. */
+.chat-toolbar { position: relative; z-index: 30; }
 
 .model-combo { position: relative; }
 .model-combo.hidden { display: none; }

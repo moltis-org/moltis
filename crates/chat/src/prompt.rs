@@ -6,12 +6,11 @@ use {serde_json::Value, tracing::warn};
 
 use {
     moltis_agents::prompt::{
-        PromptBuildLimits, PromptHostRuntimeContext, PromptNodeInfo, PromptNodesRuntimeContext,
-        PromptRuntimeContext, PromptSandboxRuntimeContext,
+        PromptBuildLimits, PromptHostRuntimeContext, PromptModeRuntimeContext, PromptNodeInfo,
+        PromptNodesRuntimeContext, PromptRuntimeContext, PromptSandboxRuntimeContext,
     },
     moltis_config::{AgentMemoryWriteMode, LoadedWorkspaceMarkdown, MemoryStyle, PromptMemoryMode},
     moltis_sessions::{metadata::SessionEntry, state_store::SessionStateStore},
-    moltis_skills::discover::SkillDiscoverer,
     moltis_tools::policy::{PolicyContext, resolve_effective_policy},
 };
 
@@ -87,9 +86,6 @@ pub(crate) fn resolve_prompt_agent_id(session_entry: Option<&SessionEntry>) -> S
     else {
         return "main".to_string();
     };
-    if agent_id == "main" {
-        return "main".to_string();
-    }
     if moltis_config::agent_workspace_dir(agent_id).exists() {
         return agent_id.to_string();
     }
@@ -101,24 +97,35 @@ pub(crate) fn resolve_prompt_agent_id(session_entry: Option<&SessionEntry>) -> S
     "main".to_string()
 }
 
+pub(crate) fn resolve_prompt_mode_context(
+    config: &moltis_config::MoltisConfig,
+    session_entry: Option<&SessionEntry>,
+) -> Option<PromptModeRuntimeContext> {
+    let mode_id = session_entry?
+        .mode_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let mode = config.modes.get_preset(mode_id)?;
+    let prompt = mode.prompt.trim();
+    if prompt.is_empty() {
+        return None;
+    }
+    Some(PromptModeRuntimeContext {
+        id: mode_id.to_string(),
+        name: mode.name.clone().unwrap_or_else(|| mode_id.to_string()),
+        prompt: prompt.to_string(),
+    })
+}
+
 /// Load identity, user profile, soul, and workspace text for one agent.
 pub(crate) fn load_prompt_persona_base_for_agent(agent_id: &str) -> PromptPersona {
     let config = moltis_config::discover_and_load();
     let prompt_memory_mode = config.chat.prompt_memory_mode;
     let agent_write_mode = config.memory.agent_write_mode;
     let memory_style = config.memory.style;
-    let mut identity = config.identity.clone();
-    if let Some(file_identity) = moltis_config::load_identity_for_agent(agent_id) {
-        if file_identity.name.is_some() {
-            identity.name = file_identity.name;
-        }
-        if file_identity.emoji.is_some() {
-            identity.emoji = file_identity.emoji;
-        }
-        if file_identity.theme.is_some() {
-            identity.theme = file_identity.theme;
-        }
-    }
+    let identity =
+        moltis_config::load_identity_for_agent(agent_id).unwrap_or_else(|| config.identity.clone());
     let user = moltis_config::resolve_user_profile_from_config(&config);
     PromptPersona {
         config,
@@ -246,6 +253,7 @@ pub(crate) fn prompt_build_limits_from_config(
 ) -> PromptBuildLimits {
     PromptBuildLimits {
         workspace_file_max_chars: config.chat.workspace_file_max_chars,
+        enable_skill_self_improvement: config.skills.enable_self_improvement,
     }
 }
 
@@ -260,10 +268,43 @@ pub(crate) async fn discover_skills_if_enabled(
     if !config.skills.enabled {
         return Vec::new();
     }
-    let search_paths = moltis_skills::discover::FsSkillDiscoverer::default_paths();
-    let discoverer = moltis_skills::discover::FsSkillDiscoverer::new(search_paths);
-    match discoverer.discover().await {
-        Ok(skills) => skills,
+    let fs_discoverer = moltis_skills::discover::FsSkillDiscoverer::new(
+        moltis_skills::discover::FsSkillDiscoverer::default_paths(),
+    );
+
+    #[cfg(feature = "bundled-skills")]
+    let skills = {
+        use moltis_skills::discover::SkillDiscoverer;
+        let bundled = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+        let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
+            Box::new(fs_discoverer),
+            bundled,
+        );
+        composite.discover().await
+    };
+    #[cfg(not(feature = "bundled-skills"))]
+    let skills = {
+        use moltis_skills::discover::SkillDiscoverer;
+        fs_discoverer.discover().await
+    };
+
+    let disabled_cats = &config.skills.disabled_bundled_categories;
+
+    match skills {
+        Ok(skills) if disabled_cats.is_empty() => skills,
+        Ok(skills) => skills
+            .into_iter()
+            .filter(|s| {
+                // Only filter bundled skills; non-bundled skills pass through.
+                if s.source != Some(moltis_skills::types::SkillSource::Bundled) {
+                    return true;
+                }
+                // Keep the skill if its category is not in the disabled list.
+                s.category
+                    .as_deref()
+                    .is_none_or(|cat| !disabled_cats.iter().any(|d| d == cat))
+            })
+            .collect(),
         Err(e) => {
             warn!("failed to discover skills: {e}");
             Vec::new()
@@ -439,6 +480,7 @@ pub(crate) async fn build_prompt_runtime_context(
         host: host_ctx,
         sandbox: sandbox_ctx,
         nodes: nodes_ctx,
+        mode: None,
     }
 }
 

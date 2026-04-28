@@ -163,20 +163,19 @@ async fn send_and_receive_dm() {
         tokio::select! {
             Ok(notification) = notifications.recv() => {
                 match notification {
-                    RelayPoolNotification::Event { event, .. } => {
+                    RelayPoolNotification::Event { event, .. }
                         if event.kind == Kind::EncryptedDirectMessage
-                            && event.pubkey == sender_keys.public_key()
-                        {
-                            let decrypted = nip04::decrypt(
-                                bot_keys.secret_key(),
-                                &event.pubkey,
-                                &event.content,
-                            ).expect("decrypt");
-                            println!("Received DM via Event: {decrypted}");
-                            assert_eq!(decrypted, test_msg);
-                            received = true;
-                            break;
-                        }
+                            && event.pubkey == sender_keys.public_key() =>
+                    {
+                        let decrypted = nip04::decrypt(
+                            bot_keys.secret_key(),
+                            &event.pubkey,
+                            &event.content,
+                        ).expect("decrypt");
+                        println!("Received DM via Event: {decrypted}");
+                        assert_eq!(decrypted, test_msg);
+                        received = true;
+                        break;
                     },
                     RelayPoolNotification::Message { message: RelayMessage::Event { event, .. }, .. }
                         if event.kind == Kind::EncryptedDirectMessage

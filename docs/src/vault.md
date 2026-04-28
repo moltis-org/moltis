@@ -137,6 +137,7 @@ Currently encrypted:
 |------|---------|-----|
 | Environment variables (`env_variables` table) | SQLite | `env:{key}` |
 | Managed SSH private keys (`ssh_keys` table) | SQLite | `ssh-key:{name}` |
+| Provider API keys (`provider_keys.json.enc`) | File | `provider_keys` |
 
 The `encrypted` column in `env_variables` and `ssh_keys` tracks whether each
 row is encrypted (1) or plaintext (0). When the vault is unsealed, new env vars
@@ -147,12 +148,15 @@ uninitialized, they are written as plaintext.
 
 On the first successful vault unseal after enabling the feature, Moltis also
 migrates any previously stored plaintext env vars and managed SSH private keys
-to encrypted storage in-place.
+to encrypted storage in-place. Provider API keys (`provider_keys.json`) are
+encrypted to a `.enc` copy alongside the original; the plaintext file is kept
+for backward compatibility until all consumers use the vault-aware read path.
+Voice provider API keys are now stored in `provider_keys.json` (same as LLM
+keys), not in `moltis.toml`.
 
 ```admonish info title="Planned"
-KeyStore (provider API keys in `provider_keys.json`) and TokenStore
-(OAuth tokens in `credentials.json`) are currently sync/file-based and
-cannot easily call async vault methods. Encryption for these stores is
+TokenStore (OAuth tokens in `credentials.json`) is currently sync/file-based
+and cannot easily call async vault methods. Encryption for this store is
 planned after an async refactor.
 ```
 

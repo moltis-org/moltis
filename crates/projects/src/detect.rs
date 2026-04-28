@@ -129,6 +129,7 @@ pub fn detect_project(dir: &Path) -> Option<Project> {
         branch_prefix: None,
         sandbox_image: None,
         detected: true,
+        code_index_enabled: true,
         created_at: now,
         updated_at: now,
     })

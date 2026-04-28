@@ -64,6 +64,10 @@ pub fn all_commands() -> &'static [CommandDef] {
             description: "Switch session agent",
         },
         CommandDef {
+            name: "mode",
+            description: "Switch session mode",
+        },
+        CommandDef {
             name: "model",
             description: "Switch provider/model",
         },
@@ -190,6 +194,7 @@ mod tests {
             "approve",
             "deny",
             "agent",
+            "mode",
             "model",
             "sandbox",
             "sh",

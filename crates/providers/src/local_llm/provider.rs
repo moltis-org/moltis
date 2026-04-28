@@ -1,4 +1,8 @@
-use std::{path::PathBuf, pin::Pin};
+use std::{
+    path::PathBuf,
+    pin::Pin,
+    sync::atomic::{AtomicI64, Ordering},
+};
 
 use {
     anyhow::Result, async_trait::async_trait, tokio::sync::RwLock, tokio_stream::Stream,
@@ -45,11 +49,20 @@ impl Default for LocalLlmConfig {
 /// Local LLM provider with lazy loading.
 ///
 /// Automatically selects the best backend for the current platform and
-/// loads the model on first use.
+/// loads the model on first use. Supports on-demand unloading to free RAM.
 pub struct LocalLlmProvider {
     config: LocalLlmConfig,
     inner: RwLock<Option<Box<dyn backend::LocalBackend>>>,
     selected_backend: RwLock<Option<backend::BackendType>>,
+    /// Unix timestamp (seconds) of the last `complete()` or `stream()` call.
+    last_activity: AtomicI64,
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
 }
 
 impl LocalLlmProvider {
@@ -59,7 +72,13 @@ impl LocalLlmProvider {
             config,
             inner: RwLock::new(None),
             selected_backend: RwLock::new(None),
+            last_activity: AtomicI64::new(0),
         }
+    }
+
+    /// Get the model ID for this provider.
+    pub fn model_id(&self) -> &str {
+        &self.config.model_id
     }
 
     /// Get the backend type that will be (or was) used.
@@ -72,12 +91,46 @@ impl LocalLlmProvider {
             .unwrap_or_else(backend::detect_best_backend)
     }
 
-    /// Ensure the backend is loaded.
-    async fn ensure_loaded(&self) -> Result<()> {
+    /// Whether the model backend is currently loaded in memory.
+    pub async fn is_loaded(&self) -> bool {
+        self.inner.read().await.is_some()
+    }
+
+    /// Unix timestamp (seconds) of the most recent inference call.
+    pub fn last_activity_secs(&self) -> i64 {
+        self.last_activity.load(Ordering::Relaxed)
+    }
+
+    /// Model size in bytes if the backend is loaded, 0 otherwise.
+    pub async fn model_size_bytes(&self) -> u64 {
+        self.inner
+            .read()
+            .await
+            .as_ref()
+            .map_or(0, |b| b.model_size_bytes())
+    }
+
+    /// Drop the loaded backend to free RAM.
+    ///
+    /// Returns `true` if the backend was loaded and has now been dropped.
+    /// The next `complete()`/`stream()` call will reload from disk.
+    pub async fn unload(&self) -> bool {
+        let mut guard = self.inner.write().await;
+        if guard.is_some() {
+            *guard = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Ensure the backend is loaded, updating last-activity.
+    pub async fn ensure_loaded(&self) -> Result<()> {
         // Fast path: check if already loaded
         {
             let guard = self.inner.read().await;
             if guard.is_some() {
+                self.touch_activity();
                 return Ok(());
             }
         }
@@ -87,6 +140,7 @@ impl LocalLlmProvider {
 
         // Double-check after acquiring write lock
         if guard.is_some() {
+            self.touch_activity();
             return Ok(());
         }
 
@@ -105,7 +159,12 @@ impl LocalLlmProvider {
         let backend = backend::create_backend(backend_type, &self.config).await?;
         *guard = Some(backend);
 
+        self.touch_activity();
         Ok(())
+    }
+
+    fn touch_activity(&self) {
+        self.last_activity.store(now_secs(), Ordering::Relaxed);
     }
 }
 
@@ -136,16 +195,19 @@ impl LlmProvider for LocalLlmProvider {
         tools: &[serde_json::Value],
     ) -> Result<CompletionResponse> {
         self.ensure_loaded().await?;
+        self.touch_activity();
 
         let guard = self.inner.read().await;
         let backend = guard
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("backend should be loaded after ensure_loaded"))?;
-        if tools.is_empty() {
+        let result = if tools.is_empty() {
             backend.complete(messages).await
         } else {
             backend.complete_with_tools(messages, tools).await
-        }
+        };
+        self.touch_activity();
+        result
     }
 
     fn stream(
@@ -157,6 +219,7 @@ impl LlmProvider for LocalLlmProvider {
                 yield StreamEvent::Error(format!("failed to load model: {e}"));
                 return;
             }
+            self.touch_activity();
 
             let guard = self.inner.read().await;
             let Some(backend) = guard.as_ref() else {
@@ -168,6 +231,7 @@ impl LlmProvider for LocalLlmProvider {
             while let Some(event) = futures::StreamExt::next(&mut stream).await {
                 yield event;
             }
+            self.touch_activity();
         })
     }
 }
@@ -233,5 +297,33 @@ mod tests {
         let backends = backend::available_backends();
         // GGUF should always be available when compiled with local-llm feature
         assert!(backends.contains(&backend::BackendType::Gguf));
+    }
+
+    #[tokio::test]
+    async fn test_is_loaded_default_false() {
+        let provider = LocalLlmProvider::new(LocalLlmConfig::default());
+        assert!(!provider.is_loaded().await);
+    }
+
+    #[tokio::test]
+    async fn test_unload_when_not_loaded() {
+        let provider = LocalLlmProvider::new(LocalLlmConfig::default());
+        assert!(!provider.unload().await);
+    }
+
+    #[test]
+    fn test_last_activity_default_zero() {
+        let provider = LocalLlmProvider::new(LocalLlmConfig::default());
+        assert_eq!(provider.last_activity_secs(), 0);
+    }
+
+    #[test]
+    fn test_model_id() {
+        let config = LocalLlmConfig {
+            model_id: "test-model".into(),
+            ..Default::default()
+        };
+        let provider = LocalLlmProvider::new(config);
+        assert_eq!(provider.model_id(), "test-model");
     }
 }

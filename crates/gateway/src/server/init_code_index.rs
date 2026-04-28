@@ -21,15 +21,26 @@ use tracing::{info, warn};
 
 /// Initialize the code index.
 ///
+/// Reads `[code_index]` from the loaded `MoltisConfig`. Falls back to
+/// `CodeIndexConfig::default()` when the section is absent or empty.
+///
 /// Checks QMD availability when the feature is enabled.
 /// Falls back to config-only mode if QMD is absent.
 pub(crate) async fn init_code_index(
     data_dir: &std::path::Path,
+    config: &moltis_config::MoltisConfig,
 ) -> Arc<moltis_code_index::CodeIndex> {
-    let code_index_config = moltis_code_index::CodeIndexConfig {
-        data_dir: Some(data_dir.join("code-index")),
-        ..Default::default()
-    };
+    // Build CodeIndexConfig from TOML, then overlay data_dir.
+    let mut code_index_config = moltis_code_index::CodeIndexConfig::from(&config.code_index);
+    // TOML data_dir overrides the default; if not set, use data_dir/code-index.
+    if code_index_config.data_dir.is_none() {
+        code_index_config.data_dir = Some(data_dir.join("code-index"));
+    }
+
+    if !config.code_index.enabled {
+        info!("code-index: disabled via [code_index].enabled = false");
+        return Arc::new(moltis_code_index::CodeIndex::config_only(code_index_config));
+    }
 
     #[cfg(feature = "qmd")]
     {
@@ -64,7 +75,12 @@ pub(crate) async fn init_code_index(
 
     #[cfg(feature = "code-index-builtin")]
     {
-        let db_path = data_dir.join("code-index").join("index.db");
+        let default_index_root = data_dir.join("code-index");
+        let index_root = code_index_config
+            .data_dir
+            .as_deref()
+            .unwrap_or(default_index_root.as_path());
+        let db_path = index_root.join("index.db");
         match moltis_code_index::store_sqlite::SqliteCodeIndexStore::new(&db_path).await {
             Ok(store) => {
                 info!(path = %db_path.display(), "code-index: builtin SQLite backend initialized");

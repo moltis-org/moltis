@@ -276,6 +276,7 @@ mod tests {
             mcp_disabled: None,
             preview: None,
             agent_id: None,
+            mode_id: None,
             node_id: None,
             version: 0,
         };
@@ -307,6 +308,7 @@ mod tests {
             mcp_disabled: None,
             preview: None,
             agent_id: None,
+            mode_id: None,
             node_id: None,
             version: 0,
         };

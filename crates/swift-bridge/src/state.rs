@@ -30,6 +30,9 @@ impl BridgeState {
         #[cfg(test)]
         init_swift_bridge_test_dirs();
 
+        // Initialize config directory (write defaults, compact, persist port).
+        moltis_config::initialize_config();
+
         emit_log(
             "INFO",
             "bridge",
