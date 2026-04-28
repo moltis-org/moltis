@@ -105,10 +105,18 @@ pub fn import_credentials(detection: &HermesDetection, config_dir: &Path) -> Cat
     // Load existing provider keys
     let keys_path = config_dir.join("provider_keys.json");
     let mut existing: serde_json::Map<String, serde_json::Value> = if keys_path.is_file() {
-        std::fs::read_to_string(&keys_path)
-            .ok()
-            .and_then(|c| serde_json::from_str(&c).ok())
-            .unwrap_or_default()
+        match std::fs::read_to_string(&keys_path) {
+            Ok(content) => match serde_json::from_str(&content) {
+                Ok(map) => map,
+                Err(e) => {
+                    return CategoryReport::failed(
+                        ImportCategory::Providers,
+                        format!("existing provider_keys.json is malformed: {e}"),
+                    );
+                },
+            },
+            Err(_) => serde_json::Map::new(),
+        }
     } else {
         serde_json::Map::new()
     };
