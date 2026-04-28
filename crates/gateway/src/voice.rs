@@ -637,21 +637,83 @@ impl TtsService for LiveTtsService {
         };
 
         // Apply voice persona overrides (voice_id, model, speed, instructions).
-        if let Some(ref persona) = persona
-            && let Err(policy) =
-                crate::voice_persona::apply_persona_to_request(&mut request, persona, provider_id)
-        {
-            return Err(format!(
-                "persona fallback policy {:?} blocked provider '{}'",
-                policy, provider_id
-            )
-            .into());
+        let persona_binding = if let Some(ref persona) = persona {
+            match crate::voice_persona::apply_persona_to_request(&mut request, persona, provider_id)
+            {
+                Ok(()) => "applied",
+                Err(moltis_voice::FallbackPolicy::ProviderDefaults) => "missing",
+                Err(_policy) => {
+                    // Fail policy — try fallback providers below.
+                    "blocked"
+                },
+            }
+        } else {
+            "none"
+        };
+
+        // Apply per-field directive overrides (take precedence over persona bindings).
+        if directives.voice_id.is_some() {
+            request.voice_id = directives.voice_id.clone();
+        }
+        if directives.model.is_some() {
+            request.model = directives.model.clone();
+        }
+        if let Some(s) = directives.speed {
+            request.speed = Some(s);
+        }
+        if let Some(s) = directives.stability {
+            request.stability = Some(s);
+        }
+        if let Some(s) = directives.similarity_boost {
+            request.similarity_boost = Some(s);
         }
 
-        let output = provider.synthesize(request).await.map_err(|e| {
-            warn!(provider = %provider_id, error = %e, "TTS synthesis failed");
-            format!("TTS synthesis failed: {}", e)
-        })?;
+        // Provider fallback chain: try the selected provider, then fall through
+        // to other configured providers if synthesis fails.
+        let mut attempted_providers = vec![provider_id];
+
+        let output = match provider.synthesize(request.clone()).await {
+            Ok(output) => output,
+            Err(e) => {
+                warn!(provider = %provider_id, error = %e, "TTS synthesis failed, trying fallback providers");
+                let mut last_error = e.to_string();
+
+                let mut fallback_output = None;
+                for (fallback_id, configured) in Self::list_providers() {
+                    if !configured || attempted_providers.contains(&fallback_id) {
+                        continue;
+                    }
+                    attempted_providers.push(fallback_id);
+                    if let Some(fallback_provider) = Self::create_provider(fallback_id) {
+                        // Re-apply persona for the new provider if applicable.
+                        let mut fb_request = request.clone();
+                        if let Some(ref persona) = persona {
+                            let _ = crate::voice_persona::apply_persona_to_request(
+                                &mut fb_request,
+                                persona,
+                                fallback_id,
+                            );
+                        }
+                        match fallback_provider.synthesize(fb_request).await {
+                            Ok(output) => {
+                                info!(provider = %fallback_id, "TTS fallback succeeded");
+                                fallback_output = Some((fallback_id, output));
+                                break;
+                            },
+                            Err(fb_err) => {
+                                warn!(provider = %fallback_id, error = %fb_err, "TTS fallback failed");
+                                last_error = fb_err.to_string();
+                            },
+                        }
+                    }
+                }
+
+                match fallback_output {
+                    Some((_fb_id, output)) => output,
+                    None => return Err(format!("TTS synthesis failed: {last_error}").into()),
+                }
+            },
+        };
 
         info!(
             provider = %provider_id,
@@ -669,6 +731,8 @@ impl TtsService for LiveTtsService {
             "mimeType": output.format.mime_type(),
             "durationMs": output.duration_ms,
             "size": output.data.len(),
+            "personaBinding": persona_binding,
+            "providersAttempted": attempted_providers.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
         }))
     }
 

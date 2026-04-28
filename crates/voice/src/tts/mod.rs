@@ -168,12 +168,22 @@ pub trait TtsProvider: Send + Sync {
 }
 
 /// Parsed TTS directives from `[[tts:key=value]]` tags in message text.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TtsDirectives {
     /// Per-message persona override.
     pub persona: Option<String>,
     /// Per-message provider override.
     pub provider: Option<String>,
+    /// Per-message voice ID override.
+    pub voice_id: Option<String>,
+    /// Per-message model override.
+    pub model: Option<String>,
+    /// Per-message speed override.
+    pub speed: Option<f32>,
+    /// Per-message stability override (ElevenLabs).
+    pub stability: Option<f32>,
+    /// Per-message similarity boost override (ElevenLabs).
+    pub similarity_boost: Option<f32>,
 }
 
 /// Extract `[[tts:...]]` directives from text and return cleaned text.
@@ -181,6 +191,7 @@ pub struct TtsDirectives {
 /// Supported directives:
 /// - `[[tts:persona=alfred]]` — override the active persona for this message
 /// - `[[tts:provider=openai]]` — override the TTS provider for this message
+/// - `[[tts:voiceId=cedar model=gpt-4o-mini-tts speed=0.9]]` — per-field overrides
 /// - `[[tts]]` — bare tag (used by `TtsAutoMode::Tagged`)
 ///
 /// Multiple directives can appear in a single tag: `[[tts:persona=alfred provider=openai]]`.
@@ -207,6 +218,15 @@ pub fn parse_tts_directives(text: &str) -> (Cow<'_, str>, TtsDirectives) {
                     match key {
                         "persona" => directives.persona = Some(value.to_string()),
                         "provider" => directives.provider = Some(value.to_string()),
+                        "voiceId" | "voice_id" | "voice" => {
+                            directives.voice_id = Some(value.to_string());
+                        },
+                        "model" => directives.model = Some(value.to_string()),
+                        "speed" => directives.speed = value.parse().ok(),
+                        "stability" => directives.stability = value.parse().ok(),
+                        "similarityBoost" | "similarity_boost" => {
+                            directives.similarity_boost = value.parse().ok();
+                        },
                         _ => {},
                     }
                 }
@@ -633,6 +653,19 @@ mod tests {
         let (text, dirs) = parse_tts_directives("Speak this [[tts]] aloud.");
         assert_eq!(text.as_ref(), "Speak this  aloud.");
         assert_eq!(dirs, TtsDirectives::default());
+    }
+
+    #[test]
+    fn test_parse_tts_directives_per_field() {
+        let (text, dirs) = parse_tts_directives(
+            "Hello [[tts:voiceId=cedar model=gpt-4o-mini-tts speed=0.9 stability=0.65]] world.",
+        );
+        assert_eq!(text.as_ref(), "Hello  world.");
+        assert_eq!(dirs.voice_id.as_deref(), Some("cedar"));
+        assert_eq!(dirs.model.as_deref(), Some("gpt-4o-mini-tts"));
+        assert_eq!(dirs.speed, Some(0.9));
+        assert_eq!(dirs.stability, Some(0.65));
+        assert_eq!(dirs.persona, None);
     }
 
     #[test]
