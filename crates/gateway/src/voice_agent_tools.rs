@@ -103,11 +103,24 @@ struct TranscribeToolResult {
 
 pub struct SpeakTool {
     tts: Arc<dyn TtsService>,
+    voice_persona_store: Option<Arc<crate::voice_persona::VoicePersonaStore>>,
 }
 
 impl SpeakTool {
     pub fn new(tts: Arc<dyn TtsService>) -> Self {
-        Self { tts }
+        Self {
+            tts,
+            voice_persona_store: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_voice_persona_store(
+        mut self,
+        store: Arc<crate::voice_persona::VoicePersonaStore>,
+    ) -> Self {
+        self.voice_persona_store = Some(store);
+        self
     }
 }
 
@@ -152,14 +165,26 @@ impl AgentTool for SpeakTool {
             speed: input.speed,
             stability: input.stability,
             similarity_boost: input.similarity_boost,
-            persona_id: input.persona,
+            persona_id: None,
         };
 
-        let result = self
-            .tts
-            .convert(serde_json::to_value(request)?)
-            .await
-            .map_err(anyhow::Error::msg)?;
+        let mut params = serde_json::to_value(request)?;
+
+        // Resolve persona: explicit ID from tool param, or active persona from store.
+        if let Some(ref store) = self.voice_persona_store {
+            let persona = if let Some(ref id) = input.persona {
+                store.get(id).await.ok().flatten().map(|r| r.persona)
+            } else {
+                store.get_active().await.ok().flatten().map(|r| r.persona)
+            };
+            if let Some(persona) = persona
+                && let Ok(v) = serde_json::to_value(&persona)
+            {
+                params["persona"] = v;
+            }
+        }
+
+        let result = self.tts.convert(params).await.map_err(anyhow::Error::msg)?;
 
         let tts_result: TtsConvertResult = serde_json::from_value(result)
             .map_err(|e| anyhow::anyhow!("invalid tts.convert response: {e}"))?;

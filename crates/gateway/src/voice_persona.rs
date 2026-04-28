@@ -111,7 +111,6 @@ pub struct UpdateVoicePersonaParams {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VoicePersonaResponse {
-    #[serde(flatten)]
     pub persona: VoicePersona,
     pub is_active: bool,
     pub created_at: i64,
