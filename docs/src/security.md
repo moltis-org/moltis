@@ -441,8 +441,8 @@ If HTTP works but WebSockets fail, make sure your location block includes
 ```nginx
 location / {
     proxy_pass http://172.17.0.1:13131;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Real-IP $remote_addr;
@@ -474,13 +474,19 @@ If WebSockets fail behind NPM while HTTP works, ensure:
 Use this in NPM's **Advanced** field:
 
 ```nginx
-proxy_set_header Host $host;
-proxy_set_header X-Forwarded-Host $host;
+proxy_set_header Host $http_host;
+proxy_set_header X-Forwarded-Host $http_host;
 proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection "upgrade";
 ```
+
+**Why `$http_host` instead of `$host`?** Nginx's `$host` strips the port,
+while `$http_host` preserves it. Moltis validates that the WebSocket `Origin`
+header matches the `Host` header (including port). On non-standard ports
+(e.g., `:444` instead of `:443`), using `$host` causes a mismatch and
+WebSocket connections are rejected with "cross-origin WebSocket upgrade".
 
 Upstream scheme guidance:
 
