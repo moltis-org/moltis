@@ -7650,7 +7650,6 @@ dependencies = [
  "moltis-import-core",
  "serde",
  "serde_json",
- "serde_yaml",
  "tempfile",
  "tracing",
 ]

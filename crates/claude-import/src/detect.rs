@@ -39,9 +39,15 @@ pub fn detect() -> Option<ClaudeDetection> {
 pub fn detect_at(home: &Path) -> Option<ClaudeDetection> {
     let claude_home = home.join(".claude");
     let claude_json = home.join(".claude.json");
-    let desktop_config = home
+    // macOS: ~/Library/Application Support/Claude/claude_desktop_config.json
+    let desktop_config_macos = home
         .join("Library")
         .join("Application Support")
+        .join("Claude")
+        .join("claude_desktop_config.json");
+    // Linux: ~/.config/Claude/claude_desktop_config.json
+    let desktop_config_linux = home
+        .join(".config")
         .join("Claude")
         .join("claude_desktop_config.json");
 
@@ -57,7 +63,8 @@ pub fn detect_at(home: &Path) -> Option<ClaudeDetection> {
     let user_memory_path = check_file(&claude_home.join("CLAUDE.md"));
     let user_skills_dir = check_dir(&claude_home.join("skills"));
     let user_commands_dir = check_dir(&claude_home.join("commands"));
-    let desktop_config_path = check_file(&desktop_config);
+    let desktop_config_path =
+        check_file(&desktop_config_macos).or_else(|| check_file(&desktop_config_linux));
 
     let has_data =
         home_dir.is_some() || user_claude_json_path.is_some() || desktop_config_path.is_some();
