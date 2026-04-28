@@ -8,6 +8,7 @@ import { signal } from "@preact/signals";
 import * as gon from "../gon";
 import { navigate } from "../router";
 import { routes, settingsPath } from "../routes";
+import { applyTheme } from "../theme";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -312,8 +313,8 @@ export function buildCommands(): Command[] {
 			action: () => {
 				const current = document.documentElement.getAttribute("data-theme");
 				const next = current === "dark" ? "light" : "dark";
-				document.documentElement.setAttribute("data-theme", next);
 				localStorage.setItem("moltis-theme", next);
+				applyTheme(next);
 			},
 		},
 		{
