@@ -95,6 +95,7 @@ export function CommandPalette(): VNode | null {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const listRef = useRef<HTMLDivElement>(null);
 	const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const reqIdRef = useRef(0);
 
 	const commands = useMemo(() => buildCommands(), [show]);
 
@@ -116,14 +117,22 @@ export function CommandPalette(): VNode | null {
 		return items;
 	}, [filtered, sessionHits]);
 
-	const grouped = useMemo(() => {
+	// Build a flat ordered list following GROUP_ORDER so render index
+	// always matches the position used by execute()/setActiveIdx().
+	const orderedItems = useMemo(() => {
 		const groups: Record<string, PaletteItem[]> = {};
 		for (const item of allItems) {
 			const group = item.type === "command" ? item.cmd.group : "sessions";
 			if (!groups[group]) groups[group] = [];
 			groups[group].push(item);
 		}
-		return groups;
+		const ordered: Array<{ group: string; items: PaletteItem[] }> = [];
+		for (const group of GROUP_ORDER) {
+			if (groups[group]?.length) {
+				ordered.push({ group, items: groups[group] });
+			}
+		}
+		return ordered;
 	}, [allItems]);
 
 	useEffect(() => {
@@ -146,16 +155,20 @@ export function CommandPalette(): VNode | null {
 			return;
 		}
 		searchTimer.current = setTimeout(() => {
+			const thisReq = ++reqIdRef.current;
 			sendRpc<SessionHit[]>("sessions.search", {
 				query,
 				includeArchived: sessionStore.showArchivedSessions.value,
-			}).then((res) => {
-				if (res?.ok && Array.isArray(res.payload)) {
-					setSessionHits(res.payload.slice(0, 5));
-				} else {
-					setSessionHits([]);
-				}
-			});
+			})
+				.then((res) => {
+					if (thisReq !== reqIdRef.current) return;
+					if (res?.ok && Array.isArray(res.payload)) {
+						setSessionHits(res.payload.slice(0, 5));
+					} else {
+						setSessionHits([]);
+					}
+				})
+				.catch(() => setSessionHits([]));
 		}, 300);
 		return () => {
 			if (searchTimer.current) clearTimeout(searchTimer.current);
@@ -168,8 +181,11 @@ export function CommandPalette(): VNode | null {
 		if (active) active.scrollIntoView({ block: "nearest" });
 	}, [activeIdx]);
 
+	// Flat list in render order for index-based execution.
+	const flatItems = useMemo(() => orderedItems.flatMap((g) => g.items), [orderedItems]);
+
 	function execute(idx: number): void {
-		const item = allItems[idx];
+		const item = flatItems[idx];
 		if (!item) return;
 		closePalette();
 		if (item.type === "command") {
@@ -185,7 +201,7 @@ export function CommandPalette(): VNode | null {
 			closePalette();
 		} else if (e.key === "ArrowDown") {
 			e.preventDefault();
-			setActiveIdx((i) => Math.min(i + 1, allItems.length - 1));
+			setActiveIdx((i) => Math.min(i + 1, flatItems.length - 1));
 		} else if (e.key === "ArrowUp") {
 			e.preventDefault();
 			setActiveIdx((i) => Math.max(i - 1, 0));
@@ -197,7 +213,9 @@ export function CommandPalette(): VNode | null {
 
 	if (!show) return null;
 
-	let flatIdx = 0;
+	// Pre-compute flat index offset for each group so render stays
+	// in sync with flatItems without an imperative counter.
+	let groupOffset = 0;
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss pattern, keyboard handled by inner dialog
@@ -222,15 +240,15 @@ export function CommandPalette(): VNode | null {
 					<kbd class="cmd-palette-kbd">esc</kbd>
 				</div>
 				<div class="cmd-palette-list" ref={listRef} role="listbox">
-					{allItems.length === 0 && <div class="cmd-palette-empty">{t("common:labels.noMatches")}</div>}
-					{GROUP_ORDER.map((group) => {
-						const items = grouped[group];
-						if (!items || items.length === 0) return null;
+					{flatItems.length === 0 && <div class="cmd-palette-empty">{t("common:labels.noMatches")}</div>}
+					{orderedItems.map(({ group, items }) => {
+						const baseIdx = groupOffset;
+						groupOffset += items.length;
 						return (
 							<fieldset key={group} aria-label={GROUP_LABELS[group]} class="cmd-palette-fieldset">
 								<div class="cmd-palette-group">{GROUP_LABELS[group]}</div>
-								{items.map((item) => {
-									const idx = flatIdx++;
+								{items.map((item, i) => {
+									const idx = baseIdx + i;
 									const key = item.type === "command" ? item.cmd.id : item.hit.sessionKey;
 									return (
 										<PaletteItemRow
