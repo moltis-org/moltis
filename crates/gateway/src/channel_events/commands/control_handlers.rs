@@ -687,6 +687,75 @@ pub(in crate::channel_events) async fn handle_stop(
     }
 }
 
+pub(in crate::channel_events) async fn handle_update(
+    state: &Arc<GatewayState>,
+    reply_to: &ChannelReplyTarget,
+    sender_id: Option<&str>,
+    args: &str,
+) -> ChannelResult<String> {
+    // Owner-only: same allowlist check as approve/deny.
+    let authorized = match sender_id {
+        Some(sid) => is_sender_on_allowlist(state, &reply_to.account_id, sid).await,
+        None => false,
+    };
+    if !authorized {
+        return Err(ChannelError::invalid_input(
+            "You are not authorized to update moltis. Only users on this bot's allowlist can use /update.",
+        ));
+    }
+
+    let requested_version = if args.is_empty() {
+        None
+    } else {
+        Some(args.trim())
+    };
+
+    let releases_url = crate::update_check::resolve_releases_url(
+        state.config.server.update_releases_url.as_deref(),
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent(format!("moltis-gateway/{}", state.version))
+        .build()
+        .map_err(|e| ChannelError::external("build HTTP client", e))?;
+
+    match crate::updater::perform_update(&client, &releases_url, requested_version).await {
+        Ok(crate::updater::UpdateOutcome::Updated { from, to, .. }) => {
+            // Schedule restart after a short delay so the reply is sent first.
+            let gw = Arc::clone(state);
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tracing::info!("restarting after update");
+                crate::updater::restart_process();
+            });
+            let _ = gw; // keep state alive until after spawn
+            Ok(format!(
+                "Updated from {from} to {to}. Restarting now\u{2026}"
+            ))
+        },
+        Ok(crate::updater::UpdateOutcome::DockerUpdated { from, to }) => {
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tracing::info!("restarting after Docker update");
+                crate::updater::restart_process();
+            });
+            Ok(format!(
+                "Updated from {from} to {to} (in-container). Restarting now\u{2026}\n\
+                 Note: pull the latest Docker image for persistence across container recreation."
+            ))
+        },
+        Ok(crate::updater::UpdateOutcome::AlreadyUpToDate { version }) => {
+            Ok(format!("Already up to date (v{version})."))
+        },
+        Ok(crate::updater::UpdateOutcome::ManualRequired {
+            command, version, ..
+        }) => Ok(format!(
+            "Update to {version} requires manual installation:\n`{command}`"
+        )),
+        Err(e) => Err(ChannelError::external("update", e)),
+    }
+}
+
 pub(in crate::channel_events) async fn handle_peek(
     state: &Arc<GatewayState>,
     session_key: &str,

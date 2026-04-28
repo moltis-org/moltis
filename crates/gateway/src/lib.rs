@@ -57,6 +57,7 @@ pub mod tailscale;
 pub mod teams_agent_tools;
 pub mod tts_phrases;
 pub mod update_check;
+pub mod updater;
 pub mod voice;
 pub mod voice_agent_tools;
 pub mod webhooks;
