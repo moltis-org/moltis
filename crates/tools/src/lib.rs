@@ -52,6 +52,7 @@ pub mod wasm_limits;
 pub mod wasm_tool_runner;
 pub mod web_fetch;
 pub mod web_search;
+pub mod webhook_tool;
 
 pub use {
     client::{build_http_client, init_shared_http_client, shared_http_client},

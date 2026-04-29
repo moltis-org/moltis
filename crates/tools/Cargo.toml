@@ -45,6 +45,7 @@ moltis-media          = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-network-filter = { workspace = true }
 moltis-providers      = { workspace = true }
+moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
 pdf-extract           = { optional = true, workspace = true }

@@ -871,6 +871,9 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
+        tool_registry.register(Box::new(moltis_tools::webhook_tool::WebhookTool::new(
+            Arc::clone(&state.services.webhooks),
+        )));
         tool_registry.register(Box::new(crate::channel_agent_tools::SendMessageTool::new(
             Arc::clone(&state.services.channel),
         )));
