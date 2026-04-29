@@ -4,7 +4,7 @@
 // Preact component reading sessionStore.activeSession.
 
 import type { VNode } from "preact";
-import { useCallback, useEffect, useRef, useState } from "preact/hooks";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { onEvent } from "../events";
 import * as gon from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
@@ -203,17 +203,22 @@ export function SessionHeader({
 	const startRename = useCallback(() => {
 		if (!canRename) return;
 		setRenaming(true);
-		requestAnimationFrame(() => {
-			if (inputRef.current) {
-				inputRef.current.value = fullName;
-				inputRef.current.focus();
-				inputRef.current.select();
-			}
-		});
-	}, [canRename, fullName]);
+	}, [canRename]);
+
+	// Populate, focus, and select the rename input synchronously after
+	// render (useLayoutEffect) so there is no rAF race with Playwright
+	// or other async interactions that could blur the input.
+	useLayoutEffect(() => {
+		if (renaming && inputRef.current) {
+			inputRef.current.value = fullName;
+			inputRef.current.focus();
+			inputRef.current.select();
+		}
+	}, [renaming, fullName]);
 
 	const commitRename = useCallback(() => {
-		const val = inputRef.current?.value.trim() || "";
+		if (!inputRef.current) return;
+		const val = inputRef.current.value.trim() || "";
 		setRenaming(false);
 		if (val && val !== fullName) {
 			sendRpc("sessions.patch", { key: currentKey, label: val }).then((res) => {

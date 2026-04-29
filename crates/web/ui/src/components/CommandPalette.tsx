@@ -5,7 +5,7 @@
 // inside GlobalDialogs.
 
 import type { VNode } from "preact";
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { sendRpc } from "../helpers";
 import { t } from "../i18n";
 import { navigate, sessionPath } from "../router";
@@ -135,12 +135,12 @@ export function CommandPalette(): VNode | null {
 		return ordered;
 	}, [allItems]);
 
-	useEffect(() => {
+	useLayoutEffect(() => {
 		if (show) {
 			setQuery("");
 			setActiveIdx(0);
 			setSessionHits([]);
-			requestAnimationFrame(() => inputRef.current?.focus());
+			inputRef.current?.focus();
 		}
 	}, [show]);
 
@@ -184,8 +184,15 @@ export function CommandPalette(): VNode | null {
 	// Flat list in render order for index-based execution.
 	const flatItems = useMemo(() => orderedItems.flatMap((g) => g.items), [orderedItems]);
 
+	// Refs keep the capture-phase document listener always up-to-date
+	// without re-registering on every render.
+	const flatItemsRef = useRef<PaletteItem[]>([]);
+	flatItemsRef.current = flatItems;
+	const activeIdxRef = useRef(0);
+	activeIdxRef.current = activeIdx;
+
 	function execute(idx: number): void {
-		const item = flatItems[idx];
+		const item = flatItemsRef.current[idx];
 		if (!item) return;
 		closePalette();
 		if (item.type === "command") {
@@ -195,21 +202,31 @@ export function CommandPalette(): VNode | null {
 		}
 	}
 
-	function onKeyDown(e: KeyboardEvent): void {
-		if (e.key === "Escape") {
-			e.preventDefault();
-			closePalette();
-		} else if (e.key === "ArrowDown") {
-			e.preventDefault();
-			setActiveIdx((i) => Math.min(i + 1, flatItems.length - 1));
-		} else if (e.key === "ArrowUp") {
-			e.preventDefault();
-			setActiveIdx((i) => Math.max(i - 1, 0));
-		} else if (e.key === "Enter") {
-			e.preventDefault();
-			execute(activeIdx);
+	// Capture-phase document listener intercepts navigation keys before
+	// the browser's native input handling (headless Chromium's autocomplete
+	// consumes ArrowDown/Up on <input> elements even with autocomplete="off").
+	useEffect(() => {
+		if (!show) return;
+
+		function handleKeyDown(e: KeyboardEvent) {
+			if (e.key === "Escape") {
+				e.preventDefault();
+				closePalette();
+			} else if (e.key === "ArrowDown") {
+				e.preventDefault();
+				setActiveIdx((i) => Math.min(i + 1, flatItemsRef.current.length - 1));
+			} else if (e.key === "ArrowUp") {
+				e.preventDefault();
+				setActiveIdx((i) => Math.max(i - 1, 0));
+			} else if (e.key === "Enter") {
+				e.preventDefault();
+				execute(activeIdxRef.current);
+			}
 		}
-	}
+
+		document.addEventListener("keydown", handleKeyDown, true);
+		return () => document.removeEventListener("keydown", handleKeyDown, true);
+	}, [show]);
 
 	if (!show) return null;
 
@@ -219,20 +236,21 @@ export function CommandPalette(): VNode | null {
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: backdrop dismiss pattern, keyboard handled by inner dialog
-		// biome-ignore lint/a11y/useKeyWithClickEvents: Escape key handled by inner onKeyDown
+		// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard handled by capture-phase document listener
 		<div
 			class="cmd-palette-backdrop"
 			onClick={(e: Event) => {
 				if (e.target === e.currentTarget) closePalette();
 			}}
 		>
-			<div role="dialog" aria-modal="true" aria-label="Command palette" class="cmd-palette" onKeyDown={onKeyDown}>
+			<div role="dialog" aria-modal="true" aria-label="Command palette" class="cmd-palette">
 				<div class="cmd-palette-input-row">
 					<span class="icon icon-md icon-search cmd-palette-search-icon" />
 					<input
 						ref={inputRef}
 						class="cmd-palette-input"
 						type="text"
+						autocomplete="off"
 						placeholder={t("common:actions.search") || "Search\u2026"}
 						value={query}
 						onInput={(e: Event) => setQuery((e.target as HTMLInputElement).value)}

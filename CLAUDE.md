@@ -195,6 +195,11 @@ Rules: use `getByRole()`/`getByText({ exact: true })` selectors, shared helpers
 (`navigateAndWait`, `waitForWsConnected`, `watchPageErrors`), assert no JS errors,
 avoid `waitForTimeout()`.
 
+**Flaky tests must be fixed, never skipped or ignored.** If a test fails intermittently,
+find and fix the root cause (race conditions, `requestAnimationFrame` timing, missing
+waits, element detachment from re-renders). Do not use `test.skip()`, `test.fixme()`,
+or retry-count workarounds to hide flakiness.
+
 ## Code Quality
 
 - Never run `cargo fmt` on stable in this repo. Always use the pinned nightly rustfmt (`just format`, `just format-check`, or `cargo fmt` — `rust-toolchain.toml` selects the right nightly automatically).

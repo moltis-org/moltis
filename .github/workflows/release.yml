@@ -378,7 +378,7 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.target }}
           MOLTIS_VERSION: ${{ steps.release_version.outputs.version }}
-        run: cargo build --release --target "$BUILD_TARGET"
+        run: ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Stage WASM assets for cargo-deb
         env:
@@ -481,7 +481,7 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.target }}
           MOLTIS_VERSION: ${{ steps.release_version.outputs.version }}
-        run: cargo build --release --target "$BUILD_TARGET"
+        run: ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Build .rpm package
         env:
@@ -579,7 +579,7 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.target }}
           MOLTIS_VERSION: ${{ steps.version.outputs.version }}
-        run: cargo build --release --target "$BUILD_TARGET"
+        run: ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Build .pkg.tar.zst
         env:
@@ -696,7 +696,7 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.target }}
           MOLTIS_VERSION: ${{ steps.version.outputs.version }}
-        run: cargo build --release --target "$BUILD_TARGET"
+        run: ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Build AppImage
         env:
@@ -897,7 +897,7 @@ jobs:
         env:
           BUILD_TARGET: ${{ matrix.target }}
           MOLTIS_VERSION: ${{ steps.version.outputs.version }}
-        run: cargo build --release --target "$BUILD_TARGET"
+        run: ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Package binary
         env:
@@ -1189,7 +1189,7 @@ jobs:
         shell: bash
         env:
           MOLTIS_VERSION: ${{ steps.version.outputs.version }}
-        run: cargo build --release --target "$BUILD_TARGET" --features embedded-assets,embedded-wasm
+        run: MOLTIS_BUILD_FEATURES=full,embedded-assets,embedded-wasm ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Package .exe
         shell: bash
