@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::formats::PluginFormat;
 
@@ -170,8 +170,15 @@ pub struct SkillMetadata {
     /// Environment requirements (intended product, system packages, network access, etc.).
     #[serde(default)]
     pub compatibility: Option<String>,
-    /// Tools this skill is allowed to use (space-delimited in spec, parsed as list).
-    #[serde(default, alias = "allowed-tools")]
+    /// Tools this skill is allowed to use.
+    ///
+    /// Accepts either a YAML sequence or a space-separated string
+    /// (Claude Code format: `"Bash(gh:*) Bash(git:*) Read"`).
+    #[serde(
+        default,
+        alias = "allowed-tools",
+        deserialize_with = "deserialize_string_or_seq"
+    )]
     pub allowed_tools: Vec<String>,
     /// Optional Dockerfile (relative to skill directory) for sandbox environment.
     #[serde(default)]
@@ -267,6 +274,25 @@ pub struct SkillEligibility {
     pub missing_bins: Vec<String>,
     /// Install options filtered to the current OS.
     pub install_options: Vec<InstallSpec>,
+}
+
+/// Deserialize a value that can be either a YAML sequence of strings or a
+/// single space-separated string (Claude Code format).
+fn deserialize_string_or_seq<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrSeq {
+        Seq(Vec<String>),
+        Str(String),
+    }
+
+    match StringOrSeq::deserialize(deserializer)? {
+        StringOrSeq::Seq(v) => Ok(v),
+        StringOrSeq::Str(s) => Ok(s.split_whitespace().map(String::from).collect()),
+    }
 }
 
 /// Full skill content: metadata + markdown body.
