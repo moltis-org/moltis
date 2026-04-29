@@ -111,6 +111,17 @@ npx tsc --noEmit       # Type check (strict, must be 0 errors)
 - Match button heights/text sizes when elements sit together.
 - **Rebuild Tailwind** after adding new classes: `cd crates/web/ui && npm run build:css`.
 
+### Adding Settings Nav Icons
+
+Settings sidebar icons use `::before` pseudo-elements in `components.css`, **not** the `icon`
+JSX property in the `sections` array. When adding a new settings section:
+
+1. Create the SVG mask in `crates/web/src/assets/icons/masks/` with `fill="black"` (not `currentColor`)
+2. Add `.icon-<name>` class in `crates/web/ui/input.css` under the mask-image icons section
+3. **Also add** `.settings-nav-item[data-section="<id>"]::before` in `crates/web/src/assets/css/components.css`
+   pointing to the SVG — without this the icon renders as a black square
+4. The `icon: <span className="icon icon-<name>" />` in `SettingsPage.tsx` is a fallback only
+
 ### E2E Test Shims
 
 E2E tests dynamically import individual JS modules (`js/state.js`, `js/helpers.js`, etc.).
