@@ -9,6 +9,7 @@ async-trait      = { workspace = true }
 base64           = { workspace = true }
 bytes            = { workspace = true }
 dashmap          = { workspace = true }
+futures          = { workspace = true }
 hex              = { workspace = true }
 hmac             = { workspace = true }
 http             = { workspace = true }
@@ -17,6 +18,7 @@ moltis-channels  = { workspace = true }
 moltis-common    = { workspace = true }
 moltis-metrics   = { optional = true, workspace = true }
 moltis-voice     = { workspace = true }
+rand             = { workspace = true }
 reqwest          = { workspace = true }
 ring             = { workspace = true }
 secrecy          = { workspace = true }

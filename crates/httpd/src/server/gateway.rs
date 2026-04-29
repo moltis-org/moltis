@@ -634,11 +634,26 @@ pub async fn prepare_gateway(
                                     provider.build_answer_response(Some(say_msg), None)
                                 },
                                 moltis_telephony::types::CallMode::Conversation => {
-                                    // Speak the greeting, then start gathering speech.
+                                    // Use Media Streams for real-time audio (low latency).
+                                    // Fall back to Gather if no external URL is available.
                                     let greeting = msg.unwrap_or(
                                         "Hello, you've reached the AI assistant. How can I help you?",
                                     );
-                                    provider.build_answer_response(Some(greeting), Some(&gather_url))
+                                    let external_url = plugin_guard
+                                        .account_config_json(&account_id)
+                                        .and_then(|c| c["webhook_url"].as_str().map(String::from));
+
+                                    if let Some(ref base_url) = external_url {
+                                        let token = moltis_telephony::media_stream::generate_stream_token();
+                                        let ws_url = format!(
+                                            "{}/voice/stream/{account_id}/{token}",
+                                            base_url.replace("https://", "wss://").replace("http://", "ws://")
+                                        );
+                                        moltis_telephony::media_stream::build_stream_twiml(&ws_url, Some(greeting))
+                                    } else {
+                                        // No public URL — fall back to Gather-based flow.
+                                        provider.build_answer_response(Some(greeting), Some(&gather_url))
+                                    }
                                 },
                             };
                             return (
@@ -676,11 +691,26 @@ pub async fn prepare_gateway(
                         if !call_sid.is_empty() {
                             drop(provider);
                             manager.register_inbound(call_sid, caller, called, &account_id);
-                            let provider = manager.provider().read().await;
-                            let twiml = provider.build_answer_response(
-                                Some("Hello, you've reached the AI assistant. How can I help you?"),
-                                Some(&gather_url),
-                            );
+
+                            let greeting = "Hello, you've reached the AI assistant. How can I help you?";
+                            let external_url = {
+                                use moltis_channels::ChannelPlugin as _;
+                                plugin_guard
+                                    .account_config_json(&account_id)
+                                    .and_then(|c| c["webhook_url"].as_str().map(String::from))
+                            };
+
+                            let twiml = if let Some(ref base_url) = external_url {
+                                let token = moltis_telephony::media_stream::generate_stream_token();
+                                let ws_url = format!(
+                                    "{}/voice/stream/{account_id}/{token}",
+                                    base_url.replace("https://", "wss://").replace("http://", "ws://")
+                                );
+                                moltis_telephony::media_stream::build_stream_twiml(&ws_url, Some(greeting))
+                            } else {
+                                let provider = manager.provider().read().await;
+                                provider.build_answer_response(Some(greeting), Some(&gather_url))
+                            };
                             return (
                                 StatusCode::OK,
                                 [(axum::http::header::CONTENT_TYPE, "text/xml")],
@@ -797,6 +827,166 @@ pub async fn prepare_gateway(
                                     .into_response()
                             },
                         }
+                    }
+                },
+            ),
+        );
+
+        // Media Stream WebSocket — real-time bidirectional audio for phone calls.
+        // Twilio connects here when the TwiML includes <Connect><Stream url="..."/>.
+        let telephony_stream_plugin = Arc::clone(&telephony_webhook_plugin);
+        let _state_for_stream = Arc::clone(&state);
+        app = app.route(
+            "/voice/stream/{account_id}/{token}",
+            axum::routing::any(
+                move |axum::extract::Path((account_id, _token)): axum::extract::Path<(
+                    String,
+                    String,
+                )>,
+                      ws: axum::extract::WebSocketUpgrade| {
+                    let plugin = Arc::clone(&telephony_stream_plugin);
+
+                    async move {
+                        ws.on_upgrade(move |mut socket| async move {
+                        use axum::extract::ws::Message;
+
+                        let plugin_guard = plugin.read().await;
+                        let account_id_owned = account_id.clone();
+
+                        tracing::info!(
+                            account_id = %account_id,
+                            "media stream WebSocket connected"
+                        );
+
+                        // Channels for the STT→agent→TTS pipeline.
+                        let (audio_tx, mut audio_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(256);
+                        let (response_tx, mut response_rx) =
+                            tokio::sync::mpsc::channel::<String>(16);
+
+                        let mut stream_sid = String::new();
+                        let mut silence_timer = tokio::time::Instant::now();
+                        let mut audio_buf: Vec<u8> = Vec::with_capacity(16_000);
+
+                        // Process incoming WebSocket messages.
+                        loop {
+                            tokio::select! {
+                                // Receive from Twilio.
+                                msg = socket.recv() => {
+                                    let Some(Ok(msg)) = msg else { break };
+                                    let Message::Text(text) = msg else { continue };
+
+                                    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
+                                    let event = parsed["event"].as_str().unwrap_or("");
+
+                                    match event {
+                                        "connected" => {
+                                            tracing::debug!("media stream: connected event");
+                                        },
+                                        "start" => {
+                                            stream_sid = parsed["streamSid"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string();
+                                            let call_sid = parsed["start"]["callSid"]
+                                                .as_str()
+                                                .unwrap_or("");
+                                            tracing::info!(
+                                                stream_sid = %stream_sid,
+                                                call_sid = %call_sid,
+                                                "media stream started"
+                                            );
+                                        },
+                                        "media" => {
+                                            if let Some(payload) = parsed["media"]["payload"].as_str() {
+                                                if let Ok(audio) = base64::Engine::decode(
+                                                    &base64::engine::general_purpose::STANDARD,
+                                                    payload,
+                                                ) {
+                                                    audio_buf.extend_from_slice(&audio);
+                                                    silence_timer = tokio::time::Instant::now();
+                                                }
+                                            }
+                                        },
+                                        "mark" => {
+                                            tracing::debug!(
+                                                mark = %parsed["mark"]["name"].as_str().unwrap_or(""),
+                                                "mark received"
+                                            );
+                                        },
+                                        "stop" => {
+                                            tracing::info!(stream_sid = %stream_sid, "media stream stopped");
+                                            break;
+                                        },
+                                        _ => {},
+                                    }
+                                },
+
+                                // Check for silence (end of utterance).
+                                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                                    let elapsed = silence_timer.elapsed();
+                                    if elapsed >= std::time::Duration::from_millis(800)
+                                        && audio_buf.len() >= 3200 // 400ms minimum
+                                    {
+                                        let audio_data = std::mem::take(&mut audio_buf);
+
+                                        // Transcribe and dispatch to agent.
+                                        let account = account_id.clone();
+                                        let pg = Arc::clone(&plugin);
+                                        let ssid = stream_sid.clone();
+                                        let resp_tx = response_tx.clone();
+
+                                        tokio::spawn(async move {
+                                            // Use the gateway's STT to transcribe.
+                                            // For now, dispatch the audio as base64 via the plugin's event sink.
+                                            let plugin_guard = pg.read().await;
+
+                                            // Transcribe using moltis-voice STT (batch for now).
+                                            // The audio is mu-law 8kHz — most providers accept this.
+                                            let transcript = {
+                                                tracing::debug!(
+                                                    bytes = audio_data.len(),
+                                                    "transcribing audio from media stream"
+                                                );
+                                                // STT transcription will be wired to the gateway's
+                                                // STT service (Deepgram streaming or batch).
+                                                None::<String>
+                                            };
+
+                                            if let Some(text) = transcript {
+                                                let _ = resp_tx.send(text).await;
+                                            }
+                                        });
+                                    }
+                                },
+
+                                // Send TTS response audio back to Twilio.
+                                Some(text) = response_rx.recv() => {
+                                    if !stream_sid.is_empty() {
+                                        // Clear any playing audio (barge-in).
+                                        let clear = serde_json::json!({
+                                            "event": "clear",
+                                            "streamSid": stream_sid,
+                                        });
+                                        let _ = socket.send(Message::Text(
+                                            clear.to_string().into()
+                                        )).await;
+
+                                        // TODO: synthesize TTS and stream mu-law chunks.
+                                        // For now, log the response.
+                                        tracing::info!(
+                                            text = %text,
+                                            "would stream TTS response to caller"
+                                        );
+                                    }
+                                },
+                            }
+                        }
+
+                        tracing::info!(
+                            account_id = %account_id_owned,
+                            "media stream session ended"
+                        );
+                    })
                     }
                 },
             ),

@@ -8,6 +8,7 @@ pub mod audio;
 pub mod config;
 pub mod error;
 pub mod manager;
+pub mod media_stream;
 pub mod outbound;
 pub mod plugin;
 pub mod provider;
