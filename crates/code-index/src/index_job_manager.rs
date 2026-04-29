@@ -254,10 +254,9 @@ impl IndexJobManager {
             let mgr = Arc::clone(&this);
             let pid = pid.clone();
 
+            // Route through spawn_index() for proper deduplication and shutdown tracking.
             tokio::spawn(async move {
-                // Route through index_project_deduped to enforce semaphore and
-                // per-project deduplication (not direct index_project call).
-                mgr.index_project_deduped(&pid).await;
+                let _ = mgr.spawn_index(pid).await;
             });
         });
 
@@ -284,6 +283,9 @@ impl IndexJobManager {
     }
 
     /// Index all enabled projects (used at startup and periodic re-index).
+    ///
+    /// Routes all jobs through `spawn_index()` to ensure proper deduplication,
+    /// rate limiting, and shutdown tracking.
     pub async fn index_all_enabled_projects(
         self: &Arc<Self>,
         projects: Vec<(String, PathBuf)>,
@@ -299,11 +301,12 @@ impl IndexJobManager {
             }
         }
 
-        // Spawn jobs for each project (they will be deduped and rate-limited).
+        // Spawn jobs for each project via spawn_index() for proper tracking.
         for (project_id, _dir) in projects {
             let this = Arc::clone(self);
+            let pid = project_id.clone();
             tokio::spawn(async move {
-                this.index_project_deduped(&project_id).await;
+                let _ = this.spawn_index(pid).await;
             });
         }
     }
@@ -332,9 +335,7 @@ impl IndexJobManager {
                         #[cfg(feature = "tracing")]
                         debug!(count = projs.len(), "periodic re-index tick");
                         let mgr = Arc::clone(&this);
-                        tokio::spawn(async move {
-                            mgr.index_all_enabled_projects(projs).await;
-                        });
+                        mgr.index_all_enabled_projects(projs).await;
                     }
                     _ = cancel.cancelled() => {
                         #[cfg(feature = "tracing")]
