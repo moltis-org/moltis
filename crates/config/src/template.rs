@@ -273,6 +273,17 @@ port = {port}                           # Port number (auto-generated for this i
 # show_settings_hint = true           # Append compaction mode hint to notices
 
 # ══════════════════════════════════════════════════════════════════════════════
+# AUXILIARY MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+# Route side tasks to cheaper/faster models while keeping the main session on a
+# more capable model. Falls back to the session's primary provider when unset.
+#
+# [auxiliary]
+# compaction = "openrouter/google/gemini-2.5-flash"        # Model for context compaction
+# title_generation = "openrouter/google/gemini-2.5-flash"  # Model for session titles
+# vision = "openrouter/google/gemini-2.5-flash"            # Model for vision/image tasks
+
+# ══════════════════════════════════════════════════════════════════════════════
 # SUB-AGENT SPAWN PRESETS
 # ══════════════════════════════════════════════════════════════════════════════
 # Configure reusable presets for sub-agents spawned via the `spawn_agent` tool.

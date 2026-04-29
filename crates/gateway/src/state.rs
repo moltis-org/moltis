@@ -284,6 +284,10 @@ pub struct GatewayInner {
     pub channel_status_log: HashMap<String, Vec<String>>,
     /// Sessions currently in channel command mode (/sh passthrough).
     pub channel_command_mode_sessions: HashSet<String>,
+    /// Sessions with fast/priority mode enabled.
+    pub fast_mode_sessions: HashSet<String>,
+    /// Per-session steering text injected mid-run via `/steer`.
+    pub steer_text: HashMap<String, String>,
     /// Which channel types are offered in the web UI (from config).
     pub channels_offered: Vec<String>,
     /// Hostnames that were discovered after passkeys already existed.
@@ -323,6 +327,8 @@ impl GatewayInner {
             cached_location: moltis_config::resolve_user_profile().location,
             channel_status_log: HashMap::new(),
             channel_command_mode_sessions: HashSet::new(),
+            fast_mode_sessions: HashSet::new(),
+            steer_text: HashMap::new(),
             channels_offered: vec![
                 "telegram".into(),
                 "whatsapp".into(),
@@ -740,6 +746,39 @@ impl GatewayState {
             .await
             .channel_command_mode_sessions
             .contains(session_key)
+    }
+
+    /// Enable or disable fast/priority mode for a session.
+    pub async fn set_fast_mode(&self, session_key: &str, enabled: bool) {
+        let mut inner = self.inner.write().await;
+        if enabled {
+            inner.fast_mode_sessions.insert(session_key.to_string());
+        } else {
+            inner.fast_mode_sessions.remove(session_key);
+        }
+    }
+
+    /// Check whether fast/priority mode is enabled for a session.
+    pub async fn is_fast_mode(&self, session_key: &str) -> bool {
+        self.inner
+            .read()
+            .await
+            .fast_mode_sessions
+            .contains(session_key)
+    }
+
+    /// Set steering text for an active session run.
+    pub async fn set_steer_text(&self, session_key: &str, text: String) {
+        self.inner
+            .write()
+            .await
+            .steer_text
+            .insert(session_key.to_string(), text);
+    }
+
+    /// Take (drain) any pending steering text for a session.
+    pub async fn take_steer_text(&self, session_key: &str) -> Option<String> {
+        self.inner.write().await.steer_text.remove(session_key)
     }
 
     /// Mark a hostname as needing passkey refresh.

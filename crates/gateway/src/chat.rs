@@ -251,4 +251,12 @@ impl ChatRuntime for GatewayChatRuntime {
             })
             .collect()
     }
+
+    async fn take_steer_text(&self, session_key: &str) -> Option<String> {
+        self.state.take_steer_text(session_key).await
+    }
+
+    async fn is_fast_mode(&self, session_key: &str) -> bool {
+        self.state.is_fast_mode(session_key).await
+    }
 }

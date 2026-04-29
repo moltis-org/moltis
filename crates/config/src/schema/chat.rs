@@ -297,3 +297,26 @@ pub enum ToolRegistryMode {
     /// Only `tool_search` is sent; the model discovers and activates tools on demand.
     Lazy,
 }
+
+/// Auxiliary model assignments for side tasks.
+///
+/// Route compression, title generation, and vision to cheaper/faster models
+/// while keeping the main session on a more capable model. Falls back to the
+/// session's primary provider when a field is `None`.
+///
+/// ```toml
+/// [auxiliary]
+/// compaction = "openrouter/google/gemini-2.5-flash"
+/// title_generation = "openrouter/google/gemini-2.5-flash"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuxiliaryModelsConfig {
+    /// Model for context compaction/summarization.
+    /// Overrides `chat.compaction.summary_model` when set.
+    pub compaction: Option<String>,
+    /// Model for session title generation.
+    pub title_generation: Option<String>,
+    /// Model for vision/image analysis tasks.
+    pub vision: Option<String>,
+}

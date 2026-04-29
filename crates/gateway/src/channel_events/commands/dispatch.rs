@@ -4,7 +4,7 @@ use moltis_channels::{ChannelReplyTarget, Error as ChannelError, Result as Chann
 
 use crate::state::GatewayState;
 
-use super::{super::resolve_channel_session, control_handlers, session_handlers};
+use super::{super::resolve_channel_session, control_handlers, quick_actions, session_handlers};
 
 pub(in crate::channel_events) async fn dispatch_interaction(
     state: &Arc<tokio::sync::OnceCell<Arc<GatewayState>>>,
@@ -115,6 +115,13 @@ pub(in crate::channel_events) async fn dispatch_command(
         "stop" => control_handlers::handle_stop(state, &session_key).await,
         "peek" => control_handlers::handle_peek(state, &session_key).await,
         "update" => control_handlers::handle_update(state, &reply_to, sender_id, args).await,
+
+        // Quick actions
+        "btw" => quick_actions::handle_btw(state, &session_key, args).await,
+        "fast" => quick_actions::handle_fast(state, session_metadata, &session_key, args).await,
+        "insights" => quick_actions::handle_insights(state, args).await,
+        "steer" => quick_actions::handle_steer(state, &session_key, args).await,
+        "queue" => quick_actions::handle_queue(state, &session_key, args).await,
         _ => Err(ChannelError::invalid_input(format!(
             "unknown command: /{cmd}"
         ))),
@@ -154,6 +161,11 @@ mod tests {
             "stop",
             "peek",
             "update",
+            "btw",
+            "fast",
+            "insights",
+            "steer",
+            "queue",
         ];
 
         for cmd in moltis_channels::commands::all_commands() {

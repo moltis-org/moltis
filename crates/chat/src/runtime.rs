@@ -158,4 +158,16 @@ pub trait ChatRuntime: Send + Sync {
 
     /// List currently connected remote nodes.
     async fn connected_nodes(&self) -> Vec<ConnectedNodeSummary>;
+
+    // ── Mid-flight steering ──────────────────────────────────────────────
+
+    /// Take (drain) any pending `/steer` text for a session.
+    async fn take_steer_text(&self, _session_key: &str) -> Option<String> {
+        None
+    }
+
+    /// Check whether fast/priority mode is enabled for a session.
+    async fn is_fast_mode(&self, _session_key: &str) -> bool {
+        false
+    }
 }

@@ -91,6 +91,27 @@ pub fn all_commands() -> &'static [CommandDef] {
             name: "update",
             description: "Update moltis to latest or specified version",
         },
+        // Quick actions
+        CommandDef {
+            name: "btw",
+            description: "Quick side question (no tools, not persisted)",
+        },
+        CommandDef {
+            name: "fast",
+            description: "Toggle fast/priority mode",
+        },
+        CommandDef {
+            name: "insights",
+            description: "Show session analytics and usage stats",
+        },
+        CommandDef {
+            name: "steer",
+            description: "Inject guidance into the current agent run",
+        },
+        CommandDef {
+            name: "queue",
+            description: "Queue a message for the next agent turn",
+        },
         // Meta
         CommandDef {
             name: "help",
@@ -205,6 +226,11 @@ mod tests {
             "stop",
             "peek",
             "update",
+            "btw",
+            "fast",
+            "insights",
+            "steer",
+            "queue",
             "help",
         ] {
             assert!(

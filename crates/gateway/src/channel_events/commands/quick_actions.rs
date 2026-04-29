@@ -1,0 +1,373 @@
+use std::sync::Arc;
+
+use {
+    moltis_channels::{Error as ChannelError, Result as ChannelResult},
+    moltis_sessions::metadata::SqliteSessionMetadata,
+};
+
+use crate::{
+    broadcast::{BroadcastOpts, broadcast},
+    state::GatewayState,
+};
+
+// ── /btw — ephemeral side question ──────────────────────────────────────────
+
+pub(in crate::channel_events) async fn handle_btw(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    args: &str,
+) -> ChannelResult<String> {
+    if args.is_empty() {
+        return Err(ChannelError::invalid_input(
+            "usage: /btw <question>\nAsk a quick side question without tools or persisting to history.",
+        ));
+    }
+
+    // Resolve a provider (same pattern as session summary).
+    let provider: Arc<dyn moltis_agents::model::LlmProvider> = {
+        let inner = state.inner.read().await;
+        let Some(ref registry) = inner.llm_providers else {
+            return Err(ChannelError::unavailable("no LLM providers available"));
+        };
+        let reg = registry.read().await;
+
+        // Prefer the session's model, fall back to first available.
+        let session_model = if let Some(ref meta) = state.services.session_metadata {
+            meta.get(session_key).await.and_then(|e| e.model.clone())
+        } else {
+            None
+        };
+        let resolved = session_model
+            .and_then(|id| reg.get(&id))
+            .or_else(|| reg.first());
+        match resolved {
+            Some(p) => p,
+            None => return Err(ChannelError::unavailable("no LLM provider configured")),
+        }
+    };
+
+    // Read recent session history for context (last ~20 messages).
+    let context_msgs = if let Some(ref store) = state.services.session_store {
+        let history = store.read(session_key).await.unwrap_or_default();
+        let chat_msgs = moltis_agents::model::values_to_chat_messages(&history);
+        let tail_start = chat_msgs.len().saturating_sub(20);
+        chat_msgs[tail_start..].to_vec()
+    } else {
+        Vec::new()
+    };
+
+    // Build a minimal prompt and call the LLM with no tools.
+    let system_prompt = "You are a helpful assistant. Answer the user's side question \
+                         concisely. You have no tools available — answer from context only.";
+    let mut messages = vec![moltis_agents::ChatMessage::system(system_prompt)];
+    messages.extend(context_msgs);
+    messages.push(moltis_agents::ChatMessage::user(args));
+
+    match provider.complete(&messages, &[]).await {
+        Ok(response) => {
+            let text = response.text.as_deref().unwrap_or("(no response)");
+            Ok(text.to_string())
+        },
+        Err(e) => Err(ChannelError::unavailable(format!(
+            "btw LLM call failed: {e}"
+        ))),
+    }
+}
+
+// ── /fast — toggle fast/priority mode ───────────────────────────────────────
+
+pub(in crate::channel_events) async fn handle_fast(
+    state: &Arc<GatewayState>,
+    _session_metadata: &SqliteSessionMetadata,
+    session_key: &str,
+    args: &str,
+) -> ChannelResult<String> {
+    let current = state.is_fast_mode(session_key).await;
+
+    match args {
+        "" => {
+            // Toggle
+            let new_val = !current;
+            state.set_fast_mode(session_key, new_val).await;
+            broadcast(
+                state,
+                "session",
+                serde_json::json!({
+                    "kind": "patched",
+                    "sessionKey": session_key,
+                    "fastMode": new_val,
+                }),
+                BroadcastOpts {
+                    drop_if_slow: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+            if new_val {
+                Ok("Fast mode enabled. Using priority processing where supported.".to_string())
+            } else {
+                Ok("Fast mode disabled. Using standard processing.".to_string())
+            }
+        },
+        "on" | "fast" => {
+            state.set_fast_mode(session_key, true).await;
+            broadcast(
+                state,
+                "session",
+                serde_json::json!({
+                    "kind": "patched",
+                    "sessionKey": session_key,
+                    "fastMode": true,
+                }),
+                BroadcastOpts {
+                    drop_if_slow: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+            Ok("Fast mode enabled. Using priority processing where supported.".to_string())
+        },
+        "off" | "normal" => {
+            state.set_fast_mode(session_key, false).await;
+            broadcast(
+                state,
+                "session",
+                serde_json::json!({
+                    "kind": "patched",
+                    "sessionKey": session_key,
+                    "fastMode": false,
+                }),
+                BroadcastOpts {
+                    drop_if_slow: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+            Ok("Fast mode disabled. Using standard processing.".to_string())
+        },
+        "status" => {
+            let label = if current {
+                "enabled"
+            } else {
+                "disabled"
+            };
+            Ok(format!("Fast mode is {label}."))
+        },
+        _ => Err(ChannelError::invalid_input("usage: /fast [on|off|status]")),
+    }
+}
+
+// ── /insights — session analytics ───────────────────────────────────────────
+
+pub(in crate::channel_events) async fn handle_insights(
+    state: &Arc<GatewayState>,
+    args: &str,
+) -> ChannelResult<String> {
+    #[cfg(not(feature = "metrics"))]
+    {
+        let _ = (state, args);
+        return Err(ChannelError::unavailable(
+            "metrics feature is not enabled in this build",
+        ));
+    }
+
+    #[cfg(feature = "metrics")]
+    {
+        let days: u64 = if args.is_empty() {
+            30
+        } else {
+            args.trim()
+                .parse()
+                .map_err(|_| ChannelError::invalid_input("usage: /insights [days]"))?
+        };
+
+        let store = state
+            .metrics_store
+            .as_ref()
+            .ok_or_else(|| ChannelError::unavailable("metrics store not available"))?;
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let since_ms = now_ms.saturating_sub(days * 24 * 60 * 60 * 1000);
+
+        let history = store
+            .load_history(since_ms, 100_000)
+            .await
+            .map_err(|e| ChannelError::external("loading metrics history", e))?;
+
+        if history.is_empty() {
+            return Ok(format!("No metrics data in the last {days} days."));
+        }
+
+        // Aggregate
+        let mut total_completions: u64 = 0;
+        let mut total_input_tokens: u64 = 0;
+        let mut total_output_tokens: u64 = 0;
+        let mut total_errors: u64 = 0;
+        let mut total_tool_executions: u64 = 0;
+        let mut total_tool_errors: u64 = 0;
+        let mut provider_totals: std::collections::HashMap<String, (u64, u64, u64)> =
+            std::collections::HashMap::new();
+
+        // Use deltas between consecutive points (metrics are cumulative counters)
+        let mut prev: Option<&crate::state::MetricsHistoryPoint> = None;
+        for point in &history {
+            if let Some(p) = prev {
+                total_completions += point.llm_completions.saturating_sub(p.llm_completions);
+                total_input_tokens += point.llm_input_tokens.saturating_sub(p.llm_input_tokens);
+                total_output_tokens += point.llm_output_tokens.saturating_sub(p.llm_output_tokens);
+                total_errors += point.llm_errors.saturating_sub(p.llm_errors);
+                total_tool_executions += point.tool_executions.saturating_sub(p.tool_executions);
+                total_tool_errors += point.tool_errors.saturating_sub(p.tool_errors);
+
+                for (provider, tokens) in &point.by_provider {
+                    let prev_tokens = p.by_provider.get(provider);
+                    let delta_in = tokens
+                        .input_tokens
+                        .saturating_sub(prev_tokens.map_or(0, |pt| pt.input_tokens));
+                    let delta_out = tokens
+                        .output_tokens
+                        .saturating_sub(prev_tokens.map_or(0, |pt| pt.output_tokens));
+                    let delta_completions = tokens
+                        .completions
+                        .saturating_sub(prev_tokens.map_or(0, |pt| pt.completions));
+                    let entry = provider_totals.entry(provider.clone()).or_default();
+                    entry.0 += delta_in;
+                    entry.1 += delta_out;
+                    entry.2 += delta_completions;
+                }
+            }
+            prev = Some(point);
+        }
+
+        let total_tokens = total_input_tokens + total_output_tokens;
+        let first_ts = history.first().map(|p| p.timestamp).unwrap_or(0);
+        let last_ts = history.last().map(|p| p.timestamp).unwrap_or(0);
+        let span_hours = (last_ts.saturating_sub(first_ts)) as f64 / 3_600_000.0;
+
+        let mut lines = Vec::new();
+        lines.push(format!("Insights \u{2014} last {days} days"));
+        lines.push(String::new());
+        lines.push(format!(
+            "LLM completions: {total_completions}  (errors: {total_errors})"
+        ));
+        lines.push(format!(
+            "Tokens: {total_tokens} total ({total_input_tokens} in / {total_output_tokens} out)"
+        ));
+        lines.push(format!(
+            "Tools: {total_tool_executions} executions  (errors: {total_tool_errors})"
+        ));
+        if span_hours > 0.0 {
+            let completions_per_hour = total_completions as f64 / span_hours;
+            lines.push(format!("Rate: {completions_per_hour:.1} completions/hour"));
+        }
+
+        if !provider_totals.is_empty() {
+            lines.push(String::new());
+            lines.push("By provider:".to_string());
+            let mut providers: Vec<_> = provider_totals.into_iter().collect();
+            providers.sort_by(|a, b| (b.1.0 + b.1.1).cmp(&(a.1.0 + a.1.1)));
+            for (provider, (input, output, completions)) in &providers {
+                lines.push(format!(
+                    "  {provider}: {completions} completions, {} tokens ({input} in / {output} out)",
+                    input + output
+                ));
+            }
+        }
+
+        let data_points = history.len();
+        lines.push(String::new());
+        lines.push(format!(
+            "Based on {data_points} data points over {span_hours:.1} hours."
+        ));
+
+        Ok(lines.join("\n"))
+    }
+}
+
+// ── /steer — inject guidance into active run ────────────────────────────────
+
+pub(in crate::channel_events) async fn handle_steer(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    args: &str,
+) -> ChannelResult<String> {
+    if args.is_empty() {
+        return Err(ChannelError::invalid_input(
+            "usage: /steer <guidance>\nInject a steering note into the current agent run.",
+        ));
+    }
+
+    // Check if there's an active run for this session.
+    let chat = state.chat().await;
+    let peek_res = chat
+        .peek(serde_json::json!({ "sessionKey": session_key }))
+        .await
+        .map_err(|e| ChannelError::external("peek", e))?;
+
+    let active = peek_res
+        .get("active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if !active {
+        return Err(ChannelError::invalid_input(
+            "No active agent run to steer. Use /steer while the agent is working.",
+        ));
+    }
+
+    state.set_steer_text(session_key, args.to_string()).await;
+
+    broadcast(
+        state,
+        "chat",
+        serde_json::json!({
+            "sessionKey": session_key,
+            "state": "steered",
+            "text": args,
+        }),
+        BroadcastOpts {
+            drop_if_slow: true,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    Ok(format!("Steering applied: {args}"))
+}
+
+// ── /queue — queue a message for the next agent turn ────────────────────────
+
+pub(in crate::channel_events) async fn handle_queue(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    args: &str,
+) -> ChannelResult<String> {
+    if args.is_empty() {
+        return Err(ChannelError::invalid_input(
+            "usage: /queue <message>\nQueue a message for the next agent turn without interrupting the current one.",
+        ));
+    }
+
+    // Use the chat service's send method — when a run is active, it will
+    // automatically queue the message according to MessageQueueMode.
+    let chat = state.chat().await;
+    let params = serde_json::json!({
+        "text": args,
+        "_session_key": session_key,
+    });
+
+    match chat.send(params).await {
+        Ok(res) => {
+            let queued = res.get("queued").and_then(|v| v.as_bool()).unwrap_or(false);
+            if queued {
+                Ok(format!("Queued for next turn: {args}"))
+            } else {
+                Ok("No active run \u{2014} message sent immediately.".to_string())
+            }
+        },
+        Err(e) => Err(ChannelError::external("queue", e)),
+    }
+}

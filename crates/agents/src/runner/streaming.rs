@@ -61,6 +61,7 @@ pub async fn run_agent_loop_streaming(
     tool_context: Option<serde_json::Value>,
     hook_registry: Option<Arc<HookRegistry>>,
     sender_name: Option<String>,
+    steer_inbox: Option<super::SteerInbox>,
 ) -> Result<AgentRunResult, AgentRunError> {
     let native_tools = provider.supports_tools();
     let config = moltis_config::discover_and_load();
@@ -866,5 +867,16 @@ pub async fn run_agent_loop_streaming(
             &mut strip_tools_next_iter,
             on_event,
         );
+
+        // Drain any pending /steer text and inject as user guidance.
+        if let Some(ref inbox) = steer_inbox {
+            let mut guard = inbox.lock().await;
+            for text in guard.drain(..) {
+                debug!(steer_text = %text, "injecting /steer guidance");
+                messages.push(ChatMessage::user(format!(
+                    "[User steering note — adjust your approach accordingly]: {text}"
+                )));
+            }
+        }
     }
 }

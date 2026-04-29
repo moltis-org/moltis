@@ -22,6 +22,12 @@ pub use {
     tool_result::{ExtractedImage, sanitize_tool_result, tool_result_to_content},
 };
 
+/// Shared inbox for mid-flight steering text (populated by `/steer` command).
+///
+/// The agent loop drains this between iterations and injects the text as a
+/// system notice so the LLM sees the guidance on its next call.
+pub type SteerInbox = std::sync::Arc<tokio::sync::Mutex<Vec<String>>>;
+
 // Re-export helpers at the module level so that sibling submodules
 // (`non_streaming`, `streaming`) can continue to import via `super::item_name`.
 pub(crate) use helpers::{

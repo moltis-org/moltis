@@ -599,6 +599,14 @@ pub(super) fn build_schema_map() -> KnownKeys {
             )])),
         ),
         (
+            "auxiliary",
+            Struct(HashMap::from([
+                ("compaction", Leaf),
+                ("title_generation", Leaf),
+                ("vision", Leaf),
+            ])),
+        ),
+        (
             "code_index",
             Struct(HashMap::from([
                 ("enabled", Leaf),
