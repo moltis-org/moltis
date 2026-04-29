@@ -3,12 +3,13 @@
 mod coqui;
 mod elevenlabs;
 mod google;
+pub mod mock;
 mod openai;
 mod piper;
 
 pub use {
-    coqui::CoquiTts, elevenlabs::ElevenLabsTts, google::GoogleTts, openai::OpenAiTts,
-    piper::PiperTts,
+    coqui::CoquiTts, elevenlabs::ElevenLabsTts, google::GoogleTts, mock::MockTts,
+    openai::OpenAiTts, piper::PiperTts,
 };
 
 use {

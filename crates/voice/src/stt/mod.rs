@@ -6,6 +6,7 @@ mod elevenlabs;
 mod google;
 mod groq;
 mod mistral;
+pub mod mock;
 mod sherpa_onnx;
 mod voxtral_local;
 mod whisper;
@@ -13,7 +14,7 @@ mod whisper_cli;
 
 pub use {
     deepgram::DeepgramStt, elevenlabs::ElevenLabsStt, google::GoogleStt, groq::GroqStt,
-    mistral::MistralStt, sherpa_onnx::SherpaOnnxStt, voxtral_local::VoxtralLocalStt,
+    mistral::MistralStt, mock::MockStt, sherpa_onnx::SherpaOnnxStt, voxtral_local::VoxtralLocalStt,
     whisper::WhisperStt, whisper_cli::WhisperCliStt,
 };
 
