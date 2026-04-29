@@ -17,7 +17,7 @@ import { ensureWsConnected, preferredChatPath } from "./onboarding/shared";
 import { AuthStep } from "./onboarding/steps/AuthStep";
 import { ChannelStep } from "./onboarding/steps/ChannelStep";
 import { IdentityStep } from "./onboarding/steps/IdentityStep";
-import { OpenClawImportStep } from "./onboarding/steps/OpenClawImportStep";
+import { ImportStep } from "./onboarding/steps/ImportStep";
 import { ProviderStep } from "./onboarding/steps/ProviderStep";
 import { RemoteAccessStep } from "./onboarding/steps/RemoteAccessStep";
 import { SkillsStep } from "./onboarding/steps/SkillsStep";
@@ -611,7 +611,7 @@ function OnboardingPage(): VNode {
 			<StepIndicator steps={steps} current={stepIndex} />
 			<div className="mt-6">
 				{step === 0 && <AuthStep onNext={goNext} skippable={authSkippable} />}
-				{step === importStep && <OpenClawImportStep onNext={goNext} onBack={authNeeded ? goBack : null} />}
+				{step === importStep && <ImportStep onNext={goNext} onBack={authNeeded ? goBack : null} />}
 				{step === llmStep && <ProviderStep onNext={goNext} onBack={authNeeded || anyImportDetected ? goBack : null} />}
 				{step === voiceStep && <VoiceStep onNext={goNext} onBack={goBack} />}
 				{step === skillsStep && <SkillsStep onNext={goNext} onBack={goBack} />}

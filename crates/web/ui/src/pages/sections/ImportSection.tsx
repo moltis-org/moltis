@@ -11,13 +11,14 @@ import { OpenClawImportSection } from "./OpenClawImportSection";
 interface ImportTab {
 	id: string;
 	label: string;
+	icon: VNode;
 	detected: boolean;
 }
 
 const ALL_TABS: ImportTab[] = [
-	{ id: "openclaw", label: "OpenClaw", detected: gon.get("openclaw_detected") === true },
-	{ id: "claude", label: "Claude Code", detected: gon.get("claude_detected") === true },
-	{ id: "hermes", label: "Hermes", detected: gon.get("hermes_detected") === true },
+	{ id: "openclaw", label: "OpenClaw", icon: <span className="icon icon-openclaw" />, detected: gon.get("openclaw_detected") === true },
+	{ id: "claude", label: "Claude Code", icon: <span className="icon icon-terminal-cmd" />, detected: gon.get("claude_detected") === true },
+	{ id: "hermes", label: "Hermes", icon: <span className="icon icon-globe" />, detected: gon.get("hermes_detected") === true },
 ];
 
 export function ImportSection(): VNode {
