@@ -210,33 +210,6 @@ function searchSkills(source: string, query: string): Promise<SkillSummary[]> {
 		.then((d) => d.skills || []);
 }
 
-function Toasts(): VNode {
-	return (
-		<div className="skills-toast-container">
-			{toasts.value.map((t) => {
-				const bg = t.type === "error" ? "var(--error, #e55)" : "var(--accent)";
-				return (
-					<div
-						key={t.id}
-						style={{
-							pointerEvents: "auto",
-							maxWidth: "420px",
-							padding: "10px 16px",
-							borderRadius: "6px",
-							fontSize: ".8rem",
-							fontWeight: 500,
-							color: "#fff",
-							background: bg,
-							boxShadow: "0 4px 12px rgba(0,0,0,.15)",
-						}}
-					>
-						{t.message}
-					</div>
-				);
-			})}
-		</div>
-	);
-}
 function InstallProgressBar(): VNode | null {
 	const items = installProgresses.value;
 	if (!items.length) return null;
@@ -1388,7 +1361,6 @@ export function initSkills(container: HTMLElement): void {
 	render(
 		<>
 			<SkillsPageComponent />
-			<Toasts />
 			<ConfirmDialog />
 		</>,
 		container,
