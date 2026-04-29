@@ -42,6 +42,7 @@ import {
 	NostrForm,
 	SignalForm,
 	TelegramForm,
+	TelephonyForm,
 } from "./channel-forms";
 import {
 	fetchRemoteAccessStatus,
@@ -1121,6 +1122,9 @@ export function ChannelStep({ onNext, onBack }: { onNext: () => void; onBack: ()
 			)}
 			{phase === "form" && selectedType === "signal" && (
 				<SignalForm onConnected={onConnected} error={channelError} setError={setChannelError} />
+			)}
+			{phase === "form" && selectedType === "telephony" && (
+				<TelephonyForm onConnected={onConnected} error={channelError} setError={setChannelError} />
 			)}
 			{phase === "success" && connectedType && (
 				<ChannelSuccess channelName={connectedName} channelType={connectedType} onAnother={onAnother} />

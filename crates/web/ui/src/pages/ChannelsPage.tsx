@@ -24,11 +24,11 @@ import { AddDiscordModal } from "./channels/modals/AddDiscordModal";
 import { AddMatrixModal } from "./channels/modals/AddMatrixModal";
 import { AddNostrModal } from "./channels/modals/AddNostrModal";
 import { AddSignalModal } from "./channels/modals/AddSignalModal";
-import { AddTelephonyModal } from "./channels/modals/AddTelephonyModal";
 import { AddSlackModal } from "./channels/modals/AddSlackModal";
 import { AddTeamsModal } from "./channels/modals/AddTeamsModal";
 // ── Sub-module imports (modals + shared fields) ──────────────
 import { AddTelegramModal } from "./channels/modals/AddTelegramModal";
+import { AddTelephonyModal } from "./channels/modals/AddTelephonyModal";
 import { AddWhatsAppModal } from "./channels/modals/AddWhatsAppModal";
 import { EditChannelModal } from "./channels/modals/EditChannelModal";
 
@@ -713,7 +713,7 @@ function ConnectButtons(): VNode {
 						if (connected.value) showAddTelephony.value = true;
 					}}
 				>
-					Connect Phone Calls
+					<span className="icon icon-phone" /> Connect Phone Calls
 				</button>
 			)}
 		</div>
