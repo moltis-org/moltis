@@ -36,6 +36,7 @@ moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
 moltis-slack          = { optional = true, workspace = true }
+moltis-telephony      = { optional = true, workspace = true }
 moltis-tls            = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-vault          = { optional = true, workspace = true }
@@ -76,6 +77,7 @@ default = [
   "signal",
   "slack",
   "tailscale",
+  "telephony",
   "tls",
   "trusted-network",
   "vault",
@@ -98,6 +100,7 @@ signal = ["moltis-gateway/signal"]
 discord = ["moltis-gateway/discord"]
 msteams = ["dep:moltis-msteams", "moltis-gateway/msteams"]
 slack = ["dep:moltis-slack", "moltis-gateway/slack"]
+telephony = ["dep:moltis-telephony", "moltis-gateway/telephony"]
 tailscale = ["moltis-gateway/tailscale"]
 tls = ["dep:moltis-tls", "dep:rustls", "moltis-gateway/tls"]
 trusted-network = ["moltis-gateway/trusted-network"]

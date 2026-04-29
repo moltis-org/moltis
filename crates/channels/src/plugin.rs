@@ -24,6 +24,7 @@ pub enum ChannelType {
     Matrix,
     Nostr,
     Signal,
+    Telephony,
 }
 
 impl ChannelType {
@@ -38,6 +39,7 @@ impl ChannelType {
             Self::Matrix => "matrix",
             Self::Nostr => "nostr",
             Self::Signal => "signal",
+            Self::Telephony => "telephony",
         }
     }
 
@@ -52,6 +54,7 @@ impl ChannelType {
             Self::Matrix => "Matrix",
             Self::Nostr => "Nostr",
             Self::Signal => "Signal",
+            Self::Telephony => "Phone Call",
         }
     }
 
@@ -76,6 +79,7 @@ impl ChannelType {
                 }
             },
             Self::Nostr => Some("dm".to_string()),
+            Self::Telephony => Some("call".to_string()),
             _ => None,
         }
     }
@@ -91,6 +95,7 @@ impl ChannelType {
             Self::Matrix => &["access_token", "password"],
             Self::Nostr => &["secret_key"],
             Self::Signal => &[],
+            Self::Telephony => &["auth_token"],
         }
     }
 }
@@ -114,6 +119,7 @@ impl std::str::FromStr for ChannelType {
             "matrix" | "element" => Ok(Self::Matrix),
             "nostr" => Ok(Self::Nostr),
             "signal" => Ok(Self::Signal),
+            "telephony" | "phone" | "voice_call" | "voicecall" => Ok(Self::Telephony),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),
@@ -132,6 +138,7 @@ impl ChannelType {
         Self::Matrix,
         Self::Nostr,
         Self::Signal,
+        Self::Telephony,
     ];
 
     /// Returns the static descriptor for this channel type.
@@ -262,6 +269,22 @@ impl ChannelType {
                     supports_voice_ingest: false,
                     supports_pairing: false,
                     supports_otp: true,
+                    supports_reactions: false,
+                    supports_location: false,
+                },
+            },
+            Self::Telephony => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Phone Call",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::Webhook,
+                    supports_outbound: true,
+                    supports_streaming: false,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: true,
+                    supports_pairing: false,
+                    supports_otp: false,
                     supports_reactions: false,
                     supports_location: false,
                 },
@@ -1308,7 +1331,7 @@ mod tests {
     #[test]
     fn all_covers_every_variant() {
         // If a new variant is added to ChannelType, this test forces updating ALL.
-        assert_eq!(ChannelType::ALL.len(), 8);
+        assert_eq!(ChannelType::ALL.len(), 9);
         for ct in ChannelType::ALL {
             // descriptor() must not panic
             let desc = ct.descriptor();

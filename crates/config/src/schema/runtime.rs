@@ -254,6 +254,9 @@ pub struct ChannelsConfig {
     /// Signal accounts backed by signal-cli, keyed by account ID.
     #[serde(default)]
     pub signal: HashMap<String, serde_json::Value>,
+    /// Telephony (phone call) accounts, keyed by account ID.
+    #[serde(default)]
+    pub telephony: HashMap<String, serde_json::Value>,
     /// Additional channel types not covered by the named fields above.
     ///
     /// This allows new channel plugins to be configured without changing
@@ -267,7 +270,7 @@ impl ChannelsConfig {
     ///
     /// This is the single source of truth for the set of named channel types.
     /// Keep in sync with the struct fields.
-    fn named_fields(&self) -> [(&str, &HashMap<String, serde_json::Value>); 7] {
+    fn named_fields(&self) -> [(&str, &HashMap<String, serde_json::Value>); 8] {
         [
             ("telegram", &self.telegram),
             ("whatsapp", &self.whatsapp),
@@ -276,6 +279,7 @@ impl ChannelsConfig {
             ("slack", &self.slack),
             ("nostr", &self.nostr),
             ("signal", &self.signal),
+            ("telephony", &self.telephony),
         ]
     }
 
@@ -319,6 +323,7 @@ fn default_channels_offered() -> Vec<String> {
         "matrix".into(),
         "nostr".into(),
         "signal".into(),
+        "telephony".into(),
     ]
 }
 
@@ -333,6 +338,7 @@ impl Default for ChannelsConfig {
             slack: HashMap::new(),
             nostr: HashMap::new(),
             signal: HashMap::new(),
+            telephony: HashMap::new(),
             extra: HashMap::new(),
         }
     }

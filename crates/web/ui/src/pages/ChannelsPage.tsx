@@ -24,6 +24,7 @@ import { AddDiscordModal } from "./channels/modals/AddDiscordModal";
 import { AddMatrixModal } from "./channels/modals/AddMatrixModal";
 import { AddNostrModal } from "./channels/modals/AddNostrModal";
 import { AddSignalModal } from "./channels/modals/AddSignalModal";
+import { AddTelephonyModal } from "./channels/modals/AddTelephonyModal";
 import { AddSlackModal } from "./channels/modals/AddSlackModal";
 import { AddTeamsModal } from "./channels/modals/AddTeamsModal";
 // ── Sub-module imports (modals + shared fields) ──────────────
@@ -185,6 +186,7 @@ export const showAddSlack: Signal<boolean> = signal(false);
 export const showAddMatrix: Signal<boolean> = signal(false);
 export const showAddNostr: Signal<boolean> = signal(false);
 export const showAddSignal: Signal<boolean> = signal(false);
+export const showAddTelephony: Signal<boolean> = signal(false);
 export const editingChannel: Signal<Channel | null> = signal(null);
 const sendersAccount: Signal<string> = signal("");
 
@@ -704,6 +706,16 @@ function ConnectButtons(): VNode {
 					<span className="icon icon-signal" /> Connect Signal
 				</button>
 			)}
+			{offered.has("telephony") && (
+				<button
+					className="provider-btn provider-btn-secondary inline-flex items-center gap-1.5"
+					onClick={() => {
+						if (connected.value) showAddTelephony.value = true;
+					}}
+				>
+					Connect Phone Calls
+				</button>
+			)}
 		</div>
 	);
 }
@@ -941,6 +953,7 @@ function ChannelsPageComponent(): VNode {
 			<AddMatrixModal />
 			<AddNostrModal />
 			<AddSignalModal />
+			<AddTelephonyModal />
 			<AddWhatsAppModal />
 			<EditChannelModal />
 			<ConfirmDialog />
@@ -963,6 +976,7 @@ export function initChannels(container: HTMLElement): void {
 	showAddMatrix.value = false;
 	showAddNostr.value = false;
 	showAddSignal.value = false;
+	showAddTelephony.value = false;
 	showAddWhatsApp.value = false;
 	editingChannel.value = null;
 	sendersAccount.value = "";

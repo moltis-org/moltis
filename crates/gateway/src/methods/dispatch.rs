@@ -128,6 +128,7 @@ const READ_METHODS: &[&str] = &[
     "openclaw.detect",
     "openclaw.scan",
     "system.describe",
+    "voicecall.status",
 ];
 
 const WRITE_METHODS: &[&str] = &[
@@ -251,6 +252,8 @@ const WRITE_METHODS: &[&str] = &[
     "hooks.reload",
     "location.result",
     "openclaw.import",
+    "voicecall.initiate",
+    "voicecall.end",
     "subscribe",
     "unsubscribe",
     "channel.join",

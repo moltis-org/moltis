@@ -7591,6 +7591,7 @@ dependencies = [
  "moltis-slack",
  "moltis-tailscale",
  "moltis-telegram",
+ "moltis-telephony",
  "moltis-tools",
  "moltis-vault",
  "moltis-voice",
@@ -7716,6 +7717,7 @@ dependencies = [
  "moltis-sessions",
  "moltis-skills",
  "moltis-slack",
+ "moltis-telephony",
  "moltis-tls",
  "moltis-tools",
  "moltis-vault",
@@ -8372,6 +8374,36 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "moltis-telephony"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "dashmap 6.1.0",
+ "hmac 0.12.1",
+ "http 1.4.0",
+ "moltis-agents",
+ "moltis-channels",
+ "moltis-common",
+ "moltis-metrics",
+ "moltis-voice",
+ "reqwest 0.13.2",
+ "secrecy 0.8.0",
+ "serde",
+ "serde_json",
+ "sha1",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
+ "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]

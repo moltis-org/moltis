@@ -138,6 +138,7 @@ default = [
   "signal",
   "slack",
   "tailscale",
+  "telephony",
   "tls",
   "trusted-network",
   "vault",
@@ -188,6 +189,7 @@ qmd                = ["moltis-gateway/qmd"]
 signal             = ["moltis-httpd/signal"]
 slack              = ["moltis-httpd/slack"]
 tailscale          = ["moltis-httpd/tailscale", "moltis-web?/tailscale"]
+telephony          = ["moltis-httpd/telephony"]
 tls                = ["moltis-httpd/tls"]
 trusted-network    = ["moltis-httpd/trusted-network"]
 vault              = ["moltis-httpd/vault", "moltis-web?/vault"]

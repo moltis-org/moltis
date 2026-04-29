@@ -23,6 +23,9 @@ pub struct PreparedGatewayCore {
     /// Slack webhook plugin.
     #[cfg(feature = "slack")]
     pub slack_webhook_plugin: Arc<tokio::sync::RwLock<moltis_slack::SlackPlugin>>,
+    /// Telephony webhook plugin.
+    #[cfg(feature = "telephony")]
+    pub telephony_webhook_plugin: Arc<tokio::sync::RwLock<moltis_telephony::TelephonyPlugin>>,
     /// Push notification service.
     #[cfg(feature = "push-notifications")]
     pub push_service: Option<Arc<crate::push::PushService>>,

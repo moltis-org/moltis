@@ -92,6 +92,8 @@ pub(super) struct PostStateInputs {
     pub msteams_webhook_plugin: Arc<tokio::sync::RwLock<moltis_msteams::MsTeamsPlugin>>,
     #[cfg(feature = "slack")]
     pub slack_webhook_plugin: Arc<tokio::sync::RwLock<moltis_slack::SlackPlugin>>,
+    #[cfg(feature = "telephony")]
+    pub telephony_webhook_plugin: Arc<tokio::sync::RwLock<moltis_telephony::TelephonyPlugin>>,
     #[cfg(feature = "local-llm")]
     pub local_llm_service: Option<Arc<crate::local_llm_setup::LiveLocalLlmService>>,
     #[cfg(feature = "vault")]
@@ -351,6 +353,8 @@ pub(super) async fn complete_startup(
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,
+        #[cfg(feature = "telephony")]
+        telephony_webhook_plugin,
         #[cfg(feature = "local-llm")]
         local_llm_service,
         #[cfg(feature = "vault")]
@@ -874,6 +878,12 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(crate::channel_agent_tools::SendMessageTool::new(
             Arc::clone(&state.services.channel),
         )));
+        // Voice call tool — lets agents initiate and manage phone calls.
+        #[cfg(feature = "telephony")]
+        {
+            let voice_tool = moltis_telephony::VoiceCallTool::new(String::new());
+            tool_registry.register(Box::new(voice_tool));
+        }
         // MCP management tools — let agents add/remove/restart MCP servers directly.
         {
             let mcp = Arc::clone(&state.services.mcp);
@@ -1435,6 +1445,8 @@ pub(super) async fn complete_startup(
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,
+        #[cfg(feature = "telephony")]
+        telephony_webhook_plugin,
         #[cfg(feature = "push-notifications")]
         push_service,
         #[cfg(feature = "trusted-network")]

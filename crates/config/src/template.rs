@@ -556,10 +556,27 @@ port = {port}                           # Port number (auto-generated for this i
 # not in this file. Keep channel config here only for manual TOML management.
 
 # [channels]
-# offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal"]
+# offered = ["telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal", "telephony"]
 
 # See docs or defaults.toml for full channel configuration examples
-# (WhatsApp, Telegram, Teams, Discord, Slack, Matrix, Nostr, Signal).
+# (WhatsApp, Telegram, Teams, Discord, Slack, Matrix, Nostr, Signal, Telephony).
+
+# ── Telephony (Phone Calls) ──────────────────────────────────────────────────
+# Make and receive phone calls via Twilio (more providers coming).
+# Requires a Twilio account with a phone number and webhook access.
+#
+# [channels.telephony.default]
+# provider = "twilio"                          # Provider backend
+# account_sid = "${{TWILIO_ACCOUNT_SID}}"      # Twilio Account SID
+# auth_token = "${{TWILIO_AUTH_TOKEN}}"        # Twilio Auth Token
+# from_number = "+15551234567"                 # Your Twilio phone number (E.164)
+# webhook_url = "https://your-domain.com"      # Public URL for Twilio callbacks
+# webhook_port = 3334                          # Webhook listener port
+# inbound_policy = "disabled"                  # disabled | allowlist | open
+# allowlist = ["+15559876543"]                 # Allowed inbound callers (E.164)
+# max_duration_secs = 3600                     # Max call duration (1 hour)
+# model = "claude-sonnet-4-20250514"                       # LLM model for call conversations
+# agent_id = "main"                            # Agent to handle calls
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS

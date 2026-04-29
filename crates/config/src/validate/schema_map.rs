@@ -434,6 +434,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                     ("matrix", Map(Box::new(channel_account()))),
                     ("nostr", Map(Box::new(channel_account()))),
                     ("signal", Map(Box::new(channel_account()))),
+                    ("telephony", Map(Box::new(channel_account()))),
                 ]),
             }
         }),

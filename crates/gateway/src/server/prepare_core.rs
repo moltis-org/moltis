@@ -1304,6 +1304,8 @@ pub async fn prepare_gateway_core(
     let msteams_webhook_plugin = channel_result.msteams_webhook_plugin;
     #[cfg(feature = "slack")]
     let slack_webhook_plugin = channel_result.slack_webhook_plugin;
+    #[cfg(feature = "telephony")]
+    let telephony_webhook_plugin = channel_result.telephony_webhook_plugin;
 
     services = services.with_session_metadata(Arc::clone(&session_metadata));
     services = services.with_session_store(Arc::clone(&session_store));
@@ -1423,6 +1425,8 @@ pub async fn prepare_gateway_core(
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,
+        #[cfg(feature = "telephony")]
+        telephony_webhook_plugin,
         #[cfg(feature = "local-llm")]
         local_llm_service,
         #[cfg(feature = "vault")]

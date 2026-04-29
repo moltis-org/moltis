@@ -85,6 +85,8 @@ pub async fn prepare_gateway(
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,
+        #[cfg(feature = "telephony")]
+        telephony_webhook_plugin,
         #[cfg(feature = "push-notifications")]
         push_service,
         #[cfg(feature = "trusted-network")]
@@ -502,6 +504,178 @@ pub async fn prepare_gateway(
                                     )
                                         .into_response(),
                                 }
+                            },
+                        }
+                    }
+                },
+            ),
+        );
+    }
+
+    #[cfg(feature = "telephony")]
+    {
+        let telephony_plugin_for_webhook = Arc::clone(&telephony_webhook_plugin);
+        let _state_for_telephony = Arc::clone(&state);
+
+        // Status callback — Twilio posts call status updates here
+        app = app.route(
+            "/api/channels/telephony/{account_id}/status",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let plugin = Arc::clone(&telephony_plugin_for_webhook);
+                    async move {
+                        let plugin_guard = plugin.read().await;
+                        let mgr = match plugin_guard.call_manager(&account_id) {
+                            Some(m) => m,
+                            None => {
+                                return (
+                                    StatusCode::NOT_FOUND,
+                                    Json(serde_json::json!({"ok": false, "error": "unknown telephony account"})),
+                                )
+                                    .into_response();
+                            },
+                        };
+
+                        // Parse the webhook event from the body
+                        let manager = mgr.read().await;
+                        let provider = manager.provider().read().await;
+                        match provider.parse_webhook_event(&headers, &body) {
+                            Ok(event) => {
+                                drop(provider);
+                                manager.handle_event(&event);
+                                (
+                                    StatusCode::OK,
+                                    Json(serde_json::json!({"ok": true})),
+                                )
+                                    .into_response()
+                            },
+                            Err(e) => {
+                                tracing::warn!(account_id = %account_id, "telephony webhook parse error: {e}");
+                                (
+                                    StatusCode::BAD_REQUEST,
+                                    Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+                                )
+                                    .into_response()
+                            },
+                        }
+                    }
+                },
+            ),
+        );
+
+        // Answer URL — Twilio fetches TwiML from here when a call connects
+        let telephony_answer_plugin = Arc::clone(&telephony_webhook_plugin);
+        app = app.route(
+            "/api/channels/telephony/{account_id}/answer",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      _headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let plugin = Arc::clone(&telephony_answer_plugin);
+                    async move {
+                        let plugin_guard = plugin.read().await;
+                        let mgr = match plugin_guard.call_manager(&account_id) {
+                            Some(m) => m,
+                            None => {
+                                return (StatusCode::NOT_FOUND, "unknown account").into_response();
+                            },
+                        };
+
+                        let manager = mgr.read().await;
+
+                        // Parse inbound call info from body
+                        let body_str = std::str::from_utf8(&body).unwrap_or("");
+                        let params: HashMap<String, String> =
+                            url::form_urlencoded::parse(body_str.as_bytes())
+                                .map(|(k, v)| (k.to_string(), v.to_string()))
+                                .collect();
+
+                        let caller = params.get("From").map(|s| s.as_str()).unwrap_or("unknown");
+                        let called = params.get("To").map(|s| s.as_str()).unwrap_or("unknown");
+                        let call_sid = params.get("CallSid").map(|s| s.as_str()).unwrap_or("");
+
+                        // Register the inbound call
+                        if !call_sid.is_empty() {
+                            manager.register_inbound(call_sid, caller, called, &account_id);
+                            let provider = manager.provider().read().await;
+
+                            // Build gather response to start listening
+                            let gather_url = format!("/api/channels/telephony/{account_id}/gather");
+                            let twiml = provider.build_answer_response(
+                                Some("Hello, you've reached the AI assistant. How can I help you?"),
+                                Some(&gather_url),
+                            );
+                            return (
+                                StatusCode::OK,
+                                [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                                twiml,
+                            )
+                                .into_response();
+                        }
+
+                        let provider = manager.provider().read().await;
+                        let twiml = provider.build_hangup_response();
+                        (
+                            StatusCode::OK,
+                            [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                            twiml,
+                        )
+                            .into_response()
+                    }
+                },
+            ),
+        );
+
+        // Gather URL — receives speech/DTMF results from Twilio
+        let telephony_gather_plugin = Arc::clone(&telephony_webhook_plugin);
+        app = app.route(
+            "/api/channels/telephony/{account_id}/gather",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let plugin = Arc::clone(&telephony_gather_plugin);
+                    async move {
+                        let plugin_guard = plugin.read().await;
+                        let mgr = match plugin_guard.call_manager(&account_id) {
+                            Some(m) => m,
+                            None => {
+                                return (StatusCode::NOT_FOUND, "unknown account").into_response();
+                            },
+                        };
+
+                        let manager = mgr.read().await;
+                        let provider = manager.provider().read().await;
+
+                        // Parse the speech/DTMF result
+                        match provider.parse_webhook_event(&headers, &body) {
+                            Ok(event) => {
+                                drop(provider);
+                                manager.handle_event(&event);
+
+                                // Continue gathering for the next input
+                                let provider = manager.provider().read().await;
+                                let gather_url =
+                                    format!("/api/channels/telephony/{account_id}/gather");
+                                let twiml = provider.build_gather_response(None, &gather_url);
+                                (
+                                    StatusCode::OK,
+                                    [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                                    twiml,
+                                )
+                                    .into_response()
+                            },
+                            Err(e) => {
+                                tracing::warn!(account_id = %account_id, "telephony gather parse error: {e}");
+                                let twiml = provider.build_hangup_response();
+                                (
+                                    StatusCode::OK,
+                                    [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                                    twiml,
+                                )
+                                    .into_response()
                             },
                         }
                     }
