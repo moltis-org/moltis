@@ -60,43 +60,46 @@ function countHermes(p: Record<string, unknown>): number {
 	return n;
 }
 
-const ALL_TABS: ImportTabDef[] = [
-	{
-		id: "openclaw",
-		label: "OpenClaw",
-		icon: <span className="icon icon-openclaw" />,
-		detected: getGon("openclaw_detected") === true,
-		detectRpc: "openclaw.scan",
-		countFn: countOpenClaw,
-	},
-	{
-		id: "claude",
-		label: "Claude Code",
-		icon: <span className="icon icon-terminal-cmd" />,
-		detected: getGon("claude_detected") === true,
-		detectRpc: "claude.detect",
-		countFn: countClaude,
-	},
-	{
-		id: "codex",
-		label: "Codex CLI",
-		icon: <span className="icon icon-code" />,
-		detected: getGon("codex_detected") === true,
-		detectRpc: "codex.detect",
-		countFn: countCodex,
-	},
-	{
-		id: "hermes",
-		label: "Hermes",
-		icon: <span className="icon icon-globe" />,
-		detected: getGon("hermes_detected") === true,
-		detectRpc: "hermes.detect",
-		countFn: countHermes,
-	},
-];
+/** Build tab definitions at render time so getGon() reads current state. */
+function getAllTabs(): ImportTabDef[] {
+	return [
+		{
+			id: "openclaw",
+			label: "OpenClaw",
+			icon: <span className="icon icon-openclaw" />,
+			detected: getGon("openclaw_detected") === true,
+			detectRpc: "openclaw.scan",
+			countFn: countOpenClaw,
+		},
+		{
+			id: "claude",
+			label: "Claude Code",
+			icon: <span className="icon icon-terminal-cmd" />,
+			detected: getGon("claude_detected") === true,
+			detectRpc: "claude.detect",
+			countFn: countClaude,
+		},
+		{
+			id: "codex",
+			label: "Codex CLI",
+			icon: <span className="icon icon-code" />,
+			detected: getGon("codex_detected") === true,
+			detectRpc: "codex.detect",
+			countFn: countCodex,
+		},
+		{
+			id: "hermes",
+			label: "Hermes",
+			icon: <span className="icon icon-globe" />,
+			detected: getGon("hermes_detected") === true,
+			detectRpc: "hermes.detect",
+			countFn: countHermes,
+		},
+	];
+}
 
 export function ImportStep({ onNext, onBack }: { onNext: () => void; onBack?: (() => void) | null }): VNode {
-	const detectedTabs = ALL_TABS.filter((t) => t.detected);
+	const detectedTabs = getAllTabs().filter((t) => t.detected);
 	const [activeTab, setActiveTab] = useState(detectedTabs[0]?.id || "openclaw");
 	const [wsReady, setWsReady] = useState(false);
 	const [badges, setBadges] = useState<Record<string, number>>({});

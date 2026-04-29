@@ -137,17 +137,17 @@ export function HermesImportSection(): VNode {
 	return (
 		<div>
 			<SectionHeading title="Hermes" />
-			<p className="text-xs text-[var(--muted)] leading-relaxed mb-3" style={{ maxWidth: "600px" }}>
+			<p className="text-xs text-[var(--muted)] leading-relaxed mb-3 max-w-[600px]">
 				Import data from your Hermes installation at <code className="text-[var(--text)]">{scan.home_dir}</code>. This
 				is a read-only copy {"\u2014"} your Hermes files will not be modified.
 			</p>
 			{error ? (
-				<div role="alert" className="alert-error-text whitespace-pre-line mb-3" style={{ maxWidth: "600px" }}>
+				<div role="alert" className="alert-error-text whitespace-pre-line mb-3 max-w-[600px]">
 					<span className="text-[var(--error)] font-medium">Error:</span> {error}
 				</div>
 			) : null}
 			{done && result ? (
-				<div className="flex flex-col gap-2" style={{ maxWidth: "600px" }}>
+				<div className="flex flex-col gap-2 max-w-[600px]">
 					<div className="text-sm font-medium text-[var(--ok)]">
 						Import complete: {result.total_imported || 0} item(s) imported.
 					</div>
@@ -172,8 +172,8 @@ export function HermesImportSection(): VNode {
 						</div>
 					) : null}
 					<button
-						className="provider-btn provider-btn-secondary mt-2"
-						style={{ width: "fit-content" }}
+						type="button"
+						className="provider-btn provider-btn-secondary mt-2 w-fit"
 						onClick={() => {
 							setDone(false);
 							setResult(null);
@@ -184,7 +184,7 @@ export function HermesImportSection(): VNode {
 					</button>
 				</div>
 			) : (
-				<div className="grid grid-cols-1 sm:grid-cols-2 gap-2" style={{ maxWidth: "600px" }}>
+				<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-[600px]">
 					{categories.map((cat) => {
 						const checked = selection[cat.key] && cat.available;
 						return (
@@ -223,8 +223,8 @@ export function HermesImportSection(): VNode {
 			)}
 			{done ? null : (
 				<button
-					className="provider-btn mt-3"
-					style={{ width: "fit-content" }}
+					type="button"
+					className="provider-btn mt-3 w-fit"
 					onClick={doImport}
 					disabled={!anySelected || importing}
 				>
