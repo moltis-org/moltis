@@ -1457,13 +1457,10 @@ pub(super) async fn complete_startup(
                             count = enabled_count,
                             "starting auto-index for enabled projects"
                         );
-                        // Register enabled projects in the manager's project_dirs map.
-                        {
-                            let mut dirs = jm.project_dirs.lock().await;
-                            for p in &projects {
-                                if p.code_index_enabled {
-                                    dirs.insert(p.id.clone(), p.directory.clone());
-                                }
+                        // Register enabled projects using public API.
+                        for p in &projects {
+                            if p.code_index_enabled {
+                                jm.register_project(p.id.clone(), p.directory.clone()).await;
                             }
                         }
                         jm.index_all_enabled_projects().await;
