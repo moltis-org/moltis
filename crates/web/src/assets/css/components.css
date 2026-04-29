@@ -1235,6 +1235,10 @@
   -webkit-mask-image: url("../icons/masks/mask-0162291303f5d971.svg");
   mask-image: url("../icons/masks/mask-0162291303f5d971.svg");
 }
+.settings-nav-item[data-section="phone"]::before {
+  -webkit-mask-image: url("../icons/masks/phone.svg");
+  mask-image: url("../icons/masks/phone.svg");
+}
 .settings-nav-item[data-section="monitoring"]::before {
   -webkit-mask-image: url("../icons/masks/mask-b9bf0315417c03e4.svg");
   mask-image: url("../icons/masks/mask-b9bf0315417c03e4.svg");
