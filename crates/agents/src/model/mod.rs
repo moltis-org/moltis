@@ -1,9 +1,3 @@
-use std::{path::Path, pin::Pin, sync::Arc, time::Duration};
-
-use {async_trait::async_trait, futures::StreamExt, tokio_stream::Stream};
-
-use crate::multimodal::parse_data_uri;
-
 // ── Reasoning effort ──────────────────────────────────────────────────────
 
 /// Re-export from config so downstream crates can use `moltis_agents::model::ReasoningEffort`.
@@ -15,7 +9,18 @@ pub use types::{
     ToolCall, Usage, push_capped_provider_raw_event,
 };
 
+mod chat;
+pub use chat::{ChatMessage, ContentPart, UserContent};
+
+mod convert;
+pub use convert::{extract_tool_call_metadata, values_to_chat_messages};
+
+mod stream;
+pub use stream::{LlmProvider, StreamEvent};
+
+#[cfg(test)]
 fn document_absolute_path_from_media_ref(media_ref: &str) -> String {
+    use std::path::Path;
     if Path::new(media_ref).is_absolute() {
         return media_ref.to_string();
     }
@@ -39,603 +44,6 @@ pub fn decode_tool_call_arguments(arguments: Option<&serde_json::Value>) -> serd
             .unwrap_or_else(|_| serde_json::Value::Object(Default::default())),
         Some(serde_json::Value::Null) | None => serde_json::Value::Object(Default::default()),
         Some(value) => value.clone(),
-    }
-}
-
-// ── Typed chat messages ─────────────────────────────────────────────────────
-
-/// Typed chat message for the LLM provider interface.
-///
-/// Only contains LLM-relevant fields — metadata like `created_at`, `model`,
-/// `provider`, `inputTokens`, `outputTokens` cannot exist here, so they
-/// can never leak into provider API requests.
-#[derive(Debug, Clone)]
-pub enum ChatMessage {
-    System {
-        content: String,
-    },
-    User {
-        content: UserContent,
-        /// Optional sender name for channel messages (Telegram, Discord, etc.).
-        name: Option<String>,
-    },
-    Assistant {
-        content: Option<String>,
-        tool_calls: Vec<ToolCall>,
-    },
-    Tool {
-        tool_call_id: String,
-        content: String,
-    },
-}
-
-/// User message content: plain text or multimodal (text + images).
-#[derive(Debug, Clone)]
-pub enum UserContent {
-    Text(String),
-    Multimodal(Vec<ContentPart>),
-}
-
-impl UserContent {
-    /// Create a text-only user content.
-    pub fn text(s: impl Into<String>) -> Self {
-        Self::Text(s.into())
-    }
-}
-
-/// A single part of a multimodal content array.
-#[derive(Debug, Clone)]
-pub enum ContentPart {
-    Text(String),
-    Image { media_type: String, data: String },
-}
-
-impl ChatMessage {
-    /// Create a system message.
-    pub fn system(content: impl Into<String>) -> Self {
-        Self::System {
-            content: content.into(),
-        }
-    }
-
-    /// Create a user message with plain text.
-    pub fn user(content: impl Into<String>) -> Self {
-        Self::User {
-            content: UserContent::Text(content.into()),
-            name: None,
-        }
-    }
-
-    /// Create a user message with plain text and a sender name.
-    pub fn user_named(content: impl Into<String>, name: impl Into<String>) -> Self {
-        Self::User {
-            content: UserContent::Text(content.into()),
-            name: Some(name.into()),
-        }
-    }
-
-    /// Create a user message with multimodal content.
-    pub fn user_multimodal(parts: Vec<ContentPart>) -> Self {
-        Self::User {
-            content: UserContent::Multimodal(parts),
-            name: None,
-        }
-    }
-
-    /// Create a user message with multimodal content and a sender name.
-    pub fn user_multimodal_named(parts: Vec<ContentPart>, name: impl Into<String>) -> Self {
-        Self::User {
-            content: UserContent::Multimodal(parts),
-            name: Some(name.into()),
-        }
-    }
-
-    /// Create an assistant message with text only (no tool calls).
-    pub fn assistant(content: impl Into<String>) -> Self {
-        Self::Assistant {
-            content: Some(content.into()),
-            tool_calls: vec![],
-        }
-    }
-
-    /// Create an assistant message with tool calls (and optional text).
-    pub fn assistant_with_tools(content: Option<String>, tool_calls: Vec<ToolCall>) -> Self {
-        Self::Assistant {
-            content,
-            tool_calls,
-        }
-    }
-
-    /// Create a tool result message.
-    pub fn tool(tool_call_id: impl Into<String>, content: impl Into<String>) -> Self {
-        Self::Tool {
-            tool_call_id: tool_call_id.into(),
-            content: content.into(),
-        }
-    }
-
-    /// Convert to OpenAI-compatible JSON format.
-    ///
-    /// Used by providers that speak the OpenAI Chat Completions API:
-    /// OpenAI, Mistral, Copilot, Kimi, Cerebras, etc.
-    #[must_use]
-    pub fn to_openai_value(&self) -> serde_json::Value {
-        match self {
-            ChatMessage::System { content } => {
-                serde_json::json!({ "role": "system", "content": content })
-            },
-            ChatMessage::User { content, name } => {
-                let mut msg = match content {
-                    UserContent::Text(text) => {
-                        serde_json::json!({ "role": "user", "content": text })
-                    },
-                    UserContent::Multimodal(parts) => {
-                        let blocks: Vec<serde_json::Value> = parts
-                            .iter()
-                            .map(|part| match part {
-                                ContentPart::Text(text) => {
-                                    serde_json::json!({ "type": "text", "text": text })
-                                },
-                                ContentPart::Image { media_type, data } => {
-                                    let data_uri = format!("data:{media_type};base64,{data}");
-                                    serde_json::json!({
-                                        "type": "image_url",
-                                        "image_url": { "url": data_uri }
-                                    })
-                                },
-                            })
-                            .collect();
-                        serde_json::json!({ "role": "user", "content": blocks })
-                    },
-                };
-                if let Some(n) = name {
-                    msg["name"] = serde_json::Value::String(n.clone());
-                }
-                msg
-            },
-            ChatMessage::Assistant {
-                content,
-                tool_calls,
-            } => {
-                if tool_calls.is_empty() {
-                    serde_json::json!({
-                        "role": "assistant",
-                        "content": content.as_deref().unwrap_or(""),
-                    })
-                } else {
-                    let tc_json: Vec<serde_json::Value> = tool_calls
-                        .iter()
-                        .map(|tc| {
-                            let mut tc_val = serde_json::json!({
-                                "id": tc.id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.name,
-                                    "arguments": tc.arguments.to_string(),
-                                }
-                            });
-                            if let Some(ref meta) = tc.metadata
-                                && let Some(obj) = tc_val.as_object_mut()
-                            {
-                                for (k, v) in meta {
-                                    obj.insert(k.clone(), v.clone());
-                                }
-                            }
-                            tc_val
-                        })
-                        .collect();
-                    let mut msg = serde_json::json!({
-                        "role": "assistant",
-                        "tool_calls": tc_json,
-                    });
-                    if let Some(text) = content {
-                        msg["content"] = serde_json::Value::String(text.clone());
-                    }
-                    msg
-                }
-            },
-            ChatMessage::Tool {
-                tool_call_id,
-                content,
-            } => {
-                serde_json::json!({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": content,
-                })
-            },
-        }
-    }
-}
-
-/// Extract allowlisted metadata keys from a tool-call JSON object.
-///
-/// Returns `None` when no metadata keys are present, keeping the common path
-/// allocation-free.
-#[must_use]
-pub fn extract_tool_call_metadata(
-    tc: &serde_json::Value,
-) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let obj = tc.as_object()?;
-    let nested = obj.get("metadata").and_then(serde_json::Value::as_object);
-    let meta: serde_json::Map<_, _> = TOOL_CALL_METADATA_KEYS
-        .iter()
-        .filter_map(|&k| {
-            obj.get(k)
-                .or_else(|| nested.and_then(|metadata| metadata.get(k)))
-                .map(|v| (k.to_string(), v.clone()))
-        })
-        .collect();
-    if meta.is_empty() {
-        None
-    } else {
-        Some(meta)
-    }
-}
-
-/// Convert persisted JSON messages (from session store) to typed `ChatMessage`s.
-///
-/// Skips messages that don't have a valid `role` field, logging a warning.
-/// Metadata fields (`created_at`, `model`, `provider`, `inputTokens`,
-/// `outputTokens`, `channel`) are silently dropped — they only exist in
-/// the persisted JSON, not in `ChatMessage`.
-pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage> {
-    let mut messages = Vec::with_capacity(values.len());
-    // Track tool_call IDs emitted by assistant messages so we only include
-    // tool/tool_result messages that have a matching assistant tool_call.
-    // Orphan tool results (e.g. from explicit /sh commands) would cause
-    // provider API errors.
-    let mut pending_tool_call_ids: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
-    for (i, val) in values.iter().enumerate() {
-        let Some(role) = val["role"].as_str() else {
-            tracing::warn!(index = i, "skipping message with missing/invalid role");
-            continue;
-        };
-        match role {
-            "system" => {
-                let content = val["content"].as_str().unwrap_or("").to_string();
-                messages.push(ChatMessage::system(content));
-            },
-            "user" => {
-                // Extract sender name from persisted channel metadata.
-                let sender_name = val
-                    .get("channel")
-                    .and_then(|ch| {
-                        ch["sender_name"]
-                            .as_str()
-                            .or_else(|| ch["username"].as_str())
-                    })
-                    .map(|s| s.to_string());
-
-                let document_context = val["documents"].as_array().and_then(|documents| {
-                    let mut sections = Vec::new();
-                    for document in documents {
-                        let Some(display_name) = document["display_name"].as_str() else {
-                            continue;
-                        };
-                        let Some(mime_type) = document["mime_type"].as_str() else {
-                            continue;
-                        };
-                        let Some(media_ref) = document["media_ref"].as_str() else {
-                            continue;
-                        };
-                        let absolute_path = document_absolute_path_from_media_ref(media_ref);
-                        sections.push(format!(
-                            "filename: {display_name}\nmime_type: {mime_type}\nlocal_path: {absolute_path}\nmedia_ref: {media_ref}"
-                        ));
-                    }
-                    if sections.is_empty() {
-                        None
-                    } else {
-                        let mut rendered = vec!["[Inbound documents available]".to_string()];
-                        rendered.extend(sections);
-                        Some(rendered.join("\n\n"))
-                    }
-                });
-
-                // Content can be a string or an array (multimodal).
-                if let Some(text) = val["content"].as_str() {
-                    let content = if let Some(ref document_context) = document_context {
-                        if text.trim().is_empty() {
-                            document_context.clone()
-                        } else {
-                            format!("{text}\n\n{document_context}")
-                        }
-                    } else {
-                        text.to_string()
-                    };
-                    messages.push(ChatMessage::User {
-                        content: UserContent::Text(content),
-                        name: sender_name,
-                    });
-                } else if let Some(arr) = val["content"].as_array() {
-                    let mut parts: Vec<ContentPart> = arr
-                        .iter()
-                        .filter_map(|block| {
-                            let block_type = block["type"].as_str()?;
-                            match block_type {
-                                "text" => {
-                                    let text = block["text"].as_str()?.to_string();
-                                    Some(ContentPart::Text(text))
-                                },
-                                "image_url" => {
-                                    let url = block["image_url"]["url"].as_str()?;
-                                    let (media_type, data) = parse_data_uri(url)?;
-                                    Some(ContentPart::Image {
-                                        media_type: media_type.to_string(),
-                                        data: data.to_string(),
-                                    })
-                                },
-                                _ => None,
-                            }
-                        })
-                        .collect();
-                    if let Some(document_context) = document_context {
-                        if let Some(ContentPart::Text(text)) = parts
-                            .iter_mut()
-                            .find(|part| matches!(part, ContentPart::Text(_)))
-                        {
-                            if !text.trim().is_empty() {
-                                text.push_str("\n\n");
-                            }
-                            text.push_str(&document_context);
-                        } else {
-                            parts.insert(0, ContentPart::Text(document_context));
-                        }
-                    }
-                    messages.push(ChatMessage::User {
-                        content: UserContent::Multimodal(parts),
-                        name: sender_name,
-                    });
-                } else {
-                    messages.push(ChatMessage::User {
-                        content: UserContent::Text(document_context.unwrap_or_default()),
-                        name: sender_name,
-                    });
-                }
-            },
-            "assistant" => {
-                let content = val["content"].as_str().map(|s| s.to_string());
-                let tool_calls: Vec<ToolCall> = val["tool_calls"]
-                    .as_array()
-                    .map(|tcs| {
-                        tcs.iter()
-                            .filter_map(|tc| {
-                                let id = tc["id"].as_str()?.to_string();
-                                let name = tc["function"]["name"].as_str()?.to_string();
-                                let arguments =
-                                    decode_tool_call_arguments(tc["function"].get("arguments"));
-                                let metadata = extract_tool_call_metadata(tc);
-                                Some(ToolCall {
-                                    id,
-                                    name,
-                                    arguments,
-                                    metadata,
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                for tc in &tool_calls {
-                    pending_tool_call_ids.insert(tc.id.clone());
-                }
-                messages.push(ChatMessage::Assistant {
-                    content,
-                    tool_calls,
-                });
-            },
-            "tool" => {
-                let tool_call_id = val["tool_call_id"].as_str().unwrap_or("").to_string();
-                if !pending_tool_call_ids.remove(&tool_call_id) {
-                    tracing::debug!(tool_call_id, "skipping orphan tool message");
-                    continue;
-                }
-                let content = if let Some(s) = val["content"].as_str() {
-                    s.to_string()
-                } else {
-                    val["content"].to_string()
-                };
-                messages.push(ChatMessage::tool(tool_call_id, content));
-            },
-            // tool_result entries are persisted tool execution output; convert
-            // them to standard tool messages so the LLM sees its own results.
-            "tool_result" => {
-                let tool_call_id = val["tool_call_id"].as_str().unwrap_or("").to_string();
-                if !pending_tool_call_ids.remove(&tool_call_id) {
-                    tracing::debug!(tool_call_id, "skipping orphan tool_result message");
-                    continue;
-                }
-                let content = if let Some(err) = val["error"].as_str() {
-                    format!("Error: {err}")
-                } else if let Some(result) = val.get("result") {
-                    if let Some(s) = result.as_str() {
-                        s.to_string()
-                    } else {
-                        result.to_string()
-                    }
-                } else {
-                    String::new()
-                };
-                messages.push(ChatMessage::tool(tool_call_id, content));
-            },
-            // notice entries are UI-only informational messages.
-            "notice" => continue,
-            other => {
-                tracing::warn!(
-                    index = i,
-                    role = other,
-                    "skipping message with unknown role"
-                );
-            },
-        }
-    }
-    messages
-}
-
-// ── Stream events ───────────────────────────────────────────────────────────
-
-/// Events emitted during streaming LLM completion.
-#[derive(Debug, Clone)]
-pub enum StreamEvent {
-    /// Text content delta.
-    Delta(String),
-    /// Raw provider event payload (for debugging API responses).
-    ProviderRaw(serde_json::Value),
-    /// Reasoning/planning text delta (not user-visible final answer text).
-    ReasoningDelta(String),
-    /// A tool call has started (content_block_start with tool_use).
-    ToolCallStart {
-        /// Tool call ID from the provider.
-        id: String,
-        /// Tool name being called.
-        name: String,
-        /// Index of this tool call in the response (0-based).
-        index: usize,
-        /// Provider-specific metadata (e.g. Gemini `thought_signature`).
-        metadata: Option<serde_json::Map<String, serde_json::Value>>,
-    },
-    /// Streaming delta for tool call arguments (JSON fragment).
-    ToolCallArgumentsDelta {
-        /// Index of the tool call this delta belongs to.
-        index: usize,
-        /// JSON fragment to append to the arguments.
-        delta: String,
-    },
-    /// A tool call's arguments are complete.
-    ToolCallComplete {
-        /// Index of the completed tool call.
-        index: usize,
-    },
-    /// Stream completed successfully.
-    Done(Usage),
-    /// An error occurred.
-    Error(String),
-}
-
-/// LLM provider trait (Anthropic, OpenAI, Google, etc.).
-#[async_trait]
-pub trait LlmProvider: Send + Sync {
-    fn name(&self) -> &str;
-
-    /// Model identifier (e.g. "claude-sonnet-4-20250514", "gpt-4o").
-    fn id(&self) -> &str;
-
-    async fn complete(
-        &self,
-        messages: &[ChatMessage],
-        tools: &[serde_json::Value],
-    ) -> anyhow::Result<CompletionResponse>;
-
-    /// Whether this provider supports tool/function calling.
-    /// Defaults to false; providers that handle the `tools` parameter
-    /// in `complete()` should override this to return true.
-    fn supports_tools(&self) -> bool {
-        false
-    }
-
-    /// Context window size in tokens for this model.
-    /// Used to detect when conversation approaches the limit and trigger auto-compact.
-    fn context_window(&self) -> u32 {
-        200_000
-    }
-
-    /// Whether this provider supports vision (image inputs).
-    /// When true, tool results containing images will be sent as multimodal
-    /// content blocks instead of stripping the image data.
-    fn supports_vision(&self) -> bool {
-        false
-    }
-
-    /// Configured tool mode for this provider, if any.
-    ///
-    /// Returns `None` when the provider has no explicit tool mode override
-    /// (the caller should fall back to `Auto` behavior based on `supports_tools()`).
-    fn tool_mode(&self) -> Option<moltis_config::ToolMode> {
-        None
-    }
-
-    /// Stream a completion, yielding delta/done/error events.
-    fn stream(
-        &self,
-        messages: Vec<ChatMessage>,
-    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>>;
-
-    /// Stream a completion with tool support.
-    ///
-    /// Like `stream()`, but accepts tool schemas and can emit `ToolCallStart`,
-    /// `ToolCallArgumentsDelta`, and `ToolCallComplete` events in addition to
-    /// text deltas.
-    ///
-    /// Default implementation falls back to `stream()` (ignoring tools).
-    /// Providers with native streaming tool support should override this.
-    fn stream_with_tools(
-        &self,
-        messages: Vec<ChatMessage>,
-        _tools: Vec<serde_json::Value>,
-    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
-        self.stream(messages)
-    }
-
-    /// Configured reasoning effort for this provider instance, if any.
-    ///
-    /// Providers that support extended thinking (Anthropic, OpenAI o-series)
-    /// use this value when building API requests.
-    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
-        None
-    }
-
-    /// Return a new provider with reasoning effort set, if supported.
-    ///
-    /// Returns `None` for providers that don't support reasoning effort.
-    /// Used by sub-agent spawning to apply per-agent reasoning settings
-    /// without mutating the shared registry provider.
-    fn with_reasoning_effort(
-        self: Arc<Self>,
-        _effort: ReasoningEffort,
-    ) -> Option<Arc<dyn LlmProvider>> {
-        None
-    }
-
-    /// Send the cheapest request available that proves the model can answer.
-    ///
-    /// The default implementation streams a tiny prompt and returns as soon as
-    /// the first text delta or terminal event arrives. Providers can override
-    /// this to use provider-specific low-cost probe requests.
-    async fn probe(&self) -> anyhow::Result<()> {
-        let probe = vec![ChatMessage::user("ping")];
-        let mut stream = self.stream(probe);
-
-        let result = tokio::time::timeout(Duration::from_secs(30), async {
-            while let Some(event) = stream.next().await {
-                match event {
-                    StreamEvent::Delta(_) | StreamEvent::Done(_) => return Ok(()),
-                    StreamEvent::Error(err) => return Err(anyhow::anyhow!(err)),
-                    _ => continue,
-                }
-            }
-            Err(anyhow::anyhow!("stream ended without producing any output"))
-        })
-        .await;
-
-        drop(stream);
-
-        match result {
-            Ok(inner) => inner,
-            Err(_) => Err(anyhow::anyhow!("Connection timed out after 30 seconds")),
-        }
-    }
-
-    /// Fetch runtime model metadata from the provider API.
-    ///
-    /// The default implementation returns a `ModelMetadata` derived from the
-    /// static `context_window()` value. Providers that support a `/models`
-    /// endpoint can override this to fetch the actual context length at runtime.
-    async fn model_metadata(&self) -> anyhow::Result<ModelMetadata> {
-        Ok(ModelMetadata {
-            id: self.id().to_string(),
-            context_length: self.context_window(),
-        })
     }
 }
 
@@ -1228,7 +636,7 @@ mod tests {
         fn stream(
             &self,
             _: Vec<ChatMessage>,
-        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        ) -> std::pin::Pin<Box<dyn tokio_stream::Stream<Item = StreamEvent> + Send + '_>> {
             Box::pin(tokio_stream::empty())
         }
     }
@@ -1279,6 +687,36 @@ mod tests {
         assert_eq!(val["role"], "user");
         assert_eq!(val["content"], "hi");
         assert_eq!(val["name"], "Alice");
+    }
+
+    #[test]
+    fn to_openai_value_sanitizes_name_with_spaces() {
+        let msg = ChatMessage::user_named("hi", "Alice Smith");
+        let val = msg.to_openai_value();
+        assert_eq!(val["name"], "Alice_Smith");
+    }
+
+    #[test]
+    fn to_openai_value_sanitizes_name_with_unicode() {
+        let msg = ChatMessage::user_named("hi", "Алексей");
+        let val = msg.to_openai_value();
+        // All non-ASCII stripped → empty → name field omitted
+        assert!(val.get("name").is_none());
+    }
+
+    #[test]
+    fn to_openai_value_sanitizes_name_mixed_chars() {
+        let msg = ChatMessage::user_named("hi", "José García 🎉");
+        let val = msg.to_openai_value();
+        // Only ASCII alphanumeric, underscore, hyphen survive; spaces → _
+        assert_eq!(val["name"], "Jos_Garca_");
+    }
+
+    #[test]
+    fn sanitize_message_name_truncates_to_64_chars() {
+        let long_name = "a".repeat(100);
+        let result = ChatMessage::sanitize_message_name(&long_name);
+        assert_eq!(result.as_deref(), Some(&"a".repeat(64)[..]));
     }
 
     #[test]

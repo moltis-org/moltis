@@ -37,6 +37,7 @@ impl OpenAiProvider {
             reasoning_content_override: None,
             context_window_global: std::collections::HashMap::new(),
             context_window_provider: std::collections::HashMap::new(),
+            supports_user_name: true,
         }
     }
 
@@ -46,6 +47,8 @@ impl OpenAiProvider {
         base_url: String,
         provider_name: String,
     ) -> Self {
+        let supports_user_name = !provider_name.eq_ignore_ascii_case("mistral")
+            && !base_url.to_ascii_lowercase().contains("mistral.ai");
         Self {
             api_key,
             model,
@@ -62,6 +65,7 @@ impl OpenAiProvider {
             reasoning_content_override: None,
             context_window_global: std::collections::HashMap::new(),
             context_window_provider: std::collections::HashMap::new(),
+            supports_user_name,
         }
     }
 
@@ -98,6 +102,15 @@ impl OpenAiProvider {
     #[must_use]
     pub fn with_reasoning_content(mut self, required: bool) -> Self {
         self.reasoning_content_override = Some(required);
+        self
+    }
+
+    /// Set whether this provider accepts the `name` field on user messages.
+    ///
+    /// Defaults to `true` for most providers; auto-set to `false` for Mistral.
+    #[must_use]
+    pub fn with_supports_user_name(mut self, supported: bool) -> Self {
+        self.supports_user_name = supported;
         self
     }
 
@@ -199,6 +212,7 @@ impl LlmProvider for OpenAiProvider {
             context_window_provider: self.context_window_provider.clone(),
             strict_tools_override: self.strict_tools_override,
             reasoning_content_override: self.reasoning_content_override,
+            supports_user_name: self.supports_user_name,
         }))
     }
 

@@ -297,12 +297,18 @@ impl OpenAiProvider {
         messages: &[ChatMessage],
     ) -> Vec<serde_json::Value> {
         let needs_reasoning_content = self.requires_reasoning_content_on_tool_messages();
+        let strip_name = !self.supports_user_name;
         let mut remapped_tool_call_ids = HashMap::new();
         let mut used_tool_call_ids = HashSet::new();
         let mut out = Vec::with_capacity(messages.len());
 
         for message in messages {
             let mut value = message.to_openai_value();
+
+            // Strip the `name` field for providers that reject it entirely.
+            if strip_name && let Some(obj) = value.as_object_mut() {
+                obj.remove("name");
+            }
 
             if let Some(tool_calls) = value
                 .get_mut("tool_calls")
@@ -773,6 +779,69 @@ mod tests {
         assert!(
             assistant_msg.get("reasoning_content").is_some(),
             "assistant tool-call message must have reasoning_content, got: {assistant_msg}"
+        );
+    }
+
+    /// Mistral provider must strip the `name` field from user messages.
+    #[test]
+    fn mistral_provider_strips_user_name() {
+        let p = provider(
+            "mistral-small-latest",
+            "mistral",
+            "https://api.mistral.ai/v1",
+        );
+        assert!(!p.supports_user_name);
+
+        let messages = vec![ChatMessage::user_named("hello", "rokku")];
+        let serialized = p.serialize_messages_for_request(&messages);
+        assert_eq!(serialized.len(), 1);
+        assert!(
+            serialized[0].get("name").is_none(),
+            "Mistral must not have name field, got: {}",
+            serialized[0]
+        );
+    }
+
+    /// Custom-named provider pointing at Mistral URL also strips name.
+    #[test]
+    fn mistral_url_detection_strips_user_name() {
+        let p = provider(
+            "mistral-small-latest",
+            "my-mistral-eu",
+            "https://api.mistral.ai/v1",
+        );
+        assert!(!p.supports_user_name);
+
+        let messages = vec![ChatMessage::user_named("hello", "rokku")];
+        let serialized = p.serialize_messages_for_request(&messages);
+        assert!(
+            serialized[0].get("name").is_none(),
+            "Mistral URL-based detection must strip name field"
+        );
+    }
+
+    /// OpenAI provider must preserve the (sanitized) `name` field.
+    #[test]
+    fn openai_provider_preserves_user_name() {
+        let p = provider("gpt-4o", "openai", "https://api.openai.com/v1");
+        assert!(p.supports_user_name);
+
+        let messages = vec![ChatMessage::user_named("hello", "Alice")];
+        let serialized = p.serialize_messages_for_request(&messages);
+        assert_eq!(serialized[0]["name"], "Alice");
+    }
+
+    /// `with_supports_user_name(false)` overrides the default.
+    #[test]
+    fn supports_user_name_can_be_overridden() {
+        let p = provider("gpt-4o", "openai", "https://api.openai.com/v1")
+            .with_supports_user_name(false);
+
+        let messages = vec![ChatMessage::user_named("hello", "Alice")];
+        let serialized = p.serialize_messages_for_request(&messages);
+        assert!(
+            serialized[0].get("name").is_none(),
+            "name should be stripped when supports_user_name=false"
         );
     }
 

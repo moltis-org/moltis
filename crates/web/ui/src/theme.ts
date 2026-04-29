@@ -5,7 +5,7 @@ function getSystemTheme(): "dark" | "light" {
 	return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-function applyTheme(mode: string): void {
+export function applyTheme(mode: string): void {
 	const resolved = mode === "system" ? getSystemTheme() : mode;
 	document.documentElement.setAttribute("data-theme", resolved);
 	document.documentElement.style.colorScheme = resolved;

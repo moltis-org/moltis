@@ -31,6 +31,7 @@ import { updateSandboxImageUI, updateSandboxUI } from "./sandbox";
 import * as _sessions from "./sessions";
 import { fetchSessions, refreshWelcomeCardIfNeeded, removeSessionFromClientState, renderSessionList } from "./sessions";
 import * as S from "./state";
+import { togglePalette } from "./stores/command-store";
 import * as modelStore from "./stores/model-store";
 import * as _modelStore from "./stores/model-store";
 import * as _nodeStore from "./stores/node-store";
@@ -194,6 +195,7 @@ try {
 gon.onChange("update", showUpdateBanner as (v: unknown) => void);
 onEvent("update.available", showUpdateBanner as (payload: unknown) => void);
 initUpdateBannerDismiss();
+initUpdateNowButton();
 showVaultBanner(gon.get("vault_status") as string | null);
 gon.onChange("vault_status", showVaultBanner as (v: unknown) => void);
 
@@ -263,6 +265,12 @@ onEvent("tick", (_payload: unknown) => {
 	const payload = _payload as Record<string, unknown>;
 	applyMemory(payload.mem as MemInfo | null);
 });
+
+// Command palette button — wire up click handler.
+const commandPaletteBtn = document.getElementById("commandPaletteBtn");
+if (commandPaletteBtn) {
+	commandPaletteBtn.addEventListener("click", () => togglePalette());
+}
 
 // Logout button — wire up click handler once.
 const logoutBtn = document.getElementById("logoutBtn");
@@ -337,6 +345,10 @@ window.addEventListener("resize", () => {
 });
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape") closeMobileMenu();
+	if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+		e.preventDefault();
+		togglePalette();
+	}
 });
 document.addEventListener("click", (e) => {
 	if (!mobileMenuPanel?.classList.contains("open")) return;
@@ -488,6 +500,43 @@ function initUpdateBannerDismiss(): void {
 		}
 		const el = document.getElementById("updateBanner");
 		if (el) el.style.display = "none";
+	});
+}
+
+function initUpdateNowButton(): void {
+	const btn = S.$<HTMLButtonElement>("updateNowBtn");
+	if (!btn || btn.dataset.bound === "1") return;
+	btn.dataset.bound = "1";
+	btn.addEventListener("click", async () => {
+		btn.textContent = "Updating\u2026";
+		btn.disabled = true;
+		try {
+			const resp = await fetch("/api/system/update", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			});
+			const data = await resp.json();
+			if (data.restarting) {
+				btn.textContent = "Restarting\u2026";
+			} else if (data.status === "manual_required" && data.command) {
+				btn.textContent = "Manual update";
+				btn.disabled = false;
+				window.alert(`Run this command to update:\n\n${data.command}`);
+			} else if (data.status === "already_up_to_date") {
+				btn.textContent = "Up to date";
+			} else if (data.error) {
+				btn.textContent = "Update now";
+				btn.disabled = false;
+				window.alert(`Update failed: ${data.error}`);
+			} else {
+				btn.textContent = "Update now";
+				btn.disabled = false;
+			}
+		} catch {
+			btn.textContent = "Update now";
+			btn.disabled = false;
+		}
 	});
 }
 

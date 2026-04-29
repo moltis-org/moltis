@@ -278,6 +278,36 @@ pub fn openclaw_detected_for_ui() -> bool {
     false
 }
 
+#[cfg(feature = "claude-import")]
+pub fn claude_detected_for_ui() -> bool {
+    moltis_claude_import::detect::detect().is_some()
+}
+
+#[cfg(not(feature = "claude-import"))]
+pub fn claude_detected_for_ui() -> bool {
+    false
+}
+
+#[cfg(feature = "codex-import")]
+pub fn codex_detected_for_ui() -> bool {
+    moltis_codex_import::detect::detect().is_some()
+}
+
+#[cfg(not(feature = "codex-import"))]
+pub fn codex_detected_for_ui() -> bool {
+    false
+}
+
+#[cfg(feature = "hermes-import")]
+pub fn hermes_detected_for_ui() -> bool {
+    moltis_hermes_import::detect::detect().is_some()
+}
+
+#[cfg(not(feature = "hermes-import"))]
+pub fn hermes_detected_for_ui() -> bool {
+    false
+}
+
 #[cfg(feature = "local-llm")]
 #[must_use]
 pub fn local_llama_cpp_bytes_for_ui() -> u64 {

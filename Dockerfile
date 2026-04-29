@@ -51,11 +51,11 @@ RUN ARCH=$(uname -m) && \
 RUN rustup target add wasm32-wasip2 && \
     cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
-# Build release binary — use default features plus Docker-specific extras.
-# local-llm-metal (Metal is macOS-only) is a no-op on Linux, so defaults are safe.
+# Build release binary with the same portable production feature set used by
+# release/package builds.
 ARG MOLTIS_VERSION
 ENV MOLTIS_VERSION=${MOLTIS_VERSION}
-RUN cargo build --release -p moltis --features wasm
+RUN ./scripts/cargo-build-moltis.sh --release
 
 # Runtime stage
 FROM debian:bookworm-slim

@@ -173,8 +173,8 @@ export function OpenClawImportSection(): VNode {
 	const anySelected = categories.some((c) => c.available && selection[c.key]);
 
 	return (
-		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			<SectionHeading title="OpenClaw Import" />
+		<div>
+			<SectionHeading title="OpenClaw" />
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
 				Import data from your OpenClaw installation at <code className="text-[var(--text)]">{scan.home_dir}</code>. This
 				is a read-only copy {"\u2014"} your OpenClaw files will not be modified or removed. You can keep using both side

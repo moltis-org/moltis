@@ -3,13 +3,14 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+use moltis_channels::ChannelPlugin;
+
 use {
     axum::{
         extract::ConnectInfo,
         http::StatusCode,
         response::{IntoResponse, Json},
     },
-    moltis_channels::ChannelPlugin,
     moltis_gateway::server::{PreparedGatewayCore, prepare_gateway_core},
     moltis_sessions::session_events::SessionEventBus,
 };

@@ -7153,11 +7153,15 @@ dependencies = [
  "dotenvy",
  "moltis-agents",
  "moltis-browser",
+ "moltis-claude-import",
+ "moltis-codex-import",
  "moltis-common",
  "moltis-config",
  "moltis-cron",
  "moltis-gateway",
+ "moltis-hermes-import",
  "moltis-httpd",
+ "moltis-import-core",
  "moltis-memory",
  "moltis-node-host",
  "moltis-oauth",
@@ -7376,6 +7380,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-claude-import"
+version = "0.1.0"
+dependencies = [
+ "dirs-next",
+ "moltis-import-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "moltis-code-index"
 version = "0.1.0"
 dependencies = [
@@ -7399,6 +7415,19 @@ dependencies = [
  "time",
  "tokio",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "moltis-codex-import"
+version = "0.1.0"
+dependencies = [
+ "dirs-next",
+ "moltis-import-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.8.23",
  "tracing",
 ]
 
@@ -7529,6 +7558,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dashmap 6.1.0",
+ "flate2",
  "futures",
  "gix",
  "hostname 0.4.2",
@@ -7542,11 +7572,14 @@ dependencies = [
  "moltis-canvas",
  "moltis-channels",
  "moltis-chat",
+ "moltis-claude-import",
  "moltis-code-index",
+ "moltis-codex-import",
  "moltis-common",
  "moltis-config",
  "moltis-cron",
  "moltis-discord",
+ "moltis-hermes-import",
  "moltis-home-assistant",
  "moltis-matrix",
  "moltis-mcp",
@@ -7592,6 +7625,7 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "sysinfo",
+ "tar",
  "tempfile",
  "thiserror 2.0.18",
  "time",
@@ -7623,6 +7657,18 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
+]
+
+[[package]]
+name = "moltis-hermes-import"
+version = "0.1.0"
+dependencies = [
+ "dirs-next",
+ "moltis-import-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -7714,6 +7760,16 @@ dependencies = [
  "urlencoding",
  "uuid",
  "webauthn-rs",
+]
+
+[[package]]
+name = "moltis-import-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

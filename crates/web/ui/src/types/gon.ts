@@ -226,6 +226,9 @@ export interface GonData {
 	routes: SpaRoutes;
 	started_at: number;
 	openclaw_detected: boolean;
+	claude_detected: boolean;
+	codex_detected: boolean;
+	hermes_detected: boolean;
 	sessions_recent: SessionMeta[];
 	agents: unknown[];
 	webhooks: unknown[];

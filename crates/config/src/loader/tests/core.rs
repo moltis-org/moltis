@@ -237,11 +237,8 @@ fn save_config_to_path_preserves_comment_blocks() {
     save_config_to_path(&path, &config).expect("save config");
 
     let saved = std::fs::read_to_string(&path).expect("read saved config");
-    // The merge preserves the template header and active key values.
-    assert!(
-        saved.contains("# Moltis User Configuration"),
-        "template header should be preserved"
-    );
+    // Header comments from the template must survive the merge.
+    assert!(saved.contains("# Moltis User Configuration"));
     assert!(saved.contains("disabled = true"));
     assert!(saved.contains("http_request_logs = true"));
 }

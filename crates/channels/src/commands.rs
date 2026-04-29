@@ -87,6 +87,10 @@ pub fn all_commands() -> &'static [CommandDef] {
             name: "peek",
             description: "Show current thinking/tool status",
         },
+        CommandDef {
+            name: "update",
+            description: "Update moltis to latest or specified version",
+        },
         // Meta
         CommandDef {
             name: "help",
@@ -200,6 +204,7 @@ mod tests {
             "sh",
             "stop",
             "peek",
+            "update",
             "help",
         ] {
             assert!(

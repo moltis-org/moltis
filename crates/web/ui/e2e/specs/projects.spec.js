@@ -58,6 +58,7 @@ test.describe("Projects page", () => {
 
 		// Open the edit form for the first project card
 		const editButton = page.locator("button").filter({ hasText: /edit/i }).first();
+		await expect(editButton).toBeVisible({ timeout: 5_000 });
 		await editButton.click();
 
 		// Verify the code index checkbox label is visible

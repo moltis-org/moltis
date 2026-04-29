@@ -39,7 +39,7 @@ export const slashCommands: SlashCommand[] = [
 	{ name: "clear", description: "Clear conversation history" },
 	{ name: "compact", description: "Summarize conversation to save tokens" },
 	{ name: "context", description: "Show session context and project info" },
-	{ name: "mode", description: "Switch session mode" },
+	{ name: "mode", description: "Switch session mode (/mode none to clear)" },
 	{ name: "new", description: "Start a new session" },
 	{ name: "reset", description: "Clear conversation history" },
 	{ name: "sh", description: "Enter command mode (/sh off or Esc to exit)" },

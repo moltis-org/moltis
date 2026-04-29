@@ -12,7 +12,8 @@ use {
 use super::types::APPLE_CONTAINER_SAFE_WORKDIR;
 use {
     super::types::{
-        GOGCLI_MODULE_PATH, GOGCLI_VERSION, SANDBOX_HOME_DIR, canonical_sandbox_packages,
+        GO_TOOL_INSTALLS, GOGCLI_MODULE_PATH, GOGCLI_VERSION, SANDBOX_HOME_DIR,
+        canonical_sandbox_packages,
     },
     crate::error::{Error, Result},
 };
@@ -46,6 +47,14 @@ pub(crate) fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> Strin
         ""
     };
 
+    // Build additional `go install` commands for bundled CLI tools.
+    let extra_go_installs: String = GO_TOOL_INSTALLS
+        .iter()
+        .map(|(module, version, _bin)| {
+            format!("        && GOBIN=/usr/local/bin go install {module}@{version} \\\n")
+        })
+        .collect();
+
     format!(
         "FROM {base}\n\
 {nodesource_setup}\
@@ -54,7 +63,9 @@ RUN apt-get update -qq && apt-get install -y -qq {pkg_str} \
 RUN if command -v corepack >/dev/null 2>&1; then corepack enable; fi\n\
 RUN if command -v go >/dev/null 2>&1; then \
         GOBIN=/usr/local/bin go install {GOGCLI_MODULE_PATH}@{GOGCLI_VERSION} \
-        && ln -sf /usr/local/bin/gog /usr/local/bin/gogcli; \
+        && ln -sf /usr/local/bin/gog /usr/local/bin/gogcli \\\n\
+{extra_go_installs}\
+        ; \
     fi\n\
 RUN curl -fsSL https://mise.jdx.dev/install.sh | sh \
     && echo 'export PATH=\"$HOME/.local/bin:$PATH\"' >> /etc/profile.d/mise.sh\n\

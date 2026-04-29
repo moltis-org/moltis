@@ -19,6 +19,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260429.01] - 2026-04-29
+### Added
+- [update] Add /update command and web UI update button (#911)
+- [browser] Add Obscura as lightweight sidecar browser backend (#869)
+- [web] Add command palette (Cmd+K / Ctrl+K) (#904)
+- [import] Add multi-source import from Claude Code, Claude Desktop, and Hermes (#914)
+- [import] Add Claude Code and Hermes import to web UI (#917)
+
+
+### Changed
+- [config] Unify provider name validation into single source of truth (#912)
+- [agents] Split model.rs into chat, convert, and stream modules
+
+
+### Removed
+- [e2e] Remove dead tests for deleted UI features
+- Remove CLAUDE.local.md from repo and add to .gitignore
+- Remove unused PathBuf imports in hermes-import
+- Remove unused imports in httpd gateway
+
+
+### Fixed
+- [e2e] Stabilize rename test and skip broken Matrix ownership test
+- [docs] Use $http_host in nginx proxy examples to preserve port (#907)
+- [e2e] Fix rename assertion, unskip Matrix ownership test
+- [gateway] Prevent USER.md from overriding saved user_name
+- [e2e] Unskip clear-all and channel-rename tests, fix for new UI
+- [release] Scope changelog entries to version deltas (#909)
+- [e2e] Rewrite stop action test for thinking indicator UI
+- [tests] Update comment preservation assertion for merge behavior
+- [providers] Sanitize and strip user name field for channel messages (#915)
+- [skills] Add missing origin metadata to data-sync, birdclaw, discrawl, wacrawl, slacrawl
+- Collapse nested if-let in MCP import
+- Collapse nested if-let in claude-import MCP servers
+- Use vec![] macro instead of push-after-init in import commands
+- [e2e] Use Ctrl+K instead of Meta+K in command palette tests
+- Restore HashMap and ChannelPlugin imports in httpd gateway
+- [web] Command palette keyboard navigation in headless Chromium
+- [web] Use capture-phase listener for command palette keyboard nav
+- [web] Eliminate rAF race in session rename input
+- [web] Prevent session switch from stealing focus during rename
+- [build] Align production feature flags
+- [web] Show /mode none hint in slash command popup
+- [web] Only guard chatInput focus against text inputs
+- [e2e] Fix flaky command palette, reasoning toggle, and projects tests
+
 ## [20260428.03] - 2026-04-28
 ### Added
 - [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)

@@ -34,4 +34,10 @@ pub struct OpenAiProvider {
     /// Provider-scoped per-model context window overrides from
     /// `[providers.<name>.model_overrides.<id>]` config.
     context_window_provider: std::collections::HashMap<String, u32>,
+    /// Whether this provider accepts the `name` field on user messages.
+    ///
+    /// OpenAI and most compatible providers accept it (with character
+    /// restrictions handled by sanitization).  Mistral rejects it outright.
+    /// Defaults to `true`; set to `false` via `with_supports_user_name(false)`.
+    pub(crate) supports_user_name: bool,
 }

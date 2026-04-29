@@ -17,7 +17,7 @@ import { ensureWsConnected, preferredChatPath } from "./onboarding/shared";
 import { AuthStep } from "./onboarding/steps/AuthStep";
 import { ChannelStep } from "./onboarding/steps/ChannelStep";
 import { IdentityStep } from "./onboarding/steps/IdentityStep";
-import { OpenClawImportStep } from "./onboarding/steps/OpenClawImportStep";
+import { ImportStep } from "./onboarding/steps/ImportStep";
 import { ProviderStep } from "./onboarding/steps/ProviderStep";
 import { RemoteAccessStep } from "./onboarding/steps/RemoteAccessStep";
 import { SkillsStep } from "./onboarding/steps/SkillsStep";
@@ -560,10 +560,14 @@ function OnboardingPage(): VNode {
 		);
 	}
 
-	// Build step list dynamically based on auth + voice + openclaw availability
-	const openclawDetected = getGon("openclaw_detected") === true;
+	// Build step list dynamically based on auth + voice + import source availability
+	const anyImportDetected =
+		getGon("openclaw_detected") === true ||
+		getGon("claude_detected") === true ||
+		getGon("codex_detected") === true ||
+		getGon("hermes_detected") === true;
 	const allLabels = [t("onboarding:steps.security")];
-	if (openclawDetected) allLabels.push(t("onboarding:steps.import"));
+	if (anyImportDetected) allLabels.push(t("onboarding:steps.import"));
 	allLabels.push(t("onboarding:steps.llm"));
 	if (voiceAvailable) allLabels.push(t("onboarding:steps.voice"));
 	allLabels.push(
@@ -578,7 +582,7 @@ function OnboardingPage(): VNode {
 
 	// Compute dynamic step indices
 	let nextIdx = 1;
-	const importStep = openclawDetected ? nextIdx++ : -1;
+	const importStep = anyImportDetected ? nextIdx++ : -1;
 	const llmStep = nextIdx++;
 	const voiceStep = voiceAvailable ? nextIdx++ : -1;
 	const skillsStep = nextIdx++;
@@ -610,8 +614,8 @@ function OnboardingPage(): VNode {
 			<StepIndicator steps={steps} current={stepIndex} />
 			<div className="mt-6">
 				{step === 0 && <AuthStep onNext={goNext} skippable={authSkippable} />}
-				{step === importStep && <OpenClawImportStep onNext={goNext} onBack={authNeeded ? goBack : null} />}
-				{step === llmStep && <ProviderStep onNext={goNext} onBack={authNeeded || openclawDetected ? goBack : null} />}
+				{step === importStep && <ImportStep onNext={goNext} onBack={authNeeded ? goBack : null} />}
+				{step === llmStep && <ProviderStep onNext={goNext} onBack={authNeeded || anyImportDetected ? goBack : null} />}
 				{step === voiceStep && <VoiceStep onNext={goNext} onBack={goBack} />}
 				{step === skillsStep && <SkillsStep onNext={goNext} onBack={goBack} />}
 				{step === remoteAccessStep && <RemoteAccessStep onNext={goNext} onBack={goBack} />}

@@ -178,6 +178,12 @@ impl DetectionResult {
 
 fn infer_kind_from_path(path: &Path) -> BrowserKind {
     let lower = path.to_string_lossy().to_ascii_lowercase();
+    if lower.contains("lightpanda") {
+        return BrowserKind::Lightpanda;
+    }
+    if lower.contains("obscura") {
+        return BrowserKind::Obscura;
+    }
     if lower.contains("brave") {
         return BrowserKind::Brave;
     }
@@ -200,6 +206,50 @@ fn infer_kind_from_path(path: &Path) -> BrowserKind {
         return BrowserKind::Chrome;
     }
     BrowserKind::Custom
+}
+
+/// Detect the Obscura headless browser binary.
+///
+/// Checks (in order):
+/// 1. Custom path from config (if provided)
+/// 2. `OBSCURA` environment variable
+/// 3. `obscura` in PATH
+#[must_use]
+pub fn detect_obscura(custom_path: Option<&str>) -> Option<PathBuf> {
+    detect_sidecar_browser(custom_path, "OBSCURA", "obscura")
+}
+
+/// Detect the Lightpanda headless browser binary.
+///
+/// Checks (in order):
+/// 1. Custom path from config (if provided)
+/// 2. `LIGHTPANDA` environment variable
+/// 3. `lightpanda` in PATH
+#[must_use]
+pub fn detect_lightpanda(custom_path: Option<&str>) -> Option<PathBuf> {
+    detect_sidecar_browser(custom_path, "LIGHTPANDA", "lightpanda")
+}
+
+fn detect_sidecar_browser(
+    custom_path: Option<&str>,
+    env_var: &'static str,
+    binary_name: &'static str,
+) -> Option<PathBuf> {
+    if let Some(path) = custom_path {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    if let Ok(path) = std::env::var(env_var) {
+        let p = PathBuf::from(path);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
+    which::which(binary_name).ok()
 }
 
 fn push_browser(
@@ -378,6 +428,8 @@ fn install_targets_for_preference(preference: BrowserPreference) -> Vec<BrowserK
         BrowserPreference::Opera => vec![BrowserKind::Opera],
         BrowserPreference::Vivaldi => vec![BrowserKind::Vivaldi],
         BrowserPreference::Arc => vec![BrowserKind::Arc],
+        // Sidecar browsers are not installed via package managers; users install them manually.
+        BrowserPreference::Obscura | BrowserPreference::Lightpanda => vec![],
     }
 }
 
@@ -391,7 +443,7 @@ fn macos_install_commands(target: BrowserKind) -> Vec<InstallCommand> {
         BrowserKind::Opera => vec!["opera"],
         BrowserKind::Vivaldi => vec!["vivaldi"],
         BrowserKind::Arc => vec!["arc"],
-        BrowserKind::Custom => vec![],
+        BrowserKind::Obscura | BrowserKind::Lightpanda | BrowserKind::Custom => vec![],
     };
 
     casks
@@ -410,7 +462,7 @@ fn linux_package_candidates(target: BrowserKind) -> Vec<&'static str> {
         BrowserKind::Opera => vec!["opera-stable", "opera", "chromium"],
         BrowserKind::Vivaldi => vec!["vivaldi-stable", "vivaldi", "chromium"],
         BrowserKind::Arc => vec!["chromium"],
-        BrowserKind::Custom => vec![],
+        BrowserKind::Obscura | BrowserKind::Lightpanda | BrowserKind::Custom => vec![],
     }
 }
 
@@ -424,7 +476,7 @@ fn windows_package_ids(target: BrowserKind) -> Vec<&'static str> {
         BrowserKind::Opera => vec!["Opera.Opera"],
         BrowserKind::Vivaldi => vec!["VivaldiTechnologies.Vivaldi"],
         BrowserKind::Arc => vec!["TheBrowserCompany.Arc"],
-        BrowserKind::Custom => vec![],
+        BrowserKind::Obscura | BrowserKind::Lightpanda | BrowserKind::Custom => vec![],
     }
 }
 
@@ -981,6 +1033,22 @@ mod tests {
         assert_eq!(
             infer_kind_from_path(Path::new("/usr/local/bin/arc")),
             BrowserKind::Arc,
+        );
+    }
+
+    #[test]
+    fn test_infer_obscura_from_path() {
+        assert_eq!(
+            infer_kind_from_path(Path::new("/usr/local/bin/obscura")),
+            BrowserKind::Obscura,
+        );
+    }
+
+    #[test]
+    fn test_infer_lightpanda_from_path() {
+        assert_eq!(
+            infer_kind_from_path(Path::new("/usr/local/bin/lightpanda")),
+            BrowserKind::Lightpanda,
         );
     }
 

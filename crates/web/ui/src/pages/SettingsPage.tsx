@@ -41,9 +41,9 @@ import {
 import { ConfigSection, GraphqlSection } from "./sections/ConfigSection";
 import { EnvironmentSection } from "./sections/EnvironmentSection";
 import { IdentitySection } from "./sections/IdentitySection";
+import { ImportSection } from "./sections/ImportSection";
 import { MemorySection } from "./sections/MemorySection";
 import { NotificationsSection } from "./sections/NotificationsSection";
-import { OpenClawImportSection } from "./sections/OpenClawImportSection";
 import { RemoteAccessSection } from "./sections/RemoteAccessSection";
 import { SecuritySection } from "./sections/SecuritySection";
 import { SshSection } from "./sections/SshSection";
@@ -182,7 +182,7 @@ const sections: SectionItem[] = [
 	},
 	{
 		id: "import",
-		label: "OpenClaw Import",
+		label: "Imports",
 		icon: <span className="icon icon-openclaw" />,
 	},
 	{
@@ -203,7 +203,14 @@ function getVisibleSections(): SectionItem[] {
 	return sections.filter((s) => {
 		if (!s.id) return true;
 		if (s.id === "graphql" && !gon.get("graphql_enabled")) return false;
-		if (s.id === "import" && !gon.get("openclaw_detected")) return false;
+		if (
+			s.id === "import" &&
+			!gon.get("openclaw_detected") &&
+			!gon.get("claude_detected") &&
+			!gon.get("codex_detected") &&
+			!gon.get("hermes_detected")
+		)
+			return false;
 		if (s.id === "vault" && (!vs || vs === "disabled")) return false;
 		return true;
 	});
@@ -395,7 +402,7 @@ function SettingsPage(): VNode {
 						)
 					) : null}
 					{section === "notifications" ? <NotificationsSection /> : null}
-					{section === "import" ? <OpenClawImportSection /> : null}
+					{section === "import" ? <ImportSection /> : null}
 					{section === "graphql" ? <GraphqlSection /> : null}
 					{section === "config" ? <ConfigSection /> : null}
 				</div>
