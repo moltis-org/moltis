@@ -235,6 +235,16 @@ impl IndexJobManager {
     /// Start the file watcher for a project after successful index.
     #[cfg(feature = "file-watcher")]
     async fn start_watcher_if_enabled(self: &Arc<Self>, project_id: &str, project_dir: &Path) {
+        // Check if project is still registered (may have been unregistered during indexing).
+        {
+            let dirs = self.project_dirs.lock().await;
+            if !dirs.contains_key(project_id) {
+                #[cfg(feature = "tracing")]
+                debug!(project_id, "project unregistered, skipping watcher startup");
+                return;
+            }
+        }
+
         // Check if watcher already exists.
         {
             let watchers = self.watchers.lock().await;
@@ -325,7 +335,7 @@ impl IndexJobManager {
                     _ = timer.tick() => {
                         #[cfg(feature = "tracing")]
                         debug!("periodic re-index tick");
-                        mgr.index_all_enabled_projects().await;
+                        this.index_all_enabled_projects().await;
                     }
                     _ = cancel.cancelled() => {
                         #[cfg(feature = "tracing")]
