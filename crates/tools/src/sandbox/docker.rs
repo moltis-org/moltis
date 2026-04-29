@@ -409,6 +409,10 @@ impl Sandbox for DockerSandbox {
         self.backend_label
     }
 
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
         let name = self.container_name(id);
 

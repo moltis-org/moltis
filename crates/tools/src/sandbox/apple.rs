@@ -704,6 +704,10 @@ impl Sandbox for AppleContainerSandbox {
         "apple-container"
     }
 
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
         let mut name = self.container_name(id).await;
         let requested_image = image_override.unwrap_or_else(|| self.image());

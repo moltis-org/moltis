@@ -137,6 +137,36 @@ impl Sandbox for CgroupSandbox {
         }
     }
 
+    async fn read_file(
+        &self,
+        _id: &SandboxId,
+        file_path: &str,
+        max_bytes: u64,
+    ) -> Result<SandboxReadResult> {
+        check_restricted_host_path(file_path)?;
+        native_host_read_file(file_path, max_bytes).await
+    }
+
+    async fn write_file(
+        &self,
+        _id: &SandboxId,
+        file_path: &str,
+        content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        check_restricted_host_path(file_path)?;
+        native_host_write_file(file_path, content).await
+    }
+
+    async fn list_files(&self, _id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        check_restricted_host_path(root)?;
+        native_host_list_files(root).await
+    }
+
+    async fn grep(&self, id: &SandboxId, opts: SandboxGrepOptions) -> Result<serde_json::Value> {
+        check_restricted_host_path(&opts.path)?;
+        command_grep(self, id, opts).await
+    }
+
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
         let scope = self.scope_name(id);
         let _ = tokio::process::Command::new("systemctl")

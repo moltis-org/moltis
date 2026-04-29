@@ -369,6 +369,10 @@ impl Sandbox for TestSandbox {
         self.name
     }
 
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
     async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
         self.ensure_ready_calls.fetch_add(1, Ordering::SeqCst);
         if let Some(ref msg) = self.ensure_ready_error {
