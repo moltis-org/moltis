@@ -157,6 +157,161 @@ pub(in crate::channel_events) async fn handle_fast(
     }
 }
 
+// ── /rollback — list or restore file checkpoints ────────────────────────────
+
+pub(in crate::channel_events) async fn handle_rollback(
+    state: &Arc<GatewayState>,
+    args: &str,
+) -> ChannelResult<String> {
+    let data_dir = moltis_config::data_dir();
+    let manager = moltis_tools::checkpoints::CheckpointManager::new(data_dir);
+
+    if args.is_empty() {
+        // List recent turns.
+        let turns = manager
+            .read_turns(10)
+            .map_err(|e| ChannelError::unavailable(format!("failed to read turns: {e}")))?;
+
+        if turns.is_empty() {
+            return Ok(
+                "No file checkpoints yet. Checkpoints are created automatically before file writes."
+                    .to_string(),
+            );
+        }
+
+        let mut lines = vec!["Recent turns with file changes:".to_string()];
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        for (i, turn) in turns.iter().enumerate() {
+            let age_secs = now.saturating_sub(turn.created_at);
+            let age_str = format_age(age_secs);
+            let file_count = turn.source_paths.len();
+            let file_label = if file_count == 1 {
+                "file"
+            } else {
+                "files"
+            };
+            let paths: Vec<&str> = turn
+                .source_paths
+                .iter()
+                .map(|p| p.rsplit('/').next().unwrap_or(p.as_str()))
+                .collect();
+            let paths_preview = if paths.len() <= 3 {
+                paths.join(", ")
+            } else {
+                format!("{}, {} +{} more", paths[0], paths[1], paths.len() - 2)
+            };
+            lines.push(format!(
+                "{}. {age_str} \u{2014} {file_count} {file_label} ({paths_preview})",
+                i + 1
+            ));
+        }
+        lines.push("\nUse /rollback <N> to restore, /rollback diff <N> to preview.".to_string());
+        return Ok(lines.join("\n"));
+    }
+
+    // /rollback diff <N>
+    if let Some(rest) = args
+        .strip_prefix("diff ")
+        .or_else(|| args.strip_prefix("diff\t"))
+    {
+        let n: usize = rest
+            .trim()
+            .parse()
+            .map_err(|_| ChannelError::invalid_input("usage: /rollback diff <N>"))?;
+        let turns = manager
+            .read_turns(n)
+            .map_err(|e| ChannelError::unavailable(format!("failed to read turns: {e}")))?;
+
+        if n == 0 || n > turns.len() {
+            return Err(ChannelError::invalid_input(format!(
+                "invalid turn number. Use 1\u{2013}{}.",
+                turns.len()
+            )));
+        }
+        let turn = &turns[n - 1];
+        let mut lines = vec![format!(
+            "Turn {n} \u{2014} {} checkpoints:",
+            turn.checkpoint_ids.len()
+        )];
+        for (id, path) in turn.checkpoint_ids.iter().zip(turn.source_paths.iter()) {
+            let exists = std::path::Path::new(path).exists();
+            let status = if exists {
+                "exists"
+            } else {
+                "missing"
+            };
+            lines.push(format!(
+                "  {path} ({status}) [cp:{id}]",
+                id = &id[..8.min(id.len())]
+            ));
+        }
+        return Ok(lines.join("\n"));
+    }
+
+    // /rollback <N> — restore all files from turn N
+    let n: usize = args
+        .trim()
+        .parse()
+        .map_err(|_| ChannelError::invalid_input("usage: /rollback [<N>|diff <N>]"))?;
+    let turns = manager
+        .read_turns(n)
+        .map_err(|e| ChannelError::unavailable(format!("failed to read turns: {e}")))?;
+
+    if n == 0 || n > turns.len() {
+        return Err(ChannelError::invalid_input(format!(
+            "invalid turn number. Use 1\u{2013}{}.",
+            turns.len()
+        )));
+    }
+    let turn = &turns[n - 1];
+
+    let mut restored = 0;
+    let mut errors = Vec::new();
+    for id in &turn.checkpoint_ids {
+        match manager.restore(id).await {
+            Ok(_) => restored += 1,
+            Err(e) => errors.push(format!("{id}: {e}")),
+        }
+    }
+
+    broadcast(
+        state,
+        "session",
+        serde_json::json!({
+            "kind": "rollback",
+            "turn": n,
+            "restored": restored,
+        }),
+        BroadcastOpts {
+            drop_if_slow: true,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    if errors.is_empty() {
+        Ok(format!("Restored {restored} files from turn {n}."))
+    } else {
+        Ok(format!(
+            "Restored {restored} files from turn {n}. {} errors:\n{}",
+            errors.len(),
+            errors.join("\n")
+        ))
+    }
+}
+
+fn format_age(secs: i64) -> String {
+    if secs < 60 {
+        "just now".to_string()
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else if secs < 86400 {
+        format!("{}h ago", secs / 3600)
+    } else {
+        format!("{}d ago", secs / 86400)
+    }
+}
+
 // ── /insights — session analytics ───────────────────────────────────────────
 
 pub(in crate::channel_events) async fn handle_insights(

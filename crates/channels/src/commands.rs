@@ -95,6 +95,10 @@ pub fn all_commands() -> &'static [CommandDef] {
             name: "update",
             description: "Update moltis to latest or specified version",
         },
+        CommandDef {
+            name: "rollback",
+            description: "List or restore file checkpoints",
+        },
         // Quick actions
         CommandDef {
             name: "btw",
@@ -231,6 +235,7 @@ mod tests {
             "stop",
             "peek",
             "update",
+            "rollback",
             "btw",
             "fast",
             "insights",
