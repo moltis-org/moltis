@@ -29,6 +29,7 @@ import {
 	setHistoryPaginationState,
 	shouldApplyServerHistory,
 } from "./session-history";
+
 import {
 	hideSessionLoadIndicator,
 	postHistoryLoadActions,
@@ -37,6 +38,18 @@ import {
 	showSessionLoadIndicator,
 	updateChatSessionHeader,
 } from "./session-render";
+
+/** Focus the chat input unless the user is actively editing a text field
+ *  (e.g. rename input, search field). Buttons and other non-text elements
+ *  are fine to steal focus from. */
+function focusChatInputIfIdle(): void {
+	const el = document.activeElement;
+	if (el && el !== document.body && el !== S.chatInput) {
+		const tag = el.tagName;
+		if (tag === "INPUT" || tag === "TEXTAREA" || (el as HTMLElement).isContentEditable) return;
+	}
+	S.chatInput?.focus();
+}
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -259,7 +272,7 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 					chatAddMsg("error", res?.error?.message || "Failed to load session");
 				}
 				finishSessionRefresh(key);
-				if (stillActive && S.chatInput) S.chatInput.focus();
+				if (stillActive) focusChatInputIfIdle();
 				return;
 			}
 
@@ -289,7 +302,7 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 						chatAddMsg("error", (error as Error)?.message || "Failed to load session history");
 					}
 					finishSessionRefresh(key);
-					if (stillActive && S.chatInput) S.chatInput.focus();
+					if (stillActive) focusChatInputIfIdle();
 					return;
 				}
 				if (!isLatestSwitchRequest(key, switchReqId)) return;
@@ -336,7 +349,7 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 						`Loaded recent history (${resolvedHistory.length} of ${total} messages) for faster loading.`,
 					);
 				}
-				if (S.chatInput) S.chatInput.focus();
+				focusChatInputIfIdle();
 			}
 			finishSessionRefresh(key);
 		})
@@ -348,6 +361,6 @@ export function switchSession(key: string, searchContext?: SearchContext | null,
 				chatAddMsg("error", "Failed to load session");
 			}
 			finishSessionRefresh(key);
-			if (stillActive && S.chatInput) S.chatInput.focus();
+			if (stillActive) focusChatInputIfIdle();
 		});
 }

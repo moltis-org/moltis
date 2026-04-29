@@ -7154,6 +7154,7 @@ dependencies = [
  "moltis-agents",
  "moltis-browser",
  "moltis-claude-import",
+ "moltis-codex-import",
  "moltis-common",
  "moltis-config",
  "moltis-cron",
@@ -7418,6 +7419,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "moltis-codex-import"
+version = "0.1.0"
+dependencies = [
+ "dirs-next",
+ "moltis-import-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.8.23",
+ "tracing",
+]
+
+[[package]]
 name = "moltis-common"
 version = "0.1.0"
 dependencies = [
@@ -7558,11 +7572,14 @@ dependencies = [
  "moltis-canvas",
  "moltis-channels",
  "moltis-chat",
+ "moltis-claude-import",
  "moltis-code-index",
+ "moltis-codex-import",
  "moltis-common",
  "moltis-config",
  "moltis-cron",
  "moltis-discord",
+ "moltis-hermes-import",
  "moltis-home-assistant",
  "moltis-matrix",
  "moltis-mcp",

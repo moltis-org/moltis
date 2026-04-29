@@ -91,8 +91,9 @@ test.describe("reasoning effort toggle", () => {
 		const comboBtn = page.locator("#reasoningComboBtn");
 		await comboBtn.click();
 
-		// Select "High"
+		// Wait for dropdown to be visible before selecting
 		const highItem = page.locator("#reasoningDropdownList .model-dropdown-item", { hasText: "High" });
+		await expect(highItem).toBeVisible();
 		await highItem.click();
 
 		const dropdown = page.locator("#reasoningDropdown");

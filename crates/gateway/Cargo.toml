@@ -43,6 +43,9 @@ moltis-network-filter   = { features = ["proxy", "service"], optional = true, wo
 moltis-nostr            = { optional = true, workspace = true }
 moltis-oauth            = { workspace = true }
 moltis-onboarding       = { workspace = true }
+moltis-claude-import    = { optional = true, workspace = true }
+moltis-codex-import     = { optional = true, workspace = true }
+moltis-hermes-import    = { optional = true, workspace = true }
 moltis-openclaw-import  = { optional = true, workspace = true }
 moltis-plugins          = { workspace = true }
 moltis-projects         = { workspace = true }
@@ -103,6 +106,8 @@ default = [
   "agent",
   "bundled-skills",
   "caldav",
+  "claude-import",
+  "codex-import",
   "home-assistant",
   "code-index-builtin",
   "discord",
@@ -110,6 +115,7 @@ default = [
   "firecrawl",
   "fs-tools",
   "graphql",
+  "hermes-import",
   "local-llm",
   "local-llm-metal",
   "matrix",
@@ -167,6 +173,9 @@ metrics = [
   "moltis-signal?/metrics",
 ]
 nostr = ["dep:moltis-nostr"]
+claude-import = ["dep:moltis-claude-import"]
+codex-import = ["dep:moltis-codex-import"]
+hermes-import = ["dep:moltis-hermes-import"]
 openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]

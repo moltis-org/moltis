@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build",
-    "build:css": "tailwindcss -i input.css -o ../src/assets/css/style.css",
+    "build:css": "tailwindcss -i input.css -o ../src/assets/css/style.css && cp ../src/assets/css/style.css ../src/assets/style.css",
     "build:shiki": "node build-shiki.mjs",
     "build:sw": "esbuild src/sw.ts --bundle --format=esm --outfile=../src/assets/sw.js",
     "build:all": "npm run build && npm run build:css && npm run build:sw",

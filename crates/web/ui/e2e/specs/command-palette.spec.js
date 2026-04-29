@@ -50,8 +50,10 @@ test.describe("Command palette", () => {
 		await page.keyboard.press("Control+k");
 		await expect(page.locator(".cmd-palette")).toBeVisible();
 
-		// Click the backdrop (outside the palette box)
-		await page.locator(".cmd-palette-backdrop").click({ position: { x: 10, y: 10 } });
+		// Click the backdrop well below the dialog to avoid edge/DPR issues
+		const backdrop = page.locator(".cmd-palette-backdrop");
+		const box = await backdrop.boundingBox();
+		await backdrop.click({ position: { x: 10, y: box.height - 20 } });
 		await expect(page.locator(".cmd-palette")).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);

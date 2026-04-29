@@ -379,6 +379,295 @@ impl OnboardingService for GatewayOnboardingService {
     async fn openclaw_import(&self, _params: Value) -> ServiceResult {
         Err("openclaw import feature not enabled".into())
     }
+
+    // ── Claude import ───────────────────────────────────────────────────────
+
+    #[cfg(feature = "claude-import")]
+    async fn claude_detect(&self) -> ServiceResult {
+        let detection = moltis_claude_import::detect::detect();
+        match detection {
+            Some(d) => {
+                let skills = moltis_claude_import::skills::discover_skills(&d);
+                let commands = moltis_claude_import::skills::discover_commands(&d);
+                let has_mcp = d.user_claude_json_path.is_some() || d.desktop_config_path.is_some();
+
+                tracing::info!(
+                    has_settings = d.user_settings_path.is_some(),
+                    has_mcp,
+                    skills = skills.len(),
+                    commands = commands.len(),
+                    has_memory = d.user_memory_path.is_some(),
+                    "claude.detect: installation detected"
+                );
+
+                Ok(serde_json::json!({
+                    "detected": true,
+                    "has_mcp_servers": has_mcp,
+                    "has_desktop_config": d.desktop_config_path.is_some(),
+                    "skills_count": skills.len(),
+                    "commands_count": commands.len(),
+                    "has_memory": d.user_memory_path.is_some(),
+                }))
+            },
+            None => {
+                tracing::info!("claude.detect: no installation detected");
+                Ok(serde_json::json!({ "detected": false }))
+            },
+        }
+    }
+
+    #[cfg(not(feature = "claude-import"))]
+    async fn claude_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "detected": false }))
+    }
+
+    #[cfg(feature = "claude-import")]
+    async fn claude_import(&self, params: Value) -> ServiceResult {
+        let detection = moltis_claude_import::detect::detect()
+            .ok_or_else(|| "no Claude Code installation found".to_string())?;
+
+        let data_dir = moltis_config::data_dir();
+        let mcp_path = data_dir.join("mcp-servers.json");
+        let skills_dir = data_dir.join("skills");
+
+        let import_mcp = params
+            .get("mcp_servers")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let import_skills = params
+            .get("skills")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let import_memory = params
+            .get("memory")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let mut categories = Vec::new();
+
+        if import_mcp {
+            categories.push(moltis_claude_import::mcp_servers::import_mcp_servers(
+                &detection, &mcp_path,
+            ));
+        }
+        if import_skills {
+            categories.push(moltis_claude_import::skills::import_skills(
+                &detection,
+                &skills_dir,
+            ));
+        }
+        if import_memory {
+            categories.push(moltis_claude_import::memory::import_memory(
+                &detection, &data_dir,
+            ));
+        }
+
+        let total: usize = categories.iter().map(|c| c.items_imported).sum();
+
+        Ok(serde_json::json!({
+            "categories": categories,
+            "total_imported": total,
+        }))
+    }
+
+    #[cfg(not(feature = "claude-import"))]
+    async fn claude_import(&self, _params: Value) -> ServiceResult {
+        Err("claude import feature not enabled".into())
+    }
+
+    // ── Codex import ────────────────────────────────────────────────────────
+
+    #[cfg(feature = "codex-import")]
+    async fn codex_detect(&self) -> ServiceResult {
+        let detection = moltis_codex_import::detect::detect();
+        match detection {
+            Some(d) => {
+                let mcp_count = moltis_codex_import::mcp_servers::count_mcp_servers(&d);
+
+                tracing::info!(
+                    has_config = d.config_path.is_some(),
+                    mcp_servers = mcp_count,
+                    has_instructions = d.instructions_path.is_some(),
+                    "codex.detect: installation detected"
+                );
+
+                Ok(serde_json::json!({
+                    "detected": true,
+                    "home_dir": d.home_dir.display().to_string(),
+                    "has_mcp_servers": mcp_count > 0,
+                    "mcp_servers_count": mcp_count,
+                    "has_memory": d.instructions_path.is_some(),
+                }))
+            },
+            None => {
+                tracing::info!("codex.detect: no installation detected");
+                Ok(serde_json::json!({ "detected": false }))
+            },
+        }
+    }
+
+    #[cfg(not(feature = "codex-import"))]
+    async fn codex_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "detected": false }))
+    }
+
+    #[cfg(feature = "codex-import")]
+    async fn codex_import(&self, params: Value) -> ServiceResult {
+        let detection = moltis_codex_import::detect::detect()
+            .ok_or_else(|| "no Codex CLI installation found".to_string())?;
+
+        let data_dir = moltis_config::data_dir();
+        let mcp_path = data_dir.join("mcp-servers.json");
+
+        let import_mcp = params
+            .get("mcp_servers")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let import_memory = params
+            .get("memory")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let mut categories = Vec::new();
+
+        if import_mcp {
+            categories.push(moltis_codex_import::mcp_servers::import_mcp_servers(
+                &detection, &mcp_path,
+            ));
+        }
+        if import_memory {
+            categories.push(moltis_codex_import::memory::import_memory(
+                &detection, &data_dir,
+            ));
+        }
+
+        let total: usize = categories.iter().map(|c| c.items_imported).sum();
+
+        Ok(serde_json::json!({
+            "categories": categories,
+            "total_imported": total,
+        }))
+    }
+
+    #[cfg(not(feature = "codex-import"))]
+    async fn codex_import(&self, _params: Value) -> ServiceResult {
+        Err("codex import feature not enabled".into())
+    }
+
+    // ── Hermes import ───────────────────────────────────────────────────────
+
+    #[cfg(feature = "hermes-import")]
+    async fn hermes_detect(&self) -> ServiceResult {
+        let detection = moltis_hermes_import::detect::detect();
+        match detection {
+            Some(d) => {
+                let creds = moltis_hermes_import::credentials::discover_credentials(&d);
+                let skills = moltis_hermes_import::skills::discover_skills(&d);
+                let has_memory = d.soul_path.is_some()
+                    || d.memory_path.is_some()
+                    || d.agents_path.is_some()
+                    || d.user_path.is_some();
+
+                let mut memory_files = Vec::new();
+                if d.soul_path.is_some() {
+                    memory_files.push("SOUL.md");
+                }
+                if d.agents_path.is_some() {
+                    memory_files.push("AGENTS.md");
+                }
+                if d.memory_path.is_some() {
+                    memory_files.push("MEMORY.md");
+                }
+                if d.user_path.is_some() {
+                    memory_files.push("USER.md");
+                }
+
+                tracing::info!(
+                    home_dir = %d.home_dir.display(),
+                    has_config = d.config_path.is_some(),
+                    credentials = creds.len(),
+                    skills = skills.len(),
+                    has_memory,
+                    "hermes.detect: installation detected"
+                );
+
+                Ok(serde_json::json!({
+                    "detected": true,
+                    "home_dir": d.home_dir.display().to_string(),
+                    "has_credentials": !creds.is_empty(),
+                    "credentials_count": creds.len(),
+                    "skills_count": skills.len(),
+                    "has_memory": has_memory,
+                    "memory_files": memory_files,
+                }))
+            },
+            None => {
+                tracing::info!("hermes.detect: no installation detected");
+                Ok(serde_json::json!({ "detected": false }))
+            },
+        }
+    }
+
+    #[cfg(not(feature = "hermes-import"))]
+    async fn hermes_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "detected": false }))
+    }
+
+    #[cfg(feature = "hermes-import")]
+    async fn hermes_import(&self, params: Value) -> ServiceResult {
+        let detection = moltis_hermes_import::detect::detect()
+            .ok_or_else(|| "no Hermes installation found".to_string())?;
+
+        let config_dir = moltis_config::config_dir()
+            .ok_or_else(|| "could not determine config directory".to_string())?;
+        let data_dir = moltis_config::data_dir();
+        let skills_dir = data_dir.join("skills");
+
+        let import_credentials = params
+            .get("credentials")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let import_skills = params
+            .get("skills")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let import_memory = params
+            .get("memory")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let mut categories = Vec::new();
+
+        if import_credentials {
+            categories.push(moltis_hermes_import::credentials::import_credentials(
+                &detection,
+                &config_dir,
+            ));
+        }
+        if import_skills {
+            categories.push(moltis_hermes_import::skills::import_skills(
+                &detection,
+                &skills_dir,
+            ));
+        }
+        if import_memory {
+            categories.push(moltis_hermes_import::memory::import_memory(
+                &detection, &data_dir,
+            ));
+        }
+
+        let total: usize = categories.iter().map(|c| c.items_imported).sum();
+
+        Ok(serde_json::json!({
+            "categories": categories,
+            "total_imported": total,
+        }))
+    }
+
+    #[cfg(not(feature = "hermes-import"))]
+    async fn hermes_import(&self, _params: Value) -> ServiceResult {
+        Err("hermes import feature not enabled".into())
+    }
 }
 
 fn parse_geo_location(value: &Value) -> Option<moltis_config::GeoLocation> {

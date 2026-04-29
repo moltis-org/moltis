@@ -624,6 +624,30 @@ impl moltis_service_traits::OnboardingService for MockOnboarding {
     async fn openclaw_import(&self, p: Value) -> ServiceResult {
         self.0.call("openclaw.import", p)
     }
+
+    async fn claude_detect(&self) -> ServiceResult {
+        self.0.call("claude.detect", json!({}))
+    }
+
+    async fn claude_import(&self, p: Value) -> ServiceResult {
+        self.0.call("claude.import", p)
+    }
+
+    async fn codex_detect(&self) -> ServiceResult {
+        self.0.call("codex.detect", json!({}))
+    }
+
+    async fn codex_import(&self, p: Value) -> ServiceResult {
+        self.0.call("codex.import", p)
+    }
+
+    async fn hermes_detect(&self) -> ServiceResult {
+        self.0.call("hermes.detect", json!({}))
+    }
+
+    async fn hermes_import(&self, p: Value) -> ServiceResult {
+        self.0.call("hermes.import", p)
+    }
 }
 
 #[async_trait::async_trait]

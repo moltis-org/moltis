@@ -636,6 +636,18 @@ Body.
     }
 
     #[test]
+    fn test_allowed_tools_space_separated_string() {
+        let content = "---\nname: check-pr\ndescription: Check a PR\nallowed-tools: \"Bash(gh:*) Bash(glab:*) Bash(git:*) Bash(p4:*)\"\n---\nBody.\n";
+        let meta = parse_metadata(content, Path::new("/tmp/check-pr")).unwrap();
+        assert_eq!(meta.allowed_tools, vec![
+            "Bash(gh:*)",
+            "Bash(glab:*)",
+            "Bash(git:*)",
+            "Bash(p4:*)"
+        ]);
+    }
+
+    #[test]
     fn test_dockerfile_field() {
         let content = r#"---
 name: docker-skill

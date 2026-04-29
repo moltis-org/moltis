@@ -1,27 +1,19 @@
-// ── OpenClaw Import section ───────────────────────────────────
+// ── Claude Code / Desktop Import section ──────────────────────
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { SectionHeading } from "../../components/forms";
 import { sendRpc } from "../../helpers";
-import { ChannelType } from "../../types";
 import type { RpcResponse } from "./_shared";
 import { rerender } from "./_shared";
 
-interface ScanResult {
+interface ClaudeScanResult {
 	detected?: boolean;
-	home_dir?: string;
-	telegram_accounts?: number;
-	discord_accounts?: number;
-	signal_accounts?: number;
-	unsupported_channels?: string[];
-	identity_available?: boolean;
-	providers_available?: boolean;
+	has_mcp_servers?: boolean;
+	has_desktop_config?: boolean;
 	skills_count?: number;
-	memory_available?: boolean;
-	memory_files_count?: number;
-	channels_available?: boolean;
-	sessions_count?: number;
+	commands_count?: number;
+	has_memory?: boolean;
 }
 
 interface ImportCategory {
@@ -33,50 +25,42 @@ interface ImportCategory {
 
 interface ImportResult {
 	categories?: ImportCategory[];
+	total_imported?: number;
 }
 
-interface ImportSelection {
-	identity: boolean;
-	providers: boolean;
+interface ClaudeSelection {
+	mcp_servers: boolean;
 	skills: boolean;
 	memory: boolean;
-	channels: boolean;
-	sessions: boolean;
 	[key: string]: boolean;
 }
 
-const IMPORT_CATEGORY_ICONS: Record<string, string> = {
-	identity: "\uD83D\uDC64",
-	providers: "\uD83D\uDD11",
+const CATEGORY_ICONS: Record<string, string> = {
+	mcp_servers: "\uD83D\uDD17",
 	skills: "\u2728",
 	memory: "\uD83E\uDDE0",
-	channels: "\uD83D\uDCAC",
-	sessions: "\uD83D\uDCBE",
 };
 
-export function OpenClawImportSection(): VNode {
-	const [importLoading, setImportLoading] = useState(true);
-	const [scan, setScan] = useState<ScanResult | null>(null);
+export function ClaudeImportSection(): VNode {
+	const [loading, setLoading] = useState(true);
+	const [scan, setScan] = useState<ClaudeScanResult | null>(null);
 	const [importing, setImporting] = useState(false);
 	const [done, setDone] = useState(false);
 	const [result, setResult] = useState<ImportResult | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [selection, setSelection] = useState<ImportSelection>({
-		identity: true,
-		providers: true,
+	const [selection, setSelection] = useState<ClaudeSelection>({
+		mcp_servers: true,
 		skills: true,
 		memory: true,
-		channels: true,
-		sessions: true,
 	});
 
 	useEffect(() => {
 		let cancelled = false;
-		sendRpc("openclaw.scan", {}).then((res: RpcResponse) => {
+		sendRpc("claude.detect", {}).then((res: RpcResponse) => {
 			if (cancelled) return;
-			if (res?.ok) setScan(res.payload as ScanResult);
-			else setError("Failed to scan OpenClaw installation");
-			setImportLoading(false);
+			if (res?.ok) setScan(res.payload as ClaudeScanResult);
+			else setError("Failed to scan Claude installation");
+			setLoading(false);
 			rerender();
 		});
 		return () => {
@@ -95,7 +79,7 @@ export function OpenClawImportSection(): VNode {
 	function doImport(): void {
 		setImporting(true);
 		setError(null);
-		sendRpc("openclaw.import", selection).then((res: RpcResponse) => {
+		sendRpc("claude.import", selection).then((res: RpcResponse) => {
 			setImporting(false);
 			if (res?.ok) {
 				setResult(res.payload as ImportResult);
@@ -107,10 +91,10 @@ export function OpenClawImportSection(): VNode {
 		});
 	}
 
-	if (importLoading) {
+	if (loading) {
 		return (
-			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<SectionHeading title="OpenClaw Import" />
+			<div>
+				<SectionHeading title="Claude Code" />
 				<div className="text-xs text-[var(--muted)]">Scanning{"\u2026"}</div>
 			</div>
 		);
@@ -118,79 +102,56 @@ export function OpenClawImportSection(): VNode {
 
 	if (!scan?.detected) {
 		return (
-			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-				<SectionHeading title="OpenClaw Import" />
-				<div className="text-xs text-[var(--muted)]">No OpenClaw installation detected.</div>
+			<div>
+				<SectionHeading title="Claude Code" />
+				<div className="text-xs text-[var(--muted)]">No Claude Code installation detected.</div>
 			</div>
 		);
 	}
 
-	const telegramAccounts = Number(scan.telegram_accounts) || 0;
-	const discordAccounts = Number(scan.discord_accounts) || 0;
-	const signalAccounts = Number(scan.signal_accounts) || 0;
-	const channelParts: string[] = [];
-	if (telegramAccounts > 0) channelParts.push(`${telegramAccounts} Telegram account(s)`);
-	if (discordAccounts > 0) channelParts.push(`${discordAccounts} Discord account(s)`);
-	if (signalAccounts > 0) channelParts.push(`${signalAccounts} Signal account(s)`);
-	const channelDetail = channelParts.length > 0 ? channelParts.join(", ") : null;
-	const unsupportedChannels = (scan.unsupported_channels || []).filter(
-		(channel) => String(channel).toLowerCase() !== ChannelType.Discord,
-	);
-
 	const categories = [
-		{ key: "identity", label: "Identity", available: scan.identity_available, detail: undefined as string | undefined },
 		{
-			key: "providers",
-			label: "Providers",
-			available: scan.providers_available,
-			detail: undefined as string | undefined,
+			key: "mcp_servers",
+			label: "MCP Servers",
+			available: scan.has_mcp_servers,
+			detail: scan.has_desktop_config ? "from Claude Code + Desktop" : "from Claude Code",
 		},
 		{
 			key: "skills",
 			label: "Skills",
-			available: (scan.skills_count || 0) > 0,
-			detail: `${scan.skills_count} skill(s)`,
+			available: (scan.skills_count || 0) + (scan.commands_count || 0) > 0,
+			detail: [
+				scan.skills_count ? `${scan.skills_count} skill(s)` : null,
+				scan.commands_count ? `${scan.commands_count} command(s)` : null,
+			]
+				.filter(Boolean)
+				.join(", "),
 		},
 		{
 			key: "memory",
 			label: "Memory",
-			available: scan.memory_available,
-			detail: `${scan.memory_files_count} memory file(s)`,
-		},
-		{
-			key: "channels",
-			label: "Channels",
-			available: scan.channels_available,
-			detail: channelDetail || undefined,
-		},
-		{
-			key: "sessions",
-			label: "Sessions",
-			available: (scan.sessions_count || 0) > 0,
-			detail: `${scan.sessions_count} session(s)`,
+			available: scan.has_memory,
+			detail: "CLAUDE.md",
 		},
 	];
 	const anySelected = categories.some((c) => c.available && selection[c.key]);
 
 	return (
 		<div>
-			<SectionHeading title="OpenClaw" />
-			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
-				Import data from your OpenClaw installation at <code className="text-[var(--text)]">{scan.home_dir}</code>. This
-				is a read-only copy {"\u2014"} your OpenClaw files will not be modified or removed. You can keep using both side
-				by side and re-import whenever you like.
+			<SectionHeading title="Claude Code" />
+			<p className="text-xs text-[var(--muted)] leading-relaxed mb-3 max-w-[600px]">
+				Import data from your Claude Code and Claude Desktop installation. This is a read-only copy {"\u2014"} your
+				Claude files will not be modified.
 			</p>
 			{error ? (
-				<div role="alert" className="alert-error-text whitespace-pre-line" style={{ maxWidth: "600px" }}>
+				<div role="alert" className="alert-error-text whitespace-pre-line mb-3 max-w-[600px]">
 					<span className="text-[var(--error)] font-medium">Error:</span> {error}
 				</div>
 			) : null}
 			{done && result ? (
-				<div className="flex flex-col gap-2" style={{ maxWidth: "600px" }}>
+				<div className="flex flex-col gap-2 max-w-[600px]">
 					<div className="text-sm font-medium text-[var(--ok)]">
-						Import complete:{" "}
-						{(result.categories || []).reduce((sum, cat) => sum + (Number(cat.items_imported) || 0), 0)} item(s)
-						imported.
+						Import complete: {result.total_imported || 0} item(s) imported.
 					</div>
 					{result.categories ? (
 						<div className="flex flex-col gap-1">
@@ -213,8 +174,8 @@ export function OpenClawImportSection(): VNode {
 						</div>
 					) : null}
 					<button
-						className="provider-btn provider-btn-secondary mt-2"
-						style={{ width: "fit-content" }}
+						type="button"
+						className="provider-btn provider-btn-secondary mt-2 w-fit"
 						onClick={() => {
 							setDone(false);
 							setResult(null);
@@ -225,7 +186,7 @@ export function OpenClawImportSection(): VNode {
 					</button>
 				</div>
 			) : (
-				<div className="grid grid-cols-1 sm:grid-cols-2 gap-2" style={{ maxWidth: "600px" }}>
+				<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-[600px]">
 					{categories.map((cat) => {
 						const checked = selection[cat.key] && cat.available;
 						return (
@@ -242,7 +203,7 @@ export function OpenClawImportSection(): VNode {
 										: "border-[var(--border)] bg-[var(--surface)] opacity-40 cursor-not-allowed"
 								}`}
 							>
-								<span className="text-lg shrink-0">{IMPORT_CATEGORY_ICONS[cat.key] || "\uD83D\uDCE6"}</span>
+								<span className="text-lg shrink-0">{CATEGORY_ICONS[cat.key] || "\uD83D\uDCE6"}</span>
 								<div className="flex-1 min-w-0">
 									<span className="text-sm font-medium text-[var(--text-strong)]">{cat.label}</span>
 									{cat.detail && cat.available ? (
@@ -262,15 +223,10 @@ export function OpenClawImportSection(): VNode {
 					})}
 				</div>
 			)}
-			{!done && unsupportedChannels.length > 0 ? (
-				<p className="text-xs text-[var(--muted)]" style={{ maxWidth: "600px" }}>
-					Unsupported channels (coming soon): {unsupportedChannels.join(", ")}
-				</p>
-			) : null}
 			{done ? null : (
 				<button
-					className="provider-btn mt-2"
-					style={{ width: "fit-content" }}
+					type="button"
+					className="provider-btn mt-3 w-fit"
 					onClick={doImport}
 					disabled={!anySelected || importing}
 				>

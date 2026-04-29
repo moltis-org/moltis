@@ -9,6 +9,7 @@ interface Tab {
 	id: string;
 	label: string;
 	badge?: string | number;
+	icon?: VNode;
 }
 
 interface TabBarProps {
@@ -24,7 +25,7 @@ export function TabBar({ tabs, active, onChange, className }: TabBarProps): VNod
 			{tabs.map((tab) => {
 				const isActive = tab.id === active;
 				const tabClass = [
-					"py-2 px-3 cursor-pointer bg-transparent border-b-2 transition-colors text-sm",
+					"py-2 px-3 cursor-pointer bg-transparent border-b-2 transition-colors text-sm flex items-center gap-1.5",
 					isActive
 						? "border-[var(--accent)] text-[var(--text)] font-medium"
 						: "border-transparent text-[var(--muted)] hover:text-[var(--text)]",
@@ -39,6 +40,7 @@ export function TabBar({ tabs, active, onChange, className }: TabBarProps): VNod
 						className={tabClass}
 						onClick={() => onChange(tab.id)}
 					>
+						{tab.icon}
 						{tab.label}
 						{tab.badge != null && (
 							<span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full bg-[var(--surface2)] text-[var(--muted)]">

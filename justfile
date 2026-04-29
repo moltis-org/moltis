@@ -73,7 +73,7 @@ build: build-web-assets
 
 # Build in release mode
 build-release:
-    cargo build --release
+    ./scripts/cargo-build-moltis.sh --release
 
 # Build embedded WASM guest tools and pre-compile to .cwasm for AOT loading.
 wasm-tools:
@@ -86,7 +86,7 @@ build-wasm-artifacts: wasm-tools
 
 # Build release after ensuring embedded WASM artifacts are present.
 build-release-with-wasm: build-wasm-artifacts
-    cargo build --release
+    ./scripts/cargo-build-moltis.sh --release
 
 # Run local dev server with workspace-local config/data dirs.
 dev-server:
@@ -101,13 +101,13 @@ deb: build-release build-wasm-artifacts
 
 # Build Debian package for amd64
 deb-amd64: build-wasm-artifacts
-    cargo build --release --target x86_64-unknown-linux-gnu
+    ./scripts/cargo-build-moltis.sh --release --target x86_64-unknown-linux-gnu
     bash ./scripts/stage-wasm-package-assets.sh target/x86_64-unknown-linux-gnu/release
     cargo deb -p moltis --no-build --target x86_64-unknown-linux-gnu
 
 # Build Debian package for arm64
 deb-arm64: build-wasm-artifacts
-    cargo build --release --target aarch64-unknown-linux-gnu
+    ./scripts/cargo-build-moltis.sh --release --target aarch64-unknown-linux-gnu
     bash ./scripts/stage-wasm-package-assets.sh target/aarch64-unknown-linux-gnu/release
     cargo deb -p moltis --no-build --target aarch64-unknown-linux-gnu
 
@@ -141,7 +141,7 @@ arch-pkg: build-release
 arch-pkg-x86_64:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release --target x86_64-unknown-linux-gnu
+    ./scripts/cargo-build-moltis.sh --release --target x86_64-unknown-linux-gnu
     VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     PKG_DIR="target/arch-pkg-x86_64"
     rm -rf "$PKG_DIR"
@@ -164,7 +164,7 @@ arch-pkg-x86_64:
 arch-pkg-aarch64:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release --target aarch64-unknown-linux-gnu
+    ./scripts/cargo-build-moltis.sh --release --target aarch64-unknown-linux-gnu
     VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     PKG_DIR="target/arch-pkg-aarch64"
     rm -rf "$PKG_DIR"
@@ -192,12 +192,12 @@ rpm: build-release
 
 # Build RPM package for x86_64
 rpm-x86_64:
-    cargo build --release --target x86_64-unknown-linux-gnu
+    ./scripts/cargo-build-moltis.sh --release --target x86_64-unknown-linux-gnu
     cargo generate-rpm -p crates/cli --target x86_64-unknown-linux-gnu
 
 # Build RPM package for aarch64
 rpm-aarch64:
-    cargo build --release --target aarch64-unknown-linux-gnu
+    ./scripts/cargo-build-moltis.sh --release --target aarch64-unknown-linux-gnu
     cargo generate-rpm -p crates/cli --target aarch64-unknown-linux-gnu
 
 # Build RPM packages for all architectures
