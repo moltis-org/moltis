@@ -491,10 +491,15 @@ impl CachedTailscaleManager {
             inner: CliTailscaleManager::new(),
             cache: tokio::sync::RwLock::new(None),
         });
-        let m = std::sync::Arc::clone(&manager);
-        tokio::spawn(async move {
-            m.refresh().await;
-        });
+        // Only spawn the prefetch if a Tokio runtime is available.
+        // In test contexts without a runtime, the cache starts empty
+        // and status() will fetch on first call.
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let m = std::sync::Arc::clone(&manager);
+            handle.spawn(async move {
+                m.refresh().await;
+            });
+        }
         manager
     }
 
