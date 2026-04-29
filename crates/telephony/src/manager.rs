@@ -191,6 +191,7 @@ impl CallManager {
                 self.provider_index.remove(pid);
             }
             drop(record);
+            self.active_calls.remove(&call_id);
             self.cancel_timeout(&call_id);
         }
     }
@@ -225,6 +226,7 @@ impl CallManager {
             rec.end_reason = Some(CallEndReason::HangupBot);
         }
         self.provider_index.remove(&provider_call_id);
+        self.active_calls.remove(call_id);
         self.cancel_timeout(call_id);
         Ok(())
     }
@@ -373,19 +375,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_ended_event_marks_terminal() {
+    async fn handle_ended_event_removes_call() {
         let mgr = test_manager();
         let call_id = mgr.register_inbound("PROV789", "+1", "+2", "acct");
+        assert!(mgr.get_call(&call_id).is_some());
 
         mgr.handle_event(&CallEvent::Ended {
             provider_call_id: "PROV789".into(),
             reason: CallEndReason::HangupUser,
         });
 
-        let record = mgr.get_call(&call_id).unwrap_or_else(|| panic!("missing"));
-        assert!(record.state.is_terminal());
-        assert_eq!(record.state, CallState::HangupUser);
-        assert!(record.ended_at.is_some());
+        // Terminal calls are cleaned up from active_calls.
+        assert!(mgr.get_call(&call_id).is_none());
+        assert!(mgr.resolve_call_id("PROV789").is_none());
     }
 
     #[tokio::test]
