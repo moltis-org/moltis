@@ -3,6 +3,10 @@ use {
     serde::{Deserialize, Serialize},
 };
 
+fn default_true() -> bool {
+    true
+}
+
 /// Voice configuration (TTS and STT).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -21,10 +25,6 @@ pub struct VoiceTtsConfig {
     pub provider: Option<VoiceTtsProvider>,
     /// Provider IDs to list in the UI. Empty means list all.
     pub providers: Vec<String>,
-    /// Provider IDs explicitly disabled by the user. These won't be used
-    /// even if configured. Managed by the toggle switches in the web UI.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub disabled_providers: Vec<String>,
     /// ElevenLabs-specific settings.
     pub elevenlabs: VoiceElevenLabsConfig,
     /// OpenAI TTS settings.
@@ -43,7 +43,6 @@ impl Default for VoiceTtsConfig {
             enabled: true,
             provider: None,
             providers: Vec::new(),
-            disabled_providers: Vec::new(),
             elevenlabs: VoiceElevenLabsConfig::default(),
             openai: VoiceOpenAiConfig::default(),
             google: VoiceGoogleTtsConfig::default(),
@@ -54,9 +53,12 @@ impl Default for VoiceTtsConfig {
 }
 
 /// ElevenLabs provider configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceElevenLabsConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// API key (from ELEVENLABS_API_KEY env or config).
     #[serde(
         default,
@@ -71,10 +73,24 @@ pub struct VoiceElevenLabsConfig {
     pub model: Option<String>,
 }
 
+impl Default for VoiceElevenLabsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            voice_id: None,
+            model: None,
+        }
+    }
+}
+
 /// OpenAI TTS/STT provider configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceOpenAiConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// API key (from OPENAI_API_KEY env or config).
     #[serde(
         default,
@@ -91,10 +107,25 @@ pub struct VoiceOpenAiConfig {
     pub model: Option<String>,
 }
 
+impl Default for VoiceOpenAiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            base_url: None,
+            voice: None,
+            model: None,
+        }
+    }
+}
+
 /// Google Cloud TTS provider configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceGoogleTtsConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// API key for Google Cloud Text-to-Speech.
     #[serde(
         default,
@@ -116,10 +147,27 @@ pub struct VoiceGoogleTtsConfig {
     pub pitch: Option<f32>,
 }
 
+impl Default for VoiceGoogleTtsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            voice: None,
+            model: None,
+            language_code: None,
+            speaking_rate: None,
+            pitch: None,
+        }
+    }
+}
+
 /// Piper TTS (local) configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoicePiperTtsConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// Path to piper binary. If not set, looks in PATH.
     pub binary_path: Option<String>,
     /// Path to the voice model file (.onnx).
@@ -132,10 +180,26 @@ pub struct VoicePiperTtsConfig {
     pub length_scale: Option<f32>,
 }
 
+impl Default for VoicePiperTtsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            binary_path: None,
+            model_path: None,
+            config_path: None,
+            speaker_id: None,
+            length_scale: None,
+        }
+    }
+}
+
 /// Coqui TTS (local server) configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceCoquiTtsConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// Coqui TTS server endpoint (default: http://localhost:5002).
     pub endpoint: String,
     /// Model name to use (if server supports multiple models).
@@ -149,6 +213,7 @@ pub struct VoiceCoquiTtsConfig {
 impl Default for VoiceCoquiTtsConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             endpoint: "http://localhost:5002".into(),
             model: None,
             speaker: None,
@@ -167,9 +232,6 @@ pub struct VoiceSttConfig {
     pub provider: Option<VoiceSttProvider>,
     /// Provider IDs to list in the UI. Empty means list all.
     pub providers: Vec<String>,
-    /// Provider IDs explicitly disabled by the user.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub disabled_providers: Vec<String>,
     /// Whisper (OpenAI) settings.
     pub whisper: VoiceWhisperConfig,
     /// Groq (Whisper-compatible) settings.
@@ -196,7 +258,6 @@ impl Default for VoiceSttConfig {
             enabled: true,
             provider: None,
             providers: Vec::new(),
-            disabled_providers: Vec::new(),
             whisper: VoiceWhisperConfig::default(),
             groq: VoiceGroqSttConfig::default(),
             deepgram: VoiceDeepgramConfig::default(),
@@ -383,9 +444,12 @@ impl std::fmt::Display for VoiceSttProvider {
 }
 
 /// OpenAI Whisper configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceWhisperConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// API key (from OPENAI_API_KEY env or config).
     #[serde(
         default,
@@ -402,10 +466,25 @@ pub struct VoiceWhisperConfig {
     pub language: Option<String>,
 }
 
+impl Default for VoiceWhisperConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            base_url: None,
+            model: None,
+            language: None,
+        }
+    }
+}
+
 /// Groq STT configuration (Whisper-compatible API).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceGroqSttConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// API key (from GROQ_API_KEY env or config).
     #[serde(
         default,
@@ -420,10 +499,24 @@ pub struct VoiceGroqSttConfig {
     pub language: Option<String>,
 }
 
+impl Default for VoiceGroqSttConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            model: None,
+            language: None,
+        }
+    }
+}
+
 /// Deepgram STT configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceDeepgramConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// API key (from DEEPGRAM_API_KEY env or config).
     #[serde(
         default,
@@ -440,10 +533,25 @@ pub struct VoiceDeepgramConfig {
     pub smart_format: bool,
 }
 
+impl Default for VoiceDeepgramConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            model: None,
+            language: None,
+            smart_format: false,
+        }
+    }
+}
+
 /// Google Cloud Speech-to-Text configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceGoogleSttConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// API key for Google Cloud Speech-to-Text.
     #[serde(
         default,
@@ -460,10 +568,25 @@ pub struct VoiceGoogleSttConfig {
     pub model: Option<String>,
 }
 
+impl Default for VoiceGoogleSttConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            service_account_json: None,
+            language: None,
+            model: None,
+        }
+    }
+}
+
 /// Mistral AI (Voxtral Transcribe) configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceMistralSttConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// API key (from MISTRAL_API_KEY env or config).
     #[serde(
         default,
@@ -478,10 +601,24 @@ pub struct VoiceMistralSttConfig {
     pub language: Option<String>,
 }
 
+impl Default for VoiceMistralSttConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            model: None,
+            language: None,
+        }
+    }
+}
+
 /// ElevenLabs Scribe STT configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceElevenLabsSttConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// API key (from ELEVENLABS_API_KEY env or config).
     /// Shared with TTS if not specified separately.
     #[serde(
@@ -497,10 +634,24 @@ pub struct VoiceElevenLabsSttConfig {
     pub language: Option<String>,
 }
 
+impl Default for VoiceElevenLabsSttConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_key: None,
+            model: None,
+            language: None,
+        }
+    }
+}
+
 /// Voxtral local (vLLM server) configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceVoxtralLocalConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// vLLM server endpoint (default: http://localhost:8000).
     pub endpoint: String,
     /// Model to use (optional, server default if not set).
@@ -512,6 +663,7 @@ pub struct VoiceVoxtralLocalConfig {
 impl Default for VoiceVoxtralLocalConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             endpoint: "http://localhost:8000".into(),
             model: None,
             language: None,
@@ -520,9 +672,12 @@ impl Default for VoiceVoxtralLocalConfig {
 }
 
 /// whisper-cli (whisper.cpp) configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceWhisperCliConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// Path to whisper-cli binary. If not set, looks in PATH.
     pub binary_path: Option<String>,
     /// Path to the GGML model file (e.g., "~/.moltis/models/ggml-base.en.bin").
@@ -531,14 +686,39 @@ pub struct VoiceWhisperCliConfig {
     pub language: Option<String>,
 }
 
+impl Default for VoiceWhisperCliConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            binary_path: None,
+            model_path: None,
+            language: None,
+        }
+    }
+}
+
 /// sherpa-onnx offline configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceSherpaOnnxConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// Path to sherpa-onnx-offline binary. If not set, looks in PATH.
     pub binary_path: Option<String>,
     /// Path to the ONNX model directory.
     pub model_dir: Option<String>,
     /// Language hint (ISO 639-1 code).
     pub language: Option<String>,
+}
+
+impl Default for VoiceSherpaOnnxConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            binary_path: None,
+            model_dir: None,
+            language: None,
+        }
+    }
 }
