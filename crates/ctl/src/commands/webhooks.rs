@@ -8,6 +8,7 @@ use {
 use crate::client::CtlClient;
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 pub enum WebhooksCommand {
     /// List all webhooks.
     List,
@@ -34,6 +35,18 @@ pub enum WebhooksCommand {
         /// System prompt suffix for agent runs.
         #[arg(long)]
         system_prompt: Option<String>,
+        /// Event types to accept (comma-separated, e.g. "pull_request,issues").
+        #[arg(long)]
+        events: Option<String>,
+        /// Skip agent, deliver rendered template directly to a channel.
+        #[arg(long)]
+        deliver_only: bool,
+        /// Template with {dot.notation} variables from the payload.
+        #[arg(long)]
+        prompt_template: Option<String>,
+        /// Target channel for deliver_only mode (telegram, discord, slack, etc.).
+        #[arg(long)]
+        deliver_to: Option<String>,
         /// Full JSON params (overrides individual flags).
         #[arg(long)]
         json: Option<String>,
@@ -73,6 +86,10 @@ pub async fn run(client: &mut CtlClient, cmd: WebhooksCommand) -> anyhow::Result
             auth_mode,
             session_mode,
             system_prompt,
+            events,
+            deliver_only,
+            prompt_template,
+            deliver_to,
             json: json_override,
         } => {
             let params = if let Some(raw) = json_override {
@@ -84,10 +101,22 @@ pub async fn run(client: &mut CtlClient, cmd: WebhooksCommand) -> anyhow::Result
                     "auth_mode": auth_mode,
                     "session_mode": session_mode,
                 });
+                let obj = p.as_object_mut().unwrap_or_else(|| unreachable!());
                 if let Some(sp) = system_prompt {
-                    p.as_object_mut()
-                        .unwrap_or_else(|| unreachable!())
-                        .insert("system_prompt_suffix".into(), json!(sp));
+                    obj.insert("system_prompt_suffix".into(), json!(sp));
+                }
+                if let Some(ev) = events {
+                    let allow: Vec<&str> = ev.split(',').map(str::trim).collect();
+                    obj.insert("event_filter".into(), json!({ "allow": allow }));
+                }
+                if deliver_only {
+                    obj.insert("deliver_only".into(), json!(true));
+                }
+                if let Some(pt) = prompt_template {
+                    obj.insert("prompt_template".into(), json!(pt));
+                }
+                if let Some(dt) = deliver_to {
+                    obj.insert("deliver_to".into(), json!(dt));
                 }
                 p
             };

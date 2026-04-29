@@ -55,6 +55,24 @@ pub struct Webhook {
     /// Rate limit: max deliveries per minute.
     #[serde(default = "default_rate_limit")]
     pub rate_limit_per_minute: u32,
+    /// When true, skip the agent and deliver the rendered prompt template
+    /// directly to the target channel. Zero LLM cost, sub-second delivery.
+    #[serde(default)]
+    pub deliver_only: bool,
+    /// Template for the delivery message. Supports `{dot.notation}` variable
+    /// substitution from the webhook payload (e.g. `{pull_request.title}`).
+    /// Used as the agent prompt (normal mode) or the direct message body
+    /// (`deliver_only` mode). When empty, the default normalized payload is used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_template: Option<String>,
+    /// Channel to deliver to in `deliver_only` mode (e.g. "telegram", "discord", "slack").
+    /// Ignored when `deliver_only` is false.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deliver_to: Option<String>,
+    /// Extra delivery config (e.g. `{"chat_id": "123"}` for Telegram).
+    /// Supports `{dot.notation}` template variables from the payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deliver_extra: Option<serde_json::Value>,
     /// Denormalized delivery count for UI.
     #[serde(default)]
     pub delivery_count: u64,
@@ -117,6 +135,14 @@ pub struct WebhookCreate {
     pub max_body_bytes: usize,
     #[serde(default = "default_rate_limit")]
     pub rate_limit_per_minute: u32,
+    #[serde(default)]
+    pub deliver_only: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_template: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deliver_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deliver_extra: Option<serde_json::Value>,
 }
 
 /// Input for patching a webhook.
@@ -155,6 +181,14 @@ pub struct WebhookPatch {
     pub max_body_bytes: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit_per_minute: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deliver_only: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_template: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deliver_to: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deliver_extra: Option<Option<serde_json::Value>>,
 }
 
 // ── Enums ──────────────────────────────────────────────────────────────
@@ -443,6 +477,10 @@ mod tests {
             allowed_cidrs: vec![],
             max_body_bytes: 1_048_576,
             rate_limit_per_minute: 60,
+            deliver_only: false,
+            prompt_template: None,
+            deliver_to: None,
+            deliver_extra: None,
         };
         let json = serde_json::to_value(&create).unwrap();
         let roundtrip: WebhookCreate = serde_json::from_value(json).unwrap();

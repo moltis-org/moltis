@@ -563,6 +563,10 @@ mod tests {
                 allowed_cidrs: Vec::new(),
                 max_body_bytes: 1024,
                 rate_limit_per_minute: 60,
+                deliver_only: false,
+                prompt_template: None,
+                deliver_to: None,
+                deliver_extra: None,
             })
             .await
             .unwrap();
@@ -613,6 +617,10 @@ mod tests {
                 allowed_cidrs: Vec::new(),
                 max_body_bytes: 1024,
                 rate_limit_per_minute: 60,
+                deliver_only: false,
+                prompt_template: None,
+                deliver_to: None,
+                deliver_extra: None,
             })
             .await
             .unwrap();

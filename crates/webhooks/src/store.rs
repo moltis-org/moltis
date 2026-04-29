@@ -155,6 +155,12 @@ fn row_to_webhook(row: &sqlx::sqlite::SqliteRow) -> Result<Webhook> {
         last_delivery_at: row.get("last_delivery_at"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+        deliver_only: row.get::<i32, _>("deliver_only") != 0,
+        prompt_template: row.get("prompt_template"),
+        deliver_to: row.get("deliver_to"),
+        deliver_extra: row
+            .get::<Option<String>, _>("deliver_extra_json")
+            .and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 
@@ -242,13 +248,19 @@ impl WebhookStore for SqliteWebhookStore {
             .map(serde_json::to_string)
             .transpose()?;
         let allowed_cidrs_json = serde_json::to_string(&create.allowed_cidrs)?;
+        let deliver_extra_json = create
+            .deliver_extra
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
 
         let result = sqlx::query(
             "INSERT INTO webhooks (name, description, public_id, agent_id, model, system_prompt_suffix, \
              tool_policy_json, auth_mode, auth_config_json, source_profile, source_config_json, \
              event_filter_json, session_mode, named_session_key, allowed_cidrs_json, \
-             max_body_bytes, rate_limit_per_minute, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             max_body_bytes, rate_limit_per_minute, deliver_only, prompt_template, deliver_to, \
+             deliver_extra_json, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&create.name)
         .bind(&create.description)
@@ -267,6 +279,10 @@ impl WebhookStore for SqliteWebhookStore {
         .bind(&allowed_cidrs_json)
         .bind(create.max_body_bytes as i64)
         .bind(create.rate_limit_per_minute as i64)
+        .bind(create.deliver_only as i32)
+        .bind(&create.prompt_template)
+        .bind(&create.deliver_to)
+        .bind(&deliver_extra_json)
         .bind(&now)
         .bind(&now)
         .execute(&self.pool)
@@ -327,6 +343,18 @@ impl WebhookStore for SqliteWebhookStore {
         if let Some(rl) = patch.rate_limit_per_minute {
             webhook.rate_limit_per_minute = rl;
         }
+        if let Some(do_) = patch.deliver_only {
+            webhook.deliver_only = do_;
+        }
+        if let Some(pt) = patch.prompt_template {
+            webhook.prompt_template = pt;
+        }
+        if let Some(dt) = patch.deliver_to {
+            webhook.deliver_to = dt;
+        }
+        if let Some(de) = patch.deliver_extra {
+            webhook.deliver_extra = de;
+        }
 
         let auth_mode_str = serde_json::to_value(&webhook.auth_mode)?
             .as_str()
@@ -353,12 +381,19 @@ impl WebhookStore for SqliteWebhookStore {
             .map(serde_json::to_string)
             .transpose()?;
         let allowed_cidrs_json = serde_json::to_string(&webhook.allowed_cidrs)?;
+        let deliver_extra_json = webhook
+            .deliver_extra
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
 
         sqlx::query(
             "UPDATE webhooks SET name = ?, description = ?, enabled = ?, agent_id = ?, model = ?, \
              system_prompt_suffix = ?, tool_policy_json = ?, auth_mode = ?, auth_config_json = ?, \
              source_config_json = ?, event_filter_json = ?, session_mode = ?, named_session_key = ?, \
-             allowed_cidrs_json = ?, max_body_bytes = ?, rate_limit_per_minute = ?, updated_at = ? \
+             allowed_cidrs_json = ?, max_body_bytes = ?, rate_limit_per_minute = ?, \
+             deliver_only = ?, prompt_template = ?, deliver_to = ?, deliver_extra_json = ?, \
+             updated_at = ? \
              WHERE id = ?",
         )
         .bind(&webhook.name)
@@ -377,6 +412,10 @@ impl WebhookStore for SqliteWebhookStore {
         .bind(&allowed_cidrs_json)
         .bind(webhook.max_body_bytes as i64)
         .bind(webhook.rate_limit_per_minute as i64)
+        .bind(webhook.deliver_only as i32)
+        .bind(&webhook.prompt_template)
+        .bind(&webhook.deliver_to)
+        .bind(&deliver_extra_json)
         .bind(&now)
         .bind(id)
         .execute(&self.pool)
@@ -624,6 +663,10 @@ mod tests {
             allowed_cidrs: vec![],
             max_body_bytes: 1_048_576,
             rate_limit_per_minute: 60,
+            deliver_only: false,
+            prompt_template: None,
+            deliver_to: None,
+            deliver_extra: None,
         }
     }
 
