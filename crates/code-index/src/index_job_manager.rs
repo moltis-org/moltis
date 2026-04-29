@@ -21,7 +21,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "tracing")]
-use crate::log::{debug, error, info, warn};
+use crate::log::{debug, info, warn};
 
 use crate::{CodeIndex, Error};
 
@@ -103,6 +103,7 @@ impl IndexJobManager {
     pub async fn unregister_project(&self, project_id: &str) {
         self.project_dirs.lock().await.remove(project_id);
         self.active_jobs.lock().await.remove(project_id);
+        self.pending_jobs.lock().await.remove(project_id);
         #[cfg(feature = "file-watcher")]
         {
             if let Some(watcher) = self.watchers.lock().await.remove(project_id) {
@@ -157,8 +158,10 @@ impl IndexJobManager {
         });
 
         // Track the handle for shutdown.
+        // Purge completed handles before adding to prevent unbounded growth.
         {
             let mut handles = this.job_handles.lock().await;
+            handles.retain(|h| !h.is_finished());
             handles.push(handle);
         }
 
