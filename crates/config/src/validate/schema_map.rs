@@ -765,6 +765,15 @@ pub(super) fn build_schema_map() -> KnownKeys {
                         ("webhook_url", Leaf),
                     ])),
                 ),
+                (
+                    "plivo",
+                    Struct(HashMap::from([
+                        ("auth_id", Leaf),
+                        ("auth_token", Leaf),
+                        ("from_number", Leaf),
+                        ("webhook_url", Leaf),
+                    ])),
+                ),
             ])),
         ),
         ("models", Map(Box::new(model_override()))),

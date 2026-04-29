@@ -68,6 +68,36 @@ pub(super) fn detect_phone_providers(config: &MoltisConfig) -> serde_json::Value
         },
     }));
 
+    // Plivo
+    let plivo_configured = config
+        .phone
+        .plivo
+        .auth_id
+        .as_ref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+
+    let plivo_enabled = config.phone.enabled && config.phone.provider == "plivo";
+
+    providers.push(serde_json::json!({
+        "id": "plivo",
+        "name": "Plivo",
+        "type": "telephony",
+        "category": "Cloud",
+        "description": "Budget-friendly telephony with strong coverage in Asia. Uses XML-based call control.",
+        "available": plivo_configured,
+        "enabled": plivo_enabled,
+        "keySource": if plivo_configured { "config" } else { "none" },
+        "keyPlaceholder": "MA...",
+        "keyUrl": "https://console.plivo.com/dashboard/",
+        "keyUrlLabel": "Plivo Console",
+        "hint": "Requires Auth ID, Auth Token, and a phone number",
+        "settings": {
+            "from_number": config.phone.plivo.from_number.clone().unwrap_or_default(),
+            "webhook_url": config.phone.plivo.webhook_url.clone().unwrap_or_default(),
+        },
+    }));
+
     serde_json::json!({ "providers": providers })
 }
 
@@ -95,6 +125,14 @@ pub(super) fn apply_phone_provider_settings(
             }
             if let Some(conn) = params["connection_id"].as_str().filter(|s| !s.is_empty()) {
                 cfg.phone.telnyx.connection_id = Some(conn.to_string());
+            }
+        },
+        "plivo" => {
+            if let Some(from) = params["from_number"].as_str().filter(|s| !s.is_empty()) {
+                cfg.phone.plivo.from_number = Some(from.to_string());
+            }
+            if let Some(url) = params["webhook_url"].as_str().filter(|s| !s.is_empty()) {
+                cfg.phone.plivo.webhook_url = Some(url.to_string());
             }
         },
         _ => {},
@@ -125,15 +163,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detect_phone_providers_returns_both() {
+    fn detect_phone_providers_returns_all() {
         let config = MoltisConfig::default();
         let result = detect_phone_providers(&config);
         let providers = result["providers"]
             .as_array()
             .unwrap_or_else(|| panic!("array"));
-        assert_eq!(providers.len(), 2);
+        assert_eq!(providers.len(), 3);
         assert_eq!(providers[0]["id"], "twilio");
         assert_eq!(providers[1]["id"], "telnyx");
+        assert_eq!(providers[2]["id"], "plivo");
     }
 
     #[test]

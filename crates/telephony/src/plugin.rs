@@ -170,6 +170,26 @@ impl ChannelPlugin for TelephonyPlugin {
                     connection_id,
                 ))
             },
+            TelephonyProviderId::Plivo => {
+                let auth_id = cfg
+                    .account_sid
+                    .as_ref()
+                    .map(|s| s.expose_secret().clone())
+                    .unwrap_or_default();
+                let auth_token = cfg
+                    .auth_token
+                    .clone()
+                    .unwrap_or_else(|| Secret::new(String::new()));
+
+                if auth_id.is_empty() {
+                    return Err(moltis_channels::Error::invalid_input(
+                        "auth_id (account_sid field) is required for Plivo",
+                    ));
+                }
+                Box::new(crate::providers::plivo::PlivoProvider::new(
+                    auth_id, auth_token,
+                ))
+            },
         };
 
         let manager = Arc::new(RwLock::new(CallManager::new(
