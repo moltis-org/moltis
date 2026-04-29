@@ -10,7 +10,7 @@ import { connected } from "../../signals";
 import * as S from "../../state";
 import { fetchPhrase } from "../../tts-phrases";
 import { targetChecked, targetValue } from "../../typed-events";
-import { Modal } from "../../ui";
+import { Modal, showToast } from "../../ui";
 import { getPttKey, getVadSensitivity, setPttKey, setVadSensitivity } from "../../voice-input";
 import {
 	createVoicePersona,
@@ -138,8 +138,6 @@ export function VoiceSection(): VNode {
 	const [voiceLoading, setVoiceLoading] = useState(true);
 	const [voxtralReqs, setVoxtralReqs] = useState<VoxtralRequirements | null>(null);
 	const [savingProvider, setSavingProvider] = useState<string | null>(null);
-	const [voiceMsg, setVoiceMsg] = useState<string | null>(null);
-	const [voiceErr, setVoiceErr] = useState<string | null>(null);
 	const [voiceTesting, setVoiceTesting] = useState<VoiceTesting | null>(null);
 	const [activeRecorder, setActiveRecorder] = useState<MediaRecorder | null>(null);
 	const [voiceTestResults, setVoiceTestResults] = useState<Record<string, VoiceTestResult>>({});
@@ -198,8 +196,6 @@ export function VoiceSection(): VNode {
 	}, [connected.value]);
 
 	function onToggleProvider(provider: VoiceProviderData, enabled: boolean, providerType: string): void {
-		setVoiceErr(null);
-		setVoiceMsg(null);
 		setSavingProvider(provider.id);
 		rerender();
 
@@ -208,20 +204,16 @@ export function VoiceSection(): VNode {
 				const res = r as RpcResponse;
 				setSavingProvider(null);
 				if (res?.ok) {
-					setVoiceMsg(`${provider.name} ${enabled ? "enabled" : "disabled"}.`);
-					setTimeout(() => {
-						setVoiceMsg(null);
-						rerender();
-					}, 2000);
+					showToast(`${provider.name} ${enabled ? "enabled" : "disabled"}.`, "success");
 					fetchVoiceStatus({ silent: true });
 				} else {
-					setVoiceErr((res?.error as { message?: string })?.message || "Failed to toggle provider");
+					showToast((res?.error as { message?: string })?.message || "Failed to toggle provider", "error");
 				}
 				rerender();
 			})
 			.catch((err: Error) => {
 				setSavingProvider(null);
-				setVoiceErr(err.message);
+				showToast(err.message, "error");
 				rerender();
 			});
 	}
@@ -261,8 +253,6 @@ export function VoiceSection(): VNode {
 			return;
 		}
 
-		setVoiceErr(null);
-		setVoiceMsg(null);
 		setVoiceTesting({ id: providerId, type, phase: "testing" });
 		rerender();
 
@@ -381,7 +371,7 @@ export function VoiceSection(): VNode {
 					rerender();
 				};
 			} catch (err) {
-				setVoiceErr(humanizeMicError(err as { name?: string; message?: string }));
+				showToast(humanizeMicError(err as { name?: string; message?: string }), "error");
 				setVoiceTesting(null);
 			}
 		}
@@ -407,9 +397,6 @@ export function VoiceSection(): VNode {
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">Voice</h2>
-
-			{voiceMsg ? <div className="text-xs text-[var(--accent)]">{voiceMsg}</div> : null}
-			{voiceErr ? <div className="text-xs text-[var(--error)]">{voiceErr}</div> : null}
 
 			<TabBar tabs={voiceTabs} active={activeTab} onChange={setActiveTab} />
 
