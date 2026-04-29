@@ -197,8 +197,9 @@ impl ChannelPlugin for TelephonyPlugin {
             cfg.max_duration_secs,
         )));
 
+        let gather_url = format!("/api/channels/telephony/{account_id}/gather");
         self.routing_outbound
-            .set_manager(account_id, Arc::clone(&manager));
+            .set_manager(account_id, Arc::clone(&manager), gather_url);
 
         self.accounts.insert(account_id.to_string(), AccountState {
             config: cfg,

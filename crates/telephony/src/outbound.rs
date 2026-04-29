@@ -107,25 +107,38 @@ impl ChannelStreamOutbound for TelephonyStreamOutbound {
 ///
 /// Used as the shared_outbound() so the agent loop can route TTS replies
 /// back to active phone calls across all accounts.
+struct AccountOutbound {
+    manager: Arc<RwLock<CallManager>>,
+    gather_url: String,
+}
+
 pub(crate) struct RoutingOutbound {
-    managers: Arc<std::sync::RwLock<std::collections::HashMap<String, Arc<RwLock<CallManager>>>>>,
+    accounts: Arc<std::sync::RwLock<std::collections::HashMap<String, AccountOutbound>>>,
 }
 
 impl RoutingOutbound {
     pub(crate) fn new() -> Self {
         Self {
-            managers: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+            accounts: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
         }
     }
 
-    pub(crate) fn set_manager(&self, account_id: &str, manager: Arc<RwLock<CallManager>>) {
-        if let Ok(mut map) = self.managers.write() {
-            map.insert(account_id.to_string(), manager);
+    pub(crate) fn set_manager(
+        &self,
+        account_id: &str,
+        manager: Arc<RwLock<CallManager>>,
+        gather_url: String,
+    ) {
+        if let Ok(mut map) = self.accounts.write() {
+            map.insert(account_id.to_string(), AccountOutbound {
+                manager,
+                gather_url,
+            });
         }
     }
 
     pub(crate) fn remove_manager(&self, account_id: &str) {
-        if let Ok(mut map) = self.managers.write() {
+        if let Ok(mut map) = self.accounts.write() {
             map.remove(account_id);
         }
     }
@@ -140,13 +153,15 @@ impl ChannelOutbound for RoutingOutbound {
         text: &str,
         _reply_to: Option<&str>,
     ) -> Result<()> {
-        let mgr = {
-            let map = self.managers.read().unwrap_or_else(|e| e.into_inner());
-            map.get(account_id).cloned()
-        };
-        let Some(mgr) = mgr else {
-            tracing::debug!(account_id = %account_id, "no call manager for account, skipping TTS");
-            return Ok(());
+        let (mgr, gather_url) = {
+            let map = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            match map.get(account_id) {
+                Some(a) => (Arc::clone(&a.manager), a.gather_url.clone()),
+                None => {
+                    tracing::debug!(account_id = %account_id, "no call manager for account, skipping TTS");
+                    return Ok(());
+                },
+            }
         };
 
         let manager = mgr.read().await;
@@ -173,6 +188,7 @@ impl ChannelOutbound for RoutingOutbound {
         {
             tracing::warn!(call_id = %to, error = %e, "TTS playback failed");
         }
+        let _ = gather_url; // Available for future Redirect-based continuation
         manager.record_bot_speech(to, text);
         Ok(())
     }

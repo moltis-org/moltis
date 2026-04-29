@@ -157,10 +157,14 @@ impl TelephonyProvider for TwilioProvider {
         let (user, pass) = self.basic_auth();
 
         let voice_attr = voice.unwrap_or("Polly.Joanna");
-        // After speaking, redirect back to gather so the call continues
-        // listening. Without a continuation verb, Twilio hangs up.
+        // After speaking, gather with speechTimeout keeps the call alive.
+        // Without a continuation verb, Twilio hangs up after the Say.
+        // The Gather has no action URL — when speech is detected, Twilio
+        // posts to the original webhook URL (the answer_url), which redirects
+        // to the gather handler. When Gather times out with no input, it
+        // falls through to the next verb (Wait) to keep the call open.
         let twiml = format!(
-            r#"<Response><Say voice="{voice_attr}">{}</Say><Gather input="speech" speechTimeout="auto"/></Response>"#,
+            r#"<Response><Say voice="{voice_attr}">{}</Say><Gather input="speech" speechTimeout="auto" timeout="30"/><Pause length="120"/></Response>"#,
             xml_escape(text)
         );
 
