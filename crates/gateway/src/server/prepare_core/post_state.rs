@@ -1475,7 +1475,9 @@ pub(super) async fn complete_startup(
         // A user may set auto_index_on_startup=false but still want periodic refreshes.
         if config.code_index.periodic_reindex_interval > std::time::Duration::ZERO {
             let jm = Arc::clone(&state.index_job_manager);
-            jm.start_periodic_reindex_loop();
+            let handle = jm.start_periodic_reindex_loop();
+            // Store the handle so it can be awaited during shutdown.
+            jm.set_periodic_loop_handle(handle).await;
         }
     }
 

@@ -71,6 +71,8 @@ pub struct IndexJobManager {
     /// Pending job flags: project_id → true if a job is spawned/pending.
     /// Used for atomic deduplication to prevent TOCTOU races.
     pending_jobs: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Periodic re-index loop handle for graceful shutdown.
+    periodic_loop_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl IndexJobManager {
@@ -88,6 +90,7 @@ impl IndexJobManager {
             config,
             job_handles: Mutex::new(Vec::new()),
             pending_jobs: Mutex::new(HashMap::new()),
+            periodic_loop_handle: Mutex::new(None),
         }
     }
 
@@ -318,6 +321,9 @@ impl IndexJobManager {
     ///
     /// Reads the current project list from `self.project_dirs` at each tick,
     /// so projects registered/unregistered after startup are correctly handled.
+    ///
+    /// The returned `JoinHandle` should be stored in `IndexJobManager` via
+    /// `set_periodic_loop_handle()` to ensure it is awaited during shutdown.
     pub fn start_periodic_reindex_loop(self: &Arc<Self>) -> JoinHandle<()> {
         let this = Arc::clone(self);
         let interval = self.config.periodic_reindex_interval;
@@ -360,12 +366,17 @@ impl IndexJobManager {
         }
     }
 
+    /// Store the periodic re-index loop handle for shutdown tracking.
+    pub async fn set_periodic_loop_handle(&self, handle: JoinHandle<()>) {
+        *self.periodic_loop_handle.lock().await = Some(handle);
+    }
+
     /// Graceful shutdown: cancel all jobs and wait for active jobs to complete.
     pub async fn shutdown(self: &Arc<Self>) {
         #[cfg(feature = "tracing")]
         info!("shutting down index job manager");
 
-        // Signal cancellation.
+        // Signal cancellation to periodic loop and watchers.
         self.cancel.cancel();
 
         // Stop all watchers.
@@ -384,6 +395,11 @@ impl IndexJobManager {
         };
         for handle in handles {
             let _ = handle.await;
+        }
+
+        // Wait for the periodic re-index loop to complete.
+        if let Some(loop_handle) = self.periodic_loop_handle.lock().await.take() {
+            let _ = loop_handle.await;
         }
 
         #[cfg(feature = "tracing")]
