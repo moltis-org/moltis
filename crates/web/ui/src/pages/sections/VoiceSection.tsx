@@ -47,6 +47,7 @@ interface VoiceProviderData {
 	category?: string;
 	available?: boolean;
 	enabled?: boolean;
+	preferred?: boolean;
 	keySource?: string;
 	settingsSummary?: string;
 	binaryPath?: string;
@@ -462,6 +463,13 @@ export function VoiceSection(): VNode {
 										onToggle={(enabled: boolean) => onToggleProvider(prov, enabled, "tts")}
 										onConfigure={() => onConfigureProvider(prov.id, prov)}
 										onTest={() => testVoiceProvider(prov.id, "tts")}
+										preferred={prov.preferred}
+										onSetPreferred={() => {
+											sendRpc("tts.setProvider", { provider: prov.id }).then(() => {
+												fetchVoiceStatus({ silent: true });
+												rerender();
+											});
+										}}
 									/>
 								);
 							})}
@@ -992,6 +1000,8 @@ interface VoiceProviderRowProps {
 	onToggle: (enabled: boolean) => void;
 	onConfigure: () => void;
 	onTest: () => void;
+	preferred?: boolean;
+	onSetPreferred?: () => void;
 }
 
 function VoiceProviderRow({
@@ -1004,6 +1014,8 @@ function VoiceProviderRow({
 	onToggle,
 	onConfigure,
 	onTest,
+	preferred,
+	onSetPreferred,
 }: VoiceProviderRowProps): VNode {
 	const canEnable = provider.available;
 	const keySourceLabel =
@@ -1032,6 +1044,9 @@ function VoiceProviderRow({
 			<div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "2px" }}>
 				<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
 					<span className="text-sm text-[var(--text-strong)]">{meta.name}</span>
+					{preferred ? (
+						<span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent)] text-white">preferred</span>
+					) : null}
 					{provider.category === "local" ? <span className="provider-item-badge">local</span> : null}
 					{keySourceLabel ? <span className="text-xs text-[var(--muted)]">{keySourceLabel}</span> : null}
 				</div>
@@ -1077,6 +1092,15 @@ function VoiceProviderRow({
 				) : null}
 			</div>
 			<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+				{onSetPreferred && provider.enabled && !preferred ? (
+					<button
+						className="provider-btn provider-btn-secondary text-xs !py-1 !px-2"
+						onClick={onSetPreferred}
+						title="Set as preferred TTS provider"
+					>
+						📌
+					</button>
+				) : null}
 				<button className="provider-btn provider-btn-secondary provider-btn-sm" onClick={onConfigure}>
 					Configure
 				</button>
