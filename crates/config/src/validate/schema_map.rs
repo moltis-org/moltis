@@ -737,6 +737,26 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ),
             ])),
         ),
+        (
+            "phone",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("provider", Leaf),
+                ("providers", Array(Box::new(Leaf))),
+                ("inbound_policy", Leaf),
+                ("allowlist", Array(Box::new(Leaf))),
+                ("max_duration_secs", Leaf),
+                (
+                    "twilio",
+                    Struct(HashMap::from([
+                        ("account_sid", Leaf),
+                        ("auth_token", Leaf),
+                        ("from_number", Leaf),
+                        ("webhook_url", Leaf),
+                    ])),
+                ),
+            ])),
+        ),
         ("models", Map(Box::new(model_override()))),
     ]))
 }

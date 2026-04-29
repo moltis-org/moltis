@@ -549,6 +549,23 @@ port = {port}                           # Port number (auto-generated for this i
 # provider = "auto"                 # "local" | "ollama" | "openai" | "custom"
 
 # ══════════════════════════════════════════════════════════════════════════════
+# PHONE (Telephony Providers)
+# ══════════════════════════════════════════════════════════════════════════════
+# Configure telephony providers for making and receiving phone calls.
+# Provider credentials are stored securely via the web UI (Settings > Phone).
+
+# [phone]
+# enabled = false                           # Enable phone calls globally
+# provider = "twilio"                       # Active provider
+# inbound_policy = "disabled"               # disabled | allowlist | open
+# allowlist = []                            # Allowed inbound callers (E.164)
+# max_duration_secs = 3600                  # Max call duration (1 hour)
+
+# [phone.twilio]
+# from_number = "+15551234567"              # Your Twilio phone number (E.164)
+# webhook_url = "https://your-domain.com"   # Public URL for Twilio callbacks
+
+# ══════════════════════════════════════════════════════════════════════════════
 # CHANNELS
 # ══════════════════════════════════════════════════════════════════════════════
 # External messaging integrations.

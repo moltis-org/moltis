@@ -19,6 +19,8 @@ mod hooks;
 mod memory;
 #[path = "schema/modes.rs"]
 mod modes;
+#[path = "schema/phone.rs"]
+mod phone;
 #[path = "schema/providers.rs"]
 mod providers;
 #[path = "schema/runtime.rs"]
@@ -31,8 +33,8 @@ mod tools;
 mod voice;
 
 pub use {
-    agents::*, chat::*, code_index::*, hooks::*, memory::*, modes::*, providers::*, runtime::*,
-    system::*, tools::*, voice::*,
+    agents::*, chat::*, code_index::*, hooks::*, memory::*, modes::*, phone::*, providers::*,
+    runtime::*, system::*, tools::*, voice::*,
 };
 
 // ── Reasoning effort ──────────────────────────────────────────────────────
@@ -251,6 +253,7 @@ pub struct MoltisConfig {
     pub failover: FailoverConfig,
     pub heartbeat: HeartbeatConfig,
     pub voice: VoiceConfig,
+    pub phone: PhoneConfig,
     pub cron: CronConfig,
     pub caldav: CalDavConfig,
     pub home_assistant: HomeAssistantConfig,
