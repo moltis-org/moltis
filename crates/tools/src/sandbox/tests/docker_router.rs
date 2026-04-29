@@ -700,6 +700,86 @@ async fn test_sandbox_router_global_image_override() {
     assert_eq!(img, DEFAULT_SANDBOX_IMAGE);
 }
 
+// ── Sandbox escape regression tests (issue #923) ───────────────────────────
+
+#[test]
+fn test_no_sandbox_does_not_provide_fs_isolation() {
+    let sandbox = NoSandbox;
+    assert!(!sandbox.provides_fs_isolation());
+}
+
+#[test]
+fn test_docker_sandbox_provides_fs_isolation() {
+    let sandbox = DockerSandbox::new(SandboxConfig::default());
+    assert!(sandbox.provides_fs_isolation());
+}
+
+#[test]
+fn test_podman_sandbox_provides_fs_isolation() {
+    let sandbox = DockerSandbox::podman(SandboxConfig::default());
+    assert!(sandbox.provides_fs_isolation());
+}
+
+#[tokio::test]
+async fn test_failover_sandbox_reports_active_backend_name() {
+    // Primary: a "docker" backend that always fails.
+    let primary = Arc::new(TestSandbox::new(
+        "docker",
+        Some("cannot connect to the docker daemon"),
+        None,
+    ));
+    // Fallback: restricted-host.
+    let fallback: Arc<dyn Sandbox> = Arc::new(RestrictedHostSandbox::new(SandboxConfig::default()));
+
+    let failover = FailoverSandbox::new(primary, fallback);
+
+    // Before failover: reports primary name.
+    assert_eq!(failover.backend_name(), "docker");
+    assert!(failover.provides_fs_isolation());
+
+    // Trigger failover via ensure_ready.
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-failover".into(),
+    };
+    failover.ensure_ready(&id, None).await.unwrap();
+
+    // After failover: reports fallback name and isolation level.
+    assert_eq!(failover.backend_name(), "restricted-host");
+    assert!(
+        !failover.provides_fs_isolation(),
+        "after failing over to restricted-host, FS isolation must be false"
+    );
+}
+
+#[tokio::test]
+async fn test_failover_sandbox_to_restricted_host_does_not_claim_fs_isolation() {
+    // Simulate macOS failover: apple-container → restricted-host
+    let primary = Arc::new(TestSandbox::new(
+        "apple-container",
+        Some("XPC connection error"),
+        None,
+    ));
+    let fallback: Arc<dyn Sandbox> = Arc::new(RestrictedHostSandbox::new(SandboxConfig::default()));
+    let failover = FailoverSandbox::new(primary, fallback);
+
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-apple-failover".into(),
+    };
+
+    // Trigger failover.
+    failover.ensure_ready(&id, None).await.unwrap();
+
+    // The critical assertion: code must NOT see "apple-container" anymore.
+    assert_ne!(
+        failover.backend_name(),
+        "apple-container",
+        "backend_name must not mask failover to restricted-host"
+    );
+    assert!(!failover.provides_fs_isolation());
+}
+
 /// E2E regression test for #796: Podman+BuildKit may leave images in
 /// BuildKit's cache instead of the Podman store.  Gated behind
 /// `MOLTIS_SANDBOX_RUNTIME_E2E=1` and requires Podman to be installed.

@@ -450,16 +450,16 @@ impl AgentTool for ExecTool {
             self.sandbox_id.is_some()
         };
 
-        // Check whether the backend is a real container runtime.  When the
-        // backend is "none" or "restricted-host" (no container runtime),
+        // Check whether the backend provides filesystem isolation (container,
+        // VM, or WASM).  When it does not (restricted-host, cgroup, none),
         // commands run directly on the host even when the session mode says
         // "sandboxed".  Using /home/sandbox as the working directory would
         // fail with ENOENT on the host, so we must fall back to the host
         // data directory.
         let has_container_backend = if let Some(ref router) = self.sandbox_router {
-            !matches!(router.backend_name(), "none" | "restricted-host")
+            router.backend().provides_fs_isolation()
         } else {
-            !matches!(self.sandbox.backend_name(), "none" | "restricted-host")
+            self.sandbox.provides_fs_isolation()
         };
 
         // Resolve working directory.  When sandboxed *with a real container
@@ -539,7 +539,12 @@ impl AgentTool for ExecTool {
         );
 
         // Approval gating.
-        if !is_sandboxed && let Some(ref mgr) = self.approval_manager {
+        // When the sandbox backend lacks filesystem isolation (restricted-host,
+        // cgroup), commands run on the host — treat them the same as unsandboxed
+        // for approval purposes.  Only fully-isolated backends (container, WASM)
+        // skip approval gating.
+        let needs_approval = !is_sandboxed || !has_container_backend;
+        if needs_approval && let Some(ref mgr) = self.approval_manager {
             let action = mgr.check_command(command).await?;
             if action == ApprovalAction::NeedsApproval {
                 info!(command, "command needs approval, waiting...");

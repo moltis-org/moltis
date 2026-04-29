@@ -346,6 +346,19 @@ pub trait Sandbox: Send + Sync {
         true
     }
 
+    /// Whether this backend provides filesystem isolation from the host.
+    ///
+    /// Returns `true` for container-based backends (Docker, Podman, Apple
+    /// Container, WASM) where commands execute in a separate filesystem
+    /// namespace.  Returns `false` for backends that only provide resource
+    /// limits (restricted-host, cgroup) or no isolation at all (none).
+    ///
+    /// Used by the exec flow to enforce approval gating and file-path
+    /// restrictions when true filesystem isolation is unavailable.
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
     /// Pre-build a container image with packages baked in.
     /// Returns `None` for backends that don't support image building.
     async fn build_image(

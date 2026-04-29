@@ -90,7 +90,30 @@ impl FailoverSandbox {
 #[async_trait]
 impl Sandbox for FailoverSandbox {
     fn backend_name(&self) -> &'static str {
-        self.primary_name
+        // Report the active backend so callers know the true isolation level.
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(false)
+        {
+            self.fallback_name
+        } else {
+            self.primary_name
+        }
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(false)
+        {
+            self.fallback.provides_fs_isolation()
+        } else {
+            self.primary.provides_fs_isolation()
+        }
     }
 
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {

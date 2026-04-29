@@ -61,6 +61,10 @@ impl Sandbox for CgroupSandbox {
         "cgroup"
     }
 
+    fn provides_fs_isolation(&self) -> bool {
+        false
+    }
+
     async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
         let output = tokio::process::Command::new("systemd-run")
             .arg("--version")
@@ -213,6 +217,10 @@ impl Sandbox for RestrictedHostSandbox {
         true
     }
 
+    fn provides_fs_isolation(&self) -> bool {
+        false
+    }
+
     async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
         Ok(())
     }
@@ -282,6 +290,7 @@ impl Sandbox for RestrictedHostSandbox {
         file_path: &str,
         max_bytes: u64,
     ) -> Result<SandboxReadResult> {
+        check_restricted_host_path(file_path)?;
         native_host_read_file(file_path, max_bytes).await
     }
 
@@ -291,16 +300,56 @@ impl Sandbox for RestrictedHostSandbox {
         file_path: &str,
         content: &[u8],
     ) -> Result<Option<serde_json::Value>> {
+        check_restricted_host_path(file_path)?;
         native_host_write_file(file_path, content).await
     }
 
     async fn list_files(&self, _id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        check_restricted_host_path(root)?;
         native_host_list_files(root).await
     }
 
     async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
         Ok(())
     }
+}
+
+/// Validate that a file path is within the allowed set for the restricted-host
+/// sandbox. Without container-level filesystem isolation, we restrict access
+/// to the Moltis data directory and temp directories to prevent sandbox escapes.
+pub(crate) fn check_restricted_host_path(path: &str) -> Result<()> {
+    let target = std::path::Path::new(path);
+
+    let data_dir = moltis_config::data_dir();
+    if target.starts_with(&data_dir) {
+        return Ok(());
+    }
+
+    // Allow temp directories — /tmp, /var/tmp, and the platform temp dir
+    // (e.g. /var/folders/... on macOS, /tmp on Linux).
+    if target.starts_with("/tmp")
+        || target.starts_with("/private/tmp")
+        || target.starts_with("/var/tmp")
+        || target.starts_with(std::env::temp_dir())
+    {
+        return Ok(());
+    }
+
+    // Allow access to Moltis-specific config/data subdirectories under $HOME.
+    if let Some(home) = moltis_config::home_dir() {
+        let moltis_config_dir = home.join(".config").join("moltis");
+        let moltis_home_dir = home.join(".moltis");
+        if target.starts_with(&moltis_config_dir) || target.starts_with(&moltis_home_dir) {
+            return Ok(());
+        }
+    }
+
+    Err(Error::message(format!(
+        "restricted-host sandbox: path '{}' is outside the allowed directories \
+         (Moltis data directory and /tmp). Install a container runtime \
+         (Docker, Podman, or Apple Container) for full filesystem isolation.",
+        path
+    )))
 }
 
 /// Returns `true` when the WASM sandbox feature is compiled in.
