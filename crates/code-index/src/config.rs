@@ -157,7 +157,7 @@ impl From<&moltis_config::CodeIndexTomlConfig> for CodeIndexConfig {
                 DEFAULT_MAX_FILE_SIZE_BYTES
             });
 
-        let periodic_reindex_interval = moltis_config::parse_duration(&toml.periodic_reindex_interval)
+        let periodic_reindex_interval = moltis_config::schema::parse_duration(&toml.periodic_reindex_interval)
             .unwrap_or_else(|e| {
                 #[cfg(feature = "tracing")]
                 tracing::warn!(

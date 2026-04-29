@@ -10,6 +10,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -65,6 +66,11 @@ pub struct IndexJobManager {
     cancel: CancellationToken,
     /// Configuration.
     config: IndexJobManagerConfig,
+    /// Spawned job handles for shutdown tracking.
+    job_handles: Mutex<Vec<JoinHandle<()>>>,
+    /// Pending job flags: project_id → true if a job is spawned/pending.
+    /// Used for atomic deduplication to prevent TOCTOU races.
+    pending_jobs: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl IndexJobManager {
@@ -80,6 +86,8 @@ impl IndexJobManager {
             semaphore: Arc::new(Semaphore::new(max_jobs)),
             cancel: CancellationToken::new(),
             config,
+            job_handles: Mutex::new(Vec::new()),
+            pending_jobs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -108,31 +116,51 @@ impl IndexJobManager {
     /// Spawn an indexing job for a project (deduplicated, rate-limited).
     ///
     /// Returns `true` if a job was spawned, `false` if one was already running
-    /// for this project.
+    /// or pending for this project.
+    ///
+    /// This method uses atomic compare-exchange on a per-project flag to prevent
+    /// TOCTOU races where multiple concurrent calls could all see "not running"
+    /// and spawn duplicate jobs.
     pub async fn spawn_index(self: &Arc<Self>, project_id: String) -> bool {
-        // Non-blocking check: if the per-project lock is held, a job is already
-        // running — skip spawning a duplicate.
-        let already_running = {
-            let jobs = self.active_jobs.lock().await;
-            if let Some(lock) = jobs.get(&project_id) {
-                lock.try_lock().is_err()
-            } else {
-                false
-            }
+        // Atomically check-and-set the pending flag for this project.
+        // Only one caller can transition from false→true, preventing TOCTOU races.
+        let is_pending = {
+            let mut pending = self.pending_jobs.lock().await;
+            let flag = pending
+                .entry(project_id.clone())
+                .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+                .clone();
+            // Atomically: if flag is false, set it to true and return false (we won)
+            // If flag is already true, return true (someone else won)
+            flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                .is_err()
         };
 
-        if already_running {
+        if is_pending {
             #[cfg(feature = "tracing")]
-            debug!(project_id = %project_id, "index job already running, skipping");
+            debug!(project_id = %project_id, "index job already pending/running, skipping");
             return false;
         }
 
         let this = Arc::clone(self);
         let project_id_for_log = project_id.clone();
+        let project_id_for_clear = project_id.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
+            // Run the index job.
             this.index_project_deduped(&project_id).await;
+
+            // Clear the pending flag when done.
+            if let Some(flag) = this.pending_jobs.lock().await.get(&project_id_for_clear) {
+                flag.store(false, Ordering::Relaxed);
+            }
         });
+
+        // Track the handle for shutdown.
+        {
+            let mut handles = this.job_handles.lock().await;
+            handles.push(handle);
+        }
 
         #[cfg(feature = "tracing")]
         info!(project_id = project_id_for_log, "spawned indexing job");
@@ -328,7 +356,7 @@ impl IndexJobManager {
         }
     }
 
-    /// Graceful shutdown: cancel all jobs and stop all watchers.
+    /// Graceful shutdown: cancel all jobs and wait for active jobs to complete.
     pub async fn shutdown(self: &Arc<Self>) {
         #[cfg(feature = "tracing")]
         info!("shutting down index job manager");
@@ -345,8 +373,15 @@ impl IndexJobManager {
             }
         }
 
-        // Wait for active jobs to complete (they will see the cancel token).
-        // In practice, jobs complete quickly since they're file I/O bound.
+        // Wait for all spawned jobs to complete.
+        let handles = {
+            let mut h = self.job_handles.lock().await;
+            std::mem::take(&mut *h)
+        };
+        for handle in handles {
+            let _ = handle.await;
+        }
+
         #[cfg(feature = "tracing")]
         info!("index job manager shutdown complete");
     }
