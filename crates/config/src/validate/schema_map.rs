@@ -649,10 +649,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                         ),
                         (
                             "piper",
-                            Struct(HashMap::from([
-                                ("enabled", Leaf),
-                                ("model_path", Leaf),
-                            ])),
+                            Struct(HashMap::from([("enabled", Leaf), ("model_path", Leaf)])),
                         ),
                         (
                             "coqui",
