@@ -118,7 +118,7 @@ export function PersonaEditModal({ editingId, existingPersona, onClose, onSaved 
 		return bindings;
 	}
 
-	async function handleSave(): Promise<void> {
+	async function savePersona(): Promise<boolean> {
 		setSaving(true);
 		setError(null);
 		try {
@@ -133,7 +133,7 @@ export function PersonaEditModal({ editingId, existingPersona, onClose, onSaved 
 				if (!(id && label)) {
 					setError("ID and Label are required.");
 					setSaving(false);
-					return;
+					return false;
 				}
 				await createVoicePersona({
 					id,
@@ -150,11 +150,18 @@ export function PersonaEditModal({ editingId, existingPersona, onClose, onSaved 
 					providerBindings,
 				});
 			}
-			onSaved();
+			return true;
 		} catch (err: unknown) {
 			setError(err instanceof Error ? err.message : String(err));
+			return false;
 		} finally {
 			setSaving(false);
+		}
+	}
+
+	async function handleSave(): Promise<void> {
+		if (await savePersona()) {
+			onSaved();
 		}
 	}
 
@@ -169,8 +176,8 @@ export function PersonaEditModal({ editingId, existingPersona, onClose, onSaved 
 
 			let res: RpcResponse;
 			if (personaIdToTest) {
-				// Save first so latest changes are used, then test.
-				await handleSave();
+				// Save first so latest changes are used, then test (without closing the modal).
+				await savePersona();
 				res = (await testTtsWithPersona(text, personaIdToTest)) as RpcResponse;
 			} else {
 				// New persona not yet saved — test with raw tts.convert and manual instructions.
