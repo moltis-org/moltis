@@ -10,7 +10,6 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
-    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
@@ -68,9 +67,6 @@ pub struct IndexJobManager {
     config: IndexJobManagerConfig,
     /// Spawned job handles for shutdown tracking.
     job_handles: Mutex<Vec<JoinHandle<()>>>,
-    /// Pending job flags: project_id → true if a job is spawned/pending.
-    /// Used for atomic deduplication to prevent TOCTOU races.
-    pending_jobs: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// Periodic re-index loop handle for graceful shutdown.
     periodic_loop_handle: Mutex<Option<JoinHandle<()>>>,
 }
@@ -89,7 +85,6 @@ impl IndexJobManager {
             cancel: CancellationToken::new(),
             config,
             job_handles: Mutex::new(Vec::new()),
-            pending_jobs: Mutex::new(HashMap::new()),
             periodic_loop_handle: Mutex::new(None),
         }
     }
@@ -106,7 +101,6 @@ impl IndexJobManager {
     pub async fn unregister_project(&self, project_id: &str) {
         self.project_dirs.lock().await.remove(project_id);
         self.active_jobs.lock().await.remove(project_id);
-        self.pending_jobs.lock().await.remove(project_id);
         #[cfg(feature = "file-watcher")]
         {
             if let Some(watcher) = self.watchers.lock().await.remove(project_id) {
@@ -117,47 +111,44 @@ impl IndexJobManager {
         }
     }
 
+    /// Get a reference to the configuration.
+    pub fn config(&self) -> &IndexJobManagerConfig {
+        &self.config
+    }
+
     /// Spawn an indexing job for a project (deduplicated, rate-limited).
     ///
-    /// Returns `true` if a job was spawned, `false` if one was already running
-    /// or pending for this project.
+    /// Returns `true` if a job was spawned, `false` if one was already running.
     ///
-    /// This method uses atomic compare-exchange on a per-project flag to prevent
-    /// TOCTOU races where multiple concurrent calls could all see "not running"
-    /// and spawn duplicate jobs.
+    /// Uses `try_lock()` on the per-project mutex to detect concurrent requests.
+    /// If the lock is already held, another job is running and we skip spawning.
     pub async fn spawn_index(self: &Arc<Self>, project_id: String) -> bool {
-        // Atomically check-and-set the pending flag for this project.
-        // Only one caller can transition from false→true, preventing TOCTOU races.
-        let is_pending = {
-            let mut pending = self.pending_jobs.lock().await;
-            let flag = pending
-                .entry(project_id.clone())
-                .or_insert_with(|| Arc::new(AtomicBool::new(false)))
-                .clone();
-            // Atomically: if flag is false, set it to true and return false (we won)
-            // If flag is already true, return true (someone else won)
-            flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
-                .is_err()
+        // Get or create the per-project lock.
+        let job_lock = {
+            let mut jobs = self.active_jobs.lock().await;
+            Arc::clone(
+                jobs.entry(project_id.clone())
+                    .or_insert_with(|| Arc::new(Mutex::new(()))),
+            )
         };
 
-        if is_pending {
-            #[cfg(feature = "tracing")]
-            debug!(project_id = %project_id, "index job already pending/running, skipping");
-            return false;
-        }
+        // Try to acquire the lock without waiting.
+        // If already locked, another job is running — skip spawning.
+        let _guard = match job_lock.try_lock() {
+            Some(g) => g,
+            None => {
+                #[cfg(feature = "tracing")]
+                debug!(project_id = %project_id, "index job already running, skipping");
+                return false;
+            }
+        };
 
         let this = Arc::clone(self);
         let project_id_for_log = project_id.clone();
-        let project_id_for_clear = project_id.clone();
 
         let handle = tokio::spawn(async move {
             // Run the index job.
             this.index_project_deduped(&project_id).await;
-
-            // Clear the pending flag when done.
-            if let Some(flag) = this.pending_jobs.lock().await.get(&project_id_for_clear) {
-                flag.store(false, Ordering::Relaxed);
-            }
         });
 
         // Track the handle for shutdown.
@@ -263,7 +254,9 @@ impl IndexJobManager {
             let mgr = Arc::clone(&this);
             let pid = pid_for_cb.clone();
 
-            // Route through spawn_index() for proper deduplication and shutdown tracking.
+            // File watcher callbacks run on a blocking thread pool, so we must spawn
+            // to return to the tokio runtime. The spawned task calls spawn_index(),
+            // which handles deduplication and shutdown tracking.
             tokio::spawn(async move {
                 let _ = mgr.spawn_index(pid).await;
             });
@@ -291,22 +284,18 @@ impl IndexJobManager {
 
     /// Index all enabled projects (used at startup and periodic re-index).
     ///
-    /// Routes all jobs through `spawn_index()` to ensure proper deduplication,
-    /// rate limiting, and shutdown tracking.
-    pub async fn index_all_enabled_projects(
-        self: &Arc<Self>,
-        projects: Vec<(String, PathBuf)>,
-    ) {
+    /// Reads the current project list from `self.project_dirs` and routes all
+    /// jobs through `spawn_index()` to ensure proper deduplication, rate limiting,
+    /// and shutdown tracking.
+    pub async fn index_all_enabled_projects(self: &Arc<Self>) {
+        // Read current project list from registry.
+        let projects: Vec<(String, PathBuf)> = {
+            let dirs = self.project_dirs.lock().await;
+            dirs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+
         #[cfg(feature = "tracing")]
         info!(count = projects.len(), "starting batch index for enabled projects");
-
-        // Register all projects first.
-        {
-            let mut dirs = self.project_dirs.lock().await;
-            for (pid, dir) in &projects {
-                dirs.insert(pid.clone(), dir.clone());
-            }
-        }
 
         // Call spawn_index for each project. Jobs are tracked via job_handles
         // inside spawn_index() for proper shutdown synchronization.
@@ -334,15 +323,9 @@ impl IndexJobManager {
             loop {
                 tokio::select! {
                     _ = timer.tick() => {
-                        // Derive current project list from live registry.
-                        let projs: Vec<(String, PathBuf)> = {
-                            let dirs = this.project_dirs.lock().await;
-                            dirs.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-                        };
                         #[cfg(feature = "tracing")]
-                        debug!(count = projs.len(), "periodic re-index tick");
-                        let mgr = Arc::clone(&this);
-                        mgr.index_all_enabled_projects(projs).await;
+                        debug!("periodic re-index tick");
+                        mgr.index_all_enabled_projects().await;
                     }
                     _ = cancel.cancelled() => {
                         #[cfg(feature = "tracing")]

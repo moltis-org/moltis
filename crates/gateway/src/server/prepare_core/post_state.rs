@@ -1446,23 +1446,27 @@ pub(super) async fn complete_startup(
     // Start auto-indexing for enabled projects if configured.
     #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
     {
-        use std::path::PathBuf;
         if config.code_index.auto_index_on_startup {
             let jm = Arc::clone(&state.index_job_manager);
             let projects_store = Arc::clone(&inputs.project_store);
             tokio::spawn(async move {
                 match projects_store.list().await {
                     Ok(projects) => {
-                        let enabled: Vec<(String, PathBuf)> = projects
-                            .iter()
-                            .filter(|p| p.code_index_enabled)
-                            .map(|p| (p.id.clone(), p.directory.clone()))
-                            .collect();
+                        let enabled_count = projects.iter().filter(|p| p.code_index_enabled).count();
                         info!(
-                            count = enabled.len(),
+                            count = enabled_count,
                             "starting auto-index for enabled projects"
                         );
-                        jm.index_all_enabled_projects(enabled.clone()).await;
+                        // Register enabled projects in the manager's project_dirs map.
+                        {
+                            let mut dirs = jm.project_dirs.lock().await;
+                            for p in &projects {
+                                if p.code_index_enabled {
+                                    dirs.insert(p.id.clone(), p.directory.clone());
+                                }
+                            }
+                        }
+                        jm.index_all_enabled_projects().await;
                     },
                     Err(e) => {
                         warn!(error = %e, "failed to list projects for auto-index");
