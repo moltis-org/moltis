@@ -1,31 +1,90 @@
 // ── Imports section — tabs for each detected import source ────
 
 import type { VNode } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { TabBar } from "../../components/forms";
 import * as gon from "../../gon";
+import { sendRpc } from "../../helpers";
+import type { RpcResponse } from "./_shared";
 import { ClaudeImportSection } from "./ClaudeImportSection";
 import { CodexImportSection } from "./CodexImportSection";
 import { HermesImportSection } from "./HermesImportSection";
 import { OpenClawImportSection } from "./OpenClawImportSection";
 
-interface ImportTab {
+interface ImportTabDef {
 	id: string;
 	label: string;
 	icon: VNode;
 	detected: boolean;
+	detectRpc: string;
+	countFn: (payload: Record<string, unknown>) => number;
 }
 
-const ALL_TABS: ImportTab[] = [
-	{ id: "openclaw", label: "OpenClaw", icon: <span className="icon icon-openclaw" />, detected: gon.get("openclaw_detected") === true },
-	{ id: "claude", label: "Claude Code", icon: <span className="icon icon-terminal-cmd" />, detected: gon.get("claude_detected") === true },
-	{ id: "codex", label: "Codex CLI", icon: <span className="icon icon-code" />, detected: gon.get("codex_detected") === true },
-	{ id: "hermes", label: "Hermes", icon: <span className="icon icon-globe" />, detected: gon.get("hermes_detected") === true },
+function countOpenClaw(p: Record<string, unknown>): number {
+	let n = 0;
+	if (p.identity_available) n++;
+	if (p.providers_available) n++;
+	n += Number(p.skills_count) || 0;
+	if (p.memory_available) n++;
+	if (p.channels_available) n++;
+	n += Number(p.sessions_count) || 0;
+	return n;
+}
+
+function countClaude(p: Record<string, unknown>): number {
+	let n = 0;
+	if (p.has_mcp_servers) n++;
+	n += (Number(p.skills_count) || 0) + (Number(p.commands_count) || 0);
+	if (p.has_memory) n++;
+	return n;
+}
+
+function countCodex(p: Record<string, unknown>): number {
+	let n = Number(p.mcp_servers_count) || 0;
+	if (p.has_memory) n++;
+	return n;
+}
+
+function countHermes(p: Record<string, unknown>): number {
+	let n = Number(p.credentials_count) || 0;
+	n += Number(p.skills_count) || 0;
+	const memFiles = p.memory_files;
+	if (Array.isArray(memFiles)) n += memFiles.length;
+	else if (p.has_memory) n++;
+	return n;
+}
+
+const ALL_TABS: ImportTabDef[] = [
+	{ id: "openclaw", label: "OpenClaw", icon: <span className="icon icon-openclaw" />, detected: gon.get("openclaw_detected") === true, detectRpc: "openclaw.scan", countFn: countOpenClaw },
+	{ id: "claude", label: "Claude Code", icon: <span className="icon icon-terminal-cmd" />, detected: gon.get("claude_detected") === true, detectRpc: "claude.detect", countFn: countClaude },
+	{ id: "codex", label: "Codex CLI", icon: <span className="icon icon-code" />, detected: gon.get("codex_detected") === true, detectRpc: "codex.detect", countFn: countCodex },
+	{ id: "hermes", label: "Hermes", icon: <span className="icon icon-globe" />, detected: gon.get("hermes_detected") === true, detectRpc: "hermes.detect", countFn: countHermes },
 ];
 
 export function ImportSection(): VNode {
-	const tabs = ALL_TABS.filter((t) => t.detected);
-	const [activeTab, setActiveTab] = useState(tabs[0]?.id || "openclaw");
+	const detectedTabs = ALL_TABS.filter((t) => t.detected);
+	const [activeTab, setActiveTab] = useState(detectedTabs[0]?.id || "openclaw");
+	const [badges, setBadges] = useState<Record<string, number>>({});
+
+	useEffect(() => {
+		for (const tab of detectedTabs) {
+			sendRpc(tab.detectRpc, {}).then((res: RpcResponse) => {
+				if (res?.ok && res.payload) {
+					const count = tab.countFn(res.payload as Record<string, unknown>);
+					if (count > 0) {
+						setBadges((prev) => ({ ...prev, [tab.id]: count }));
+					}
+				}
+			});
+		}
+	}, []);
+
+	const tabs = detectedTabs.map((t) => ({
+		id: t.id,
+		label: t.label,
+		icon: t.icon,
+		badge: badges[t.id] as number | undefined,
+	}));
 
 	// Single source detected — render directly without tab bar
 	if (tabs.length === 1) {

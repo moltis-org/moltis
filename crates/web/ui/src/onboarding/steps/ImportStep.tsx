@@ -22,19 +22,56 @@ interface ImportTabDef {
 	label: string;
 	icon: VNode;
 	detected: boolean;
+	detectRpc: string;
+	countFn: (payload: Record<string, unknown>) => number;
+}
+
+function countOpenClaw(p: Record<string, unknown>): number {
+	let n = 0;
+	if (p.identity_available) n++;
+	if (p.providers_available) n++;
+	n += Number(p.skills_count) || 0;
+	if (p.memory_available) n++;
+	if (p.channels_available) n++;
+	n += Number(p.sessions_count) || 0;
+	return n;
+}
+
+function countClaude(p: Record<string, unknown>): number {
+	let n = 0;
+	if (p.has_mcp_servers) n++;
+	n += (Number(p.skills_count) || 0) + (Number(p.commands_count) || 0);
+	if (p.has_memory) n++;
+	return n;
+}
+
+function countCodex(p: Record<string, unknown>): number {
+	let n = Number(p.mcp_servers_count) || 0;
+	if (p.has_memory) n++;
+	return n;
+}
+
+function countHermes(p: Record<string, unknown>): number {
+	let n = Number(p.credentials_count) || 0;
+	n += Number(p.skills_count) || 0;
+	const memFiles = p.memory_files;
+	if (Array.isArray(memFiles)) n += memFiles.length;
+	else if (p.has_memory) n++;
+	return n;
 }
 
 const ALL_TABS: ImportTabDef[] = [
-	{ id: "openclaw", label: "OpenClaw", icon: <span className="icon icon-openclaw" />, detected: getGon("openclaw_detected") === true },
-	{ id: "claude", label: "Claude Code", icon: <span className="icon icon-terminal-cmd" />, detected: getGon("claude_detected") === true },
-	{ id: "codex", label: "Codex CLI", icon: <span className="icon icon-code" />, detected: getGon("codex_detected") === true },
-	{ id: "hermes", label: "Hermes", icon: <span className="icon icon-globe" />, detected: getGon("hermes_detected") === true },
+	{ id: "openclaw", label: "OpenClaw", icon: <span className="icon icon-openclaw" />, detected: getGon("openclaw_detected") === true, detectRpc: "openclaw.scan", countFn: countOpenClaw },
+	{ id: "claude", label: "Claude Code", icon: <span className="icon icon-terminal-cmd" />, detected: getGon("claude_detected") === true, detectRpc: "claude.detect", countFn: countClaude },
+	{ id: "codex", label: "Codex CLI", icon: <span className="icon icon-code" />, detected: getGon("codex_detected") === true, detectRpc: "codex.detect", countFn: countCodex },
+	{ id: "hermes", label: "Hermes", icon: <span className="icon icon-globe" />, detected: getGon("hermes_detected") === true, detectRpc: "hermes.detect", countFn: countHermes },
 ];
 
 export function ImportStep({ onNext, onBack }: { onNext: () => void; onBack?: (() => void) | null }): VNode {
-	const tabs = ALL_TABS.filter((t) => t.detected);
-	const [activeTab, setActiveTab] = useState(tabs[0]?.id || "openclaw");
+	const detectedTabs = ALL_TABS.filter((t) => t.detected);
+	const [activeTab, setActiveTab] = useState(detectedTabs[0]?.id || "openclaw");
 	const [wsReady, setWsReady] = useState(false);
+	const [badges, setBadges] = useState<Record<string, number>>({});
 
 	// Ensure WS is connected with retry before showing import sections
 	useEffect(() => {
@@ -45,7 +82,6 @@ export function ImportStep({ onNext, onBack }: { onNext: () => void; onBack?: ((
 		function tryConnect(): void {
 			if (cancelled) return;
 			ensureWsConnected();
-			// Probe WS readiness with a lightweight RPC
 			(sendRpc("openclaw.scan", {}) as Promise<{ ok?: boolean; error?: { code?: string; message?: string } }>).then(
 				(res) => {
 					if (cancelled) return;
@@ -57,7 +93,7 @@ export function ImportStep({ onNext, onBack }: { onNext: () => void; onBack?: ((
 						attempts += 1;
 						timer = setTimeout(tryConnect, WS_RETRY_DELAY_MS);
 					} else {
-						setWsReady(true); // Let sections show their own errors
+						setWsReady(true);
 					}
 				},
 			);
@@ -70,6 +106,21 @@ export function ImportStep({ onNext, onBack }: { onNext: () => void; onBack?: ((
 		};
 	}, []);
 
+	// Fetch item counts for badges once WS is ready
+	useEffect(() => {
+		if (!wsReady) return;
+		for (const tab of detectedTabs) {
+			sendRpc(tab.detectRpc, {}).then((res: { ok?: boolean; payload?: unknown }) => {
+				if (res?.ok && res.payload) {
+					const count = tab.countFn(res.payload as Record<string, unknown>);
+					if (count > 0) {
+						setBadges((prev) => ({ ...prev, [tab.id]: count }));
+					}
+				}
+			});
+		}
+	}, [wsReady]);
+
 	if (!wsReady) {
 		return (
 			<div className="flex flex-col items-center justify-center gap-3 min-h-[200px]">
@@ -78,6 +129,13 @@ export function ImportStep({ onNext, onBack }: { onNext: () => void; onBack?: ((
 			</div>
 		);
 	}
+
+	const tabs = detectedTabs.map((t) => ({
+		id: t.id,
+		label: t.label,
+		icon: t.icon,
+		badge: badges[t.id] as number | undefined,
+	}));
 
 	return (
 		<div className="flex flex-col gap-4">
