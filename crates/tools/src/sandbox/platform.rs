@@ -10,8 +10,8 @@ use {
         error::{Error, Result},
         exec::{ExecOpts, ExecResult},
         sandbox::file_system::{
-            SandboxListFilesResult, SandboxReadResult, native_host_list_files,
-            native_host_read_file, native_host_write_file,
+            SandboxGrepOptions, SandboxListFilesResult, SandboxReadResult, command_grep,
+            native_host_list_files, native_host_read_file, native_host_write_file,
         },
     },
 };
@@ -307,6 +307,11 @@ impl Sandbox for RestrictedHostSandbox {
     async fn list_files(&self, _id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
         check_restricted_host_path(root)?;
         native_host_list_files(root).await
+    }
+
+    async fn grep(&self, id: &SandboxId, opts: SandboxGrepOptions) -> Result<serde_json::Value> {
+        check_restricted_host_path(&opts.path)?;
+        command_grep(self, id, opts).await
     }
 
     async fn cleanup(&self, _id: &SandboxId) -> Result<()> {

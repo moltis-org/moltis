@@ -260,6 +260,30 @@ async fn test_restricted_host_list_blocks_outside_allowlist() {
     assert!(result.is_err(), "list_files must block /etc");
 }
 
+#[tokio::test]
+async fn test_restricted_host_grep_blocks_outside_allowlist() {
+    use crate::sandbox::file_system::{SandboxGrepMode, SandboxGrepOptions};
+
+    let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-rh-block-grep".into(),
+    };
+    let result = sandbox
+        .grep(&id, SandboxGrepOptions {
+            pattern: "root".to_string(),
+            path: "/etc".to_string(),
+            mode: SandboxGrepMode::Content,
+            case_insensitive: false,
+            include_globs: Vec::new(),
+            offset: 0,
+            head_limit: None,
+            match_cap: None,
+        })
+        .await;
+    assert!(result.is_err(), "grep must block /etc");
+}
+
 #[test]
 fn test_parse_memory_limit() {
     assert_eq!(parse_memory_limit("512M"), Some(512 * 1024 * 1024));
