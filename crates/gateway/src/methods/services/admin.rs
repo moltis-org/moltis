@@ -184,36 +184,24 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                     .map(PathBuf::from)
                             });
 
-                        // Handle off → on transition (including new project creation):
-                        // - existing project: old_enabled=false, new_enabled=true
-                        // - new project: old_enabled=false (from Err), new_enabled=true
-                        // Only trigger auto-index if auto_index_on_create is enabled in config.
-                        if new_enabled == Some(true) && !old_enabled {
-                            // Check auto_index_on_create config - only apply to NEW projects
-                            let is_new_project = old_result.is_none();
-                            let should_auto_index = if is_new_project {
-                                ctx.state.config.code_index.auto_index_on_create
-                            } else {
-                                true  // Always index for existing project toggle
-                            };
-                            
-                            if should_auto_index {
-                                if let Some(dir) = project_dir {
-                                    info!(
-                                        project_id = %pid,
-                                        "code-index: registering project and triggering index"
-                                    );
-                                    let jm = Arc::clone(&ctx.state.index_job_manager);
-                                    let pid_owned = pid.clone();
-                                    tokio::spawn(async move {
-                                        jm.register_project(pid_owned.clone(), dir).await;
-                                        jm.spawn_index(pid_owned).await;
-                                    });
-                                }
-                            }
-                        }
-                        // Handle on → off transition (existing project only)
-                        else if new_enabled == Some(false) && old_enabled {
+                        // Determine if we should trigger auto-index after successful upsert.
+                        // Check off → on transition (including new project creation):
+                        let should_trigger_index = new_enabled == Some(true) && !old_enabled;
+                        
+                        // For NEW projects only, check auto_index_on_create config.
+                        // For existing projects being re-enabled, always index (user-initiated).
+                        let is_new_project = old_result.is_none();
+                        let should_trigger_index = should_trigger_index && if is_new_project {
+                            ctx.state.config.code_index.auto_index_on_create
+                        } else {
+                            true  // Always index for existing project toggle
+                        };
+
+                        let project_dir_for_index = project_dir.cloned();
+                        let pid_for_index = pid.clone();
+                        
+                        // Handle on → off transition (existing project only) - unregister BEFORE upsert
+                        if new_enabled == Some(false) && old_enabled {
                             info!(
                                 project_id = %pid,
                                 "code-index: disabling project indexing"
@@ -224,6 +212,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 jm.unregister_project(&pid_owned).await;
                             });
                         }
+
+                        // Note: We register and trigger index AFTER upsert succeeds (see below).
+                        // This prevents phantom entries if the upsert fails.
                     }
                 }
 
@@ -233,6 +224,24 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .upsert(ctx.params.clone())
                     .await
                     .map_err(ErrorShape::from)
+                    .and_then(|result| {
+                        // After successful upsert, register and trigger index if needed.
+                        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+                        if should_trigger_index {
+                            if let Some(dir) = project_dir_for_index {
+                                info!(
+                                    project_id = %pid_for_index,
+                                    "code-index: registering project and triggering index"
+                                );
+                                let jm = Arc::clone(&ctx.state.index_job_manager);
+                                tokio::spawn(async move {
+                                    jm.register_project(pid_for_index.clone(), dir).await;
+                                    jm.spawn_index(pid_for_index).await;
+                                });
+                            }
+                        }
+                        Ok(result)
+                    })
             })
         }),
     );

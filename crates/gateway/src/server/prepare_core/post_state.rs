@@ -1446,6 +1446,27 @@ pub(super) async fn complete_startup(
     // Start auto-indexing for enabled projects if configured.
     #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
     {
+        // Register all enabled projects at startup (required for periodic re-index).
+        // This happens regardless of auto_index_on_startup setting.
+        let jm_reg = Arc::clone(&state.index_job_manager);
+        let projects_store = Arc::clone(&inputs.project_store);
+        tokio::spawn(async move {
+            match projects_store.list().await {
+                Ok(projects) => {
+                    // Register all enabled projects in the manager's project_dirs map.
+                    for p in &projects {
+                        if p.code_index_enabled {
+                            jm_reg.register_project(p.id.clone(), p.directory.clone()).await;
+                        }
+                    }
+                },
+                Err(e) => {
+                    warn!(error = %e, "failed to list projects for registration");
+                },
+            }
+        });
+
+        // Trigger initial index for enabled projects if configured.
         if config.code_index.auto_index_on_startup {
             let jm = Arc::clone(&state.index_job_manager);
             let projects_store = Arc::clone(&inputs.project_store);
@@ -1457,12 +1478,6 @@ pub(super) async fn complete_startup(
                             count = enabled_count,
                             "starting auto-index for enabled projects"
                         );
-                        // Register enabled projects using public API.
-                        for p in &projects {
-                            if p.code_index_enabled {
-                                jm.register_project(p.id.clone(), p.directory.clone()).await;
-                            }
-                        }
                         jm.index_all_enabled_projects().await;
                     },
                     Err(e) => {
