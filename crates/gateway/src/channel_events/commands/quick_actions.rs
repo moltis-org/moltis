@@ -161,6 +161,7 @@ pub(in crate::channel_events) async fn handle_fast(
 
 pub(in crate::channel_events) async fn handle_rollback(
     state: &Arc<GatewayState>,
+    session_key: &str,
     args: &str,
 ) -> ChannelResult<String> {
     let data_dir = moltis_config::data_dir();
@@ -169,7 +170,7 @@ pub(in crate::channel_events) async fn handle_rollback(
     if args.is_empty() {
         // List recent turns.
         let turns = manager
-            .read_turns(10)
+            .read_turns(10, Some(session_key))
             .map_err(|e| ChannelError::unavailable(format!("failed to read turns: {e}")))?;
 
         if turns.is_empty() {
@@ -219,7 +220,7 @@ pub(in crate::channel_events) async fn handle_rollback(
             .parse()
             .map_err(|_| ChannelError::invalid_input("usage: /rollback diff <N>"))?;
         let turns = manager
-            .read_turns(n)
+            .read_turns(n, Some(session_key))
             .map_err(|e| ChannelError::unavailable(format!("failed to read turns: {e}")))?;
 
         if n == 0 || n > turns.len() {
@@ -254,7 +255,7 @@ pub(in crate::channel_events) async fn handle_rollback(
         .parse()
         .map_err(|_| ChannelError::invalid_input("usage: /rollback [<N>|diff <N>]"))?;
     let turns = manager
-        .read_turns(n)
+        .read_turns(n, Some(session_key))
         .map_err(|e| ChannelError::unavailable(format!("failed to read turns: {e}")))?;
 
     if n == 0 || n > turns.len() {

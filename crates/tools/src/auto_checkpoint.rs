@@ -66,7 +66,7 @@ impl HookHandler for AutoCheckpointHook {
     }
 
     fn events(&self) -> &[HookEvent] {
-        &[HookEvent::BeforeToolCall]
+        &[HookEvent::BeforeToolCall, HookEvent::AgentEnd]
     }
 
     fn priority(&self) -> i32 {
@@ -79,6 +79,29 @@ impl HookHandler for AutoCheckpointHook {
         _event: HookEvent,
         payload: &HookPayload,
     ) -> moltis_common::Result<HookAction> {
+        // On AgentEnd, flush any in-progress turn so it is persisted.
+        if let HookPayload::AgentEnd { session_key, .. } = payload {
+            let mut active = self.active.lock().await;
+            if let Some(turn) = active.remove(session_key)
+                && !turn.checkpoint_ids.is_empty()
+            {
+                let manager = Arc::clone(&self.manager);
+                let record = TurnRecord {
+                    run_id: turn.run_id,
+                    session_key: turn.session_key,
+                    created_at: turn.created_at,
+                    checkpoint_ids: turn.checkpoint_ids,
+                    source_paths: turn.source_paths,
+                };
+                tokio::spawn(async move {
+                    if let Err(e) = manager.append_turn(&record) {
+                        warn!(error = %e, "failed to flush turn record at agent end");
+                    }
+                });
+            }
+            return Ok(HookAction::Continue);
+        }
+
         let HookPayload::BeforeToolCall {
             session_key,
             tool_name,

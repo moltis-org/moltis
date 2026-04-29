@@ -147,8 +147,8 @@ impl CheckpointManager {
         Ok(())
     }
 
-    /// Read all turn records (newest first).
-    pub fn read_turns(&self, limit: usize) -> Result<Vec<TurnRecord>> {
+    /// Read turn records (newest first), optionally filtered by session key.
+    pub fn read_turns(&self, limit: usize, session_key: Option<&str>) -> Result<Vec<TurnRecord>> {
         let path = self.turns_path();
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
@@ -159,6 +159,7 @@ impl CheckpointManager {
             .lines()
             .filter(|line| !line.trim().is_empty())
             .filter_map(|line| serde_json::from_str(line).ok())
+            .filter(|turn: &TurnRecord| session_key.is_none_or(|sk| turn.session_key == sk))
             .collect();
         turns.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         turns.truncate(limit);

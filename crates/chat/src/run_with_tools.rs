@@ -854,6 +854,8 @@ pub(crate) async fn run_with_tools(
     let steer_state = state.clone();
     let steer_session_key = session_key.to_string();
     let steer_task = tokio::spawn(async move {
+        // Drain any stale steering text left over from a previous run.
+        let _ = steer_state.take_steer_text(&steer_session_key).await;
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
             if let Some(text) = steer_state.take_steer_text(&steer_session_key).await {
@@ -876,7 +878,6 @@ pub(crate) async fn run_with_tools(
         Some(steer_inbox.clone()),
     )
     .await;
-    steer_task.abort();
 
     // On context-window overflow, compact the session and retry once.
     let result = match first_result {
@@ -999,6 +1000,7 @@ pub(crate) async fn run_with_tools(
         },
         other => other,
     };
+    steer_task.abort();
 
     // Ensure all runner events (including deltas) are broadcast in order before
     // emitting terminal final/error frames.

@@ -117,7 +117,7 @@ pub(in crate::channel_events) async fn dispatch_command(
         "peek" => control_handlers::handle_peek(state, &session_key).await,
         "update" => control_handlers::handle_update(state, &reply_to, sender_id, args).await,
 
-        "rollback" => quick_actions::handle_rollback(state, args).await,
+        "rollback" => quick_actions::handle_rollback(state, &session_key, args).await,
 
         // Quick actions
         "btw" => quick_actions::handle_btw(state, &session_key, args).await,

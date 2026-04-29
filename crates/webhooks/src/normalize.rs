@@ -73,10 +73,16 @@ pub fn render_template(template: &str, payload: &serde_json::Value) -> String {
                 }
                 key.push(inner);
             }
-            if !found_close || key.is_empty() {
-                // Malformed — emit literal.
+            if !found_close {
+                // Malformed (no closing brace) — emit literal.
                 result.push('{');
                 result.push_str(&key);
+                continue;
+            }
+            if key.is_empty() {
+                // Empty braces `{}` — emit literal.
+                result.push('{');
+                result.push('}');
                 continue;
             }
 
