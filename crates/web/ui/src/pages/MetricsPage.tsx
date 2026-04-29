@@ -739,6 +739,155 @@ function PrometheusEndpoint(): VNode {
 	);
 }
 
+// ── Insights tab ────────────────────────────────────────────────
+
+interface InsightsData {
+	days: number;
+	completions: number;
+	input_tokens: number;
+	output_tokens: number;
+	total_tokens: number;
+	errors: number;
+	tool_executions: number;
+	tool_errors: number;
+	by_provider: Record<string, { input_tokens: number; output_tokens: number; completions: number }>;
+	data_points: number;
+	span_hours: number;
+}
+
+const INSIGHTS_RANGES = [
+	{ label: "7 days", days: 7 },
+	{ label: "30 days", days: 30 },
+	{ label: "90 days", days: 90 },
+];
+
+function InsightsTab(): VNode {
+	const [data, setData] = useState<InsightsData | null>(null);
+	const [insightsDays, setInsightsDays] = useState(30);
+	const [insightsLoading, setInsightsLoading] = useState(true);
+
+	useEffect(() => {
+		setInsightsLoading(true);
+		fetch(`/api/metrics/insights?days=${insightsDays}`)
+			.then((resp) => {
+				if (resp.ok) return resp.json();
+				throw new Error(`HTTP ${resp.status}`);
+			})
+			.then((d: InsightsData) => {
+				setData(d);
+				setInsightsLoading(false);
+			})
+			.catch(() => {
+				setData(null);
+				setInsightsLoading(false);
+			});
+	}, [insightsDays]);
+
+	if (insightsLoading) {
+		return <div className="flex items-center justify-center h-32 text-[var(--muted)]">Loading insights...</div>;
+	}
+
+	if (!data || data.data_points === 0) {
+		return (
+			<div className="text-center text-[var(--muted)] py-16">
+				<p className="text-lg mb-2">No usage data yet</p>
+				<p className="text-sm">Metrics are collected while the gateway is running.</p>
+			</div>
+		);
+	}
+
+	const providers = Object.entries(data.by_provider).sort(
+		(a, b) => b[1].input_tokens + b[1].output_tokens - (a[1].input_tokens + a[1].output_tokens),
+	);
+
+	const completionsPerHour = data.span_hours > 0 ? (data.completions / data.span_hours).toFixed(1) : "—";
+
+	return (
+		<div className="space-y-8">
+			{/* Time range selector */}
+			<div className="flex gap-2">
+				{INSIGHTS_RANGES.map((r) => (
+					<button
+						key={r.days}
+						type="button"
+						className={`px-3 py-1.5 rounded text-sm transition-colors ${
+							insightsDays === r.days
+								? "bg-[var(--accent)] text-white"
+								: "bg-[var(--bg-secondary)] text-[var(--fg)] hover:bg-[var(--bg-hover)]"
+						}`}
+						onClick={() => setInsightsDays(r.days)}
+					>
+						{r.label}
+					</button>
+				))}
+			</div>
+
+			{/* Summary cards */}
+			<div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+				<InsightCard label="LLM Completions" value={formatNumber(data.completions)} />
+				<InsightCard label="Total Tokens" value={formatNumber(data.total_tokens)} />
+				<InsightCard label="Input Tokens" value={formatNumber(data.input_tokens)} />
+				<InsightCard label="Output Tokens" value={formatNumber(data.output_tokens)} />
+				<InsightCard label="Completions/hour" value={completionsPerHour} />
+				<InsightCard label="LLM Errors" value={formatNumber(data.errors)} alert={data.errors > 0} />
+				<InsightCard label="Tool Executions" value={formatNumber(data.tool_executions)} />
+				<InsightCard label="Tool Errors" value={formatNumber(data.tool_errors)} alert={data.tool_errors > 0} />
+			</div>
+
+			{/* Provider breakdown */}
+			{providers.length > 0 && (
+				<div>
+					<h3 className="text-sm font-semibold text-[var(--muted)] uppercase tracking-wider mb-4">Usage by Provider</h3>
+					<div className="border border-[var(--border)] rounded-lg overflow-hidden">
+						<table className="w-full text-sm">
+							<thead>
+								<tr className="bg-[var(--bg-secondary)] text-[var(--muted)]">
+									<th className="text-left px-4 py-2 font-medium">Provider</th>
+									<th className="text-right px-4 py-2 font-medium">Completions</th>
+									<th className="text-right px-4 py-2 font-medium">Input Tokens</th>
+									<th className="text-right px-4 py-2 font-medium">Output Tokens</th>
+									<th className="text-right px-4 py-2 font-medium">Total</th>
+								</tr>
+							</thead>
+							<tbody>
+								{providers.map(([name, stats]) => (
+									<tr key={name} className="border-t border-[var(--border)]">
+										<td className="px-4 py-2 font-medium">{name}</td>
+										<td className="text-right px-4 py-2 tabular-nums">{formatNumber(stats.completions)}</td>
+										<td className="text-right px-4 py-2 tabular-nums">{formatNumber(stats.input_tokens)}</td>
+										<td className="text-right px-4 py-2 tabular-nums">{formatNumber(stats.output_tokens)}</td>
+										<td className="text-right px-4 py-2 tabular-nums font-medium">
+											{formatNumber(stats.input_tokens + stats.output_tokens)}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					</div>
+				</div>
+			)}
+
+			{/* Footer */}
+			<p className="text-xs text-[var(--muted)]">
+				Based on {formatNumber(data.data_points)} data points over {data.span_hours.toFixed(1)} hours.
+			</p>
+		</div>
+	);
+}
+
+function InsightCard({ label, value, alert }: { label: string; value: string; alert?: boolean }): VNode {
+	return (
+		<div
+			className={`p-4 rounded-lg border ${
+				alert ? "border-[var(--error)] bg-[var(--error-bg)]" : "border-[var(--border)] bg-[var(--bg-secondary)]"
+			}`}
+		>
+			<div className="text-xs text-[var(--muted)] mb-1">{label}</div>
+			<div className={`text-xl font-semibold tabular-nums ${alert ? "text-[var(--error)]" : ""}`}>{value}</div>
+		</div>
+	);
+}
+
 function MonitoringPage({ initialTab }: { initialTab: string }): VNode {
 	const [activeTab, setActiveTab] = useState(initialTab || "overview");
 	const [timeRange, setTimeRange] = useState("1h");
@@ -747,7 +896,7 @@ function MonitoringPage({ initialTab }: { initialTab: string }): VNode {
 	function handleTabChange(tab: string): void {
 		setActiveTab(tab);
 		if (monitoringSyncPath) {
-			const newPath = tab === "charts" ? `${monitoringPathBase}/charts` : monitoringPathBase;
+			const newPath = tab === "overview" ? monitoringPathBase : `${monitoringPathBase}/${tab}`;
 			if (window.location.pathname !== newPath) {
 				history.pushState(null, "", newPath);
 			}
@@ -806,6 +955,7 @@ function MonitoringPage({ initialTab }: { initialTab: string }): VNode {
 						tabs={[
 							{ id: "overview", label: t("metrics:tabs.overview") },
 							{ id: "charts", label: t("metrics:tabs.charts") },
+							{ id: "insights", label: "Insights" },
 						]}
 						active={activeTab}
 						onChange={handleTabChange}
@@ -826,6 +976,8 @@ function MonitoringPage({ initialTab }: { initialTab: string }): VNode {
 				{activeTab === "charts" && (
 					<ChartsSection points={historyPoints.value} timeRange={timeRange} onTimeRangeChange={setTimeRange} />
 				)}
+
+				{activeTab === "insights" && <InsightsTab />}
 			</div>
 		</div>
 	);
@@ -836,7 +988,7 @@ export function initMonitoring(container: HTMLElement, param?: string | null, op
 	_monitoringContainer = container;
 	monitoringPathBase = options?.pathBase || routes.monitoring;
 	monitoringSyncPath = options?.syncPath !== false;
-	const initialTab = param === "charts" ? "charts" : "overview";
+	const initialTab = param === "charts" ? "charts" : param === "insights" ? "insights" : "overview";
 	render(<MonitoringPage initialTab={initialTab} />, container);
 }
 

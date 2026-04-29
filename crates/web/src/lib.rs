@@ -227,6 +227,10 @@ fn build_api_routes() -> Router<AppState> {
         .route(
             "/api/metrics/history",
             get(moltis_httpd::metrics_routes::api_metrics_history_handler),
+        )
+        .route(
+            "/api/metrics/insights",
+            get(moltis_httpd::metrics_routes::api_metrics_insights_handler),
         );
 
     protected

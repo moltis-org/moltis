@@ -8439,6 +8439,7 @@ dependencies = [
  "moltis-metrics",
  "moltis-network-filter",
  "moltis-providers",
+ "moltis-service-traits",
  "moltis-sessions",
  "moltis-skills",
  "pdf-extract",
