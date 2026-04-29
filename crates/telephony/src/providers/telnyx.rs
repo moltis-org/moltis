@@ -522,4 +522,21 @@ mod tests {
         );
         assert_eq!(map_hangup_cause(""), CallEndReason::Completed);
     }
+
+    #[test]
+    fn verify_webhook_rejects_missing_headers_when_key_configured() {
+        let provider = TelnyxProvider::new(Secret::new("key".into()), "conn".into())
+            .with_public_key("aabbccdd00112233445566778899aabb00112233445566778899aabbccddeeff");
+        let result = provider.verify_webhook("https://example.com", &HeaderMap::new(), b"body");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("missing"));
+    }
+
+    #[test]
+    fn verify_webhook_skips_when_no_key() {
+        let provider = TelnyxProvider::new(Secret::new("key".into()), "conn".into());
+        // No public key configured — verification skipped
+        let result = provider.verify_webhook("https://example.com", &HeaderMap::new(), b"body");
+        assert!(result.is_ok());
+    }
 }

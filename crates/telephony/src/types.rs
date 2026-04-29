@@ -263,4 +263,27 @@ mod tests {
         let parsed: CallState = serde_json::from_str(&json).unwrap_or(CallState::Error);
         assert_eq!(parsed, CallState::HangupUser);
     }
+
+    #[test]
+    fn call_record_initial_message_serde() {
+        let record = CallRecord {
+            call_id: "test".into(),
+            provider_call_id: None,
+            direction: CallDirection::Outbound,
+            from: "+1".into(),
+            to: "+2".into(),
+            mode: CallMode::Notify,
+            state: CallState::Initiated,
+            initial_message: Some("Hello there".into()),
+            session_key: None,
+            account_id: "acct".into(),
+            transcript: vec![],
+            started_at: OffsetDateTime::now_utc(),
+            ended_at: None,
+            end_reason: None,
+        };
+        let json = serde_json::to_value(&record).unwrap_or_default();
+        assert_eq!(json["initial_message"], "Hello there");
+        assert_eq!(json["mode"], "notify");
+    }
 }

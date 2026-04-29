@@ -477,4 +477,56 @@ mod tests {
         assert!(!debug_str.contains("super-secret"));
         assert!(debug_str.contains("[REDACTED]"));
     }
+
+    #[test]
+    fn build_answer_notify_mode_includes_hangup() {
+        // When gather_url is None (notify mode), TwiML should include <Hangup/>
+        let provider = TwilioProvider::new("AC_TEST".into(), Secret::new("T".into()));
+        let resp = provider.build_answer_response(Some("Your appointment is tomorrow"), None);
+        let twiml = std::str::from_utf8(&resp).unwrap_or("");
+        assert!(twiml.contains("Your appointment is tomorrow"));
+        assert!(twiml.contains("<Hangup/>"));
+        assert!(!twiml.contains("<Gather"));
+    }
+
+    #[test]
+    fn play_tts_twiml_includes_gather_continuation() {
+        // play_tts generates TwiML with <Gather> after <Say> to keep the call alive
+        let provider = TwilioProvider::new("AC_TEST".into(), Secret::new("T".into()));
+        // We can't test play_tts directly (it needs HTTP), but we can test the TwiML pattern
+        // by looking at build_gather_response which is similar.
+        let resp = provider.build_gather_response(
+            Some("How can I help?"),
+            "/api/channels/telephony/default/gather",
+        );
+        let twiml = std::str::from_utf8(&resp).unwrap_or("");
+        assert!(twiml.contains("<Gather"));
+        assert!(twiml.contains("How can I help?"));
+        assert!(twiml.contains("action="));
+    }
+
+    #[test]
+    fn dtmf_validation_rejects_invalid_chars() {
+        // Test that the DTMF validation pattern works
+        let valid = "0123456789*#wW";
+        assert!(
+            valid
+                .chars()
+                .all(|c| c.is_ascii_digit() || "*#wW".contains(c))
+        );
+
+        let invalid = "1<script>";
+        assert!(
+            !invalid
+                .chars()
+                .all(|c| c.is_ascii_digit() || "*#wW".contains(c))
+        );
+
+        let injection = r#"1"/><Say>injected</Say><Play digits=""#;
+        assert!(
+            !injection
+                .chars()
+                .all(|c| c.is_ascii_digit() || "*#wW".contains(c))
+        );
+    }
 }

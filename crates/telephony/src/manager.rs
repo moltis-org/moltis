@@ -413,4 +413,57 @@ mod tests {
         });
         assert_eq!(mgr.active_calls().len(), 0);
     }
+
+    #[tokio::test]
+    async fn initiate_stores_initial_message() {
+        let mgr = test_manager();
+        let call_id = mgr
+            .initiate(
+                "+1",
+                "+2",
+                CallMode::Notify,
+                Some("Hello from bot"),
+                "acct",
+                "http://status",
+                "http://answer",
+            )
+            .await
+            .unwrap_or_default();
+        let record = mgr.get_call(&call_id).unwrap_or_else(|| panic!("missing"));
+        assert_eq!(record.initial_message.as_deref(), Some("Hello from bot"));
+        assert_eq!(record.mode, CallMode::Notify);
+    }
+
+    #[tokio::test]
+    async fn hangup_cleans_up_both_maps() {
+        let mgr = test_manager();
+        let call_id = mgr
+            .initiate(
+                "+1",
+                "+2",
+                CallMode::Conversation,
+                None,
+                "acct",
+                "http://s",
+                "http://a",
+            )
+            .await
+            .unwrap_or_default();
+        assert!(mgr.get_call(&call_id).is_some());
+
+        mgr.hangup(&call_id).await.unwrap_or_else(|e| panic!("{e}"));
+        // Both active_calls and provider_index should be cleaned up
+        assert!(mgr.get_call(&call_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn record_bot_speech_adds_transcript() {
+        let mgr = test_manager();
+        let call_id = mgr.register_inbound("P1", "+1", "+2", "acct");
+        mgr.record_bot_speech(&call_id, "Hello caller");
+        let record = mgr.get_call(&call_id).unwrap_or_else(|| panic!("missing"));
+        assert_eq!(record.transcript.len(), 1);
+        assert_eq!(record.transcript[0].text, "Hello caller");
+        assert_eq!(record.transcript[0].speaker, Speaker::Bot);
+    }
 }

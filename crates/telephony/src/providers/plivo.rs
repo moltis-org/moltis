@@ -482,4 +482,34 @@ mod tests {
         assert!(xml.contains("Hello"));
         assert!(xml.contains("https://example.com/gather"));
     }
+
+    #[test]
+    fn build_answer_notify_includes_hangup() {
+        let provider = PlivoProvider::new("MA".into(), Secret::new("tok".into()));
+        let resp = provider.build_answer_response(Some("Reminder call"), None);
+        let xml = std::str::from_utf8(&resp).unwrap_or("");
+        assert!(xml.contains("Reminder call"));
+        assert!(xml.contains("<Hangup/>"));
+        assert!(!xml.contains("<GetInput"));
+    }
+
+    #[test]
+    fn verify_webhook_rejects_missing_headers() {
+        let provider = PlivoProvider::new("MA".into(), Secret::new("tok".into()));
+        let result = provider.verify_webhook("https://example.com", &HeaderMap::new(), b"body");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_webhook_busy() {
+        let provider = PlivoProvider::new("MA".into(), Secret::new("tok".into()));
+        let body = b"CallUUID=busy1&CallStatus=busy";
+        let event = provider
+            .parse_webhook_event(&HeaderMap::new(), body)
+            .unwrap_or_else(|e| panic!("{e}"));
+        match event {
+            CallEvent::Ended { reason, .. } => assert_eq!(reason, CallEndReason::Busy),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
 }

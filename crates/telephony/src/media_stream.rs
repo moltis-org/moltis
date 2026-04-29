@@ -489,4 +489,47 @@ mod tests {
         assert_ne!(t1, t2);
         assert!(!t1.is_empty());
     }
+
+    #[test]
+    fn parse_connected_event() {
+        let json = r#"{"event": "connected"}"#;
+        let msg: TwilioInbound = serde_json::from_str(json).unwrap_or_else(|e| panic!("{e}"));
+        assert!(matches!(msg, TwilioInbound::Connected {}));
+    }
+
+    #[test]
+    fn parse_mark_event() {
+        let json = r#"{"event": "mark", "streamSid": "MZ123", "mark": {"name": "tts-1"}}"#;
+        let msg: TwilioInbound = serde_json::from_str(json).unwrap_or_else(|e| panic!("{e}"));
+        match msg {
+            TwilioInbound::Mark { stream_sid, mark } => {
+                assert_eq!(stream_sid, "MZ123");
+                assert_eq!(mark.name, "tts-1");
+            },
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn serialize_mark_event() {
+        let msg = TwilioOutbound::Mark {
+            stream_sid: "MZ123".into(),
+            mark: OutboundMark {
+                name: "tts-42".into(),
+            },
+        };
+        let json = serde_json::to_string(&msg).unwrap_or_default();
+        assert!(json.contains("\"event\":\"mark\""));
+        assert!(json.contains("\"name\":\"tts-42\""));
+    }
+
+    #[test]
+    fn stream_token_length() {
+        let token = generate_stream_token();
+        // 16 random bytes base64url-encoded = 22 chars (no padding)
+        assert!(token.len() >= 20);
+        // Should be URL-safe
+        assert!(!token.contains('+'));
+        assert!(!token.contains('/'));
+    }
 }
