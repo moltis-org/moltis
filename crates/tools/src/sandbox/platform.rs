@@ -325,12 +325,13 @@ pub(crate) fn check_restricted_host_path(path: &str) -> Result<()> {
         return Ok(());
     }
 
-    // Allow temp directories — /tmp, /var/tmp, and the platform temp dir
-    // (e.g. /var/folders/... on macOS, /tmp on Linux).
+    // Allow hardcoded temp directory prefixes. Do NOT use std::env::temp_dir()
+    // here — it reads TMPDIR which could be set to a sensitive directory,
+    // bypassing the allowlist.
     if target.starts_with("/tmp")
         || target.starts_with("/private/tmp")
         || target.starts_with("/var/tmp")
-        || target.starts_with(normalize_path(&std::env::temp_dir()))
+        || target.starts_with("/var/folders/")
     {
         return Ok(());
     }
