@@ -25,21 +25,26 @@ function clearChatEmptyState(): void {
 	S.chatMsgBox.classList.remove("chat-messages-empty");
 }
 
-// Scroll chat to bottom and keep it pinned until layout settles.
-// Uses a ResizeObserver to catch any late layout shifts (sidebar re-render,
-// font loading, async style recalc) and re-scrolls until stable.
+// Scroll state for rAF-based auto-scroll — prevents re-entrancy during streaming
+let isAutoScrolling = false;
+
+// Scroll chat to bottom using requestAnimationFrame to sync with browser paint cycle.
+// Checks isChatAtBottom() BEFORE scheduling to respect user scroll intent immediately.
+// Does NOT use ResizeObserver or stacked setTimeouts — avoids race conditions and jank.
 export function scrollChatToBottom(): void {
 	if (!S.chatMsgBox) return;
-	S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
-	const box = S.chatMsgBox;
-	const observer = new ResizeObserver(() => {
-		box.scrollTop = box.scrollHeight;
+	// Check user intent BEFORE scheduling scroll — respect scroll-up immediately
+	if (isAutoScrolling || !isChatAtBottom()) return;
+
+	isAutoScrolling = true;
+
+	requestAnimationFrame(() => {
+		if (S.chatMsgBox) {
+			S.chatMsgBox.scrollTop = S.chatMsgBox.scrollHeight;
+			hideNewContentIndicator();
+		}
+		isAutoScrolling = false;
 	});
-	observer.observe(box);
-	setTimeout(() => {
-		observer.disconnect();
-	}, 500);
-	hideNewContentIndicator();
 }
 
 /** Returns true when the chat scroll position is within `threshold` px of the bottom. */
@@ -49,7 +54,17 @@ export function isChatAtBottom(threshold = 60): boolean {
 	return scrollHeight - scrollTop - clientHeight < threshold;
 }
 
-/** Scroll to bottom only if the user is already near the bottom (smart auto-scroll). */
+/**
+ * Scroll to bottom only if the user is already near the bottom (smart auto-scroll).
+ *
+ * Dispatch pattern:
+ * - autoScrollMode === "always" → force scroll (legacy behavior)
+ * - isChatAtBottom() === true → user at bottom, scroll with new content
+ * - else → show indicator, let user choose when to scroll
+ *
+ * Note: scrollChatToBottom() internally re-checks isChatAtBottom() before executing,
+ * so this function is safe to call even if user scrolled up between calls.
+ */
 export function smartScrollToBottom(): void {
 	if (S.autoScrollMode === "always") {
 		scrollChatToBottom();
@@ -72,7 +87,9 @@ export function showNewContentIndicator(): void {
 		indicator.type = "button";
 		indicator.textContent = "↓ New messages";
 		indicator.addEventListener("click", () => {
+			// Explicit hide on user action — scroll is rAF-synced, hide immediately
 			scrollChatToBottom();
+			hideNewContentIndicator();
 		});
 		S.chatMsgBox.appendChild(indicator);
 	}
