@@ -412,6 +412,7 @@ pub(super) async fn detect_voice_providers(
 
     // Build TTS providers list
     let tts_pref = config.voice.tts.provider;
+    let tts_disabled = &config.voice.tts.disabled_providers;
     let tts_providers = vec![
         build_provider_info(
             VoiceProviderId::Elevenlabs,
@@ -420,7 +421,8 @@ pub(super) async fn detect_voice_providers(
             "cloud",
             config.voice.tts.elevenlabs.api_key.is_some() || env_elevenlabs_key.is_some(),
             config.voice.tts.enabled
-                && (config.voice.tts.elevenlabs.api_key.is_some() || env_elevenlabs_key.is_some()),
+                && (config.voice.tts.elevenlabs.api_key.is_some() || env_elevenlabs_key.is_some())
+                && !tts_disabled.iter().any(|d| d == "elevenlabs"),
             tts_pref == Some(moltis_config::VoiceTtsProvider::ElevenLabs),
             key_source(
                 config.voice.tts.elevenlabs.api_key.is_some(),
@@ -445,7 +447,8 @@ pub(super) async fn detect_voice_providers(
                     || config.voice.tts.openai.base_url.is_some()
                     || env_openai_key.is_some()
                     || llm_openai_key.is_some()
-                    || llm_openai_base_url.is_some()),
+                    || llm_openai_base_url.is_some())
+                && !tts_disabled.iter().any(|d| d == "openai"),
             tts_pref == Some(moltis_config::VoiceTtsProvider::OpenAi),
             key_source(
                 config.voice.tts.openai.api_key.is_some()
@@ -463,7 +466,8 @@ pub(super) async fn detect_voice_providers(
             "cloud",
             config.voice.tts.google.api_key.is_some() || env_google_key.is_some(),
             config.voice.tts.enabled
-                && (config.voice.tts.google.api_key.is_some() || env_google_key.is_some()),
+                && (config.voice.tts.google.api_key.is_some() || env_google_key.is_some())
+                && !tts_disabled.iter().any(|d| d == "google"),
             tts_pref == Some(moltis_config::VoiceTtsProvider::Google),
             key_source(
                 config.voice.tts.google.api_key.is_some(),
@@ -481,7 +485,8 @@ pub(super) async fn detect_voice_providers(
             piper_available.is_some() && config.voice.tts.piper.model_path.is_some(),
             config.voice.tts.enabled
                 && piper_available.is_some()
-                && config.voice.tts.piper.model_path.is_some(),
+                && config.voice.tts.piper.model_path.is_some()
+                && !tts_disabled.iter().any(|d| d == "piper"),
             tts_pref == Some(moltis_config::VoiceTtsProvider::Piper),
             None,
             piper_available.clone(),
@@ -503,7 +508,9 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "local",
             coqui_server_running,
-            config.voice.tts.enabled && coqui_server_running,
+            config.voice.tts.enabled
+                && coqui_server_running
+                && !tts_disabled.iter().any(|d| d == "coqui"),
             tts_pref == Some(moltis_config::VoiceTtsProvider::Coqui),
             None,
             tts_server_binary,
@@ -519,6 +526,7 @@ pub(super) async fn detect_voice_providers(
     let voxtral_server_running = check_vllm_server(&config.voice.stt.voxtral_local.endpoint).await;
 
     // Build STT providers list
+    let stt_disabled = &config.voice.stt.disabled_providers;
     let stt_providers = vec![
         build_provider_info(
             VoiceProviderId::Whisper,
@@ -530,8 +538,7 @@ pub(super) async fn detect_voice_providers(
                 || env_openai_key.is_some()
                 || llm_openai_key.is_some()
                 || llm_openai_base_url.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::Whisper)
-                && config.voice.stt.enabled,
+            config.voice.stt.enabled && !stt_disabled.iter().any(|d| d == "whisper"),
             false,
             key_source(
                 config.voice.stt.whisper.api_key.is_some()
@@ -550,7 +557,7 @@ pub(super) async fn detect_voice_providers(
             config.voice.stt.groq.api_key.is_some()
                 || env_groq_key.is_some()
                 || llm_groq_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::Groq) && config.voice.stt.enabled,
+            config.voice.stt.enabled && !stt_disabled.iter().any(|d| d == "groq"),
             false,
             key_source(
                 config.voice.stt.groq.api_key.is_some(),
@@ -566,8 +573,7 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "cloud",
             config.voice.stt.deepgram.api_key.is_some() || env_deepgram_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::Deepgram)
-                && config.voice.stt.enabled,
+            config.voice.stt.enabled && !stt_disabled.iter().any(|d| d == "deepgram"),
             false,
             key_source(
                 config.voice.stt.deepgram.api_key.is_some(),
@@ -583,7 +589,7 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "cloud",
             config.voice.stt.google.api_key.is_some() || env_google_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::Google) && config.voice.stt.enabled,
+            config.voice.stt.enabled && !stt_disabled.iter().any(|d| d == "google"),
             false,
             key_source(
                 config.voice.stt.google.api_key.is_some(),
@@ -599,8 +605,7 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "cloud",
             config.voice.stt.mistral.api_key.is_some() || env_mistral_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::Mistral)
-                && config.voice.stt.enabled,
+            config.voice.stt.enabled && !stt_disabled.iter().any(|d| d == "mistral"),
             false,
             key_source(
                 config.voice.stt.mistral.api_key.is_some(),
@@ -618,8 +623,7 @@ pub(super) async fn detect_voice_providers(
             config.voice.stt.elevenlabs.api_key.is_some()
                 || config.voice.tts.elevenlabs.api_key.is_some()
                 || env_elevenlabs_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::ElevenLabs)
-                && config.voice.stt.enabled,
+            config.voice.stt.enabled && !stt_disabled.iter().any(|d| d == "elevenlabs-stt"),
             false,
             key_source(
                 config.voice.stt.elevenlabs.api_key.is_some()
@@ -636,8 +640,7 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "local",
             voxtral_server_running,
-            config.voice.stt.provider == Some(VoiceSttProvider::VoxtralLocal)
-                && config.voice.stt.enabled,
+            config.voice.stt.enabled && !stt_disabled.iter().any(|d| d == "voxtral-local"),
             false,
             None,
             None,
@@ -653,8 +656,7 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "local",
             whisper_cli_available.is_some() && config.voice.stt.whisper_cli.model_path.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::WhisperCli)
-                && config.voice.stt.enabled,
+            config.voice.stt.enabled && !stt_disabled.iter().any(|d| d == "whisper-cli"),
             false,
             None,
             whisper_cli_available.clone(),
@@ -676,8 +678,7 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "local",
             sherpa_onnx_available.is_some() && config.voice.stt.sherpa_onnx.model_dir.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::SherpaOnnx)
-                && config.voice.stt.enabled,
+            config.voice.stt.enabled && !stt_disabled.iter().any(|d| d == "sherpa-onnx"),
             false,
             None,
             sherpa_onnx_available.clone(),
@@ -1161,32 +1162,54 @@ pub(super) fn toggle_voice_provider(
                     "google-tts" => "google",
                     other => other,
                 };
-                let tts_provider = moltis_config::VoiceTtsProvider::parse(config_provider);
                 if enabled {
-                    // Set as preferred only if no preferred is set yet or if
-                    // the preferred matches this provider. This allows multiple
-                    // providers to be configured and available for fallback
-                    // without toggling one off when another is toggled on.
-                    if cfg.voice.tts.provider.is_none() || cfg.voice.tts.provider == tts_provider {
-                        cfg.voice.tts.provider = tts_provider;
-                    }
+                    // Remove from disabled list.
+                    cfg.voice
+                        .tts
+                        .disabled_providers
+                        .retain(|p| p != config_provider);
                     cfg.voice.tts.enabled = true;
-                } else if cfg.voice.tts.provider == tts_provider {
-                    // Clear preferred provider — auto-select will pick the next configured.
-                    cfg.voice.tts.provider = None;
+                } else {
+                    // Add to disabled list.
+                    if !cfg
+                        .voice
+                        .tts
+                        .disabled_providers
+                        .contains(&config_provider.to_string())
+                    {
+                        cfg.voice
+                            .tts
+                            .disabled_providers
+                            .push(config_provider.to_string());
+                    }
+                    // Clear preferred if it was this provider.
+                    if cfg.voice.tts.provider
+                        == moltis_config::VoiceTtsProvider::parse(config_provider)
+                    {
+                        cfg.voice.tts.provider = None;
+                    }
                 }
             },
             "stt" => {
-                let stt_provider = VoiceSttProvider::parse(provider);
                 if enabled {
-                    if let Some(provider_id) = stt_provider {
-                        cfg.voice.stt.provider = Some(provider_id);
-                        cfg.voice.stt.enabled = true;
+                    // Remove from disabled list.
+                    cfg.voice.stt.disabled_providers.retain(|p| p != provider);
+                    cfg.voice.stt.enabled = true;
+                } else {
+                    // Add to disabled list.
+                    if !cfg
+                        .voice
+                        .stt
+                        .disabled_providers
+                        .contains(&provider.to_string())
+                    {
+                        cfg.voice.stt.disabled_providers.push(provider.to_string());
                     }
-                } else if stt_provider
-                    .is_some_and(|provider_id| cfg.voice.stt.provider == Some(provider_id))
-                {
-                    cfg.voice.stt.enabled = false;
+                    // Clear preferred if it was this provider.
+                    let stt_provider = VoiceSttProvider::parse(provider);
+                    if cfg.voice.stt.provider == stt_provider {
+                        cfg.voice.stt.provider = None;
+                    }
                 }
             },
             _ => {},

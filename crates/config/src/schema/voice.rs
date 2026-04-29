@@ -21,6 +21,10 @@ pub struct VoiceTtsConfig {
     pub provider: Option<VoiceTtsProvider>,
     /// Provider IDs to list in the UI. Empty means list all.
     pub providers: Vec<String>,
+    /// Provider IDs explicitly disabled by the user. These won't be used
+    /// even if configured. Managed by the toggle switches in the web UI.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_providers: Vec<String>,
     /// ElevenLabs-specific settings.
     pub elevenlabs: VoiceElevenLabsConfig,
     /// OpenAI TTS settings.
@@ -39,6 +43,7 @@ impl Default for VoiceTtsConfig {
             enabled: true,
             provider: None,
             providers: Vec::new(),
+            disabled_providers: Vec::new(),
             elevenlabs: VoiceElevenLabsConfig::default(),
             openai: VoiceOpenAiConfig::default(),
             google: VoiceGoogleTtsConfig::default(),
@@ -162,6 +167,9 @@ pub struct VoiceSttConfig {
     pub provider: Option<VoiceSttProvider>,
     /// Provider IDs to list in the UI. Empty means list all.
     pub providers: Vec<String>,
+    /// Provider IDs explicitly disabled by the user.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_providers: Vec<String>,
     /// Whisper (OpenAI) settings.
     pub whisper: VoiceWhisperConfig,
     /// Groq (Whisper-compatible) settings.
@@ -188,6 +196,7 @@ impl Default for VoiceSttConfig {
             enabled: true,
             provider: None,
             providers: Vec::new(),
+            disabled_providers: Vec::new(),
             whisper: VoiceWhisperConfig::default(),
             groq: VoiceGroqSttConfig::default(),
             deepgram: VoiceDeepgramConfig::default(),
