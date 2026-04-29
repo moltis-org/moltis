@@ -196,6 +196,9 @@ pub struct CallRecord {
     pub to: String,
     pub mode: CallMode,
     pub state: CallState,
+    /// Initial message to speak when the call connects (outbound only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_message: Option<String>,
     pub session_key: Option<String>,
     pub account_id: String,
     pub transcript: Vec<TranscriptEntry>,

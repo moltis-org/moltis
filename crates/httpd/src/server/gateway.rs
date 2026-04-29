@@ -613,7 +613,43 @@ pub async fn prepare_gateway(
                         let called = params.get("To").map(|s| s.as_str()).unwrap_or("unknown");
                         let call_sid = params.get("CallSid").map(|s| s.as_str()).unwrap_or("");
 
-                        // Enforce inbound call policy.
+                        // Check if this is an existing outbound call (already
+                        // registered by manager.initiate()).
+                        let existing_call = if !call_sid.is_empty() {
+                            manager.resolve_call_id(call_sid).and_then(|cid| manager.get_call(&cid))
+                        } else {
+                            None
+                        };
+
+                        let provider = manager.provider().read().await;
+                        let gather_url = format!("/api/channels/telephony/{account_id}/gather");
+
+                        if let Some(call) = existing_call {
+                            // Outbound call we initiated — use its mode and message.
+                            let msg = call.initial_message.as_deref();
+                            let twiml = match call.mode {
+                                moltis_telephony::types::CallMode::Notify => {
+                                    // Speak the message, then hang up.
+                                    let say_msg = msg.unwrap_or("This is a notification.");
+                                    provider.build_answer_response(Some(say_msg), None)
+                                },
+                                moltis_telephony::types::CallMode::Conversation => {
+                                    // Speak the greeting, then start gathering speech.
+                                    let greeting = msg.unwrap_or(
+                                        "Hello, you've reached the AI assistant. How can I help you?",
+                                    );
+                                    provider.build_answer_response(Some(greeting), Some(&gather_url))
+                                },
+                            };
+                            return (
+                                StatusCode::OK,
+                                [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                                twiml,
+                            )
+                                .into_response();
+                        }
+
+                        // New inbound call — enforce access policy.
                         {
                             use moltis_channels::ChannelPlugin as _;
                             if let Some(config_view) = plugin_guard.account_config(&account_id) {
@@ -621,14 +657,12 @@ pub async fn prepare_gateway(
                                 match policy {
                                     moltis_channels::gating::DmPolicy::Disabled => {
                                         tracing::info!(account_id = %account_id, caller = %caller, "rejecting inbound call: inbound_policy=disabled");
-                                        let provider = manager.provider().read().await;
                                         let twiml = provider.build_hangup_response();
                                         return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/xml")], twiml).into_response();
                                     },
                                     moltis_channels::gating::DmPolicy::Allowlist => {
                                         if !moltis_channels::gating::is_allowed(caller, config_view.allowlist()) {
                                             tracing::info!(account_id = %account_id, caller = %caller, "rejecting inbound call: not on allowlist");
-                                            let provider = manager.provider().read().await;
                                             let twiml = provider.build_hangup_response();
                                             return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/xml")], twiml).into_response();
                                         }
@@ -638,13 +672,11 @@ pub async fn prepare_gateway(
                             }
                         }
 
-                        // Register the inbound call
+                        // Register the new inbound call and start conversation.
                         if !call_sid.is_empty() {
+                            drop(provider);
                             manager.register_inbound(call_sid, caller, called, &account_id);
                             let provider = manager.provider().read().await;
-
-                            // Build gather response to start listening
-                            let gather_url = format!("/api/channels/telephony/{account_id}/gather");
                             let twiml = provider.build_answer_response(
                                 Some("Hello, you've reached the AI assistant. How can I help you?"),
                                 Some(&gather_url),
@@ -657,7 +689,6 @@ pub async fn prepare_gateway(
                                 .into_response();
                         }
 
-                        let provider = manager.provider().read().await;
                         let twiml = provider.build_hangup_response();
                         (
                             StatusCode::OK,

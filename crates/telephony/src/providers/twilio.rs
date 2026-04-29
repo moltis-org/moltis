@@ -342,8 +342,9 @@ impl TelephonyProvider for TwilioProvider {
             }
             twiml.push_str("</Gather>");
         } else if let Some(msg) = message {
+            // Notify mode: speak the message, then hang up.
             twiml.push_str(&format!(
-                r#"<Say voice="Polly.Joanna">{}</Say>"#,
+                r#"<Say voice="Polly.Joanna">{}</Say><Pause length="2"/><Hangup/>"#,
                 xml_escape(msg)
             ));
         }

@@ -334,8 +334,9 @@ impl TelephonyProvider for PlivoProvider {
             }
             xml.push_str("</GetInput>");
         } else if let Some(msg) = message {
+            // Notify mode: speak, then hang up.
             xml.push_str(&format!(
-                r#"<Speak language="en-US">{}</Speak>"#,
+                r#"<Speak language="en-US">{}</Speak><Wait length="2"/><Hangup/>"#,
                 xml_escape(msg)
             ));
         }
