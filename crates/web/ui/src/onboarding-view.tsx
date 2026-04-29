@@ -562,7 +562,10 @@ function OnboardingPage(): VNode {
 
 	// Build step list dynamically based on auth + voice + import source availability
 	const anyImportDetected =
-		getGon("openclaw_detected") === true || getGon("claude_detected") === true || getGon("codex_detected") === true || getGon("hermes_detected") === true;
+		getGon("openclaw_detected") === true ||
+		getGon("claude_detected") === true ||
+		getGon("codex_detected") === true ||
+		getGon("hermes_detected") === true;
 	const allLabels = [t("onboarding:steps.security")];
 	if (anyImportDetected) allLabels.push(t("onboarding:steps.import"));
 	allLabels.push(t("onboarding:steps.llm"));

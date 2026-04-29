@@ -61,10 +61,38 @@ function countHermes(p: Record<string, unknown>): number {
 }
 
 const ALL_TABS: ImportTabDef[] = [
-	{ id: "openclaw", label: "OpenClaw", icon: <span className="icon icon-openclaw" />, detected: getGon("openclaw_detected") === true, detectRpc: "openclaw.scan", countFn: countOpenClaw },
-	{ id: "claude", label: "Claude Code", icon: <span className="icon icon-terminal-cmd" />, detected: getGon("claude_detected") === true, detectRpc: "claude.detect", countFn: countClaude },
-	{ id: "codex", label: "Codex CLI", icon: <span className="icon icon-code" />, detected: getGon("codex_detected") === true, detectRpc: "codex.detect", countFn: countCodex },
-	{ id: "hermes", label: "Hermes", icon: <span className="icon icon-globe" />, detected: getGon("hermes_detected") === true, detectRpc: "hermes.detect", countFn: countHermes },
+	{
+		id: "openclaw",
+		label: "OpenClaw",
+		icon: <span className="icon icon-openclaw" />,
+		detected: getGon("openclaw_detected") === true,
+		detectRpc: "openclaw.scan",
+		countFn: countOpenClaw,
+	},
+	{
+		id: "claude",
+		label: "Claude Code",
+		icon: <span className="icon icon-terminal-cmd" />,
+		detected: getGon("claude_detected") === true,
+		detectRpc: "claude.detect",
+		countFn: countClaude,
+	},
+	{
+		id: "codex",
+		label: "Codex CLI",
+		icon: <span className="icon icon-code" />,
+		detected: getGon("codex_detected") === true,
+		detectRpc: "codex.detect",
+		countFn: countCodex,
+	},
+	{
+		id: "hermes",
+		label: "Hermes",
+		icon: <span className="icon icon-globe" />,
+		detected: getGon("hermes_detected") === true,
+		detectRpc: "hermes.detect",
+		countFn: countHermes,
+	},
 ];
 
 export function ImportStep({ onNext, onBack }: { onNext: () => void; onBack?: (() => void) | null }): VNode {
@@ -144,9 +172,7 @@ export function ImportStep({ onNext, onBack }: { onNext: () => void; onBack?: ((
 				We detected existing installations you can import from. This is a read-only copy &mdash; your original files
 				will not be modified. You can re-import at any time from Settings.
 			</p>
-			{tabs.length > 1 ? (
-				<TabBar tabs={tabs} active={activeTab} onChange={setActiveTab} />
-			) : null}
+			{tabs.length > 1 ? <TabBar tabs={tabs} active={activeTab} onChange={setActiveTab} /> : null}
 			<div>{renderTab(activeTab)}</div>
 			<div className="flex flex-wrap items-center gap-3 mt-1">
 				{onBack ? (
