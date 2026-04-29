@@ -61,6 +61,49 @@ impl TelephonyPlugin {
             .get(account_id)
             .map(|a| Arc::clone(&a.manager))
     }
+
+    /// Get the configured from_number for an account.
+    pub fn from_number(&self, account_id: &str) -> Option<String> {
+        self.accounts
+            .get(account_id)
+            .map(|a| a.config.from_number.clone())
+    }
+
+    /// Dispatch recognized speech to the agent loop via the channel event sink.
+    ///
+    /// This is called from the gather webhook handler when Twilio sends a
+    /// speech recognition result. The text is dispatched asynchronously so
+    /// the TwiML response returns immediately.
+    pub async fn dispatch_speech(&self, account_id: &str, call_id: &str, caller: &str, text: &str) {
+        let Some(sink) = &self.event_sink else {
+            tracing::warn!("telephony: no event sink configured, cannot dispatch speech");
+            return;
+        };
+
+        let config = self.accounts.get(account_id).map(|a| &a.config);
+
+        let reply_to = moltis_channels::ChannelReplyTarget {
+            channel_type: moltis_channels::ChannelType::Telephony,
+            account_id: account_id.to_string(),
+            chat_id: call_id.to_string(),
+            message_id: None,
+            thread_id: None,
+        };
+
+        let meta = moltis_channels::ChannelMessageMeta {
+            channel_type: moltis_channels::ChannelType::Telephony,
+            sender_name: Some(caller.to_string()),
+            username: Some(caller.to_string()),
+            sender_id: Some(caller.to_string()),
+            message_kind: Some(moltis_channels::ChannelMessageKind::Voice),
+            model: config.and_then(|c| c.model.clone()),
+            agent_id: config.and_then(|c| c.agent_id.clone()),
+            audio_filename: None,
+            documents: None,
+        };
+
+        sink.dispatch_to_chat(text, reply_to, meta).await;
+    }
 }
 
 impl Default for TelephonyPlugin {

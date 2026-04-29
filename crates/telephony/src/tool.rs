@@ -14,10 +14,16 @@ use {
 
 use crate::{manager::CallManager, types::CallMode};
 
+/// Per-account state stored in the tool.
+struct ToolAccount {
+    manager: Arc<RwLock<CallManager>>,
+    from_number: String,
+}
+
 /// Agent tool that allows the LLM to make and manage phone calls.
 pub struct VoiceCallTool {
-    /// Account ID → CallManager for each active telephony account.
-    managers: Arc<RwLock<Vec<(String, Arc<RwLock<CallManager>>)>>>,
+    /// Account ID → per-account state.
+    accounts: Arc<RwLock<Vec<(String, ToolAccount)>>>,
     /// Default account to use when not specified.
     default_account: Option<String>,
     /// Default webhook base URL for callbacks.
@@ -27,36 +33,47 @@ pub struct VoiceCallTool {
 impl VoiceCallTool {
     pub fn new(webhook_base_url: String) -> Self {
         Self {
-            managers: Arc::new(RwLock::new(Vec::new())),
+            accounts: Arc::new(RwLock::new(Vec::new())),
             default_account: None,
             webhook_base_url,
         }
     }
 
     /// Register a call manager for an account.
-    pub async fn add_manager(&self, account_id: String, manager: Arc<RwLock<CallManager>>) {
-        self.managers.write().await.push((account_id, manager));
+    pub async fn add_manager(
+        &self,
+        account_id: String,
+        manager: Arc<RwLock<CallManager>>,
+        from_number: String,
+    ) {
+        self.accounts.write().await.push((account_id, ToolAccount {
+            manager,
+            from_number,
+        }));
     }
 
-    async fn resolve_manager(
+    async fn resolve_account(
         &self,
         account_id: Option<&str>,
-    ) -> anyhow::Result<(String, Arc<RwLock<CallManager>>)> {
-        let managers = self.managers.read().await;
-        if managers.is_empty() {
+    ) -> anyhow::Result<(String, Arc<RwLock<CallManager>>, String)> {
+        let accounts = self.accounts.read().await;
+        if accounts.is_empty() {
             anyhow::bail!("no telephony accounts configured");
         }
 
-        if let Some(aid) = account_id.or(self.default_account.as_deref()) {
-            let found = managers
+        let (id, acct) = if let Some(aid) = account_id.or(self.default_account.as_deref()) {
+            accounts
                 .iter()
                 .find(|(id, _)| id == aid)
-                .ok_or_else(|| anyhow::anyhow!("account {aid} not found"))?;
-            Ok((found.0.clone(), Arc::clone(&found.1)))
+                .ok_or_else(|| anyhow::anyhow!("account {aid} not found"))?
         } else {
-            let first = &managers[0];
-            Ok((first.0.clone(), Arc::clone(&first.1)))
-        }
+            &accounts[0]
+        };
+        Ok((
+            id.clone(),
+            Arc::clone(&acct.manager),
+            acct.from_number.clone(),
+        ))
     }
 }
 
@@ -127,18 +144,31 @@ impl AgentTool for VoiceCallTool {
                     _ => CallMode::Conversation,
                 };
 
-                let (acct, mgr) = self.resolve_manager(account_id).await?;
+                let (acct, mgr, from_number) = self.resolve_account(account_id).await?;
+                if from_number.is_empty() {
+                    anyhow::bail!("no from_number configured for account {acct}");
+                }
                 let manager = mgr.read().await;
 
-                // Build webhook URLs.
-                let status_url = format!("{}/telephony/{acct}/status", self.webhook_base_url);
-                let answer_url = format!("{}/telephony/{acct}/answer", self.webhook_base_url);
-
-                // Get from_number from active calls context (simplified).
-                let from = "+10000000000"; // Placeholder — resolved from account config at runtime.
+                let status_url = format!(
+                    "{}/api/channels/telephony/{acct}/status",
+                    self.webhook_base_url
+                );
+                let answer_url = format!(
+                    "{}/api/channels/telephony/{acct}/answer",
+                    self.webhook_base_url
+                );
 
                 let call_id = manager
-                    .initiate(from, to, mode, message, &acct, &status_url, &answer_url)
+                    .initiate(
+                        &from_number,
+                        to,
+                        mode,
+                        message,
+                        &acct,
+                        &status_url,
+                        &answer_url,
+                    )
                     .await?;
 
                 debug!(call_id = %call_id, to = %to, "voice_call tool: call initiated");
@@ -155,7 +185,7 @@ impl AgentTool for VoiceCallTool {
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("'call_id' is required"))?;
 
-                let (_acct, mgr) = self.resolve_manager(account_id).await?;
+                let (_acct, mgr, _from) = self.resolve_account(account_id).await?;
                 mgr.read().await.hangup(call_id).await?;
 
                 Ok(json!({ "status": "ended", "call_id": call_id }))
@@ -165,7 +195,7 @@ impl AgentTool for VoiceCallTool {
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("'call_id' is required"))?;
 
-                let (_acct, mgr) = self.resolve_manager(account_id).await?;
+                let (_acct, mgr, _from) = self.resolve_account(account_id).await?;
                 let record = mgr
                     .read()
                     .await
@@ -190,7 +220,7 @@ impl AgentTool for VoiceCallTool {
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("'digits' is required"))?;
 
-                let (_acct, mgr) = self.resolve_manager(account_id).await?;
+                let (_acct, mgr, _from) = self.resolve_account(account_id).await?;
                 let manager = mgr.read().await;
                 let record = manager
                     .get_call(call_id)
@@ -220,12 +250,13 @@ mod tests {
     use {super::*, crate::providers::mock::MockProvider};
 
     async fn test_tool() -> VoiceCallTool {
-        let tool = VoiceCallTool::new("https://example.com/api".into());
+        let tool = VoiceCallTool::new("https://example.com".into());
         let mgr = Arc::new(RwLock::new(CallManager::new(
             Box::new(MockProvider::new()),
             60,
         )));
-        tool.add_manager("test-acct".into(), mgr).await;
+        tool.add_manager("test-acct".into(), mgr, "+15551111111".into())
+            .await;
         tool
     }
 

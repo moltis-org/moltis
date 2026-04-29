@@ -628,7 +628,8 @@ pub async fn prepare_gateway(
             ),
         );
 
-        // Gather URL — receives speech/DTMF results from Twilio
+        // Gather URL — receives speech/DTMF results from Twilio and dispatches
+        // to the agent loop via the plugin's ChannelEventSink.
         let telephony_gather_plugin = Arc::clone(&telephony_webhook_plugin);
         app = app.route(
             "/api/channels/telephony/{account_id}/gather",
@@ -649,13 +650,47 @@ pub async fn prepare_gateway(
                         let manager = mgr.read().await;
                         let provider = manager.provider().read().await;
 
-                        // Parse the speech/DTMF result
                         match provider.parse_webhook_event(&headers, &body) {
                             Ok(event) => {
                                 drop(provider);
                                 manager.handle_event(&event);
 
-                                // Continue gathering for the next input
+                                // If speech was recognized, dispatch to the agent loop.
+                                if let moltis_telephony::types::CallEvent::Speech {
+                                    ref provider_call_id,
+                                    ref text,
+                                    ..
+                                } = event
+                                {
+                                    let call_id = manager
+                                        .resolve_call_id(provider_call_id)
+                                        .unwrap_or_default();
+
+                                    // Look up the caller from the call record.
+                                    let caller = manager
+                                        .get_call(&call_id)
+                                        .map(|r| r.from.clone())
+                                        .unwrap_or_default();
+
+                                    // Dispatch via the plugin's event sink (async, non-blocking).
+                                    let account_id_owned = account_id.clone();
+                                    let call_id_owned = call_id.clone();
+                                    let caller_owned = caller;
+                                    let text_owned = text.clone();
+                                    let plugin_for_dispatch = Arc::clone(&plugin);
+                                    tokio::spawn(async move {
+                                        let pg = plugin_for_dispatch.read().await;
+                                        pg.dispatch_speech(
+                                            &account_id_owned,
+                                            &call_id_owned,
+                                            &caller_owned,
+                                            &text_owned,
+                                        )
+                                        .await;
+                                    });
+                                }
+
+                                // Continue gathering for the next input.
                                 let provider = manager.provider().read().await;
                                 let gather_url =
                                     format!("/api/channels/telephony/{account_id}/gather");
