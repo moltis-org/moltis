@@ -320,7 +320,7 @@ pub(super) async fn complete_startup(
         resolved_auth,
         deploy_platform,
         session_event_bus,
-        services,
+        mut services,
         registry,
         effective_providers,
         config_env_overrides,
@@ -432,6 +432,11 @@ pub(super) async fn complete_startup(
     #[cfg(feature = "code-index-builtin")]
     #[allow(unused_variables)]
     let code_index_for_tools_builtin = Arc::clone(&code_index);
+
+    #[cfg(feature = "telephony")]
+    {
+        services.telephony_plugin = Some(Arc::clone(&telephony_webhook_plugin));
+    }
 
     let state = GatewayState::with_options(
         resolved_auth,
@@ -879,9 +884,28 @@ pub(super) async fn complete_startup(
             Arc::clone(&state.services.channel),
         )));
         // Voice call tool — lets agents initiate and manage phone calls.
+        // Populate it with per-account managers so the tool can resolve
+        // from_number and initiate calls directly.
         #[cfg(feature = "telephony")]
         {
-            let voice_tool = moltis_telephony::VoiceCallTool::new(String::new());
+            let webhook_base = state
+                .config
+                .server
+                .effective_external_url()
+                .unwrap_or_default();
+            let voice_tool = moltis_telephony::VoiceCallTool::new(webhook_base);
+
+            if let Some(ref tp) = state.services.telephony_plugin {
+                use moltis_channels::ChannelPlugin as _;
+                let plugin = tp.read().await;
+                for aid in plugin.account_ids() {
+                    if let (Some(mgr), Some(from)) =
+                        (plugin.call_manager(&aid), plugin.from_number(&aid))
+                    {
+                        voice_tool.add_manager(aid, mgr, from).await;
+                    }
+                }
+            }
             tool_registry.register(Box::new(voice_tool));
         }
         // MCP management tools — let agents add/remove/restart MCP servers directly.

@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(feature = "telephony")]
+use moltis_channels::ChannelPlugin as _;
+
 pub(super) fn register(reg: &mut MethodRegistry) {
     reg.register(
         "voicecall.status",
@@ -7,30 +10,45 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             Box::pin(async move {
                 #[cfg(feature = "telephony")]
                 {
-                    let registry = ctx
-                        .state
-                        .services
-                        .channel_registry
-                        .as_ref()
-                        .ok_or_else(|| ErrorShape::new("internal_error", "no channel registry"))?;
+                    let plugin_arc =
+                        ctx.state
+                            .services
+                            .telephony_plugin
+                            .as_ref()
+                            .ok_or_else(|| {
+                                ErrorShape::new("not_configured", "telephony not configured")
+                            })?;
 
-                    let plugin = registry.get("telephony");
-                    let Some(plugin) = plugin else {
-                        return Ok(serde_json::json!({
-                            "configured": false,
-                            "accounts": []
-                        }));
-                    };
-
-                    let guard = plugin.read().await;
-                    let account_ids = guard.account_ids();
-
+                    let plugin = plugin_arc.read().await;
+                    let account_ids = plugin.account_ids();
                     let mut accounts = Vec::new();
                     for aid in &account_ids {
-                        let config = guard.account_config_json(aid);
+                        let config = plugin.account_config_json(aid);
+                        let active_calls: Vec<serde_json::Value> = plugin
+                            .call_manager(aid)
+                            .and_then(|mgr| {
+                                mgr.try_read().ok().map(|m| {
+                                    m.active_calls()
+                                        .into_iter()
+                                        .map(|c| {
+                                            serde_json::json!({
+                                                "call_id": c.call_id,
+                                                "state": c.state,
+                                                "from": c.from,
+                                                "to": c.to,
+                                                "direction": c.direction,
+                                                "mode": c.mode,
+                                            })
+                                        })
+                                        .collect()
+                                })
+                            })
+                            .unwrap_or_default();
+
                         accounts.push(serde_json::json!({
                             "account_id": aid,
                             "config": config,
+                            "active_calls": active_calls,
                         }));
                     }
 
@@ -55,24 +73,100 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "voicecall.initiate",
         Box::new(|ctx| {
             Box::pin(async move {
-                let to = ctx.params["to"].as_str().ok_or_else(|| {
-                    ErrorShape::new("invalid_params", "missing 'to' phone number")
-                })?;
-                let message = ctx.params["message"].as_str();
+                #[cfg(feature = "telephony")]
+                {
+                    let to = ctx.params["to"].as_str().ok_or_else(|| {
+                        ErrorShape::new("invalid_params", "missing 'to' phone number")
+                    })?;
+                    if !to.starts_with('+') {
+                        return Err(ErrorShape::new(
+                            "invalid_params",
+                            "phone number must be in E.164 format (start with +)",
+                        ));
+                    }
+                    let message = ctx.params["message"].as_str();
+                    let mode_str = ctx.params["mode"].as_str().unwrap_or("conversation");
+                    let mode = match mode_str {
+                        "notify" => moltis_telephony::types::CallMode::Notify,
+                        _ => moltis_telephony::types::CallMode::Conversation,
+                    };
+                    let target_account = ctx.params["account_id"].as_str().map(String::from);
 
-                if !to.starts_with('+') {
-                    return Err(ErrorShape::new(
-                        "invalid_params",
-                        "phone number must be in E.164 format (start with +)",
-                    ));
+                    let plugin_arc =
+                        ctx.state
+                            .services
+                            .telephony_plugin
+                            .as_ref()
+                            .ok_or_else(|| {
+                                ErrorShape::new("not_configured", "telephony not configured")
+                            })?;
+
+                    let plugin = plugin_arc.read().await;
+                    let account_ids = plugin.account_ids();
+                    let account_id = target_account
+                        .as_deref()
+                        .or(account_ids.first().map(|s| s.as_str()))
+                        .ok_or_else(|| {
+                            ErrorShape::new("not_configured", "no telephony accounts available")
+                        })?
+                        .to_string();
+
+                    let from_number = plugin.from_number(&account_id).ok_or_else(|| {
+                        ErrorShape::new("not_configured", "no from_number for account")
+                    })?;
+                    if from_number.is_empty() {
+                        return Err(ErrorShape::new(
+                            "not_configured",
+                            "from_number is empty for this account",
+                        ));
+                    }
+
+                    let mgr = plugin.call_manager(&account_id).ok_or_else(|| {
+                        ErrorShape::new("not_configured", "no call manager for account")
+                    })?;
+
+                    let webhook_base = ctx
+                        .state
+                        .config
+                        .server
+                        .effective_external_url()
+                        .unwrap_or_default();
+
+                    let status_url =
+                        format!("{webhook_base}/api/channels/telephony/{account_id}/status");
+                    let answer_url =
+                        format!("{webhook_base}/api/channels/telephony/{account_id}/answer");
+
+                    let manager = mgr.read().await;
+                    let call_id = manager
+                        .initiate(
+                            &from_number,
+                            to,
+                            mode,
+                            message,
+                            &account_id,
+                            &status_url,
+                            &answer_url,
+                        )
+                        .await
+                        .map_err(|e| ErrorShape::new("call_failed", e.to_string()))?;
+
+                    Ok(serde_json::json!({
+                        "status": "initiated",
+                        "call_id": call_id,
+                        "from": from_number,
+                        "to": to,
+                        "mode": mode_str,
+                    }))
                 }
-
-                Ok(serde_json::json!({
-                    "status": "accepted",
-                    "to": to,
-                    "message": message,
-                    "hint": "Use the voice_call agent tool for full call lifecycle management."
-                }))
+                #[cfg(not(feature = "telephony"))]
+                {
+                    let _ = ctx;
+                    Err(ErrorShape::new(
+                        "feature_disabled",
+                        "telephony feature not enabled",
+                    ))
+                }
             })
         }),
     );
@@ -81,15 +175,55 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "voicecall.end",
         Box::new(|ctx| {
             Box::pin(async move {
-                let call_id = ctx.params["call_id"]
-                    .as_str()
-                    .ok_or_else(|| ErrorShape::new("invalid_params", "missing 'call_id'"))?;
+                #[cfg(feature = "telephony")]
+                {
+                    let call_id = ctx.params["call_id"]
+                        .as_str()
+                        .ok_or_else(|| ErrorShape::new("invalid_params", "missing 'call_id'"))?;
+                    let target_account = ctx.params["account_id"].as_str().map(String::from);
 
-                Ok(serde_json::json!({
-                    "status": "accepted",
-                    "call_id": call_id,
-                    "hint": "Use the voice_call agent tool for full call lifecycle management."
-                }))
+                    let plugin_arc =
+                        ctx.state
+                            .services
+                            .telephony_plugin
+                            .as_ref()
+                            .ok_or_else(|| {
+                                ErrorShape::new("not_configured", "telephony not configured")
+                            })?;
+
+                    let plugin = plugin_arc.read().await;
+                    let account_ids = plugin.account_ids();
+                    let account_id = target_account
+                        .as_deref()
+                        .or(account_ids.first().map(|s| s.as_str()))
+                        .ok_or_else(|| {
+                            ErrorShape::new("not_configured", "no telephony accounts available")
+                        })?
+                        .to_string();
+
+                    let mgr = plugin.call_manager(&account_id).ok_or_else(|| {
+                        ErrorShape::new("not_configured", "no call manager for account")
+                    })?;
+
+                    let manager = mgr.read().await;
+                    manager
+                        .hangup(call_id)
+                        .await
+                        .map_err(|e| ErrorShape::new("hangup_failed", e.to_string()))?;
+
+                    Ok(serde_json::json!({
+                        "status": "ended",
+                        "call_id": call_id,
+                    }))
+                }
+                #[cfg(not(feature = "telephony"))]
+                {
+                    let _ = ctx;
+                    Err(ErrorShape::new(
+                        "feature_disabled",
+                        "telephony feature not enabled",
+                    ))
+                }
             })
         }),
     );
