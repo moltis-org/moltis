@@ -780,6 +780,84 @@ async fn test_failover_sandbox_to_restricted_host_does_not_claim_fs_isolation() 
     assert!(!failover.provides_fs_isolation());
 }
 
+#[tokio::test]
+async fn test_failover_sandbox_read_file_enforces_path_allowlist() {
+    // After failover to RestrictedHostSandbox, file operations must go through
+    // the fallback's read_file (which checks the path allowlist), not through
+    // the default trait impl that calls self.exec() and bypasses the check.
+    let primary = Arc::new(TestSandbox::new(
+        "docker",
+        Some("cannot connect to the docker daemon"),
+        None,
+    ));
+    let fallback: Arc<dyn Sandbox> = Arc::new(RestrictedHostSandbox::new(SandboxConfig::default()));
+    let failover = FailoverSandbox::new(primary, fallback);
+
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-failover-read".into(),
+    };
+
+    // Trigger failover.
+    failover.ensure_ready(&id, None).await.unwrap();
+    assert_eq!(failover.backend_name(), "restricted-host");
+
+    // read_file on a blocked path must be rejected by the allowlist.
+    let result = failover.read_file(&id, "/etc/passwd", 4096).await;
+    assert!(
+        result.is_err(),
+        "FailoverSandbox.read_file must enforce path allowlist after failover to restricted-host"
+    );
+}
+
+#[tokio::test]
+async fn test_failover_sandbox_write_file_enforces_path_allowlist() {
+    let primary = Arc::new(TestSandbox::new(
+        "docker",
+        Some("cannot connect to the docker daemon"),
+        None,
+    ));
+    let fallback: Arc<dyn Sandbox> = Arc::new(RestrictedHostSandbox::new(SandboxConfig::default()));
+    let failover = FailoverSandbox::new(primary, fallback);
+
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-failover-write".into(),
+    };
+
+    failover.ensure_ready(&id, None).await.unwrap();
+
+    let result = failover.write_file(&id, "/var/log/evil.txt", b"nope").await;
+    assert!(
+        result.is_err(),
+        "FailoverSandbox.write_file must enforce path allowlist after failover"
+    );
+}
+
+#[tokio::test]
+async fn test_failover_sandbox_list_files_enforces_path_allowlist() {
+    let primary = Arc::new(TestSandbox::new(
+        "docker",
+        Some("cannot connect to the docker daemon"),
+        None,
+    ));
+    let fallback: Arc<dyn Sandbox> = Arc::new(RestrictedHostSandbox::new(SandboxConfig::default()));
+    let failover = FailoverSandbox::new(primary, fallback);
+
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-failover-list".into(),
+    };
+
+    failover.ensure_ready(&id, None).await.unwrap();
+
+    let result = failover.list_files(&id, "/etc").await;
+    assert!(
+        result.is_err(),
+        "FailoverSandbox.list_files must enforce path allowlist after failover"
+    );
+}
+
 /// E2E regression test for #796: Podman+BuildKit may leave images in
 /// BuildKit's cache instead of the Podman store.  Gated behind
 /// `MOLTIS_SANDBOX_RUNTIME_E2E=1` and requires Podman to be installed.

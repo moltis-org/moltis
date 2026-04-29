@@ -22,6 +22,7 @@ use {
             should_use_docker_backend,
         },
         docker::{DockerSandbox, NoSandbox},
+        file_system::{SandboxGrepOptions, SandboxListFilesResult, SandboxReadResult},
         platform::RestrictedHostSandbox,
         types::{
             BuildImageResult, DEFAULT_SANDBOX_IMAGE, Sandbox, SandboxConfig, SandboxId, SandboxMode,
@@ -195,6 +196,49 @@ impl Sandbox for FailoverSandbox {
         }
 
         self.primary.cleanup(id).await
+    }
+
+    // Delegate file operations to the active backend's own implementations
+    // so that path-level restrictions (e.g. RestrictedHostSandbox's allowlist)
+    // are enforced. Without these overrides the default trait impls route
+    // through self.exec(), bypassing the fallback backend's read_file/etc.
+
+    async fn read_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        max_bytes: u64,
+    ) -> Result<SandboxReadResult> {
+        if self.fallback_enabled().await {
+            return self.fallback.read_file(id, file_path, max_bytes).await;
+        }
+        self.primary.read_file(id, file_path, max_bytes).await
+    }
+
+    async fn write_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        if self.fallback_enabled().await {
+            return self.fallback.write_file(id, file_path, content).await;
+        }
+        self.primary.write_file(id, file_path, content).await
+    }
+
+    async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        if self.fallback_enabled().await {
+            return self.fallback.list_files(id, root).await;
+        }
+        self.primary.list_files(id, root).await
+    }
+
+    async fn grep(&self, id: &SandboxId, opts: SandboxGrepOptions) -> Result<serde_json::Value> {
+        if self.fallback_enabled().await {
+            return self.fallback.grep(id, opts).await;
+        }
+        self.primary.grep(id, opts).await
     }
 
     async fn build_image(
