@@ -226,12 +226,7 @@ export function AddTelephonyModal(): VNode {
 				/>
 
 				{error.value && <div className="text-xs text-red-500 mt-1">{error.value}</div>}
-				<button
-					type="submit"
-					className="provider-btn mt-2"
-					disabled={saving.value}
-					onClick={onSubmit}
-				>
+				<button type="submit" className="provider-btn mt-2" disabled={saving.value} onClick={onSubmit}>
 					{saving.value ? "Connecting..." : "Connect Phone Calls"}
 				</button>
 			</div>

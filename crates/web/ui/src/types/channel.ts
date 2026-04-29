@@ -7,7 +7,16 @@
  * Serialised as lowercase via `#[serde(rename_all = "lowercase")]`.
  * MsTeams is serialised as `"msteams"`.
  */
-export type ChannelType = "telegram" | "whatsapp" | "msteams" | "discord" | "slack" | "matrix" | "nostr" | "signal" | "telephony";
+export type ChannelType =
+	| "telegram"
+	| "whatsapp"
+	| "msteams"
+	| "discord"
+	| "slack"
+	| "matrix"
+	| "nostr"
+	| "signal"
+	| "telephony";
 
 /**
  * Runtime constants for `ChannelType` values.

@@ -18,9 +18,7 @@ test.describe("Telephony channel", () => {
 		await waitForWsConnected(page);
 
 		await page.getByRole("button", { name: "Connect Phone Calls", exact: true }).click();
-		await expect(
-			page.getByRole("heading", { name: "Connect Phone Calls", exact: true }),
-		).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Connect Phone Calls", exact: true })).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -30,9 +28,7 @@ test.describe("Telephony channel", () => {
 		await waitForWsConnected(page);
 
 		await page.getByRole("button", { name: "Connect Phone Calls", exact: true }).click();
-		await expect(
-			page.getByRole("heading", { name: "Connect Phone Calls", exact: true }),
-		).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Connect Phone Calls", exact: true })).toBeVisible();
 
 		// Account SID field
 		const sidInput = page.locator('input[placeholder="AC..."]');
@@ -90,9 +86,7 @@ test.describe("Telephony channel", () => {
 		await waitForWsConnected(page);
 
 		await page.getByRole("button", { name: "Connect Phone Calls", exact: true }).click();
-		await expect(
-			page.getByRole("heading", { name: "Connect Phone Calls", exact: true }),
-		).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Connect Phone Calls", exact: true })).toBeVisible();
 
 		// Click submit without filling anything
 		await page.getByRole("button", { name: "Connect Phone Calls", exact: false }).last().click();
@@ -134,9 +128,7 @@ test.describe("Telephony channel", () => {
 		await expect(page.getByText("Default Model")).toBeVisible();
 
 		// Submit button should be present
-		const submitButton = page
-			.getByRole("button", { name: "Connect Phone Calls", exact: false })
-			.last();
+		const submitButton = page.getByRole("button", { name: "Connect Phone Calls", exact: false }).last();
 		await expect(submitButton).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
