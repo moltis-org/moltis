@@ -15,6 +15,7 @@ use {
 pub enum TelephonyProviderId {
     #[default]
     Twilio,
+    Telnyx,
 }
 
 /// Inbound call access policy.

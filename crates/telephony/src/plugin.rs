@@ -149,6 +149,27 @@ impl ChannelPlugin for TelephonyPlugin {
                 }
                 Box::new(TwilioProvider::new(sid, token))
             },
+            TelephonyProviderId::Telnyx => {
+                let api_key = cfg
+                    .auth_token
+                    .clone()
+                    .unwrap_or_else(|| Secret::new(String::new()));
+                let connection_id = cfg
+                    .account_sid
+                    .as_ref()
+                    .map(|s| s.expose_secret().clone())
+                    .unwrap_or_default();
+
+                if connection_id.is_empty() {
+                    return Err(moltis_channels::Error::invalid_input(
+                        "connection_id (account_sid field) is required for Telnyx",
+                    ));
+                }
+                Box::new(crate::providers::telnyx::TelnyxProvider::new(
+                    api_key,
+                    connection_id,
+                ))
+            },
         };
 
         let manager = Arc::new(RwLock::new(CallManager::new(

@@ -23,6 +23,8 @@ pub struct PhoneConfig {
     pub max_duration_secs: u64,
     /// Twilio-specific settings.
     pub twilio: PhoneTwilioConfig,
+    /// Telnyx-specific settings.
+    pub telnyx: PhoneTelnyxConfig,
 }
 
 fn default_max_duration() -> u64 {
@@ -39,6 +41,7 @@ impl Default for PhoneConfig {
             allowlist: Vec::new(),
             max_duration_secs: default_max_duration(),
             twilio: PhoneTwilioConfig::default(),
+            telnyx: PhoneTelnyxConfig::default(),
         }
     }
 }
@@ -66,5 +69,27 @@ pub struct PhoneTwilioConfig {
     /// Phone number (E.164 format).
     pub from_number: Option<String>,
     /// Public webhook URL for Twilio callbacks.
+    pub webhook_url: Option<String>,
+}
+
+/// Telnyx provider configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PhoneTelnyxConfig {
+    /// Telnyx API key (v2).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::schema::serialize_option_secret",
+        deserialize_with = "crate::schema::deserialize_option_secret"
+    )]
+    pub api_key: Option<Secret<String>>,
+    /// Telnyx Call Control connection ID.
+    pub connection_id: Option<String>,
+    /// Ed25519 public key for webhook signature verification.
+    pub public_key: Option<String>,
+    /// Phone number (E.164 format).
+    pub from_number: Option<String>,
+    /// Public webhook URL for Telnyx callbacks.
     pub webhook_url: Option<String>,
 }

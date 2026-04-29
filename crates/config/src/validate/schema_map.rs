@@ -755,6 +755,16 @@ pub(super) fn build_schema_map() -> KnownKeys {
                         ("webhook_url", Leaf),
                     ])),
                 ),
+                (
+                    "telnyx",
+                    Struct(HashMap::from([
+                        ("api_key", Leaf),
+                        ("connection_id", Leaf),
+                        ("public_key", Leaf),
+                        ("from_number", Leaf),
+                        ("webhook_url", Leaf),
+                    ])),
+                ),
             ])),
         ),
         ("models", Map(Box::new(model_override()))),
