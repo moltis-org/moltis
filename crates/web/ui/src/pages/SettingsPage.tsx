@@ -207,6 +207,7 @@ function getVisibleSections(): SectionItem[] {
 			s.id === "import" &&
 			!gon.get("openclaw_detected") &&
 			!gon.get("claude_detected") &&
+			!gon.get("codex_detected") &&
 			!gon.get("hermes_detected")
 		)
 			return false;

@@ -44,6 +44,7 @@ moltis-nostr            = { optional = true, workspace = true }
 moltis-oauth            = { workspace = true }
 moltis-onboarding       = { workspace = true }
 moltis-claude-import    = { optional = true, workspace = true }
+moltis-codex-import     = { optional = true, workspace = true }
 moltis-hermes-import    = { optional = true, workspace = true }
 moltis-openclaw-import  = { optional = true, workspace = true }
 moltis-plugins          = { workspace = true }
@@ -105,6 +106,7 @@ default = [
   "bundled-skills",
   "caldav",
   "claude-import",
+  "codex-import",
   "home-assistant",
   "code-index-builtin",
   "discord",
@@ -170,6 +172,7 @@ metrics = [
 ]
 nostr = ["dep:moltis-nostr"]
 claude-import = ["dep:moltis-claude-import"]
+codex-import = ["dep:moltis-codex-import"]
 hermes-import = ["dep:moltis-hermes-import"]
 openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]

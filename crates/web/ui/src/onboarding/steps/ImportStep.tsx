@@ -1,6 +1,6 @@
 // ── Tabbed import step for onboarding ────────────────────────
 //
-// Wraps all detected import sources (OpenClaw, Claude Code, Hermes)
+// Wraps all detected import sources (OpenClaw, Claude Code, Codex, Hermes)
 // behind a tab bar, reusing the settings import section components.
 
 import type { VNode } from "preact";
@@ -9,6 +9,7 @@ import { TabBar } from "../../components/forms";
 import { get as getGon } from "../../gon";
 import { sendRpc } from "../../helpers";
 import { ClaudeImportSection } from "../../pages/sections/ClaudeImportSection";
+import { CodexImportSection } from "../../pages/sections/CodexImportSection";
 import { HermesImportSection } from "../../pages/sections/HermesImportSection";
 import { OpenClawImportSection } from "../../pages/sections/OpenClawImportSection";
 import { ensureWsConnected } from "../shared";
@@ -26,6 +27,7 @@ interface ImportTabDef {
 const ALL_TABS: ImportTabDef[] = [
 	{ id: "openclaw", label: "OpenClaw", icon: <span className="icon icon-openclaw" />, detected: getGon("openclaw_detected") === true },
 	{ id: "claude", label: "Claude Code", icon: <span className="icon icon-terminal-cmd" />, detected: getGon("claude_detected") === true },
+	{ id: "codex", label: "Codex CLI", icon: <span className="icon icon-code" />, detected: getGon("codex_detected") === true },
 	{ id: "hermes", label: "Hermes", icon: <span className="icon icon-globe" />, detected: getGon("hermes_detected") === true },
 ];
 
@@ -115,6 +117,8 @@ function renderTab(id: string): VNode | null {
 			return <OpenClawImportSection />;
 		case "claude":
 			return <ClaudeImportSection />;
+		case "codex":
+			return <CodexImportSection />;
 		case "hermes":
 			return <HermesImportSection />;
 		default:

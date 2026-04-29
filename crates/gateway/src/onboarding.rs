@@ -475,6 +475,85 @@ impl OnboardingService for GatewayOnboardingService {
         Err("claude import feature not enabled".into())
     }
 
+    // ── Codex import ────────────────────────────────────────────────────────
+
+    #[cfg(feature = "codex-import")]
+    async fn codex_detect(&self) -> ServiceResult {
+        let detection = moltis_codex_import::detect::detect();
+        match detection {
+            Some(d) => {
+                let mcp_count = moltis_codex_import::mcp_servers::count_mcp_servers(&d);
+
+                tracing::info!(
+                    has_config = d.config_path.is_some(),
+                    mcp_servers = mcp_count,
+                    has_instructions = d.instructions_path.is_some(),
+                    "codex.detect: installation detected"
+                );
+
+                Ok(serde_json::json!({
+                    "detected": true,
+                    "home_dir": d.home_dir.display().to_string(),
+                    "has_mcp_servers": mcp_count > 0,
+                    "mcp_servers_count": mcp_count,
+                    "has_memory": d.instructions_path.is_some(),
+                }))
+            },
+            None => {
+                tracing::info!("codex.detect: no installation detected");
+                Ok(serde_json::json!({ "detected": false }))
+            },
+        }
+    }
+
+    #[cfg(not(feature = "codex-import"))]
+    async fn codex_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "detected": false }))
+    }
+
+    #[cfg(feature = "codex-import")]
+    async fn codex_import(&self, params: Value) -> ServiceResult {
+        let detection = moltis_codex_import::detect::detect()
+            .ok_or_else(|| "no Codex CLI installation found".to_string())?;
+
+        let data_dir = moltis_config::data_dir();
+        let mcp_path = data_dir.join("mcp-servers.json");
+
+        let import_mcp = params
+            .get("mcp_servers")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let import_memory = params
+            .get("memory")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let mut categories = Vec::new();
+
+        if import_mcp {
+            categories.push(moltis_codex_import::mcp_servers::import_mcp_servers(
+                &detection, &mcp_path,
+            ));
+        }
+        if import_memory {
+            categories.push(moltis_codex_import::memory::import_memory(
+                &detection, &data_dir,
+            ));
+        }
+
+        let total: usize = categories.iter().map(|c| c.items_imported).sum();
+
+        Ok(serde_json::json!({
+            "categories": categories,
+            "total_imported": total,
+        }))
+    }
+
+    #[cfg(not(feature = "codex-import"))]
+    async fn codex_import(&self, _params: Value) -> ServiceResult {
+        Err("codex import feature not enabled".into())
+    }
+
     // ── Hermes import ───────────────────────────────────────────────────────
 
     #[cfg(feature = "hermes-import")]

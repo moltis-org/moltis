@@ -288,6 +288,16 @@ pub fn claude_detected_for_ui() -> bool {
     false
 }
 
+#[cfg(feature = "codex-import")]
+pub fn codex_detected_for_ui() -> bool {
+    moltis_codex_import::detect::detect().is_some()
+}
+
+#[cfg(not(feature = "codex-import"))]
+pub fn codex_detected_for_ui() -> bool {
+    false
+}
+
 #[cfg(feature = "hermes-import")]
 pub fn hermes_detected_for_ui() -> bool {
     moltis_hermes_import::detect::detect().is_some()

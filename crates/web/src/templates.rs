@@ -84,6 +84,8 @@ pub(crate) struct GonData {
     openclaw_detected: bool,
     /// Whether a Claude Code/Desktop installation was detected (for import UI).
     claude_detected: bool,
+    /// Whether a Codex CLI installation was detected (for import UI).
+    codex_detected: bool,
     /// Whether a Hermes installation was detected (for import UI).
     hermes_detected: bool,
     /// Small recent session snapshot for instant sidebar paint.
@@ -491,6 +493,7 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         started_at: *PROCESS_STARTED_AT_MS,
         openclaw_detected: moltis_gateway::server::openclaw_detected_for_ui(),
         claude_detected: moltis_gateway::server::claude_detected_for_ui(),
+        codex_detected: moltis_gateway::server::codex_detected_for_ui(),
         hermes_detected: moltis_gateway::server::hermes_detected_for_ui(),
         sessions_recent,
         agents,

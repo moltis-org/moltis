@@ -5,6 +5,7 @@ import { useState } from "preact/hooks";
 import { TabBar } from "../../components/forms";
 import * as gon from "../../gon";
 import { ClaudeImportSection } from "./ClaudeImportSection";
+import { CodexImportSection } from "./CodexImportSection";
 import { HermesImportSection } from "./HermesImportSection";
 import { OpenClawImportSection } from "./OpenClawImportSection";
 
@@ -18,6 +19,7 @@ interface ImportTab {
 const ALL_TABS: ImportTab[] = [
 	{ id: "openclaw", label: "OpenClaw", icon: <span className="icon icon-openclaw" />, detected: gon.get("openclaw_detected") === true },
 	{ id: "claude", label: "Claude Code", icon: <span className="icon icon-terminal-cmd" />, detected: gon.get("claude_detected") === true },
+	{ id: "codex", label: "Codex CLI", icon: <span className="icon icon-code" />, detected: gon.get("codex_detected") === true },
 	{ id: "hermes", label: "Hermes", icon: <span className="icon icon-globe" />, detected: gon.get("hermes_detected") === true },
 ];
 
@@ -46,6 +48,8 @@ function renderTab(id: string): VNode | null {
 			return <OpenClawImportSection />;
 		case "claude":
 			return <ClaudeImportSection />;
+		case "codex":
+			return <CodexImportSection />;
 		case "hermes":
 			return <HermesImportSection />;
 		default:

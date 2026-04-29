@@ -13,6 +13,7 @@ default-members = [
   "crates/claude-import",
   "crates/cli",
   "crates/code-index",
+  "crates/codex-import",
   "crates/common",
   "crates/config",
   "crates/cron",
@@ -79,6 +80,7 @@ members = [
   "crates/claude-import",
   "crates/cli",
   "crates/code-index",
+  "crates/codex-import",
   "crates/common",
   "crates/config",
   "crates/cron",
@@ -349,6 +351,7 @@ moltis-channels         = { path = "crates/channels" }
 moltis-chat             = { path = "crates/chat" }
 moltis-claude-import    = { path = "crates/claude-import" }
 moltis-code-index       = { path = "crates/code-index" }
+moltis-codex-import     = { path = "crates/codex-import" }
 moltis-common           = { path = "crates/common" }
 moltis-config           = { path = "crates/config" }
 moltis-cron             = { path = "crates/cron" }

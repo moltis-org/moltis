@@ -66,6 +66,7 @@ dotenvy                = { workspace = true }
 moltis-agents          = { workspace = true }
 moltis-browser         = { workspace = true }
 moltis-claude-import   = { optional = true, workspace = true }
+moltis-codex-import    = { optional = true, workspace = true }
 moltis-common          = { workspace = true }
 moltis-config          = { workspace = true }
 moltis-cron            = { workspace = true }
@@ -115,6 +116,7 @@ default = [
   "bundled-skills",
   "caldav",
   "claude-import",
+  "codex-import",
   "code-splitter",
   "file-watcher",
   "firecrawl",
@@ -170,6 +172,7 @@ lang-typescript = ["moltis-memory/lang-typescript"]
 # jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
 claude-import      = ["dep:moltis-claude-import", "moltis-gateway/claude-import"]
+codex-import       = ["dep:moltis-codex-import", "moltis-gateway/codex-import"]
 hermes-import      = ["dep:moltis-hermes-import", "moltis-gateway/hermes-import"]
 lightweight        = ["jemalloc", "tls", "web-ui"]
 local-llm          = ["moltis-gateway/local-llm"]
