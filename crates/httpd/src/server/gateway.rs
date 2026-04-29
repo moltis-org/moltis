@@ -613,6 +613,31 @@ pub async fn prepare_gateway(
                         let called = params.get("To").map(|s| s.as_str()).unwrap_or("unknown");
                         let call_sid = params.get("CallSid").map(|s| s.as_str()).unwrap_or("");
 
+                        // Enforce inbound call policy.
+                        {
+                            use moltis_channels::ChannelPlugin as _;
+                            if let Some(config_view) = plugin_guard.account_config(&account_id) {
+                                let policy = config_view.dm_policy();
+                                match policy {
+                                    moltis_channels::gating::DmPolicy::Disabled => {
+                                        tracing::info!(account_id = %account_id, caller = %caller, "rejecting inbound call: inbound_policy=disabled");
+                                        let provider = manager.provider().read().await;
+                                        let twiml = provider.build_hangup_response();
+                                        return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/xml")], twiml).into_response();
+                                    },
+                                    moltis_channels::gating::DmPolicy::Allowlist => {
+                                        if !moltis_channels::gating::is_allowed(caller, config_view.allowlist()) {
+                                            tracing::info!(account_id = %account_id, caller = %caller, "rejecting inbound call: not on allowlist");
+                                            let provider = manager.provider().read().await;
+                                            let twiml = provider.build_hangup_response();
+                                            return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/xml")], twiml).into_response();
+                                        }
+                                    },
+                                    moltis_channels::gating::DmPolicy::Open => {},
+                                }
+                            }
+                        }
+
                         // Register the inbound call
                         if !call_sid.is_empty() {
                             manager.register_inbound(call_sid, caller, called, &account_id);

@@ -157,8 +157,10 @@ impl TelephonyProvider for TwilioProvider {
         let (user, pass) = self.basic_auth();
 
         let voice_attr = voice.unwrap_or("Polly.Joanna");
+        // After speaking, redirect back to gather so the call continues
+        // listening. Without a continuation verb, Twilio hangs up.
         let twiml = format!(
-            r#"<Response><Say voice="{voice_attr}">{}</Say></Response>"#,
+            r#"<Response><Say voice="{voice_attr}">{}</Say><Gather input="speech" speechTimeout="auto"/></Response>"#,
             xml_escape(text)
         );
 
