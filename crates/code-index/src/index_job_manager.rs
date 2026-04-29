@@ -252,21 +252,22 @@ impl IndexJobManager {
             }
         }
 
-        // Clone Arc<Self> for the watcher callback.
+        // Compute filter_config before the closure consumes `this` and `pid`.
+        let filter_config = self.code_index.config().filter();
+
+        // Clone Arc<Self> and pid for the watcher callback.
         let this = Arc::clone(self);
-        let pid = project_id.to_string();
+        let pid_for_cb = project_id.to_string(); // captured by closure
 
         let handler: crate::watcher::WatchHandler = Arc::new(move |_proj_id, _changed_paths| {
             let mgr = Arc::clone(&this);
-            let pid = pid.clone();
+            let pid = pid_for_cb.clone();
 
             // Route through spawn_index() for proper deduplication and shutdown tracking.
             tokio::spawn(async move {
                 let _ = mgr.spawn_index(pid).await;
             });
         });
-
-        let filter_config = this.code_index.config().filter();
 
         let result = crate::watcher::FileWatcher::start(
             project_id.to_string(),
@@ -277,7 +278,7 @@ impl IndexJobManager {
 
         match result {
             Ok(watcher) => {
-                self.watchers.lock().await.insert(pid.to_string(), watcher);
+                self.watchers.lock().await.insert(project_id.to_string(), watcher);
                 #[cfg(feature = "tracing")]
                 info!(project_id, "started file watcher");
             }
