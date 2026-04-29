@@ -197,6 +197,25 @@ fn test_check_restricted_host_path_blocks_etc_passwd() {
 }
 
 #[test]
+fn test_check_restricted_host_path_blocks_dot_dot_traversal() {
+    // /tmp/../etc/passwd normalizes to /etc/passwd — must be blocked.
+    let result = check_restricted_host_path("/tmp/../etc/passwd");
+    assert!(result.is_err(), "must block /tmp/../etc/passwd traversal");
+}
+
+#[test]
+fn test_check_restricted_host_path_blocks_nested_traversal() {
+    let result = check_restricted_host_path("/tmp/a/b/../../../etc/shadow");
+    assert!(result.is_err(), "must block nested .. traversal");
+}
+
+#[test]
+fn test_check_restricted_host_path_allows_dot_dot_within_tmp() {
+    // /tmp/a/../b stays within /tmp — should be allowed.
+    check_restricted_host_path("/tmp/a/../b/file.txt").unwrap();
+}
+
+#[test]
 fn test_check_restricted_host_path_blocks_home_ssh() {
     let result = check_restricted_host_path("/home/user/.ssh/id_rsa");
     assert!(result.is_err(), "must block ~/.ssh");

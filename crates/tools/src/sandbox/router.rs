@@ -91,11 +91,13 @@ impl FailoverSandbox {
 impl Sandbox for FailoverSandbox {
     fn backend_name(&self) -> &'static str {
         // Report the active backend so callers know the true isolation level.
+        // On lock contention (write lock held during failover switch),
+        // conservatively assume fallback is active — the safer default.
         if self
             .use_fallback
             .try_read()
             .map(|guard| *guard)
-            .unwrap_or(false)
+            .unwrap_or(true)
         {
             self.fallback_name
         } else {
@@ -104,11 +106,13 @@ impl Sandbox for FailoverSandbox {
     }
 
     fn provides_fs_isolation(&self) -> bool {
+        // On lock contention, conservatively report the fallback's (weaker)
+        // isolation level rather than the primary's.
         if self
             .use_fallback
             .try_read()
             .map(|guard| *guard)
-            .unwrap_or(false)
+            .unwrap_or(true)
         {
             self.fallback.provides_fs_isolation()
         } else {

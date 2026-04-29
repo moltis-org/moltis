@@ -318,7 +318,7 @@ impl Sandbox for RestrictedHostSandbox {
 /// sandbox. Without container-level filesystem isolation, we restrict access
 /// to the Moltis data directory and temp directories to prevent sandbox escapes.
 pub(crate) fn check_restricted_host_path(path: &str) -> Result<()> {
-    let target = std::path::Path::new(path);
+    let target = normalize_path(std::path::Path::new(path));
 
     let data_dir = moltis_config::data_dir();
     if target.starts_with(&data_dir) {
@@ -330,7 +330,7 @@ pub(crate) fn check_restricted_host_path(path: &str) -> Result<()> {
     if target.starts_with("/tmp")
         || target.starts_with("/private/tmp")
         || target.starts_with("/var/tmp")
-        || target.starts_with(std::env::temp_dir())
+        || target.starts_with(normalize_path(&std::env::temp_dir()))
     {
         return Ok(());
     }
@@ -350,6 +350,24 @@ pub(crate) fn check_restricted_host_path(path: &str) -> Result<()> {
          (Docker, Podman, or Apple Container) for full filesystem isolation.",
         path
     )))
+}
+
+/// Normalize a path by resolving `.` and `..` components without hitting the
+/// filesystem (no symlink resolution). This prevents path traversal attacks
+/// like `/tmp/../etc/passwd` bypassing prefix checks.
+fn normalize_path(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::{Component, PathBuf};
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                out.pop();
+            },
+            Component::CurDir => {},
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// Returns `true` when the WASM sandbox feature is compiled in.
