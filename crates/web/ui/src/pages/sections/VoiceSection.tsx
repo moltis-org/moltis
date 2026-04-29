@@ -444,7 +444,7 @@ export function VoiceSection(): VNode {
 														active
 													</span>
 												) : null}
-												{pr.persona.provider_bindings.map((b) => (
+												{(pr.persona.provider_bindings || []).map((b) => (
 													<span
 														key={b.provider}
 														className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface-alt)] text-[var(--muted)]"
