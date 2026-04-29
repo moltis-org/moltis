@@ -178,6 +178,55 @@ pub(in crate::channel_events) async fn handle_new(
     }
 }
 
+pub(in crate::channel_events) async fn handle_fork(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    args: &str,
+) -> ChannelResult<String> {
+    let label = if args.is_empty() {
+        None
+    } else {
+        Some(args.trim())
+    };
+
+    let mut params = serde_json::json!({ "key": session_key });
+    if let Some(l) = label {
+        params["label"] = serde_json::json!(l);
+    }
+
+    let res = state
+        .services
+        .session
+        .fork(params)
+        .await
+        .map_err(ChannelError::unavailable)?;
+
+    let new_key = res
+        .get("sessionKey")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let fork_point = res.get("forkPoint").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    broadcast(
+        state,
+        "session",
+        serde_json::json!({
+            "kind": "created",
+            "sessionKey": new_key,
+        }),
+        BroadcastOpts {
+            drop_if_slow: true,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let label_str = res.get("label").and_then(|v| v.as_str()).unwrap_or(new_key);
+    Ok(format!(
+        "Forked at message {fork_point} into: {label_str}\nUse /sessions to switch."
+    ))
+}
+
 pub(in crate::channel_events) async fn handle_clear(
     state: &Arc<GatewayState>,
     session_key: &str,

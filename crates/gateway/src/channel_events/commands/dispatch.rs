@@ -70,6 +70,7 @@ pub(in crate::channel_events) async fn dispatch_command(
             )
             .await
         },
+        "fork" => session_handlers::handle_fork(state, &session_key, args).await,
         "clear" => session_handlers::handle_clear(state, &session_key).await,
         "compact" => session_handlers::handle_compact(state, &session_key).await,
         "context" => session_handlers::handle_context(state, &session_key).await,
@@ -145,6 +146,7 @@ mod tests {
         // in sync with the match arms above.
         let dispatched = [
             "new",
+            "fork",
             "clear",
             "compact",
             "context",

@@ -35,6 +35,10 @@ pub fn all_commands() -> &'static [CommandDef] {
             description: "Attach an existing session here",
         },
         CommandDef {
+            name: "fork",
+            description: "Fork this session into a new branch",
+        },
+        CommandDef {
             name: "clear",
             description: "Clear session history",
         },
@@ -210,6 +214,7 @@ mod tests {
         let names: Vec<&str> = all_commands().iter().map(|c| c.name).collect();
         for expected in [
             "new",
+            "fork",
             "clear",
             "compact",
             "context",
