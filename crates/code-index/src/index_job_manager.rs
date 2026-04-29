@@ -163,7 +163,7 @@ impl IndexJobManager {
         // Track the handle for shutdown.
         // Purge completed handles before adding to prevent unbounded growth.
         {
-            let mut handles = this.job_handles.lock().await;
+            let mut handles = self.job_handles.lock().await;
             handles.retain(|h| !h.is_finished());
             handles.push(handle);
         }
@@ -308,13 +308,10 @@ impl IndexJobManager {
             }
         }
 
-        // Spawn jobs for each project via spawn_index() for proper tracking.
+        // Call spawn_index for each project. Jobs are tracked via job_handles
+        // inside spawn_index() for proper shutdown synchronization.
         for (project_id, _dir) in projects {
-            let this = Arc::clone(self);
-            let pid = project_id.clone();
-            tokio::spawn(async move {
-                let _ = this.spawn_index(pid).await;
-            });
+            self.spawn_index(project_id).await;
         }
     }
 
