@@ -222,26 +222,64 @@ impl TelephonyProvider for TelnyxProvider {
     }
 
     fn verify_webhook(&self, _url: &str, headers: &HeaderMap, body: &[u8]) -> anyhow::Result<()> {
-        let Some(ref _public_key) = self.public_key else {
-            // No public key configured — skip verification.
-            // This is acceptable for development; production should set the key.
+        let Some(ref public_key) = self.public_key else {
+            tracing::debug!("telnyx: no public_key configured, skipping webhook verification");
             return Ok(());
         };
 
-        let _signature = headers
+        let signature = headers
             .get("telnyx-signature-ed25519")
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| anyhow::anyhow!("missing telnyx-signature-ed25519 header"))?;
 
-        let _timestamp = headers
+        let timestamp = headers
             .get("telnyx-timestamp")
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| anyhow::anyhow!("missing telnyx-timestamp header"))?;
 
-        // Ed25519 verification would go here with the ed25519-dalek crate.
-        // For now, validate that the required headers are present.
-        // Full verification requires adding ed25519-dalek to deps.
-        let _ = body;
+        // Reject stale timestamps (5 minute window).
+        if let Ok(ts) = timestamp.parse::<i64>() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            if (now - ts).unsigned_abs() > 300 {
+                anyhow::bail!("telnyx webhook timestamp too old");
+            }
+        }
+
+        // Verify Ed25519 signature: signed_payload = "{timestamp}|{body}"
+        let body_str = std::str::from_utf8(body).unwrap_or("");
+        let signed_payload = format!("{timestamp}|{body_str}");
+
+        let sig_bytes = base64::engine::general_purpose::STANDARD
+            .decode(signature)
+            .map_err(|e| anyhow::anyhow!("invalid base64 signature: {e}"))?;
+
+        let key_bytes = hex::decode(public_key)
+            .or_else(|_| base64::engine::general_purpose::STANDARD.decode(public_key))
+            .map_err(|e| anyhow::anyhow!("invalid public key encoding: {e}"))?;
+
+        if key_bytes.len() != 32 {
+            anyhow::bail!(
+                "invalid Ed25519 public key length: {} (expected 32)",
+                key_bytes.len()
+            );
+        }
+        if sig_bytes.len() != 64 {
+            anyhow::bail!(
+                "invalid Ed25519 signature length: {} (expected 64)",
+                sig_bytes.len()
+            );
+        }
+
+        // Verify using ring (already a transitive dep via rustls).
+        use ring::signature;
+        let peer_key = signature::UnparsedPublicKey::new(&signature::ED25519, &key_bytes);
+        peer_key
+            .verify(signed_payload.as_bytes(), &sig_bytes)
+            .map_err(|_| anyhow::anyhow!("Ed25519 signature verification failed"))?;
+
         Ok(())
     }
 

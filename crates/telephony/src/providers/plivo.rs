@@ -226,9 +226,11 @@ impl TelephonyProvider for PlivoProvider {
             .and_then(|v| v.to_str().ok());
 
         let (Some(signature), Some(nonce)) = (signature, nonce) else {
-            // Fall back to accepting unsigned requests if no sig headers.
-            // Production deployments should enforce verification.
-            return Ok(());
+            // Fail closed: if auth_token is configured, require signatures.
+            anyhow::bail!(
+                "missing X-Plivo-Signature-V3 or nonce header — \
+                 webhook signature verification failed"
+            );
         };
 
         let body_str = std::str::from_utf8(body).unwrap_or("");

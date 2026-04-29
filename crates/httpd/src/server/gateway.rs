@@ -538,9 +538,16 @@ pub async fn prepare_gateway(
                             },
                         };
 
-                        // Parse the webhook event from the body
                         let manager = mgr.read().await;
                         let provider = manager.provider().read().await;
+
+                        // Verify webhook signature before processing.
+                        let webhook_url = format!("/api/channels/telephony/{account_id}/status");
+                        if let Err(e) = provider.verify_webhook(&webhook_url, &headers, &body) {
+                            tracing::warn!(account_id = %account_id, "telephony status webhook verification failed: {e}");
+                            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"ok": false, "error": "signature verification failed"}))).into_response();
+                        }
+
                         match provider.parse_webhook_event(&headers, &body) {
                             Ok(event) => {
                                 drop(provider);
@@ -584,6 +591,16 @@ pub async fn prepare_gateway(
                         };
 
                         let manager = mgr.read().await;
+
+                        // Verify webhook signature.
+                        {
+                            let provider = manager.provider().read().await;
+                            let webhook_url = format!("/api/channels/telephony/{account_id}/answer");
+                            if let Err(e) = provider.verify_webhook(&webhook_url, &_headers, &body) {
+                                tracing::warn!(account_id = %account_id, "telephony answer webhook verification failed: {e}");
+                                return (StatusCode::UNAUTHORIZED, "signature verification failed").into_response();
+                            }
+                        }
 
                         // Parse inbound call info from body
                         let body_str = std::str::from_utf8(&body).unwrap_or("");
@@ -649,6 +666,17 @@ pub async fn prepare_gateway(
 
                         let manager = mgr.read().await;
                         let provider = manager.provider().read().await;
+
+                        // Verify webhook signature.
+                        let webhook_url =
+                            format!("/api/channels/telephony/{account_id}/gather");
+                        if let Err(e) =
+                            provider.verify_webhook(&webhook_url, &headers, &body)
+                        {
+                            tracing::warn!(account_id = %account_id, "telephony gather webhook verification failed: {e}");
+                            return (StatusCode::UNAUTHORIZED, "signature verification failed")
+                                .into_response();
+                        }
 
                         match provider.parse_webhook_event(&headers, &body) {
                             Ok(event) => {

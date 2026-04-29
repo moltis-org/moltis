@@ -230,6 +230,7 @@ nostr-sdk          = { features = ["nip04", "nip44", "nip59"], version = "0.44" 
 open               = "5.3"
 rand               = "0.10"
 regex              = "1"
+ring               = "0.17"
 secrecy            = { features = ["serde"], version = "0.8" }
 serenity           = { features = ["cache", "client", "gateway", "model", "rustls_backend"], version = "0.12" }
 sha1               = "0.10"

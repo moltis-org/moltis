@@ -187,6 +187,9 @@ impl CallManager {
 
         // Clean up terminated calls from the index (but keep the record).
         if record.state.is_terminal() {
+            if let Some(pid) = &record.provider_call_id {
+                self.provider_index.remove(pid);
+            }
             drop(record);
             self.cancel_timeout(&call_id);
         }
@@ -215,12 +218,13 @@ impl CallManager {
             .hangup_call(&provider_call_id)
             .await?;
 
-        // Mark as bot hangup.
+        // Mark as bot hangup and clean up provider index.
         if let Some(mut rec) = self.active_calls.get_mut(call_id) {
             rec.state = CallState::HangupBot;
             rec.ended_at = Some(OffsetDateTime::now_utc());
             rec.end_reason = Some(CallEndReason::HangupBot);
         }
+        self.provider_index.remove(&provider_call_id);
         self.cancel_timeout(call_id);
         Ok(())
     }

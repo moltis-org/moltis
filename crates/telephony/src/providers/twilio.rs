@@ -178,6 +178,14 @@ impl TelephonyProvider for TwilioProvider {
     }
 
     async fn send_dtmf(&self, provider_call_id: &str, digits: &str) -> anyhow::Result<()> {
+        // Validate DTMF digits to prevent TwiML injection.
+        if !digits
+            .chars()
+            .all(|c| c.is_ascii_digit() || "*#wW".contains(c))
+        {
+            anyhow::bail!("invalid DTMF digits: only 0-9, *, #, w, W are allowed");
+        }
+
         let url = format!("{}/Calls/{provider_call_id}.json", self.base_url);
         let (user, pass) = self.basic_auth();
 

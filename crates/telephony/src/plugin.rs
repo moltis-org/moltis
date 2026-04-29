@@ -17,7 +17,7 @@ use {
 use crate::{
     config::{TelephonyAccountConfig, TelephonyProviderId},
     manager::CallManager,
-    outbound::{NoopOutbound, TelephonyOutbound, TelephonyStreamOutbound},
+    outbound::{RoutingOutbound, TelephonyStreamOutbound},
     providers::twilio::TwilioProvider,
 };
 
@@ -25,8 +25,6 @@ use crate::{
 struct AccountState {
     config: TelephonyAccountConfig,
     manager: Arc<RwLock<CallManager>>,
-    #[allow(dead_code)]
-    outbound: Arc<TelephonyOutbound>,
 }
 
 /// Telephony channel plugin.
@@ -34,6 +32,7 @@ pub struct TelephonyPlugin {
     accounts: HashMap<String, AccountState>,
     message_log: Option<Arc<dyn MessageLog>>,
     event_sink: Option<Arc<dyn ChannelEventSink>>,
+    routing_outbound: Arc<RoutingOutbound>,
 }
 
 impl TelephonyPlugin {
@@ -42,6 +41,7 @@ impl TelephonyPlugin {
             accounts: HashMap::new(),
             message_log: None,
             event_sink: None,
+            routing_outbound: Arc::new(RoutingOutbound::new()),
         }
     }
 
@@ -197,12 +197,12 @@ impl ChannelPlugin for TelephonyPlugin {
             cfg.max_duration_secs,
         )));
 
-        let outbound = Arc::new(TelephonyOutbound::new(Arc::clone(&manager)));
+        self.routing_outbound
+            .set_manager(account_id, Arc::clone(&manager));
 
         self.accounts.insert(account_id.to_string(), AccountState {
             config: cfg,
             manager,
-            outbound,
         });
 
         info!(account_id = %account_id, "telephony account started");
@@ -210,6 +210,7 @@ impl ChannelPlugin for TelephonyPlugin {
     }
 
     async fn stop_account(&mut self, account_id: &str) -> moltis_channels::Result<()> {
+        self.routing_outbound.remove_manager(account_id);
         if let Some(state) = self.accounts.remove(account_id) {
             let mgr = state.manager.read().await;
             for call in mgr.active_calls() {
@@ -259,7 +260,7 @@ impl ChannelPlugin for TelephonyPlugin {
     }
 
     fn shared_outbound(&self) -> Arc<dyn ChannelOutbound> {
-        Arc::new(NoopOutbound)
+        Arc::clone(&self.routing_outbound) as Arc<dyn ChannelOutbound>
     }
 
     fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {

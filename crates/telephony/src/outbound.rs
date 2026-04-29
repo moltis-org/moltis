@@ -103,18 +103,77 @@ impl ChannelStreamOutbound for TelephonyStreamOutbound {
     }
 }
 
-/// Placeholder no-op outbound used for the shared_outbound() default.
-pub(crate) struct NoopOutbound;
+/// Routing outbound that dispatches to the correct account's CallManager.
+///
+/// Used as the shared_outbound() so the agent loop can route TTS replies
+/// back to active phone calls across all accounts.
+pub(crate) struct RoutingOutbound {
+    managers: Arc<std::sync::RwLock<std::collections::HashMap<String, Arc<RwLock<CallManager>>>>>,
+}
+
+impl RoutingOutbound {
+    pub(crate) fn new() -> Self {
+        Self {
+            managers: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
+        }
+    }
+
+    pub(crate) fn set_manager(&self, account_id: &str, manager: Arc<RwLock<CallManager>>) {
+        if let Ok(mut map) = self.managers.write() {
+            map.insert(account_id.to_string(), manager);
+        }
+    }
+
+    pub(crate) fn remove_manager(&self, account_id: &str) {
+        if let Ok(mut map) = self.managers.write() {
+            map.remove(account_id);
+        }
+    }
+}
 
 #[async_trait]
-impl ChannelOutbound for NoopOutbound {
+impl ChannelOutbound for RoutingOutbound {
     async fn send_text(
         &self,
-        _account_id: &str,
-        _to: &str,
-        _text: &str,
+        account_id: &str,
+        to: &str,
+        text: &str,
         _reply_to: Option<&str>,
     ) -> Result<()> {
+        let mgr = {
+            let map = self.managers.read().unwrap_or_else(|e| e.into_inner());
+            map.get(account_id).cloned()
+        };
+        let Some(mgr) = mgr else {
+            tracing::debug!(account_id = %account_id, "no call manager for account, skipping TTS");
+            return Ok(());
+        };
+
+        let manager = mgr.read().await;
+        let call = manager.get_call(to);
+        let Some(call) = call else {
+            tracing::debug!(call_id = %to, "no active call, skipping TTS");
+            return Ok(());
+        };
+        if call.state.is_terminal() {
+            return Ok(());
+        }
+
+        let provider_call_id = match call.provider_call_id.as_deref() {
+            Some(pid) => pid.to_string(),
+            None => return Ok(()),
+        };
+
+        if let Err(e) = manager
+            .provider()
+            .read()
+            .await
+            .play_tts(&provider_call_id, text, None)
+            .await
+        {
+            tracing::warn!(call_id = %to, error = %e, "TTS playback failed");
+        }
+        manager.record_bot_speech(to, text);
         Ok(())
     }
 
