@@ -28,13 +28,13 @@ import { rerender } from "./_shared";
 import {
 	AddVoiceProviderModal,
 	PersonaEditModal,
-	voiceSelectedProvider,
-	voiceSelectedProviderData,
-	voiceShowAddModal,
 	type VoiceProviderData,
 	type VoiceTesting,
 	type VoiceTestResult,
 	type VoxtralRequirements,
+	voiceSelectedProvider,
+	voiceSelectedProviderData,
+	voiceShowAddModal,
 } from "./VoiceModals";
 
 interface VoiceProviders {
