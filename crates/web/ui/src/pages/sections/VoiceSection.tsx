@@ -10,7 +10,7 @@ import { connected } from "../../signals";
 import * as S from "../../state";
 import { fetchPhrase } from "../../tts-phrases";
 import { targetChecked, targetValue } from "../../typed-events";
-import { Modal, showToast } from "../../ui";
+import { Modal, showToast, Toasts } from "../../ui";
 import { getPttKey, getVadSensitivity, setPttKey, setVadSensitivity } from "../../voice-input";
 import {
 	createVoicePersona,
@@ -686,6 +686,7 @@ export function VoiceSection(): VNode {
 					voiceSelectedProviderData.value = null;
 				}}
 			/>
+			<Toasts />
 		</div>
 	);
 }
