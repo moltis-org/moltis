@@ -274,25 +274,25 @@ impl CallManager {
         let handle = tokio::spawn(async move {
             let call_id = call_id_owned;
             tokio::time::sleep(std::time::Duration::from_secs(max_secs)).await;
-            if let Some(mut rec) = calls.get_mut(&call_id) {
-                if !rec.state.is_terminal() {
-                    warn!(call_id = %call_id, "max duration exceeded, hanging up");
-                    rec.state = CallState::Timeout;
-                    rec.ended_at = Some(OffsetDateTime::now_utc());
-                    rec.end_reason = Some(CallEndReason::Timeout);
+            if let Some(mut rec) = calls.get_mut(&call_id)
+                && !rec.state.is_terminal()
+            {
+                warn!(call_id = %call_id, "max duration exceeded, hanging up");
+                rec.state = CallState::Timeout;
+                rec.ended_at = Some(OffsetDateTime::now_utc());
+                rec.end_reason = Some(CallEndReason::Timeout);
 
-                    if let Some(pid) = &rec.provider_call_id {
-                        let pid = pid.clone();
-                        drop(rec);
-                        let _ = provider.read().await.hangup_call(&pid).await;
-                    }
+                if let Some(pid) = &rec.provider_call_id {
+                    let pid = pid.clone();
+                    drop(rec);
+                    let _ = provider.read().await.hangup_call(&pid).await;
                 }
             }
             // Clean up the index entry.
-            if let Some(rec) = calls.get(&call_id) {
-                if let Some(pid) = &rec.provider_call_id {
-                    provider_index.remove(pid);
-                }
+            if let Some(rec) = calls.get(&call_id)
+                && let Some(pid) = &rec.provider_call_id
+            {
+                provider_index.remove(pid);
             }
         });
 

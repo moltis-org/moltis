@@ -9,19 +9,14 @@ use {
 pub type CallId = String;
 
 /// How a call should behave once connected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallMode {
     /// Deliver a message and hang up after a short delay. One-way notification.
     Notify,
     /// Full multi-turn agent conversation until explicit end or timeout.
+    #[default]
     Conversation,
-}
-
-impl Default for CallMode {
-    fn default() -> Self {
-        Self::Conversation
-    }
 }
 
 /// Call lifecycle states.

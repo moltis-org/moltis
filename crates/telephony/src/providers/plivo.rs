@@ -258,24 +258,24 @@ impl TelephonyProvider for PlivoProvider {
         let call_status = params.get("CallStatus").map(String::as_str).unwrap_or("");
 
         // Check for speech recognition result first.
-        if let Some(speech) = params.get("Speech") {
-            if !speech.is_empty() {
-                return Ok(CallEvent::Speech {
-                    provider_call_id: call_uuid,
-                    text: speech.clone(),
-                    confidence: None,
-                });
-            }
+        if let Some(speech) = params.get("Speech")
+            && !speech.is_empty()
+        {
+            return Ok(CallEvent::Speech {
+                provider_call_id: call_uuid,
+                text: speech.clone(),
+                confidence: None,
+            });
         }
 
         // Check for DTMF digits.
-        if let Some(digits) = params.get("Digits") {
-            if !digits.is_empty() {
-                return Ok(CallEvent::Dtmf {
-                    provider_call_id: call_uuid,
-                    digits: digits.clone(),
-                });
-            }
+        if let Some(digits) = params.get("Digits")
+            && !digits.is_empty()
+        {
+            return Ok(CallEvent::Dtmf {
+                provider_call_id: call_uuid,
+                digits: digits.clone(),
+            });
         }
 
         match call_status {
@@ -385,9 +385,7 @@ fn normalize_number(n: &str) -> String {
     }
     let mut result = String::with_capacity(trimmed.len());
     for (i, ch) in trimmed.chars().enumerate() {
-        if ch == '+' && i == 0 {
-            result.push(ch);
-        } else if ch.is_ascii_digit() {
+        if (ch == '+' && i == 0) || ch.is_ascii_digit() {
             result.push(ch);
         }
     }

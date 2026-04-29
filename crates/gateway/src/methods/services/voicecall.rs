@@ -111,7 +111,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         })?
                         .to_string();
 
-                    let from_number = plugin.from_number(&account_id).ok_or_else(|| {
+                    let from_number = plugin.caller_number(&account_id).ok_or_else(|| {
                         ErrorShape::new("not_configured", "no from_number for account")
                     })?;
                     if from_number.is_empty() {

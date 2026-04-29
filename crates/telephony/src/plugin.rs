@@ -63,7 +63,7 @@ impl TelephonyPlugin {
     }
 
     /// Get the configured from_number for an account.
-    pub fn from_number(&self, account_id: &str) -> Option<String> {
+    pub fn caller_number(&self, account_id: &str) -> Option<String> {
         self.accounts
             .get(account_id)
             .map(|a| a.config.from_number.clone())

@@ -111,11 +111,9 @@ mod tests {
         let a = pcm_to_mulaw(0);
         let b = pcm_to_mulaw(0);
         assert_eq!(a, b);
-        // Positive and negative zero may differ.
-        let pos = pcm_to_mulaw(1);
-        let neg = pcm_to_mulaw(-1);
-        // Both low-amplitude values should be close to the silence range.
-        assert!(pos != neg || pos == neg, "both encode");
+        // Low-amplitude values should encode without panicking.
+        let _pos = pcm_to_mulaw(1);
+        let _neg = pcm_to_mulaw(-1);
     }
 
     #[test]

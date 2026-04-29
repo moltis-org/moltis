@@ -900,7 +900,7 @@ pub(super) async fn complete_startup(
                 let plugin = tp.read().await;
                 for aid in plugin.account_ids() {
                     if let (Some(mgr), Some(from)) =
-                        (plugin.call_manager(&aid), plugin.from_number(&aid))
+                        (plugin.call_manager(&aid), plugin.caller_number(&aid))
                     {
                         voice_tool.add_manager(aid, mgr, from).await;
                     }
