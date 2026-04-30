@@ -161,8 +161,8 @@ pub trait ChatRuntime: Send + Sync {
 
     // ── Mid-flight steering ──────────────────────────────────────────────
 
-    /// Take (drain) any pending `/steer` text for a session.
-    async fn take_steer_text(&self, _session_key: &str) -> Option<String> {
+    /// Take (drain) all pending `/steer` texts for a session.
+    async fn take_steer_text(&self, _session_key: &str) -> Option<Vec<String>> {
         None
     }
 

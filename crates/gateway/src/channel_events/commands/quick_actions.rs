@@ -23,15 +23,18 @@ pub(in crate::channel_events) async fn handle_btw(
         ));
     }
 
-    // Resolve a provider (same pattern as session summary).
-    let provider: Arc<dyn moltis_agents::model::LlmProvider> = {
+    // Resolve a provider. Clone the registry Arc out of the inner lock
+    // first, then drop `inner` before acquiring the registry read lock
+    // to avoid nested lock contention.
+    let registry = {
         let inner = state.inner.read().await;
-        let Some(ref registry) = inner.llm_providers else {
-            return Err(ChannelError::unavailable("no LLM providers available"));
-        };
+        inner.llm_providers.clone()
+    };
+    let Some(registry) = registry else {
+        return Err(ChannelError::unavailable("no LLM providers available"));
+    };
+    let provider: Arc<dyn moltis_agents::model::LlmProvider> = {
         let reg = registry.read().await;
-
-        // Prefer the session's model, fall back to first available.
         let session_model = if let Some(ref meta) = state.services.session_metadata {
             meta.get(session_key).await.and_then(|e| e.model.clone())
         } else {

@@ -252,7 +252,7 @@ impl ChatRuntime for GatewayChatRuntime {
             .collect()
     }
 
-    async fn take_steer_text(&self, session_key: &str) -> Option<String> {
+    async fn take_steer_text(&self, session_key: &str) -> Option<Vec<String>> {
         self.state.take_steer_text(session_key).await
     }
 

@@ -858,8 +858,8 @@ pub(crate) async fn run_with_tools(
         let _ = steer_state.take_steer_text(&steer_session_key).await;
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            if let Some(text) = steer_state.take_steer_text(&steer_session_key).await {
-                steer_inbox_writer.lock().await.push(text);
+            if let Some(texts) = steer_state.take_steer_text(&steer_session_key).await {
+                steer_inbox_writer.lock().await.extend(texts);
             }
         }
     });

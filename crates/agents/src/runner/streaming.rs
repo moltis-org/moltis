@@ -868,13 +868,16 @@ pub async fn run_agent_loop_streaming(
             on_event,
         );
 
-        // Drain any pending /steer text and inject as user guidance.
+        // Drain any pending /steer text and inject as a system note.
+        // Uses system role to avoid consecutive-user-message violations
+        // with strict providers that enforce role alternation.
         if let Some(ref inbox) = steer_inbox {
             let mut guard = inbox.lock().await;
-            for text in guard.drain(..) {
-                debug!(steer_text = %text, "injecting /steer guidance");
-                messages.push(ChatMessage::user(format!(
-                    "[User steering note — adjust your approach accordingly]: {text}"
+            if !guard.is_empty() {
+                let combined = guard.drain(..).collect::<Vec<_>>().join("\n");
+                debug!(steer_text = %combined, "injecting /steer guidance");
+                messages.push(ChatMessage::system(format!(
+                    "[Steering note from the user — adjust your approach accordingly]: {combined}"
                 )));
             }
         }

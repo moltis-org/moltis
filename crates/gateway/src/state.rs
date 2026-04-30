@@ -286,8 +286,9 @@ pub struct GatewayInner {
     pub channel_command_mode_sessions: HashSet<String>,
     /// Sessions with fast/priority mode enabled.
     pub fast_mode_sessions: HashSet<String>,
-    /// Per-session steering text injected mid-run via `/steer`.
-    pub steer_text: HashMap<String, String>,
+    /// Per-session steering text queue injected mid-run via `/steer`.
+    /// Multiple `/steer` calls accumulate; all are drained on the next poll.
+    pub steer_text: HashMap<String, Vec<String>>,
     /// Which channel types are offered in the web UI (from config).
     pub channels_offered: Vec<String>,
     /// Hostnames that were discovered after passkeys already existed.
@@ -767,18 +768,26 @@ impl GatewayState {
             .contains(session_key)
     }
 
-    /// Set steering text for an active session run.
+    /// Append steering text for an active session run.
+    /// Multiple calls accumulate; all are drained on the next poll.
     pub async fn set_steer_text(&self, session_key: &str, text: String) {
         self.inner
             .write()
             .await
             .steer_text
-            .insert(session_key.to_string(), text);
+            .entry(session_key.to_string())
+            .or_default()
+            .push(text);
     }
 
-    /// Take (drain) any pending steering text for a session.
-    pub async fn take_steer_text(&self, session_key: &str) -> Option<String> {
-        self.inner.write().await.steer_text.remove(session_key)
+    /// Take (drain) all pending steering texts for a session.
+    pub async fn take_steer_text(&self, session_key: &str) -> Option<Vec<String>> {
+        let texts = self.inner.write().await.steer_text.remove(session_key)?;
+        if texts.is_empty() {
+            None
+        } else {
+            Some(texts)
+        }
     }
 
     /// Mark a hostname as needing passkey refresh.
