@@ -555,17 +555,6 @@ export function SessionHeader({
 						{session?.archived ? "Unarchive" : "Archive"}
 					</button>
 				)}
-				{showDelete && !isMain && (
-					<button
-						className={`${actionButtonClass} chat-session-btn-danger inline-flex items-center gap-1.5`}
-						onClick={onDelete}
-						title="Delete session"
-						style={{ background: "var(--error)", borderColor: "var(--error)", color: "#fff" }}
-					>
-						<span className="icon icon-sm icon-x-circle shrink-0" />
-						Delete
-					</button>
-				)}
 				{showFork && !isCron && (
 					<button
 						className={`${actionButtonClass} inline-flex items-center gap-1.5`}
@@ -584,6 +573,17 @@ export function SessionHeader({
 					>
 						<span className="icon icon-sm icon-share shrink-0" />
 						Share
+					</button>
+				)}
+				{showDelete && !isMain && (
+					<button
+						className={`${actionButtonClass} chat-session-btn-danger inline-flex items-center gap-1.5`}
+						onClick={onDelete}
+						title="Delete session"
+						style={{ background: "var(--error)", borderColor: "var(--error)", color: "#fff" }}
+					>
+						<span className="icon icon-sm icon-x-circle shrink-0" />
+						Delete
 					</button>
 				)}
 				{showStop && canStop && (

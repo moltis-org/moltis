@@ -343,6 +343,9 @@ export function appendFinalFooter(msgEl: HTMLElement | null, p: ChatPayload, eve
 		messageEl: msgEl,
 		sessionKey: p.sessionKey || eventSession || S.activeSessionKey,
 		messageIndex: p.messageIndex,
+		text: p.text || "",
+		runId: p.runId,
+		hasAudio: !!p.audio,
 	});
 }
 

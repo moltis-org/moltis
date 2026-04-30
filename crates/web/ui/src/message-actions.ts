@@ -3,107 +3,18 @@
 // Appended below each finalized assistant message footer.
 // The retry button opens a popover with "Try again", "Add details",
 // and "More concise" options.
+// Icons use CSS mask-image classes (icon-*) backed by SVG files on disk.
 
 import { sendRpc } from "./helpers";
 import { showToast } from "./ui";
 
-// ── SVG icon helpers ─────────────────────────────────────────
+// ── Icon helper ──────────────────────────────────────────────
 
-const NS = "http://www.w3.org/2000/svg";
-
-function svgIcon(viewBox: string, ...paths: string[]): SVGSVGElement {
-	const svg = document.createElementNS(NS, "svg");
-	svg.setAttribute("viewBox", viewBox);
-	svg.setAttribute("fill", "none");
-	svg.setAttribute("stroke", "currentColor");
-	svg.setAttribute("stroke-width", "2");
-	svg.setAttribute("stroke-linecap", "round");
-	svg.setAttribute("stroke-linejoin", "round");
-	svg.setAttribute("aria-hidden", "true");
-	svg.classList.add("msg-action-icon");
-	for (const d of paths) {
-		const p = document.createElementNS(NS, "path");
-		p.setAttribute("d", d);
-		svg.appendChild(p);
-	}
-	return svg;
-}
-
-function copyIcon(): SVGSVGElement {
-	// Two-rect clipboard icon (Lucide "copy")
-	const svg = document.createElementNS(NS, "svg");
-	svg.setAttribute("viewBox", "0 0 24 24");
-	svg.setAttribute("fill", "none");
-	svg.setAttribute("stroke", "currentColor");
-	svg.setAttribute("stroke-width", "2");
-	svg.setAttribute("stroke-linecap", "round");
-	svg.setAttribute("stroke-linejoin", "round");
-	svg.setAttribute("aria-hidden", "true");
-	svg.classList.add("msg-action-icon");
-	const r1 = document.createElementNS(NS, "rect");
-	r1.setAttribute("x", "9");
-	r1.setAttribute("y", "9");
-	r1.setAttribute("width", "13");
-	r1.setAttribute("height", "13");
-	r1.setAttribute("rx", "2");
-	svg.appendChild(r1);
-	const p = document.createElementNS(NS, "path");
-	p.setAttribute("d", "M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1");
-	svg.appendChild(p);
-	return svg;
-}
-
-function checkIcon(): SVGSVGElement {
-	return svgIcon("0 0 24 24", "M20 6 9 17l-5-5");
-}
-
-function retryIcon(): SVGSVGElement {
-	return svgIcon("0 0 24 24", "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8", "M21 3v5h-5");
-}
-
-function forkIcon(): SVGSVGElement {
-	// Git-branch style icon
-	const svg = document.createElementNS(NS, "svg");
-	svg.setAttribute("viewBox", "0 0 24 24");
-	svg.setAttribute("fill", "none");
-	svg.setAttribute("stroke", "currentColor");
-	svg.setAttribute("stroke-width", "2");
-	svg.setAttribute("stroke-linecap", "round");
-	svg.setAttribute("stroke-linejoin", "round");
-	svg.setAttribute("aria-hidden", "true");
-	svg.classList.add("msg-action-icon");
-	const l = document.createElementNS(NS, "line");
-	l.setAttribute("x1", "6");
-	l.setAttribute("y1", "3");
-	l.setAttribute("x2", "6");
-	l.setAttribute("y2", "15");
-	svg.appendChild(l);
-	const c1 = document.createElementNS(NS, "circle");
-	c1.setAttribute("cx", "18");
-	c1.setAttribute("cy", "6");
-	c1.setAttribute("r", "3");
-	svg.appendChild(c1);
-	const c2 = document.createElementNS(NS, "circle");
-	c2.setAttribute("cx", "6");
-	c2.setAttribute("cy", "18");
-	c2.setAttribute("r", "3");
-	svg.appendChild(c2);
-	const p = document.createElementNS(NS, "path");
-	p.setAttribute("d", "M18 9a9 9 0 0 1-9 9");
-	svg.appendChild(p);
-	return svg;
-}
-
-// ── Menu item icons (for retry popover) ──────────────────────
-
-function addDetailsIcon(): SVGSVGElement {
-	// List-plus style icon
-	return svgIcon("0 0 24 24", "M11 12H3", "M16 6H3", "M16 18H3", "M18 9v6", "M21 12h-6");
-}
-
-function conciseIcon(): SVGSVGElement {
-	// List-minus style icon
-	return svgIcon("0 0 24 24", "M11 12H3", "M16 6H3", "M16 18H3", "M21 12h-6");
+function iconSpan(iconClass: string): HTMLSpanElement {
+	const span = document.createElement("span");
+	span.className = `icon icon-sm ${iconClass}`;
+	span.setAttribute("aria-hidden", "true");
+	return span;
 }
 
 // ── Popover dismiss ──────────────────────────────────────────
@@ -129,6 +40,9 @@ export interface MessageActionContext {
 	messageEl: HTMLElement;
 	sessionKey: string;
 	messageIndex?: number;
+	text?: string;
+	runId?: string;
+	hasAudio?: boolean;
 }
 
 export function appendMessageActions(ctx: MessageActionContext): void {
@@ -138,16 +52,15 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 	bar.className = "msg-action-bar";
 
 	// ── Copy button ──────────────────────────────────────────
-	const copyBtn = actionButton(copyIcon(), "Copy");
+	const copyBtn = actionButton("icon-copy", "Copy");
 	copyBtn.addEventListener("click", () => {
 		const text = extractPlainText(messageEl);
 		if (navigator.clipboard?.writeText) {
 			navigator.clipboard.writeText(text).then(() => {
-				// Swap icon to checkmark briefly
-				copyBtn.replaceChildren(checkIcon());
+				copyBtn.replaceChildren(iconSpan("icon-checkmark"));
 				copyBtn.title = "Copied";
 				setTimeout(() => {
-					copyBtn.replaceChildren(copyIcon());
+					copyBtn.replaceChildren(iconSpan("icon-copy"));
 					copyBtn.title = "Copy";
 				}, 1500);
 			});
@@ -156,7 +69,7 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 	bar.appendChild(copyBtn);
 
 	// ── Retry button (with popover) ──────────────────────────
-	const retryBtn = actionButton(retryIcon(), "Retry");
+	const retryBtn = actionButton("icon-retry", "Retry");
 	retryBtn.addEventListener("click", (e) => {
 		e.stopPropagation();
 		if (activePopover && activePopover.parentElement === bar) {
@@ -167,15 +80,42 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 		const popover = buildRetryPopover(sessionKey, messageEl);
 		bar.appendChild(popover);
 		activePopover = popover;
-		// Dismiss on next outside click
 		requestAnimationFrame(() => {
 			document.addEventListener("click", onDocClick, { once: true });
 		});
 	});
 	bar.appendChild(retryBtn);
 
+	// ── Voice button ─────────────────────────────────────────
+	if (ctx.text && !ctx.hasAudio) {
+		const voiceBtn = actionButton("icon-microphone", "Voice it");
+		voiceBtn.addEventListener("click", async () => {
+			const params: Record<string, unknown> = { key: sessionKey };
+			if (ctx.runId) params.runId = ctx.runId;
+			if (Number.isInteger(ctx.messageIndex) && (ctx.messageIndex as number) >= 0) {
+				params.messageIndex = ctx.messageIndex;
+			}
+			if (!(params.runId || Number.isInteger(params.messageIndex))) {
+				showToast("Cannot generate voice for this message", "error");
+				return;
+			}
+			voiceBtn.classList.add("msg-action-btn-active");
+			voiceBtn.title = "Generating voice...";
+			const result = await sendRpc("sessions.voice.generate", params);
+			voiceBtn.classList.remove("msg-action-btn-active");
+			if (result?.ok) {
+				voiceBtn.replaceChildren(iconSpan("icon-checkmark"));
+				voiceBtn.title = "Voice generated";
+			} else {
+				voiceBtn.title = "Voice it";
+				showToast("Voice generation failed", "error");
+			}
+		});
+		bar.appendChild(voiceBtn);
+	}
+
 	// ── Fork button ──────────────────────────────────────────
-	const forkBtn = actionButton(forkIcon(), "Fork into new session");
+	const forkBtn = actionButton("icon-git-fork", "Fork into new session");
 	forkBtn.addEventListener("click", () => {
 		sendRpc("sessions.fork", {
 			key: sessionKey,
@@ -195,12 +135,12 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 
 // ── Button factory ───────────────────────────────────────────
 
-function actionButton(icon: SVGSVGElement, title: string): HTMLButtonElement {
+function actionButton(iconClass: string, title: string): HTMLButtonElement {
 	const btn = document.createElement("button");
 	btn.type = "button";
 	btn.className = "msg-action-btn";
 	btn.title = title;
-	btn.appendChild(icon);
+	btn.appendChild(iconSpan(iconClass));
 	return btn;
 }
 
@@ -210,20 +150,20 @@ function buildRetryPopover(sessionKey: string, messageEl: HTMLElement): HTMLElem
 	const pop = document.createElement("div");
 	pop.className = "msg-action-popover";
 
-	const items: Array<{ icon: SVGSVGElement; label: string; action: () => void }> = [
+	const items: Array<{ iconClass: string; label: string; action: () => void }> = [
 		{
-			icon: retryIcon(),
+			iconClass: "icon-retry",
 			label: "Try again",
 			action: () => retryMessage(sessionKey, messageEl),
 		},
 		{
-			icon: addDetailsIcon(),
+			iconClass: "icon-list-plus",
 			label: "Add details",
 			action: () =>
 				retryWithInstruction(sessionKey, messageEl, "Please provide more details and expand on your answer."),
 		},
 		{
-			icon: conciseIcon(),
+			iconClass: "icon-list-minus",
 			label: "More concise",
 			action: () => retryWithInstruction(sessionKey, messageEl, "Please be more concise and brief in your response."),
 		},
@@ -233,7 +173,7 @@ function buildRetryPopover(sessionKey: string, messageEl: HTMLElement): HTMLElem
 		const row = document.createElement("button");
 		row.type = "button";
 		row.className = "msg-action-popover-item";
-		row.appendChild(item.icon);
+		row.appendChild(iconSpan(item.iconClass));
 		const span = document.createElement("span");
 		span.textContent = item.label;
 		row.appendChild(span);
@@ -271,7 +211,6 @@ function retryWithInstruction(_sessionKey: string, _messageEl: HTMLElement, inst
 // ── Text extraction ──────────────────────────────────────────
 
 function extractPlainText(messageEl: HTMLElement): string {
-	// Clone the element, remove footer/action bar/reasoning, get textContent
 	const clone = messageEl.cloneNode(true) as HTMLElement;
 	for (const sel of [
 		".msg-model-footer",

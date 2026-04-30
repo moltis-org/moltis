@@ -2165,6 +2165,28 @@
     -webkit-mask-image: url("./icons/nav/webhooks.svg");
     mask-image: url("./icons/nav/webhooks.svg");
   }
+
+  /* Message action bar icons */
+  .icon-copy {
+    -webkit-mask-image: url("./icons/masks/mask-copy.svg");
+    mask-image: url("./icons/masks/mask-copy.svg");
+  }
+  .icon-retry {
+    -webkit-mask-image: url("./icons/masks/mask-retry.svg");
+    mask-image: url("./icons/masks/mask-retry.svg");
+  }
+  .icon-git-fork {
+    -webkit-mask-image: url("./icons/masks/mask-git-fork.svg");
+    mask-image: url("./icons/masks/mask-git-fork.svg");
+  }
+  .icon-list-plus {
+    -webkit-mask-image: url("./icons/masks/mask-list-plus.svg");
+    mask-image: url("./icons/masks/mask-list-plus.svg");
+  }
+  .icon-list-minus {
+    -webkit-mask-image: url("./icons/masks/mask-list-minus.svg");
+    mask-image: url("./icons/masks/mask-list-minus.svg");
+  }
 }
 
 /* ── Command Palette ──────────────────────────────────────────────── */

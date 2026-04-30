@@ -787,9 +787,10 @@
   background: var(--bg-hover);
 }
 
-.msg-action-icon {
-  width: 14px;
-  height: 14px;
+.msg-action-btn-active {
+  color: var(--accent);
+  opacity: 0.7;
+  pointer-events: none;
 }
 
 /* Retry popover */
@@ -838,9 +839,7 @@
   background: var(--bg-hover);
 }
 
-.msg-action-popover-item .msg-action-icon {
-  width: 14px;
-  height: 14px;
+.msg-action-popover-item .icon {
   color: var(--muted);
   flex-shrink: 0;
 }
