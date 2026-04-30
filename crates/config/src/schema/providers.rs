@@ -26,6 +26,7 @@ pub const KNOWN_PROVIDER_NAMES: &[&str] = &[
     // OpenAI-compatible providers (table-driven)
     "alibaba-coding",
     "cerebras",
+    "deepinfra",
     "deepseek",
     "fireworks",
     "gemini",

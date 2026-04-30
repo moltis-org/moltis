@@ -132,8 +132,8 @@ port = {port}                           # Port number (auto-generated for this i
                                     # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
 # show_legacy_models = true         # Show models older than 1 year in the chat model selector (they always appear in Settings)
 # All available providers (canonical list in schema/providers.rs):
-#   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
-#   "fireworks", "mistral", "openrouter", "cerebras", "minimax",
+#   "anthropic", "openai", "gemini", "groq", "xai", "deepinfra",
+#   "deepseek", "fireworks", "mistral", "openrouter", "cerebras", "minimax",
 #   "moonshot", "zai", "zai-code", "venice", "alibaba-coding",
 #   "ollama", "lmstudio", "local-llm", "openai-codex",
 #   "github-copilot", "kimi-code"
@@ -177,6 +177,14 @@ port = {port}                           # Port number (auto-generated for this i
 # api_key = "..."                             # Or set GROQ_API_KEY env var
 # models = ["llama-3.3-70b-versatile"]
 # alias = "groq"
+
+# ── DeepInfra ─────────────────────────────────────────────────
+# [providers.deepinfra]
+# enabled = true
+# api_key = "..."                             # Or set DEEPINFRA_API_KEY env var
+# models = ["meta-llama/Llama-4-Maverick-17B-128E-Instruct"]
+# base_url = "https://api.deepinfra.com/v1/openai"
+# alias = "deepinfra"
 
 # ── DeepSeek ──────────────────────────────────────────────────
 # [providers.deepseek]
@@ -386,6 +394,8 @@ port = {port}                           # Port number (auto-generated for this i
 # no_network = true                 # Disable network access in sandbox
 # image = "custom-image:tag"        # Custom Docker image (default: auto-built)
 # packages = [...]                  # Packages installed in sandbox containers
+# gpus = "all"                      # GPU passthrough: "all", "device=0", "device=0,1"
+                                    # (Docker/Podman only, ignored for other backends)
 
 # [tools.exec.sandbox.resource_limits]
 # memory_limit = "512M"             # Memory limit (e.g., "512M", "1G")
@@ -520,6 +530,7 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [failover]
 # enabled = true                    # Enable automatic failover
+# exact_model = false               # When true, user-selected models are exact — no fallback
 # fallback_models = []              # Ordered list of fallback models
 
 # ══════════════════════════════════════════════════════════════════════════════

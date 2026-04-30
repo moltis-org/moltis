@@ -128,6 +128,9 @@ impl DockerSandbox {
         if let Some(pids) = limits.pids_max {
             args.extend(["--pids-limit".to_string(), pids.to_string()]);
         }
+        if let Some(ref gpus) = self.config.gpus {
+            args.extend(["--gpus".to_string(), gpus.clone()]);
+        }
         args
     }
 

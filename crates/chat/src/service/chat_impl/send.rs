@@ -513,7 +513,15 @@ impl LiveChatService {
                     .ok_or_else(|| "no LLM providers configured".to_string())?
             };
 
-            if self.failover_config.enabled {
+            // When exact_model is set and the user explicitly selected a model,
+            // skip failover — use the chosen model or fail.
+            let user_selected = model_id.is_some();
+            let skip_failover = !self.failover_config.enabled
+                || (self.failover_config.exact_model && user_selected);
+
+            if skip_failover {
+                primary
+            } else {
                 let fallbacks = if self.failover_config.fallback_models.is_empty() {
                     // Auto-build: same model on other providers first, then same
                     // provider's other models, then everything else.
@@ -528,8 +536,6 @@ impl LiveChatService {
                     chain.extend(fallbacks);
                     Arc::new(moltis_agents::provider_chain::ProviderChain::new(chain))
                 }
-            } else {
-                primary
             }
         };
 

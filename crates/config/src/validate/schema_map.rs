@@ -86,6 +86,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("trusted_domains", Array(Box::new(Leaf))),
             ("backend", Leaf),
             ("resource_limits", resource_limits()),
+            ("gpus", Leaf),
             ("packages", Leaf),
             ("wasm_fuel_limit", Leaf),
             ("wasm_epoch_interval_ms", Leaf),
@@ -523,6 +524,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             "failover",
             Struct(HashMap::from([
                 ("enabled", Leaf),
+                ("exact_model", Leaf),
                 ("fallback_models", Leaf),
             ])),
         ),

@@ -692,6 +692,11 @@ pub struct SandboxConfig {
     /// execution.
     pub backend: String,
     pub resource_limits: ResourceLimitsConfig,
+    /// GPU device passthrough for Docker/Podman backends.
+    /// Examples: "all", "device=0", "device=0,1".
+    /// Ignored for Apple Container and WASM backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpus: Option<String>,
     /// Packages to install via `apt-get` in the sandbox image.
     /// Set to an empty list to skip provisioning.
     #[serde(default = "default_sandbox_packages")]
@@ -899,6 +904,7 @@ impl Default for SandboxConfig {
             trusted_domains: Vec::new(),
             backend: "auto".into(),
             resource_limits: ResourceLimitsConfig::default(),
+            gpus: None,
             packages: default_sandbox_packages(),
             wasm_fuel_limit: None,
             wasm_epoch_interval_ms: None,

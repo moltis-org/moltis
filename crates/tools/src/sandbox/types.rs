@@ -175,6 +175,8 @@ pub struct SandboxConfig {
     /// `"auto"` prefers Apple Container on macOS, then Podman, then Docker, then restricted-host.
     pub backend: String,
     pub resource_limits: ResourceLimits,
+    /// GPU device passthrough for Docker/Podman backends (e.g. "all", "device=0").
+    pub gpus: Option<String>,
     /// Packages to install via `apt-get` after container creation.
     /// Set to an empty list to skip provisioning.
     pub packages: Vec<String>,
@@ -204,6 +206,7 @@ impl Default for SandboxConfig {
             trusted_domains: Vec::new(),
             backend: "auto".into(),
             resource_limits: ResourceLimits::default(),
+            gpus: None,
             packages: Vec::new(),
             timezone: None,
             wasm_fuel_limit: None,
@@ -263,6 +266,7 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
                 cpu_quota: cfg.resource_limits.cpu_quota,
                 pids_max: cfg.resource_limits.pids_max,
             },
+            gpus: cfg.gpus.clone(),
             packages: cfg.packages.clone(),
             timezone: None, // Set by gateway from user profile
             wasm_fuel_limit: cfg.wasm_fuel_limit,

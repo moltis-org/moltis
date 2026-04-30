@@ -110,6 +110,25 @@ pub(crate) const ALIBABA_CODING_MODELS: &[(&str, &str)] = &[
     ("glm-4.7", "GLM-4.7"),
 ];
 
+/// Known DeepInfra models.
+/// See: <https://deepinfra.com/models>
+pub(crate) const DEEPINFRA_MODELS: &[(&str, &str)] = &[
+    (
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+        "Llama 4 Maverick",
+    ),
+    ("meta-llama/Llama-4-Scout-17B-16E-Instruct", "Llama 4 Scout"),
+    ("deepseek-ai/DeepSeek-V3-0324", "DeepSeek V3"),
+    ("deepseek-ai/DeepSeek-R1", "DeepSeek R1"),
+    ("Qwen/Qwen3-235B-A22B", "Qwen3 235B"),
+    ("Qwen/Qwen3-32B", "Qwen3 32B"),
+    (
+        "mistralai/Mistral-Small-24B-Instruct-2501",
+        "Mistral Small 24B",
+    ),
+    ("google/gemma-3-27b-it", "Gemma 3 27B"),
+];
+
 /// Known DeepSeek models.
 pub(crate) const DEEPSEEK_MODELS: &[(&str, &str)] = &[
     ("deepseek-chat", "DeepSeek Chat"),
@@ -241,6 +260,16 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         local_only: false,
     },
     OpenAiCompatDef {
+        config_name: "deepinfra",
+        env_key: "DEEPINFRA_API_KEY",
+        env_base_url_key: "DEEPINFRA_BASE_URL",
+        default_base_url: "https://api.deepinfra.com/v1/openai",
+        models: DEEPINFRA_MODELS,
+        supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
+    },
+    OpenAiCompatDef {
         config_name: "deepseek",
         env_key: "DEEPSEEK_API_KEY",
         env_base_url_key: "DEEPSEEK_BASE_URL",
@@ -315,6 +344,7 @@ mod tests {
         assert!(!CEREBRAS_MODELS.is_empty());
         assert!(!MINIMAX_MODELS.is_empty());
         assert!(!ZAI_MODELS.is_empty());
+        assert!(!DEEPINFRA_MODELS.is_empty());
         assert!(!MOONSHOT_MODELS.is_empty());
         assert!(!GEMINI_MODELS.is_empty());
     }
@@ -335,6 +365,7 @@ mod tests {
             ANTHROPIC_MODELS,
             MISTRAL_MODELS,
             CEREBRAS_MODELS,
+            DEEPINFRA_MODELS,
             MINIMAX_MODELS,
             ZAI_MODELS,
             MOONSHOT_MODELS,
