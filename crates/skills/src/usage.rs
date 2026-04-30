@@ -183,15 +183,24 @@ impl SkillUsageStore {
         self.inner.read().await.data.skills.clone()
     }
 
+    /// Force-flush any pending dirty data to disk. Call during graceful
+    /// shutdown to ensure debounced read events are not lost.
+    pub async fn shutdown_flush(&self) {
+        flush_to_disk(&self.inner, &self.path).await;
+    }
+
     /// Flush immediately if enough time has elapsed, otherwise notify the
     /// background task to handle it after the debounce interval.
     async fn maybe_flush(&self) {
         let now = now_secs();
-        let should_flush = {
+        let (is_dirty, elapsed) = {
             let guard = self.inner.read().await;
-            guard.dirty && now.saturating_sub(guard.last_flush_at) >= FLUSH_DEBOUNCE_SECS
+            (guard.dirty, now.saturating_sub(guard.last_flush_at))
         };
-        if should_flush {
+        if !is_dirty {
+            return;
+        }
+        if elapsed >= FLUSH_DEBOUNCE_SECS {
             flush_to_disk(&self.inner, &self.path).await;
         } else {
             self.flush_notify.notify_one();

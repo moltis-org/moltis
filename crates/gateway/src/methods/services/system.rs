@@ -138,12 +138,36 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "skills.remove",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
+                // Capture skill names from the repo before it's removed,
+                // so we can prune the usage store afterwards.
+                let source = ctx.params.get("source").and_then(|v| v.as_str());
+                let skill_names: Vec<String> = source
+                    .and_then(|s| {
+                        let path = moltis_skills::manifest::ManifestStore::default_path().ok()?;
+                        let store = moltis_skills::manifest::ManifestStore::new(path);
+                        let manifest = store.load().ok()?;
+                        let repo = manifest.find_repo(s)?;
+                        Some(repo.skills.iter().map(|s| s.name.clone()).collect())
+                    })
+                    .unwrap_or_default();
+
+                let result = ctx
+                    .state
                     .services
                     .skills
                     .remove(ctx.params.clone())
                     .await
-                    .map_err(ErrorShape::from)
+                    .map_err(ErrorShape::from)?;
+
+                // Prune usage entries for removed skills so they don't
+                // linger in /insights aggregates.
+                if let Some(store) = ctx.state.skill_usage_store.get() {
+                    for name in &skill_names {
+                        store.remove(name).await;
+                    }
+                }
+
+                Ok(result)
             })
         }),
     );
