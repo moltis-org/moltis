@@ -26,7 +26,7 @@ import {
 	tokenSpeedTone,
 	toolCallSummary,
 } from "../helpers";
-import { attachMessageVoiceControl } from "../message-voice";
+import { appendMessageActions } from "../message-actions";
 import { navigate } from "../router";
 import { settingsPath } from "../routes";
 import * as S from "../state";
@@ -237,17 +237,13 @@ function renderHistoryAssistantMessage(msg: AssistantMsg): HTMLElement | null {
 	if (el && msg.model) {
 		const footer = createModelFooter(msg);
 		el.appendChild(footer);
-		void attachMessageVoiceControl({
+		appendMessageActions({
 			messageEl: el,
-			footerEl: footer,
 			sessionKey: S.activeSessionKey,
+			messageIndex: msg.historyIndex,
 			text: msg.content || "",
 			runId: msg.run_id || undefined,
-			messageIndex: msg.historyIndex,
-			audioPath: msg.audio || undefined,
-			audioWarning: undefined,
-			forceAction: false,
-			autoplayOnGenerate: true,
+			hasAudio: !!msg.audio,
 		});
 	}
 	if (msg.inputTokens || msg.outputTokens) {
