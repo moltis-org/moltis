@@ -641,9 +641,32 @@ impl SandboxRouter {
     }
 
     /// Clean up sandbox resources for a session.
+    ///
+    /// For isolated backends, syncs workspace changes back to the host
+    /// before destroying the sandbox.
     pub async fn cleanup_session(&self, session_key: &str) -> Result<()> {
         let id = self.sandbox_id_for(session_key);
         let backend = self.resolve_backend(session_key).await;
+
+        // Sync workspace changes back to host for isolated backends.
+        if backend.is_isolated()
+            && let Some(host_workspace) = super::sync::resolve_sync_workspace(&self.config, &id)
+            && let Err(e) = super::sync::sync_out(
+                &*backend,
+                &id,
+                &host_workspace,
+                super::sync::DEFAULT_SANDBOX_WORKSPACE,
+            )
+            .await
+        {
+            warn!(
+                session = session_key,
+                %id,
+                error = %e,
+                "workspace sync-out failed, changes in sandbox may be lost"
+            );
+        }
+
         backend.cleanup(&id).await?;
         self.remove_override(session_key).await;
         self.remove_backend_override(session_key).await;

@@ -11,6 +11,7 @@ pub(crate) mod host;
 pub(crate) mod paths;
 pub(crate) mod platform;
 pub(crate) mod router;
+pub(crate) mod sync;
 pub(crate) mod types;
 pub(crate) mod wasm;
 

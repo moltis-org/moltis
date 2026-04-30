@@ -634,6 +634,26 @@ impl AgentTool for ExecTool {
                         backend: backend.backend_name().to_string(),
                         image: image.clone(),
                     });
+
+                    // Sync workspace for isolated backends on first run.
+                    if backend.is_isolated()
+                        && let Some(host_workspace) =
+                            crate::sandbox::sync::resolve_sync_workspace(router.config(), &id)
+                        && let Err(e) = crate::sandbox::sync::sync_in(
+                            &*backend,
+                            &id,
+                            &host_workspace,
+                            crate::sandbox::sync::DEFAULT_SANDBOX_WORKSPACE,
+                        )
+                        .await
+                    {
+                        warn!(
+                            session = sk,
+                            sandbox_id = %id,
+                            error = %e,
+                            "workspace sync-in failed, sandbox starts with empty workspace"
+                        );
+                    }
                 }
                 debug!(session = sk, sandbox_id = %id, command, "sandbox running command");
                 let mut sandbox_result = backend.exec(&id, command, &opts).await?;
