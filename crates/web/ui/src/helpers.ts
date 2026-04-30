@@ -273,7 +273,7 @@ export function renderMarkdown(raw: string): string {
 	const { text, tables } = extractAsciiTables(raw);
 	let result = markedInstance.parse(text) as string;
 	result = result.replace(/@@MOLTIS_ASCII_TABLE_(\d+)@@/g, (_: string, idx: string) => tables[Number(idx)] || "");
-	return result;
+	return result.trimEnd();
 }
 
 export function sendRpc<T = unknown>(method: string, params: unknown): Promise<RpcResponse<T>> {
