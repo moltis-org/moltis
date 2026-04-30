@@ -170,4 +170,10 @@ pub trait ChatRuntime: Send + Sync {
     async fn is_fast_mode(&self, _session_key: &str) -> bool {
         false
     }
+
+    /// Trigger background auto-title generation for a session.
+    ///
+    /// Called after the first assistant response. The gateway implements this
+    /// to spawn a background LLM call; the default is a no-op.
+    async fn trigger_auto_title(&self, _session_key: &str) {}
 }

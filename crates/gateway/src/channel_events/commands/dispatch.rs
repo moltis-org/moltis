@@ -73,6 +73,7 @@ pub(in crate::channel_events) async fn dispatch_command(
         "fork" => session_handlers::handle_fork(state, &session_key, args).await,
         "clear" => session_handlers::handle_clear(state, &session_key).await,
         "compact" => session_handlers::handle_compact(state, &session_key).await,
+        "title" => session_handlers::handle_title(state, &session_key).await,
         "context" => session_handlers::handle_context(state, &session_key).await,
         "sessions" => {
             session_handlers::handle_sessions(
@@ -152,6 +153,7 @@ mod tests {
             "fork",
             "clear",
             "compact",
+            "title",
             "context",
             "sessions",
             "attach",

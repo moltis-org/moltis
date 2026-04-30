@@ -47,6 +47,10 @@ pub fn all_commands() -> &'static [CommandDef] {
             description: "Compact session (summarize)",
         },
         CommandDef {
+            name: "title",
+            description: "Auto-generate session title",
+        },
+        CommandDef {
             name: "context",
             description: "Show session context info",
         },
@@ -221,6 +225,7 @@ mod tests {
             "fork",
             "clear",
             "compact",
+            "title",
             "context",
             "sessions",
             "attach",

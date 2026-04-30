@@ -857,6 +857,7 @@ mod share;
 pub(crate) mod summary;
 #[cfg(test)]
 mod tests;
+pub(crate) mod title;
 mod voice;
 
 pub use service::LiveSessionService;

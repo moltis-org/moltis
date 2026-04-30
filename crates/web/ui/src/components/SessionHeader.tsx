@@ -240,6 +240,15 @@ export function SessionHeader({
 		[commitRename],
 	);
 
+	const [generatingTitle, setGeneratingTitle] = useState(false);
+	const onGenerateTitle = useCallback(() => {
+		setGeneratingTitle(true);
+		sendRpc<{ label?: string }>("sessions.generate_title", { key: currentKey }).then((res) => {
+			setGeneratingTitle(false);
+			if (res?.ok) fetchSessions();
+		});
+	}, [currentKey]);
+
 	const onFork = useCallback(() => {
 		sendRpc<{ sessionKey?: string }>("sessions.fork", { key: currentKey }).then((res) => {
 			if (res?.ok && res.payload?.sessionKey) {
@@ -506,9 +515,19 @@ export function SessionHeader({
 		));
 
 	const renameCta = showName && showRenameButton && canRename && !renaming && (
-		<button className={actionButtonClass} onClick={startRename} title="Rename session">
-			Rename
-		</button>
+		<div className="flex items-center gap-1">
+			<button className={actionButtonClass} onClick={startRename} title="Rename session">
+				Rename
+			</button>
+			<button
+				className={actionButtonClass}
+				onClick={onGenerateTitle}
+				disabled={generatingTitle}
+				title="Auto-generate title from conversation"
+			>
+				{generatingTitle ? "..." : "Auto-title"}
+			</button>
+		</div>
 	);
 
 	return (
