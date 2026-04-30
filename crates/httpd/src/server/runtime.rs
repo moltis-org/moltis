@@ -1319,11 +1319,11 @@ pub async fn start_gateway(
         }
     }
 
-    // Spawn shutdown handler:
+    // Spawn shutdown handler (triggers on SIGINT or SIGTERM):
     // - unregister mDNS service (when configured)
     // - reset tailscale state on exit (when configured)
     // - give browser pool 5s to shut down gracefully
-    // - force process exit to avoid hanging after ctrl-c
+    // - force process exit to avoid hanging
     {
         let browser_for_shutdown = Arc::clone(&banner.browser_for_lifecycle);
         #[cfg(feature = "tailscale")]
@@ -1332,8 +1332,23 @@ pub async fn start_gateway(
         #[cfg(feature = "tailscale")]
         let ts_mode = banner.tailscale_mode;
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_err() {
-                return;
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{SignalKind, signal};
+                let mut sigterm =
+                    signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+                tokio::select! {
+                    result = tokio::signal::ctrl_c() => {
+                        if result.is_err() { return; }
+                    }
+                    _ = sigterm.recv() => {}
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                if tokio::signal::ctrl_c().await.is_err() {
+                    return;
+                }
             }
 
             #[cfg(feature = "mdns")]
