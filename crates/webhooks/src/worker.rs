@@ -220,7 +220,9 @@ impl WebhookWorker {
                     channel,
                     "deliver_only: no deliver callback configured, dropping message"
                 );
-                Ok(())
+                Err(anyhow::anyhow!(
+                    "deliver_only: no deliver callback configured for channel '{channel}'"
+                ))
             };
 
             let duration_ms = start.elapsed().as_millis() as i64;
