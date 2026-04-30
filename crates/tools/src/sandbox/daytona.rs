@@ -1,0 +1,457 @@
+//! Daytona Sandbox backend — cloud sandboxes via the Daytona API.
+//!
+//! Each session gets an ephemeral Daytona sandbox. Commands run via the
+//! toolbox REST API, files transfer via multipart upload and raw download.
+//! The sandbox is deleted on cleanup.
+//!
+//! Requires `DAYTONA_API_KEY` and optionally `DAYTONA_API_URL`.
+
+use std::{collections::HashMap, time::Duration};
+
+use {
+    async_trait::async_trait,
+    secrecy::{ExposeSecret, Secret},
+    tokio::sync::RwLock,
+    tracing::{debug, info, warn},
+};
+
+use crate::{
+    error::{Error, Result},
+    exec::{ExecOpts, ExecResult},
+    sandbox::{
+        file_system::SandboxReadResult,
+        types::{Sandbox, SandboxConfig, SandboxId},
+    },
+};
+
+/// Default Daytona API URL.
+const DEFAULT_API_URL: &str = "https://app.daytona.io/api";
+
+/// Default workspace directory inside Daytona sandboxes.
+const DAYTONA_WORKSPACE: &str = "/home/daytona";
+
+/// State of a live Daytona sandbox session.
+struct DaytonaSession {
+    sandbox_id: String,
+    workspace_dir: String,
+}
+
+/// Daytona Sandbox backend configuration.
+#[derive(Debug, Clone)]
+pub struct DaytonaSandboxConfig {
+    pub api_key: Secret<String>,
+    pub api_url: String,
+    pub target: Option<String>,
+    pub image: Option<String>,
+    pub language: Option<String>,
+}
+
+impl Default for DaytonaSandboxConfig {
+    fn default() -> Self {
+        Self {
+            api_key: Secret::new(String::new()),
+            api_url: DEFAULT_API_URL.into(),
+            target: None,
+            image: None,
+            language: None,
+        }
+    }
+}
+
+/// Daytona Sandbox backend.
+pub struct DaytonaSandbox {
+    #[allow(dead_code)]
+    config: SandboxConfig,
+    daytona: DaytonaSandboxConfig,
+    client: reqwest::Client,
+    active: RwLock<HashMap<String, DaytonaSession>>,
+}
+
+impl DaytonaSandbox {
+    pub fn new(config: SandboxConfig, daytona: DaytonaSandboxConfig) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(300))
+            .build()
+            .unwrap_or_default();
+        Self {
+            config,
+            daytona,
+            client,
+            active: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Build an authenticated request.
+    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        let url = format!("{}{path}", self.daytona.api_url);
+        self.client
+            .request(method, &url)
+            .bearer_auth(self.daytona.api_key.expose_secret())
+            .header("X-Daytona-Source", "moltis")
+    }
+
+    /// Create a Daytona sandbox, returning (sandbox_id, workspace_dir).
+    async fn create_sandbox(&self) -> Result<(String, String)> {
+        let mut body = serde_json::json!({});
+
+        if let Some(ref image) = self.daytona.image {
+            body["image"] = serde_json::Value::String(image.clone());
+        }
+        if let Some(ref target) = self.daytona.target {
+            body["target"] = serde_json::Value::String(target.clone());
+        }
+        if let Some(ref lang) = self.daytona.language {
+            body["labels"] = serde_json::json!({
+                "code-toolbox-language": lang,
+            });
+        }
+
+        let resp = self
+            .request(reqwest::Method::POST, "/workspace")
+            .timeout(Duration::from_secs(120))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Error::message(format!("daytona: failed to create sandbox: {e}")))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Error::message(format!(
+                "daytona: create sandbox failed (HTTP {status}): {text}"
+            )));
+        }
+
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| Error::message(format!("daytona: invalid create response: {e}")))?;
+
+        let sandbox_id = data["id"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| Error::message("daytona: missing id in create response"))?;
+
+        // Try to get the workspace directory from the response.
+        let workspace_dir = data["info"]["projectDir"]
+            .as_str()
+            .or_else(|| data["info"]["homeDir"].as_str())
+            .map(String::from)
+            .unwrap_or_else(|| DAYTONA_WORKSPACE.to_string());
+
+        Ok((sandbox_id, workspace_dir))
+    }
+
+    /// Run a command via the toolbox API.
+    async fn run_command(
+        &self,
+        sandbox_id: &str,
+        command: &str,
+        cwd: &str,
+        opts: &ExecOpts,
+    ) -> Result<ExecResult> {
+        let timeout_secs = opts.timeout.as_secs().max(1);
+        let body = serde_json::json!({
+            "command": command,
+            "cwd": cwd,
+            "timeout": timeout_secs,
+        });
+
+        let resp = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/workspace/{sandbox_id}/toolbox/process/execute"),
+            )
+            .timeout(opts.timeout + Duration::from_secs(10))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| Error::message(format!("daytona: command request failed: {e}")))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Error::message(format!(
+                "daytona: command failed (HTTP {status}): {text}"
+            )));
+        }
+
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| Error::message(format!("daytona: invalid command response: {e}")))?;
+
+        let exit_code = data["exitCode"].as_i64().unwrap_or(-1) as i32;
+        let mut stdout = data["result"].as_str().unwrap_or("").to_string();
+
+        stdout.truncate(opts.max_output_bytes);
+
+        Ok(ExecResult {
+            stdout,
+            stderr: String::new(),
+            exit_code,
+        })
+    }
+
+    /// Upload a file to the sandbox via the toolbox API.
+    async fn upload_file(&self, sandbox_id: &str, path: &str, content: &[u8]) -> Result<()> {
+        let file_name: String = std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("file")
+            .to_string();
+        let part = reqwest::multipart::Part::bytes(content.to_vec())
+            .file_name(file_name)
+            .mime_str("application/octet-stream")
+            .map_err(|e| Error::message(format!("daytona: mime error: {e}")))?;
+
+        let form = reqwest::multipart::Form::new().part("file", part);
+
+        let resp = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/workspace/{sandbox_id}/toolbox/files/upload"),
+            )
+            .query(&[("path", path)])
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| Error::message(format!("daytona: file upload failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Error::message(format!(
+                "daytona: file upload failed: {text}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Download a file from the sandbox via the toolbox API.
+    async fn download_file(&self, sandbox_id: &str, path: &str) -> Result<Option<Vec<u8>>> {
+        let resp = self
+            .request(
+                reqwest::Method::GET,
+                &format!("/workspace/{sandbox_id}/toolbox/files/download"),
+            )
+            .query(&[("path", path)])
+            .send()
+            .await
+            .map_err(|e| Error::message(format!("daytona: file download failed: {e}")))?;
+
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(Error::message(format!(
+                "daytona: file download failed: {text}"
+            )));
+        }
+
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| Error::message(format!("daytona: failed to read file bytes: {e}")))?;
+
+        Ok(Some(bytes.to_vec()))
+    }
+
+    /// Delete a sandbox.
+    async fn delete_sandbox(&self, sandbox_id: &str) -> Result<()> {
+        let resp = self
+            .request(reqwest::Method::DELETE, &format!("/workspace/{sandbox_id}"))
+            .send()
+            .await
+            .map_err(|e| Error::message(format!("daytona: delete request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            if !text.contains("not found") {
+                return Err(Error::message(format!(
+                    "daytona: delete sandbox failed: {text}"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the session state for a sandbox, or None.
+    async fn session_state(&self, id: &SandboxId) -> Option<(String, String)> {
+        self.active
+            .read()
+            .await
+            .get(&id.key)
+            .map(|s| (s.sandbox_id.clone(), s.workspace_dir.clone()))
+    }
+}
+
+#[async_trait]
+impl Sandbox for DaytonaSandbox {
+    fn backend_name(&self) -> &'static str {
+        "daytona"
+    }
+
+    fn is_real(&self) -> bool {
+        true
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
+    fn is_isolated(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        if self.session_state(id).await.is_some() {
+            return Ok(());
+        }
+
+        info!(%id, "daytona: creating sandbox");
+
+        let (sandbox_id, workspace_dir) = self.create_sandbox().await?;
+
+        info!(%id, daytona_id = sandbox_id, workspace = workspace_dir, "daytona: sandbox ready");
+
+        self.active
+            .write()
+            .await
+            .insert(id.key.clone(), DaytonaSession {
+                sandbox_id,
+                workspace_dir,
+            });
+
+        Ok(())
+    }
+
+    async fn exec(&self, id: &SandboxId, command: &str, opts: &ExecOpts) -> Result<ExecResult> {
+        let (sandbox_id, workspace_dir) = self
+            .session_state(id)
+            .await
+            .ok_or_else(|| Error::message(format!("daytona: no active sandbox for {id}")))?;
+
+        let cwd = opts
+            .working_dir
+            .as_ref()
+            .and_then(|p| p.to_str())
+            .unwrap_or(&workspace_dir);
+
+        self.run_command(&sandbox_id, command, cwd, opts).await
+    }
+
+    async fn read_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        max_bytes: u64,
+    ) -> Result<SandboxReadResult> {
+        let (sandbox_id, _) = self
+            .session_state(id)
+            .await
+            .ok_or_else(|| Error::message(format!("daytona: no active sandbox for {id}")))?;
+
+        match self.download_file(&sandbox_id, file_path).await? {
+            None => Ok(SandboxReadResult::NotFound),
+            Some(bytes) => {
+                if bytes.len() as u64 > max_bytes {
+                    Ok(SandboxReadResult::TooLarge(bytes.len() as u64))
+                } else {
+                    Ok(SandboxReadResult::Ok(bytes))
+                }
+            },
+        }
+    }
+
+    async fn write_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        let (sandbox_id, _) = self
+            .session_state(id)
+            .await
+            .ok_or_else(|| Error::message(format!("daytona: no active sandbox for {id}")))?;
+
+        // Ensure parent directory exists.
+        if let Some(parent) = std::path::Path::new(file_path).parent()
+            && let Some(parent_str) = parent.to_str()
+        {
+            let mkdir_opts = ExecOpts {
+                timeout: Duration::from_secs(10),
+                ..Default::default()
+            };
+            let _ = self
+                .run_command(
+                    &sandbox_id,
+                    &format!("mkdir -p {parent_str}"),
+                    "/",
+                    &mkdir_opts,
+                )
+                .await;
+        }
+
+        self.upload_file(&sandbox_id, file_path, content).await?;
+
+        Ok(None)
+    }
+
+    async fn cleanup(&self, id: &SandboxId) -> Result<()> {
+        let session = self.active.write().await.remove(&id.key);
+        if let Some(session) = session {
+            debug!(%id, daytona_id = session.sandbox_id, "daytona: deleting sandbox");
+            if let Err(e) = self.delete_sandbox(&session.sandbox_id).await {
+                warn!(%id, error = %e, "daytona: sandbox deletion failed during cleanup");
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_daytona_sandbox_backend_name() {
+        let sandbox =
+            DaytonaSandbox::new(SandboxConfig::default(), DaytonaSandboxConfig::default());
+        assert_eq!(sandbox.backend_name(), "daytona");
+        assert!(sandbox.is_real());
+        assert!(sandbox.provides_fs_isolation());
+        assert!(sandbox.is_isolated());
+    }
+
+    #[test]
+    fn test_daytona_config_defaults() {
+        let config = DaytonaSandboxConfig::default();
+        assert_eq!(config.api_url, "https://app.daytona.io/api");
+        assert!(config.target.is_none());
+        assert!(config.image.is_none());
+        assert!(config.language.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_no_active_sandbox_returns_error() {
+        let sandbox =
+            DaytonaSandbox::new(SandboxConfig::default(), DaytonaSandboxConfig::default());
+        let id = SandboxId {
+            scope: crate::sandbox::types::SandboxScope::Session,
+            key: "test".into(),
+        };
+        let opts = ExecOpts::default();
+        let result = sandbox.exec(&id, "echo hello", &opts).await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no active sandbox")
+        );
+    }
+}

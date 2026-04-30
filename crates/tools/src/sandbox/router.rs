@@ -323,6 +323,7 @@ pub(crate) fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         "wasm" | "wasmtime" => create_wasm_backend(config),
         #[cfg(feature = "vercel-sandbox")]
         "vercel" => create_vercel_backend(config),
+        "daytona" => create_daytona_backend(config),
         _ => auto_detect_backend(config),
     }
 }
@@ -396,6 +397,47 @@ fn create_vercel_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         "sandbox backend: vercel (Firecracker microVM)"
     );
     Arc::new(VercelSandbox::new(config, vercel_config))
+}
+
+/// Create a Daytona sandbox backend, falling back to `RestrictedHostSandbox`
+/// if the API key is not configured.
+fn create_daytona_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
+    use super::daytona::{DaytonaSandbox, DaytonaSandboxConfig};
+
+    let api_key = config
+        .daytona_api_key
+        .clone()
+        .or_else(|| std::env::var("DAYTONA_API_KEY").ok())
+        .unwrap_or_default();
+
+    if api_key.is_empty() {
+        tracing::warn!(
+            "daytona sandbox requested but no API key configured (set DAYTONA_API_KEY); \
+             using restricted-host"
+        );
+        return Arc::new(RestrictedHostSandbox::new(config));
+    }
+
+    let daytona_config = DaytonaSandboxConfig {
+        api_key: secrecy::Secret::new(api_key),
+        api_url: config
+            .daytona_api_url
+            .clone()
+            .or_else(|| std::env::var("DAYTONA_API_URL").ok())
+            .unwrap_or_else(|| "https://app.daytona.io/api".into()),
+        target: config
+            .daytona_target
+            .clone()
+            .or_else(|| std::env::var("DAYTONA_TARGET").ok()),
+        image: config.daytona_image.clone(),
+        language: None,
+    };
+
+    tracing::info!(
+        api_url = daytona_config.api_url,
+        "sandbox backend: daytona (cloud sandbox)"
+    );
+    Arc::new(DaytonaSandbox::new(config, daytona_config))
 }
 
 /// Wrap a primary sandbox backend with a failover chain.
@@ -512,6 +554,17 @@ pub fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
                 "no local container runtime; using vercel sandbox (VERCEL_TOKEN detected)"
             );
             return create_vercel_backend(config);
+        }
+    }
+
+    {
+        let has_daytona_key =
+            config.daytona_api_key.is_some() || std::env::var("DAYTONA_API_KEY").is_ok();
+        if has_daytona_key {
+            tracing::info!(
+                "no local container runtime; using daytona sandbox (DAYTONA_API_KEY detected)"
+            );
+            return create_daytona_backend(config);
         }
     }
 

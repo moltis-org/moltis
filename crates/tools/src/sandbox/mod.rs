@@ -5,6 +5,7 @@
 #[cfg(target_os = "macos")]
 pub(crate) mod apple;
 pub(crate) mod containers;
+pub(crate) mod daytona;
 pub(crate) mod docker;
 pub(crate) mod file_system;
 pub(crate) mod host;
@@ -37,6 +38,7 @@ pub use {
         list_running_containers, list_sandbox_images, remove_container, remove_sandbox_image,
         restart_container_daemon, sandbox_image_tag, stop_container,
     },
+    daytona::{DaytonaSandbox, DaytonaSandboxConfig},
     docker::{DockerSandbox, NoSandbox},
     host::{HostProvisionResult, is_debian_host, provision_host_packages},
     paths::shared_home_dir_path,

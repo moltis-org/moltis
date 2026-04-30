@@ -204,6 +204,16 @@ pub struct SandboxConfig {
     pub vercel_vcpus: Option<u32>,
     /// Vercel snapshot ID for fast cold starts.
     pub vercel_snapshot_id: Option<String>,
+
+    // ── Daytona sandbox configuration ───────────────────────────────────
+    /// Daytona API key (`DAYTONA_API_KEY`).
+    pub daytona_api_key: Option<String>,
+    /// Daytona API URL (default: `https://app.daytona.io/api`).
+    pub daytona_api_url: Option<String>,
+    /// Daytona target region/environment.
+    pub daytona_target: Option<String>,
+    /// Custom image for Daytona sandbox creation.
+    pub daytona_image: Option<String>,
 }
 
 impl Default for SandboxConfig {
@@ -235,6 +245,10 @@ impl Default for SandboxConfig {
             vercel_timeout_ms: None,
             vercel_vcpus: None,
             vercel_snapshot_id: None,
+            daytona_api_key: None,
+            daytona_api_url: None,
+            daytona_target: None,
+            daytona_image: None,
         }
     }
 }
@@ -295,7 +309,7 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             wasm_fuel_limit: cfg.wasm_fuel_limit,
             wasm_epoch_interval_ms: cfg.wasm_epoch_interval_ms,
             wasm_tool_limits: cfg.wasm_tool_limits.as_ref().map(WasmToolLimits::from),
-            // Vercel config is populated from env vars by the gateway.
+            // Remote backend config is populated from env vars by the gateway.
             vercel_token: None,
             vercel_project_id: None,
             vercel_team_id: None,
@@ -303,6 +317,10 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             vercel_timeout_ms: None,
             vercel_vcpus: None,
             vercel_snapshot_id: None,
+            daytona_api_key: None,
+            daytona_api_url: None,
+            daytona_target: None,
+            daytona_image: None,
         }
     }
 }
