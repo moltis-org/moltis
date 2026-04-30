@@ -202,8 +202,8 @@ async fn run_single_probe(
         };
     }
 
-    let completion =
-        tokio::time::timeout(Duration::from_secs(20), provider.check_availability()).await;
+    let probe_timeout = provider.probe_timeout();
+    let completion = tokio::time::timeout(probe_timeout, provider.check_availability()).await;
 
     match completion {
         Ok(Ok(_)) => {
@@ -280,7 +280,7 @@ async fn run_single_probe(
             display_name,
             provider_name,
             status: ProbeStatus::Error {
-                message: "probe timeout after 20s".to_string(),
+                message: format!("probe timeout after {}s", probe_timeout.as_secs()),
             },
         },
     }

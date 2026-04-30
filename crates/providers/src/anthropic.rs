@@ -211,7 +211,8 @@ impl AnthropicProvider {
         // 404 means the model ID doesn't exist — return an error directly
         // instead of wasting tokens on a completion probe.
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            let body_text = resp.text().await.unwrap_or_default();
+            let mut body_text = resp.text().await.unwrap_or_default();
+            body_text.truncate(200);
             anyhow::bail!(
                 "Model '{}' not found in Anthropic catalog (HTTP 404: {})",
                 self.model,

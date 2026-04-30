@@ -328,9 +328,7 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn probe_timeout(&self) -> std::time::Duration {
-        self.probe_timeout_secs
-            .map(|s| std::time::Duration::from_secs(s.max(1)))
-            .unwrap_or_else(|| std::time::Duration::from_secs(30))
+        self.probe_timeout_duration()
     }
 
     async fn check_availability(&self) -> anyhow::Result<()> {

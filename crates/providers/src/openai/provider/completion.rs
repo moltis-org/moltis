@@ -247,7 +247,7 @@ impl OpenAiProvider {
                     provider = %self.provider_name,
                     "catalog endpoint unreachable, falling back to completion probe"
                 );
-                return self.probe_chat_completions().await;
+                return self.timed_probe_chat_completions().await;
             },
         };
 
@@ -257,7 +257,7 @@ impl OpenAiProvider {
                 provider = %self.provider_name,
                 "catalog endpoint returned error, falling back to completion probe"
             );
-            return self.probe_chat_completions().await;
+            return self.timed_probe_chat_completions().await;
         }
 
         let body: serde_json::Value = match resp.json().await {
@@ -268,7 +268,7 @@ impl OpenAiProvider {
                     provider = %self.provider_name,
                     "catalog response parse failed, falling back to completion probe"
                 );
-                return self.probe_chat_completions().await;
+                return self.timed_probe_chat_completions().await;
             },
         };
 
@@ -293,7 +293,23 @@ impl OpenAiProvider {
             catalog_models = ids.len(),
             "model not found in catalog, falling back to completion probe"
         );
-        self.probe_chat_completions().await
+        self.timed_probe_chat_completions().await
+    }
+
+    /// Run `probe_chat_completions()` with the configured `probe_timeout()`.
+    async fn timed_probe_chat_completions(&self) -> anyhow::Result<()> {
+        let timeout = self.probe_timeout_duration();
+        tokio::time::timeout(timeout, self.probe_chat_completions())
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!("Connection timed out after {} seconds", timeout.as_secs())
+            })?
+    }
+
+    pub(crate) fn probe_timeout_duration(&self) -> Duration {
+        self.probe_timeout_secs
+            .map(|s| Duration::from_secs(s.max(1)))
+            .unwrap_or_else(|| Duration::from_secs(30))
     }
 
     /// Non-streaming completion using the Chat Completions API.
