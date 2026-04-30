@@ -757,6 +757,94 @@
   max-width: 320px;
 }
 
+/* ── Message action bar (copy, retry, fork) ── */
+
+.msg-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  position: relative;
+}
+
+.msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.msg-action-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.msg-action-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* Retry popover */
+
+.msg-action-popover {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 24px;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  z-index: 50;
+  padding: 4px;
+  animation: msg-action-pop-in 0.12s ease-out;
+}
+
+@keyframes msg-action-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.msg-action-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.78rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.msg-action-popover-item:hover {
+  background: var(--bg-hover);
+}
+
+.msg-action-popover-item .msg-action-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
 /* ── Waveform Audio Player ── */
 
 .waveform-player {

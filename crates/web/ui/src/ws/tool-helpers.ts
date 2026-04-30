@@ -21,6 +21,7 @@ import {
 	tokenSpeedTone,
 	toolCallSummary,
 } from "../helpers";
+import { appendMessageActions } from "../message-actions";
 import { attachMessageVoiceControl } from "../message-voice";
 import { navigate } from "../router";
 import * as S from "../state";
@@ -336,6 +337,12 @@ export function appendFinalFooter(msgEl: HTMLElement | null, p: ChatPayload, eve
 		audioWarning: p.audioWarning || undefined,
 		forceAction: p.replyMedium === "voice" && !p.audio,
 		autoplayOnGenerate: true,
+	});
+
+	appendMessageActions({
+		messageEl: msgEl,
+		sessionKey: p.sessionKey || eventSession || S.activeSessionKey,
+		messageIndex: p.messageIndex,
 	});
 }
 
