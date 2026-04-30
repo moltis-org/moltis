@@ -234,9 +234,15 @@ impl McpManager {
                                     .handle_unauthorized(www_authenticate.as_deref())
                                     .await?;
 
+                                // Store provider before retry so auth_state is
+                                // visible even if the retry also fails (GH-927).
+                                let mut inner = self.inner.write().await;
+                                inner
+                                    .auth_providers
+                                    .insert(name.to_string(), auth_provider.clone());
+                                drop(inner);
+
                                 if !auth_ok {
-                                    let mut inner = self.inner.write().await;
-                                    inner.auth_providers.insert(name.to_string(), auth_provider);
                                     return Err(McpManagerError::OAuthRequired {
                                         server: name.to_string(),
                                     }
@@ -276,9 +282,15 @@ impl McpManager {
                                     .handle_unauthorized(www_authenticate.as_deref())
                                     .await?;
 
+                                // Store provider before retry so auth_state is
+                                // visible even if the retry also fails (GH-927).
+                                let mut inner = self.inner.write().await;
+                                inner
+                                    .auth_providers
+                                    .insert(name.to_string(), auth_provider.clone());
+                                drop(inner);
+
                                 if !auth_ok {
-                                    let mut inner = self.inner.write().await;
-                                    inner.auth_providers.insert(name.to_string(), auth_provider);
                                     return Err(McpManagerError::OAuthRequired {
                                         server: name.to_string(),
                                     }
@@ -354,9 +366,15 @@ impl McpManager {
                                     .handle_unauthorized(www_authenticate.as_deref())
                                     .await?;
 
+                                // Store provider before retry so auth_state is
+                                // visible even if the retry also fails (GH-927).
+                                let mut inner = self.inner.write().await;
+                                inner
+                                    .auth_providers
+                                    .insert(name.to_string(), auth_provider.clone());
+                                drop(inner);
+
                                 if !auth_ok {
-                                    let mut inner = self.inner.write().await;
-                                    inner.auth_providers.insert(name.to_string(), auth_provider);
                                     return Err(McpManagerError::OAuthRequired {
                                         server: name.to_string(),
                                     }
@@ -395,9 +413,15 @@ impl McpManager {
                                     .handle_unauthorized(www_authenticate.as_deref())
                                     .await?;
 
+                                // Store provider before retry so auth_state is
+                                // visible even if the retry also fails (GH-927).
+                                let mut inner = self.inner.write().await;
+                                inner
+                                    .auth_providers
+                                    .insert(name.to_string(), auth_provider.clone());
+                                drop(inner);
+
                                 if !auth_ok {
-                                    let mut inner = self.inner.write().await;
-                                    inner.auth_providers.insert(name.to_string(), auth_provider);
                                     return Err(McpManagerError::OAuthRequired {
                                         server: name.to_string(),
                                     }
@@ -1002,6 +1026,47 @@ mod tests {
             statuses[0].auth_state,
             Some(McpAuthState::Failed),
             "auth_state must be Failed so the UI can show a Re-authenticate button"
+        );
+    }
+
+    /// Same as the SSE test above but for the StreamableHttp transport path.
+    #[tokio::test]
+    async fn test_start_server_streamable_http_expired_token_preserves_auth_state() {
+        let mut mock_server = mockito::Server::new_async().await;
+        // StreamableHttp POSTs directly to the configured URL.
+        let _post_401 = mock_server
+            .mock("POST", "/mcp")
+            .with_status(401)
+            .with_header("www-authenticate", "Bearer")
+            .create_async()
+            .await;
+
+        let url = format!("{}/mcp", mock_server.url());
+        let mut reg = McpRegistry::new();
+        let config = McpServerConfig {
+            transport: TransportType::StreamableHttp,
+            url: Some(secrecy::Secret::new(url)),
+            enabled: true,
+            oauth: Some(McpOAuthConfig {
+                client_id: "test-client".into(),
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                scopes: vec![],
+            }),
+            ..Default::default()
+        };
+        reg.servers.insert("analytics".into(), config.clone());
+        let mgr = McpManager::new(reg);
+
+        let err = mgr.start_server("analytics", &config).await;
+        assert!(err.is_err(), "start_server should fail with 401");
+
+        let statuses = mgr.status_all().await;
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(
+            statuses[0].auth_state,
+            Some(McpAuthState::Failed),
+            "StreamableHttp auth_state must be Failed for re-auth button"
         );
     }
 }
