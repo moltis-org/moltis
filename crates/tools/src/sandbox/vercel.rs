@@ -298,8 +298,8 @@ impl VercelSandbox {
             }
         }
 
-        stdout.truncate(opts.max_output_bytes);
-        stderr.truncate(opts.max_output_bytes);
+        stdout.truncate(stdout.floor_char_boundary(opts.max_output_bytes));
+        stderr.truncate(stderr.floor_char_boundary(opts.max_output_bytes));
 
         Ok((stdout, stderr))
     }

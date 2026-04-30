@@ -150,9 +150,14 @@ impl DaytonaSandbox {
         cwd: &str,
         opts: &ExecOpts,
     ) -> Result<ExecResult> {
+        // The Daytona toolbox API combines stdout and stderr in the `result`
+        // field. To separate them, wrap the command to redirect stderr to a
+        // temp file, then read it back in a second call.
+        let stderr_file = format!("/tmp/moltis-stderr-{}", uuid::Uuid::new_v4());
+        let wrapped = format!("{{ {command} ; }} 2>{stderr_file}");
         let timeout_secs = opts.timeout.as_secs().max(1);
         let body = serde_json::json!({
-            "command": command,
+            "command": wrapped,
             "cwd": cwd,
             "timeout": timeout_secs,
         });
@@ -184,11 +189,33 @@ impl DaytonaSandbox {
         let exit_code = data["exitCode"].as_i64().unwrap_or(-1) as i32;
         let mut stdout = data["result"].as_str().unwrap_or("").to_string();
 
-        stdout.truncate(opts.max_output_bytes);
+        // Retrieve stderr from the temp file.
+        let stderr_body = serde_json::json!({
+            "command": format!("cat {stderr_file} 2>/dev/null; rm -f {stderr_file}"),
+            "cwd": "/",
+            "timeout": 5,
+        });
+        let mut stderr = String::new();
+        if let Ok(resp) = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/workspace/{sandbox_id}/toolbox/process/execute"),
+            )
+            .timeout(Duration::from_secs(10))
+            .json(&stderr_body)
+            .send()
+            .await
+            && let Ok(data) = resp.json::<serde_json::Value>().await
+        {
+            stderr = data["result"].as_str().unwrap_or("").to_string();
+        }
+
+        stdout.truncate(stdout.floor_char_boundary(opts.max_output_bytes));
+        stderr.truncate(stderr.floor_char_boundary(opts.max_output_bytes));
 
         Ok(ExecResult {
             stdout,
-            stderr: String::new(),
+            stderr,
             exit_code,
         })
     }

@@ -904,6 +904,11 @@ pub async fn prepare_gateway_core(
                 sandbox_config.daytona_api_key.is_some()
                     || std::env::var("DAYTONA_API_KEY").is_ok(),
             ),
+            (
+                "firecracker",
+                sandbox_config.firecracker_bin.is_some()
+                    || std::path::Path::new("/usr/local/bin/firecracker").exists(),
+            ),
         ] {
             if has_creds && router.backend_name() != name {
                 let backend =
