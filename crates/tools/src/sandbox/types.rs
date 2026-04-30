@@ -214,6 +214,20 @@ pub struct SandboxConfig {
     pub daytona_target: Option<String>,
     /// Custom image for Daytona sandbox creation.
     pub daytona_image: Option<String>,
+
+    // ── Firecracker sandbox configuration (Linux only) ──────────────────
+    /// Path to the `firecracker` binary.
+    pub firecracker_bin: Option<PathBuf>,
+    /// Path to the uncompressed Linux kernel (`vmlinux`).
+    pub firecracker_kernel: Option<PathBuf>,
+    /// Path to the base ext4 rootfs image.
+    pub firecracker_rootfs: Option<PathBuf>,
+    /// Path to the SSH private key for VM access.
+    pub firecracker_ssh_key: Option<PathBuf>,
+    /// Number of vCPUs per Firecracker VM.
+    pub firecracker_vcpus: Option<u32>,
+    /// Memory in MiB per Firecracker VM.
+    pub firecracker_memory_mb: Option<u32>,
 }
 
 impl Default for SandboxConfig {
@@ -249,6 +263,12 @@ impl Default for SandboxConfig {
             daytona_api_url: None,
             daytona_target: None,
             daytona_image: None,
+            firecracker_bin: None,
+            firecracker_kernel: None,
+            firecracker_rootfs: None,
+            firecracker_ssh_key: None,
+            firecracker_vcpus: None,
+            firecracker_memory_mb: None,
         }
     }
 }
@@ -321,6 +341,12 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             daytona_api_url: None,
             daytona_target: None,
             daytona_image: None,
+            firecracker_bin: None,
+            firecracker_kernel: None,
+            firecracker_rootfs: None,
+            firecracker_ssh_key: None,
+            firecracker_vcpus: None,
+            firecracker_memory_mb: None,
         }
     }
 }

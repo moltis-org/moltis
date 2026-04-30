@@ -8,6 +8,8 @@ pub(crate) mod containers;
 pub(crate) mod daytona;
 pub(crate) mod docker;
 pub(crate) mod file_system;
+#[cfg(target_os = "linux")]
+pub(crate) mod firecracker;
 pub(crate) mod host;
 pub(crate) mod paths;
 pub(crate) mod platform;
@@ -25,6 +27,8 @@ mod tests;
 
 #[cfg(target_os = "macos")]
 pub use apple::{AppleContainerSandbox, ensure_apple_container_service};
+#[cfg(target_os = "linux")]
+pub use firecracker::{FirecrackerSandbox, FirecrackerSandboxConfig};
 #[cfg(target_os = "linux")]
 pub use platform::CgroupSandbox;
 #[cfg(feature = "vercel-sandbox")]

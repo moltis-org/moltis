@@ -324,6 +324,8 @@ pub(crate) fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         #[cfg(feature = "vercel-sandbox")]
         "vercel" => create_vercel_backend(config),
         "daytona" => create_daytona_backend(config),
+        #[cfg(target_os = "linux")]
+        "firecracker" => create_firecracker_backend(config),
         _ => auto_detect_backend(config),
     }
 }
@@ -438,6 +440,42 @@ fn create_daytona_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         "sandbox backend: daytona (cloud sandbox)"
     );
     Arc::new(DaytonaSandbox::new(config, daytona_config))
+}
+
+/// Create a Firecracker sandbox backend.
+/// Linux-only: requires firecracker binary, kernel, rootfs, and root/CAP_NET_ADMIN.
+#[cfg(target_os = "linux")]
+fn create_firecracker_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
+    use super::firecracker::{FirecrackerSandbox, FirecrackerSandboxConfig};
+
+    let fc_config = FirecrackerSandboxConfig {
+        firecracker_bin: config
+            .firecracker_bin
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("/usr/local/bin/firecracker")),
+        kernel_path: config
+            .firecracker_kernel
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("/opt/moltis/vmlinux")),
+        rootfs_path: config
+            .firecracker_rootfs
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("/opt/moltis/rootfs.ext4")),
+        ssh_key_path: config
+            .firecracker_ssh_key
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("/opt/moltis/ssh_key")),
+        vcpus: config.firecracker_vcpus.unwrap_or(2),
+        memory_mb: config.firecracker_memory_mb.unwrap_or(512),
+    };
+
+    tracing::info!(
+        firecracker = %fc_config.firecracker_bin.display(),
+        vcpus = fc_config.vcpus,
+        memory_mb = fc_config.memory_mb,
+        "sandbox backend: firecracker (local microVM)"
+    );
+    Arc::new(FirecrackerSandbox::new(config, fc_config))
 }
 
 /// Wrap a primary sandbox backend with a failover chain.
