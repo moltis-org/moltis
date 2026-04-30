@@ -1292,6 +1292,18 @@ pub async fn prepare_gateway_core(
                     .set_image_override(&entry.key, image.clone())
                     .await;
             }
+            if let Some(ref backend) = entry.sandbox_backend
+                && let Err(e) = sandbox_router
+                    .set_backend_override(&entry.key, backend)
+                    .await
+            {
+                tracing::debug!(
+                    session = entry.key,
+                    backend = backend.as_str(),
+                    error = %e,
+                    "skipping persisted sandbox backend override (backend not available)"
+                );
+            }
         }
     }
 

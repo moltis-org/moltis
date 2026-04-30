@@ -559,6 +559,21 @@ impl SessionService for LiveSessionService {
                 }
             }
         }
+        if let Some(sandbox_backend_opt) = p.sandbox_backend {
+            let sandbox_backend = sandbox_backend_opt.filter(|s| !s.is_empty());
+            self.metadata
+                .set_sandbox_backend(key, sandbox_backend.clone())
+                .await;
+            if let Some(ref router) = self.sandbox_router {
+                if let Some(ref name) = sandbox_backend {
+                    if let Err(e) = router.set_backend_override(key, name).await {
+                        warn!(session = key, error = %e, "failed to set sandbox backend override");
+                    }
+                } else {
+                    router.remove_backend_override(key).await;
+                }
+            }
+        }
 
         let entry = self
             .metadata
@@ -573,6 +588,7 @@ impl SessionService for LiveSessionService {
             "archived": entry.archived,
             "sandbox_enabled": entry.sandbox_enabled,
             "sandbox_image": entry.sandbox_image,
+            "sandbox_backend": entry.sandbox_backend,
             "worktree_branch": entry.worktree_branch,
             "mcpDisabled": entry.mcp_disabled,
             "agent_id": entry.agent_id,

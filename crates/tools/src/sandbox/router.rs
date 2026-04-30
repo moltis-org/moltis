@@ -121,6 +121,19 @@ impl Sandbox for FailoverSandbox {
         }
     }
 
+    fn is_isolated(&self) -> bool {
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback.is_isolated()
+        } else {
+            self.primary.is_isolated()
+        }
+    }
+
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
         if self.fallback_enabled().await {
             return self.fallback.ensure_ready(id, image_override).await;
@@ -479,11 +492,21 @@ pub enum SandboxEvent {
 }
 
 /// Routes sandbox decisions per-session, with per-session overrides on top of global config.
+///
+/// Supports multiple named backends simultaneously. Each session can be routed
+/// to a different backend via per-session overrides, while the default backend
+/// serves sessions without an explicit override.
 pub struct SandboxRouter {
     config: SandboxConfig,
-    backend: Arc<dyn Sandbox>,
+    /// Default backend, stored separately for lock-free access.
+    default_backend: Arc<dyn Sandbox>,
+    /// All available backends, keyed by backend name.
+    /// The default backend is also present in this map.
+    backends: HashMap<String, Arc<dyn Sandbox>>,
     /// Per-session overrides: true = sandboxed, false = direct execution.
     overrides: RwLock<HashMap<String, bool>>,
+    /// Per-session backend override: session_key -> backend_name.
+    backend_overrides: RwLock<HashMap<String, String>>,
     /// Per-session image overrides.
     image_overrides: RwLock<HashMap<String, String>>,
     /// Runtime override for the global default image (set via API, persisted externally).
@@ -502,12 +525,19 @@ impl SandboxRouter {
     pub fn new(config: SandboxConfig) -> Self {
         // Always create a real sandbox backend, even when global mode is Off,
         // because per-session overrides can enable sandboxing dynamically.
-        let backend = create_sandbox_backend(config.clone());
+        let default_backend = create_sandbox_backend(config.clone());
+        let mut backends = HashMap::new();
+        backends.insert(
+            default_backend.backend_name().to_string(),
+            Arc::clone(&default_backend),
+        );
         let (event_tx, _) = tokio::sync::broadcast::channel(32);
         Self {
             config,
-            backend,
+            default_backend,
+            backends,
             overrides: RwLock::new(HashMap::new()),
+            backend_overrides: RwLock::new(HashMap::new()),
             image_overrides: RwLock::new(HashMap::new()),
             global_image_override: RwLock::new(None),
             event_tx,
@@ -518,11 +548,15 @@ impl SandboxRouter {
 
     /// Create a router with a custom sandbox backend (useful for testing).
     pub fn with_backend(config: SandboxConfig, backend: Arc<dyn Sandbox>) -> Self {
+        let mut backends = HashMap::new();
+        backends.insert(backend.backend_name().to_string(), Arc::clone(&backend));
         let (event_tx, _) = tokio::sync::broadcast::channel(32);
         Self {
             config,
-            backend,
+            default_backend: backend,
+            backends,
             overrides: RwLock::new(HashMap::new()),
+            backend_overrides: RwLock::new(HashMap::new()),
             image_overrides: RwLock::new(HashMap::new()),
             global_image_override: RwLock::new(None),
             event_tx,
@@ -556,11 +590,12 @@ impl SandboxRouter {
     }
 
     /// Check whether a session should run sandboxed.
-    /// Returns `false` when no real container runtime is available, regardless of
-    /// config mode or per-session overrides. Otherwise, per-session override takes
-    /// priority, then falls back to global mode.
+    /// Returns `false` when the session's resolved backend is not real, regardless
+    /// of config mode or per-session overrides. Otherwise, per-session override
+    /// takes priority, then falls back to global mode.
     pub async fn is_sandboxed(&self, session_key: &str) -> bool {
-        if !self.backend.is_real() {
+        let backend = self.resolve_backend(session_key).await;
+        if !backend.is_real() {
             return false;
         }
         if let Some(&override_val) = self.overrides.read().await.get(session_key) {
@@ -608,16 +643,74 @@ impl SandboxRouter {
     /// Clean up sandbox resources for a session.
     pub async fn cleanup_session(&self, session_key: &str) -> Result<()> {
         let id = self.sandbox_id_for(session_key);
-        self.backend.cleanup(&id).await?;
+        let backend = self.resolve_backend(session_key).await;
+        backend.cleanup(&id).await?;
         self.remove_override(session_key).await;
+        self.remove_backend_override(session_key).await;
         self.remove_image_override(session_key).await;
         self.clear_prepared_session(session_key).await;
         Ok(())
     }
 
-    /// Access the sandbox backend.
+    /// Access the default sandbox backend.
     pub fn backend(&self) -> &Arc<dyn Sandbox> {
-        &self.backend
+        &self.default_backend
+    }
+
+    /// Resolve the sandbox backend for a session.
+    ///
+    /// Priority (highest to lowest):
+    /// 1. Per-session backend override (`backend_overrides[session_key]`)
+    /// 2. Default backend
+    pub async fn resolve_backend(&self, session_key: &str) -> Arc<dyn Sandbox> {
+        if let Some(name) = self.backend_overrides.read().await.get(session_key) {
+            if let Some(backend) = self.backends.get(name.as_str()) {
+                return Arc::clone(backend);
+            }
+            warn!(
+                session = session_key,
+                backend = name.as_str(),
+                "per-session backend override references unknown backend, using default"
+            );
+        }
+        Arc::clone(&self.default_backend)
+    }
+
+    /// Register an additional sandbox backend.
+    ///
+    /// The backend is keyed by its `backend_name()`. If a backend with the
+    /// same name already exists it is replaced.
+    pub fn register_backend(&mut self, backend: Arc<dyn Sandbox>) {
+        let name = backend.backend_name().to_string();
+        debug!(backend = name.as_str(), "registered sandbox backend");
+        self.backends.insert(name, backend);
+    }
+
+    /// List the names of all available backends.
+    pub fn available_backends(&self) -> Vec<&str> {
+        self.backends.keys().map(String::as_str).collect()
+    }
+
+    /// Set a per-session backend override.
+    ///
+    /// Returns `Err` if `backend_name` is not registered.
+    pub async fn set_backend_override(&self, session_key: &str, backend_name: &str) -> Result<()> {
+        if !self.backends.contains_key(backend_name) {
+            return Err(Error::message(format!(
+                "unknown sandbox backend: {backend_name:?} (available: {:?})",
+                self.available_backends()
+            )));
+        }
+        self.backend_overrides
+            .write()
+            .await
+            .insert(session_key.to_string(), backend_name.to_string());
+        Ok(())
+    }
+
+    /// Remove a per-session backend override (revert to default).
+    pub async fn remove_backend_override(&self, session_key: &str) {
+        self.backend_overrides.write().await.remove(session_key);
     }
 
     /// Access the global sandbox mode.
@@ -630,9 +723,9 @@ impl SandboxRouter {
         &self.config
     }
 
-    /// Human-readable name of the sandbox backend (e.g. "docker", "apple-container").
+    /// Human-readable name of the default sandbox backend (e.g. "docker", "apple-container").
     pub fn backend_name(&self) -> &'static str {
-        self.backend.backend_name()
+        self.default_backend.backend_name()
     }
 
     /// Set a per-session image override.

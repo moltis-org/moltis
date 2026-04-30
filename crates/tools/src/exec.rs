@@ -457,7 +457,8 @@ impl AgentTool for ExecTool {
         // fail with ENOENT on the host, so we must fall back to the host
         // data directory.
         let has_container_backend = if let Some(ref router) = self.sandbox_router {
-            router.backend().provides_fs_isolation()
+            let sk = session_key.unwrap_or("main");
+            router.resolve_backend(sk).await.provides_fs_isolation()
         } else {
             self.sandbox.provides_fs_isolation()
         };
@@ -603,7 +604,7 @@ impl AgentTool for ExecTool {
             if is_sandboxed {
                 let id = router.sandbox_id_for(sk);
                 let image = router.resolve_image(sk, None).await;
-                let backend = router.backend();
+                let backend = router.resolve_backend(sk).await;
                 info!(session = sk, sandbox_id = %id, backend = backend.backend_name(), image, "sandbox ensure_ready");
                 let announce_prepare = router.mark_preparing_once(sk).await;
                 if announce_prepare {

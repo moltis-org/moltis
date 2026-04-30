@@ -133,7 +133,7 @@ impl ProcessTool {
             if is_sandboxed {
                 let id = router.sandbox_id_for(session_key);
                 let image = router.resolve_image(session_key, None).await;
-                let backend = router.backend();
+                let backend = router.resolve_backend(session_key).await;
                 backend.ensure_ready(&id, Some(&image)).await?;
                 return Ok(backend.exec(&id, &command, &opts).await?);
             }

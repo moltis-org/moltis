@@ -364,6 +364,17 @@ pub trait Sandbox: Send + Sync {
         false
     }
 
+    /// Whether this backend manages an isolated filesystem that requires
+    /// workspace sync (copy-in on setup, patch extraction on cleanup).
+    ///
+    /// Defaults to `false`. Local bind-mount backends (Docker, Podman, Apple
+    /// Container) mount the host workspace directly. Remote/VM backends
+    /// (Vercel, Daytona, Firecracker) return `true` — the workspace must be
+    /// synced in via git bundles and changes extracted back via patches.
+    fn is_isolated(&self) -> bool {
+        false
+    }
+
     /// Pre-build a container image with packages baked in.
     /// Returns `None` for backends that don't support image building.
     async fn build_image(

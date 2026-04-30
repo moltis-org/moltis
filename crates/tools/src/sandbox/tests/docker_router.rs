@@ -902,3 +902,139 @@ async fn test_podman_build_image_exists_in_store() {
         .output()
         .await;
 }
+
+// ── Multi-backend router tests ──────────────────────────────────────
+
+#[test]
+fn test_router_available_backends_contains_default() {
+    let config = SandboxConfig {
+        backend: "docker".into(),
+        ..Default::default()
+    };
+    let router = SandboxRouter::new(config);
+    let backends = router.available_backends();
+    assert!(
+        backends.contains(&"docker"),
+        "default backend must be listed"
+    );
+}
+
+#[test]
+fn test_router_register_backend_adds_to_available() {
+    let config = SandboxConfig {
+        backend: "docker".into(),
+        ..Default::default()
+    };
+    let mut router = SandboxRouter::new(config);
+    assert!(!router.available_backends().contains(&"restricted-host"));
+
+    router.register_backend(Arc::new(RestrictedHostSandbox::new(
+        SandboxConfig::default(),
+    )));
+    let backends = router.available_backends();
+    assert!(backends.contains(&"docker"));
+    assert!(backends.contains(&"restricted-host"));
+}
+
+#[tokio::test]
+async fn test_resolve_backend_returns_default_without_override() {
+    let config = SandboxConfig {
+        backend: "docker".into(),
+        ..Default::default()
+    };
+    let router = SandboxRouter::new(config);
+    let backend = router.resolve_backend("session:abc").await;
+    assert_eq!(backend.backend_name(), "docker");
+}
+
+#[tokio::test]
+async fn test_resolve_backend_returns_overridden_backend() {
+    let config = SandboxConfig {
+        backend: "docker".into(),
+        ..Default::default()
+    };
+    let mut router = SandboxRouter::new(config);
+    router.register_backend(Arc::new(RestrictedHostSandbox::new(
+        SandboxConfig::default(),
+    )));
+
+    router
+        .set_backend_override("session:abc", "restricted-host")
+        .await
+        .unwrap();
+
+    let backend = router.resolve_backend("session:abc").await;
+    assert_eq!(backend.backend_name(), "restricted-host");
+
+    // Other sessions still get the default.
+    let default_backend = router.resolve_backend("session:other").await;
+    assert_eq!(default_backend.backend_name(), "docker");
+}
+
+#[tokio::test]
+async fn test_set_backend_override_rejects_unknown_backend() {
+    let config = SandboxConfig {
+        backend: "docker".into(),
+        ..Default::default()
+    };
+    let router = SandboxRouter::new(config);
+    let result = router
+        .set_backend_override("session:abc", "nonexistent")
+        .await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_remove_backend_override_reverts_to_default() {
+    let config = SandboxConfig {
+        backend: "docker".into(),
+        ..Default::default()
+    };
+    let mut router = SandboxRouter::new(config);
+    router.register_backend(Arc::new(RestrictedHostSandbox::new(
+        SandboxConfig::default(),
+    )));
+
+    router
+        .set_backend_override("session:abc", "restricted-host")
+        .await
+        .unwrap();
+    assert_eq!(
+        router.resolve_backend("session:abc").await.backend_name(),
+        "restricted-host"
+    );
+
+    router.remove_backend_override("session:abc").await;
+    assert_eq!(
+        router.resolve_backend("session:abc").await.backend_name(),
+        "docker"
+    );
+}
+
+#[tokio::test]
+async fn test_cleanup_session_clears_backend_override() {
+    let config = SandboxConfig {
+        backend: "docker".into(),
+        ..Default::default()
+    };
+    let mut router = SandboxRouter::new(config);
+    router.register_backend(Arc::new(RestrictedHostSandbox::new(
+        SandboxConfig::default(),
+    )));
+
+    router
+        .set_backend_override("session:abc", "restricted-host")
+        .await
+        .unwrap();
+
+    // cleanup_session should clear the backend override (along with other overrides).
+    // Note: this will call cleanup on docker (the resolved backend at call time),
+    // which is a no-op for containers that don't exist — that's fine for testing.
+    let _ = router.cleanup_session("session:abc").await;
+
+    // After cleanup, should revert to default.
+    assert_eq!(
+        router.resolve_backend("session:abc").await.backend_name(),
+        "docker"
+    );
+}
