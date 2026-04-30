@@ -22,7 +22,6 @@ import {
 	toolCallSummary,
 } from "../helpers";
 import { appendMessageActions } from "../message-actions";
-import { attachMessageVoiceControl } from "../message-voice";
 import { navigate } from "../router";
 import * as S from "../state";
 import { sessionStore } from "../stores/session-store";
@@ -325,19 +324,6 @@ export function appendFinalFooter(msgEl: HTMLElement | null, p: ChatPayload, eve
 		footer.appendChild(badge);
 	}
 	msgEl.appendChild(footer);
-
-	void attachMessageVoiceControl({
-		messageEl: msgEl,
-		footerEl: footer,
-		sessionKey: p.sessionKey || eventSession || S.activeSessionKey,
-		text: p.text || "",
-		runId: p.runId,
-		messageIndex: p.messageIndex,
-		audioPath: p.audio || undefined,
-		audioWarning: p.audioWarning || undefined,
-		forceAction: p.replyMedium === "voice" && !p.audio,
-		autoplayOnGenerate: true,
-	});
 
 	appendMessageActions({
 		messageEl: msgEl,
