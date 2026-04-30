@@ -188,7 +188,8 @@ impl AgentTool for ReadSkillTool {
             store.record_read(name).await;
         }
         #[cfg(feature = "metrics")]
-        counter!(skills_metrics::ACTIVATIONS_TOTAL, labels::TOOL => name.to_string()).increment(1);
+        counter!(skills_metrics::ACTIVATIONS_TOTAL, labels::TOOL => "read_skill".to_string())
+            .increment(1);
 
         Ok(result)
     }

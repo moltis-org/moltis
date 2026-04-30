@@ -2,7 +2,7 @@
 //!
 //! Tracks how often each skill is read (activated) and modified (created,
 //! updated, patched). Data is persisted to `<data_dir>/skills-usage.json`
-//! with atomic writes.
+//! with atomic writes, debounced to avoid excessive I/O.
 
 use std::{
     collections::HashMap,
@@ -13,8 +13,11 @@ use std::{
 
 use {
     serde::{Deserialize, Serialize},
-    tokio::sync::RwLock,
+    tokio::sync::{Notify, RwLock},
 };
+
+/// Minimum interval between disk flushes (seconds).
+const FLUSH_DEBOUNCE_SECS: u64 = 5;
 
 /// Per-skill usage counters and timestamps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,20 +44,32 @@ struct UsageFile {
     skills: HashMap<String, SkillUsageEntry>,
 }
 
+/// Shared interior state.
+struct Inner {
+    data: UsageFile,
+    dirty: bool,
+    last_flush_at: u64,
+}
+
 /// Thread-safe, file-backed skill usage store.
+///
+/// Flushes are debounced: mutations mark the store dirty but only write to
+/// disk when at least [`FLUSH_DEBOUNCE_SECS`] have elapsed since the last
+/// flush. A background notify ensures eventual persistence.
 ///
 /// Clone-friendly via inner `Arc`.
 #[derive(Clone)]
 pub struct SkillUsageStore {
-    inner: Arc<RwLock<UsageFile>>,
+    inner: Arc<RwLock<Inner>>,
     path: PathBuf,
+    flush_notify: Arc<Notify>,
 }
 
 impl SkillUsageStore {
-    /// Create a new store, loading existing data from disk if present.
+    /// Create a new store synchronously (for tests and non-async contexts).
     pub fn new(data_dir: &Path) -> Self {
         let path = data_dir.join("skills-usage.json");
-        let file = if path.exists() {
+        let data = if path.exists() {
             std::fs::read_to_string(&path)
                 .ok()
                 .and_then(|s| serde_json::from_str::<UsageFile>(&s).ok())
@@ -62,10 +77,46 @@ impl SkillUsageStore {
         } else {
             UsageFile::default()
         };
-        Self {
-            inner: Arc::new(RwLock::new(file)),
+        Self::from_data(data, path)
+    }
+
+    /// Create a new store with async I/O (preferred in async contexts).
+    pub async fn open(data_dir: &Path) -> Self {
+        let path = data_dir.join("skills-usage.json");
+        let data = match tokio::fs::read_to_string(&path).await {
+            Ok(s) => serde_json::from_str::<UsageFile>(&s).unwrap_or_default(),
+            Err(_) => UsageFile::default(),
+        };
+        Self::from_data(data, path)
+    }
+
+    fn from_data(data: UsageFile, path: PathBuf) -> Self {
+        let store = Self {
+            inner: Arc::new(RwLock::new(Inner {
+                data,
+                dirty: false,
+                last_flush_at: 0,
+            })),
             path,
-        }
+            flush_notify: Arc::new(Notify::new()),
+        };
+        store.spawn_flush_task();
+        store
+    }
+
+    /// Spawn a background task that flushes dirty data on notification.
+    fn spawn_flush_task(&self) {
+        let inner = Arc::clone(&self.inner);
+        let path = self.path.clone();
+        let notify = Arc::clone(&self.flush_notify);
+        tokio::spawn(async move {
+            loop {
+                notify.notified().await;
+                // Coalesce rapid mutations by sleeping briefly.
+                tokio::time::sleep(tokio::time::Duration::from_secs(FLUSH_DEBOUNCE_SECS)).await;
+                flush_to_disk(&inner, &path).await;
+            }
+        });
     }
 
     /// Record a read (activation) event for a skill.
@@ -74,6 +125,7 @@ impl SkillUsageStore {
         {
             let mut guard = self.inner.write().await;
             let entry = guard
+                .data
                 .skills
                 .entry(name.to_string())
                 .or_insert_with(|| SkillUsageEntry {
@@ -85,8 +137,9 @@ impl SkillUsageStore {
                 });
             entry.read_count += 1;
             entry.last_read_at = Some(now);
+            guard.dirty = true;
         }
-        self.flush().await;
+        self.maybe_flush().await;
     }
 
     /// Record a write (create/update/patch) event for a skill.
@@ -95,6 +148,7 @@ impl SkillUsageStore {
         {
             let mut guard = self.inner.write().await;
             let entry = guard
+                .data
                 .skills
                 .entry(name.to_string())
                 .or_insert_with(|| SkillUsageEntry {
@@ -106,48 +160,73 @@ impl SkillUsageStore {
                 });
             entry.write_count += 1;
             entry.last_write_at = Some(now);
+            guard.dirty = true;
         }
-        self.flush().await;
+        // Writes are less frequent — flush immediately.
+        flush_to_disk(&self.inner, &self.path).await;
     }
 
     /// Remove a skill's usage entry (called on delete).
     pub async fn remove(&self, name: &str) {
         {
             let mut guard = self.inner.write().await;
-            guard.skills.remove(name);
+            guard.data.skills.remove(name);
+            guard.dirty = true;
         }
-        self.flush().await;
+        flush_to_disk(&self.inner, &self.path).await;
     }
 
     /// Return a snapshot of all usage entries.
     pub async fn get_all(&self) -> HashMap<String, SkillUsageEntry> {
-        self.inner.read().await.skills.clone()
+        self.inner.read().await.data.skills.clone()
     }
 
-    /// Persist to disk atomically (temp + rename).
-    async fn flush(&self) {
-        let snapshot = {
+    /// Flush immediately if enough time has elapsed, otherwise notify the
+    /// background task to handle it after the debounce interval.
+    async fn maybe_flush(&self) {
+        let now = now_secs();
+        let should_flush = {
             let guard = self.inner.read().await;
-            match serde_json::to_string_pretty(&*guard) {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::warn!(error = %e, "failed to serialize skill usage");
-                    return;
-                },
-            }
+            guard.dirty && now.saturating_sub(guard.last_flush_at) >= FLUSH_DEBOUNCE_SECS
         };
-        let tmp = self.path.with_extension("json.tmp");
-        if let Some(parent) = self.path.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-        if let Err(e) = tokio::fs::write(&tmp, &snapshot).await {
-            tracing::warn!(error = %e, "failed to write skill usage temp file");
-            return;
-        }
-        if let Err(e) = tokio::fs::rename(&tmp, &self.path).await {
-            tracing::warn!(error = %e, "failed to rename skill usage file");
+        if should_flush {
+            flush_to_disk(&self.inner, &self.path).await;
+        } else {
+            self.flush_notify.notify_one();
         }
     }
+}
+
+/// Persist to disk atomically (temp + rename), clearing the dirty flag.
+async fn flush_to_disk(inner: &RwLock<Inner>, path: &Path) {
+    let snapshot = {
+        let guard = inner.read().await;
+        if !guard.dirty {
+            return;
+        }
+        match serde_json::to_string_pretty(&guard.data) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to serialize skill usage");
+                return;
+            },
+        }
+    };
+    let tmp = path.with_extension("json.tmp");
+    if let Some(parent) = path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    if let Err(e) = tokio::fs::write(&tmp, &snapshot).await {
+        tracing::warn!(error = %e, "failed to write skill usage temp file");
+        return;
+    }
+    if let Err(e) = tokio::fs::rename(&tmp, path).await {
+        tracing::warn!(error = %e, "failed to rename skill usage file");
+        return;
+    }
+    let mut guard = inner.write().await;
+    guard.dirty = false;
+    guard.last_flush_at = now_secs();
 }
 
 fn now_millis() -> u64 {
@@ -155,6 +234,13 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -165,7 +251,7 @@ mod tests {
     #[tokio::test]
     async fn test_record_read_increments() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = SkillUsageStore::new(tmp.path());
+        let store = SkillUsageStore::open(tmp.path()).await;
 
         store.record_read("demo").await;
         store.record_read("demo").await;
@@ -181,7 +267,7 @@ mod tests {
     #[tokio::test]
     async fn test_record_write_increments() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = SkillUsageStore::new(tmp.path());
+        let store = SkillUsageStore::open(tmp.path()).await;
 
         store.record_write("demo").await;
 
@@ -195,7 +281,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove_deletes_entry() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = SkillUsageStore::new(tmp.path());
+        let store = SkillUsageStore::open(tmp.path()).await;
 
         store.record_read("demo").await;
         assert!(store.get_all().await.contains_key("demo"));
@@ -209,24 +295,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
 
         {
-            let store = SkillUsageStore::new(tmp.path());
-            store.record_read("alpha").await;
+            let store = SkillUsageStore::open(tmp.path()).await;
+            // record_write flushes immediately, so data is on disk.
             store.record_write("alpha").await;
-            store.record_read("beta").await;
+            store.record_read("alpha").await;
+            // Force flush for the read (which may be debounced).
+            flush_to_disk(&store.inner, &store.path).await;
+            store.record_write("beta").await;
         }
 
         // New store instance reads from disk.
-        let store2 = SkillUsageStore::new(tmp.path());
+        let store2 = SkillUsageStore::open(tmp.path()).await;
         let all = store2.get_all().await;
         assert_eq!(all.get("alpha").unwrap().read_count, 1);
         assert_eq!(all.get("alpha").unwrap().write_count, 1);
-        assert_eq!(all.get("beta").unwrap().read_count, 1);
+        assert_eq!(all.get("beta").unwrap().write_count, 1);
     }
 
     #[tokio::test]
     async fn test_created_at_set_on_first_event() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = SkillUsageStore::new(tmp.path());
+        let store = SkillUsageStore::open(tmp.path()).await;
 
         store.record_read("new-skill").await;
         let all = store.get_all().await;
@@ -246,7 +335,15 @@ mod tests {
     #[tokio::test]
     async fn test_missing_file_creates_empty_store() {
         let tmp = tempfile::tempdir().unwrap();
-        let store = SkillUsageStore::new(tmp.path());
+        let store = SkillUsageStore::open(tmp.path()).await;
         assert!(store.get_all().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sync_constructor_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SkillUsageStore::new(tmp.path());
+        store.record_write("test").await;
+        assert_eq!(store.get_all().await.get("test").unwrap().write_count, 1);
     }
 }

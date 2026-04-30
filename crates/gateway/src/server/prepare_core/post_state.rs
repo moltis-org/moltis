@@ -1213,7 +1213,7 @@ pub(super) async fn complete_startup(
         {
             use moltis_skills::{discover::FsSkillDiscoverer, usage::SkillUsageStore};
 
-            let skill_usage = SkillUsageStore::new(&data_dir);
+            let skill_usage = SkillUsageStore::open(&data_dir).await;
 
             tool_registry.register(Box::new(
                 moltis_tools::skill_tools::CreateSkillTool::new(data_dir.clone())
