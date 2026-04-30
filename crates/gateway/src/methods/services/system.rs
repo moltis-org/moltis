@@ -139,17 +139,30 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         Box::new(|ctx| {
             Box::pin(async move {
                 // Capture skill names from the repo before it's removed,
-                // so we can prune the usage store afterwards.
+                // so we can prune the usage store afterwards. Uses
+                // spawn_blocking since ManifestStore::load() is sync I/O.
                 let source = ctx.params.get("source").and_then(|v| v.as_str());
-                let skill_names: Vec<String> = source
-                    .and_then(|s| {
+                let skill_names: Vec<String> = if let Some(s) = source {
+                    let s = s.to_string();
+                    tokio::task::spawn_blocking(move || {
                         let path = moltis_skills::manifest::ManifestStore::default_path().ok()?;
                         let store = moltis_skills::manifest::ManifestStore::new(path);
                         let manifest = store.load().ok()?;
-                        let repo = manifest.find_repo(s)?;
-                        Some(repo.skills.iter().map(|s| s.name.clone()).collect())
+                        let repo = manifest.find_repo(&s)?;
+                        Some(
+                            repo.skills
+                                .iter()
+                                .map(|sk| sk.name.clone())
+                                .collect::<Vec<_>>(),
+                        )
                     })
-                    .unwrap_or_default();
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+                } else {
+                    vec![]
+                };
 
                 let result = ctx
                     .state
