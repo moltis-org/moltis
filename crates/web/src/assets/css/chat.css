@@ -143,11 +143,11 @@
   background: color-mix(in srgb, var(--surface2) 85%, transparent);
   border: 1px solid var(--border);
   border-color: color-mix(in srgb, var(--border-strong) 65%, transparent);
-  border-radius: 999px;
+  border-radius: 12px;
   align-items: center;
   gap: 6px;
   max-width: min(88%, 640px);
-  padding: 5px 10px;
+  padding: 6px 14px;
   white-space: normal;
   display: inline-flex;
 }
