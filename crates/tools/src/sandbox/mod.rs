@@ -50,6 +50,7 @@ pub use {
     router::{FailoverSandbox, SandboxEvent, SandboxRouter, auto_detect_backend, create_sandbox},
     types::{
         BuildImageResult, DEFAULT_SANDBOX_IMAGE, HomePersistence, NetworkPolicy, ResourceLimits,
-        Sandbox, SandboxConfig, SandboxId, SandboxMode, SandboxScope, WorkspaceMount,
+        Sandbox, SandboxBackendId, SandboxConfig, SandboxId, SandboxMode, SandboxScope,
+        WorkspaceMount,
     },
 };

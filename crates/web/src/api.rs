@@ -59,6 +59,14 @@ pub struct SandboxSharedHomeUpdateRequest {
     path: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+pub struct RemoteBackendUpdateRequest {
+    /// Which backend: "vercel" or "daytona".
+    backend: String,
+    /// Fields to save. Keys like "token", "api_url", "project_id", etc.
+    config: std::collections::HashMap<String, serde_json::Value>,
+}
+
 fn shared_home_config_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
     let runtime_cfg = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
     let mode = match config.tools.exec.sandbox.home_persistence {
@@ -914,6 +922,92 @@ pub async fn api_set_shared_home_handler(
         Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             SANDBOX_SHARED_HOME_SAVE_FAILED,
+            e.to_string(),
+        ),
+    }
+}
+
+// ── Remote sandbox backend configuration ──────────────────────────────────────
+
+fn remote_backends_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
+    let sb = &config.tools.exec.sandbox;
+    serde_json::json!({
+        "vercel": {
+            "configured": !sb.vercel_token.as_deref().unwrap_or("").is_empty(),
+            "project_id": sb.vercel_project_id,
+            "team_id": sb.vercel_team_id,
+            "runtime": sb.vercel_runtime.as_deref().unwrap_or("node24"),
+            "timeout_ms": sb.vercel_timeout_ms.unwrap_or(300_000),
+            "vcpus": sb.vercel_vcpus.unwrap_or(2),
+        },
+        "daytona": {
+            "configured": !sb.daytona_api_key.as_deref().unwrap_or("").is_empty(),
+            "api_url": sb.daytona_api_url.as_deref().unwrap_or("https://app.daytona.io/api"),
+            "target": sb.daytona_target,
+        },
+    })
+}
+
+pub async fn api_get_remote_backends_handler() -> impl IntoResponse {
+    let config = moltis_config::discover_and_load();
+    Json(remote_backends_payload(&config))
+}
+
+pub async fn api_set_remote_backend_handler(
+    Json(body): Json<RemoteBackendUpdateRequest>,
+) -> impl IntoResponse {
+    let update_result = moltis_config::update_config(|cfg| {
+        let sb = &mut cfg.tools.exec.sandbox;
+        match body.backend.as_str() {
+            "vercel" => {
+                if let Some(v) = body.config.get("token").and_then(|v| v.as_str()) {
+                    sb.vercel_token = Some(v.to_string());
+                }
+                if let Some(v) = body.config.get("project_id") {
+                    sb.vercel_project_id = v.as_str().map(|s| s.to_string());
+                }
+                if let Some(v) = body.config.get("team_id") {
+                    sb.vercel_team_id = v.as_str().map(|s| s.to_string());
+                }
+                if let Some(v) = body.config.get("runtime").and_then(|v| v.as_str()) {
+                    sb.vercel_runtime = Some(v.to_string());
+                }
+                if let Some(v) = body.config.get("timeout_ms").and_then(|v| v.as_u64()) {
+                    sb.vercel_timeout_ms = Some(v);
+                }
+                if let Some(v) = body.config.get("vcpus").and_then(|v| v.as_u64()) {
+                    sb.vercel_vcpus = Some(v as u32);
+                }
+            },
+            "daytona" => {
+                if let Some(v) = body.config.get("api_key").and_then(|v| v.as_str()) {
+                    sb.daytona_api_key = Some(v.to_string());
+                }
+                if let Some(v) = body.config.get("api_url").and_then(|v| v.as_str()) {
+                    sb.daytona_api_url = Some(v.to_string());
+                }
+                if let Some(v) = body.config.get("target") {
+                    sb.daytona_target = v.as_str().map(|s| s.to_string());
+                }
+            },
+            _ => {},
+        }
+    });
+
+    match update_result {
+        Ok(saved_path) => {
+            let config = moltis_config::discover_and_load();
+            Json(serde_json::json!({
+                "ok": true,
+                "restart_required": true,
+                "config_path": saved_path.display().to_string(),
+                "config": remote_backends_payload(&config),
+            }))
+            .into_response()
+        },
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "remote_backend_save_failed",
             e.to_string(),
         ),
     }

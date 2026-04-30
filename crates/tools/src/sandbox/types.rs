@@ -62,6 +62,44 @@ impl std::fmt::Display for SandboxMode {
     }
 }
 
+/// Known sandbox backend identifiers.
+///
+/// Used in the API/gon layer for type-safe backend references. The config
+/// schema uses a plain `String` for flexibility (TOML compatibility), but
+/// this enum ensures wire-format consistency.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SandboxBackendId {
+    Docker,
+    Podman,
+    AppleContainer,
+    Cgroup,
+    RestrictedHost,
+    Wasm,
+    Vercel,
+    Daytona,
+    Firecracker,
+    None,
+}
+
+impl SandboxBackendId {
+    /// Parse from backend_name() output.
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "docker" => Self::Docker,
+            "podman" => Self::Podman,
+            "apple-container" => Self::AppleContainer,
+            "cgroup" => Self::Cgroup,
+            "restricted-host" => Self::RestrictedHost,
+            "wasm" => Self::Wasm,
+            "vercel" => Self::Vercel,
+            "daytona" => Self::Daytona,
+            "firecracker" => Self::Firecracker,
+            _ => Self::None,
+        }
+    }
+}
+
 /// Scope determines container lifecycle boundaries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -329,17 +367,16 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             wasm_fuel_limit: cfg.wasm_fuel_limit,
             wasm_epoch_interval_ms: cfg.wasm_epoch_interval_ms,
             wasm_tool_limits: cfg.wasm_tool_limits.as_ref().map(WasmToolLimits::from),
-            // Remote backend config is populated from env vars by the gateway.
-            vercel_token: None,
-            vercel_project_id: None,
-            vercel_team_id: None,
-            vercel_runtime: None,
-            vercel_timeout_ms: None,
-            vercel_vcpus: None,
+            vercel_token: cfg.vercel_token.clone(),
+            vercel_project_id: cfg.vercel_project_id.clone(),
+            vercel_team_id: cfg.vercel_team_id.clone(),
+            vercel_runtime: cfg.vercel_runtime.clone(),
+            vercel_timeout_ms: cfg.vercel_timeout_ms,
+            vercel_vcpus: cfg.vercel_vcpus,
             vercel_snapshot_id: None,
-            daytona_api_key: None,
-            daytona_api_url: None,
-            daytona_target: None,
+            daytona_api_key: cfg.daytona_api_key.clone(),
+            daytona_api_url: cfg.daytona_api_url.clone(),
+            daytona_target: cfg.daytona_target.clone(),
             daytona_image: None,
             firecracker_bin: None,
             firecracker_kernel: None,

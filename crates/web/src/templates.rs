@@ -99,10 +99,11 @@ pub(crate) struct GonData {
 
 #[derive(serde::Serialize)]
 struct SandboxGonInfo {
-    backend: String,
+    backend: moltis_tools::sandbox::SandboxBackendId,
     os: &'static str,
     default_image: String,
     image_building: bool,
+    available_backends: Vec<moltis_tools::sandbox::SandboxBackendId>,
 }
 
 /// Memory snapshot included in gon data and tick broadcasts.
@@ -431,20 +432,28 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .unwrap_or_default();
 
     let sandbox = if let Some(ref router) = gw.sandbox_router {
+        use moltis_tools::sandbox::SandboxBackendId;
         SandboxGonInfo {
-            backend: router.backend_name().to_owned(),
+            backend: SandboxBackendId::from_name(router.backend_name()),
             os: std::env::consts::OS,
             default_image: router.default_image().await,
             image_building: router
                 .building_flag
                 .load(std::sync::atomic::Ordering::Relaxed),
+            available_backends: router
+                .available_backends()
+                .into_iter()
+                .map(SandboxBackendId::from_name)
+                .collect(),
         }
     } else {
+        use moltis_tools::sandbox::SandboxBackendId;
         SandboxGonInfo {
-            backend: "none".to_owned(),
+            backend: SandboxBackendId::None,
             os: std::env::consts::OS,
             default_image: moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_owned(),
             image_building: false,
+            available_backends: vec![SandboxBackendId::None],
         }
     };
 

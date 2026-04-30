@@ -46,11 +46,25 @@ export interface MemSnapshot {
 
 // ── Sandbox gon info ────────────────────────────────────────
 
+/** Known sandbox backend identifiers. */
+export type SandboxBackendId =
+	| "docker"
+	| "podman"
+	| "apple-container"
+	| "cgroup"
+	| "restricted-host"
+	| "wasm"
+	| "vercel"
+	| "daytona"
+	| "firecracker"
+	| "none";
+
 export interface SandboxGonInfo {
-	backend: string;
+	backend: SandboxBackendId;
 	os: string;
 	default_image: string;
 	image_building: boolean;
+	available_backends: SandboxBackendId[];
 }
 
 // ── Identity ────────────────────────────────────────────────
