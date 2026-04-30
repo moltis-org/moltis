@@ -33,15 +33,18 @@ pub(in crate::channel_events) async fn handle_btw(
     let Some(registry) = registry else {
         return Err(ChannelError::unavailable("no LLM providers available"));
     };
+    // Resolve session model via async DB lookup *before* acquiring the
+    // registry read lock to avoid holding the lock across an await point.
+    let session_model = if let Some(ref meta) = state.services.session_metadata {
+        meta.get(session_key).await.and_then(|e| e.model.clone())
+    } else {
+        None
+    };
     let provider: Arc<dyn moltis_agents::model::LlmProvider> = {
         let reg = registry.read().await;
-        let session_model = if let Some(ref meta) = state.services.session_metadata {
-            meta.get(session_key).await.and_then(|e| e.model.clone())
-        } else {
-            None
-        };
         let resolved = session_model
-            .and_then(|id| reg.get(&id))
+            .as_deref()
+            .and_then(|id| reg.get(id))
             .or_else(|| reg.first());
         match resolved {
             Some(p) => p,
@@ -283,6 +286,7 @@ pub(in crate::channel_events) async fn handle_rollback(
         "session",
         serde_json::json!({
             "kind": "rollback",
+            "sessionKey": session_key,
             "turn": n,
             "restored": restored,
         }),
