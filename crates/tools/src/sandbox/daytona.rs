@@ -36,6 +36,13 @@ struct DaytonaSession {
     workspace_dir: String,
 }
 
+/// Track the workspace dir of the most recently created sandbox so
+/// `workspace_dir()` (which is sync and has no session context) can
+/// return a reasonable value for workspace sync. Updated on each
+/// `ensure_ready()`.
+static LAST_DAYTONA_WORKSPACE: std::sync::OnceLock<std::sync::Mutex<String>> =
+    std::sync::OnceLock::new();
+
 /// Daytona Sandbox backend configuration.
 #[derive(Debug, Clone)]
 pub struct DaytonaSandboxConfig {
@@ -335,7 +342,17 @@ impl Sandbox for DaytonaSandbox {
     }
 
     fn workspace_dir(&self) -> &str {
-        "/home/daytona"
+        // Return the most recently observed workspace dir, or the default.
+        if let Some(lock) = LAST_DAYTONA_WORKSPACE.get()
+            && let Ok(guard) = lock.lock()
+            && !guard.is_empty()
+        {
+            // SAFETY: We leak the string to return a &'static str.
+            // This is acceptable because there are very few distinct
+            // workspace paths across the process lifetime.
+            return Box::leak(guard.clone().into_boxed_str());
+        }
+        DAYTONA_WORKSPACE
     }
 
     async fn ensure_ready(&self, id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
@@ -348,6 +365,12 @@ impl Sandbox for DaytonaSandbox {
         let (sandbox_id, workspace_dir) = self.create_sandbox().await?;
 
         info!(%id, daytona_id = sandbox_id, workspace = workspace_dir, "daytona: sandbox ready");
+
+        // Update the workspace dir for workspace_dir() trait method.
+        let lock = LAST_DAYTONA_WORKSPACE.get_or_init(|| std::sync::Mutex::new(String::new()));
+        if let Ok(mut guard) = lock.lock() {
+            *guard = workspace_dir.clone();
+        }
 
         self.active
             .write()

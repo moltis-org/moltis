@@ -172,16 +172,30 @@ pub async fn sync_out(
 
 /// Resolve the host workspace path for sync operations.
 ///
-/// Uses the sandbox home persistence directory corresponding to the session.
-/// Returns `None` if home persistence is disabled.
+/// For isolated backends, always returns a path — even when home persistence
+/// is disabled — because workspace sync is essential for remote backends to
+/// function. Falls back to a dedicated sync directory under `data_dir()`.
 pub fn resolve_sync_workspace(
     config: &super::types::SandboxConfig,
     id: &SandboxId,
 ) -> Option<std::path::PathBuf> {
-    use super::paths::{detected_container_cli, sandbox_home_persistence_host_dir};
+    use super::{
+        paths::{detected_container_cli, sandbox_home_persistence_host_dir},
+        types::sanitize_path_component,
+    };
 
     let cli = detected_container_cli(config);
-    sandbox_home_persistence_host_dir(config, cli, id)
+    // If home persistence is configured, use that directory.
+    if let Some(path) = sandbox_home_persistence_host_dir(config, cli, id) {
+        return Some(path);
+    }
+    // Fallback: dedicated sync directory for isolated backends.
+    Some(
+        moltis_config::data_dir()
+            .join("sandbox")
+            .join("sync")
+            .join(sanitize_path_component(&id.key)),
+    )
 }
 
 /// Check if a directory is empty or contains no entries.

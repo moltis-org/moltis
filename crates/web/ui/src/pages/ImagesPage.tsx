@@ -984,7 +984,10 @@ function RemoteBackendsSection(): VNode {
 						className="provider-btn"
 						style={{ alignSelf: "flex-start" }}
 						onClick={saveVercel}
-						disabled={remoteSaving.value === "vercel" || !vercelToken.value.trim()}
+						disabled={
+							remoteSaving.value === "vercel" ||
+							!(vercelToken.value.trim() || vercelProjectId.value.trim() || vercelTeamId.value.trim())
+						}
 					>
 						{remoteSaving.value === "vercel" ? "Saving\u2026" : "Save Vercel"}
 					</button>
