@@ -282,6 +282,19 @@ pub struct ProviderEntry {
     /// `None` (default) = models stay loaded indefinitely.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle_timeout_secs: Option<u64>,
+
+    /// Timeout in seconds for completion-based model probes.
+    ///
+    /// When the lightweight catalog check (`GET /v1/models`) is unavailable,
+    /// probing falls back to sending a completion request. This setting
+    /// controls how long to wait for that fallback.
+    ///
+    /// Increase this for local LLM servers that need time to load large
+    /// models on first request (e.g. llama.cpp with 100B+ models).
+    ///
+    /// `None` (default) uses the built-in 30-second timeout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_timeout_secs: Option<u64>,
 }
 
 impl std::fmt::Debug for ProviderEntry {
@@ -300,6 +313,7 @@ impl std::fmt::Debug for ProviderEntry {
             .field("strict_tools", &self.strict_tools)
             .field("policy", &self.policy)
             .field("model_overrides", &self.model_overrides)
+            .field("probe_timeout_secs", &self.probe_timeout_secs)
             .finish()
     }
 }
@@ -321,6 +335,7 @@ impl Default for ProviderEntry {
             policy: None,
             model_overrides: HashMap::new(),
             idle_timeout_secs: None,
+            probe_timeout_secs: None,
         }
     }
 }

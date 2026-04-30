@@ -224,6 +224,12 @@ impl ProviderRegistry {
                 if let Some(strict) = config.get(def.config_name).and_then(|e| e.strict_tools) {
                     oai = oai.with_strict_tools(strict);
                 }
+                if let Some(timeout) = config
+                    .get(def.config_name)
+                    .and_then(|e| e.probe_timeout_secs)
+                {
+                    oai = oai.with_probe_timeout_secs(Some(timeout));
+                }
 
                 self.register(
                     ModelInfo {
@@ -948,6 +954,13 @@ impl ProviderRegistry {
                     oai = oai.with_strict_tools(strict);
                 }
 
+                if let Some(timeout) = config
+                    .get(def.config_name)
+                    .and_then(|e| e.probe_timeout_secs)
+                {
+                    oai = oai.with_probe_timeout_secs(Some(timeout));
+                }
+
                 // Fireworks Fire Pass router models for Kimi route to
                 // Moonshot, which rejects strict-mode schemas and requires
                 // reasoning_content on tool-call messages (issue #810).
@@ -1058,6 +1071,7 @@ impl ProviderRegistry {
                 if let Some(strict) = entry.strict_tools {
                     oai = oai.with_strict_tools(strict);
                 }
+                oai = oai.with_probe_timeout_secs(entry.probe_timeout_secs);
                 let provider = Arc::new(oai);
                 self.register(
                     ModelInfo {

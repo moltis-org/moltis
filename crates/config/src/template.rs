@@ -124,6 +124,8 @@ port = {port}                           # Port number (auto-generated for this i
 #   strict_tools - Force strict/non-strict tool schemas (default: auto-detect per provider)
 #   policy    - Per-provider tool policy override (allow/deny lists)
 #   model_overrides.<model_id>.context_window - Override context window for a specific model
+#   probe_timeout_secs - Timeout for completion-based model probes (default: 30s).
+#                        Increase for local LLM servers that load large models on first request.
 
 # [providers]
 # offered = ["local-llm", "lmstudio", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"]

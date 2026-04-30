@@ -49,6 +49,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ("policy", tool_policy_entry()),
             ("model_overrides", Map(Box::new(model_override()))),
             ("idle_timeout_secs", Leaf),
+            ("probe_timeout_secs", Leaf),
         ]))
     };
 

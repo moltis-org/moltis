@@ -202,7 +202,8 @@ async fn run_single_probe(
         };
     }
 
-    let completion = tokio::time::timeout(Duration::from_secs(20), provider.probe()).await;
+    let completion =
+        tokio::time::timeout(Duration::from_secs(20), provider.check_availability()).await;
 
     match completion {
         Ok(Ok(_)) => {
@@ -1138,7 +1139,7 @@ impl ModelService for LiveModelService {
         let started = Instant::now();
         info!(model_id, provider = provider.name(), "model probe started");
 
-        match provider.probe().await {
+        match provider.check_availability().await {
             Ok(()) => {
                 info!(
                     model_id,
