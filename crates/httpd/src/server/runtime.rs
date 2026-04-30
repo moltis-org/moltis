@@ -1320,7 +1320,7 @@ pub async fn start_gateway(
     }
 
     // Spawn shutdown handler:
-    // - SIGTERM (Docker/systemd): graceful — drain browser pool, unregister services
+    // - SIGTERM / SIGHUP (Docker/systemd): graceful — drain browser pool, unregister services
     // - SIGINT  (ctrl-c): immediate exit
     {
         let browser_for_shutdown = Arc::clone(&banner.browser_for_lifecycle);
@@ -1331,34 +1331,39 @@ pub async fn start_gateway(
         let ts_mode = banner.tailscale_mode;
         tokio::spawn(async move {
             #[cfg(unix)]
-            let graceful = {
+            let signal_name: &str = {
                 use tokio::signal::unix::{SignalKind, signal};
                 let mut sigterm =
                     signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+                let mut sighup =
+                    signal(SignalKind::hangup()).expect("failed to register SIGHUP handler");
                 tokio::select! {
                     result = tokio::signal::ctrl_c() => {
                         if result.is_err() { return; }
-                        false
+                        "SIGINT"
                     }
                     _ = sigterm.recv() => {
-                        true
+                        "SIGTERM"
+                    }
+                    _ = sighup.recv() => {
+                        "SIGHUP"
                     }
                 }
             };
             #[cfg(not(unix))]
-            let graceful = {
+            let signal_name: &str = {
                 if tokio::signal::ctrl_c().await.is_err() {
                     return;
                 }
-                false
+                "SIGINT"
             };
 
-            if !graceful {
+            if signal_name == "SIGINT" {
                 info!("received SIGINT, exiting immediately");
                 std::process::exit(0);
             }
 
-            info!("received SIGTERM, starting graceful shutdown");
+            info!(signal = signal_name, "starting graceful shutdown");
 
             #[cfg(feature = "mdns")]
             if let Some(ref daemon) = _mdns_daemon {
