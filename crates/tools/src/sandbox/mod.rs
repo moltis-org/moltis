@@ -13,6 +13,8 @@ pub(crate) mod platform;
 pub(crate) mod router;
 pub(crate) mod sync;
 pub(crate) mod types;
+#[cfg(feature = "vercel-sandbox")]
+pub(crate) mod vercel;
 pub(crate) mod wasm;
 
 #[cfg(test)]
@@ -24,6 +26,8 @@ mod tests;
 pub use apple::{AppleContainerSandbox, ensure_apple_container_service};
 #[cfg(target_os = "linux")]
 pub use platform::CgroupSandbox;
+#[cfg(feature = "vercel-sandbox")]
+pub use vercel::{VercelSandbox, VercelSandboxConfig};
 #[cfg(feature = "wasm")]
 pub use wasm::WasmSandbox;
 pub use {

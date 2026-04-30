@@ -188,6 +188,22 @@ pub struct SandboxConfig {
     pub wasm_epoch_interval_ms: Option<u64>,
     /// Per-tool WASM limits (fuel/memory). Falls back to built-in defaults when absent.
     pub wasm_tool_limits: Option<WasmToolLimits>,
+
+    // ── Vercel sandbox configuration ────────────────────────────────────
+    /// Vercel API token (`VERCEL_TOKEN` or `VERCEL_OIDC_TOKEN`).
+    pub vercel_token: Option<String>,
+    /// Vercel project ID.
+    pub vercel_project_id: Option<String>,
+    /// Vercel team ID.
+    pub vercel_team_id: Option<String>,
+    /// Vercel sandbox runtime (e.g. "node24", "node22", "python3.13").
+    pub vercel_runtime: Option<String>,
+    /// Vercel sandbox timeout in milliseconds.
+    pub vercel_timeout_ms: Option<u64>,
+    /// Vercel sandbox vCPU count.
+    pub vercel_vcpus: Option<u32>,
+    /// Vercel snapshot ID for fast cold starts.
+    pub vercel_snapshot_id: Option<String>,
 }
 
 impl Default for SandboxConfig {
@@ -212,6 +228,13 @@ impl Default for SandboxConfig {
             wasm_fuel_limit: None,
             wasm_epoch_interval_ms: None,
             wasm_tool_limits: None,
+            vercel_token: None,
+            vercel_project_id: None,
+            vercel_team_id: None,
+            vercel_runtime: None,
+            vercel_timeout_ms: None,
+            vercel_vcpus: None,
+            vercel_snapshot_id: None,
         }
     }
 }
@@ -272,6 +295,14 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             wasm_fuel_limit: cfg.wasm_fuel_limit,
             wasm_epoch_interval_ms: cfg.wasm_epoch_interval_ms,
             wasm_tool_limits: cfg.wasm_tool_limits.as_ref().map(WasmToolLimits::from),
+            // Vercel config is populated from env vars by the gateway.
+            vercel_token: None,
+            vercel_project_id: None,
+            vercel_team_id: None,
+            vercel_runtime: None,
+            vercel_timeout_ms: None,
+            vercel_vcpus: None,
+            vercel_snapshot_id: None,
         }
     }
 }

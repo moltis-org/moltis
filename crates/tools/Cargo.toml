@@ -5,7 +5,8 @@ version.workspace = true
 
 [features]
 bundled-skills = ["moltis-skills/bundled-skills"]
-default        = ["firecrawl", "fs-tools", "metrics", "wasm"]
+default        = ["firecrawl", "fs-tools", "metrics", "vercel-sandbox", "wasm"]
+vercel-sandbox = ["dep:flate2"]
 embedded-wasm = []
 firecrawl     = []
 # Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep).
@@ -27,6 +28,7 @@ anyhow                = { workspace = true }
 async-trait           = { workspace = true }
 base64                = { workspace = true }
 bytes                 = { workspace = true }
+flate2                = { optional = true, workspace = true }
 futures               = { workspace = true }
 globset               = { optional = true, workspace = true }
 grep-matcher          = { optional = true, workspace = true }

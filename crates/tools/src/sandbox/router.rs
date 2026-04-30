@@ -321,6 +321,8 @@ pub(crate) fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
             Arc::new(RestrictedHostSandbox::new(config))
         },
         "wasm" | "wasmtime" => create_wasm_backend(config),
+        #[cfg(feature = "vercel-sandbox")]
+        "vercel" => create_vercel_backend(config),
         _ => auto_detect_backend(config),
     }
 }
@@ -346,6 +348,54 @@ fn create_wasm_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         tracing::warn!("wasm sandbox requested but feature not compiled in; using restricted-host");
         Arc::new(RestrictedHostSandbox::new(config))
     }
+}
+
+/// Create a Vercel sandbox backend, falling back to `RestrictedHostSandbox` if
+/// the feature is disabled or the token is not configured.
+#[cfg(feature = "vercel-sandbox")]
+fn create_vercel_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
+    use super::vercel::{VercelSandbox, VercelSandboxConfig};
+
+    let token = config
+        .vercel_token
+        .clone()
+        .or_else(|| std::env::var("VERCEL_TOKEN").ok())
+        .or_else(|| std::env::var("VERCEL_OIDC_TOKEN").ok())
+        .unwrap_or_default();
+
+    if token.is_empty() {
+        tracing::warn!(
+            "vercel sandbox requested but no token configured (set VERCEL_TOKEN); \
+             using restricted-host"
+        );
+        return Arc::new(RestrictedHostSandbox::new(config));
+    }
+
+    let vercel_config = VercelSandboxConfig {
+        token: secrecy::Secret::new(token),
+        project_id: config
+            .vercel_project_id
+            .clone()
+            .or_else(|| std::env::var("VERCEL_PROJECT_ID").ok()),
+        team_id: config
+            .vercel_team_id
+            .clone()
+            .or_else(|| std::env::var("VERCEL_TEAM_ID").ok()),
+        runtime: config
+            .vercel_runtime
+            .clone()
+            .unwrap_or_else(|| "node24".into()),
+        timeout_ms: config.vercel_timeout_ms.unwrap_or(300_000),
+        vcpus: config.vercel_vcpus.unwrap_or(2),
+        snapshot_id: config.vercel_snapshot_id.clone(),
+    };
+
+    tracing::info!(
+        runtime = vercel_config.runtime,
+        vcpus = vercel_config.vcpus,
+        "sandbox backend: vercel (Firecracker microVM)"
+    );
+    Arc::new(VercelSandbox::new(config, vercel_config))
 }
 
 /// Wrap a primary sandbox backend with a failover chain.
@@ -451,7 +501,21 @@ pub fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         );
     }
 
-    // Use restricted-host sandbox before falling back to NoSandbox.
+    // No local container runtime available — try remote backends.
+    #[cfg(feature = "vercel-sandbox")]
+    {
+        let has_vercel_token = config.vercel_token.is_some()
+            || std::env::var("VERCEL_TOKEN").is_ok()
+            || std::env::var("VERCEL_OIDC_TOKEN").is_ok();
+        if has_vercel_token {
+            tracing::info!(
+                "no local container runtime; using vercel sandbox (VERCEL_TOKEN detected)"
+            );
+            return create_vercel_backend(config);
+        }
+    }
+
+    // Use restricted-host sandbox as last resort.
     tracing::info!(
         "sandbox backend: restricted-host (env clearing, rlimits; no container runtime available)"
     );
