@@ -353,8 +353,8 @@ impl FirecrackerSandbox {
 
         let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        stdout.truncate(opts.max_output_bytes);
-        stderr.truncate(opts.max_output_bytes);
+        stdout.truncate(stdout.floor_char_boundary(opts.max_output_bytes));
+        stderr.truncate(stderr.floor_char_boundary(opts.max_output_bytes));
 
         Ok(ExecResult {
             stdout,
