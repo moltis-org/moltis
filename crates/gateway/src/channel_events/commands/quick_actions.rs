@@ -446,6 +446,44 @@ pub(in crate::channel_events) async fn handle_insights(
             "Based on {data_points} data points over {span_hours:.1} hours."
         ));
 
+        // Skill usage telemetry
+        if let Some(store) = state.skill_usage_store.get() {
+            let usage = store.get_all().await;
+            if !usage.is_empty() {
+                lines.push(String::new());
+                lines.push("Skills:".to_string());
+
+                let total_reads: u64 = usage.values().map(|e| e.read_count).sum();
+                let total_writes: u64 = usage.values().map(|e| e.write_count).sum();
+                lines.push(format!(
+                    "  {total_reads} activations, {total_writes} modifications across {} skills",
+                    usage.len()
+                ));
+
+                // Top 5 most-used skills by read_count
+                let mut by_reads: Vec<_> = usage.iter().collect();
+                by_reads.sort_by(|a, b| b.1.read_count.cmp(&a.1.read_count));
+                if by_reads.iter().any(|(_, e)| e.read_count > 0) {
+                    lines.push("  Most activated:".to_string());
+                    for (name, entry) in by_reads.iter().take(5) {
+                        if entry.read_count == 0 {
+                            break;
+                        }
+                        lines.push(format!(
+                            "    {name}: {} reads, {} writes",
+                            entry.read_count, entry.write_count
+                        ));
+                    }
+                }
+
+                // Skills never read (created but unused)
+                let never_read: Vec<_> = usage.iter().filter(|(_, e)| e.read_count == 0).collect();
+                if !never_read.is_empty() {
+                    lines.push(format!("  Never activated: {}", never_read.len()));
+                }
+            }
+        }
+
         Ok(lines.join("\n"))
     }
 }

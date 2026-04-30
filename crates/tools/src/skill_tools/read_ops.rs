@@ -5,7 +5,7 @@ use std::{path::Path, sync::Arc};
 use {
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
-    moltis_skills::{discover::SkillDiscoverer, types::SkillSource},
+    moltis_skills::{discover::SkillDiscoverer, types::SkillSource, usage::SkillUsageStore},
     serde_json::{Value, json},
 };
 
@@ -30,6 +30,7 @@ const SIDECAR_SUBDIRS: &[&str] = moltis_skills::SIDECAR_SUBDIRS;
 /// filesystem MCP server to load `SKILL.md` by absolute path.
 pub struct ReadSkillTool {
     discoverer: Arc<dyn SkillDiscoverer>,
+    usage_store: Option<SkillUsageStore>,
     #[cfg(feature = "bundled-skills")]
     bundled_store: Option<Arc<moltis_skills::bundled::BundledSkillStore>>,
 }
@@ -40,6 +41,7 @@ impl ReadSkillTool {
     pub fn new(discoverer: Arc<dyn SkillDiscoverer>) -> Self {
         Self {
             discoverer,
+            usage_store: None,
             #[cfg(feature = "bundled-skills")]
             bundled_store: None,
         }
@@ -54,8 +56,16 @@ impl ReadSkillTool {
     ) -> Self {
         Self {
             discoverer,
+            usage_store: None,
             bundled_store: Some(bundled_store),
         }
+    }
+
+    /// Attach a usage telemetry store.
+    #[must_use]
+    pub fn with_usage_store(mut self, store: SkillUsageStore) -> Self {
+        self.usage_store = Some(store);
+        self
     }
 
     /// Convenience constructor that uses default filesystem paths.
@@ -65,6 +75,7 @@ impl ReadSkillTool {
         let discoverer = Arc::new(FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths()));
         Self {
             discoverer,
+            usage_store: None,
             #[cfg(feature = "bundled-skills")]
             bundled_store: None,
         }
@@ -168,6 +179,12 @@ impl AgentTool for ReadSkillTool {
 
         let mut result = read_primary(name, meta).await?;
         inject_install_note(&mut result, &install_note);
+
+        // Record activation (primary reads only, not sidecar reads).
+        if let Some(ref store) = self.usage_store {
+            store.record_read(name).await;
+        }
+
         Ok(result)
     }
 }

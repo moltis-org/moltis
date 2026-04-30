@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use {
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
+    moltis_skills::usage::SkillUsageStore,
     serde_json::{Value, json},
 };
 
@@ -19,6 +20,7 @@ use {
 pub struct CreateSkillTool {
     data_dir: PathBuf,
     checkpoints: CheckpointManager,
+    usage_store: Option<SkillUsageStore>,
 }
 
 impl CreateSkillTool {
@@ -27,7 +29,14 @@ impl CreateSkillTool {
         Self {
             data_dir,
             checkpoints,
+            usage_store: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_usage_store(mut self, store: SkillUsageStore) -> Self {
+        self.usage_store = Some(store);
+        self
     }
 
     fn skills_dir(&self) -> PathBuf {
@@ -118,6 +127,10 @@ impl AgentTool for CreateSkillTool {
         let content = build_skill_md(name, description, body, &allowed_tools);
         write_skill(&skill_dir, &content).await?;
 
+        if let Some(ref store) = self.usage_store {
+            store.record_write(name).await;
+        }
+
         Ok(json!({
             "created": true,
             "path": skill_dir.display().to_string(),
@@ -132,6 +145,7 @@ impl AgentTool for CreateSkillTool {
 pub struct UpdateSkillTool {
     data_dir: PathBuf,
     checkpoints: CheckpointManager,
+    usage_store: Option<SkillUsageStore>,
 }
 
 impl UpdateSkillTool {
@@ -140,7 +154,14 @@ impl UpdateSkillTool {
         Self {
             data_dir,
             checkpoints,
+            usage_store: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_usage_store(mut self, store: SkillUsageStore) -> Self {
+        self.usage_store = Some(store);
+        self
     }
 
     fn skills_dir(&self) -> PathBuf {
@@ -229,6 +250,10 @@ impl AgentTool for UpdateSkillTool {
         let content = build_skill_md(name, description, body, &allowed_tools);
         write_skill(&skill_dir, &content).await?;
 
+        if let Some(ref store) = self.usage_store {
+            store.record_write(name).await;
+        }
+
         Ok(json!({
             "updated": true,
             "path": skill_dir.display().to_string(),
@@ -243,6 +268,7 @@ impl AgentTool for UpdateSkillTool {
 pub struct DeleteSkillTool {
     data_dir: PathBuf,
     checkpoints: CheckpointManager,
+    usage_store: Option<SkillUsageStore>,
 }
 
 impl DeleteSkillTool {
@@ -251,7 +277,14 @@ impl DeleteSkillTool {
         Self {
             data_dir,
             checkpoints,
+            usage_store: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_usage_store(mut self, store: SkillUsageStore) -> Self {
+        self.usage_store = Some(store);
+        self
     }
 
     fn skills_dir(&self) -> PathBuf {
@@ -315,6 +348,10 @@ impl AgentTool for DeleteSkillTool {
             .checkpoint_path(&skill_dir, "delete_skill")
             .await?;
         tokio::fs::remove_dir_all(&skill_dir).await?;
+
+        if let Some(ref store) = self.usage_store {
+            store.remove(name).await;
+        }
 
         Ok(json!({
             "deleted": true,
