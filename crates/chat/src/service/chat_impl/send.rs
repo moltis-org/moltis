@@ -1275,9 +1275,15 @@ impl LiveChatService {
             }
 
             // ── Auto-title generation ──────────────────────────────
-            // After the first exchange (2 messages = 1 user + 1 assistant),
-            // trigger background title generation if the session has no label.
-            if auto_title_enabled && let Ok(2) = session_store.count(&session_key_clone).await {
+            // After the first completed turn, trigger background title
+            // generation. We check >= 2 (not == 2) because agentic turns
+            // with tool calls produce more than 2 stored messages.
+            // `generate_title_if_needed` guards against duplicate titles.
+            if auto_title_enabled
+                && let Ok(count) = session_store.count(&session_key_clone).await
+                && count >= 2
+                && !queued_replay
+            {
                 state.trigger_auto_title(&session_key_clone).await;
             }
 

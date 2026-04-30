@@ -69,6 +69,10 @@ pub async fn generate_title(
         included += 1;
     }
 
+    if context.is_empty() {
+        anyhow::bail!("no user/assistant content to generate title from");
+    }
+
     debug!(context_len = context.len(), "generating session title");
 
     #[cfg(feature = "metrics")]

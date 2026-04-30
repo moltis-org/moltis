@@ -95,27 +95,28 @@ pub(crate) async fn generate_title_for_session(state: &Arc<GatewayState>, sessio
     let chat_msgs = moltis_agents::model::values_to_chat_messages(&history);
     match moltis_agents::title::generate_title(provider, &chat_msgs).await {
         Ok(title) => {
-            // Persist the title as the session label.
-            if let Err(e) = session_metadata
+            // Persist the title as the session label and read back the
+            // entry atomically so the broadcast version is consistent.
+            let entry = match session_metadata
                 .upsert(session_key, Some(title.clone()))
                 .await
             {
-                warn!(error = %e, session = %session_key, "auto-title: failed to persist title");
-                return;
-            }
+                Ok(e) => e,
+                Err(e) => {
+                    warn!(error = %e, session = %session_key, "auto-title: failed to persist title");
+                    return;
+                },
+            };
 
             info!(session = %session_key, title = %title, "auto-title: set session title");
 
-            // Broadcast so the UI updates immediately.
-            let entry = session_metadata.get(session_key).await;
-            let version = entry.map(|e| e.version).unwrap_or(0);
             broadcast(
                 state,
                 "session",
                 serde_json::json!({
                     "kind": "patched",
                     "sessionKey": session_key,
-                    "version": version,
+                    "version": entry.version,
                     "label": title,
                 }),
                 BroadcastOpts::default(),

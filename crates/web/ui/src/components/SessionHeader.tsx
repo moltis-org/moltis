@@ -243,10 +243,11 @@ export function SessionHeader({
 	const [generatingTitle, setGeneratingTitle] = useState(false);
 	const onGenerateTitle = useCallback(() => {
 		setGeneratingTitle(true);
-		sendRpc<{ label?: string }>("sessions.generate_title", { key: currentKey }).then((res) => {
-			setGeneratingTitle(false);
-			if (res?.ok) fetchSessions();
-		});
+		sendRpc<{ label?: string }>("sessions.generate_title", { key: currentKey })
+			.then((res) => {
+				if (res?.ok) fetchSessions();
+			})
+			.finally(() => setGeneratingTitle(false));
 	}, [currentKey]);
 
 	const onFork = useCallback(() => {
