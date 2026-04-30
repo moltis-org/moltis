@@ -79,11 +79,6 @@ test.describe("Smart auto-scroll", () => {
 		const afterFill = await getScrollState(page);
 		expect(afterFill.scrollHeight).toBeGreaterThan(afterFill.clientHeight);
 
-		// scrollChatToBottom() installs a ResizeObserver that force-scrolls to
-		// bottom for 500ms.  Wait for it to expire so the upcoming chatAddMsg
-		// doesn't get yanked back to the bottom.
-		await page.waitForTimeout(600);
-
 		// Scroll to the top to simulate a user reading earlier messages
 		await page.evaluate(() => {
 			document.getElementById("messages").scrollTop = 0;
@@ -198,6 +193,8 @@ test.describe("Smart auto-scroll", () => {
 			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 			var chatUi = await import(`${prefix}js/chat-ui.js`);
 			chatUi.chatAddMsg("user", "User message while scrolled up");
+			// Wait for rAF-based scroll to complete
+			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 		});
 
 		// Should be at the bottom
@@ -238,6 +235,8 @@ test.describe("Smart auto-scroll", () => {
 			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 			var chatUi = await import(`${prefix}js/chat-ui.js`);
 			chatUi.chatAddMsg("assistant", "Message in always mode");
+			// Wait for rAF-based scroll to complete
+			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 		});
 
 		// Should have scrolled to bottom automatically

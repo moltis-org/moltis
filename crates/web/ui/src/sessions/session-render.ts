@@ -394,7 +394,7 @@ export function postHistoryLoadActions(
 	if (!skipAutoScroll && searchContext?.query && S.chatMsgBox) {
 		highlightAndScroll(msgEls, searchContext.messageIndex, searchContext.query);
 	} else if (!skipAutoScroll) {
-		scrollChatToBottom();
+		scrollChatToBottom(true);
 	}
 
 	const session = sessionStore.getByKey(key);
@@ -412,7 +412,7 @@ export function postHistoryLoadActions(
 			thinkEl.appendChild(makeThinkingDots());
 		}
 		S.chatMsgBox.appendChild(thinkEl);
-		if (!skipAutoScroll) scrollChatToBottom();
+		if (!skipAutoScroll) scrollChatToBottom(true);
 	}
 }
 
