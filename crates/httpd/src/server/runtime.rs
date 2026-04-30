@@ -1342,10 +1342,12 @@ pub async fn start_gateway(
                         if result.is_err() { return; }
                         "SIGINT"
                     }
-                    _ = sigterm.recv() => {
+                    result = sigterm.recv() => {
+                        if result.is_none() { return; }
                         "SIGTERM"
                     }
-                    _ = sighup.recv() => {
+                    result = sighup.recv() => {
+                        if result.is_none() { return; }
                         "SIGHUP"
                     }
                 }
