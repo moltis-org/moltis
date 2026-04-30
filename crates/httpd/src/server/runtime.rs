@@ -1319,11 +1319,9 @@ pub async fn start_gateway(
         }
     }
 
-    // Spawn shutdown handler (triggers on SIGINT or SIGTERM):
-    // - unregister mDNS service (when configured)
-    // - reset tailscale state on exit (when configured)
-    // - give browser pool 5s to shut down gracefully
-    // - force process exit to avoid hanging
+    // Spawn shutdown handler:
+    // - SIGTERM (Docker/systemd): graceful — drain browser pool, unregister services
+    // - SIGINT  (ctrl-c): immediate exit
     {
         let browser_for_shutdown = Arc::clone(&banner.browser_for_lifecycle);
         #[cfg(feature = "tailscale")]
@@ -1333,23 +1331,34 @@ pub async fn start_gateway(
         let ts_mode = banner.tailscale_mode;
         tokio::spawn(async move {
             #[cfg(unix)]
-            {
+            let graceful = {
                 use tokio::signal::unix::{SignalKind, signal};
                 let mut sigterm =
                     signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
                 tokio::select! {
                     result = tokio::signal::ctrl_c() => {
                         if result.is_err() { return; }
+                        false
                     }
-                    _ = sigterm.recv() => {}
+                    _ = sigterm.recv() => {
+                        true
+                    }
                 }
-            }
+            };
             #[cfg(not(unix))]
-            {
+            let graceful = {
                 if tokio::signal::ctrl_c().await.is_err() {
                     return;
                 }
+                false
+            };
+
+            if !graceful {
+                info!("received SIGINT, exiting immediately");
+                std::process::exit(0);
             }
+
+            info!("received SIGTERM, starting graceful shutdown");
 
             #[cfg(feature = "mdns")]
             if let Some(ref daemon) = _mdns_daemon {
