@@ -6,12 +6,39 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "skills.list",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
+                let mut result = ctx
+                    .state
                     .services
                     .skills
                     .list()
                     .await
-                    .map_err(ErrorShape::from)
+                    .map_err(ErrorShape::from)?;
+
+                // Enrich with per-skill usage telemetry.
+                if let Some(store) = ctx.state.skill_usage_store.get() {
+                    let usage = store.get_all().await;
+                    if let Some(arr) = result.as_array_mut() {
+                        for item in arr.iter_mut() {
+                            let name = item.get("name").and_then(|n| n.as_str());
+                            let entry = name.and_then(|n| usage.get(n));
+                            if let Some((entry, obj)) = entry.zip(item.as_object_mut()) {
+                                obj.insert(
+                                    "read_count".into(),
+                                    serde_json::json!(entry.read_count),
+                                );
+                                obj.insert(
+                                    "write_count".into(),
+                                    serde_json::json!(entry.write_count),
+                                );
+                                if let Some(ts) = entry.last_read_at {
+                                    obj.insert("last_read_at".into(), serde_json::json!(ts));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Ok(result)
             })
         }),
     );

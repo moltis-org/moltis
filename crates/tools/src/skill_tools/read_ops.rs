@@ -9,6 +9,9 @@ use {
     serde_json::{Value, json},
 };
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, labels, skills as skills_metrics};
+
 use {
     super::{
         MAX_SIDECAR_FILES_PER_CALL, MAX_SIDECAR_FILES_PER_SUBDIR, MAX_SKILL_BODY_BYTES,
@@ -184,6 +187,8 @@ impl AgentTool for ReadSkillTool {
         if let Some(ref store) = self.usage_store {
             store.record_read(name).await;
         }
+        #[cfg(feature = "metrics")]
+        counter!(skills_metrics::ACTIVATIONS_TOTAL, labels::TOOL => name.to_string()).increment(1);
 
         Ok(result)
     }

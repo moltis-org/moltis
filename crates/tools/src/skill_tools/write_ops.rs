@@ -9,6 +9,9 @@ use {
     serde_json::{Value, json},
 };
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, labels, skills as skills_metrics};
+
 use {
     super::{
         MAX_SIDECAR_FILES_PER_CALL,
@@ -348,6 +351,9 @@ impl AgentTool for PatchSkillTool {
         if let Some(ref store) = self.usage_store {
             store.record_write(name).await;
         }
+        #[cfg(feature = "metrics")]
+        counter!(skills_metrics::MODIFICATIONS_TOTAL, labels::TOOL => "patch_skill".to_string())
+            .increment(1);
 
         let mut response = json!({
             "patched": true,

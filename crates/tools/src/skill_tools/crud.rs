@@ -9,6 +9,9 @@ use {
     serde_json::{Value, json},
 };
 
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, labels, skills as skills_metrics};
+
 use {
     super::helpers::{build_skill_md, write_skill},
     crate::{checkpoints::CheckpointManager, error::Error},
@@ -130,6 +133,9 @@ impl AgentTool for CreateSkillTool {
         if let Some(ref store) = self.usage_store {
             store.record_write(name).await;
         }
+        #[cfg(feature = "metrics")]
+        counter!(skills_metrics::MODIFICATIONS_TOTAL, labels::TOOL => "create_skill".to_string())
+            .increment(1);
 
         Ok(json!({
             "created": true,
@@ -253,6 +259,9 @@ impl AgentTool for UpdateSkillTool {
         if let Some(ref store) = self.usage_store {
             store.record_write(name).await;
         }
+        #[cfg(feature = "metrics")]
+        counter!(skills_metrics::MODIFICATIONS_TOTAL, labels::TOOL => "update_skill".to_string())
+            .increment(1);
 
         Ok(json!({
             "updated": true,
