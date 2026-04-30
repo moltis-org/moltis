@@ -214,14 +214,48 @@ impl McpManager {
                     config.oauth.is_some(),
                     has_stored_token,
                 ) {
-                    let client = McpClient::connect_legacy_sse_with_auth(
+                    match McpClient::connect_legacy_sse_with_auth(
                         name,
                         &remote,
                         auth_provider.clone(),
                         self.effective_timeout_for(config),
                     )
-                    .await?;
-                    (client, Some(auth_provider))
+                    .await
+                    {
+                        Ok(client) => (client, Some(auth_provider)),
+                        Err(e) => {
+                            if let Error::Transport(McpTransportError::Unauthorized {
+                                www_authenticate,
+                            }) = &e
+                            {
+                                info!(server = %name, "legacy SSE auth failed (token expired?)");
+
+                                let auth_ok = auth_provider
+                                    .handle_unauthorized(www_authenticate.as_deref())
+                                    .await?;
+
+                                if !auth_ok {
+                                    let mut inner = self.inner.write().await;
+                                    inner.auth_providers.insert(name.to_string(), auth_provider);
+                                    return Err(McpManagerError::OAuthRequired {
+                                        server: name.to_string(),
+                                    }
+                                    .into());
+                                }
+
+                                let client = McpClient::connect_legacy_sse_with_auth(
+                                    name,
+                                    &remote,
+                                    auth_provider.clone(),
+                                    self.effective_timeout_for(config),
+                                )
+                                .await?;
+                                (client, Some(auth_provider))
+                            } else {
+                                return Err(e);
+                            }
+                        },
+                    }
                 } else {
                     match McpClient::connect_legacy_sse(
                         name,
@@ -297,14 +331,51 @@ impl McpManager {
                     config.oauth.is_some(),
                     has_stored_token,
                 ) {
-                    let client = McpClient::connect_sse_with_auth(
+                    match McpClient::connect_sse_with_auth(
                         name,
                         &remote,
                         auth_provider.clone(),
                         self.effective_timeout_for(config),
                     )
-                    .await?;
-                    (client, Some(auth_provider))
+                    .await
+                    {
+                        Ok(client) => (client, Some(auth_provider)),
+                        Err(e) => {
+                            if let Error::Transport(McpTransportError::Unauthorized {
+                                www_authenticate,
+                            }) = &e
+                            {
+                                info!(
+                                    server = %name,
+                                    "streamable HTTP auth failed (token expired?)"
+                                );
+
+                                let auth_ok = auth_provider
+                                    .handle_unauthorized(www_authenticate.as_deref())
+                                    .await?;
+
+                                if !auth_ok {
+                                    let mut inner = self.inner.write().await;
+                                    inner.auth_providers.insert(name.to_string(), auth_provider);
+                                    return Err(McpManagerError::OAuthRequired {
+                                        server: name.to_string(),
+                                    }
+                                    .into());
+                                }
+
+                                let client = McpClient::connect_sse_with_auth(
+                                    name,
+                                    &remote,
+                                    auth_provider.clone(),
+                                    self.effective_timeout_for(config),
+                                )
+                                .await?;
+                                (client, Some(auth_provider))
+                            } else {
+                                return Err(e);
+                            }
+                        },
+                    }
                 } else {
                     match McpClient::connect_sse(name, &remote, self.effective_timeout_for(config))
                         .await
@@ -880,5 +951,57 @@ mod tests {
             err,
             Error::Manager(McpManagerError::OAuthStateNotFound)
         ));
+    }
+
+    /// Regression test for GH-927: when an SSE server with OAuth config gets a
+    /// 401 on the authenticated connection path, `start_server` must preserve the
+    /// auth provider (with `Failed` state) so the frontend can show a
+    /// "Re-authenticate" button.
+    ///
+    /// Before the fix, the auth_provider was discarded when
+    /// `connect_legacy_sse_with_auth` failed via `?`, leaving auth_state as `None`.
+    #[tokio::test]
+    async fn test_start_server_with_expired_token_preserves_auth_state() {
+        // Mock server that always returns 401 on the SSE endpoint.
+        let mut mock_server = mockito::Server::new_async().await;
+        let _sse_401 = mock_server
+            .mock("GET", "/sse")
+            .with_status(401)
+            .with_header("www-authenticate", "Bearer")
+            .create_async()
+            .await;
+
+        let url = format!("{}/sse", mock_server.url());
+        let mut reg = McpRegistry::new();
+        let config = McpServerConfig {
+            transport: TransportType::Sse,
+            url: Some(secrecy::Secret::new(url)),
+            enabled: true,
+            // OAuth config makes should_attempt_auth_connection return true,
+            // simulating a server that was previously configured with OAuth.
+            oauth: Some(McpOAuthConfig {
+                client_id: "test-client".into(),
+                auth_url: "https://auth.example.com/authorize".into(),
+                token_url: "https://auth.example.com/token".into(),
+                scopes: vec![],
+            }),
+            ..Default::default()
+        };
+        reg.servers.insert("posthog".into(), config.clone());
+        let mgr = McpManager::new(reg);
+
+        // No pre-seeded auth_providers — simulates a cold restart.
+        // start_server will take the authenticated path (due to oauth config),
+        // get 401, and must store the auth_provider with Failed state.
+        let err = mgr.start_server("posthog", &config).await;
+        assert!(err.is_err(), "start_server should fail with 401");
+
+        let statuses = mgr.status_all().await;
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(
+            statuses[0].auth_state,
+            Some(McpAuthState::Failed),
+            "auth_state must be Failed so the UI can show a Re-authenticate button"
+        );
     }
 }

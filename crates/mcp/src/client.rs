@@ -20,7 +20,7 @@ use crate::{
     transport::StdioTransport,
     types::{
         ClientCapabilities, ClientInfo, InitializeParams, InitializeResult, McpToolDef,
-        PROTOCOL_VERSION, ToolsCallParams, ToolsCallResult, ToolsListResult,
+        McpTransportError, PROTOCOL_VERSION, ToolsCallParams, ToolsCallResult, ToolsListResult,
     },
 };
 
@@ -235,11 +235,20 @@ impl McpClient {
             },
         };
 
-        let resp = self
+        let resp = match self
             .transport
             .request("initialize", Some(serde_json::to_value(&params)?))
             .await
-            .context("MCP initialize request failed")?;
+        {
+            Ok(r) => r,
+            // Preserve 401 so the manager can trigger the OAuth re-auth flow.
+            Err(e @ Error::Transport(McpTransportError::Unauthorized { .. })) => return Err(e),
+            Err(e) => {
+                return Err(Error::message(format!(
+                    "MCP initialize request failed: {e}"
+                )));
+            },
+        };
 
         let result: InitializeResult =
             serde_json::from_value(resp.result.context("MCP initialize returned no result")?)
