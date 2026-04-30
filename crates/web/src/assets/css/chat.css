@@ -63,12 +63,9 @@
   white-space: normal;
 }
 
-.msg p:last-child {
-  margin-bottom: 0;
-}
-
-.msg p:first-child {
-  margin-top: 0;
+.msg p {
+  margin: 0;
+  white-space: normal;
 }
 
 /* ── Markdown block elements inside messages ── */
