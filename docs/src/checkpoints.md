@@ -1,23 +1,41 @@
 # Checkpoints
 
-Moltis now creates automatic checkpoints before built-in file mutations that
-change personal skills or agent memory files.
+Moltis automatically snapshots files before the agent modifies them. If the
+agent breaks something, use [`/rollback`](commands.md#rollback) to restore files
+to their pre-turn state.
 
-## What Gets Checkpointed
+## Automatic Per-Turn Checkpointing
 
-Current built-in checkpoint coverage includes:
+An `AutoCheckpointHook` runs before every file-mutating tool call (`Write`,
+`Edit`, `MultiEdit`) and snapshots the target file. Checkpoints are grouped by
+**turn** (one user message = one turn), so `/rollback 1` undoes all file changes
+from that turn at once.
 
-- `create_skill`
-- `update_skill`
-- `delete_skill`
-- `write_skill_files`
-- `memory_save`
-- `memory_forget`
-- `memory_delete`
+The hook also fires on skill and memory mutations:
+
+- `create_skill`, `update_skill`, `delete_skill`, `write_skill_files`
+- `memory_save`, `memory_forget`, `memory_delete`
 - the silent pre-compaction memory flush
 
 Each mutation creates a manifest-backed snapshot in `~/.moltis/checkpoints/`
 before the write or delete happens.
+
+## /rollback Command
+
+Available in the web UI, all channels (Telegram, Discord, Slack, etc.), and CLI.
+
+```
+/rollback           # list recent turns with file changes
+/rollback 1         # restore all files from turn 1
+/rollback diff 1    # preview which files were changed in turn 1
+```
+
+Turns are session-scoped — you only see checkpoints from your current session.
+
+## Cleanup
+
+When checkpoint count exceeds 500, the oldest 20% are automatically pruned.
+Cleanup runs lazily on each new checkpoint creation.
 
 ## Tool Surface
 

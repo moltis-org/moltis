@@ -44,6 +44,7 @@
 - [CalDAV (Calendars)](caldav.md)
 - [GraphQL API](graphql.md)
 - [Session State](session-state.md)
+- [Slash Commands](commands.md)
 - [Modes](modes.md)
 - [Session Branching](session-branching.md)
 - [Checkpoints](checkpoints.md)
