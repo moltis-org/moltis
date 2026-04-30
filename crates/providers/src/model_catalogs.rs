@@ -118,7 +118,7 @@ pub(crate) const DEEPINFRA_MODELS: &[(&str, &str)] = &[
         "Llama 4 Maverick",
     ),
     ("meta-llama/Llama-4-Scout-17B-16E-Instruct", "Llama 4 Scout"),
-    ("deepseek-ai/DeepSeek-V3-0324", "DeepSeek V3"),
+    ("deepseek-ai/DeepSeek-V3", "DeepSeek V3"),
     ("deepseek-ai/DeepSeek-R1", "DeepSeek R1"),
     ("Qwen/Qwen3-235B-A22B", "Qwen3 235B"),
     ("Qwen/Qwen3-32B", "Qwen3 32B"),

@@ -563,6 +563,23 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         }
     }
 
+    // Sandbox GPU passthrough validation
+    if let Some(ref gpus) = config.tools.exec.sandbox.gpus {
+        let valid = gpus == "all"
+            || gpus.starts_with("device=")
+            || gpus.chars().all(|c| c.is_ascii_digit() || c == ',');
+        if !valid {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "tools.exec.sandbox.gpus".into(),
+                message: format!(
+                    "unrecognized gpus value \"{gpus}\"; expected \"all\", \"device=0\", \"device=0,1\", or a device index",
+                ),
+            });
+        }
+    }
+
     // Unknown CalDAV provider
     let valid_caldav_providers = ["fastmail", "icloud", "generic"];
     for (name, account) in &config.caldav.accounts {
