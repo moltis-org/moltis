@@ -56,6 +56,27 @@ impl KnownProvider {
 /// Build the known providers list at runtime, including local-llm if enabled.
 pub fn known_providers() -> Vec<KnownProvider> {
     let providers = vec![
+        // Membership/OAuth providers first — no API key needed, just sign in.
+        KnownProvider {
+            name: "openai-codex",
+            display_name: "OpenAI Codex",
+            auth_type: AuthType::Oauth,
+            env_key: None,
+            default_base_url: None,
+            requires_model: false,
+            key_optional: false,
+            local_only: false,
+        },
+        KnownProvider {
+            name: "github-copilot",
+            display_name: "GitHub Copilot",
+            auth_type: AuthType::Oauth,
+            env_key: None,
+            default_base_url: None,
+            requires_model: false,
+            key_optional: false,
+            local_only: false,
+        },
         KnownProvider {
             name: "anthropic",
             display_name: "Anthropic",
@@ -225,26 +246,6 @@ pub fn known_providers() -> Vec<KnownProvider> {
             requires_model: false,
             key_optional: true,
             local_only: true,
-        },
-        KnownProvider {
-            name: "openai-codex",
-            display_name: "OpenAI Codex",
-            auth_type: AuthType::Oauth,
-            env_key: None,
-            default_base_url: None,
-            requires_model: false,
-            key_optional: false,
-            local_only: false,
-        },
-        KnownProvider {
-            name: "github-copilot",
-            display_name: "GitHub Copilot",
-            auth_type: AuthType::Oauth,
-            env_key: None,
-            default_base_url: None,
-            requires_model: false,
-            key_optional: false,
-            local_only: false,
         },
         KnownProvider {
             name: "kimi-code",
