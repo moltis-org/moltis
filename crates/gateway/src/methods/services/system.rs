@@ -15,22 +15,24 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .map_err(ErrorShape::from)?;
 
                 // Enrich with per-skill usage telemetry.
+                // Always insert read_count/write_count (defaulting to 0)
+                // so the response schema is consistent for all skills.
                 if let Some(store) = ctx.state.skill_usage_store.get() {
                     let usage = store.get_all().await;
                     if let Some(arr) = result.as_array_mut() {
                         for item in arr.iter_mut() {
-                            let name = item.get("name").and_then(|n| n.as_str());
-                            let entry = name.and_then(|n| usage.get(n));
-                            if let Some((entry, obj)) = entry.zip(item.as_object_mut()) {
+                            if let Some(obj) = item.as_object_mut() {
+                                let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                let entry = usage.get(name);
                                 obj.insert(
                                     "read_count".into(),
-                                    serde_json::json!(entry.read_count),
+                                    serde_json::json!(entry.map_or(0, |e| e.read_count)),
                                 );
                                 obj.insert(
                                     "write_count".into(),
-                                    serde_json::json!(entry.write_count),
+                                    serde_json::json!(entry.map_or(0, |e| e.write_count)),
                                 );
-                                if let Some(ts) = entry.last_read_at {
+                                if let Some(ts) = entry.and_then(|e| e.last_read_at) {
                                     obj.insert("last_read_at".into(), serde_json::json!(ts));
                                 }
                             }
