@@ -44,10 +44,22 @@ export interface MessageActionContext {
 	text?: string;
 	runId?: string;
 	hasAudio?: boolean;
+	audioWarning?: string;
 }
 
 export function appendMessageActions(ctx: MessageActionContext): void {
 	const { messageEl, sessionKey } = ctx;
+
+	// Surface server-side audio warnings inline on the message.
+	if (ctx.audioWarning) {
+		let warningEl = messageEl.querySelector(".msg-voice-warning") as HTMLElement | null;
+		if (!warningEl) {
+			warningEl = document.createElement("div");
+			warningEl.className = "voice-error-result msg-voice-warning";
+			messageEl.appendChild(warningEl);
+		}
+		warningEl.textContent = ctx.audioWarning;
+	}
 
 	const bar = document.createElement("div");
 	bar.className = "msg-action-bar";
@@ -57,14 +69,19 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 	copyBtn.addEventListener("click", () => {
 		const text = extractPlainText(messageEl);
 		if (navigator.clipboard?.writeText) {
-			navigator.clipboard.writeText(text).then(() => {
-				copyBtn.replaceChildren(iconSpan("icon-checkmark"));
-				copyBtn.title = "Copied";
-				setTimeout(() => {
-					copyBtn.replaceChildren(iconSpan("icon-copy"));
-					copyBtn.title = "Copy";
-				}, 1500);
-			});
+			navigator.clipboard.writeText(text).then(
+				() => {
+					copyBtn.replaceChildren(iconSpan("icon-checkmark"));
+					copyBtn.title = "Copied";
+					setTimeout(() => {
+						copyBtn.replaceChildren(iconSpan("icon-copy"));
+						copyBtn.title = "Copy";
+					}, 1500);
+				},
+				() => {
+					showToast("Failed to copy to clipboard", "error");
+				},
+			);
 		}
 	});
 	bar.appendChild(copyBtn);
@@ -78,7 +95,7 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 			return;
 		}
 		dismissActivePopover();
-		const popover = buildRetryPopover(sessionKey, messageEl);
+		const popover = buildRetryPopover(sessionKey);
 		bar.appendChild(popover);
 		activePopover = popover;
 		requestAnimationFrame(() => {
@@ -150,7 +167,7 @@ function actionButton(iconClass: string, title: string): HTMLButtonElement {
 
 // ── Retry popover ────────────────────────────────────────────
 
-function buildRetryPopover(sessionKey: string, messageEl: HTMLElement): HTMLElement {
+function buildRetryPopover(sessionKey: string): HTMLElement {
 	const pop = document.createElement("div");
 	pop.className = "msg-action-popover";
 
@@ -158,18 +175,17 @@ function buildRetryPopover(sessionKey: string, messageEl: HTMLElement): HTMLElem
 		{
 			iconClass: "icon-retry",
 			label: "Try again",
-			action: () => retryMessage(sessionKey, messageEl),
+			action: () => retrySend(sessionKey, "Please try again with a different response."),
 		},
 		{
 			iconClass: "icon-list-plus",
 			label: "Add details",
-			action: () =>
-				retryWithInstruction(sessionKey, messageEl, "Please provide more details and expand on your answer."),
+			action: () => retrySend(sessionKey, "Please provide more details and expand on your answer."),
 		},
 		{
 			iconClass: "icon-list-minus",
 			label: "More concise",
-			action: () => retryWithInstruction(sessionKey, messageEl, "Please be more concise and brief in your response."),
+			action: () => retrySend(sessionKey, "Please be more concise and brief in your response."),
 		},
 	];
 
@@ -192,20 +208,10 @@ function buildRetryPopover(sessionKey: string, messageEl: HTMLElement): HTMLElem
 	return pop;
 }
 
-// ── Retry actions ────────────────────────────────────────────
-// Uses chat.send with follow-up instructions since there is no
-// dedicated retry RPC. The agent regenerates based on the prompt.
+// ── Retry action ─────────────────────────────────────────────
 
-function retryMessage(_sessionKey: string, _messageEl: HTMLElement): void {
-	sendRpc("chat.send", { text: "Please try again with a different response.", _seq: Date.now() }).then((res) => {
-		if (!res.ok) {
-			showToast(res.error?.message || "Retry failed", "error");
-		}
-	});
-}
-
-function retryWithInstruction(_sessionKey: string, _messageEl: HTMLElement, instruction: string): void {
-	sendRpc("chat.send", { text: instruction, _seq: Date.now() }).then((res) => {
+function retrySend(sessionKey: string, text: string): void {
+	sendRpc("chat.send", { text, _session_key: sessionKey }).then((res) => {
 		if (!res.ok) {
 			showToast(res.error?.message || "Retry failed", "error");
 		}
@@ -223,8 +229,9 @@ function extractPlainText(messageEl: HTMLElement): string {
 		".msg-voice-player-slot",
 		".msg-voice-warning",
 	]) {
-		const el = clone.querySelector(sel);
-		if (el) el.remove();
+		for (const el of clone.querySelectorAll(sel)) {
+			el.remove();
+		}
 	}
 	return (clone.textContent || "").trim();
 }

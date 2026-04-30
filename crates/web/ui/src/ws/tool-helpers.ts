@@ -332,6 +332,7 @@ export function appendFinalFooter(msgEl: HTMLElement | null, p: ChatPayload, eve
 		text: p.text || "",
 		runId: p.runId,
 		hasAudio: !!p.audio,
+		audioWarning: p.audioWarning || undefined,
 	});
 }
 
