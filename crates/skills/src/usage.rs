@@ -197,21 +197,29 @@ impl SkillUsageStore {
     }
 }
 
-/// Persist to disk atomically (temp + rename), clearing the dirty flag.
+/// Persist to disk atomically (temp + rename).
+///
+/// Serializes data and clears the dirty flag under a single write lock
+/// to avoid a TOCTOU race where a concurrent mutation between snapshot
+/// and flag-clear would be silently lost.
 async fn flush_to_disk(inner: &RwLock<Inner>, path: &Path) {
     let snapshot = {
-        let guard = inner.read().await;
+        let mut guard = inner.write().await;
         if !guard.dirty {
             return;
         }
-        match serde_json::to_string_pretty(&guard.data) {
+        let s = match serde_json::to_string_pretty(&guard.data) {
             Ok(s) => s,
             Err(e) => {
                 tracing::warn!(error = %e, "failed to serialize skill usage");
                 return;
             },
-        }
+        };
+        guard.dirty = false;
+        guard.last_flush_at = now_secs();
+        s
     };
+    // I/O proceeds outside the lock.
     let tmp = path.with_extension("json.tmp");
     if let Some(parent) = path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
@@ -222,11 +230,7 @@ async fn flush_to_disk(inner: &RwLock<Inner>, path: &Path) {
     }
     if let Err(e) = tokio::fs::rename(&tmp, path).await {
         tracing::warn!(error = %e, "failed to rename skill usage file");
-        return;
     }
-    let mut guard = inner.write().await;
-    guard.dirty = false;
-    guard.last_flush_at = now_secs();
 }
 
 fn now_millis() -> u64 {
