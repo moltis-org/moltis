@@ -6,6 +6,7 @@
 // Icons use CSS mask-image classes (icon-*) backed by SVG files on disk.
 
 import { sendRpc } from "./helpers";
+import { renderPersistedAudio } from "./message-voice";
 import { showToast } from "./ui";
 
 // ── Icon helper ──────────────────────────────────────────────
@@ -103,12 +104,15 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 			voiceBtn.title = "Generating voice...";
 			const result = await sendRpc("sessions.voice.generate", params);
 			voiceBtn.classList.remove("msg-action-btn-active");
-			if (result?.ok) {
+			const payload = result?.payload as Record<string, unknown> | undefined;
+			if (result?.ok && payload?.audio) {
+				renderPersistedAudio(messageEl, sessionKey, payload.audio as string, true);
 				voiceBtn.replaceChildren(iconSpan("icon-checkmark"));
 				voiceBtn.title = "Voice generated";
 			} else {
 				voiceBtn.title = "Voice it";
-				showToast("Voice generation failed", "error");
+				const errorMsg = (result?.error as Record<string, unknown> | undefined)?.message as string | undefined;
+				showToast(errorMsg || "Voice generation failed", "error");
 			}
 		});
 		bar.appendChild(voiceBtn);
