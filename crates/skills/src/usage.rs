@@ -203,7 +203,8 @@ impl SkillUsageStore {
 ///
 /// Serializes data and clears the dirty flag under a single write lock
 /// to avoid a TOCTOU race where a concurrent mutation between snapshot
-/// and flag-clear would be silently lost.
+/// and flag-clear would be silently lost. On I/O failure, re-sets the
+/// dirty flag so the background task will retry.
 async fn flush_to_disk(inner: &RwLock<Inner>, path: &Path) {
     let snapshot = {
         let mut guard = inner.write().await;
@@ -221,17 +222,19 @@ async fn flush_to_disk(inner: &RwLock<Inner>, path: &Path) {
         guard.last_flush_at = now_secs();
         s
     };
-    // I/O proceeds outside the lock.
+    // I/O proceeds outside the lock. On failure, re-mark dirty for retry.
     let tmp = path.with_extension("json.tmp");
     if let Some(parent) = path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
     if let Err(e) = tokio::fs::write(&tmp, &snapshot).await {
         tracing::warn!(error = %e, "failed to write skill usage temp file");
+        inner.write().await.dirty = true;
         return;
     }
     if let Err(e) = tokio::fs::rename(&tmp, path).await {
         tracing::warn!(error = %e, "failed to rename skill usage file");
+        inner.write().await.dirty = true;
     }
 }
 
