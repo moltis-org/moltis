@@ -32,9 +32,10 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                     "write_count".into(),
                                     serde_json::json!(entry.map_or(0, |e| e.write_count)),
                                 );
-                                if let Some(ts) = entry.and_then(|e| e.last_read_at) {
-                                    obj.insert("last_read_at".into(), serde_json::json!(ts));
-                                }
+                                obj.insert(
+                                    "last_read_at".into(),
+                                    serde_json::json!(entry.and_then(|e| e.last_read_at)),
+                                );
                             }
                         }
                     }

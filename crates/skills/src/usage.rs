@@ -66,7 +66,9 @@ pub struct SkillUsageStore {
 }
 
 impl SkillUsageStore {
-    /// Create a new store synchronously (for tests and non-async contexts).
+    /// Create a new store with synchronous file I/O. Requires an active Tokio
+    /// runtime (spawns a background flush task). Prefer [`open`](Self::open)
+    /// in async contexts.
     pub fn new(data_dir: &Path) -> Self {
         let path = data_dir.join("skills-usage.json");
         let data = if path.exists() {
