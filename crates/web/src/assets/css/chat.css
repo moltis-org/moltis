@@ -63,6 +63,14 @@
   white-space: normal;
 }
 
+.msg p:last-child {
+  margin-bottom: 0;
+}
+
+.msg p:first-child {
+  margin-top: 0;
+}
+
 /* ── Markdown block elements inside messages ── */
 
 .msg h1, .msg h2, .msg h3, .msg h4, .msg h5, .msg h6 {
