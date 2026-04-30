@@ -20,15 +20,12 @@ use crate::{
     exec::ExecOpts,
     sandbox::{
         file_system::SandboxReadResult,
-        types::{SANDBOX_HOME_DIR, Sandbox, SandboxId},
+        types::{Sandbox, SandboxId},
     },
 };
 
 /// Maximum tarball size for sync read operations (100 MB).
 const MAX_SYNC_BYTES: u64 = 100 * 1024 * 1024;
-
-/// Default sandbox workspace directory.
-pub const DEFAULT_SANDBOX_WORKSPACE: &str = SANDBOX_HOME_DIR;
 
 /// Upload host workspace contents to an isolated sandbox.
 ///

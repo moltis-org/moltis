@@ -639,20 +639,33 @@ impl AgentTool for ExecTool {
                     if backend.is_isolated()
                         && let Some(host_workspace) =
                             crate::sandbox::sync::resolve_sync_workspace(router.config(), &id)
-                        && let Err(e) = crate::sandbox::sync::sync_in(
+                    {
+                        if let Err(e) = crate::sandbox::sync::sync_in(
                             &*backend,
                             &id,
                             &host_workspace,
-                            crate::sandbox::sync::DEFAULT_SANDBOX_WORKSPACE,
+                            backend.workspace_dir(),
                         )
                         .await
-                    {
-                        warn!(
-                            session = sk,
-                            sandbox_id = %id,
-                            error = %e,
-                            "workspace sync-in failed, sandbox starts with empty workspace"
-                        );
+                        {
+                            warn!(
+                                session = sk,
+                                sandbox_id = %id,
+                                error = %e,
+                                "workspace sync-in failed, sandbox starts with empty workspace"
+                            );
+                        }
+                        router.mark_synced(sk).await;
+                    }
+                } else if backend.is_isolated() && !router.is_synced(sk).await {
+                    // Another caller is performing sync_in; wait for it.
+                    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+                    while !router.is_synced(sk).await {
+                        if tokio::time::Instant::now() >= deadline {
+                            warn!(session = sk, "timed out waiting for workspace sync-in");
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(200)).await;
                     }
                 }
                 debug!(session = sk, sandbox_id = %id, command, "sandbox running command");

@@ -121,6 +121,19 @@ impl Sandbox for FailoverSandbox {
         }
     }
 
+    fn workspace_dir(&self) -> &str {
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback.workspace_dir()
+        } else {
+            self.primary.workspace_dir()
+        }
+    }
+
     fn is_isolated(&self) -> bool {
         if self
             .use_fallback
@@ -291,6 +304,18 @@ pub fn create_sandbox(config: SandboxConfig) -> Arc<dyn Sandbox> {
 /// overrides can enable sandboxing dynamically).
 pub(crate) fn create_sandbox_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     select_backend(config)
+}
+
+/// Create a backend by explicit name, using the given config.
+///
+/// Used by the gateway to register additional backends into the multi-backend
+/// router at startup. If the backend cannot be created (missing credentials,
+/// wrong platform), falls back to `RestrictedHostSandbox`.
+pub fn select_backend_by_name(name: &str, config: &SandboxConfig) -> Arc<dyn Sandbox> {
+    select_backend(SandboxConfig {
+        backend: name.to_string(),
+        ..config.clone()
+    })
 }
 
 /// Select the sandbox backend based on config and platform availability.
@@ -671,6 +696,9 @@ pub struct SandboxRouter {
     /// Session keys that have already completed sandbox initialization.
     /// Used to avoid repeating first-run preparation banners on every command.
     prepared_sessions: RwLock<HashSet<String>>,
+    /// Session keys where workspace sync-in has completed.
+    /// Subsequent exec calls wait until sync_in finishes before proceeding.
+    synced_sessions: RwLock<HashSet<String>>,
     /// Whether a sandbox image pre-build is currently in progress.
     /// Used by the gateway to show a banner in the UI.
     pub building_flag: std::sync::atomic::AtomicBool,
@@ -697,6 +725,7 @@ impl SandboxRouter {
             global_image_override: RwLock::new(None),
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
+            synced_sessions: RwLock::new(HashSet::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -716,6 +745,7 @@ impl SandboxRouter {
             global_image_override: RwLock::new(None),
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
+            synced_sessions: RwLock::new(HashSet::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -742,6 +772,24 @@ impl SandboxRouter {
     /// Clear preparation marker for a session (used on cleanup or prepare failure).
     pub async fn clear_prepared_session(&self, session_key: &str) {
         self.prepared_sessions.write().await.remove(session_key);
+    }
+
+    /// Mark a session as having completed workspace sync-in.
+    pub async fn mark_synced(&self, session_key: &str) {
+        self.synced_sessions
+            .write()
+            .await
+            .insert(session_key.to_string());
+    }
+
+    /// Check whether workspace sync has completed for a session.
+    pub async fn is_synced(&self, session_key: &str) -> bool {
+        self.synced_sessions.read().await.contains(session_key)
+    }
+
+    /// Clear sync marker for a session (used on cleanup).
+    pub async fn clear_synced_session(&self, session_key: &str) {
+        self.synced_sessions.write().await.remove(session_key);
     }
 
     /// Check whether a session should run sandboxed.
@@ -806,13 +854,9 @@ impl SandboxRouter {
         // Sync workspace changes back to host for isolated backends.
         if backend.is_isolated()
             && let Some(host_workspace) = super::sync::resolve_sync_workspace(&self.config, &id)
-            && let Err(e) = super::sync::sync_out(
-                &*backend,
-                &id,
-                &host_workspace,
-                super::sync::DEFAULT_SANDBOX_WORKSPACE,
-            )
-            .await
+            && let Err(e) =
+                super::sync::sync_out(&*backend, &id, &host_workspace, backend.workspace_dir())
+                    .await
         {
             warn!(
                 session = session_key,
@@ -827,6 +871,7 @@ impl SandboxRouter {
         self.remove_backend_override(session_key).await;
         self.remove_image_override(session_key).await;
         self.clear_prepared_session(session_key).await;
+        self.clear_synced_session(session_key).await;
         Ok(())
     }
 

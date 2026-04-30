@@ -476,6 +476,15 @@ pub trait Sandbox: Send + Sync {
         false
     }
 
+    /// The default workspace/home directory inside this backend.
+    ///
+    /// Used by workspace sync to determine where to extract files.
+    /// Defaults to `/home/sandbox`. Remote backends override this
+    /// (e.g. Vercel returns `/vercel/sandbox`).
+    fn workspace_dir(&self) -> &str {
+        SANDBOX_HOME_DIR
+    }
+
     /// Whether this backend manages an isolated filesystem that requires
     /// workspace sync (copy-in on setup, patch extraction on cleanup).
     ///

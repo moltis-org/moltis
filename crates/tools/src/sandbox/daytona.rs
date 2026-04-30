@@ -307,6 +307,10 @@ impl Sandbox for DaytonaSandbox {
         true
     }
 
+    fn workspace_dir(&self) -> &str {
+        "/home/daytona"
+    }
+
     async fn ensure_ready(&self, id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
         if self.session_state(id).await.is_some() {
             return Ok(());

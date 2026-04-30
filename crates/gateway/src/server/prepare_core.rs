@@ -887,9 +887,35 @@ pub async fn prepare_gateway_core(
         .timezone
         .as_ref()
         .map(|tz| tz.name().to_string());
-    let sandbox_router = Arc::new(moltis_tools::sandbox::SandboxRouter::new(
-        sandbox_config.clone(),
-    ));
+    let sandbox_router = {
+        let mut router = moltis_tools::sandbox::SandboxRouter::new(sandbox_config.clone());
+
+        // Register additional remote backends that have credentials configured.
+        // This enables per-session backend switching (e.g. sandboxBackend="vercel").
+        for (name, has_creds) in [
+            (
+                "vercel",
+                sandbox_config.vercel_token.is_some()
+                    || std::env::var("VERCEL_TOKEN").is_ok()
+                    || std::env::var("VERCEL_OIDC_TOKEN").is_ok(),
+            ),
+            (
+                "daytona",
+                sandbox_config.daytona_api_key.is_some()
+                    || std::env::var("DAYTONA_API_KEY").is_ok(),
+            ),
+        ] {
+            if has_creds && router.backend_name() != name {
+                let backend =
+                    moltis_tools::sandbox::router::select_backend_by_name(name, &sandbox_config);
+                if backend.backend_name() == name {
+                    router.register_backend(backend);
+                }
+            }
+        }
+
+        Arc::new(router)
+    };
 
     // ── Upstream proxy (user-configured) ─────────────────────────────────
     let upstream_proxy = config

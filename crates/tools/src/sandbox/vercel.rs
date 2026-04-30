@@ -452,6 +452,10 @@ impl Sandbox for VercelSandbox {
         true
     }
 
+    fn workspace_dir(&self) -> &str {
+        "/vercel/sandbox"
+    }
+
     async fn ensure_ready(&self, id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
         if self.session_sandbox_id(id).await.is_some() {
             return Ok(());

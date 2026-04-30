@@ -13,7 +13,7 @@ pub(crate) mod firecracker;
 pub(crate) mod host;
 pub(crate) mod paths;
 pub(crate) mod platform;
-pub(crate) mod router;
+pub mod router;
 pub(crate) mod sync;
 pub(crate) mod types;
 #[cfg(feature = "vercel-sandbox")]
