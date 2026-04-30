@@ -741,6 +741,32 @@ pub struct SandboxConfig {
     /// Daytona target region/environment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daytona_target: Option<String>,
+    /// Custom image for Daytona sandbox creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daytona_image: Option<String>,
+
+    /// Vercel snapshot ID for fast cold starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_snapshot_id: Option<String>,
+
+    /// Path to the `firecracker` binary (Linux only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_bin: Option<String>,
+    /// Path to the uncompressed Linux kernel (`vmlinux`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_kernel: Option<String>,
+    /// Path to the base ext4 rootfs image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_rootfs: Option<String>,
+    /// Path to the SSH private key for VM access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_ssh_key: Option<String>,
+    /// Number of vCPUs per Firecracker VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_vcpus: Option<u32>,
+    /// Memory in MiB per Firecracker VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_memory_mb: Option<u32>,
 }
 
 /// Default packages installed in sandbox containers.
@@ -949,6 +975,14 @@ impl Default for SandboxConfig {
             daytona_api_key: None,
             daytona_api_url: None,
             daytona_target: None,
+            daytona_image: None,
+            vercel_snapshot_id: None,
+            firecracker_bin: None,
+            firecracker_kernel: None,
+            firecracker_rootfs: None,
+            firecracker_ssh_key: None,
+            firecracker_vcpus: None,
+            firecracker_memory_mb: None,
         }
     }
 }

@@ -220,8 +220,10 @@ impl FirecrackerSandbox {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
-        let boot_args =
-            format!("console=ttyS0 reboot=k panic=1 pci=off ip={guest_ip}:::{host_ip}:30:eth0:off");
+        // Linux kernel ip= format: ip=<client>:<server>:<gw>:<netmask>:<hostname>:<iface>:<autoconf>
+        let boot_args = format!(
+            "console=ttyS0 reboot=k panic=1 pci=off ip={guest_ip}::{host_ip}:255.255.255.252::eth0:off"
+        );
         Self::fc_api_call(
             api_socket,
             "PUT",
@@ -399,6 +401,12 @@ impl Sandbox for FirecrackerSandbox {
                 self.fc.firecracker_bin.display()
             )));
         }
+        // curl is required for Firecracker API calls over Unix socket.
+        if !super::containers::is_cli_available("curl") {
+            return Err(Error::message(
+                "firecracker: curl is required for API calls over Unix socket (install curl)",
+            ));
+        }
         if !self.fc.kernel_path.exists() {
             return Err(Error::message(format!(
                 "firecracker: kernel not found at {}",
@@ -473,8 +481,11 @@ impl Sandbox for FirecrackerSandbox {
     }
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
-        let mut vms = self.active.write().await;
-        if let Some(mut vm) = vms.remove(&id.key) {
+        // Take ownership and drop the lock immediately so concurrent
+        // exec()/ensure_ready() calls for other sessions are not blocked
+        // during the async teardown below.
+        let vm = self.active.write().await.remove(&id.key);
+        if let Some(mut vm) = vm {
             debug!(%id, guest_ip = vm.guest_ip, "firecracker: stopping VM");
 
             let _ = Self::fc_api_call(
