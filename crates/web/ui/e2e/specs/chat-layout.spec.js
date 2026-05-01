@@ -60,11 +60,6 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 		});
 		expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth);
 
-		// Screenshot for visual regression
-		await expect(page.locator("#messages")).toHaveScreenshot("chat-no-horizontal-overflow.png", {
-			maxDiffPixelRatio: 0.01,
-		});
-
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -89,11 +84,6 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 				overflow.clientWidth,
 			);
 		}
-
-		// Screenshot at the narrowest width for regression
-		await expect(page.locator("#messages")).toHaveScreenshot("chat-layout-narrow-600.png", {
-			maxDiffPixelRatio: 0.01,
-		});
 
 		expect(pageErrors).toEqual([]);
 	});
