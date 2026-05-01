@@ -213,16 +213,21 @@ test.describe("Daytona Sandbox live integration", () => {
 	});
 
 	test("create sandbox and execute command", async () => {
-		// Create a sandbox.
-		const createResp = await fetch(`${DAYTONA_API}/workspace`, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${DAYTONA_API_KEY}`,
-				"Content-Type": "application/json",
-				"X-Daytona-Source": "moltis-e2e",
-			},
-			body: JSON.stringify({}),
-		});
+		// Create a sandbox (retry on transient 5xx errors from Daytona).
+		let createResp;
+		for (let attempt = 0; attempt < 3; attempt++) {
+			createResp = await fetch(`${DAYTONA_API}/workspace`, {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${DAYTONA_API_KEY}`,
+					"Content-Type": "application/json",
+					"X-Daytona-Source": "moltis-e2e",
+				},
+				body: JSON.stringify({}),
+			});
+			if (createResp.status < 500) break;
+			await new Promise((r) => setTimeout(r, 3000));
+		}
 
 		expect(createResp.status).toBeLessThan(300);
 		const createData = await createResp.json();
