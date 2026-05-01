@@ -330,7 +330,8 @@ impl FirecrackerSandbox {
             .and_then(|p| p.to_str())
             .unwrap_or(FC_WORKSPACE);
 
-        let full_cmd = format!("cd {cwd} && {command}");
+        let quoted_cwd = cwd.replace('\'', "'\\''");
+        let full_cmd = format!("cd '{quoted_cwd}' && {command}");
 
         let output = tokio::process::Command::new("ssh")
             .args([
