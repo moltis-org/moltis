@@ -162,7 +162,9 @@ impl DaytonaSandbox {
         // field. To separate them, wrap the command to redirect stderr to a
         // temp file, then read it back in a second call.
         let stderr_file = format!("/tmp/moltis-stderr-{}", uuid::Uuid::new_v4());
-        let wrapped = format!("{{ {command} ; }} 2>{stderr_file}");
+        // Use a subshell (parentheses) instead of a group (braces) to safely
+        // capture stderr — subshells tolerate any command content including `}`.
+        let wrapped = format!("({command}) 2>{stderr_file}");
         let timeout_secs = opts.timeout.as_secs().max(1);
         let body = serde_json::json!({
             "command": wrapped,

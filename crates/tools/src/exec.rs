@@ -637,41 +637,55 @@ impl AgentTool for ExecTool {
 
                     // Sync workspace and provision packages for isolated backends on first run.
                     if backend.is_isolated() {
-                        if let Some(host_workspace) =
+                        let sync_ok = if let Some(host_workspace) =
                             crate::sandbox::sync::resolve_sync_workspace(router.config(), &id)
-                            && let Err(e) = crate::sandbox::sync::sync_in(
+                        {
+                            match crate::sandbox::sync::sync_in(
                                 &*backend,
                                 &id,
                                 &host_workspace,
                                 backend.workspace_dir(),
                             )
                             .await
-                        {
-                            warn!(
-                                session = sk,
-                                sandbox_id = %id,
-                                error = %e,
-                                "workspace sync-in failed, sandbox starts with empty workspace"
-                            );
+                            {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    warn!(
+                                        session = sk,
+                                        sandbox_id = %id,
+                                        error = %e,
+                                        "workspace sync-in failed, sandbox starts with empty workspace"
+                                    );
+                                    false
+                                },
+                            }
+                        } else {
+                            true
+                        };
+
+                        // Provision packages only if sync succeeded (no point
+                        // provisioning if we couldn't even connect to the sandbox)
+                        // and no pre-built image was used.
+                        if sync_ok {
+                            let has_prebuilt = image
+                                != crate::sandbox::types::DEFAULT_SANDBOX_IMAGE
+                                && !image.is_empty();
+                            let packages = &router.config().packages;
+                            if !has_prebuilt
+                                && !packages.is_empty()
+                                && let Err(e) = backend.provision_packages(&id, packages).await
+                            {
+                                warn!(
+                                    session = sk,
+                                    sandbox_id = %id,
+                                    error = %e,
+                                    "package provisioning failed (non-fatal)"
+                                );
+                            }
                         }
 
-                        // Provision default packages in the remote sandbox — skip if
-                        // a pre-built image/snapshot was used (packages already baked in).
-                        let has_prebuilt = image != crate::sandbox::types::DEFAULT_SANDBOX_IMAGE
-                            && !image.is_empty();
-                        let packages = &router.config().packages;
-                        if !has_prebuilt
-                            && !packages.is_empty()
-                            && let Err(e) = backend.provision_packages(&id, packages).await
-                        {
-                            warn!(
-                                session = sk,
-                                sandbox_id = %id,
-                                error = %e,
-                                "package provisioning failed (non-fatal)"
-                            );
-                        }
-
+                        // Always mark synced to unblock concurrent waiters.
+                        // The sandbox is ready for exec regardless of sync outcome.
                         router.mark_synced(sk).await;
                     }
                 } else if backend.is_isolated() && !router.is_synced(sk).await {
