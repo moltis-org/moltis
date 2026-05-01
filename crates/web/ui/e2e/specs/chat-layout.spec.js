@@ -55,7 +55,7 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 		// The messages container must not have horizontal overflow
 		const overflow = await page.evaluate(() => {
 			var box = document.getElementById("messages");
-			if (!box) return { scrollWidth: 0, clientWidth: 0 };
+			if (!box) throw new Error("#messages element not found");
 			return { scrollWidth: box.scrollWidth, clientWidth: box.clientWidth };
 		});
 		expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth);
@@ -80,7 +80,7 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 
 			const overflow = await page.evaluate(() => {
 				var box = document.getElementById("messages");
-				if (!box) return { scrollWidth: 0, clientWidth: 0 };
+				if (!box) throw new Error("#messages element not found");
 				return { scrollWidth: box.scrollWidth, clientWidth: box.clientWidth };
 			});
 
