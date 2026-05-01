@@ -201,7 +201,7 @@ test.describe("Daytona Sandbox live integration", () => {
 
 	test.afterEach(async () => {
 		if (sandboxId) {
-			await fetch(`${DAYTONA_API}/workspace/${sandboxId}`, {
+			await fetch(`${DAYTONA_API}/sandbox/${sandboxId}`, {
 				method: "DELETE",
 				headers: {
 					Authorization: `Bearer ${DAYTONA_API_KEY}`,
@@ -262,7 +262,7 @@ test.describe("Daytona Sandbox live integration", () => {
 		expect(execData.result).toContain("hello-from-daytona");
 
 		// Delete sandbox.
-		const deleteResp = await fetch(`${DAYTONA_API}/workspace/${sandboxId}`, {
+		const deleteResp = await fetch(`${DAYTONA_API}/sandbox/${sandboxId}`, {
 			method: "DELETE",
 			headers: {
 				Authorization: `Bearer ${DAYTONA_API_KEY}`,
