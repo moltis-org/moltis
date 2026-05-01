@@ -1,0 +1,28 @@
+[package]
+description       = "Import/export Moltis config, data, and databases as portable .tar.gz archives"
+edition.workspace = true
+license.workspace = true
+name              = "moltis-portable"
+version.workspace = true
+
+[dependencies]
+anyhow     = { workspace = true }
+flate2     = { workspace = true }
+hex        = { workspace = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+sha2       = { workspace = true }
+sqlx       = { workspace = true }
+tar        = { workspace = true }
+time       = { workspace = true }
+tokio      = { workspace = true }
+tracing    = { workspace = true }
+walkdir    = { workspace = true }
+
+moltis-config = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

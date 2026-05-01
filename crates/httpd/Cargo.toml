@@ -31,6 +31,7 @@ moltis-graphql        = { optional = true, workspace = true }
 moltis-matrix         = { optional = true, workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-msteams        = { optional = true, workspace = true }
+moltis-portable       = { workspace = true }
 moltis-protocol       = { workspace = true }
 moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
