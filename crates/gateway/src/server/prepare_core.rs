@@ -39,6 +39,7 @@ use {
 };
 mod log_persistence;
 mod post_state;
+mod sandbox;
 /// Prepare the core gateway: load config, run migrations, wire services,
 /// spawn background tasks, and return the core state without any HTTP layer.
 /// This is the transport-agnostic initialisation. Non-HTTP consumers (TUI,
@@ -880,47 +881,12 @@ pub async fn prepare_gateway_core(
     services = services.with_webhooks(live_webhooks);
 
     // Build sandbox router from config.
-    let mut sandbox_config = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
-    sandbox_config.container_prefix = Some(sandbox_container_prefix);
-    sandbox_config.timezone = config
-        .user
-        .timezone
-        .as_ref()
-        .map(|tz| tz.name().to_string());
-    let sandbox_router = {
-        let mut router = moltis_tools::sandbox::SandboxRouter::new(sandbox_config.clone());
-
-        // Register additional remote backends that have credentials configured.
-        // This enables per-session backend switching (e.g. sandboxBackend="vercel").
-        for (name, has_creds) in [
-            (
-                "vercel",
-                sandbox_config.vercel_token.is_some()
-                    || std::env::var("VERCEL_TOKEN").is_ok()
-                    || std::env::var("VERCEL_OIDC_TOKEN").is_ok(),
-            ),
-            (
-                "daytona",
-                sandbox_config.daytona_api_key.is_some()
-                    || std::env::var("DAYTONA_API_KEY").is_ok(),
-            ),
-            (
-                "firecracker",
-                sandbox_config.firecracker_bin.is_some()
-                    || std::path::Path::new("/usr/local/bin/firecracker").exists(),
-            ),
-        ] {
-            if has_creds && router.backend_name() != name {
-                let backend =
-                    moltis_tools::sandbox::router::select_backend_by_name(name, &sandbox_config);
-                if backend.backend_name() == name {
-                    router.register_backend(backend);
-                }
-            }
-        }
-
-        Arc::new(router)
-    };
+    let sandbox_config = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    let sandbox_router = Arc::new(sandbox::build_sandbox_router(
+        &sandbox_config,
+        &sandbox_container_prefix,
+        config.user.timezone.as_ref().map(|tz| tz.name()),
+    ));
 
     // ── Upstream proxy (user-configured) ─────────────────────────────────
     let upstream_proxy = config
@@ -1002,191 +968,8 @@ pub async fn prepare_gateway_core(
         moltis_tools::init_shared_http_client(upstream_proxy);
     }
 
-    // Spawn background image pre-build.
-    {
-        let router = Arc::clone(&sandbox_router);
-        let backend = Arc::clone(router.backend());
-        let packages = router.config().packages.clone();
-        let base_image = router
-            .config()
-            .image
-            .clone()
-            .unwrap_or_else(|| moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string());
-
-        if super::helpers::should_prebuild_sandbox_image(router.mode(), &packages) {
-            let deferred_for_build = Arc::clone(&deferred_state);
-            sandbox_router.building_flag.store(true, Ordering::Relaxed);
-            let build_router = Arc::clone(&sandbox_router);
-            tokio::spawn(async move {
-                if let Some(state) = deferred_for_build.get() {
-                    broadcast(
-                        state,
-                        "sandbox.image.build",
-                        serde_json::json!({
-                            "phase": "start",
-                            "package_count": packages.len(),
-                        }),
-                        BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        },
-                    )
-                    .await;
-                }
-
-                match backend.build_image(&base_image, &packages).await {
-                    Ok(Some(result)) => {
-                        info!(
-                            tag = %result.tag,
-                            built = result.built,
-                            "sandbox image pre-build complete"
-                        );
-                        router.set_global_image(Some(result.tag.clone())).await;
-                        build_router.building_flag.store(false, Ordering::Relaxed);
-                        build_router.build_complete.notify_waiters();
-
-                        if let Some(state) = deferred_for_build.get() {
-                            broadcast(
-                                state,
-                                "sandbox.image.build",
-                                serde_json::json!({
-                                    "phase": "done",
-                                    "tag": result.tag,
-                                    "built": result.built,
-                                }),
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
-                            .await;
-                        }
-                    },
-                    Ok(None) => {
-                        debug!(
-                            "sandbox image pre-build: no-op (no packages or unsupported backend)"
-                        );
-                        build_router.building_flag.store(false, Ordering::Relaxed);
-                        build_router.build_complete.notify_waiters();
-                    },
-                    Err(e) => {
-                        tracing::warn!("sandbox image pre-build failed: {e}");
-                        build_router.building_flag.store(false, Ordering::Relaxed);
-                        build_router.build_complete.notify_waiters();
-                        if let Some(state) = deferred_for_build.get() {
-                            broadcast(
-                                state,
-                                "sandbox.image.build",
-                                serde_json::json!({
-                                    "phase": "error",
-                                    "error": e.to_string(),
-                                }),
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
-                            .await;
-                        }
-                    },
-                }
-            });
-        }
-    }
-
-    // Host package provisioning when no container runtime is available.
-    {
-        let packages = sandbox_router.config().packages.clone();
-        if sandbox_router.backend_name() == "none"
-            && !packages.is_empty()
-            && moltis_tools::sandbox::is_debian_host()
-        {
-            let deferred_for_host = Arc::clone(&deferred_state);
-            let pkg_count = packages.len();
-            tokio::spawn(async move {
-                if let Some(state) = deferred_for_host.get() {
-                    broadcast(
-                        state,
-                        "sandbox.host.provision",
-                        serde_json::json!({
-                            "phase": "start",
-                            "count": pkg_count,
-                        }),
-                        BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        },
-                    )
-                    .await;
-                }
-
-                match moltis_tools::sandbox::provision_host_packages(&packages).await {
-                    Ok(Some(result)) => {
-                        info!(
-                            installed = result.installed.len(),
-                            skipped = result.skipped.len(),
-                            sudo = result.used_sudo,
-                            "host package provisioning complete"
-                        );
-                        if let Some(state) = deferred_for_host.get() {
-                            broadcast(
-                                state,
-                                "sandbox.host.provision",
-                                serde_json::json!({
-                                    "phase": "done",
-                                    "installed": result.installed.len(),
-                                    "skipped": result.skipped.len(),
-                                }),
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
-                            .await;
-                        }
-                    },
-                    Ok(None) => {
-                        debug!("host package provisioning: no-op (not debian or empty packages)");
-                    },
-                    Err(e) => {
-                        warn!("host package provisioning failed: {e}");
-                        if let Some(state) = deferred_for_host.get() {
-                            broadcast(
-                                state,
-                                "sandbox.host.provision",
-                                serde_json::json!({
-                                    "phase": "error",
-                                    "error": e.to_string(),
-                                }),
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
-                            .await;
-                        }
-                    },
-                }
-            });
-        }
-    }
-
-    // Startup GC: remove orphaned session containers.
-    if sandbox_router.backend_name() != "none" {
-        let prefix = sandbox_router.config().container_prefix.clone();
-        tokio::spawn(async move {
-            if let Some(prefix) = prefix {
-                match moltis_tools::sandbox::clean_all_containers(&prefix).await {
-                    Ok(0) => {},
-                    Ok(n) => info!(
-                        removed = n,
-                        "startup GC: cleaned orphaned session containers"
-                    ),
-                    Err(e) => debug!("startup GC: container cleanup skipped: {e}"),
-                }
-            }
-        });
-    }
+    // Spawn background sandbox tasks (image pre-build, host provisioning, container GC).
+    sandbox::spawn_sandbox_background_tasks(&sandbox_router, &deferred_state);
 
     // Periodic cron session retention pruning.
     if let Some(retention_days) = config.cron.session_retention_days
