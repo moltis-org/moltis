@@ -108,15 +108,18 @@ impl VercelSandbox {
 
     /// Create a Vercel sandbox, returning the sandbox ID.
     async fn create_sandbox(&self) -> Result<String> {
+        let project_id = self.vercel.project_id.as_deref().ok_or_else(|| {
+            Error::message(
+                "vercel: project_id is required (set VERCEL_PROJECT_ID or configure in settings)",
+            )
+        })?;
+
         let mut body = serde_json::json!({
+            "projectId": project_id,
             "runtime": self.vercel.runtime,
             "timeout": self.vercel.timeout_ms,
             "resources": { "vcpus": self.vercel.vcpus },
         });
-
-        if let Some(ref project_id) = self.vercel.project_id {
-            body["projectId"] = serde_json::Value::String(project_id.clone());
-        }
 
         if let Some(ref snapshot_id) = self.vercel.snapshot_id {
             body["source"] = serde_json::json!({

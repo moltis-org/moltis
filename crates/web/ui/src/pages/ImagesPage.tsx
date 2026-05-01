@@ -1003,7 +1003,7 @@ function VercelTabContent(): VNode {
 					<input
 						type="text"
 						className="provider-key-input"
-						placeholder="Project ID (optional)"
+						placeholder="Project ID (required)"
 						style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
 						value={vercelProjectId.value}
 						onInput={(e) => {
@@ -1027,7 +1027,8 @@ function VercelTabContent(): VNode {
 					onClick={saveVercel}
 					disabled={
 						remoteSaving.value === "vercel" ||
-						!(vercelToken.value.trim() || vercelProjectId.value.trim() || vercelTeamId.value.trim())
+						!vercelToken.value.trim() ||
+						!vercelProjectId.value.trim()
 					}
 				>
 					{remoteSaving.value === "vercel" ? "Saving\u2026" : "Save"}

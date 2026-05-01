@@ -1094,11 +1094,26 @@ WORKDIR /home/sandbox\n"
     let _ = std::fs::remove_dir_all(&tmp_dir);
     match result {
         Ok(tag) => Json(serde_json::json!({ "tag": tag })).into_response(),
-        Err(e) => api_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            SANDBOX_IMAGE_BUILD_FAILED,
-            e.to_string(),
-        ),
+        Err(e) => {
+            let detail = e.to_string();
+            let message = if detail.contains("Cannot connect")
+                || detail.contains("connect to the Docker daemon")
+                || detail.contains("No such file or directory")
+                || detail.contains("failed to run docker")
+                || detail.contains("failed to run podman")
+            {
+                format!(
+                    "Docker/Podman daemon is not available. Image building requires a running container runtime. Detail: {detail}"
+                )
+            } else {
+                detail
+            };
+            api_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                SANDBOX_IMAGE_BUILD_FAILED,
+                message,
+            )
+        },
     }
 }
 

@@ -40,8 +40,8 @@ vercel_vcpus = 2
 ### Getting Credentials
 
 1. **Token**: Go to [vercel.com/account/tokens](https://vercel.com/account/tokens) → Create
-2. **Team ID**: Go to your team's Settings → General → scroll to "Team ID"
-3. **Project ID** (optional): Project Settings → General → "Project ID"
+2. **Project ID** (required): Create a project at [vercel.com/new](https://vercel.com/new), then get the ID from Project Settings → General → "Project ID"
+3. **Team ID** (optional but recommended): Go to your team's Settings → General → scroll to "Team ID"
 
 ### How It Works
 
