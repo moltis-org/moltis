@@ -932,6 +932,7 @@ pub async fn api_set_shared_home_handler(
 fn remote_backends_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
     let sb = &config.tools.exec.sandbox;
     serde_json::json!({
+        "backend": sb.backend,
         "vercel": {
             "configured": !sb.vercel_token.as_deref().unwrap_or("").is_empty(),
             "project_id": sb.vercel_project_id,
@@ -958,6 +959,10 @@ pub async fn api_set_remote_backend_handler(
 ) -> impl IntoResponse {
     let update_result = moltis_config::update_config(|cfg| {
         let sb = &mut cfg.tools.exec.sandbox;
+        // Allow changing the default backend (auto/docker/podman/apple-container/vercel/daytona).
+        if let Some(v) = body.config.get("backend").and_then(|v| v.as_str()) {
+            sb.backend = v.to_string();
+        }
         match body.backend.as_str() {
             "vercel" => {
                 if let Some(v) = body.config.get("token").and_then(|v| v.as_str()) {

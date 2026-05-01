@@ -684,6 +684,8 @@ function backendRecommendation(info: SandboxInfoValue | null): { level: string; 
 	return null;
 }
 
+const backendSaving = signal(false);
+
 function SandboxBanner(): VNode | null {
 	const info = sandboxInfo.value as SandboxInfoValue | null;
 	if (!info) return null;
@@ -703,15 +705,57 @@ function SandboxBanner(): VNode | null {
 						? "var(--warning, var(--muted))"
 						: "var(--muted)";
 
+	const availableBackends: SandboxBackendId[] = [
+		"auto" as SandboxBackendId,
+		"docker",
+		"podman",
+		"apple-container",
+		"wasm",
+		"vercel",
+		"daytona",
+		"restricted-host",
+	];
+
+	const configuredBackend = remoteConfig.value as (RemoteBackendsConfig & { backend?: string }) | null;
+	const currentConfigBackend = configuredBackend?.backend || "auto";
+
+	function changeBackend(e: Event): void {
+		const value = (e.target as HTMLSelectElement).value;
+		backendSaving.value = true;
+		saveRemoteBackend("_global", { backend: value });
+		// saveRemoteBackend sets remoteSaving which we can watch, but for simplicity:
+		setTimeout(() => {
+			backendSaving.value = false;
+		}, 2000);
+	}
+
 	return (
 		<div className="max-w-form">
 			<div className="info-bar" style={{ marginBottom: "8px" }}>
 				<span className="info-field">
-					<span className="info-label">Container backend:</span>
+					<span className="info-label">Active backend:</span>
 					<span className="info-value-strong" style={{ color: badgeColor, fontFamily: "var(--font-mono)" }}>
 						{label}
 					</span>
 				</span>
+			</div>
+			<div style={{ marginBottom: "12px" }}>
+				<label className="text-xs text-[var(--muted)]" style={{ display: "block", marginBottom: "4px" }}>
+					Preferred backend (requires restart):
+				</label>
+				<select
+					className="provider-key-input"
+					style={{ width: "auto", minWidth: "200px", fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
+					value={currentConfigBackend}
+					onChange={changeBackend}
+					disabled={backendSaving.value}
+				>
+					{availableBackends.map((id) => (
+						<option key={id} value={id}>
+							{id === ("auto" as SandboxBackendId) ? "auto (detect best available)" : BACKEND_LABELS[id] || id}
+						</option>
+					))}
+				</select>
 			</div>
 			{rec && (
 				<div className={rec.level === "warn" ? "alert-warning-text" : "alert-info-text"}>
@@ -1025,11 +1069,7 @@ function VercelTabContent(): VNode {
 					className="provider-btn"
 					style={{ alignSelf: "flex-start" }}
 					onClick={saveVercel}
-					disabled={
-						remoteSaving.value === "vercel" ||
-						!vercelToken.value.trim() ||
-						!vercelProjectId.value.trim()
-					}
+					disabled={remoteSaving.value === "vercel" || !vercelToken.value.trim() || !vercelProjectId.value.trim()}
 				>
 					{remoteSaving.value === "vercel" ? "Saving\u2026" : "Save"}
 				</button>
