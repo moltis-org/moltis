@@ -69,6 +69,11 @@ impl DockerImageBuilder {
         }
     }
 
+    /// Create with an explicit CLI binary name.
+    pub fn with_cli(cli: &'static str) -> Self {
+        Self { cli }
+    }
+
     /// Return the container CLI name (e.g. "docker" or "podman").
     pub fn cli_name(&self) -> &'static str {
         self.cli
@@ -102,6 +107,42 @@ impl DockerImageBuilder {
             .await
             .is_ok_and(|s| s.success())
     }
+
+    /// Run a build with the configured CLI.
+    async fn try_build(
+        &self,
+        tag: &str,
+        dockerfile: &Path,
+        context: &Path,
+    ) -> Result<std::process::Output> {
+        Self::run_build(self.cli, tag, dockerfile, context).await
+    }
+
+    /// Run a `<cli> build` command and return the output.
+    async fn run_build(
+        cli: &str,
+        tag: &str,
+        dockerfile: &Path,
+        context: &Path,
+    ) -> Result<std::process::Output> {
+        debug!(cli, tag, context = %context.display(), "spawning image build");
+        tokio::process::Command::new(cli)
+            .args([
+                "build",
+                "-t",
+                tag,
+                "-f",
+                &dockerfile.display().to_string(),
+                &context.display().to_string(),
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await
+            .with_context(|| {
+                format!("failed to run `{cli} build` — is {cli} installed and in PATH?")
+            })
+    }
 }
 
 impl Default for DockerImageBuilder {
@@ -131,29 +172,48 @@ impl ImageBuilder for DockerImageBuilder {
 
         info!(tag, dockerfile = %dockerfile.display(), "building tool image");
 
-        debug!(cli = self.cli, tag, context = %context.display(), "spawning image build");
-        let output = tokio::process::Command::new(self.cli)
-            .args([
-                "build",
-                "-t",
-                &tag,
-                "-f",
-                &dockerfile.display().to_string(),
-                &context.display().to_string(),
-            ])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output()
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to run `{} build` — is {} installed and in PATH?",
-                    self.cli, self.cli
-                )
-            })?;
-
+        // Try the configured CLI first. If it fails with a daemon connection
+        // error, try the alternative CLI (docker ↔ podman).
+        let output = self.try_build(&tag, dockerfile, context).await?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            let is_daemon_error = stderr.contains("Cannot connect")
+                || stderr.contains("connect to the Docker daemon")
+                || stderr.contains("unable to connect")
+                || stderr.contains("connection refused");
+
+            if is_daemon_error {
+                let alt_cli = if self.cli == "podman" {
+                    "docker"
+                } else {
+                    "podman"
+                };
+                if crate::sandbox::containers::is_cli_available(alt_cli) {
+                    info!(
+                        primary = self.cli,
+                        fallback = alt_cli,
+                        "primary CLI daemon not available, trying fallback"
+                    );
+                    let alt_output = Self::run_build(alt_cli, &tag, dockerfile, context).await?;
+                    if alt_output.status.success() {
+                        info!(
+                            tag,
+                            cli = alt_cli,
+                            "tool image built successfully (via fallback)"
+                        );
+                        return Ok(tag);
+                    }
+                    let alt_stderr = String::from_utf8_lossy(&alt_output.stderr);
+                    warn!(
+                        cli = alt_cli,
+                        tag,
+                        exit_code = alt_output.status.code().unwrap_or(-1),
+                        stderr = %alt_stderr.trim(),
+                        "fallback image build also failed"
+                    );
+                }
+            }
+
             let stdout = String::from_utf8_lossy(&output.stdout);
             warn!(
                 cli = self.cli,

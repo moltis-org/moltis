@@ -1094,6 +1094,9 @@ WORKDIR /home/sandbox\n"
         );
     }
 
+    // Use the container CLI that's available and running. On macOS with
+    // Apple Container, this typically falls back to Docker or Podman for
+    // image building since Apple Container can't build images directly.
     let builder = moltis_tools::image_cache::DockerImageBuilder::new();
     tracing::debug!(
         name,
