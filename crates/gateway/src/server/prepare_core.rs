@@ -31,10 +31,7 @@ use {
         store::SessionStore,
     },
     secrecy::{ExposeSecret, Secret},
-    std::{
-        path::PathBuf,
-        sync::Arc,
-    },
+    std::{path::PathBuf, sync::Arc},
     tracing::{debug, info, warn},
 };
 mod log_persistence;
