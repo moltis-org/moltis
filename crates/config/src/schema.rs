@@ -40,15 +40,59 @@ pub use {
 /// Reasoning/thinking effort level for models that support extended thinking.
 ///
 /// Maps to provider-specific parameters:
-/// - **Anthropic**: `thinking.budget_tokens` (low=4096, medium=10240, high=32768)
-/// - **OpenAI**: `reasoning_effort` field on o-series models
+/// - **Anthropic**: `thinking.budget_tokens`
+/// - **OpenAI**: `reasoning_effort` field on o-series / GPT-5 models
+/// - **Gemini**: `thinkingBudget` or `thinkingLevel`
 /// - **Other providers**: ignored if unsupported
+///
+/// Not all providers support every level. Providers map unsupported levels
+/// to their nearest supported equivalent (e.g. `ExtraHigh` → `High` when
+/// the provider caps at `High`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
+    Minimal,
     Low,
     Medium,
     High,
+    /// Extra-high reasoning effort. Serializes as `"xhigh"`.
+    #[serde(rename = "xhigh")]
+    ExtraHigh,
+}
+
+impl ReasoningEffort {
+    /// All levels in ascending order.
+    pub const ALL: &[Self] = &[
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::ExtraHigh,
+    ];
+
+    /// Wire / serialization name (matches serde output).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::ExtraHigh => "xhigh",
+        }
+    }
+
+    /// Human-readable label for UI display.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Minimal => "Minimal",
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+            Self::ExtraHigh => "Extra High",
+        }
+    }
 }
 
 /// Agent identity (name, emoji, theme).

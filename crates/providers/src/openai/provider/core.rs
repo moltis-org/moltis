@@ -142,9 +142,13 @@ impl OpenAiProvider {
     pub(crate) fn reasoning_effort_str(&self) -> Option<&'static str> {
         use moltis_agents::model::ReasoningEffort;
         self.reasoning_effort.map(|e| match e {
+            // OpenAI accepts "low", "medium", "high". Minimal maps to "low",
+            // ExtraHigh maps to "high" (provider caps at high for most models).
+            ReasoningEffort::Minimal => "low",
             ReasoningEffort::Low => "low",
             ReasoningEffort::Medium => "medium",
             ReasoningEffort::High => "high",
+            ReasoningEffort::ExtraHigh => "high",
         })
     }
 
