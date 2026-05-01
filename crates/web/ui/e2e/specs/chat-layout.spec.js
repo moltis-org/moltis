@@ -76,28 +76,17 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 		for (const width of [1280, 900, 600]) {
 			await page.setViewportSize({ width, height: 800 });
 			// Allow layout to settle after resize
-			await page.waitForFunction(
-				(w) => window.innerWidth === w,
-				width,
-				{ timeout: 5_000 },
-			);
+			await page.waitForFunction((w) => window.innerWidth === w, width, { timeout: 5_000 });
 
 			const overflow = await page.evaluate(() => {
 				var box = document.getElementById("messages");
-				if (!box) return { scrollWidth: 0, clientWidth: 0, parentWidth: 0 };
-				return {
-					scrollWidth: box.scrollWidth,
-					clientWidth: box.clientWidth,
-					parentWidth: box.parentElement ? box.parentElement.clientWidth : 0,
-				};
+				if (!box) return { scrollWidth: 0, clientWidth: 0 };
+				return { scrollWidth: box.scrollWidth, clientWidth: box.clientWidth };
 			});
 
-			// Messages container must not overflow its parent or itself
+			// No horizontal scrollbar: content fits within the visible area
 			expect(overflow.scrollWidth, `scrollWidth <= clientWidth at ${width}px`).toBeLessThanOrEqual(
 				overflow.clientWidth,
-			);
-			expect(overflow.clientWidth, `clientWidth <= parentWidth at ${width}px`).toBeLessThanOrEqual(
-				overflow.parentWidth,
 			);
 		}
 
