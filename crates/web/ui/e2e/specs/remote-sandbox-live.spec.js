@@ -7,22 +7,24 @@
  * Required secrets (GitHub Actions):
  *   VERCEL_TOKEN      — Vercel access token (ver_...)
  *   VERCEL_TEAM_ID    — Vercel team ID (team_...)
+ *   VERCEL_PROJECT_ID — Vercel project ID (prj_...)
  *   DAYTONA_API_KEY   — Daytona API key (optional, for Daytona tests)
  *
  * Run locally:
- *   VERCEL_TOKEN=ver_xxx VERCEL_TEAM_ID=team_xxx npx playwright test e2e/specs/remote-sandbox-live.spec.js
+ *   VERCEL_TOKEN=ver_xxx VERCEL_TEAM_ID=team_xxx VERCEL_PROJECT_ID=prj_xxx npx playwright test e2e/specs/remote-sandbox-live.spec.js
  */
 
 const { test, expect } = require("../base-test");
 
 const VERCEL_TOKEN = process.env.VERCEL_TOKEN;
 const VERCEL_TEAM_ID = process.env.VERCEL_TEAM_ID;
+const VERCEL_PROJECT_ID = process.env.VERCEL_PROJECT_ID;
 const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY;
 
 const VERCEL_API = "https://vercel.com/api";
 
 test.describe("Vercel Sandbox live integration", () => {
-	test.skip(!VERCEL_TOKEN, "VERCEL_TOKEN not set — skipping live Vercel tests");
+	test.skip(!VERCEL_TOKEN || !VERCEL_PROJECT_ID, "VERCEL_TOKEN or VERCEL_PROJECT_ID not set — skipping live Vercel tests");
 
 	let sandboxId = null;
 
@@ -48,6 +50,7 @@ test.describe("Vercel Sandbox live integration", () => {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
+				projectId: VERCEL_PROJECT_ID,
 				runtime: "node24",
 				timeout: 60000,
 				resources: { vcpus: 1 },
@@ -129,6 +132,7 @@ test.describe("Vercel Sandbox live integration", () => {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({
+				projectId: VERCEL_PROJECT_ID,
 				runtime: "node24",
 				timeout: 60000,
 				resources: { vcpus: 1 },
