@@ -212,7 +212,7 @@ test.describe("Daytona Sandbox live integration", () => {
 		}
 	});
 
-	test("create sandbox and execute command", async () => {
+	test("create sandbox and execute command", { timeout: 120_000 }, async () => {
 		// Create a sandbox (retry on transient 5xx errors from Daytona).
 		let createResp;
 		for (let attempt = 0; attempt < 3; attempt++) {
