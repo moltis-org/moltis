@@ -45,8 +45,8 @@ async function maybeCompleteIdentity(page) {
 	return true;
 }
 
-async function maybeSkipOpenClawImport(page) {
-	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
+async function maybeSkipImport(page) {
+	const importHeading = page.getByRole("heading", { name: /^Import (from OpenClaw|Your Data)$/ });
 	if (!(await isVisible(importHeading))) return false;
 
 	return clickFirstVisibleButton(page, { name: /^Skip/ });
@@ -59,7 +59,7 @@ async function moveToLlmStep(page) {
 		if (await isVisible(llmHeading)) return;
 
 		if (await maybeSkipAuth(page)) continue;
-		if (await maybeSkipOpenClawImport(page)) continue;
+		if (await maybeSkipImport(page)) continue;
 		if (await maybeCompleteIdentity(page)) continue;
 
 		const backButton = page.locator(".onboarding-card").getByRole("button", { name: "Back", exact: true }).first();

@@ -702,6 +702,10 @@ pub struct SandboxRouter {
     /// Whether a sandbox image pre-build is currently in progress.
     /// Used by the gateway to show a banner in the UI.
     pub building_flag: std::sync::atomic::AtomicBool,
+    /// Notified when the background image build finishes (success or failure).
+    /// Callers that arrive while `building_flag` is true can await this to
+    /// avoid launching containers from the bare base image.
+    pub build_complete: tokio::sync::Notify,
 }
 
 impl SandboxRouter {
@@ -727,6 +731,7 @@ impl SandboxRouter {
             prepared_sessions: RwLock::new(HashSet::new()),
             synced_sessions: RwLock::new(HashSet::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
+            build_complete: tokio::sync::Notify::new(),
         }
     }
 
@@ -747,6 +752,7 @@ impl SandboxRouter {
             prepared_sessions: RwLock::new(HashSet::new()),
             synced_sessions: RwLock::new(HashSet::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
+            build_complete: tokio::sync::Notify::new(),
         }
     }
 
@@ -970,8 +976,27 @@ impl SandboxRouter {
         *self.global_image_override.write().await = image;
     }
 
+    /// If a background image build is in progress, wait for it to finish
+    /// (with a generous timeout) so that callers get the pre-built image
+    /// instead of the bare base image.
+    async fn wait_for_build_if_needed(&self) {
+        use std::sync::atomic::Ordering;
+        if !self.building_flag.load(Ordering::Relaxed) {
+            return;
+        }
+        debug!("sandbox image build in progress, waiting before resolving image");
+        // 10 minutes should be plenty for a first-time image build; if it takes
+        // longer the caller falls through to the base image (same as before).
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            self.build_complete.notified(),
+        )
+        .await;
+    }
+
     /// Get the current effective default image (runtime override > config > hardcoded).
     pub async fn default_image(&self) -> String {
+        self.wait_for_build_if_needed().await;
         if let Some(ref img) = *self.global_image_override.read().await {
             return img.clone();
         }

@@ -18,13 +18,14 @@ use {
 };
 
 const FIREWORKS_BASE_URL: &str = "https://api.fireworks.ai/inference/v1";
-const TEST_MODEL: &str = "accounts/fireworks/models/deepseek-v3p2";
+const TEST_MODEL: &str = "accounts/fireworks/models/glm-5p1";
 
 /// Known Fireworks models we catalog. Keep in sync with `FIREWORKS_MODELS` in
-/// `crates/providers/src/lib.rs`.
+/// `crates/providers/src/model_catalogs.rs`.
 const KNOWN_MODELS: &[&str] = &[
     "accounts/fireworks/routers/kimi-k2p5-turbo",
-    "accounts/fireworks/models/deepseek-v3p2",
+    "accounts/fireworks/models/kimi-k2p6",
+    "accounts/fireworks/models/glm-5p1",
     "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507",
     "accounts/fireworks/models/llama-v3p1-405b-instruct",
     "accounts/fireworks/models/llama-v3p1-70b-instruct",

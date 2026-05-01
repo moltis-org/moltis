@@ -574,6 +574,26 @@ fn test_sandbox_image_dockerfile_npm_without_nodejs_kept() {
 }
 
 #[test]
+fn test_sandbox_image_dockerfile_adds_gh_repo() {
+    let dockerfile = sandbox_image_dockerfile("ubuntu:25.10", &["curl".into(), "gh".into()]);
+    assert!(dockerfile.contains("githubcli-archive-keyring.gpg"));
+    assert!(dockerfile.contains("cli.github.com/packages"));
+    assert!(dockerfile.contains("apt-get install -y -qq gh"));
+    // gh should NOT appear in the main apt-get install line
+    let main_install_line = dockerfile
+        .lines()
+        .find(|l| l.contains("apt-get install -y -qq") && !l.contains("githubcli"))
+        .unwrap();
+    assert!(!main_install_line.contains(" gh "));
+}
+
+#[test]
+fn test_sandbox_image_dockerfile_no_gh_repo_without_gh() {
+    let dockerfile = sandbox_image_dockerfile("ubuntu:25.10", &["curl".into(), "git".into()]);
+    assert!(!dockerfile.contains("githubcli"));
+}
+
+#[test]
 fn test_docker_image_tag_changes_with_base() {
     let packages = vec!["curl".into()];
     let t1 = sandbox_image_tag("moltis-main-sandbox", "ubuntu:25.10", &packages);

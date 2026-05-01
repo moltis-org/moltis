@@ -362,6 +362,12 @@ export function VoiceSection(): VNode {
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
 							STT lets you use the microphone button in chat to record voice input.
 						</p>
+						{gon.get("stt_enabled") === false && (
+							<div className="rounded border border-[var(--border-strong)] bg-[var(--surface2)] px-3 py-2 text-xs text-[var(--muted)]">
+								Speech-to-text is disabled in your config (<code>voice.stt.enabled = false</code> in{" "}
+								<code>moltis.toml</code>). Provider configuration is shown for reference.
+							</div>
+						)}
 						<div className="flex flex-col gap-2">
 							{allProviders.stt.map((prov) => {
 								const testState = voiceTesting?.id === prov.id && voiceTesting?.type === "stt" ? voiceTesting : null;
@@ -390,6 +396,12 @@ export function VoiceSection(): VNode {
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
 							TTS lets you hear responses as audio. Configure providers and test voices.
 						</p>
+						{gon.get("tts_enabled") === false && (
+							<div className="rounded border border-[var(--border-strong)] bg-[var(--surface2)] px-3 py-2 text-xs text-[var(--muted)]">
+								Text-to-speech is disabled in your config (<code>voice.tts.enabled = false</code> in{" "}
+								<code>moltis.toml</code>). Provider configuration is shown for reference.
+							</div>
+						)}
 						<div className="flex flex-col gap-2">
 							{allProviders.tts.map((prov) => {
 								const testState = voiceTesting?.id === prov.id && voiceTesting?.type === "tts" ? voiceTesting : null;

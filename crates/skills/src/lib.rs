@@ -18,6 +18,7 @@ pub mod registry;
 pub mod requirements;
 pub mod safety;
 pub mod types;
+pub mod usage;
 
 #[cfg(feature = "bundled-skills")]
 pub mod bundled;

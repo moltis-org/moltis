@@ -28,6 +28,7 @@ mod auth_commands;
 mod browser_commands;
 mod channel_commands;
 mod config_commands;
+mod data_commands;
 mod db_commands;
 mod doctor_commands;
 mod hooks_commands;
@@ -159,6 +160,11 @@ enum Commands {
     Browser {
         #[command(subcommand)]
         action: browser_commands::BrowserAction,
+    },
+    /// Export and import Moltis data archives.
+    Data {
+        #[command(subcommand)]
+        action: data_commands::DataAction,
     },
     /// Database management (reset, clear, migrate).
     Db {
@@ -469,6 +475,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
         Some(Commands::Browser { action }) => browser_commands::handle_browser(action),
+        Some(Commands::Data { action }) => data_commands::handle_data(action).await,
         Some(Commands::Db { action }) => db_commands::handle_db(action).await,
         Some(Commands::Memory { action }) => memory_commands::handle_memory(action).await,
         Some(Commands::Node { action }) => node_commands::handle_node(action).await,

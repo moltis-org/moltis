@@ -209,6 +209,230 @@ test.describe("Smart auto-scroll", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("auto-scrolls when already at the bottom and new assistant message arrives", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await injectScrollableMessages(page, 40);
+
+		// Verify we are at the bottom after injection (injectScrollableMessages scrolls to end)
+		const before = await getScrollState(page);
+		const distBefore = before.scrollHeight - before.scrollTop - before.clientHeight;
+		expect(distBefore).toBeLessThan(60);
+
+		// Add a new assistant message — should auto-scroll since we're at the bottom
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var chatUi = await import(`${prefix}js/chat-ui.js`);
+			var el = chatUi.chatAddMsg("assistant", "New response while at bottom");
+			if (el) el.style.minHeight = "80px";
+			// Wait for rAF-based scroll to complete
+			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+		});
+
+		// Should still be at the bottom
+		const after = await getScrollState(page);
+		const distAfter = after.scrollHeight - after.scrollTop - after.clientHeight;
+		expect(distAfter).toBeLessThan(60);
+
+		// No "new messages" indicator should appear
+		const indicator = page.locator(".new-content-indicator");
+		await expect(indicator).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("auto-scrolls through multiple sequential assistant messages when at bottom", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await injectScrollableMessages(page, 40);
+
+		// Confirm at bottom
+		const before = await getScrollState(page);
+		expect(before.scrollHeight - before.scrollTop - before.clientHeight).toBeLessThan(60);
+
+		// Simulate streaming: add several messages in sequence while remaining at bottom
+		for (let i = 0; i < 5; i++) {
+			await page.evaluate(
+				async ({ idx }) => {
+					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+					var appUrl = new URL(appScript.src, window.location.origin);
+					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+					var chatUi = await import(`${prefix}js/chat-ui.js`);
+					var el = chatUi.chatAddMsg("assistant", `Streaming chunk ${idx}`);
+					if (el) el.style.minHeight = "60px";
+					await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+				},
+				{ idx: i },
+			);
+		}
+
+		// Should still be at the bottom after all messages
+		const after = await getScrollState(page);
+		const distAfter = after.scrollHeight - after.scrollTop - after.clientHeight;
+		expect(distAfter).toBeLessThan(60);
+
+		// No indicator
+		const indicator = page.locator(".new-content-indicator");
+		await expect(indicator).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("auto-scrolls after user message followed by immediate assistant response", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await injectScrollableMessages(page, 40);
+
+		// Confirm at bottom
+		const before = await getScrollState(page);
+		expect(before.scrollHeight - before.scrollTop - before.clientHeight).toBeLessThan(60);
+
+		// Simulate the exact #946 scenario: user sends, then assistant responds immediately
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var chatUi = await import(`${prefix}js/chat-ui.js`);
+
+			// User message (triggers force scroll)
+			var userEl = chatUi.chatAddMsg("user", "Hello, how are you?");
+			if (userEl) userEl.style.minHeight = "40px";
+
+			// Immediately after: assistant response starts (like the thinking placeholder)
+			var assistantEl = chatUi.chatAddMsg("assistant", "Let me think...");
+			if (assistantEl) assistantEl.style.minHeight = "80px";
+
+			// Wait for rAF-based scroll
+			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+		});
+
+		// Should be scrolled to bottom — no indicator
+		const after = await getScrollState(page);
+		const distAfter = after.scrollHeight - after.scrollTop - after.clientHeight;
+		expect(distAfter).toBeLessThan(60);
+
+		const indicator = page.locator(".new-content-indicator");
+		await expect(indicator).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("auto-scrolls when assistant message arrives one frame after user message", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await injectScrollableMessages(page, 40);
+
+		// Confirm at bottom
+		const before = await getScrollState(page);
+		expect(before.scrollHeight - before.scrollTop - before.clientHeight).toBeLessThan(60);
+
+		// User message scrolls to bottom, then after one rAF the assistant response arrives
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var chatUi = await import(`${prefix}js/chat-ui.js`);
+
+			// User message (force scrolls)
+			var userEl = chatUi.chatAddMsg("user", "Question?");
+			if (userEl) userEl.style.minHeight = "40px";
+
+			// Wait one rAF so the user-message scroll completes
+			await new Promise((resolve) => requestAnimationFrame(resolve));
+
+			// Now assistant message arrives in the next frame
+			var assistantEl = chatUi.chatAddMsg("assistant", "Here is the answer...");
+			if (assistantEl) assistantEl.style.minHeight = "120px";
+
+			// Wait for the assistant-triggered rAF scroll
+			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+		});
+
+		// Should be at the bottom — the assistant message must have auto-scrolled
+		const after = await getScrollState(page);
+		expect(after.scrollHeight - after.scrollTop - after.clientHeight).toBeLessThan(60);
+
+		// No indicator
+		const indicator = page.locator(".new-content-indicator");
+		await expect(indicator).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("no indicator appears when at bottom and smartScrollToBottom is called directly", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await injectScrollableMessages(page, 40);
+
+		// Confirm at bottom
+		const before = await getScrollState(page);
+		expect(before.scrollHeight - before.scrollTop - before.clientHeight).toBeLessThan(60);
+
+		// Call smartScrollToBottom directly (as streaming handlers do)
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var chatUi = await import(`${prefix}js/chat-ui.js`);
+
+			// Append content that pushes scroll down
+			var el = document.createElement("div");
+			el.className = "msg assistant";
+			el.textContent = "Streamed content";
+			el.style.minHeight = "100px";
+			document.getElementById("messages").appendChild(el);
+
+			// Now call smartScrollToBottom as the WS handler would
+			chatUi.smartScrollToBottom();
+			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+		});
+
+		// Should be at the bottom
+		const after = await getScrollState(page);
+		expect(after.scrollHeight - after.scrollTop - after.clientHeight).toBeLessThan(60);
+
+		// No indicator
+		const indicator = page.locator(".new-content-indicator");
+		await expect(indicator).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("rapid message burst while at bottom stays scrolled without indicator", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await injectScrollableMessages(page, 40);
+
+		// Confirm at bottom
+		const before = await getScrollState(page);
+		expect(before.scrollHeight - before.scrollTop - before.clientHeight).toBeLessThan(60);
+
+		// Fire a rapid burst of messages without waiting between them
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var chatUi = await import(`${prefix}js/chat-ui.js`);
+
+			// Rapid burst — no awaiting between messages (simulates fast streaming)
+			for (var i = 0; i < 10; i++) {
+				var el = chatUi.chatAddMsg("assistant", `Rapid burst ${i}`);
+				if (el) el.style.minHeight = "40px";
+			}
+
+			// Wait for rAF scroll to settle
+			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+			// Double rAF for safety — isAutoScrolling guard may defer one frame
+			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+		});
+
+		// Should be at the bottom
+		const after = await getScrollState(page);
+		expect(after.scrollHeight - after.scrollTop - after.clientHeight).toBeLessThan(60);
+
+		// No indicator
+		const indicator = page.locator(".new-content-indicator");
+		await expect(indicator).toHaveCount(0);
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test('"always" mode bypasses smart scroll and always auto-scrolls', async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 

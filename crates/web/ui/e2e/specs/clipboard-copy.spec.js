@@ -24,31 +24,24 @@ async function generateSshKey(page) {
 	return keyName;
 }
 
+/** Locate the copy button scoped to a specific key's container.
+ *  This prevents the locator from jumping to a different key's button
+ *  when the clicked button's text changes from "Copy Public Key" to "Copied". */
+function copyBtnForKey(page, keyName) {
+	const keyItem = page.locator(".provider-item", {
+		has: page.locator(".provider-item-name", { hasText: keyName }),
+	});
+	return keyItem.locator("button.provider-btn-secondary").first();
+}
+
 test.describe("copyToClipboard utility", () => {
-	test("copy button writes correct text via Clipboard API", async ({ page }) => {
+	test("copy button writes correct text via Clipboard API", async ({ page, context }) => {
+		// Grant real clipboard permissions so the native Clipboard API works.
+		await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 		await navigateAndWait(page, "/settings/ssh");
-		await generateSshKey(page);
+		const keyName = await generateSshKey(page);
 
-		// Capture clipboard writes without relying on real browser clipboard
-		// permissions (blocked in headless mode by default).
-		await page.evaluate(() => {
-			window.__clipboardWritten = null;
-			try {
-				Object.defineProperty(window.navigator, "clipboard", {
-					configurable: true,
-					value: {
-						writeText: (text) => {
-							window.__clipboardWritten = text;
-							return Promise.resolve();
-						},
-					},
-				});
-			} catch {
-				// descriptor not configurable — real clipboard may still work
-			}
-		});
-
-		const copyBtn = page.getByRole("button", { name: "Copy Public Key", exact: true }).first();
+		const copyBtn = copyBtnForKey(page, keyName);
 		await expect(copyBtn).toBeVisible();
 		await copyBtn.click();
 
@@ -56,28 +49,22 @@ test.describe("copyToClipboard utility", () => {
 		await expect(copyBtn).toHaveText("Copied", { timeout: 2_000 });
 
 		// The written text must be the public key (begins with the key type)
-		const written = await page.evaluate(() => window.__clipboardWritten);
-		if (written !== null) {
-			expect(written.trim()).toMatch(/^ssh-/);
-		}
+		const clipText = await page.evaluate(() => navigator.clipboard.readText());
+		expect(clipText.trim()).toMatch(/^ssh-/);
 	});
 
 	test("copy button falls back to execCommand when clipboard API is unavailable", async ({ page }) => {
 		await navigateAndWait(page, "/settings/ssh");
-		await generateSshKey(page);
+		const keyName = await generateSshKey(page);
 
 		// Simulate an insecure context where navigator.clipboard is undefined,
 		// then intercept document.execCommand to confirm the fallback fires.
 		await page.evaluate(() => {
 			window.__execCommandCopyCalled = false;
-			try {
-				Object.defineProperty(window.navigator, "clipboard", {
-					configurable: true,
-					value: undefined,
-				});
-			} catch {
-				// already non-configurable in this environment
-			}
+			Object.defineProperty(Navigator.prototype, "clipboard", {
+				configurable: true,
+				get: () => undefined,
+			});
 			const orig = document.execCommand.bind(document);
 			document.execCommand = (cmd, ...args) => {
 				if (cmd === "copy") window.__execCommandCopyCalled = true;
@@ -85,7 +72,7 @@ test.describe("copyToClipboard utility", () => {
 			};
 		});
 
-		const copyBtn = page.getByRole("button", { name: "Copy Public Key", exact: true }).first();
+		const copyBtn = copyBtnForKey(page, keyName);
 		await expect(copyBtn).toBeVisible();
 		await copyBtn.click();
 
@@ -98,25 +85,21 @@ test.describe("copyToClipboard utility", () => {
 
 	test("copy button shows error toast when both clipboard and execCommand fail", async ({ page }) => {
 		await navigateAndWait(page, "/settings/ssh");
-		await generateSshKey(page);
+		const keyName = await generateSshKey(page);
 
 		// Exhaust all copy paths: clipboard undefined + execCommand returns false.
 		// copyToClipboard() should then call showToast() with the failMessage
 		// that SshSection passes: "Could not copy public key — please copy it
 		// manually."
 		await page.evaluate(() => {
-			try {
-				Object.defineProperty(window.navigator, "clipboard", {
-					configurable: true,
-					value: undefined,
-				});
-			} catch {
-				// ignore
-			}
+			Object.defineProperty(Navigator.prototype, "clipboard", {
+				configurable: true,
+				get: () => undefined,
+			});
 			document.execCommand = () => false;
 		});
 
-		const copyBtn = page.getByRole("button", { name: "Copy Public Key", exact: true }).first();
+		const copyBtn = copyBtnForKey(page, keyName);
 		await expect(copyBtn).toBeVisible();
 		await copyBtn.click();
 

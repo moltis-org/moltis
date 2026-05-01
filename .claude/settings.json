@@ -61,5 +61,9 @@
       "Read(./.entire/metadata/**)"
     ]
   },
-  "plansDirectory": "./prompts"
+  "plansDirectory": "./prompts",
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  }
 }

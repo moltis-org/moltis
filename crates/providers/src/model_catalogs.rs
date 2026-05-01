@@ -73,7 +73,8 @@ pub(crate) const FIREWORKS_MODELS: &[(&str, &str)] = &[
         "accounts/fireworks/routers/kimi-k2p5-turbo",
         "Kimi K2.5 Turbo",
     ),
-    ("accounts/fireworks/models/deepseek-v3p2", "DeepSeek V3p2"),
+    ("accounts/fireworks/models/kimi-k2p6", "Kimi K2.6"),
+    ("accounts/fireworks/models/glm-5p1", "GLM 5.1"),
     (
         "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507",
         "Qwen3 235B A22B Instruct",
@@ -497,7 +498,7 @@ mod tests {
             .expect("fireworks entry must exist");
         assert!(!is_fireworks_kimi_router(
             fireworks,
-            "accounts/fireworks/models/deepseek-v3p2"
+            "accounts/fireworks/models/glm-5p1"
         ));
         assert!(!is_fireworks_kimi_router(
             fireworks,

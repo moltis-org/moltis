@@ -48,6 +48,8 @@ pub const KNOWN_PROVIDER_NAMES: &[&str] = &[
     // Providers registered via genai/async-openai backends
     "groq",
     "xai",
+    // Multi-protocol proxy (opencode.ai)
+    "opencode-zen",
 ];
 
 /// OAuth provider configuration (e.g. openai-codex).

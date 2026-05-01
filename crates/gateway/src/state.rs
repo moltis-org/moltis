@@ -439,6 +439,10 @@ pub struct GatewayState {
     /// Sender for queueing delivery IDs to the webhook worker.
     pub webhook_worker_tx: std::sync::OnceLock<mpsc::Sender<i64>>,
 
+    // ── Skill usage telemetry ─────────────────────────────────────────────
+    /// Late-bound skill usage store for per-skill read/write telemetry.
+    pub skill_usage_store: std::sync::OnceLock<moltis_skills::usage::SkillUsageStore>,
+
     // ── Atomics (lock-free) ─────────────────────────────────────────────────
     pub tts_phrase_counter: AtomicUsize,
     /// Live count of connected nodes.  Shared with `ExecTool` via the
@@ -549,6 +553,7 @@ impl GatewayState {
             webhook_store: std::sync::OnceLock::new(),
             webhook_rate_limiter: moltis_webhooks::rate_limit::WebhookRateLimiter::default(),
             webhook_worker_tx: std::sync::OnceLock::new(),
+            skill_usage_store: std::sync::OnceLock::new(),
             tts_phrase_counter: AtomicUsize::new(0),
             node_count: Arc::new(AtomicUsize::new(0)),
             ssh_target_count: Arc::new(AtomicUsize::new(0)),

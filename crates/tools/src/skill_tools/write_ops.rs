@@ -5,8 +5,12 @@ use std::path::PathBuf;
 use {
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
+    moltis_skills::usage::SkillUsageStore,
     serde_json::{Value, json},
 };
+
+#[cfg(feature = "metrics")]
+use moltis_metrics::{counter, labels, skills as skills_metrics};
 
 use {
     super::{
@@ -142,6 +146,7 @@ const MAX_PATCHES_PER_CALL: usize = 10;
 pub struct PatchSkillTool {
     data_dir: PathBuf,
     checkpoints: CheckpointManager,
+    usage_store: Option<SkillUsageStore>,
 }
 
 impl PatchSkillTool {
@@ -150,7 +155,14 @@ impl PatchSkillTool {
         Self {
             data_dir,
             checkpoints,
+            usage_store: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_usage_store(mut self, store: SkillUsageStore) -> Self {
+        self.usage_store = Some(store);
+        self
     }
 
     fn skills_dir(&self) -> PathBuf {
@@ -335,6 +347,13 @@ impl AgentTool for PatchSkillTool {
         } else {
             None
         };
+
+        if let Some(ref store) = self.usage_store {
+            store.record_write(name).await;
+        }
+        #[cfg(feature = "metrics")]
+        counter!(skills_metrics::MODIFICATIONS_TOTAL, labels::TOOL => "patch_skill".to_string())
+            .increment(1);
 
         let mut response = json!({
             "patched": true,

@@ -949,7 +949,7 @@ function fetchBundledCategories(): void {
 	});
 }
 
-function BundledCategoriesSection(): VNode {
+function BundledCategoriesSection(): VNode | null {
 	const cats = bundledCategories.value;
 	const toggling = useSignal<string | null>(null);
 
@@ -957,7 +957,7 @@ function BundledCategoriesSection(): VNode {
 		fetchBundledCategories();
 	}, []);
 
-	if (!cats.length) return <></>;
+	if (!cats.length) return null;
 
 	function toggle(cat: BundledCategory): void {
 		if (toggling.value) return;

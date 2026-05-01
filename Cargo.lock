@@ -7168,6 +7168,7 @@ dependencies = [
  "moltis-onboarding",
  "moltis-openclaw-import",
  "moltis-plugins",
+ "moltis-portable",
  "moltis-projects",
  "moltis-sessions",
  "moltis-skills",
@@ -7727,6 +7728,7 @@ dependencies = [
  "moltis-matrix",
  "moltis-metrics",
  "moltis-msteams",
+ "moltis-portable",
  "moltis-protocol",
  "moltis-providers",
  "moltis-service-traits",
@@ -8061,6 +8063,26 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tracing",
+]
+
+[[package]]
+name = "moltis-portable"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "hex",
+ "moltis-config",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tar",
+ "tempfile",
+ "time",
+ "tokio",
+ "tracing",
+ "walkdir",
 ]
 
 [[package]]

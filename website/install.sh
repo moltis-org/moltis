@@ -77,7 +77,7 @@ Usage:
 
 Options:
     --no-homebrew       Skip Homebrew even if available (macOS)
-    --method=METHOD     Force installation method: homebrew, binary, deb, rpm, arch, appimage, snap, source
+    --method=METHOD     Force installation method: homebrew, binary, deb, rpm, arch, appimage, snap, source, proxmox
     --version=VERSION   Install a specific version (default: latest)
     -h, --help          Show this help message
 
@@ -472,6 +472,24 @@ install_snap() {
     success "Moltis installed via Snap"
 }
 
+detect_proxmox() {
+    command_exists pveversion && [ -d /etc/pve ]
+}
+
+install_proxmox() {
+    info "Proxmox VE detected — installing Moltis as an LXC container..."
+
+    if ! detect_proxmox; then
+        error "This does not appear to be a Proxmox VE host."
+    fi
+
+    # Use the community-scripts helper when merged upstream, fall back to fork.
+    PROXMOX_SCRIPT_URL="https://raw.githubusercontent.com/moltis-org/ProxmoxVED/feat/moltis/ct/moltis.sh"
+
+    info "Launching Proxmox VE helper script..."
+    bash -c "$(curl -fsSL "$PROXMOX_SCRIPT_URL")"
+}
+
 install_from_source() {
     warn "Building from source. This may take several minutes..."
 
@@ -579,12 +597,39 @@ main() {
             snap)
                 install_snap
                 ;;
+            proxmox)
+                install_proxmox
+                return
+                ;;
             source)
                 install_from_source "$VERSION"
                 ;;
             *)
                 error "Unknown installation method: $PREFERRED_METHOD"
                 ;;
+        esac
+    elif [ "$OS" = "linux" ] && detect_proxmox; then
+        info "Proxmox VE host detected"
+        printf "  Install as an LXC container (recommended) or directly on this host?\n"
+        printf "  ${BOLD}1)${NC} LXC container (isolated, easy to manage)\n"
+        printf "  ${BOLD}2)${NC} Install directly on this host\n"
+        printf "\n"
+        printf "  Choice [1]: "
+        read -r choice </dev/tty 2>/dev/null || choice="1"
+        choice="${choice:-1}"
+        if [ "$choice" = "1" ]; then
+            install_proxmox
+            return
+        fi
+        # Fall through to normal Linux install
+        DISTRO=$(detect_linux_distro)
+        case "$DISTRO" in
+            ubuntu|debian|linuxmint|pop|elementary|zorin)
+                install_deb "$ARCH" "$VERSION" ;;
+            fedora|rhel|centos|rocky|alma|ol)
+                install_rpm "$ARCH" "$VERSION" ;;
+            *)
+                install_binary "$OS" "$ARCH" "$VERSION" ;;
         esac
     elif [ "$OS" = "macos" ]; then
         # macOS: prefer Homebrew, fall back to binary

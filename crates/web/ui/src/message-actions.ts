@@ -5,6 +5,7 @@
 // and "More concise" options.
 // Icons use CSS mask-image classes (icon-*) backed by SVG files on disk.
 
+import * as gon from "./gon";
 import { sendRpc } from "./helpers";
 import { renderPersistedAudio } from "./message-voice";
 import { copyToClipboard, showToast } from "./ui";
@@ -99,7 +100,7 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 	bar.appendChild(retryBtn);
 
 	// ── Voice button ─────────────────────────────────────────
-	if (ctx.text && !ctx.hasAudio) {
+	if (ctx.text && !ctx.hasAudio && gon.get("tts_enabled") !== false) {
 		const voiceBtn = actionButton("icon-microphone", "Voice it");
 		voiceBtn.addEventListener("click", async () => {
 			const params: Record<string, unknown> = { key: sessionKey };

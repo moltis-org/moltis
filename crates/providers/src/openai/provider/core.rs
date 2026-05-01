@@ -139,12 +139,29 @@ impl OpenAiProvider {
     }
 
     /// Return the reasoning effort string if configured.
+    ///
+    /// OpenAI accepts `"low"`, `"medium"`, `"high"`. Levels outside that range
+    /// are clamped to the nearest supported value.
     pub(crate) fn reasoning_effort_str(&self) -> Option<&'static str> {
         use moltis_agents::model::ReasoningEffort;
         self.reasoning_effort.map(|e| match e {
+            ReasoningEffort::Minimal => {
+                tracing::debug!(
+                    model = %self.model,
+                    "reasoning effort Minimal clamped to \"low\" (OpenAI minimum)"
+                );
+                "low"
+            },
             ReasoningEffort::Low => "low",
             ReasoningEffort::Medium => "medium",
             ReasoningEffort::High => "high",
+            ReasoningEffort::ExtraHigh => {
+                tracing::debug!(
+                    model = %self.model,
+                    "reasoning effort ExtraHigh clamped to \"high\" (OpenAI maximum)"
+                );
+                "high"
+            },
         })
     }
 

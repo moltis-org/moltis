@@ -1022,7 +1022,10 @@ pub async fn prepare_gateway_core(
                     broadcast(
                         state,
                         "sandbox.image.build",
-                        serde_json::json!({ "phase": "start", "packages": packages }),
+                        serde_json::json!({
+                            "phase": "start",
+                            "package_count": packages.len(),
+                        }),
                         BroadcastOpts {
                             drop_if_slow: true,
                             ..Default::default()
@@ -1040,6 +1043,7 @@ pub async fn prepare_gateway_core(
                         );
                         router.set_global_image(Some(result.tag.clone())).await;
                         build_router.building_flag.store(false, Ordering::Relaxed);
+                        build_router.build_complete.notify_waiters();
 
                         if let Some(state) = deferred_for_build.get() {
                             broadcast(
@@ -1063,10 +1067,12 @@ pub async fn prepare_gateway_core(
                             "sandbox image pre-build: no-op (no packages or unsupported backend)"
                         );
                         build_router.building_flag.store(false, Ordering::Relaxed);
+                        build_router.build_complete.notify_waiters();
                     },
                     Err(e) => {
                         tracing::warn!("sandbox image pre-build failed: {e}");
                         build_router.building_flag.store(false, Ordering::Relaxed);
+                        build_router.build_complete.notify_waiters();
                         if let Some(state) = deferred_for_build.get() {
                             broadcast(
                                 state,

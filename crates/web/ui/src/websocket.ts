@@ -101,7 +101,7 @@ const connectOpts: ConnectOptions = {
 		});
 		chatAddMsg("system", `Connected to moltis gateway v${hello.server.version} at ${ts}`);
 		if ((S.sandboxInfo as Record<string, unknown> | null)?.image_building) {
-			chatAddMsg("system", "Building sandbox image (installing packages)\u2026");
+			handleSandboxImageBuild({ phase: "start" });
 		}
 		// Subscribe to all needed events (v4 protocol).
 		// Await so that events are not lost to a race between subscribe and

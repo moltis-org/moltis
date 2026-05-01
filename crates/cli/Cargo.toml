@@ -80,6 +80,7 @@ moltis-oauth           = { workspace = true }
 moltis-onboarding      = { workspace = true }
 moltis-openclaw-import = { optional = true, workspace = true }
 moltis-plugins         = { workspace = true }
+moltis-portable        = { workspace = true }
 moltis-projects        = { workspace = true }
 moltis-sessions        = { workspace = true }
 moltis-skills          = { workspace = true }

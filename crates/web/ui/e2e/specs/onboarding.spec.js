@@ -100,7 +100,7 @@ async function maybeCompleteIdentity(page) {
 }
 
 async function maybeSkipOpenClawImport(page) {
-	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
+	const importHeading = page.getByRole("heading", { name: /^Import (from OpenClaw|Your Data)$/ });
 	if (!(await isVisible(importHeading))) return false;
 	const headingBefore = await visibleOnboardingHeadingText(page);
 
@@ -371,7 +371,7 @@ test.describe("Onboarding wizard", () => {
 		if (!isAuthStepVisible) {
 			// When auth is not needed, the wizard may show identity, OpenClaw import, or LLM step
 			const anyStepHeading = page.getByRole("heading", {
-				name: /^(Add LLMs|Add providers|Set up your identity|Import from OpenClaw)$/,
+				name: /^(Add LLMs|Add providers|Set up your identity|Import from OpenClaw|Import Your Data)$/,
 			});
 			await expect(anyStepHeading).toBeVisible();
 			return;

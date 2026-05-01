@@ -6,7 +6,8 @@
 
 use {
     serenity::all::{
-        Command, CommandInteraction, ComponentInteraction, Context, CreateCommand,
+        Command, CommandDataOption, CommandDataOptionValue, CommandInteraction, CommandOptionType,
+        ComponentInteraction, Context, CreateCommand, CreateCommandOption,
         CreateInteractionResponse, CreateInteractionResponseFollowup, EditInteractionResponse,
         Interaction,
     },
@@ -21,7 +22,19 @@ use crate::state::AccountStateMap;
 pub fn build_commands() -> Vec<CreateCommand> {
     moltis_channels::commands::all_commands()
         .iter()
-        .map(|c| CreateCommand::new(c.name).description(c.description))
+        .map(|c| {
+            let mut cmd = CreateCommand::new(c.name).description(c.description);
+            if let Some(arg) = &c.arg {
+                let mut opt =
+                    CreateCommandOption::new(CommandOptionType::String, arg.name, arg.description)
+                        .required(arg.required);
+                for &(label, value) in arg.choices {
+                    opt = opt.add_string_choice(label, value);
+                }
+                cmd = cmd.add_option(opt);
+            }
+            cmd
+        })
         .collect()
 }
 
@@ -102,8 +115,10 @@ async fn handle_slash_command(
     };
     let sender_id = command.user.id.to_string();
 
+    let command_text = build_command_text(&command.data.name, &command.data.options);
+
     let response_text = match sink
-        .dispatch_command(&command.data.name, reply_to, Some(&sender_id))
+        .dispatch_command(&command_text, reply_to, Some(&sender_id))
         .await
     {
         Ok(response) => response,
@@ -168,6 +183,23 @@ async fn handle_component_interaction(
                 callback_data, "interaction dispatch failed: {e}"
             );
         },
+    }
+}
+
+/// Build the full command string from the slash command name and its options.
+///
+/// Discord slash commands pass arguments as structured options rather than
+/// inline text. This reconstructs the `"name value"` format expected by
+/// `dispatch_command`.
+fn build_command_text(name: &str, options: &[CommandDataOption]) -> String {
+    let arg = options.iter().find_map(|opt| match &opt.value {
+        CommandDataOptionValue::String(s) => Some(s.as_str()),
+        _ => None,
+    });
+
+    match arg {
+        Some(value) if !value.is_empty() => format!("{name} {value}"),
+        _ => name.to_string(),
     }
 }
 
@@ -310,6 +342,199 @@ mod tests {
                     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'),
                 "command name contains invalid characters: {name}"
             );
+        }
+    }
+
+    #[test]
+    fn commands_with_arg_have_options() {
+        let commands = build_commands();
+        let registry = moltis_channels::commands::all_commands();
+
+        for reg_cmd in registry {
+            let json = commands
+                .iter()
+                .find_map(|c| {
+                    let v = serde_json::to_value(c).ok()?;
+                    if v["name"].as_str()? == reg_cmd.name {
+                        Some(v)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| panic!("missing built command: {}", reg_cmd.name));
+
+            let options = json["options"].as_array();
+
+            if let Some(arg) = &reg_cmd.arg {
+                let opts = options.unwrap_or_else(|| {
+                    panic!("command /{} has arg but no Discord options", reg_cmd.name)
+                });
+                assert!(
+                    !opts.is_empty(),
+                    "command /{} has arg but empty options array",
+                    reg_cmd.name
+                );
+                let first = &opts[0];
+                assert_eq!(
+                    first["name"].as_str(),
+                    Some(arg.name),
+                    "command /{} option name should be \"{}\"",
+                    reg_cmd.name,
+                    arg.name,
+                );
+                // CommandOptionType::String == 3
+                assert_eq!(
+                    first["type"].as_u64(),
+                    Some(3),
+                    "command /{} option type should be String (3)",
+                    reg_cmd.name
+                );
+
+                // Verify choices match
+                if !arg.choices.is_empty() {
+                    let json_choices = first["choices"].as_array().unwrap_or_else(|| {
+                        panic!("command /{} has choices but none in JSON", reg_cmd.name)
+                    });
+                    assert_eq!(
+                        json_choices.len(),
+                        arg.choices.len(),
+                        "command /{} choice count mismatch",
+                        reg_cmd.name
+                    );
+                    for (json_choice, &(label, value)) in
+                        json_choices.iter().zip(arg.choices.iter())
+                    {
+                        assert_eq!(json_choice["name"].as_str(), Some(label));
+                        assert_eq!(json_choice["value"].as_str(), Some(value));
+                    }
+                }
+            } else {
+                let is_empty = options.map_or(true, |o| o.is_empty());
+                assert!(
+                    is_empty,
+                    "command /{} has no arg but has Discord options",
+                    reg_cmd.name
+                );
+            }
+        }
+    }
+
+    fn string_option(value: &str) -> CommandDataOption {
+        serde_json::from_value(serde_json::json!({
+            "name": "value",
+            "type": 3,
+            "value": value,
+        }))
+        .expect("valid string option")
+    }
+
+    fn bool_option(value: bool) -> CommandDataOption {
+        serde_json::from_value(serde_json::json!({
+            "name": "value",
+            "type": 5,
+            "value": value,
+        }))
+        .expect("valid bool option")
+    }
+
+    #[test]
+    fn build_command_text_no_options() {
+        let text = build_command_text("new", &[]);
+        assert_eq!(text, "new");
+    }
+
+    #[test]
+    fn build_command_text_with_string_option() {
+        let options = vec![string_option("2")];
+        let text = build_command_text("mode", &options);
+        assert_eq!(text, "mode 2");
+    }
+
+    #[test]
+    fn build_command_text_with_empty_string_option() {
+        let options = vec![string_option("")];
+        let text = build_command_text("mode", &options);
+        assert_eq!(text, "mode");
+    }
+
+    #[test]
+    fn build_command_text_ignores_non_string_options() {
+        let options = vec![bool_option(true)];
+        let text = build_command_text("fast", &options);
+        assert_eq!(text, "fast");
+    }
+
+    #[test]
+    fn build_command_text_with_multi_word_arg() {
+        let options = vec![string_option("provider:openai gpt-4o")];
+        let text = build_command_text("model", &options);
+        assert_eq!(text, "model provider:openai gpt-4o");
+    }
+
+    #[test]
+    fn option_descriptions_within_discord_limit() {
+        // Discord enforces a 100-character limit on option descriptions too.
+        for cmd in moltis_channels::commands::all_commands() {
+            if let Some(arg) = &cmd.arg {
+                assert!(
+                    arg.description.len() <= 100,
+                    "command /{} arg description exceeds 100 chars ({} chars): {}",
+                    cmd.name,
+                    arg.description.len(),
+                    arg.description,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn arg_names_are_valid_discord_option_names() {
+        // Discord option names: lowercase, 1-32 chars, alphanumeric + hyphens.
+        for cmd in moltis_channels::commands::all_commands() {
+            if let Some(arg) = &cmd.arg {
+                assert!(
+                    !arg.name.is_empty() && arg.name.len() <= 32,
+                    "command /{} arg name length out of range: {}",
+                    cmd.name,
+                    arg.name,
+                );
+                assert!(
+                    arg.name.chars().all(|c| c.is_ascii_lowercase()
+                        || c.is_ascii_digit()
+                        || c == '-'
+                        || c == '_'),
+                    "command /{} arg name has invalid characters: {}",
+                    cmd.name,
+                    arg.name,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn choices_within_discord_limits() {
+        // Discord allows max 25 choices, each name ≤ 100 chars, each value ≤ 100 chars.
+        for cmd in moltis_channels::commands::all_commands() {
+            if let Some(arg) = &cmd.arg {
+                assert!(
+                    arg.choices.len() <= 25,
+                    "command /{} has {} choices (max 25)",
+                    cmd.name,
+                    arg.choices.len(),
+                );
+                for &(label, value) in arg.choices {
+                    assert!(
+                        label.len() <= 100,
+                        "command /{} choice label too long: {label}",
+                        cmd.name,
+                    );
+                    assert!(
+                        value.len() <= 100,
+                        "command /{} choice value too long: {value}",
+                        cmd.name,
+                    );
+                }
+            }
         }
     }
 }

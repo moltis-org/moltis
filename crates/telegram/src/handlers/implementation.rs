@@ -696,6 +696,35 @@ pub async fn handle_message_direct(
                     return Ok(());
                 }
 
+                // For bare commands with fixed choices (e.g. /sh, /fast),
+                // show an inline keyboard derived from CommandDef.choices.
+                // Commands with custom keyboard handlers (model, agent, etc.)
+                // are handled above and won't reach this point.
+                if cmd_text.trim() == cmd {
+                    let cmd_def = moltis_channels::commands::all_commands()
+                        .iter()
+                        .find(|c| c.name == cmd);
+                    if let Some(def) = cmd_def
+                        && let Some(arg) = &def.arg
+                        && !arg.choices.is_empty()
+                    {
+                        let bot = {
+                            let accts = accounts.read().unwrap_or_else(|e| e.into_inner());
+                            accts.get(account_id).map(|s| s.bot.clone())
+                        };
+                        if let Some(bot) = bot {
+                            send_choices_keyboard(
+                                &bot,
+                                &reply_target.outbound_to(),
+                                cmd,
+                                arg.choices,
+                            )
+                            .await;
+                        }
+                        return Ok(());
+                    }
+                }
+
                 let response = if cmd == "help" {
                     moltis_channels::commands::help_text()
                 } else {
@@ -860,6 +889,10 @@ pub async fn handle_callback_query(
     } else if data.starts_with("model_provider:") {
         // Handled separately below — no simple cmd_text.
         None
+    } else if data.contains("_choice:") {
+        // Generic choice callback: "{cmd}_choice:{value}" → "{cmd} {value}"
+        let (cmd_part, val) = data.split_once("_choice:").unwrap_or(("", ""));
+        Some(format!("{cmd_part} {val}"))
     } else {
         if let Some(ref bot) = bot {
             let _ = bot.answer_callback_query(&query.id).await;
