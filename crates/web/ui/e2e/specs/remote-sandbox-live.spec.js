@@ -34,7 +34,10 @@ test.describe("Vercel Sandbox live integration", () => {
 			const url = `${VERCEL_API}/v1/sandboxes/${sandboxId}/stop${VERCEL_TEAM_ID ? `?teamId=${VERCEL_TEAM_ID}` : ""}`;
 			await fetch(url, {
 				method: "POST",
-				headers: { Authorization: `Bearer ${VERCEL_TOKEN}` },
+				headers: {
+					Authorization: `Bearer ${VERCEL_TOKEN}`,
+					"Content-Type": "application/json",
+				},
 			}).catch(() => {});
 			sandboxId = null;
 		}
@@ -116,7 +119,10 @@ test.describe("Vercel Sandbox live integration", () => {
 		const stopUrl = `${VERCEL_API}/v1/sandboxes/${sandboxId}/stop${VERCEL_TEAM_ID ? `?teamId=${VERCEL_TEAM_ID}` : ""}`;
 		const stopResp = await fetch(stopUrl, {
 			method: "POST",
-			headers: { Authorization: `Bearer ${VERCEL_TOKEN}` },
+			headers: {
+				Authorization: `Bearer ${VERCEL_TOKEN}`,
+				"Content-Type": "application/json",
+			},
 		});
 		expect(stopResp.status).toBe(200);
 		sandboxId = null; // already stopped
@@ -223,20 +229,27 @@ test.describe("Daytona Sandbox live integration", () => {
 		sandboxId = createData.id;
 		expect(sandboxId).toBeTruthy();
 
-		// Execute a command.
-		const execResp = await fetch(`${DAYTONA_API}/workspace/${sandboxId}/toolbox/process/execute`, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${DAYTONA_API_KEY}`,
-				"Content-Type": "application/json",
-				"X-Daytona-Source": "moltis-e2e",
-			},
-			body: JSON.stringify({
-				command: "echo hello-from-daytona",
-				cwd: "/home/daytona",
-				timeout: 30,
-			}),
-		});
+		// Wait for sandbox toolbox to become available (may take a few seconds after creation).
+		const execDeadline = Date.now() + 60000;
+		let execResp;
+		while (Date.now() < execDeadline) {
+			execResp = await fetch(`${DAYTONA_API}/workspace/${sandboxId}/toolbox/process/execute`, {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${DAYTONA_API_KEY}`,
+					"Content-Type": "application/json",
+					"X-Daytona-Source": "moltis-e2e",
+				},
+				body: JSON.stringify({
+					command: "echo hello-from-daytona",
+					cwd: "/home/daytona",
+					timeout: 30,
+				}),
+			});
+			if (execResp.status === 200) break;
+			// 404 or 503 means toolbox not ready yet.
+			await new Promise((r) => setTimeout(r, 2000));
+		}
 
 		expect(execResp.status).toBe(200);
 		const execData = await execResp.json();
