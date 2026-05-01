@@ -10,7 +10,10 @@ test.describe("Command palette", () => {
 
 		await page.keyboard.press("Control+k");
 		await expect(page.locator(".cmd-palette")).toBeVisible();
-		await expect(page.locator(".cmd-palette-input")).toBeFocused();
+		// Focus is set in useLayoutEffect; wait for it to settle
+		await expect
+			.poll(() => page.locator(".cmd-palette-input").evaluate((el) => el === document.activeElement))
+			.toBeTruthy();
 
 		await page.keyboard.press("Escape");
 		await expect(page.locator(".cmd-palette")).toHaveCount(0);

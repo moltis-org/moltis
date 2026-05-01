@@ -19,7 +19,7 @@ import { sendRpc } from "../helpers";
 import { updateNavCount } from "../nav-counts";
 import { connected } from "../signals";
 import * as S from "../state";
-import { ConfirmDialog, requestConfirm, showToast } from "../ui";
+import { ConfirmDialog, copyToClipboard, requestConfirm, showToast } from "../ui";
 import { AddDiscordModal } from "./channels/modals/AddDiscordModal";
 import { AddMatrixModal } from "./channels/modals/AddMatrixModal";
 import { AddNostrModal } from "./channels/modals/AddNostrModal";
@@ -266,12 +266,6 @@ function ChannelStorageNotice({ compact = false }: ChannelStorageNoticeProps): V
 			<span className="font-medium text-[var(--text-strong)]">Storage note.</span> {channelStorageNote()}
 		</div>
 	);
-}
-
-function copyToClipboard(value: unknown, successMessage: string): void {
-	const text = String(value || "").trim();
-	if (!text) return;
-	navigator.clipboard.writeText(text).then(() => showToast(successMessage));
 }
 
 // ── Matrix info row ──────────────────────────────────────────
@@ -752,9 +746,7 @@ function renderSenderRow(s: SenderEntry, onAction: (identifier: string, action: 
 		<span
 			className="provider-item-badge cursor-pointer select-none"
 			style={{ background: "var(--warning-bg, #fef3c7)", color: "var(--warning-text, #92400e)" }}
-			onClick={() => {
-				navigator.clipboard.writeText(s.otp_pending?.code ?? "").then(() => showToast("OTP code copied"));
-			}}
+			onClick={() => copyToClipboard(s.otp_pending?.code ?? "", "OTP code copied")}
 		>
 			OTP: <code className="text-xs">{s.otp_pending.code}</code>
 		</span>

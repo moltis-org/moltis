@@ -8,10 +8,28 @@ import { type ContextData, renderContextCard } from "./context-card";
 
 // ── Types ────────────────────────────────────────────────────
 
+/** Known slash command names — adding a name here requires a handler in `slashHandlers`. */
+type SlashCommandName =
+	| "btw"
+	| "clear"
+	| "compact"
+	| "context"
+	| "fast"
+	| "fork"
+	| "insights"
+	| "mode"
+	| "new"
+	| "reset"
+	| "rollback"
+	| "sh";
+
 export interface SlashCommand {
-	name: string;
+	name: SlashCommandName;
 	description: string;
 }
+
+/** Handler function for a slash command. */
+type SlashHandler = (args: string) => void;
 
 export interface ParsedSlash {
 	name: string;
@@ -29,6 +47,26 @@ interface ModePayload {
 	prompt: string;
 }
 
+interface InsightsApiResponse {
+	days: number;
+	completions: number;
+	input_tokens: number;
+	output_tokens: number;
+	total_tokens: number;
+	errors: number;
+	tool_executions: number;
+	tool_errors: number;
+	by_provider: Record<string, { input_tokens: number; output_tokens: number; completions: number }>;
+	data_points: number;
+	span_hours: number;
+}
+
+function fmtNum(n: number): string {
+	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	return n.toLocaleString();
+}
+
 interface ModesListPayload {
 	modes: ModePayload[];
 }
@@ -36,12 +74,17 @@ interface ModesListPayload {
 // ── Slash commands list ─────────────────────────────────────
 
 export const slashCommands: SlashCommand[] = [
+	{ name: "btw", description: "Quick side question (no tools, not persisted)" },
 	{ name: "clear", description: "Clear conversation history" },
 	{ name: "compact", description: "Summarize conversation to save tokens" },
 	{ name: "context", description: "Show session context and project info" },
+	{ name: "fast", description: "Toggle fast/priority mode" },
+	{ name: "fork", description: "Fork this session into a new branch" },
+	{ name: "insights", description: "Show usage analytics (tokens, providers)" },
 	{ name: "mode", description: "Switch session mode (/mode none to clear)" },
 	{ name: "new", description: "Start a new session" },
 	{ name: "reset", description: "Clear conversation history" },
+	{ name: "rollback", description: "List or restore file checkpoints" },
 	{ name: "sh", description: "Enter command mode (/sh off or Esc to exit)" },
 ];
 
@@ -307,20 +350,22 @@ function handleModeCommand(cmdArgs: string): void {
 	});
 }
 
-export function handleSlashCommand(cmdName: string, cmdArgs: string): void {
-	if (cmdName === "clear") {
-		clearActiveSession();
-		return;
-	}
-	if (cmdName === "compact") {
+/**
+ * Handler map — every `SlashCommandName` must have an entry here.
+ * TypeScript will error at `satisfies` if a command is missing.
+ */
+const slashHandlers: Record<SlashCommandName, SlashHandler> = {
+	clear: () => clearActiveSession(),
+
+	compact: () => {
 		chatAddMsg("system", "Compacting conversation\u2026");
 		sendRpc("chat.compact", {}).then((res) => {
 			if (res.ok) switchSession(S.activeSessionKey);
 			else chatAddMsg("error", res.error?.message || "Compact failed");
 		});
-		return;
-	}
-	if (cmdName === "context") {
+	},
+
+	context: () => {
 		chatAddMsg("system", "Loading context\u2026");
 		sendRpc("chat.context", {}).then((res) => {
 			if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
@@ -333,28 +378,22 @@ export function handleSlashCommand(cmdName: string, cmdArgs: string): void {
 				}
 			} else chatAddMsg("error", res.error?.message || "Context failed");
 		});
-		return;
-	}
-	if (cmdName === "mode") {
-		handleModeCommand(cmdArgs);
-		return;
-	}
-	if (cmdName === "new") {
-		const newKey = `session:${crypto.randomUUID()}`;
-		switchSession(newKey);
-		return;
-	}
-	if (cmdName === "reset") {
-		// Use sessions.reset (not chat.clear) so the session summary also runs.
+	},
+
+	mode: (args) => handleModeCommand(args),
+
+	new: () => switchSession(`session:${crypto.randomUUID()}`),
+
+	reset: () => {
 		chatAddMsg("system", "Resetting session\u2026");
 		sendRpc("sessions.reset", { key: S.activeSessionKey }).then((res) => {
 			if (res.ok) switchSession(S.activeSessionKey);
 			else chatAddMsg("error", res.error?.message || "Reset failed");
 		});
-		return;
-	}
-	if (cmdName === "sh") {
-		const normalized = (cmdArgs || "").toLowerCase();
+	},
+
+	sh: (args) => {
+		const normalized = (args || "").toLowerCase();
 		if (normalized === "off" || normalized === "exit") {
 			setCommandMode(false);
 			chatAddMsg("system", renderMarkdown("**Command:** mode disabled"), true);
@@ -366,5 +405,97 @@ export function handleSlashCommand(cmdName: string, cmdArgs: string): void {
 			renderMarkdown(`**Command:** mode enabled (${commandModeSummary()}) \u00b7 exit with /sh off or Esc`),
 			true,
 		);
-	}
+	},
+
+	insights: (args) => {
+		const days = args.trim() || "30";
+		chatAddMsg("system", `Loading insights for last ${days} days\u2026`);
+		fetch(`/api/metrics/insights?days=${days}`)
+			.then((resp) => (resp.ok ? resp.json() : Promise.reject(new Error(`HTTP ${resp.status}`))))
+			.then((data: InsightsApiResponse) => {
+				if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+				const lines: string[] = [];
+				lines.push(`**Insights** \u2014 last ${data.days} days\n`);
+				lines.push("| Metric | Value |");
+				lines.push("|--------|-------|");
+				lines.push(`| LLM completions | ${fmtNum(data.completions)} |`);
+				lines.push(`| Total tokens | ${fmtNum(data.total_tokens)} |`);
+				lines.push(`| Input tokens | ${fmtNum(data.input_tokens)} |`);
+				lines.push(`| Output tokens | ${fmtNum(data.output_tokens)} |`);
+				lines.push(`| LLM errors | ${fmtNum(data.errors)} |`);
+				lines.push(`| Tool executions | ${fmtNum(data.tool_executions)} |`);
+				if (data.span_hours > 0) {
+					lines.push(`| Completions/hour | ${(data.completions / data.span_hours).toFixed(1)} |`);
+				}
+				if (data.by_provider && Object.keys(data.by_provider).length > 0) {
+					lines.push("\n**By provider:**\n");
+					lines.push("| Provider | Completions | Tokens |");
+					lines.push("|----------|-------------|--------|");
+					const sorted = Object.entries(data.by_provider).sort(
+						(a, b) => b[1].input_tokens + b[1].output_tokens - (a[1].input_tokens + a[1].output_tokens),
+					);
+					for (const [name, stats] of sorted) {
+						lines.push(
+							`| ${name} | ${fmtNum(stats.completions)} | ${fmtNum(stats.input_tokens + stats.output_tokens)} |`,
+						);
+					}
+				}
+				lines.push(`\n*${fmtNum(data.data_points)} data points over ${data.span_hours.toFixed(1)} hours*`);
+				chatAddMsg("system", renderMarkdown(lines.join("\n")), true);
+			})
+			.catch((err: Error) => chatAddMsg("error", `Insights failed: ${err.message}`));
+	},
+
+	btw: (args) => {
+		if (!args.trim()) {
+			chatAddMsg("error", "Usage: /btw <question>");
+			return;
+		}
+		chatAddMsg("system", "Thinking\u2026");
+		sendRpc("chat.send_sync", { text: args, _ephemeral: true }).then((res) => {
+			if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+			if (res.ok && res.payload) {
+				const text = typeof res.payload === "string" ? res.payload : (res.payload as UnknownRecord).text;
+				chatAddMsg("system", renderMarkdown(String(text || "(no response)")), true);
+			} else chatAddMsg("error", res.error?.message || "/btw failed");
+		});
+	},
+
+	fast: (args) => {
+		const arg = args.trim().toLowerCase();
+		chatAddMsg("system", `Fast mode: ${arg || "toggle"}\u2026`);
+		sendRpc("chat.send_sync", { text: `/fast ${arg}`.trim() }).then((res) => {
+			if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+			if (res.ok && res.payload) {
+				const text = typeof res.payload === "string" ? res.payload : (res.payload as UnknownRecord).text;
+				chatAddMsg("system", String(text || "Done"));
+			} else chatAddMsg("error", res.error?.message || "/fast failed");
+		});
+	},
+
+	fork: (args) => {
+		chatAddMsg("system", "Forking session\u2026");
+		sendRpc("sessions.fork", { key: S.activeSessionKey, label: args.trim() || undefined }).then((res) => {
+			if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+			if (res.ok && res.payload) {
+				const key = (res.payload as UnknownRecord).sessionKey as string;
+				const label = (res.payload as UnknownRecord).label as string;
+				chatAddMsg("system", `Forked into: ${label || key}. Use the session list to switch.`);
+				fetchSessions();
+			} else chatAddMsg("error", res.error?.message || "Fork failed");
+		});
+	},
+
+	rollback: () => {
+		chatAddMsg(
+			"system",
+			renderMarkdown("Rollback is available via the `/rollback` channel command (Telegram, Discord, etc.) or the CLI."),
+			true,
+		);
+	},
+};
+
+export function handleSlashCommand(cmdName: string, cmdArgs: string): void {
+	const handler = slashHandlers[cmdName as SlashCommandName];
+	if (handler) handler(cmdArgs);
 }

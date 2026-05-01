@@ -260,6 +260,59 @@ Then in GitHub repo → Settings → Webhooks → Add webhook:
 }
 ```
 
+## Deliver-Only Mode (Zero LLM Tokens)
+
+Set `deliver_only: true` to skip the agent and forward a rendered template directly
+to a channel. This is a webhook proxy — zero LLM cost, sub-second delivery.
+
+Use `prompt_template` with `{dot.notation}` variables and `deliver_to` for the target channel.
+
+### Template syntax
+
+- `{field}` — top-level field from the payload
+- `{object.nested.field}` — nested access
+- `{__raw__}` — full payload as JSON (truncated)
+- Missing keys are left as `{key}` literals
+
+### Example: GitHub issues → Telegram (no LLM)
+
+```json
+{
+  "name": "github-issues-notify",
+  "source_profile": "github",
+  "auth_mode": "github_hmac_sha256",
+  "auth_config": { "secret": "whsec_..." },
+  "event_filter": { "allow": ["issues.opened", "issues.closed"] },
+  "deliver_only": true,
+  "prompt_template": "#{issue.number} {issue.title} ({action} by {sender.login})",
+  "deliver_to": "telegram"
+}
+```
+
+### Example: Stripe payments → Discord (no LLM)
+
+```json
+{
+  "name": "stripe-notify",
+  "source_profile": "stripe",
+  "auth_mode": "stripe_webhook_signature",
+  "auth_config": { "secret": "whsec_..." },
+  "event_filter": { "allow": ["payment_intent.succeeded"] },
+  "deliver_only": true,
+  "prompt_template": "Payment: {data.object.amount} {data.object.currency} — {data.object.status}",
+  "deliver_to": "discord"
+}
+```
+
+## Agent Tool
+
+The `webhook` tool is available to agents. Ask the agent to create webhooks:
+
+> "Set up a GitHub webhook for PR reviews on my repo"
+> "Create a deliver-only webhook that forwards Stripe payments to my Telegram"
+
+The agent uses the `webhook` tool with actions: `list`, `create`, `get`, `update`, `delete`, `profiles`, `deliveries`.
+
 ## Rate Limiting
 
 Global config in `moltis.toml`:

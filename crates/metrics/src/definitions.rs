@@ -448,6 +448,10 @@ pub mod skills {
     /// Prompt generation duration
     pub const PROMPT_GENERATION_DURATION_SECONDS: &str =
         "moltis_skills_prompt_generation_duration_seconds";
+    /// Skill activations (read_skill primary calls)
+    pub const ACTIVATIONS_TOTAL: &str = "moltis_skills_activations_total";
+    /// Skill modifications (create + update + patch)
+    pub const MODIFICATIONS_TOTAL: &str = "moltis_skills_modifications_total";
 }
 
 /// Telegram channel metrics

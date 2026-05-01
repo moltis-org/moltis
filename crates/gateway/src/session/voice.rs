@@ -73,11 +73,30 @@ impl LiveSessionService {
             .into());
         }
 
+        // Resolve voice persona through the full chain:
+        // session agent's voice_persona_id → global active persona.
+        let mut convert_params = serde_json::json!({
+            "text": sanitized,
+            "format": "ogg",
+        });
+        if let Some(ref vp_store) = self.voice_persona_store {
+            let persona = crate::voice_persona::resolve_persona(
+                vp_store,
+                self.agent_persona_store.as_deref(),
+                None,
+                Some(key),
+                Some(&*self.metadata),
+            )
+            .await;
+            if let Some(persona) = persona
+                && let Ok(v) = serde_json::to_value(&persona)
+            {
+                convert_params["persona"] = v;
+            }
+        }
+
         let convert_value = tts
-            .convert(serde_json::json!({
-                "text": sanitized,
-                "format": "ogg",
-            }))
+            .convert(convert_params)
             .await
             .map_err(|e| format!("TTS convert failed: {e}"))?;
         let convert: TtsConvertPayload = serde_json::from_value(convert_value)

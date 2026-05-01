@@ -22,6 +22,7 @@ use {
             should_use_docker_backend,
         },
         docker::{DockerSandbox, NoSandbox},
+        file_system::{SandboxGrepOptions, SandboxListFilesResult, SandboxReadResult},
         platform::RestrictedHostSandbox,
         types::{
             BuildImageResult, DEFAULT_SANDBOX_IMAGE, Sandbox, SandboxConfig, SandboxId, SandboxMode,
@@ -90,7 +91,34 @@ impl FailoverSandbox {
 #[async_trait]
 impl Sandbox for FailoverSandbox {
     fn backend_name(&self) -> &'static str {
-        self.primary_name
+        // Report the active backend so callers know the true isolation level.
+        // On lock contention (write lock held during failover switch),
+        // conservatively assume fallback is active — the safer default.
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback_name
+        } else {
+            self.primary_name
+        }
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        // On lock contention, conservatively report the fallback's (weaker)
+        // isolation level rather than the primary's.
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback.provides_fs_isolation()
+        } else {
+            self.primary.provides_fs_isolation()
+        }
     }
 
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
@@ -168,6 +196,49 @@ impl Sandbox for FailoverSandbox {
         }
 
         self.primary.cleanup(id).await
+    }
+
+    // Delegate file operations to the active backend's own implementations
+    // so that path-level restrictions (e.g. RestrictedHostSandbox's allowlist)
+    // are enforced. Without these overrides the default trait impls route
+    // through self.exec(), bypassing the fallback backend's read_file/etc.
+
+    async fn read_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        max_bytes: u64,
+    ) -> Result<SandboxReadResult> {
+        if self.fallback_enabled().await {
+            return self.fallback.read_file(id, file_path, max_bytes).await;
+        }
+        self.primary.read_file(id, file_path, max_bytes).await
+    }
+
+    async fn write_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        if self.fallback_enabled().await {
+            return self.fallback.write_file(id, file_path, content).await;
+        }
+        self.primary.write_file(id, file_path, content).await
+    }
+
+    async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        if self.fallback_enabled().await {
+            return self.fallback.list_files(id, root).await;
+        }
+        self.primary.list_files(id, root).await
+    }
+
+    async fn grep(&self, id: &SandboxId, opts: SandboxGrepOptions) -> Result<serde_json::Value> {
+        if self.fallback_enabled().await {
+            return self.fallback.grep(id, opts).await;
+        }
+        self.primary.grep(id, opts).await
     }
 
     async fn build_image(
@@ -425,6 +496,10 @@ pub struct SandboxRouter {
     /// Whether a sandbox image pre-build is currently in progress.
     /// Used by the gateway to show a banner in the UI.
     pub building_flag: std::sync::atomic::AtomicBool,
+    /// Notified when the background image build finishes (success or failure).
+    /// Callers that arrive while `building_flag` is true can await this to
+    /// avoid launching containers from the bare base image.
+    pub build_complete: tokio::sync::Notify,
 }
 
 impl SandboxRouter {
@@ -442,6 +517,7 @@ impl SandboxRouter {
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
+            build_complete: tokio::sync::Notify::new(),
         }
     }
 
@@ -457,6 +533,7 @@ impl SandboxRouter {
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
+            build_complete: tokio::sync::Notify::new(),
         }
     }
 
@@ -583,8 +660,27 @@ impl SandboxRouter {
         *self.global_image_override.write().await = image;
     }
 
+    /// If a background image build is in progress, wait for it to finish
+    /// (with a generous timeout) so that callers get the pre-built image
+    /// instead of the bare base image.
+    async fn wait_for_build_if_needed(&self) {
+        use std::sync::atomic::Ordering;
+        if !self.building_flag.load(Ordering::Relaxed) {
+            return;
+        }
+        debug!("sandbox image build in progress, waiting before resolving image");
+        // 10 minutes should be plenty for a first-time image build; if it takes
+        // longer the caller falls through to the base image (same as before).
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            self.build_complete.notified(),
+        )
+        .await;
+    }
+
     /// Get the current effective default image (runtime override > config > hardcoded).
     pub async fn default_image(&self) -> String {
+        self.wait_for_build_if_needed().await;
         if let Some(ref img) = *self.global_image_override.read().await {
             return img.clone();
         }

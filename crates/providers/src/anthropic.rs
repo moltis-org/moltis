@@ -163,6 +163,71 @@ impl AnthropicProvider {
 
         Ok(())
     }
+
+    /// Lightweight availability check via Anthropic's `GET /v1/models` endpoint.
+    ///
+    /// Verifies the API key is valid and the model exists without generating
+    /// any tokens. Falls back to [`probe_request()`] if the models endpoint
+    /// is unavailable.
+    async fn check_model_in_catalog(&self) -> anyhow::Result<()> {
+        let url = format!(
+            "{}{ANTHROPIC_MODELS_ENDPOINT_PATH}/{}",
+            self.base_url.trim_end_matches('/'),
+            self.model,
+        );
+
+        debug!(
+            model = %self.model,
+            url = %url,
+            "checking anthropic model availability via catalog"
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .timeout(Duration::from_secs(15))
+            .header("x-api-key", self.api_key.expose_secret())
+            .header("anthropic-version", "2023-06-01")
+            .header("accept", "application/json")
+            .send()
+            .await;
+
+        let resp = match resp {
+            Ok(r) => r,
+            Err(err) => {
+                debug!(
+                    error = %err,
+                    "anthropic catalog unreachable, falling back to completion probe"
+                );
+                return self.probe_request().await;
+            },
+        };
+
+        if resp.status().is_success() {
+            debug!(model = %self.model, "model found in anthropic catalog");
+            return Ok(());
+        }
+
+        // 404 means the model ID doesn't exist — return an error directly
+        // instead of wasting tokens on a completion probe.
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            let mut body_text = resp.text().await.unwrap_or_default();
+            body_text.truncate(200);
+            anyhow::bail!(
+                "Model '{}' not found in Anthropic catalog (HTTP 404: {})",
+                self.model,
+                body_text,
+            );
+        }
+
+        // Other errors (auth, rate-limit) — fall back to the completion probe
+        // which has richer error classification.
+        debug!(
+            status = %resp.status(),
+            "anthropic catalog check failed, falling back to completion probe"
+        );
+        self.probe_request().await
+    }
 }
 
 fn formatted_model_name(model_id: &str) -> String {
@@ -733,6 +798,10 @@ impl LlmProvider for AnthropicProvider {
 
     async fn probe(&self) -> anyhow::Result<()> {
         self.probe_request().await
+    }
+
+    async fn check_availability(&self) -> anyhow::Result<()> {
+        self.check_model_in_catalog().await
     }
 
     #[allow(clippy::collapsible_if)]

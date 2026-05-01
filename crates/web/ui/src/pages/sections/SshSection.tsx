@@ -7,7 +7,7 @@ import { TabBar } from "../../components/forms/Tabs";
 import * as gon from "../../gon";
 import { localizedApiErrorMessage } from "../../helpers";
 import { targetChecked, targetValue } from "../../typed-events";
-import { showToast } from "../../ui";
+import { copyToClipboard, showToast } from "../../ui";
 import { rerender } from "./_shared";
 
 interface SshKeyEntry {
@@ -397,17 +397,15 @@ export function SshSection(): VNode {
 	}
 
 	function onCopyPublicKey(entry: SshKeyEntry): void {
-		navigator.clipboard
-			.writeText(entry.public_key || "")
-			.then(() => {
-				setCopiedKeyId(entry.id);
-				setTimeout(() => {
-					setCopiedKeyId(null);
-					rerender();
-				}, 1500);
+		copyToClipboard(entry.public_key || "", "", "Could not copy public key — please copy it manually.").then((ok) => {
+			if (!ok) return;
+			setCopiedKeyId(entry.id);
+			rerender();
+			setTimeout(() => {
+				setCopiedKeyId(null);
 				rerender();
-			})
-			.catch((error: Error) => setError(error.message));
+			}, 1500);
+		});
 	}
 
 	const [sshTab, setSshTab] = useState("keys");

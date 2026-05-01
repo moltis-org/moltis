@@ -183,6 +183,7 @@ export interface SandboxPhasePayload {
 	installed?: number;
 	skipped?: number;
 	image?: string;
+	package_count?: number;
 }
 
 export interface LocalLlmDownloadPayload {

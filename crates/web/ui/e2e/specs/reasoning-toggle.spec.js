@@ -1,6 +1,35 @@
 const { expect, test } = require("../base-test");
 const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
+/** Set mock models in the browser and freeze the store so bootstrap/WS cannot overwrite. */
+async function setMockModels(page, models, selectedId, effort) {
+	await page.evaluate(
+		async ([models, selectedId, effort]) => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var store = await import(`${prefix}js/stores/model-store.js`);
+			// Wait for bootstrap to populate the initial model list so there are
+			// no in-flight fetch/setAll calls that could overwrite our mock data.
+			for (var i = 0; i < 100 && store.models.value.length === 0; i++) {
+				await new Promise((r) => setTimeout(r, 50));
+			}
+			// Freeze the modelStore object to block future bootstrap/WS updates.
+			store.modelStore.fetch = () => Promise.resolve();
+			store.modelStore.setAll = () => {};
+			// Select the model ID BEFORE setting the list so that when the models
+			// signal updates, the computed selectedModel/supportsReasoning resolve
+			// immediately without a brief "model not found" gap.
+			store.select(selectedId);
+			store.setAll(models);
+			// Set effort AFTER models so supportsReasoning is true; the effect
+			// in reasoning-toggle resets effort to "" when supportsReasoning=false.
+			if (effort) store.setReasoningEffort(effort);
+		},
+		[models, selectedId, effort],
+	);
+}
+
 test.describe("reasoning effort toggle", () => {
 	test.beforeEach(async ({ page }) => {
 		await navigateAndWait(page, "/");
@@ -10,15 +39,11 @@ test.describe("reasoning effort toggle", () => {
 	test("reasoning combo is hidden when model does not support reasoning", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
-		// Inject a non-reasoning model into the store
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var store = await import(`${prefix}js/stores/model-store.js`);
-			store.setAll([{ id: "gpt-4o", displayName: "GPT-4o", provider: "openai", supportsReasoning: false }]);
-			store.select("gpt-4o");
-		});
+		await setMockModels(
+			page,
+			[{ id: "gpt-4o", displayName: "GPT-4o", provider: "openai", supportsReasoning: false }],
+			"gpt-4o",
+		);
 
 		const reasoningCombo = page.locator("#reasoningCombo");
 		await expect(reasoningCombo).toBeHidden();
@@ -28,16 +53,11 @@ test.describe("reasoning effort toggle", () => {
 	test("reasoning combo appears when model supports reasoning", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var store = await import(`${prefix}js/stores/model-store.js`);
-			store.setAll([
-				{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true },
-			]);
-			store.select("claude-opus-4-5");
-		});
+		await setMockModels(
+			page,
+			[{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true }],
+			"claude-opus-4-5",
+		);
 
 		const reasoningCombo = page.locator("#reasoningCombo");
 		await expect(reasoningCombo).toBeVisible();
@@ -47,18 +67,14 @@ test.describe("reasoning effort toggle", () => {
 	test("clicking toggle opens dropdown with Off/Low/Medium/High options", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var store = await import(`${prefix}js/stores/model-store.js`);
-			store.setAll([
-				{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true },
-			]);
-			store.select("claude-opus-4-5");
-		});
+		await setMockModels(
+			page,
+			[{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true }],
+			"claude-opus-4-5",
+		);
 
 		const comboBtn = page.locator("#reasoningComboBtn");
+		await expect(comboBtn).toBeVisible();
 		await comboBtn.click();
 
 		const dropdown = page.locator("#reasoningDropdown");
@@ -77,18 +93,14 @@ test.describe("reasoning effort toggle", () => {
 	test("selecting effort level updates label and closes dropdown", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var store = await import(`${prefix}js/stores/model-store.js`);
-			store.setAll([
-				{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true },
-			]);
-			store.select("claude-opus-4-5");
-		});
+		await setMockModels(
+			page,
+			[{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true }],
+			"claude-opus-4-5",
+		);
 
 		const comboBtn = page.locator("#reasoningComboBtn");
+		await expect(comboBtn).toBeVisible();
 		await comboBtn.click();
 
 		// Wait for dropdown to be visible before selecting
@@ -128,17 +140,12 @@ test.describe("reasoning effort toggle", () => {
 		});
 
 		// Set up a reasoning model and select high effort
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var store = await import(`${prefix}js/stores/model-store.js`);
-			store.setAll([
-				{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true },
-			]);
-			store.select("claude-opus-4-5");
-			store.setReasoningEffort("high");
-		});
+		await setMockModels(
+			page,
+			[{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true }],
+			"claude-opus-4-5",
+			"high",
+		);
 
 		const chatInput = page.locator("#chatInput");
 		await chatInput.fill("hello");
@@ -154,13 +161,15 @@ test.describe("reasoning effort toggle", () => {
 	test("reasoning variants are filtered from model dropdown", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var store = await import(`${prefix}js/stores/model-store.js`);
-			store.setAll([
-				{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true },
+		await setMockModels(
+			page,
+			[
+				{
+					id: "claude-opus-4-5",
+					displayName: "Claude Opus 4.5",
+					provider: "anthropic",
+					supportsReasoning: true,
+				},
 				{
 					id: "claude-opus-4-5@reasoning-low",
 					displayName: "Claude Opus 4.5 (low reasoning)",
@@ -179,9 +188,9 @@ test.describe("reasoning effort toggle", () => {
 					provider: "anthropic",
 					supportsReasoning: true,
 				},
-			]);
-			store.select("claude-opus-4-5");
-		});
+			],
+			"claude-opus-4-5",
+		);
 
 		const modelBtn = page.locator("#modelComboBtn");
 		await modelBtn.click();
@@ -197,18 +206,20 @@ test.describe("reasoning effort toggle", () => {
 	test("switching to non-reasoning model resets effort to Off", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
-		await page.evaluate(async () => {
-			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-			var appUrl = new URL(appScript.src, window.location.origin);
-			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-			var store = await import(`${prefix}js/stores/model-store.js`);
-			store.setAll([
-				{ id: "claude-opus-4-5", displayName: "Claude Opus 4.5", provider: "anthropic", supportsReasoning: true },
+		await setMockModels(
+			page,
+			[
+				{
+					id: "claude-opus-4-5",
+					displayName: "Claude Opus 4.5",
+					provider: "anthropic",
+					supportsReasoning: true,
+				},
 				{ id: "gpt-4o", displayName: "GPT-4o", provider: "openai", supportsReasoning: false },
-			]);
-			store.select("claude-opus-4-5");
-			store.setReasoningEffort("high");
-		});
+			],
+			"claude-opus-4-5",
+			"high",
+		);
 
 		// Verify reasoning is High
 		const label = page.locator("#reasoningComboLabel");

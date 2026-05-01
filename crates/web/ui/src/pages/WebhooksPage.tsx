@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import * as gon from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
 import { models as modelsSig } from "../stores/model-store";
-import { ComboSelect, ConfirmDialog, Modal, ModelSelect, requestConfirm } from "../ui";
+import { ComboSelect, ConfirmDialog, copyToClipboard, Modal, ModelSelect, requestConfirm } from "../ui";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -179,7 +179,8 @@ function CopyTestCommandButton({ webhook }: { webhook: Webhook }): VNode {
 			style={{ whiteSpace: "nowrap" }}
 			title={copied ? "Copied!" : "Copy a curl command to test this webhook"}
 			onClick={() => {
-				navigator.clipboard.writeText(cmd).then(() => {
+				copyToClipboard(cmd, "", "").then((ok) => {
+					if (!ok) return;
 					setCopied(true);
 					setTimeout(() => setCopied(false), 2000);
 				});

@@ -166,6 +166,124 @@ async fn test_restricted_host_sandbox_cleanup_noop() {
     sandbox.cleanup(&id).await.unwrap();
 }
 
+// ── Sandbox escape regression tests (issue #923) ───────────────────────────
+
+#[test]
+fn test_restricted_host_sandbox_does_not_provide_fs_isolation() {
+    let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+    assert!(
+        !sandbox.provides_fs_isolation(),
+        "restricted-host must NOT claim filesystem isolation"
+    );
+}
+
+#[test]
+fn test_check_restricted_host_path_allows_data_dir() {
+    let data = moltis_config::data_dir().join("notes/todo.txt");
+    check_restricted_host_path(&data.display().to_string()).unwrap();
+}
+
+#[test]
+fn test_check_restricted_host_path_allows_tmp() {
+    check_restricted_host_path("/tmp/sandbox-work/out.txt").unwrap();
+}
+
+#[test]
+fn test_check_restricted_host_path_blocks_etc_passwd() {
+    let result = check_restricted_host_path("/etc/passwd");
+    assert!(result.is_err(), "must block /etc/passwd");
+    let msg = result.unwrap_err().to_string();
+    assert!(msg.contains("outside the allowed directories"));
+}
+
+#[test]
+fn test_check_restricted_host_path_blocks_dot_dot_traversal() {
+    // /tmp/../etc/passwd normalizes to /etc/passwd — must be blocked.
+    let result = check_restricted_host_path("/tmp/../etc/passwd");
+    assert!(result.is_err(), "must block /tmp/../etc/passwd traversal");
+}
+
+#[test]
+fn test_check_restricted_host_path_blocks_nested_traversal() {
+    let result = check_restricted_host_path("/tmp/a/b/../../../etc/shadow");
+    assert!(result.is_err(), "must block nested .. traversal");
+}
+
+#[test]
+fn test_check_restricted_host_path_allows_dot_dot_within_tmp() {
+    // /tmp/a/../b stays within /tmp — should be allowed.
+    check_restricted_host_path("/tmp/a/../b/file.txt").unwrap();
+}
+
+#[test]
+fn test_check_restricted_host_path_blocks_home_ssh() {
+    let result = check_restricted_host_path("/home/user/.ssh/id_rsa");
+    assert!(result.is_err(), "must block ~/.ssh");
+}
+
+#[test]
+fn test_check_restricted_host_path_blocks_root_dir() {
+    let result = check_restricted_host_path("/root/.bashrc");
+    assert!(result.is_err(), "must block /root");
+}
+
+#[tokio::test]
+async fn test_restricted_host_read_blocks_etc_passwd() {
+    let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-rh-block-read".into(),
+    };
+    let result = sandbox.read_file(&id, "/etc/passwd", 4096).await;
+    assert!(result.is_err(), "read_file must block /etc/passwd");
+}
+
+#[tokio::test]
+async fn test_restricted_host_write_blocks_outside_allowlist() {
+    let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-rh-block-write".into(),
+    };
+    let result = sandbox.write_file(&id, "/var/log/evil.txt", b"nope").await;
+    assert!(result.is_err(), "write_file must block /var/log");
+}
+
+#[tokio::test]
+async fn test_restricted_host_list_blocks_outside_allowlist() {
+    let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-rh-block-list".into(),
+    };
+    let result = sandbox.list_files(&id, "/etc").await;
+    assert!(result.is_err(), "list_files must block /etc");
+}
+
+#[tokio::test]
+async fn test_restricted_host_grep_blocks_outside_allowlist() {
+    use crate::sandbox::file_system::{SandboxGrepMode, SandboxGrepOptions};
+
+    let sandbox = RestrictedHostSandbox::new(SandboxConfig::default());
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-rh-block-grep".into(),
+    };
+    let result = sandbox
+        .grep(&id, SandboxGrepOptions {
+            pattern: "root".to_string(),
+            path: "/etc".to_string(),
+            mode: SandboxGrepMode::Content,
+            case_insensitive: false,
+            include_globs: Vec::new(),
+            offset: 0,
+            head_limit: None,
+            match_cap: None,
+        })
+        .await;
+    assert!(result.is_err(), "grep must block /etc");
+}
+
 #[test]
 fn test_parse_memory_limit() {
     assert_eq!(parse_memory_limit("512M"), Some(512 * 1024 * 1024));

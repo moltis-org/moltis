@@ -73,6 +73,8 @@ pub(super) fn build_gateway_base_internal(
         ngrok_controller: Arc::downgrade(&ngrok_controller),
         #[cfg(feature = "ngrok")]
         ngrok_runtime,
+        #[cfg(feature = "tailscale")]
+        tailscale_manager: moltis_gateway::tailscale::CachedTailscaleManager::new_with_prefetch(),
         push_service,
         #[cfg(feature = "graphql")]
         graphql_schema,
@@ -176,6 +178,8 @@ pub(super) fn build_gateway_base_internal(
         ngrok_controller: Arc::downgrade(&ngrok_controller),
         #[cfg(feature = "ngrok")]
         ngrok_runtime,
+        #[cfg(feature = "tailscale")]
+        tailscale_manager: moltis_gateway::tailscale::CachedTailscaleManager::new_with_prefetch(),
         #[cfg(feature = "graphql")]
         graphql_schema,
     };

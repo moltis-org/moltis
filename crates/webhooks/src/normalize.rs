@@ -50,6 +50,89 @@ pub fn build_delivery_message(
     msg
 }
 
+/// Render a template string with `{dot.notation}` variable substitution from a
+/// JSON payload.
+///
+/// - `{pull_request.title}` → `payload["pull_request"]["title"]`
+/// - `{__raw__}` → full payload as indented JSON (truncated at 4000 chars)
+/// - Missing keys are left as literal `{key}` in the output.
+/// - Nested objects/arrays are JSON-serialized (truncated at 2000 chars).
+pub fn render_template(template: &str, payload: &serde_json::Value) -> String {
+    let mut result = String::with_capacity(template.len() * 2);
+    let mut chars = template.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '{' {
+            // Collect until closing brace.
+            let mut key = String::new();
+            let mut found_close = false;
+            for inner in chars.by_ref() {
+                if inner == '}' {
+                    found_close = true;
+                    break;
+                }
+                key.push(inner);
+            }
+            if !found_close {
+                // Malformed (no closing brace) — emit literal.
+                result.push('{');
+                result.push_str(&key);
+                continue;
+            }
+            if key.is_empty() {
+                // Empty braces `{}` — emit literal.
+                result.push('{');
+                result.push('}');
+                continue;
+            }
+
+            if key == "__raw__" {
+                let raw = serde_json::to_string_pretty(payload).unwrap_or_default();
+                result.push_str(truncate_str(&raw, 4000));
+                continue;
+            }
+
+            // Resolve dot-notation path.
+            let resolved = resolve_path(payload, &key);
+            match resolved {
+                Some(serde_json::Value::String(s)) => result.push_str(s),
+                Some(serde_json::Value::Number(n)) => result.push_str(&n.to_string()),
+                Some(serde_json::Value::Bool(b)) => {
+                    result.push_str(if *b {
+                        "true"
+                    } else {
+                        "false"
+                    });
+                },
+                Some(serde_json::Value::Null) => result.push_str("null"),
+                Some(other) => {
+                    let serialized = serde_json::to_string(&other).unwrap_or_default();
+                    result.push_str(truncate_str(&serialized, 2000));
+                },
+                None => {
+                    // Missing key — leave literal.
+                    result.push('{');
+                    result.push_str(&key);
+                    result.push('}');
+                },
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
+/// Resolve a dot-notation path like `"pull_request.user.login"` against a JSON value.
+fn resolve_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
 /// Extract selected headers from a request for logging.
 /// Only includes headers that are useful for debugging; skips auth secrets.
 pub fn extract_safe_headers(headers: &axum::http::HeaderMap) -> serde_json::Value {

@@ -3,162 +3,19 @@
 use {
     secrecy::Secret,
     serde::{Deserialize, Serialize},
-    std::fmt,
 };
 
 // ── Provider ID Enums ───────────────────────────────────────────────────────
+//
+// Canonical definitions live in `moltis-config`. Re-exported here so
+// downstream crates can import from `moltis_voice` without pulling in
+// the full config crate.
 
 /// Text-to-Speech provider identifiers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-pub enum TtsProviderId {
-    #[default]
-    #[serde(rename = "elevenlabs")]
-    ElevenLabs,
-    #[serde(rename = "openai")]
-    OpenAi,
-    #[serde(rename = "google")]
-    Google,
-    #[serde(rename = "piper")]
-    Piper,
-    #[serde(rename = "coqui")]
-    Coqui,
-}
-
-impl fmt::Display for TtsProviderId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ElevenLabs => write!(f, "elevenlabs"),
-            Self::OpenAi => write!(f, "openai"),
-            Self::Google => write!(f, "google"),
-            Self::Piper => write!(f, "piper"),
-            Self::Coqui => write!(f, "coqui"),
-        }
-    }
-}
-
-impl TtsProviderId {
-    /// Parse from string (for API compatibility).
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "elevenlabs" => Some(Self::ElevenLabs),
-            "openai" | "openai-tts" => Some(Self::OpenAi),
-            "google" | "google-tts" => Some(Self::Google),
-            "piper" => Some(Self::Piper),
-            "coqui" => Some(Self::Coqui),
-            _ => None,
-        }
-    }
-
-    /// Get human-readable name.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::ElevenLabs => "ElevenLabs",
-            Self::OpenAi => "OpenAI TTS",
-            Self::Google => "Google Cloud TTS",
-            Self::Piper => "Piper",
-            Self::Coqui => "Coqui TTS",
-        }
-    }
-
-    /// All TTS provider IDs.
-    pub fn all() -> &'static [Self] {
-        &[
-            Self::ElevenLabs,
-            Self::OpenAi,
-            Self::Google,
-            Self::Piper,
-            Self::Coqui,
-        ]
-    }
-}
+pub type TtsProviderId = moltis_config::VoiceTtsProvider;
 
 /// Speech-to-Text provider identifiers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-pub enum SttProviderId {
-    #[default]
-    #[serde(rename = "whisper")]
-    Whisper,
-    #[serde(rename = "groq")]
-    Groq,
-    #[serde(rename = "deepgram")]
-    Deepgram,
-    #[serde(rename = "google")]
-    Google,
-    #[serde(rename = "mistral")]
-    Mistral,
-    #[serde(rename = "voxtral-local")]
-    VoxtralLocal,
-    #[serde(rename = "whisper-cli")]
-    WhisperCli,
-    #[serde(rename = "sherpa-onnx")]
-    SherpaOnnx,
-    #[serde(rename = "elevenlabs-stt", alias = "elevenlabs")]
-    ElevenLabs,
-}
-
-impl fmt::Display for SttProviderId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Whisper => write!(f, "whisper"),
-            Self::Groq => write!(f, "groq"),
-            Self::Deepgram => write!(f, "deepgram"),
-            Self::Google => write!(f, "google"),
-            Self::Mistral => write!(f, "mistral"),
-            Self::VoxtralLocal => write!(f, "voxtral-local"),
-            Self::WhisperCli => write!(f, "whisper-cli"),
-            Self::SherpaOnnx => write!(f, "sherpa-onnx"),
-            Self::ElevenLabs => write!(f, "elevenlabs-stt"),
-        }
-    }
-}
-
-impl SttProviderId {
-    /// Parse from string (for API compatibility).
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "whisper" => Some(Self::Whisper),
-            "groq" => Some(Self::Groq),
-            "deepgram" => Some(Self::Deepgram),
-            "google" => Some(Self::Google),
-            "mistral" => Some(Self::Mistral),
-            "voxtral-local" => Some(Self::VoxtralLocal),
-            "whisper-cli" => Some(Self::WhisperCli),
-            "sherpa-onnx" => Some(Self::SherpaOnnx),
-            "elevenlabs" | "elevenlabs-stt" => Some(Self::ElevenLabs),
-            _ => None,
-        }
-    }
-
-    /// Get human-readable name.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Whisper => "OpenAI Whisper",
-            Self::Groq => "Groq",
-            Self::Deepgram => "Deepgram",
-            Self::Google => "Google Cloud",
-            Self::Mistral => "Mistral AI",
-            Self::VoxtralLocal => "Voxtral (Local)",
-            Self::WhisperCli => "whisper.cpp",
-            Self::SherpaOnnx => "sherpa-onnx",
-            Self::ElevenLabs => "ElevenLabs Scribe",
-        }
-    }
-
-    /// All STT provider IDs.
-    pub fn all() -> &'static [Self] {
-        &[
-            Self::Whisper,
-            Self::Groq,
-            Self::Deepgram,
-            Self::Google,
-            Self::Mistral,
-            Self::VoxtralLocal,
-            Self::WhisperCli,
-            Self::SherpaOnnx,
-            Self::ElevenLabs,
-        ]
-    }
-}
+pub type SttProviderId = moltis_config::VoiceSttProvider;
 
 // ── Configuration Structs ───────────────────────────────────────────────────
 
@@ -177,8 +34,8 @@ pub struct TtsConfig {
     /// Enable TTS globally.
     pub enabled: bool,
 
-    /// Default provider: "elevenlabs", "openai", "google", "piper", "coqui".
-    pub provider: String,
+    /// Preferred provider. `None` means auto-select the first configured.
+    pub provider: Option<TtsProviderId>,
 
     /// Auto-speak mode.
     pub auto: TtsAutoMode,
@@ -206,7 +63,7 @@ impl Default for TtsConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            provider: "elevenlabs".into(),
+            provider: None,
             auto: TtsAutoMode::Off,
             max_text_length: 2000,
             elevenlabs: ElevenLabsConfig::default(),
@@ -287,6 +144,10 @@ pub struct OpenAiTtsConfig {
 }
 
 /// Google Cloud TTS provider configuration.
+///
+/// Supports both standard Cloud TTS v1 voices and Gemini TTS models.
+/// Set `model` to a `gemini-*` value (e.g., `"gemini-2.5-flash-preview-tts"`)
+/// to use Gemini TTS with voice persona instruction support.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GoogleTtsConfig {
@@ -299,8 +160,12 @@ pub struct GoogleTtsConfig {
     )]
     pub api_key: Option<Secret<String>>,
 
-    /// Voice name (e.g., "en-US-Neural2-A", "en-US-Wavenet-D").
+    /// Voice name (e.g., "en-US-Neural2-A", "Algieba" for Gemini).
     pub voice: Option<String>,
+
+    /// Model to use. Set to a `gemini-*` value for Gemini TTS
+    /// (e.g., `"gemini-2.5-flash-preview-tts"`).
+    pub model: Option<String>,
 
     /// Language code (e.g., "en-US", "fr-FR").
     pub language_code: Option<String>,
@@ -598,6 +463,168 @@ impl Default for VoxtralLocalConfig {
     }
 }
 
+// ── Voice Persona Types ───────────────────────────────────────────────────
+
+/// A named voice persona — a reusable voice identity for TTS.
+///
+/// Instead of improvising voice "flair" per-message, a persona defines a
+/// stable spoken identity that is injected deterministically into every
+/// TTS synthesis call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoicePersona {
+    /// Unique identifier (lowercase alphanumeric + hyphens, 1-50 chars).
+    pub id: String,
+    /// Display name (e.g., "Alfred", "Narrator").
+    pub label: String,
+    /// Human-readable description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Preferred TTS provider for this persona.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<TtsProviderId>,
+    /// What to do when the active provider has no binding for this persona.
+    #[serde(default)]
+    pub fallback_policy: FallbackPolicy,
+    /// Provider-neutral voice direction fields.
+    #[serde(default)]
+    pub prompt: VoicePersonaPrompt,
+    /// Per-provider voice/model overrides.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provider_bindings: Vec<VoicePersonaProviderBinding>,
+}
+
+/// Provider-neutral voice character direction.
+///
+/// These fields describe *how* the voice should sound, independent of any
+/// specific TTS provider. Providers that support instruction-based control
+/// (e.g., OpenAI `gpt-4o-mini-tts`) receive a rendered version of these
+/// fields. Others use the provider binding overrides (voice_id, model, etc.).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VoicePersonaPrompt {
+    /// Character profile (e.g., "A wise British butler with dry wit").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    /// Delivery style (e.g., "Measured, deliberate, slightly amused").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+    /// Accent description (e.g., "Received Pronunciation").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent: Option<String>,
+    /// Speech pacing guidance (e.g., "Unhurried, with dramatic pauses").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pacing: Option<String>,
+    /// Scene or context (e.g., "Speaking from a grand library").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene: Option<String>,
+    /// Constraints on delivery (e.g., "Never shout", "Avoid slang").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraints: Vec<String>,
+}
+
+impl VoicePersonaPrompt {
+    /// Render the prompt fields into a single instruction string for TTS providers.
+    #[must_use]
+    pub fn render(&self, label: &str) -> Option<String> {
+        let mut parts = Vec::new();
+
+        parts.push(format!("Persona: {label}"));
+
+        if let Some(ref profile) = self.profile {
+            parts.push(format!("Profile: {profile}"));
+        }
+        if let Some(ref style) = self.style {
+            parts.push(format!("Style: {style}"));
+        }
+        if let Some(ref accent) = self.accent {
+            parts.push(format!("Accent: {accent}"));
+        }
+        if let Some(ref pacing) = self.pacing {
+            parts.push(format!("Pacing: {pacing}"));
+        }
+        if let Some(ref scene) = self.scene {
+            parts.push(format!("Scene: {scene}"));
+        }
+        if !self.constraints.is_empty() {
+            parts.push(format!("Constraints: {}", self.constraints.join(". ")));
+        }
+
+        // Only the label — no real content to send.
+        if parts.len() <= 1 {
+            return None;
+        }
+
+        Some(parts.join("\n"))
+    }
+
+    /// Returns `true` when all fields are empty / default.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.profile.is_none()
+            && self.style.is_none()
+            && self.accent.is_none()
+            && self.pacing.is_none()
+            && self.scene.is_none()
+            && self.constraints.is_empty()
+    }
+}
+
+/// Per-provider voice/model overrides for a persona.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoicePersonaProviderBinding {
+    /// Which provider this binding applies to.
+    pub provider: TtsProviderId,
+    /// Override the default voice ID for this provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_id: Option<String>,
+    /// Override the default model for this provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Speed multiplier override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<f32>,
+    /// ElevenLabs stability override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stability: Option<f32>,
+    /// ElevenLabs similarity boost override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub similarity_boost: Option<f32>,
+    /// Google speaking rate override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaking_rate: Option<f32>,
+    /// Google pitch override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<f32>,
+}
+
+/// What to do when the active TTS provider has no binding for the persona.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FallbackPolicy {
+    /// Use the provider-neutral prompt fields even without a binding.
+    #[default]
+    PreservePersona,
+    /// Drop the persona entirely — use provider defaults.
+    ProviderDefaults,
+    /// Fail the synthesis attempt for this provider.
+    Fail,
+}
+
+impl VoicePersona {
+    /// Find the provider binding for the given provider, if one exists.
+    #[must_use]
+    pub fn binding_for(&self, provider: TtsProviderId) -> Option<&VoicePersonaProviderBinding> {
+        self.provider_bindings
+            .iter()
+            .find(|b| b.provider == provider)
+    }
+
+    /// Render the persona prompt as a single instruction string.
+    #[must_use]
+    pub fn render_instructions(&self) -> Option<String> {
+        self.prompt.render(&self.label)
+    }
+}
+
 // ── Secret serialization helpers ───────────────────────────────────────────
 
 fn serialize_option_secret<S>(
@@ -643,7 +670,7 @@ mod tests {
     fn test_default_tts_config() {
         let config = TtsConfig::default();
         assert!(!config.enabled);
-        assert_eq!(config.provider, "elevenlabs");
+        assert_eq!(config.provider, None);
         assert_eq!(config.auto, TtsAutoMode::Off);
         assert_eq!(config.max_text_length, 2000);
     }
@@ -667,11 +694,136 @@ mod tests {
     }
 
     #[test]
+    fn test_voice_persona_prompt_render() {
+        let prompt = VoicePersonaPrompt {
+            profile: Some("A wise British butler".into()),
+            style: Some("Measured, deliberate".into()),
+            accent: Some("Received Pronunciation".into()),
+            pacing: None,
+            scene: None,
+            constraints: vec!["Never shout".into(), "Avoid slang".into()],
+        };
+
+        let rendered = prompt.render("Alfred").unwrap();
+        assert!(rendered.contains("Persona: Alfred"));
+        assert!(rendered.contains("Profile: A wise British butler"));
+        assert!(rendered.contains("Style: Measured, deliberate"));
+        assert!(rendered.contains("Accent: Received Pronunciation"));
+        assert!(rendered.contains("Constraints: Never shout. Avoid slang"));
+        assert!(!rendered.contains("Pacing:"));
+        assert!(!rendered.contains("Scene:"));
+    }
+
+    #[test]
+    fn test_voice_persona_prompt_render_empty() {
+        let prompt = VoicePersonaPrompt::default();
+        assert!(prompt.is_empty());
+        assert!(prompt.render("Empty").is_none());
+    }
+
+    #[test]
+    fn test_voice_persona_binding_for() {
+        let persona = VoicePersona {
+            id: "alfred".into(),
+            label: "Alfred".into(),
+            description: None,
+            provider: Some(TtsProviderId::OpenAi),
+            fallback_policy: FallbackPolicy::PreservePersona,
+            prompt: VoicePersonaPrompt::default(),
+            provider_bindings: vec![
+                VoicePersonaProviderBinding {
+                    provider: TtsProviderId::OpenAi,
+                    voice_id: Some("cedar".into()),
+                    model: Some("gpt-4o-mini-tts".into()),
+                    speed: None,
+                    stability: None,
+                    similarity_boost: None,
+                    speaking_rate: None,
+                    pitch: None,
+                },
+                VoicePersonaProviderBinding {
+                    provider: TtsProviderId::ElevenLabs,
+                    voice_id: Some("voice123".into()),
+                    model: None,
+                    speed: None,
+                    stability: Some(0.65),
+                    similarity_boost: Some(0.8),
+                    speaking_rate: None,
+                    pitch: None,
+                },
+            ],
+        };
+
+        let openai = persona.binding_for(TtsProviderId::OpenAi).unwrap();
+        assert_eq!(openai.voice_id.as_deref(), Some("cedar"));
+        assert_eq!(openai.model.as_deref(), Some("gpt-4o-mini-tts"));
+
+        let elevenlabs = persona.binding_for(TtsProviderId::ElevenLabs).unwrap();
+        assert_eq!(elevenlabs.stability, Some(0.65));
+
+        assert!(persona.binding_for(TtsProviderId::Google).is_none());
+    }
+
+    #[test]
+    fn test_fallback_policy_serde() {
+        let json = r#""preserve-persona""#;
+        let policy: FallbackPolicy = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, FallbackPolicy::PreservePersona);
+
+        let json = r#""provider-defaults""#;
+        let policy: FallbackPolicy = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, FallbackPolicy::ProviderDefaults);
+
+        let json = r#""fail""#;
+        let policy: FallbackPolicy = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, FallbackPolicy::Fail);
+    }
+
+    #[test]
+    fn test_voice_persona_roundtrip() {
+        let persona = VoicePersona {
+            id: "narrator".into(),
+            label: "Narrator".into(),
+            description: Some("Epic story narrator".into()),
+            provider: Some(TtsProviderId::OpenAi),
+            fallback_policy: FallbackPolicy::Fail,
+            prompt: VoicePersonaPrompt {
+                profile: Some("Dramatic voice".into()),
+                style: Some("Commanding".into()),
+                accent: None,
+                pacing: Some("Slow, deliberate".into()),
+                scene: Some("Narrating an epic tale".into()),
+                constraints: vec!["Never whisper".into()],
+            },
+            provider_bindings: vec![VoicePersonaProviderBinding {
+                provider: TtsProviderId::OpenAi,
+                voice_id: Some("onyx".into()),
+                model: Some("gpt-4o-mini-tts".into()),
+                speed: Some(0.9),
+                stability: None,
+                similarity_boost: None,
+                speaking_rate: None,
+                pitch: None,
+            }],
+        };
+
+        let json = serde_json::to_string(&persona).unwrap();
+        let parsed: VoicePersona = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, "narrator");
+        assert_eq!(parsed.fallback_policy, FallbackPolicy::Fail);
+        assert_eq!(parsed.provider_bindings.len(), 1);
+        assert_eq!(
+            parsed.prompt.scene.as_deref(),
+            Some("Narrating an epic tale")
+        );
+    }
+
+    #[test]
     fn test_voice_config_roundtrip() {
         let config = VoiceConfig {
             tts: TtsConfig {
                 enabled: true,
-                provider: "openai".into(),
+                provider: Some(TtsProviderId::OpenAi),
                 auto: TtsAutoMode::Inbound,
                 max_text_length: 1000,
                 elevenlabs: ElevenLabsConfig {
@@ -690,7 +842,7 @@ mod tests {
         let parsed: VoiceConfig = serde_json::from_str(&json).unwrap();
 
         assert!(parsed.tts.enabled);
-        assert_eq!(parsed.tts.provider, "openai");
+        assert_eq!(parsed.tts.provider, Some(TtsProviderId::OpenAi));
         assert_eq!(parsed.tts.auto, TtsAutoMode::Inbound);
     }
 }

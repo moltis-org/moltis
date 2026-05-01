@@ -12,9 +12,7 @@ use {
     tracing::{debug, error, info, warn},
 };
 
-use moltis_gateway::tailscale::{
-    CliTailscaleManager, TailscaleManager, TailscaleMode, validate_tailscale_config,
-};
+use moltis_gateway::tailscale::{TailscaleManager, TailscaleMode, validate_tailscale_config};
 
 use crate::server::AppState;
 
@@ -45,8 +43,7 @@ pub fn tailscale_router() -> Router<AppState> {
 async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
     debug!("tailscale status requested");
     let port = state.gateway.port;
-    let manager = CliTailscaleManager::new();
-    match manager.status().await {
+    match state.tailscale_manager.status().await {
         Ok(status) => {
             let passkey_warning = moltis_gateway::server::sync_runtime_webauthn_host_and_notice(
                 &state.gateway,
@@ -129,21 +126,19 @@ async fn configure_handler(
             .into_response();
     }
 
-    let manager = CliTailscaleManager::new();
-
     let tls = state.gateway.tls_active;
     let port = state.gateway.port;
     info!(mode = %mode, port, tls, "applying tailscale mode");
     let result = match mode {
-        TailscaleMode::Off => manager.disable().await,
-        TailscaleMode::Serve => manager.enable_serve(port, tls).await,
-        TailscaleMode::Funnel => manager.enable_funnel(port, tls).await,
+        TailscaleMode::Off => state.tailscale_manager.disable().await,
+        TailscaleMode::Serve => state.tailscale_manager.enable_serve(port, tls).await,
+        TailscaleMode::Funnel => state.tailscale_manager.enable_funnel(port, tls).await,
     };
 
     match result {
         Ok(()) => {
             info!(mode = %mode, "tailscale mode applied successfully");
-            let status = manager.status().await.ok();
+            let status = state.tailscale_manager.status().await.ok();
             let passkey_warning = if let Some(ref s) = status {
                 moltis_gateway::server::sync_runtime_webauthn_host_and_notice(
                     &state.gateway,

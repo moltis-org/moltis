@@ -213,6 +213,8 @@ export interface GonData {
 	heartbeat_config: HeartbeatConfig;
 	heartbeat_runs: CronRunRecord[];
 	voice_enabled: boolean;
+	stt_enabled: boolean;
+	tts_enabled: boolean;
 	graphql_enabled: boolean;
 	terminal_enabled: boolean;
 	git_branch?: string;

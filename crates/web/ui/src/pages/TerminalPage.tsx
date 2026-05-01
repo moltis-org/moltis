@@ -7,6 +7,7 @@
 // only hard-coded markup -- no user input is interpolated.
 
 import { localizedApiErrorMessage } from "../helpers";
+import { copyToClipboard } from "../ui";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -825,18 +826,14 @@ function bindEvents(): void {
 			if (xterm) xterm.focus();
 		});
 	if (copyInstallBtn)
-		copyInstallBtn.addEventListener("click", async () => {
+		copyInstallBtn.addEventListener("click", () => {
 			if (!tmuxInstallCommand) return;
-			if (!navigator.clipboard?.writeText) {
-				setStatus("Clipboard API unavailable in this browser.", "error");
-				return;
-			}
-			try {
-				await navigator.clipboard.writeText(tmuxInstallCommand);
-				setStatus("Install command copied to clipboard.", "ok");
-			} catch {
-				setStatus("Failed to copy install command.", "error");
-			}
+			copyToClipboard(tmuxInstallCommand, "", "").then((ok) => {
+				setStatus(
+					ok ? "Install command copied to clipboard." : "Clipboard unavailable — copy the command manually.",
+					ok ? "ok" : "error",
+				);
+			});
 		});
 }
 

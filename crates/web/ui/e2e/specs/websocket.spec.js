@@ -382,7 +382,8 @@ test.describe("WebSocket connection lifecycle", () => {
 		var assistant = page.locator("#messages .msg.assistant").last();
 		await expect(assistant).toContainText("voice fallback should be available");
 		await expect(assistant.locator(".msg-voice-warning")).toContainText("timeout");
-		await expect(assistant.locator(".msg-voice-action")).toHaveText("Voice it");
+		// Voice action is now an icon button in the action bar
+		await expect(assistant.locator('.msg-action-btn[title="Voice it"]')).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -409,10 +410,11 @@ test.describe("WebSocket connection lifecycle", () => {
 
 		var assistant = page.locator("#messages .msg.assistant").last();
 		await expect(assistant).toContainText("try generating voice now");
-		await expect(assistant.locator(".msg-voice-action")).toHaveText("Voice it");
-		await assistant.locator(".msg-voice-action").click();
-		await expect(assistant.locator(".msg-voice-action")).toHaveText("Retry voice");
-		await expect(assistant.locator(".msg-voice-warning")).toContainText("Voice generation failed for test.");
+		var voiceBtn = assistant.locator('.msg-action-btn[title="Voice it"]');
+		await expect(voiceBtn).toBeVisible();
+		await voiceBtn.click();
+		// After failed RPC the button title reverts and a toast is shown
+		await expect(voiceBtn).toHaveAttribute("title", "Voice it");
 		expect(pageErrors).toEqual([]);
 	});
 

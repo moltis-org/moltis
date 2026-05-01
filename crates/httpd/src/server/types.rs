@@ -36,6 +36,8 @@ pub struct AppState {
     pub ngrok_controller: Weak<NgrokController>,
     #[cfg(feature = "ngrok")]
     pub ngrok_runtime: Arc<tokio::sync::RwLock<Option<NgrokRuntimeStatus>>>,
+    #[cfg(feature = "tailscale")]
+    pub tailscale_manager: Arc<moltis_gateway::tailscale::CachedTailscaleManager>,
     #[cfg(feature = "push-notifications")]
     pub push_service: Option<Arc<moltis_gateway::push::PushService>>,
     #[cfg(feature = "graphql")]

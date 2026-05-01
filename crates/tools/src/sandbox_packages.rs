@@ -78,6 +78,7 @@ const CATEGORY_MAP: &[(&str, &[&str])] = &[
     ]),
     ("CLI utilities", &[
         "git",
+        "gh", // GitHub CLI
         "gnupg2",
         "jq",
         "rsync",

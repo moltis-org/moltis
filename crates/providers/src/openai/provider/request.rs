@@ -642,7 +642,7 @@ mod tests {
     #[test]
     fn fireworks_native_model_defaults_to_strict_tools() {
         let p = provider(
-            "accounts/fireworks/models/deepseek-v3p2",
+            "accounts/fireworks/models/glm-5p1",
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
         );
@@ -655,7 +655,7 @@ mod tests {
     #[test]
     fn fireworks_rejects_null_in_enums() {
         let p = provider(
-            "accounts/fireworks/models/deepseek-v3p2",
+            "accounts/fireworks/models/glm-5p1",
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
         );
@@ -690,7 +690,7 @@ mod tests {
     #[test]
     fn fireworks_native_model_no_reasoning_content() {
         let p = provider(
-            "accounts/fireworks/models/deepseek-v3p2",
+            "accounts/fireworks/models/glm-5p1",
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
         );
@@ -849,7 +849,7 @@ mod tests {
     #[test]
     fn fireworks_native_model_no_reasoning_content_in_serialized_messages() {
         let p = provider(
-            "accounts/fireworks/models/deepseek-v3p2",
+            "accounts/fireworks/models/glm-5p1",
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
         );

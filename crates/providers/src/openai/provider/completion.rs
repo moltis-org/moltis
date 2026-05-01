@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use secrecy::ExposeSecret;
 
 use tracing::{debug, trace, warn};
@@ -207,6 +209,107 @@ impl OpenAiProvider {
         }
 
         Ok(())
+    }
+
+    /// Lightweight availability check via `GET /v1/models`.
+    ///
+    /// Verifies the provider is reachable and lists this model without
+    /// triggering model loading or token generation. Falls back to
+    /// [`probe()`](Self::probe_chat_completions) if the models endpoint
+    /// is unavailable or does not list the model.
+    pub(super) async fn check_model_in_catalog(&self) -> anyhow::Result<()> {
+        let url = format!("{}/models", self.base_url.trim_end_matches('/'));
+
+        debug!(
+            model = %self.model,
+            provider = %self.provider_name,
+            url = %url,
+            "checking model availability via catalog endpoint"
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .timeout(Duration::from_secs(15))
+            .header(
+                "Authorization",
+                format!("Bearer {}", self.api_key.expose_secret()),
+            )
+            .header("Accept", "application/json")
+            .send()
+            .await;
+
+        let resp = match resp {
+            Ok(r) => r,
+            Err(err) => {
+                debug!(
+                    error = %err,
+                    provider = %self.provider_name,
+                    "catalog endpoint unreachable, falling back to completion probe"
+                );
+                return self.timed_probe_chat_completions().await;
+            },
+        };
+
+        if !resp.status().is_success() {
+            debug!(
+                status = %resp.status(),
+                provider = %self.provider_name,
+                "catalog endpoint returned error, falling back to completion probe"
+            );
+            return self.timed_probe_chat_completions().await;
+        }
+
+        let body: serde_json::Value = match resp.json().await {
+            Ok(v) => v,
+            Err(err) => {
+                debug!(
+                    error = %err,
+                    provider = %self.provider_name,
+                    "catalog response parse failed, falling back to completion probe"
+                );
+                return self.timed_probe_chat_completions().await;
+            },
+        };
+
+        // Walk the response looking for model IDs in standard locations.
+        let mut ids = Vec::new();
+        collect_model_ids(&body, &mut ids);
+
+        if ids.iter().any(|id| id == &self.model) {
+            debug!(
+                model = %self.model,
+                provider = %self.provider_name,
+                "model found in catalog"
+            );
+            return Ok(());
+        }
+
+        // Model not listed — could mean the endpoint doesn't list all models
+        // (e.g. some servers only list loaded models). Fall back to probe.
+        debug!(
+            model = %self.model,
+            provider = %self.provider_name,
+            catalog_models = ids.len(),
+            "model not found in catalog, falling back to completion probe"
+        );
+        self.timed_probe_chat_completions().await
+    }
+
+    /// Run `probe_chat_completions()` with the configured `probe_timeout()`.
+    async fn timed_probe_chat_completions(&self) -> anyhow::Result<()> {
+        let timeout = self.probe_timeout_duration();
+        tokio::time::timeout(timeout, self.probe_chat_completions())
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!("Connection timed out after {} seconds", timeout.as_secs())
+            })?
+    }
+
+    pub(crate) fn probe_timeout_duration(&self) -> Duration {
+        self.probe_timeout_secs
+            .map(|s| Duration::from_secs(s.max(1)))
+            .unwrap_or_else(|| Duration::from_secs(30))
     }
 
     /// Non-streaming completion using the Chat Completions API.
@@ -470,5 +573,29 @@ impl OpenAiProvider {
                 cache_write_tokens,
             },
         })
+    }
+}
+
+/// Extract model IDs from a `/models` JSON response.
+///
+/// Walks standard locations: top-level `data` array (OpenAI), `models` array,
+/// or the root if it is an array. Collects all `"id"` string fields found.
+fn collect_model_ids<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a str>) {
+    let items = match value {
+        serde_json::Value::Array(arr) => arr.as_slice(),
+        serde_json::Value::Object(map) => {
+            for key in ["data", "models", "items", "results"] {
+                if let Some(nested) = map.get(key) {
+                    collect_model_ids(nested, out);
+                }
+            }
+            return;
+        },
+        _ => return,
+    };
+    for entry in items {
+        if let Some(id) = entry.get("id").and_then(serde_json::Value::as_str) {
+            out.push(id);
+        }
     }
 }

@@ -44,6 +44,28 @@ export function handleSandboxPrepare(payload: SandboxPhasePayload): void {
 	}
 }
 
+let buildIndicatorEl: HTMLElement | null = null;
+let buildTimerInterval: ReturnType<typeof setInterval> | null = null;
+let buildStartTime = 0;
+
+function clearBuildIndicator(): void {
+	if (buildTimerInterval) {
+		clearInterval(buildTimerInterval);
+		buildTimerInterval = null;
+	}
+	if (buildIndicatorEl) {
+		buildIndicatorEl.remove();
+		buildIndicatorEl = null;
+	}
+}
+
+function formatElapsed(ms: number): string {
+	const secs = Math.floor(ms / 1000);
+	const m = Math.floor(secs / 60);
+	const s = secs % 60;
+	return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
 export function handleSandboxImageBuild(payload: SandboxPhasePayload): void {
 	const phase = payload.phase;
 	// Update the sandboxInfo signal so all pages (chat, settings) reflect the build state.
@@ -51,14 +73,55 @@ export function handleSandboxImageBuild(payload: SandboxPhasePayload): void {
 
 	const isChatPage = currentPrefix === "/chats";
 	if (!isChatPage) return;
+
 	if (phase === "start") {
-		chatAddMsg("system", "Building sandbox image (installing packages)\u2026");
+		clearBuildIndicator();
+		buildStartTime = Date.now();
+
+		buildIndicatorEl = document.createElement("div");
+		buildIndicatorEl.className = "msg system download-indicator";
+
+		const status = document.createElement("div");
+		status.className = "download-status";
+		const pkgCount = payload.package_count || 0;
+		const pkgLabel = pkgCount > 0 ? ` (${pkgCount} packages)` : "";
+		status.textContent = `Building sandbox image${pkgLabel}\u2026`;
+		buildIndicatorEl.appendChild(status);
+
+		const progressContainer = document.createElement("div");
+		progressContainer.className = "download-progress indeterminate";
+		const progressBar = document.createElement("div");
+		progressBar.className = "download-progress-bar";
+		progressContainer.appendChild(progressBar);
+		buildIndicatorEl.appendChild(progressContainer);
+
+		const progressText = document.createElement("div");
+		progressText.className = "download-progress-text";
+		progressText.textContent = "First run — usually takes 3\u20135 minutes";
+		buildIndicatorEl.appendChild(progressText);
+
+		if (S.chatMsgBox) {
+			clearChatEmptyState();
+			S.chatMsgBox.appendChild(buildIndicatorEl);
+			smartScrollToBottom();
+		}
+
+		// Update elapsed time every second.
+		buildTimerInterval = setInterval(() => {
+			const textEl = buildIndicatorEl?.querySelector(".download-progress-text");
+			if (textEl) {
+				textEl.textContent = `Elapsed: ${formatElapsed(Date.now() - buildStartTime)}`;
+			}
+		}, 1000);
 	} else if (phase === "done") {
-		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
-		const msg = payload.built ? `Sandbox image ready: ${payload.tag}` : `Sandbox image already cached: ${payload.tag}`;
-		chatAddMsg("system", msg);
+		clearBuildIndicator();
+		if (!payload.built) {
+			// Image was already cached — no need to tell the user about it.
+			return;
+		}
+		chatAddMsg("system", "Sandbox image ready");
 	} else if (phase === "error") {
-		if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
+		clearBuildIndicator();
 		chatAddMsg("error", `Sandbox image build failed: ${payload.error || "unknown"}`);
 	}
 }

@@ -6,12 +6,42 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "skills.list",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
+                let mut result = ctx
+                    .state
                     .services
                     .skills
                     .list()
                     .await
-                    .map_err(ErrorShape::from)
+                    .map_err(ErrorShape::from)?;
+
+                // Enrich with per-skill usage telemetry.
+                // Always insert read_count/write_count (defaulting to 0)
+                // so the response schema is consistent for all skills.
+                if let Some(store) = ctx.state.skill_usage_store.get() {
+                    let usage = store.get_all().await;
+                    if let Some(arr) = result.as_array_mut() {
+                        for item in arr.iter_mut() {
+                            if let Some(obj) = item.as_object_mut() {
+                                let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                let entry = usage.get(name);
+                                obj.insert(
+                                    "read_count".into(),
+                                    serde_json::json!(entry.map_or(0, |e| e.read_count)),
+                                );
+                                obj.insert(
+                                    "write_count".into(),
+                                    serde_json::json!(entry.map_or(0, |e| e.write_count)),
+                                );
+                                obj.insert(
+                                    "last_read_at".into(),
+                                    serde_json::json!(entry.and_then(|e| e.last_read_at)),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                Ok(result)
             })
         }),
     );
@@ -108,12 +138,49 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "skills.remove",
         Box::new(|ctx| {
             Box::pin(async move {
-                ctx.state
+                // Capture skill names from the repo before it's removed,
+                // so we can prune the usage store afterwards. Uses
+                // spawn_blocking since ManifestStore::load() is sync I/O.
+                let source = ctx.params.get("source").and_then(|v| v.as_str());
+                let skill_names: Vec<String> = if let Some(s) = source {
+                    let s = s.to_string();
+                    tokio::task::spawn_blocking(move || {
+                        let path = moltis_skills::manifest::ManifestStore::default_path().ok()?;
+                        let store = moltis_skills::manifest::ManifestStore::new(path);
+                        let manifest = store.load().ok()?;
+                        let repo = manifest.find_repo(&s)?;
+                        Some(
+                            repo.skills
+                                .iter()
+                                .map(|sk| sk.name.clone())
+                                .collect::<Vec<_>>(),
+                        )
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+                } else {
+                    vec![]
+                };
+
+                let result = ctx
+                    .state
                     .services
                     .skills
                     .remove(ctx.params.clone())
                     .await
-                    .map_err(ErrorShape::from)
+                    .map_err(ErrorShape::from)?;
+
+                // Prune usage entries for removed skills so they don't
+                // linger in /insights aggregates.
+                if let Some(store) = ctx.state.skill_usage_store.get() {
+                    for name in &skill_names {
+                        store.remove(name).await;
+                    }
+                }
+
+                Ok(result)
             })
         }),
     );

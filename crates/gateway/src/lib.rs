@@ -60,6 +60,7 @@ pub mod update_check;
 pub mod updater;
 pub mod voice;
 pub mod voice_agent_tools;
+pub mod voice_persona;
 pub mod webhooks;
 
 #[cfg(test)]

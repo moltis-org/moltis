@@ -30,7 +30,7 @@ use crate::openai_codex;
 #[allow(unused_imports)]
 use crate::{
     anthropic, async_openai_provider, config_helpers::*, discovered_model::*, genai_provider,
-    model_capabilities::*, model_catalogs::*, model_id::*, ollama::*, openai,
+    model_capabilities::*, model_catalogs::*, model_id::*, ollama::*, openai, opencode_zen,
 };
 impl ProviderRegistry {
     /// Register models from a [`RediscoveryResult`], skipping those already
@@ -118,6 +118,57 @@ impl ProviderRegistry {
                             .unwrap_or_default(),
                     ),
                 );
+                self.register(
+                    ModelInfo {
+                        id: model.id.clone(),
+                        provider: provider_label.clone(),
+                        display_name: model.display_name.clone(),
+                        created_at: model.created_at,
+                        recommended: model.recommended,
+                        capabilities: model
+                            .capabilities
+                            .unwrap_or_else(|| ModelCapabilities::infer(&model.id)),
+                    },
+                    provider,
+                );
+                added += 1;
+            }
+        }
+
+        // ── OpenCode Zen builtin ──────────────────────────────────────
+        if let Some(models) = fetched.get("opencode-zen")
+            && config.is_enabled("opencode-zen")
+            && let Some(key) = resolve_api_key(
+                config,
+                "opencode-zen",
+                "OPENCODE_ZEN_API_KEY",
+                env_overrides,
+            )
+        {
+            let base_url = config
+                .get("opencode-zen")
+                .and_then(|e| e.base_url.clone())
+                .or_else(|| env_value(env_overrides, "OPENCODE_ZEN_BASE_URL"))
+                .unwrap_or_else(|| opencode_zen::OPENCODE_ZEN_DEFAULT_BASE_URL.into());
+            let alias = config.get("opencode-zen").and_then(|e| e.alias.clone());
+            let provider_label = alias.unwrap_or_else(|| "opencode-zen".into());
+            let global_cw = self.global_cw_overrides.clone();
+            let provider_cw = config
+                .get("opencode-zen")
+                .map(|e| extract_cw_overrides(&e.model_overrides))
+                .unwrap_or_default();
+
+            for model in models {
+                if self.has_provider_model(&provider_label, &model.id) {
+                    continue;
+                }
+                let provider: Arc<dyn LlmProvider> = Arc::new(opencode_zen::ZenProvider::new(
+                    key.clone(),
+                    model.id.clone(),
+                    base_url.clone(),
+                    global_cw.clone(),
+                    provider_cw.clone(),
+                ));
                 self.register(
                     ModelInfo {
                         id: model.id.clone(),
@@ -223,6 +274,12 @@ impl ProviderRegistry {
                 }
                 if let Some(strict) = config.get(def.config_name).and_then(|e| e.strict_tools) {
                     oai = oai.with_strict_tools(strict);
+                }
+                if let Some(timeout) = config
+                    .get(def.config_name)
+                    .and_then(|e| e.probe_timeout_secs)
+                {
+                    oai = oai.with_probe_timeout_secs(Some(timeout));
                 }
 
                 self.register(
@@ -948,6 +1005,13 @@ impl ProviderRegistry {
                     oai = oai.with_strict_tools(strict);
                 }
 
+                if let Some(timeout) = config
+                    .get(def.config_name)
+                    .and_then(|e| e.probe_timeout_secs)
+                {
+                    oai = oai.with_probe_timeout_secs(Some(timeout));
+                }
+
                 // Fireworks Fire Pass router models for Kimi route to
                 // Moonshot, which rejects strict-mode schemas and requires
                 // reasoning_content on tool-call messages (issue #810).
@@ -1058,6 +1122,7 @@ impl ProviderRegistry {
                 if let Some(strict) = entry.strict_tools {
                     oai = oai.with_strict_tools(strict);
                 }
+                oai = oai.with_probe_timeout_secs(entry.probe_timeout_secs);
                 let provider = Arc::new(oai);
                 self.register(
                     ModelInfo {
@@ -1076,6 +1141,95 @@ impl ProviderRegistry {
                 provider = %name,
                 "registered custom OpenAI-compatible provider"
             );
+        }
+    }
+
+    pub(crate) fn register_opencode_zen_providers(
+        &mut self,
+        config: &ProvidersConfig,
+        env_overrides: &HashMap<String, String>,
+        prefetched: &HashMap<String, Vec<DiscoveredModel>>,
+    ) {
+        if !config.is_enabled("opencode-zen") {
+            return;
+        }
+        let Some(key) = resolve_api_key(
+            config,
+            "opencode-zen",
+            "OPENCODE_ZEN_API_KEY",
+            env_overrides,
+        ) else {
+            return;
+        };
+
+        let base_url = config
+            .get("opencode-zen")
+            .and_then(|e| e.base_url.clone())
+            .or_else(|| env_value(env_overrides, "OPENCODE_ZEN_BASE_URL"))
+            .unwrap_or_else(|| opencode_zen::OPENCODE_ZEN_DEFAULT_BASE_URL.into());
+
+        let alias = config.get("opencode-zen").and_then(|e| e.alias.clone());
+        let provider_label = alias.unwrap_or_else(|| "opencode-zen".into());
+
+        let preferred = configured_models_for_provider(config, "opencode-zen");
+        let discovered = if should_fetch_models(config, "opencode-zen") {
+            match prefetched.get("opencode-zen") {
+                Some(live) => live.clone(),
+                // Live fetch was requested but produced no result — fall back to
+                // the static catalog so the provider is still usable.
+                None => catalog_to_discovered(opencode_zen::OPENCODE_ZEN_MODELS, 2),
+            }
+        } else {
+            // Discovery explicitly disabled: only register models the user
+            // pinned in [providers.opencode-zen] models = [...]. Consistent with
+            // how other built-in providers behave when fetch_models = false.
+            Vec::new()
+        };
+        let models = merge_preferred_and_discovered_models(preferred, discovered);
+
+        if models.is_empty() {
+            tracing::debug!(
+                "opencode-zen: no models to register (discovery disabled and no pinned models)"
+            );
+            return;
+        }
+
+        let global_cw = self.global_cw_overrides.clone();
+        let provider_cw = config
+            .get("opencode-zen")
+            .map(|e| extract_cw_overrides(&e.model_overrides))
+            .unwrap_or_default();
+
+        let mut added = 0usize;
+        for model in models {
+            if self.has_provider_model(&provider_label, &model.id) {
+                continue;
+            }
+            let provider: Arc<dyn LlmProvider> = Arc::new(opencode_zen::ZenProvider::new(
+                key.clone(),
+                model.id.clone(),
+                base_url.clone(),
+                global_cw.clone(),
+                provider_cw.clone(),
+            ));
+            self.register(
+                ModelInfo {
+                    id: model.id.clone(),
+                    provider: provider_label.clone(),
+                    display_name: model.display_name.clone(),
+                    created_at: model.created_at,
+                    recommended: model.recommended,
+                    capabilities: model
+                        .capabilities
+                        .unwrap_or_else(|| ModelCapabilities::infer(&model.id)),
+                },
+                provider,
+            );
+            added += 1;
+        }
+
+        if added > 0 {
+            tracing::info!(model_count = added, "registered OpenCode Zen provider");
         }
     }
 

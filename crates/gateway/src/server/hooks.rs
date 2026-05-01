@@ -205,6 +205,12 @@ fn builtin_hook_metadata() -> Vec<(
             vec![HookEvent::Command],
             "crates/plugins/src/bundled/session_memory.rs",
         ),
+        (
+            "auto-checkpoint",
+            "Snapshots files before Write/Edit/MultiEdit tool calls so /rollback can restore them.",
+            vec![HookEvent::BeforeToolCall],
+            "crates/tools/src/auto_checkpoint.rs",
+        ),
     ]
 }
 
@@ -307,6 +313,11 @@ pub(crate) async fn discover_and_build_hooks(
             let memory_hook = SessionMemoryHook::new(data.clone(), Arc::clone(store));
             registry.register(Arc::new(memory_hook));
         }
+
+        // Auto-checkpoint: snapshot files before Write/Edit/MultiEdit tool calls.
+        let checkpoint_manager = Arc::new(moltis_tools::checkpoints::CheckpointManager::new(data));
+        let auto_cp = moltis_tools::auto_checkpoint::AutoCheckpointHook::new(checkpoint_manager);
+        registry.register(Arc::new(auto_cp));
     }
 
     for (name, description, events, source_file) in builtin_hook_metadata() {

@@ -63,6 +63,11 @@
   white-space: normal;
 }
 
+.msg p {
+  margin: 0;
+  white-space: normal;
+}
+
 /* ── Markdown block elements inside messages ── */
 
 .msg h1, .msg h2, .msg h3, .msg h4, .msg h5, .msg h6 {
@@ -138,11 +143,11 @@
   background: color-mix(in srgb, var(--surface2) 85%, transparent);
   border: 1px solid var(--border);
   border-color: color-mix(in srgb, var(--border-strong) 65%, transparent);
-  border-radius: 999px;
+  border-radius: 12px;
   align-items: center;
   gap: 6px;
   max-width: min(88%, 640px);
-  padding: 5px 10px;
+  padding: 6px 14px;
   white-space: normal;
   display: inline-flex;
 }
@@ -755,6 +760,93 @@
 .msg-voice-warning {
   margin-top: 6px;
   max-width: 320px;
+}
+
+/* ── Message action bar (copy, retry, fork) ── */
+
+.msg-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 6px;
+  position: relative;
+}
+
+.msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.msg-action-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.msg-action-btn-active {
+  color: var(--accent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* Retry popover */
+
+.msg-action-popover {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 24px;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  z-index: 50;
+  padding: 4px;
+  animation: msg-action-pop-in 0.12s ease-out;
+}
+
+@keyframes msg-action-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.msg-action-popover-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.78rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+}
+
+.msg-action-popover-item:hover {
+  background: var(--bg-hover);
+}
+
+.msg-action-popover-item .icon {
+  color: var(--muted);
+  flex-shrink: 0;
 }
 
 /* ── Waveform Audio Player ── */

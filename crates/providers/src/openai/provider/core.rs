@@ -38,6 +38,7 @@ impl OpenAiProvider {
             context_window_global: std::collections::HashMap::new(),
             context_window_provider: std::collections::HashMap::new(),
             supports_user_name: true,
+            probe_timeout_secs: None,
         }
     }
 
@@ -66,6 +67,7 @@ impl OpenAiProvider {
             context_window_global: std::collections::HashMap::new(),
             context_window_provider: std::collections::HashMap::new(),
             supports_user_name,
+            probe_timeout_secs: None,
         }
     }
 
@@ -111,6 +113,13 @@ impl OpenAiProvider {
     #[must_use]
     pub fn with_supports_user_name(mut self, supported: bool) -> Self {
         self.supports_user_name = supported;
+        self
+    }
+
+    /// Set the completion-based probe timeout override (seconds).
+    #[must_use]
+    pub fn with_probe_timeout_secs(mut self, secs: Option<u64>) -> Self {
+        self.probe_timeout_secs = secs;
         self
     }
 
@@ -213,6 +222,7 @@ impl LlmProvider for OpenAiProvider {
             strict_tools_override: self.strict_tools_override,
             reasoning_content_override: self.reasoning_content_override,
             supports_user_name: self.supports_user_name,
+            probe_timeout_secs: self.probe_timeout_secs,
         }))
     }
 
@@ -315,6 +325,14 @@ impl LlmProvider for OpenAiProvider {
             WireApi::Responses => self.probe_responses().await,
             WireApi::ChatCompletions => self.probe_chat_completions().await,
         }
+    }
+
+    fn probe_timeout(&self) -> std::time::Duration {
+        self.probe_timeout_duration()
+    }
+
+    async fn check_availability(&self) -> anyhow::Result<()> {
+        self.check_model_in_catalog().await
     }
 
     #[allow(clippy::collapsible_if)]

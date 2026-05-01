@@ -847,6 +847,23 @@ pub(crate) async fn run_with_tools(
         runtime_context,
     );
 
+    // Create a shared steer inbox that the gateway can push steering text into.
+    // A background task polls the ChatRuntime and forwards any `/steer` text.
+    let steer_inbox: moltis_agents::runner::SteerInbox = Arc::new(Mutex::new(Vec::new()));
+    let steer_inbox_writer = steer_inbox.clone();
+    let steer_state = state.clone();
+    let steer_session_key = session_key.to_string();
+    let steer_task = tokio::spawn(async move {
+        // Drain any stale steering text left over from a previous run.
+        let _ = steer_state.take_steer_text(&steer_session_key).await;
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if let Some(texts) = steer_state.take_steer_text(&steer_session_key).await {
+                steer_inbox_writer.lock().await.extend(texts);
+            }
+        }
+    });
+
     let provider_ref = provider.clone();
     let first_result = run_agent_loop_streaming(
         provider,
@@ -858,6 +875,7 @@ pub(crate) async fn run_with_tools(
         Some(tool_context.clone()),
         hook_registry.clone(),
         sender_name.clone(),
+        Some(steer_inbox.clone()),
     )
     .await;
 
@@ -956,6 +974,7 @@ pub(crate) async fn run_with_tools(
                         Some(tool_context),
                         hook_registry,
                         sender_name,
+                        Some(steer_inbox.clone()),
                     )
                     .await
                 },
@@ -981,6 +1000,7 @@ pub(crate) async fn run_with_tools(
         },
         other => other,
     };
+    steer_task.abort();
 
     // Ensure all runner events (including deltas) are broadcast in order before
     // emitting terminal final/error frames.

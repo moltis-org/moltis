@@ -552,7 +552,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             "elevenlabs" | "elevenlabs-stt" => {
                                 cfg.voice.tts.elevenlabs.api_key = None;
                                 cfg.voice.stt.elevenlabs.api_key = None;
-                                cfg.voice.tts.provider = "elevenlabs".to_string();
+                                cfg.voice.tts.provider =
+                                    Some(moltis_config::VoiceTtsProvider::ElevenLabs);
                                 cfg.voice.tts.enabled = true;
                                 cfg.voice.stt.provider =
                                     Some(moltis_config::VoiceSttProvider::ElevenLabs);
@@ -560,13 +561,15 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             },
                             "openai" | "openai-tts" => {
                                 cfg.voice.tts.openai.api_key = None;
-                                cfg.voice.tts.provider = "openai".to_string();
+                                cfg.voice.tts.provider =
+                                    Some(moltis_config::VoiceTtsProvider::OpenAi);
                                 cfg.voice.tts.enabled = true;
                             },
                             "google-tts" | "google" => {
                                 cfg.voice.tts.google.api_key = None;
                                 cfg.voice.stt.google.api_key = None;
-                                cfg.voice.tts.provider = "google".to_string();
+                                cfg.voice.tts.provider =
+                                    Some(moltis_config::VoiceTtsProvider::Google);
                                 cfg.voice.tts.enabled = true;
                                 cfg.voice.stt.provider =
                                     Some(moltis_config::VoiceSttProvider::Google);

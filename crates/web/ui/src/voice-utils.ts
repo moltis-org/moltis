@@ -101,6 +101,13 @@ export function testTts(text: string, providerId: string): Promise<unknown> {
 }
 
 /**
+ * Convert text to speech using a specific voice persona.
+ */
+export function testTtsWithPersona(text: string, personaId: string): Promise<unknown> {
+	return sendRpc("tts.convert", { text, personaId });
+}
+
+/**
  * Upload an audio blob for STT transcription.
  * Returns raw fetch Response.
  */
@@ -113,6 +120,97 @@ export function transcribeAudio(sessionKey: string, providerId: string, audioBlo
 			body: audioBlob,
 		},
 	);
+}
+
+// ── Voice Persona RPC wrappers ────────────────────────────────
+
+export interface VoicePersonaPrompt {
+	profile?: string;
+	style?: string;
+	accent?: string;
+	pacing?: string;
+	scene?: string;
+	constraints?: string[];
+}
+
+export interface VoicePersonaProviderBinding {
+	provider: string;
+	voice_id?: string;
+	model?: string;
+	speed?: number;
+	stability?: number;
+	similarity_boost?: number;
+	speaking_rate?: number;
+	pitch?: number;
+}
+
+export interface VoicePersona {
+	id: string;
+	label: string;
+	description?: string;
+	provider?: string;
+	fallback_policy: string;
+	prompt: VoicePersonaPrompt;
+	provider_bindings: VoicePersonaProviderBinding[];
+}
+
+export interface VoicePersonaResponse {
+	persona: VoicePersona;
+	isActive: boolean;
+	createdAt: number;
+	updatedAt: number;
+}
+
+interface PersonaListPayload {
+	personas: VoicePersonaResponse[];
+	active: string | null;
+}
+
+interface SetActivePayload {
+	ok: boolean;
+	active: string | null;
+}
+
+export function listVoicePersonas(): Promise<PersonaListPayload> {
+	return sendRpc("voice.personas.list", {}).then((r) => r.payload as PersonaListPayload);
+}
+
+export function getVoicePersona(id: string): Promise<VoicePersonaResponse> {
+	return sendRpc("voice.personas.get", { id }).then((r) => r.payload as VoicePersonaResponse);
+}
+
+export function createVoicePersona(params: {
+	id: string;
+	label: string;
+	description?: string;
+	provider?: string;
+	fallbackPolicy?: string;
+	prompt?: VoicePersonaPrompt;
+	providerBindings?: VoicePersonaProviderBinding[];
+}): Promise<VoicePersonaResponse> {
+	return sendRpc("voice.personas.create", params).then((r) => r.payload as VoicePersonaResponse);
+}
+
+export function updateVoicePersona(
+	id: string,
+	params: {
+		label?: string;
+		description?: string;
+		provider?: string;
+		fallbackPolicy?: string;
+		prompt?: VoicePersonaPrompt;
+		providerBindings?: VoicePersonaProviderBinding[];
+	},
+): Promise<VoicePersonaResponse> {
+	return sendRpc("voice.personas.update", { id, ...params }).then((r) => r.payload as VoicePersonaResponse);
+}
+
+export function deleteVoicePersona(id: string): Promise<{ ok: boolean }> {
+	return sendRpc("voice.personas.delete", { id }).then((r) => r.payload as { ok: boolean });
+}
+
+export function setActiveVoicePersona(id: string | null): Promise<SetActivePayload> {
+	return sendRpc("voice.personas.set_active", { id: id ?? "none" }).then((r) => r.payload as SetActivePayload);
 }
 
 /**

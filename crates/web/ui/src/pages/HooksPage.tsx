@@ -8,6 +8,7 @@ import { Loading } from "../components/forms";
 import { onEvent } from "../events";
 import { sendRpc } from "../helpers";
 import { updateNavCount } from "../nav-counts";
+import { copyToClipboard } from "../ui";
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -237,7 +238,9 @@ function HookCard({ hook }: { hook: Hook }): VNode {
 							title="Click to copy path"
 							onClick={(e) => {
 								e.stopPropagation();
-								navigator.clipboard.writeText(hook.source_path).then(() => showToast("Path copied", "success"));
+								copyToClipboard(hook.source_path, "", "").then((ok) =>
+									showToast(ok ? "Path copied" : "Could not copy path", ok ? "success" : "error"),
+								);
 							}}
 						>
 							{hook.source_path}

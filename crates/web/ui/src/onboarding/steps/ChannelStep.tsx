@@ -31,6 +31,7 @@ import { sendRpc } from "../../helpers";
 import { t } from "../../i18n";
 import { targetChecked, targetValue } from "../../typed-events";
 import { WsEventName } from "../../types/ws-events";
+import { copyToClipboard } from "../../ui";
 import { ErrorPanel } from "../shared";
 import type { ChannelFormProps } from "./channel-forms";
 import {
@@ -848,8 +849,7 @@ function TeamsForm({ onConnected, error, setError }: ChannelFormProps): VNode {
 
 	function onCopyEndpoint(): void {
 		if (!bootstrapEndpoint) return;
-		if (typeof navigator !== "undefined" && navigator.clipboard?.writeText)
-			navigator.clipboard.writeText(bootstrapEndpoint);
+		copyToClipboard(bootstrapEndpoint, "Endpoint copied");
 	}
 
 	function onSubmit(e: Event): void {

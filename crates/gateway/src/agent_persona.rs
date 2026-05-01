@@ -64,6 +64,10 @@ pub struct AgentPersona {
     pub theme: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Optional voice persona ID. When set, switching to this agent
+    /// automatically activates the linked voice persona for TTS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice_persona_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -79,6 +83,8 @@ pub struct CreateAgentParams {
     pub theme: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub voice_persona_id: Option<String>,
 }
 
 /// Parameters for updating an existing agent.
@@ -92,6 +98,8 @@ pub struct UpdateAgentParams {
     pub theme: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub voice_persona_id: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -102,6 +110,7 @@ struct AgentRow {
     emoji: Option<String>,
     theme: Option<String>,
     description: Option<String>,
+    voice_persona_id: Option<String>,
     created_at: i64,
     updated_at: i64,
 }
@@ -115,6 +124,7 @@ impl From<AgentRow> for AgentPersona {
             emoji: r.emoji,
             theme: r.theme,
             description: r.description,
+            voice_persona_id: r.voice_persona_id,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -253,14 +263,15 @@ impl AgentPersonaStore {
 
         let now = now_ms();
         sqlx::query(
-            r#"INSERT INTO agents (id, name, is_default, emoji, theme, description, created_at, updated_at)
-               VALUES (?, ?, 0, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO agents (id, name, is_default, emoji, theme, description, voice_persona_id, created_at, updated_at)
+               VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(&params.id)
         .bind(&params.name)
         .bind(&params.emoji)
         .bind(&params.theme)
         .bind(&params.description)
+        .bind(&params.voice_persona_id)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -283,6 +294,7 @@ impl AgentPersonaStore {
             emoji: params.emoji,
             theme: params.theme,
             description: params.description,
+            voice_persona_id: params.voice_persona_id,
             created_at: now,
             updated_at: now,
         })
@@ -299,15 +311,17 @@ impl AgentPersonaStore {
         let emoji = params.emoji.or(existing.emoji);
         let theme = params.theme.or(existing.theme);
         let description = params.description.or(existing.description);
+        let voice_persona_id = params.voice_persona_id.or(existing.voice_persona_id);
         let now = now_ms();
 
         sqlx::query(
-            "UPDATE agents SET name = ?, emoji = ?, theme = ?, description = ?, updated_at = ? WHERE id = ?",
+            "UPDATE agents SET name = ?, emoji = ?, theme = ?, description = ?, voice_persona_id = ?, updated_at = ? WHERE id = ?",
         )
         .bind(&name)
         .bind(&emoji)
         .bind(&theme)
         .bind(&description)
+        .bind(&voice_persona_id)
         .bind(now)
         .bind(id)
         .execute(&self.pool)
@@ -328,6 +342,7 @@ impl AgentPersonaStore {
             emoji,
             theme,
             description,
+            voice_persona_id,
             created_at: existing.created_at,
             updated_at: now,
         })
@@ -474,14 +489,15 @@ mod tests {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS agents (
-                id          TEXT PRIMARY KEY,
-                name        TEXT NOT NULL,
-                is_default  INTEGER NOT NULL DEFAULT 0,
-                emoji       TEXT,
-                theme       TEXT,
-                description TEXT,
-                created_at  INTEGER NOT NULL,
-                updated_at  INTEGER NOT NULL
+                id                TEXT PRIMARY KEY,
+                name              TEXT NOT NULL,
+                is_default        INTEGER NOT NULL DEFAULT 0,
+                emoji             TEXT,
+                theme             TEXT,
+                description       TEXT,
+                voice_persona_id  TEXT,
+                created_at        INTEGER NOT NULL,
+                updated_at        INTEGER NOT NULL
             )"#,
         )
         .execute(&pool)
@@ -523,6 +539,7 @@ mod tests {
                 emoji: Some("🔬".to_string()),
                 theme: Some("analytical".to_string()),
                 description: Some("Helps with research tasks".to_string()),
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -547,6 +564,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await;
         assert!(result.is_err());
@@ -563,6 +581,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await;
         assert!(result.is_err());
@@ -579,6 +598,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -589,6 +609,7 @@ mod tests {
                 emoji: Some("✍️".to_string()),
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -608,6 +629,7 @@ mod tests {
                 emoji: Some("🤖".to_string()),
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -626,6 +648,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -653,6 +676,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -674,6 +698,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -701,6 +726,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -712,6 +738,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();

@@ -83,6 +83,7 @@ export function Loading({ message = "Loading\u2026", className }: LoadingProps):
 // ── Copy button ─────────────────────────────────────────────
 
 import { useCallback, useState } from "preact/hooks";
+import { copyToClipboard } from "../../ui";
 
 interface CopyButtonProps {
 	/** Text to copy to clipboard */
@@ -107,7 +108,8 @@ export function CopyButton({
 	const [copied, setCopied] = useState(false);
 
 	const onClick = useCallback(() => {
-		navigator.clipboard.writeText(text).then(() => {
+		copyToClipboard(text, "", "").then((ok) => {
+			if (!ok) return;
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);
 		});

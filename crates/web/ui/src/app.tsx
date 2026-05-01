@@ -40,7 +40,7 @@ import * as _sessionHistoryCache from "./stores/session-history-cache";
 import * as _sessionStoreModule from "./stores/session-store";
 import { insertSessionInOrder, sessionStore } from "./stores/session-store";
 import { initTheme, injectMarkdownStyles } from "./theme";
-import { GlobalDialogs } from "./ui";
+import { GlobalDialogs, Toasts } from "./ui";
 import { connect } from "./websocket";
 import * as _wsConnect from "./ws-connect";
 
@@ -697,6 +697,12 @@ function startApp(): void {
 	dialogRoot.id = "preactDialogRoot";
 	document.body.appendChild(dialogRoot);
 	render(<GlobalDialogs />, dialogRoot);
+
+	// Mount global toast notifications (used by showToast() from any page).
+	const toastRoot = document.createElement("div");
+	toastRoot.id = "preactToastRoot";
+	document.body.appendChild(toastRoot);
+	render(<Toasts />, toastRoot);
 
 	initSessionTabBar();
 	initArchivedSessionsToggle();

@@ -73,7 +73,8 @@ pub(crate) const FIREWORKS_MODELS: &[(&str, &str)] = &[
         "accounts/fireworks/routers/kimi-k2p5-turbo",
         "Kimi K2.5 Turbo",
     ),
-    ("accounts/fireworks/models/deepseek-v3p2", "DeepSeek V3p2"),
+    ("accounts/fireworks/models/kimi-k2p6", "Kimi K2.6"),
+    ("accounts/fireworks/models/glm-5p1", "GLM 5.1"),
     (
         "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507",
         "Qwen3 235B A22B Instruct",
@@ -108,6 +109,25 @@ pub(crate) const ALIBABA_CODING_MODELS: &[(&str, &str)] = &[
     ("qwen3-coder-next", "Qwen3 Coder Next"),
     ("qwen3-coder-plus", "Qwen3 Coder Plus"),
     ("glm-4.7", "GLM-4.7"),
+];
+
+/// Known DeepInfra models.
+/// See: <https://deepinfra.com/models>
+pub(crate) const DEEPINFRA_MODELS: &[(&str, &str)] = &[
+    (
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+        "Llama 4 Maverick",
+    ),
+    ("meta-llama/Llama-4-Scout-17B-16E-Instruct", "Llama 4 Scout"),
+    ("deepseek-ai/DeepSeek-V3", "DeepSeek V3"),
+    ("deepseek-ai/DeepSeek-R1", "DeepSeek R1"),
+    ("Qwen/Qwen3-235B-A22B", "Qwen3 235B"),
+    ("Qwen/Qwen3-32B", "Qwen3 32B"),
+    (
+        "mistralai/Mistral-Small-24B-Instruct-2501",
+        "Mistral Small 24B",
+    ),
+    ("google/gemma-3-27b-it", "Gemma 3 27B"),
 ];
 
 /// Known DeepSeek models.
@@ -241,6 +261,16 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         local_only: false,
     },
     OpenAiCompatDef {
+        config_name: "deepinfra",
+        env_key: "DEEPINFRA_API_KEY",
+        env_base_url_key: "DEEPINFRA_BASE_URL",
+        default_base_url: "https://api.deepinfra.com/v1/openai",
+        models: DEEPINFRA_MODELS,
+        supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
+    },
+    OpenAiCompatDef {
         config_name: "deepseek",
         env_key: "DEEPSEEK_API_KEY",
         env_base_url_key: "DEEPSEEK_BASE_URL",
@@ -315,6 +345,7 @@ mod tests {
         assert!(!CEREBRAS_MODELS.is_empty());
         assert!(!MINIMAX_MODELS.is_empty());
         assert!(!ZAI_MODELS.is_empty());
+        assert!(!DEEPINFRA_MODELS.is_empty());
         assert!(!MOONSHOT_MODELS.is_empty());
         assert!(!GEMINI_MODELS.is_empty());
     }
@@ -335,6 +366,7 @@ mod tests {
             ANTHROPIC_MODELS,
             MISTRAL_MODELS,
             CEREBRAS_MODELS,
+            DEEPINFRA_MODELS,
             MINIMAX_MODELS,
             ZAI_MODELS,
             MOONSHOT_MODELS,
@@ -466,7 +498,7 @@ mod tests {
             .expect("fireworks entry must exist");
         assert!(!is_fireworks_kimi_router(
             fireworks,
-            "accounts/fireworks/models/deepseek-v3p2"
+            "accounts/fireworks/models/glm-5p1"
         ));
         assert!(!is_fireworks_kimi_router(
             fireworks,

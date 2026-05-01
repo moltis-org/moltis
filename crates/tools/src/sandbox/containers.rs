@@ -22,13 +22,19 @@ use {
 /// Only filtered when `nodejs` is in the package list.
 const NODESOURCE_SUPERSEDED_PACKAGES: &[&str] = &["npm"];
 
+/// Packages installed from third-party repos that must be excluded from the
+/// main `apt-get install` (they are installed by their own repo setup block).
+const THIRD_PARTY_REPO_PACKAGES: &[&str] = &["gh"];
+
 pub(crate) fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> String {
     let canonical = canonical_sandbox_packages(packages);
     let has_nodejs = canonical.iter().any(|p| p == "nodejs");
+    let has_gh = canonical.iter().any(|p| p == "gh");
     let pkg_list: Vec<&str> = canonical
         .iter()
         .map(String::as_str)
         .filter(|p| !has_nodejs || !NODESOURCE_SUPERSEDED_PACKAGES.contains(p))
+        .filter(|p| !THIRD_PARTY_REPO_PACKAGES.contains(p))
         .collect();
     let pkg_str = pkg_list.join(" ");
 
@@ -47,6 +53,22 @@ pub(crate) fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> Strin
         ""
     };
 
+    // If gh (GitHub CLI) is requested, add the GitHub apt repository.
+    let gh_setup = if has_gh {
+        "RUN apt-get update -qq \
+&& apt-get install -y -qq curl gnupg \
+&& install -m 0755 -d /etc/apt/keyrings \
+&& curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+   -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+&& chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+&& echo \"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\" \
+   > /etc/apt/sources.list.d/github-cli.list \
+&& apt-get update -qq && apt-get install -y -qq gh \
+&& rm -rf /var/lib/apt/lists/*\n"
+    } else {
+        ""
+    };
+
     // Build additional `go install` commands for bundled CLI tools.
     let extra_go_installs: String = GO_TOOL_INSTALLS
         .iter()
@@ -58,6 +80,7 @@ pub(crate) fn sandbox_image_dockerfile(base: &str, packages: &[String]) -> Strin
     format!(
         "FROM {base}\n\
 {nodesource_setup}\
+{gh_setup}\
 RUN apt-get update -qq && apt-get install -y -qq {pkg_str} \
     && mkdir -p {SANDBOX_HOME_DIR}\n\
 RUN if command -v corepack >/dev/null 2>&1; then corepack enable; fi\n\

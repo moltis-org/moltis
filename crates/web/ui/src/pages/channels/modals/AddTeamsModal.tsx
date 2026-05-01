@@ -15,7 +15,7 @@ import {
 import { models as modelsSig } from "../../../stores/model-store";
 import { targetValue } from "../../../typed-events";
 import { ChannelType } from "../../../types";
-import { Modal, showToast } from "../../../ui";
+import { copyToClipboard, Modal, showToast } from "../../../ui";
 import {
 	type ChannelConfig,
 	ConnectionModeHint,
@@ -108,13 +108,7 @@ export function AddTeamsModal(): VNode {
 
 	function copyBootstrapEndpoint(): void {
 		if (!bootstrapEndpoint.value) return;
-		if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-			showToast("Clipboard is unavailable");
-			return;
-		}
-		navigator.clipboard.writeText(bootstrapEndpoint.value).then(() => {
-			showToast("Messaging endpoint copied");
-		});
+		copyToClipboard(bootstrapEndpoint.value, "Messaging endpoint copied");
 	}
 
 	function onSubmit(e: Event): void {

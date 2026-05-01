@@ -8,7 +8,7 @@ import { onEvent } from "../events";
 import { sendRpc } from "../helpers";
 import { navigate } from "../router";
 import { settingsPath } from "../routes";
-import { ConfirmDialog, requestConfirm } from "../ui";
+import { ConfirmDialog, copyToClipboard, requestConfirm } from "../ui";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -143,12 +143,6 @@ function showToast(message: string, type: string): void {
 	setTimeout(() => {
 		toasts.value = toasts.value.filter((t) => t.id !== id);
 	}, 4000);
-}
-
-function copyToClipboard(text: string): void {
-	if (navigator.clipboard?.writeText) {
-		navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard", "success"));
-	}
 }
 
 async function generateToken(): Promise<void> {
@@ -429,7 +423,14 @@ function ConnectNodeForm(): VNode {
 					</code>
 					<button
 						className="provider-btn provider-btn-secondary provider-btn-sm shrink-0"
-						onClick={() => copyToClipboard(wsUrl)}
+						onClick={() =>
+							copyToClipboard(wsUrl, "", "").then((ok) =>
+								showToast(
+									ok ? "Copied to clipboard" : "Could not copy — please copy manually.",
+									ok ? "success" : "error",
+								),
+							)
+						}
 					>
 						Copy
 					</button>
@@ -463,7 +464,14 @@ function ConnectNodeForm(): VNode {
 						<span className="text-xs font-medium text-green-500">Token generated</span>
 						<button
 							className="provider-btn provider-btn-secondary provider-btn-sm"
-							onClick={() => copyToClipboard(generatedToken.value?.command ?? "")}
+							onClick={() =>
+								copyToClipboard(generatedToken.value?.command ?? "", "", "").then((ok) =>
+									showToast(
+										ok ? "Copied to clipboard" : "Could not copy — please copy manually.",
+										ok ? "success" : "error",
+									),
+								)
+							}
 						>
 							Copy command
 						</button>

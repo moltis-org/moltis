@@ -21,7 +21,7 @@ import {
 	tokenSpeedTone,
 	toolCallSummary,
 } from "../helpers";
-import { attachMessageVoiceControl } from "../message-voice";
+import { appendMessageActions } from "../message-actions";
 import { navigate } from "../router";
 import * as S from "../state";
 import { sessionStore } from "../stores/session-store";
@@ -325,17 +325,14 @@ export function appendFinalFooter(msgEl: HTMLElement | null, p: ChatPayload, eve
 	}
 	msgEl.appendChild(footer);
 
-	void attachMessageVoiceControl({
+	appendMessageActions({
 		messageEl: msgEl,
-		footerEl: footer,
 		sessionKey: p.sessionKey || eventSession || S.activeSessionKey,
+		messageIndex: p.messageIndex,
 		text: p.text || "",
 		runId: p.runId,
-		messageIndex: p.messageIndex,
-		audioPath: p.audio || undefined,
+		hasAudio: !!p.audio,
 		audioWarning: p.audioWarning || undefined,
-		forceAction: p.replyMedium === "voice" && !p.audio,
-		autoplayOnGenerate: true,
 	});
 }
 

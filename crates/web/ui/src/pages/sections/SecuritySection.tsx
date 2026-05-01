@@ -6,6 +6,7 @@ import { DangerZone, EmptyState, ListItem, Loading } from "../../components/form
 import { refresh as refreshGon } from "../../gon";
 import { detectPasskeyName } from "../../passkey-detect";
 import { targetValue } from "../../typed-events";
+import { copyToClipboard } from "../../ui";
 import { prepareCreationOptions } from "../../webauthn-helpers";
 import { rerender } from "./_shared";
 
@@ -607,13 +608,18 @@ export function SecuritySection(): VNode {
 								type="button"
 								className="provider-btn provider-btn-secondary"
 								onClick={() => {
-									navigator.clipboard.writeText(pwRecoveryKey).then(() => {
+									copyToClipboard(
+										pwRecoveryKey ?? "",
+										"",
+										"Could not copy — please select and copy the key manually.",
+									).then((ok) => {
+										if (!ok) return;
 										setPwRecoveryCopied(true);
+										rerender();
 										setTimeout(() => {
 											setPwRecoveryCopied(false);
 											rerender();
 										}, 2000);
-										rerender();
 									});
 								}}
 							>

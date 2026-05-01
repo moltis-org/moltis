@@ -198,6 +198,7 @@ async fn test_streaming_runner_preserves_cache_usage() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();

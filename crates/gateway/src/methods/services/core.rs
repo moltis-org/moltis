@@ -997,12 +997,25 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "tts.status",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let mut status = ctx
+                        .state
                         .services
                         .tts
                         .status()
                         .await
-                        .map_err(ErrorShape::from)
+                        .map_err(ErrorShape::from)?;
+
+                    // Enrich with active persona info.
+                    if let Some(ref store) = ctx.state.services.voice_persona_store
+                        && let Ok(Some(active)) = store.get_active().await
+                    {
+                        status["persona"] = serde_json::json!({
+                            "id": active.persona.id,
+                            "label": active.persona.label,
+                        });
+                    }
+
+                    Ok(status)
                 })
             }),
         );
@@ -1049,10 +1062,39 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "tts.convert",
             Box::new(|ctx| {
                 Box::pin(async move {
+                    let mut params = ctx.params.clone();
+
+                    // Resolve voice persona through the full chain:
+                    // explicit personaId → session agent's voice_persona_id → global active.
+                    if params.get("persona").is_none()
+                        && let Some(ref vp_store) = ctx.state.services.voice_persona_store
+                    {
+                        let explicit_id = params.get("personaId").and_then(|v| v.as_str());
+                        let session_key = params
+                            .get("_session_key")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+
+                        let persona = crate::voice_persona::resolve_persona(
+                            vp_store,
+                            ctx.state.services.agent_persona_store.as_deref(),
+                            explicit_id,
+                            session_key.as_deref(),
+                            ctx.state.services.session_metadata.as_deref(),
+                        )
+                        .await;
+
+                        if let Some(persona) = persona
+                            && let Ok(v) = serde_json::to_value(&persona)
+                        {
+                            params["persona"] = v;
+                        }
+                    }
+
                     ctx.state
                         .services
                         .tts
-                        .convert(ctx.params.clone())
+                        .convert(params)
                         .await
                         .map_err(ErrorShape::from)
                 })

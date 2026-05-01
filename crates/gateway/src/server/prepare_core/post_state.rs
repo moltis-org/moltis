@@ -880,6 +880,9 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
+        tool_registry.register(Box::new(moltis_tools::webhook_tool::WebhookTool::new(
+            Arc::clone(&state.services.webhooks),
+        )));
         tool_registry.register(Box::new(crate::channel_agent_tools::SendMessageTool::new(
             Arc::clone(&state.services.channel),
         )));
@@ -1231,28 +1234,37 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(moltis_tools::task_list::TaskListTool::new(
             &data_dir,
         )));
-        tool_registry.register(Box::new(crate::voice_agent_tools::SpeakTool::new(
-            Arc::clone(&state.services.tts),
-        )));
+        let mut speak_tool =
+            crate::voice_agent_tools::SpeakTool::new(Arc::clone(&state.services.tts));
+        if let Some(ref vps) = state.services.voice_persona_store {
+            speak_tool = speak_tool.with_voice_persona_store(Arc::clone(vps));
+        }
+        tool_registry.register(Box::new(speak_tool));
         tool_registry.register(Box::new(crate::voice_agent_tools::TranscribeTool::new(
             Arc::clone(&state.services.stt),
         )));
 
         {
-            use moltis_skills::discover::FsSkillDiscoverer;
+            use moltis_skills::{discover::FsSkillDiscoverer, usage::SkillUsageStore};
 
-            tool_registry.register(Box::new(moltis_tools::skill_tools::CreateSkillTool::new(
-                data_dir.clone(),
-            )));
-            tool_registry.register(Box::new(moltis_tools::skill_tools::UpdateSkillTool::new(
-                data_dir.clone(),
-            )));
-            tool_registry.register(Box::new(moltis_tools::skill_tools::PatchSkillTool::new(
-                data_dir.clone(),
-            )));
-            tool_registry.register(Box::new(moltis_tools::skill_tools::DeleteSkillTool::new(
-                data_dir.clone(),
-            )));
+            let skill_usage = SkillUsageStore::open(&data_dir).await;
+
+            tool_registry.register(Box::new(
+                moltis_tools::skill_tools::CreateSkillTool::new(data_dir.clone())
+                    .with_usage_store(skill_usage.clone()),
+            ));
+            tool_registry.register(Box::new(
+                moltis_tools::skill_tools::UpdateSkillTool::new(data_dir.clone())
+                    .with_usage_store(skill_usage.clone()),
+            ));
+            tool_registry.register(Box::new(
+                moltis_tools::skill_tools::PatchSkillTool::new(data_dir.clone())
+                    .with_usage_store(skill_usage.clone()),
+            ));
+            tool_registry.register(Box::new(
+                moltis_tools::skill_tools::DeleteSkillTool::new(data_dir.clone())
+                    .with_usage_store(skill_usage.clone()),
+            ));
 
             let fs_discoverer =
                 FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths_for(&data_dir));
@@ -1269,15 +1281,17 @@ pub(super) async fn complete_startup(
                     moltis_tools::skill_tools::ReadSkillTool::with_bundled(
                         read_discoverer,
                         bundled_store,
-                    ),
+                    )
+                    .with_usage_store(skill_usage.clone()),
                 ));
             }
             #[cfg(not(feature = "bundled-skills"))]
             {
                 let read_discoverer = Arc::new(fs_discoverer);
-                tool_registry.register(Box::new(moltis_tools::skill_tools::ReadSkillTool::new(
-                    read_discoverer,
-                )));
+                tool_registry.register(Box::new(
+                    moltis_tools::skill_tools::ReadSkillTool::new(read_discoverer)
+                        .with_usage_store(skill_usage.clone()),
+                ));
             }
 
             if config.skills.enable_agent_sidecar_files {
@@ -1285,6 +1299,8 @@ pub(super) async fn complete_startup(
                     moltis_tools::skill_tools::WriteSkillFilesTool::new(data_dir.clone()),
                 ));
             }
+
+            let _ = state.skill_usage_store.set(skill_usage);
         }
 
         tool_registry.register(Box::new(

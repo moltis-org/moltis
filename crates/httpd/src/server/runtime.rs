@@ -1320,10 +1320,8 @@ pub async fn start_gateway(
     }
 
     // Spawn shutdown handler:
-    // - unregister mDNS service (when configured)
-    // - reset tailscale state on exit (when configured)
-    // - give browser pool 5s to shut down gracefully
-    // - force process exit to avoid hanging after ctrl-c
+    // - SIGTERM / SIGHUP (Docker/systemd): graceful — drain browser pool, unregister services
+    // - SIGINT  (ctrl-c): immediate exit
     {
         let browser_for_shutdown = Arc::clone(&banner.browser_for_lifecycle);
         #[cfg(feature = "tailscale")]
@@ -1332,9 +1330,42 @@ pub async fn start_gateway(
         #[cfg(feature = "tailscale")]
         let ts_mode = banner.tailscale_mode;
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_err() {
-                return;
+            #[cfg(unix)]
+            let signal_name: &str = {
+                use tokio::signal::unix::{SignalKind, signal};
+                let mut sigterm =
+                    signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+                let mut sighup =
+                    signal(SignalKind::hangup()).expect("failed to register SIGHUP handler");
+                tokio::select! {
+                    result = tokio::signal::ctrl_c() => {
+                        if result.is_err() { return; }
+                        "SIGINT"
+                    }
+                    result = sigterm.recv() => {
+                        if result.is_none() { return; }
+                        "SIGTERM"
+                    }
+                    result = sighup.recv() => {
+                        if result.is_none() { return; }
+                        "SIGHUP"
+                    }
+                }
+            };
+            #[cfg(not(unix))]
+            let signal_name: &str = {
+                if tokio::signal::ctrl_c().await.is_err() {
+                    return;
+                }
+                "SIGINT"
+            };
+
+            if signal_name == "SIGINT" {
+                info!("received SIGINT, exiting immediately");
+                std::process::exit(0);
             }
+
+            info!(signal = signal_name, "starting graceful shutdown");
 
             #[cfg(feature = "mdns")]
             if let Some(ref daemon) = _mdns_daemon {

@@ -124,14 +124,16 @@ port = {port}                           # Port number (auto-generated for this i
 #   strict_tools - Force strict/non-strict tool schemas (default: auto-detect per provider)
 #   policy    - Per-provider tool policy override (allow/deny lists)
 #   model_overrides.<model_id>.context_window - Override context window for a specific model
+#   probe_timeout_secs - Timeout for completion-based model probes (default: 30s).
+#                        Increase for local LLM servers that load large models on first request.
 
 # [providers]
 # offered = ["local-llm", "lmstudio", "github-copilot", "openai-codex", "openai", "anthropic", "openrouter", "ollama", "moonshot", "minimax", "zai"]
                                     # Enabled providers and those shown in onboarding/picker UI ([] = enable/show all)
 # show_legacy_models = true         # Show models older than 1 year in the chat model selector (they always appear in Settings)
 # All available providers (canonical list in schema/providers.rs):
-#   "anthropic", "openai", "gemini", "groq", "xai", "deepseek",
-#   "fireworks", "mistral", "openrouter", "cerebras", "minimax",
+#   "anthropic", "openai", "gemini", "groq", "xai", "deepinfra",
+#   "deepseek", "fireworks", "mistral", "openrouter", "cerebras", "minimax",
 #   "moonshot", "zai", "zai-code", "venice", "alibaba-coding",
 #   "ollama", "lmstudio", "local-llm", "openai-codex",
 #   "github-copilot", "kimi-code"
@@ -175,6 +177,14 @@ port = {port}                           # Port number (auto-generated for this i
 # api_key = "..."                             # Or set GROQ_API_KEY env var
 # models = ["llama-3.3-70b-versatile"]
 # alias = "groq"
+
+# ── DeepInfra ─────────────────────────────────────────────────
+# [providers.deepinfra]
+# enabled = true
+# api_key = "..."                             # Or set DEEPINFRA_API_KEY env var
+# models = ["meta-llama/Llama-4-Maverick-17B-128E-Instruct"]
+# base_url = "https://api.deepinfra.com/v1/openai"
+# alias = "deepinfra"
 
 # ── DeepSeek ──────────────────────────────────────────────────
 # [providers.deepseek]
@@ -242,6 +252,7 @@ port = {port}                           # Port number (auto-generated for this i
 # ══════════════════════════════════════════════════════════════════════════════
 
 # [chat]
+# auto_title = true                   # Auto-generate session title after first exchange
 # message_queue_mode = "followup"   # How to handle messages during an active agent run:
                                     #   "followup" - Queue messages, replay one-by-one after run
                                     #   "collect"  - Buffer messages, concatenate as single message
@@ -271,6 +282,17 @@ port = {port}                           # Port number (auto-generated for this i
 # tail_budget_ratio = 0.20            # Tail size as fraction of threshold × context window
 # tool_prune_char_threshold = 200     # Prune tool results longer than this in middle region
 # show_settings_hint = true           # Append compaction mode hint to notices
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AUXILIARY MODELS
+# ══════════════════════════════════════════════════════════════════════════════
+# Route side tasks to cheaper/faster models while keeping the main session on a
+# more capable model. Falls back to the session's primary provider when unset.
+#
+# [auxiliary]
+# compaction = "openrouter/google/gemini-2.5-flash"        # Model for context compaction
+# title_generation = "openrouter/google/gemini-2.5-flash"  # Model for session titles
+# vision = "openrouter/google/gemini-2.5-flash"            # Model for vision/image tasks
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SUB-AGENT SPAWN PRESETS
@@ -373,6 +395,8 @@ port = {port}                           # Port number (auto-generated for this i
 # no_network = true                 # Disable network access in sandbox
 # image = "custom-image:tag"        # Custom Docker image (default: auto-built)
 # packages = [...]                  # Packages installed in sandbox containers
+# gpus = "all"                      # GPU passthrough: "all", "device=0", "device=0,1"
+                                    # (Docker/Podman only, ignored for other backends)
 
 # [tools.exec.sandbox.resource_limits]
 # memory_limit = "512M"             # Memory limit (e.g., "512M", "1G")
@@ -507,6 +531,7 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [failover]
 # enabled = true                    # Enable automatic failover
+# exact_model = false               # When true, user-selected models are exact — no fallback
 # fallback_models = []              # Ordered list of fallback models
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -516,6 +541,19 @@ port = {port}                           # Port number (auto-generated for this i
 # [voice.tts]
 # enabled = true
 # providers = ["openai", "elevenlabs"]  # UI allowlist (empty = show all)
+
+# Voice personas — named voice identities injected into TTS calls.
+# Personas are managed via the web UI (Settings > Voice > Voice Personas)
+# and stored in the database. Example via TOML for reference:
+#
+# Configure personas in the web UI, or use the RPC API:
+#   voice.personas.create  — create a new persona
+#   voice.personas.list    — list all personas
+#   voice.personas.set_active — activate a persona
+#
+# Providers that support instructions (OpenAI gpt-4o-mini-tts) will receive
+# the persona's profile/style/accent as voice direction. Other providers
+# use the persona's provider-specific bindings (voice_id, model overrides).
 
 # [voice.stt]
 # enabled = true

@@ -54,7 +54,7 @@ function ensureVoicePlayerSlot(messageEl: HTMLElement | null): HTMLElement | nul
 	return slot;
 }
 
-function renderPersistedAudio(
+export function renderPersistedAudio(
 	messageEl: HTMLElement,
 	sessionKey: string | undefined,
 	audioPath: string | undefined,

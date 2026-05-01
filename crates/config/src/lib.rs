@@ -53,8 +53,8 @@ pub use {
         PresetToolPolicy, PromptMemoryMode, ResolvedIdentity, SessionAccessPolicyConfig,
         SessionExportMode, Timezone, ToolMode, ToolPolicyConfig, ToolRegistryMode, UserProfile,
         UserProfileWriteMode, VoiceConfig, VoiceElevenLabsConfig, VoiceOpenAiConfig,
-        VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig, VoiceWhisperConfig, WireApi,
-        parse_byte_size,
+        VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig, VoiceTtsProvider, VoiceWhisperConfig,
+        WireApi, parse_byte_size,
     },
     validate::{Diagnostic, Severity, ValidationResult},
 };

@@ -468,6 +468,95 @@ pub fn validate_tailscale_config(
     Ok(())
 }
 
+// ── Cached wrapper ──────────────────────────────────────────────────────────
+
+/// A caching wrapper around [`CliTailscaleManager`] that pre-fetches status
+/// on startup and serves the cached result for subsequent calls.
+///
+/// The status is refreshed after any mutating operation (enable/disable) or
+/// when explicitly requested via [`refresh()`].
+pub struct CachedTailscaleManager {
+    inner: CliTailscaleManager,
+    cache: tokio::sync::RwLock<Option<TailscaleStatus>>,
+}
+
+impl CachedTailscaleManager {
+    /// Create a new cached manager and kick off an async pre-fetch.
+    ///
+    /// The returned manager immediately starts fetching tailscale status in
+    /// the background. Callers to `status()` before the fetch completes will
+    /// get a fallback "unknown" result rather than blocking.
+    pub fn new_with_prefetch() -> std::sync::Arc<Self> {
+        let manager = std::sync::Arc::new(Self {
+            inner: CliTailscaleManager::new(),
+            cache: tokio::sync::RwLock::new(None),
+        });
+        // Only spawn the prefetch if a Tokio runtime is available.
+        // In test contexts without a runtime, the cache starts empty
+        // and status() will fetch on first call.
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let m = std::sync::Arc::clone(&manager);
+            handle.spawn(async move {
+                m.refresh().await;
+            });
+        }
+        manager
+    }
+
+    /// Force a refresh of the cached status.
+    pub async fn refresh(&self) {
+        match self.inner.status().await {
+            Ok(status) => {
+                *self.cache.write().await = Some(status);
+            },
+            Err(e) => {
+                tracing::debug!(error = %e, "tailscale status pre-fetch failed, cache unchanged");
+            },
+        }
+    }
+}
+
+#[async_trait]
+impl TailscaleManager for CachedTailscaleManager {
+    async fn status(&self) -> Result<TailscaleStatus> {
+        // Return cached status if available.
+        if let Some(ref cached) = *self.cache.read().await {
+            return Ok(cached.clone());
+        }
+
+        // Cache miss — fetch synchronously (first call before prefetch completes).
+        let status = self.inner.status().await?;
+        *self.cache.write().await = Some(status.clone());
+        Ok(status)
+    }
+
+    async fn enable_serve(&self, port: u16, tls: bool) -> Result<()> {
+        self.inner.enable_serve(port, tls).await?;
+        self.refresh().await;
+        Ok(())
+    }
+
+    async fn enable_funnel(&self, port: u16, tls: bool) -> Result<()> {
+        self.inner.enable_funnel(port, tls).await?;
+        self.refresh().await;
+        Ok(())
+    }
+
+    async fn disable(&self) -> Result<()> {
+        self.inner.disable().await?;
+        self.refresh().await;
+        Ok(())
+    }
+
+    async fn hostname(&self) -> Result<Option<String>> {
+        // Use cached status if available.
+        if let Some(ref cached) = *self.cache.read().await {
+            return Ok(cached.hostname.clone());
+        }
+        self.inner.hostname().await
+    }
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {

@@ -251,4 +251,20 @@ impl ChatRuntime for GatewayChatRuntime {
             })
             .collect()
     }
+
+    async fn take_steer_text(&self, session_key: &str) -> Option<Vec<String>> {
+        self.state.take_steer_text(session_key).await
+    }
+
+    async fn is_fast_mode(&self, session_key: &str) -> bool {
+        self.state.is_fast_mode(session_key).await
+    }
+
+    async fn trigger_auto_title(&self, session_key: &str) {
+        let state = Arc::clone(&self.state);
+        let key = session_key.to_string();
+        tokio::spawn(async move {
+            crate::session::title::generate_title_if_needed(&state, &key).await;
+        });
+    }
 }

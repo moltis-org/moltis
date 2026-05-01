@@ -23,6 +23,7 @@ import { routes } from "../routes";
 import { bindSandboxImageEvents, bindSandboxToggleEvents, updateSandboxImageUI, updateSandboxUI } from "../sandbox";
 import { switchSession } from "../sessions";
 import * as S from "../state";
+import { copyToClipboard } from "../ui";
 import { initVadButton, initVoiceInput, teardownVoiceInput } from "../voice-input";
 import {
 	chatAutoResize,
@@ -440,7 +441,8 @@ function wireFullContextCopyButton(
 		let copyText = contextText;
 		const llmOutputVisible = llmOutputPanel && !llmOutputPanel.classList.contains("hidden");
 		if (llmOutputVisible) copyText = `LLM output:\n${JSON.stringify(llmOutputs, null, 2)}\n\nContext:\n${contextText}`;
-		navigator.clipboard.writeText(copyText).then(() => {
+		copyToClipboard(copyText, "", "").then((ok) => {
+			if (!ok) return;
 			copyBtn.textContent = "Copied!";
 			setTimeout(() => {
 				copyBtn.textContent = "Copy";

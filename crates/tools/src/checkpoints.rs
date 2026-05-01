@@ -20,6 +20,10 @@ use crate::{
 
 const DEFAULT_LIST_LIMIT: usize = 20;
 const MAX_LIST_LIMIT: usize = 100;
+/// Prune when checkpoint count exceeds this threshold.
+const CLEANUP_CHECKPOINT_THRESHOLD: usize = 500;
+/// Fraction of checkpoints to remove when pruning.
+const CLEANUP_PRUNE_RATIO: f64 = 0.2;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -109,6 +113,137 @@ impl CheckpointManager {
             .await
             .map_err(|error| Error::message(format!("checkpoint restore task failed: {error}")))?
     }
+}
+
+// ── Turn index ──────────────────────────────────────────────────────────────
+
+/// A group of checkpoints created during a single agent turn (run).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnRecord {
+    pub run_id: String,
+    pub session_key: String,
+    pub created_at: i64,
+    pub checkpoint_ids: Vec<String>,
+    /// Source paths for display (parallel to checkpoint_ids).
+    pub source_paths: Vec<String>,
+}
+
+impl CheckpointManager {
+    /// Path to the turns index file.
+    fn turns_path(&self) -> PathBuf {
+        self.base_dir.join("turns.jsonl")
+    }
+
+    /// Append a turn record to the index.
+    pub fn append_turn(&self, record: &TurnRecord) -> Result<()> {
+        fs::create_dir_all(&self.base_dir)?;
+        let mut line = serde_json::to_string(record)?;
+        line.push('\n');
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.turns_path())?;
+        std::io::Write::write_all(&mut file, line.as_bytes())?;
+        Ok(())
+    }
+
+    /// Read turn records (newest first), optionally filtered by session key.
+    pub fn read_turns(&self, limit: usize, session_key: Option<&str>) -> Result<Vec<TurnRecord>> {
+        let path = self.turns_path();
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut turns: Vec<TurnRecord> = content
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .filter(|turn: &TurnRecord| session_key.is_none_or(|sk| turn.session_key == sk))
+            .collect();
+        turns.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        turns.truncate(limit);
+        Ok(turns)
+    }
+
+    /// Remove old checkpoints when the total count exceeds the threshold.
+    ///
+    /// Deletes the oldest checkpoints (by `created_at`) until the count is
+    /// under the threshold. Also removes corresponding turn records.
+    pub async fn cleanup_if_needed(&self) -> Result<usize> {
+        let base_dir = self.base_dir.clone();
+        tokio::task::spawn_blocking(move || cleanup_blocking(&base_dir))
+            .await
+            .map_err(|e| Error::message(format!("checkpoint cleanup failed: {e}")))?
+    }
+}
+
+fn cleanup_blocking(base_dir: &Path) -> Result<usize> {
+    let mut all = read_all_manifests(base_dir)?;
+    if all.len() <= CLEANUP_CHECKPOINT_THRESHOLD {
+        return Ok(0);
+    }
+
+    // Sort oldest first, delete the oldest CLEANUP_PRUNE_RATIO fraction.
+    all.sort_by_key(|r| r.created_at);
+    let to_remove = (all.len() as f64 * CLEANUP_PRUNE_RATIO).ceil() as usize;
+    let removed_ids: std::collections::HashSet<String> =
+        all.iter().take(to_remove).map(|r| r.id.clone()).collect();
+
+    let mut deleted = 0;
+    for id in &removed_ids {
+        let dir = base_dir.join(id);
+        if dir.is_dir() {
+            if let Err(e) = fs::remove_dir_all(&dir) {
+                tracing::warn!(checkpoint = %id, error = %e, "failed to remove old checkpoint");
+            } else {
+                deleted += 1;
+            }
+        }
+    }
+
+    // Rewrite turns.jsonl without references to deleted checkpoints.
+    let turns_path = base_dir.join("turns.jsonl");
+    if turns_path.exists()
+        && let Ok(content) = fs::read_to_string(&turns_path)
+    {
+        let filtered: Vec<String> = content
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter_map(|line| {
+                let mut turn: TurnRecord = serde_json::from_str(line).ok()?;
+                let orig_len = turn.checkpoint_ids.len();
+                let mut new_ids = Vec::new();
+                let mut new_paths = Vec::new();
+                for (id, path) in turn
+                    .checkpoint_ids
+                    .into_iter()
+                    .zip(turn.source_paths.into_iter())
+                {
+                    if !removed_ids.contains(&id) {
+                        new_ids.push(id);
+                        new_paths.push(path);
+                    }
+                }
+                if new_ids.is_empty() && orig_len > 0 {
+                    return None; // entire turn pruned
+                }
+                turn.checkpoint_ids = new_ids;
+                turn.source_paths = new_paths;
+                serde_json::to_string(&turn).ok()
+            })
+            .collect();
+        let _ = fs::write(&turns_path, filtered.join("\n") + "\n");
+    }
+
+    if deleted > 0 {
+        tracing::info!(
+            deleted,
+            remaining = all.len() - deleted,
+            "pruned old checkpoints"
+        );
+    }
+    Ok(deleted)
 }
 
 pub struct CheckpointsListTool {

@@ -284,6 +284,11 @@ pub struct GatewayInner {
     pub channel_status_log: HashMap<String, Vec<String>>,
     /// Sessions currently in channel command mode (/sh passthrough).
     pub channel_command_mode_sessions: HashSet<String>,
+    /// Sessions with fast/priority mode enabled.
+    pub fast_mode_sessions: HashSet<String>,
+    /// Per-session steering text queue injected mid-run via `/steer`.
+    /// Multiple `/steer` calls accumulate; all are drained on the next poll.
+    pub steer_text: HashMap<String, Vec<String>>,
     /// Which channel types are offered in the web UI (from config).
     pub channels_offered: Vec<String>,
     /// Hostnames that were discovered after passkeys already existed.
@@ -323,6 +328,8 @@ impl GatewayInner {
             cached_location: moltis_config::resolve_user_profile().location,
             channel_status_log: HashMap::new(),
             channel_command_mode_sessions: HashSet::new(),
+            fast_mode_sessions: HashSet::new(),
+            steer_text: HashMap::new(),
             channels_offered: vec![
                 "telegram".into(),
                 "whatsapp".into(),
@@ -431,6 +438,10 @@ pub struct GatewayState {
     pub webhook_rate_limiter: moltis_webhooks::rate_limit::WebhookRateLimiter,
     /// Sender for queueing delivery IDs to the webhook worker.
     pub webhook_worker_tx: std::sync::OnceLock<mpsc::Sender<i64>>,
+
+    // ── Skill usage telemetry ─────────────────────────────────────────────
+    /// Late-bound skill usage store for per-skill read/write telemetry.
+    pub skill_usage_store: std::sync::OnceLock<moltis_skills::usage::SkillUsageStore>,
 
     // ── Atomics (lock-free) ─────────────────────────────────────────────────
     pub tts_phrase_counter: AtomicUsize,
@@ -542,6 +553,7 @@ impl GatewayState {
             webhook_store: std::sync::OnceLock::new(),
             webhook_rate_limiter: moltis_webhooks::rate_limit::WebhookRateLimiter::default(),
             webhook_worker_tx: std::sync::OnceLock::new(),
+            skill_usage_store: std::sync::OnceLock::new(),
             tts_phrase_counter: AtomicUsize::new(0),
             node_count: Arc::new(AtomicUsize::new(0)),
             ssh_target_count: Arc::new(AtomicUsize::new(0)),
@@ -740,6 +752,47 @@ impl GatewayState {
             .await
             .channel_command_mode_sessions
             .contains(session_key)
+    }
+
+    /// Enable or disable fast/priority mode for a session.
+    pub async fn set_fast_mode(&self, session_key: &str, enabled: bool) {
+        let mut inner = self.inner.write().await;
+        if enabled {
+            inner.fast_mode_sessions.insert(session_key.to_string());
+        } else {
+            inner.fast_mode_sessions.remove(session_key);
+        }
+    }
+
+    /// Check whether fast/priority mode is enabled for a session.
+    pub async fn is_fast_mode(&self, session_key: &str) -> bool {
+        self.inner
+            .read()
+            .await
+            .fast_mode_sessions
+            .contains(session_key)
+    }
+
+    /// Append steering text for an active session run.
+    /// Multiple calls accumulate; all are drained on the next poll.
+    pub async fn set_steer_text(&self, session_key: &str, text: String) {
+        self.inner
+            .write()
+            .await
+            .steer_text
+            .entry(session_key.to_string())
+            .or_default()
+            .push(text);
+    }
+
+    /// Take (drain) all pending steering texts for a session.
+    pub async fn take_steer_text(&self, session_key: &str) -> Option<Vec<String>> {
+        let texts = self.inner.write().await.steer_text.remove(session_key)?;
+        if texts.is_empty() {
+            None
+        } else {
+            Some(texts)
+        }
     }
 
     /// Mark a hostname as needing passkey refresh.

@@ -314,6 +314,28 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
     reg.register(
+        "sessions.generate_title",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                let key = ctx
+                    .params
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        ErrorShape::new(error_codes::INVALID_REQUEST, "missing 'key' parameter")
+                    })?
+                    .to_string();
+                crate::session::title::generate_title_for_session(&ctx.state, &key).await;
+                let label = if let Some(ref meta) = ctx.state.services.session_metadata {
+                    meta.get(&key).await.and_then(|e| e.label)
+                } else {
+                    None
+                };
+                Ok(serde_json::json!({ "ok": true, "label": label }))
+            })
+        }),
+    );
+    reg.register(
         "sessions.share.create",
         Box::new(|ctx| {
             Box::pin(async move {

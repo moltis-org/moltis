@@ -85,14 +85,13 @@ let vadSourceNode: MediaStreamAudioSourceNode | null = null;
 // VAD monitor loop mutable state (avoids static properties on function)
 let vadMonitorMuteStart = 0;
 
-/** Check if voice feature is enabled. */
-function isVoiceEnabled(): boolean {
-	return gon.get("voice_enabled") === true;
+function isSttEnabled(): boolean {
+	return gon.get("stt_enabled") !== false;
 }
 
 /** Check if STT is available and enable/disable buttons. */
 async function checkSttStatus(): Promise<void> {
-	if (!isVoiceEnabled()) {
+	if (!isSttEnabled()) {
 		sttConfigured = false;
 		if (vadActive) stopVad();
 		updateMicButton();
@@ -114,7 +113,7 @@ async function checkSttStatus(): Promise<void> {
 
 function updateMicButton(): void {
 	if (!micBtn) return;
-	micBtn.style.display = sttConfigured && isVoiceEnabled() ? "" : "none";
+	micBtn.style.display = sttConfigured && isSttEnabled() ? "" : "none";
 	micBtn.disabled = !S.connected;
 	micBtn.title = isStarting ? t("chat:micStarting") : isRecording ? t("chat:micStopAndSend") : t("chat:micTooltip");
 }
@@ -123,7 +122,7 @@ function updateMicButton(): void {
 
 function updateVadButton(): void {
 	if (!vadBtn) return;
-	vadBtn.style.display = sttConfigured && isVoiceEnabled() ? "" : "none";
+	vadBtn.style.display = sttConfigured && isSttEnabled() ? "" : "none";
 	vadBtn.disabled = !S.connected;
 	vadBtn.title = vadActive ? t("chat:vadStopTooltip") : t("chat:vadTooltip");
 }

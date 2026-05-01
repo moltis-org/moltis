@@ -77,6 +77,10 @@ async fn test_github_pr_ingress_full_flow() {
             allowed_cidrs: vec![],
             max_body_bytes: 1_048_576,
             rate_limit_per_minute: 60,
+            deliver_only: false,
+            prompt_template: None,
+            deliver_to: None,
+            deliver_extra: None,
         })
         .await
         .unwrap();
@@ -265,6 +269,10 @@ async fn test_static_header_auth_flow() {
             allowed_cidrs: vec![],
             max_body_bytes: 1_048_576,
             rate_limit_per_minute: 60,
+            deliver_only: false,
+            prompt_template: None,
+            deliver_to: None,
+            deliver_extra: None,
         })
         .await
         .unwrap();
@@ -419,6 +427,10 @@ async fn test_disabled_webhook_lookup() {
             allowed_cidrs: vec![],
             max_body_bytes: 1_048_576,
             rate_limit_per_minute: 60,
+            deliver_only: false,
+            prompt_template: None,
+            deliver_to: None,
+            deliver_extra: None,
         })
         .await
         .unwrap();
@@ -597,6 +609,10 @@ async fn test_crash_recovery_includes_processing_deliveries() {
             allowed_cidrs: vec![],
             max_body_bytes: 1_048_576,
             rate_limit_per_minute: 60,
+            deliver_only: false,
+            prompt_template: None,
+            deliver_to: None,
+            deliver_extra: None,
         })
         .await
         .unwrap();
@@ -715,6 +731,10 @@ fn test_webhook_redacted_hides_secrets() {
         last_delivery_at: None,
         created_at: "2026-04-07T00:00:00Z".into(),
         updated_at: "2026-04-07T00:00:00Z".into(),
+        deliver_only: false,
+        prompt_template: None,
+        deliver_to: None,
+        deliver_extra: None,
     };
 
     let redacted = wh.redacted();
@@ -757,6 +777,10 @@ fn test_webhook_redacted_none_stays_none() {
         last_delivery_at: None,
         created_at: "2026-04-07T00:00:00Z".into(),
         updated_at: "2026-04-07T00:00:00Z".into(),
+        deliver_only: false,
+        prompt_template: None,
+        deliver_to: None,
+        deliver_extra: None,
     };
 
     let redacted = wh.redacted();
@@ -851,6 +875,10 @@ async fn test_source_profile_not_in_patch() {
             allowed_cidrs: vec![],
             max_body_bytes: 1_048_576,
             rate_limit_per_minute: 60,
+            deliver_only: false,
+            prompt_template: None,
+            deliver_to: None,
+            deliver_extra: None,
         })
         .await
         .unwrap();

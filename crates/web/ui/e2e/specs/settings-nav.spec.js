@@ -1271,6 +1271,7 @@ test.describe("Settings navigation", () => {
 			"MCP",
 			"Skills",
 		);
+		if (navItems.includes("Imports")) expectedPrefix.push("Imports");
 		const expectedSystem = ["Terminal", "Monitoring", "Logs"];
 		const expected = [...expectedPrefix];
 		if (navItems.includes("OpenClaw Import")) expected.push("OpenClaw Import");

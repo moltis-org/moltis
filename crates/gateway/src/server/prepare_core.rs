@@ -599,6 +599,15 @@ pub async fn prepare_gateway_core(
         tracing::warn!(error = %e, "failed to ensure main agent DB row");
     }
 
+    let voice_persona_store = Arc::new(crate::voice_persona::VoicePersonaStore::new(
+        db_pool.clone(),
+    ));
+    match voice_persona_store.seed_defaults().await {
+        Ok(0) => {},
+        Ok(n) => tracing::info!(count = n, "seeded default voice personas"),
+        Err(e) => tracing::warn!(error = %e, "failed to seed default voice personas"),
+    }
+
     let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
         Arc::new(tokio::sync::OnceCell::new());
 
@@ -982,7 +991,10 @@ pub async fn prepare_gateway_core(
                     broadcast(
                         state,
                         "sandbox.image.build",
-                        serde_json::json!({ "phase": "start", "packages": packages }),
+                        serde_json::json!({
+                            "phase": "start",
+                            "package_count": packages.len(),
+                        }),
                         BroadcastOpts {
                             drop_if_slow: true,
                             ..Default::default()
@@ -1000,6 +1012,7 @@ pub async fn prepare_gateway_core(
                         );
                         router.set_global_image(Some(result.tag.clone())).await;
                         build_router.building_flag.store(false, Ordering::Relaxed);
+                        build_router.build_complete.notify_waiters();
 
                         if let Some(state) = deferred_for_build.get() {
                             broadcast(
@@ -1023,10 +1036,12 @@ pub async fn prepare_gateway_core(
                             "sandbox image pre-build: no-op (no packages or unsupported backend)"
                         );
                         build_router.building_flag.store(false, Ordering::Relaxed);
+                        build_router.build_complete.notify_waiters();
                     },
                     Err(e) => {
                         tracing::warn!("sandbox image pre-build failed: {e}");
                         build_router.building_flag.store(false, Ordering::Relaxed);
+                        build_router.build_complete.notify_waiters();
                         if let Some(state) = deferred_for_build.get() {
                             broadcast(
                                 state,
@@ -1311,6 +1326,7 @@ pub async fn prepare_gateway_core(
     services = services.with_session_store(Arc::clone(&session_store));
     services = services.with_session_share_store(Arc::clone(&session_share_store));
     services = services.with_agent_persona_store(Arc::clone(&agent_persona_store));
+    services = services.with_voice_persona_store(Arc::clone(&voice_persona_store));
     startup_mem_probe.checkpoint("channels.initialized");
 
     let agents_config = Arc::new(tokio::sync::RwLock::new(config.agents.clone()));
@@ -1355,6 +1371,7 @@ pub async fn prepare_gateway_core(
                 .with_share_store(Arc::clone(&session_share_store))
                 .with_sandbox_router(Arc::clone(&sandbox_router))
                 .with_agent_persona_store(Arc::clone(&agent_persona_store))
+                .with_voice_persona_store(Arc::clone(&voice_persona_store))
                 .with_project_store(Arc::clone(&project_store))
                 .with_state_store(Arc::clone(&session_state_store))
                 .with_browser_service(Arc::clone(&services.browser));

@@ -158,4 +158,22 @@ pub trait ChatRuntime: Send + Sync {
 
     /// List currently connected remote nodes.
     async fn connected_nodes(&self) -> Vec<ConnectedNodeSummary>;
+
+    // ── Mid-flight steering ──────────────────────────────────────────────
+
+    /// Take (drain) all pending `/steer` texts for a session.
+    async fn take_steer_text(&self, _session_key: &str) -> Option<Vec<String>> {
+        None
+    }
+
+    /// Check whether fast/priority mode is enabled for a session.
+    async fn is_fast_mode(&self, _session_key: &str) -> bool {
+        false
+    }
+
+    /// Trigger background auto-title generation for a session.
+    ///
+    /// Called after the first assistant response. The gateway implements this
+    /// to spawn a background LLM call; the default is a no-op.
+    async fn trigger_auto_title(&self, _session_key: &str) {}
 }

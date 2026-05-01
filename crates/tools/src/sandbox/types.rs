@@ -175,6 +175,8 @@ pub struct SandboxConfig {
     /// `"auto"` prefers Apple Container on macOS, then Podman, then Docker, then restricted-host.
     pub backend: String,
     pub resource_limits: ResourceLimits,
+    /// GPU device passthrough for Docker/Podman backends (e.g. "all", "device=0").
+    pub gpus: Option<String>,
     /// Packages to install via `apt-get` after container creation.
     /// Set to an empty list to skip provisioning.
     pub packages: Vec<String>,
@@ -204,6 +206,7 @@ impl Default for SandboxConfig {
             trusted_domains: Vec::new(),
             backend: "auto".into(),
             resource_limits: ResourceLimits::default(),
+            gpus: None,
             packages: Vec::new(),
             timezone: None,
             wasm_fuel_limit: None,
@@ -263,6 +266,7 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
                 cpu_quota: cfg.resource_limits.cpu_quota,
                 pids_max: cfg.resource_limits.pids_max,
             },
+            gpus: cfg.gpus.clone(),
             packages: cfg.packages.clone(),
             timezone: None, // Set by gateway from user profile
             wasm_fuel_limit: cfg.wasm_fuel_limit,
@@ -344,6 +348,20 @@ pub trait Sandbox: Send + Sync {
     /// Returns `false` for `NoSandbox` (pass-through to host).
     fn is_real(&self) -> bool {
         true
+    }
+
+    /// Whether this backend provides filesystem isolation from the host.
+    ///
+    /// Defaults to `false` (fail-safe): new backends must explicitly opt in
+    /// by returning `true`.  Container-based backends (Docker, Podman, Apple
+    /// Container, WASM) override this to `true`.  Backends that only provide
+    /// resource limits (restricted-host, cgroup) or no isolation (none) keep
+    /// the default.
+    ///
+    /// Used by the exec flow to enforce approval gating and file-path
+    /// restrictions when true filesystem isolation is unavailable.
+    fn provides_fs_isolation(&self) -> bool {
+        false
     }
 
     /// Pre-build a container image with packages baked in.

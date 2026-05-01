@@ -5,16 +5,29 @@ conversation at any point. The new session diverges without affecting the
 original — useful for exploring alternative approaches, running "what if"
 scenarios, or preserving a checkpoint before a risky prompt.
 
+## /fork Command
+
+The quickest way to fork — type in the chat input or on any channel:
+
+```
+/fork                    # fork with auto-generated label
+/fork experiment-a       # fork with a custom label
+```
+
+Available in the web UI, Telegram, Discord, Slack, Matrix, and all other
+channels. See [Slash Commands](commands.md) for the full list.
+
 ## Forking from the UI
 
-There are two ways to fork a session in the web UI:
+There are three ways to fork a session:
 
+- **`/fork` command** — type `/fork [label]` in the chat input.
 - **Chat header** — click the **Fork** button in the header bar (next to
   Delete). This is visible for every session except cron sessions.
 - **Sidebar** — hover over a session in the sidebar and click the fork icon
   that appears in the action buttons.
 
-Both create a new session that copies all messages from the current one and
+All three create a new session that copies all messages from the current one and
 immediately switch you to it.
 
 Forked sessions appear **indented** under their parent in the sidebar, with a

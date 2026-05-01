@@ -40,4 +40,7 @@ pub struct OpenAiProvider {
     /// restrictions handled by sanitization).  Mistral rejects it outright.
     /// Defaults to `true`; set to `false` via `with_supports_user_name(false)`.
     pub(crate) supports_user_name: bool,
+    /// Optional override for the completion-based probe timeout (seconds).
+    /// `None` uses the trait default (30s).
+    probe_timeout_secs: Option<u64>,
 }

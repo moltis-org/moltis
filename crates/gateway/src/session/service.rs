@@ -49,6 +49,7 @@ pub struct LiveSessionService {
     pub(super) store: Arc<SessionStore>,
     pub(super) metadata: Arc<SqliteSessionMetadata>,
     pub(super) agent_persona_store: Option<Arc<AgentPersonaStore>>,
+    pub(super) voice_persona_store: Option<Arc<crate::voice_persona::VoicePersonaStore>>,
     pub(super) tts_service: Option<Arc<dyn TtsService>>,
     pub(super) share_store: Option<Arc<ShareStore>>,
     pub(super) sandbox_router: Option<Arc<SandboxRouter>>,
@@ -66,6 +67,7 @@ impl LiveSessionService {
             store,
             metadata,
             agent_persona_store: None,
+            voice_persona_store: None,
             tts_service: None,
             share_store: None,
             sandbox_router: None,
@@ -85,6 +87,14 @@ impl LiveSessionService {
 
     pub fn with_agent_persona_store(mut self, store: Arc<AgentPersonaStore>) -> Self {
         self.agent_persona_store = Some(store);
+        self
+    }
+
+    pub fn with_voice_persona_store(
+        mut self,
+        store: Arc<crate::voice_persona::VoicePersonaStore>,
+    ) -> Self {
+        self.voice_persona_store = Some(store);
         self
     }
 

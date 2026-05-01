@@ -10,6 +10,7 @@ fn sync_persona_into_preset_creates_new_entry() {
         emoji: Some("✍️".into()),
         theme: Some("poetic".into()),
         description: None,
+        voice_persona_id: None,
         created_at: 0,
         updated_at: 0,
     };
@@ -43,6 +44,7 @@ fn sync_persona_preserves_existing_preset_fields() {
         emoji: None,
         theme: None,
         description: None,
+        voice_persona_id: None,
         created_at: 0,
         updated_at: 0,
     };

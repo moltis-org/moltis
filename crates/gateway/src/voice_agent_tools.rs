@@ -22,6 +22,10 @@ struct SpeakToolParams {
     speed: Option<f64>,
     stability: Option<f64>,
     similarity_boost: Option<f64>,
+    /// Optional voice persona ID. When set, the persona's voice/model/instructions
+    /// are injected into the TTS call. When omitted, the active persona (if any)
+    /// is resolved automatically by the `tts.convert` handler.
+    persona: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,6 +46,9 @@ struct TtsConvertParams {
     stability: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     similarity_boost: Option<f64>,
+    /// Persona ID forwarded to `tts.convert` for resolution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    persona_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -96,11 +103,24 @@ struct TranscribeToolResult {
 
 pub struct SpeakTool {
     tts: Arc<dyn TtsService>,
+    voice_persona_store: Option<Arc<crate::voice_persona::VoicePersonaStore>>,
 }
 
 impl SpeakTool {
     pub fn new(tts: Arc<dyn TtsService>) -> Self {
-        Self { tts }
+        Self {
+            tts,
+            voice_persona_store: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_voice_persona_store(
+        mut self,
+        store: Arc<crate::voice_persona::VoicePersonaStore>,
+    ) -> Self {
+        self.voice_persona_store = Some(store);
+        self
     }
 }
 
@@ -126,7 +146,8 @@ impl AgentTool for SpeakTool {
                 "model": { "type": "string", "description": "Optional provider model override." },
                 "speed": { "type": "number", "description": "Optional speaking speed." },
                 "stability": { "type": "number", "description": "Optional stability (provider-specific)." },
-                "similarityBoost": { "type": "number", "description": "Optional similarity boost (provider-specific)." }
+                "similarityBoost": { "type": "number", "description": "Optional similarity boost (provider-specific)." },
+                "persona": { "type": "string", "description": "Optional voice persona ID. Uses the persona's voice, model, and style instructions." }
             }
         })
     }
@@ -144,13 +165,26 @@ impl AgentTool for SpeakTool {
             speed: input.speed,
             stability: input.stability,
             similarity_boost: input.similarity_boost,
+            persona_id: None,
         };
 
-        let result = self
-            .tts
-            .convert(serde_json::to_value(request)?)
-            .await
-            .map_err(anyhow::Error::msg)?;
+        let mut params = serde_json::to_value(request)?;
+
+        // Resolve persona: explicit ID from tool param, or active persona from store.
+        if let Some(ref store) = self.voice_persona_store {
+            let persona = if let Some(ref id) = input.persona {
+                store.get(id).await.ok().flatten().map(|r| r.persona)
+            } else {
+                store.get_active().await.ok().flatten().map(|r| r.persona)
+            };
+            if let Some(persona) = persona
+                && let Ok(v) = serde_json::to_value(&persona)
+            {
+                params["persona"] = v;
+            }
+        }
+
+        let result = self.tts.convert(params).await.map_err(anyhow::Error::msg)?;
 
         let tts_result: TtsConvertResult = serde_json::from_value(result)
             .map_err(|e| anyhow::anyhow!("invalid tts.convert response: {e}"))?;

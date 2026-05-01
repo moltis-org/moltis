@@ -19,6 +19,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260501.01] - 2026-05-01
+### Added
+- [providers] Add Zen (opencode.ai) multi-protocol provider (#944)
+- [web-ui] Hide voice buttons when stt/tts disabled in config (#943)
+
+## [20260430.02] - 2026-04-30
+### Added
+- [web-ui] Add message action bar to assistant responses (#932)
+- [gateway] Auto-generate session titles from conversation (#933)
+- Add DeepInfra provider, sandbox GPU passthrough, strict model selection (#934)
+- Detect Proxmox VE and offer LXC container install
+- [skills] Add per-skill usage telemetry to /insights and web UI (#935)
+- [sandbox] Add GitHub CLI (gh) to default sandbox packages
+- [web-ui] Show progress indicator during sandbox image build
+
+
+### Fixed
+- Replace completion-based model probe with lightweight catalog check (#931)
+- [deploy] Correct subcommand in systemd service file
+- [web-ui] Clipboard copy button broken on insecure contexts (#936)
+- [deploy] Use bare moltis command in systemd service
+- [web-ui] System-notice text overflows excessively rounded container (#941)
+- [httpd] Handle SIGTERM for graceful Docker shutdown (#940)
+- [sandbox] Wait for image build before launching containers
+- [e2e] Fix clipboard, provider order, and reasoning toggle tests
+- [httpd] Gate msteams-only imports behind feature flag
+- [e2e] Fix settings-nav, voice, onboarding, and command palette tests
+
+## [20260430.01] - 2026-04-30
+### Added
+- Add /btw, /fast, /insights, /steer, /queue commands and auxiliary model config (#926)
+
+
+### Fixed
+- [mcp] Preserve auth_state on expired OAuth token so re-auth button shows (#930)
+- [web-ui] Remove scroll-hijacking ResizeObserver in chat (#922) (#925)
+
+## [20260429.02] - 2026-04-29
+### Added
+- [voice] Add voice personas for deterministic TTS identity (#916)
+
+
+### Fixed
+- [sandbox] Prevent sandbox escape via RestrictedHostSandbox and FailoverSandbox (#924)
+
 ## [20260429.01] - 2026-04-29
 ### Added
 - [update] Add /update command and web UI update button (#911)

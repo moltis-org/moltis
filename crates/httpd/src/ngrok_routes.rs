@@ -202,6 +202,9 @@ mod tests {
                 public_url: "https://existing.ngrok.app".to_string(),
                 passkey_warning: None,
             }))),
+            #[cfg(feature = "tailscale")]
+            tailscale_manager: moltis_gateway::tailscale::CachedTailscaleManager::new_with_prefetch(
+            ),
             #[cfg(feature = "push-notifications")]
             push_service: None,
             #[cfg(feature = "graphql")]
