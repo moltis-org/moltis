@@ -78,6 +78,9 @@ pub struct FirecrackerSandbox {
 }
 
 impl FirecrackerSandbox {
+    /// Maximum number of concurrent /30 subnets (256 * 64 = 16384).
+    const MAX_SUBNETS: u16 = 256 * 64;
+
     pub fn new(config: SandboxConfig, fc: FirecrackerSandboxConfig) -> Self {
         Self {
             config,
@@ -87,15 +90,21 @@ impl FirecrackerSandbox {
         }
     }
 
-    fn allocate_subnet(&self) -> (String, String, u16) {
+    fn allocate_subnet(&self) -> Result<(String, String, u16)> {
         let idx = self
             .subnet_counter
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if idx >= Self::MAX_SUBNETS {
+            return Err(Error::message(format!(
+                "firecracker: subnet pool exhausted ({} VMs created without cleanup)",
+                Self::MAX_SUBNETS
+            )));
+        }
         let third = idx / 64;
         let fourth_base = (idx % 64) * 4;
         let host_ip = format!("{SUBNET_BASE}.{third}.{}", fourth_base + 1);
         let guest_ip = format!("{SUBNET_BASE}.{third}.{}", fourth_base + 2);
-        (host_ip, guest_ip, idx)
+        Ok((host_ip, guest_ip, idx))
     }
 
     async fn create_tap(tap_name: &str, host_ip: &str) -> Result<()> {
@@ -213,6 +222,9 @@ impl FirecrackerSandbox {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while !api_socket.exists() {
             if tokio::time::Instant::now() >= deadline {
+                let mut child = child;
+                let _ = child.kill().await;
+                let _ = child.wait().await;
                 return Err(Error::message(
                     "firecracker: API socket did not appear within 5s",
                 ));
@@ -220,65 +232,78 @@ impl FirecrackerSandbox {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
-        // Linux kernel ip= format: ip=<client>:<server>:<gw>:<netmask>:<hostname>:<iface>:<autoconf>
-        let boot_args = format!(
-            "console=ttyS0 reboot=k panic=1 pci=off ip={guest_ip}::{host_ip}:255.255.255.252::eth0:off"
-        );
-        Self::fc_api_call(
-            api_socket,
-            "PUT",
-            "/boot-source",
-            &serde_json::json!({
-                "kernel_image_path": self.fc.kernel_path.display().to_string(),
-                "boot_args": boot_args,
-            }),
-        )
-        .await?;
+        // Configure and start the VM. On any error, kill the process to
+        // avoid leaving an orphaned Firecracker instance.
+        let configure_result = async {
+            // Linux kernel ip= format: ip=<client>:<server>:<gw>:<netmask>:<hostname>:<iface>:<autoconf>
+            let boot_args = format!(
+                "console=ttyS0 reboot=k panic=1 pci=off ip={guest_ip}::{host_ip}:255.255.255.252::eth0:off"
+            );
+            Self::fc_api_call(
+                api_socket,
+                "PUT",
+                "/boot-source",
+                &serde_json::json!({
+                    "kernel_image_path": self.fc.kernel_path.display().to_string(),
+                    "boot_args": boot_args,
+                }),
+            )
+            .await?;
 
-        Self::fc_api_call(
-            api_socket,
-            "PUT",
-            "/drives/rootfs",
-            &serde_json::json!({
-                "drive_id": "rootfs",
-                "path_on_host": rootfs_path.display().to_string(),
-                "is_root_device": true,
-                "is_read_only": false,
-            }),
-        )
-        .await?;
+            Self::fc_api_call(
+                api_socket,
+                "PUT",
+                "/drives/rootfs",
+                &serde_json::json!({
+                    "drive_id": "rootfs",
+                    "path_on_host": rootfs_path.display().to_string(),
+                    "is_root_device": true,
+                    "is_read_only": false,
+                }),
+            )
+            .await?;
 
-        Self::fc_api_call(
-            api_socket,
-            "PUT",
-            "/machine-config",
-            &serde_json::json!({
-                "vcpu_count": self.fc.vcpus,
-                "mem_size_mib": self.fc.memory_mb,
-            }),
-        )
-        .await?;
+            Self::fc_api_call(
+                api_socket,
+                "PUT",
+                "/machine-config",
+                &serde_json::json!({
+                    "vcpu_count": self.fc.vcpus,
+                    "mem_size_mib": self.fc.memory_mb,
+                }),
+            )
+            .await?;
 
-        Self::fc_api_call(
-            api_socket,
-            "PUT",
-            "/network-interfaces/eth0",
-            &serde_json::json!({
-                "iface_id": "eth0",
-                "host_dev_name": tap_name,
-            }),
-        )
-        .await?;
+            Self::fc_api_call(
+                api_socket,
+                "PUT",
+                "/network-interfaces/eth0",
+                &serde_json::json!({
+                    "iface_id": "eth0",
+                    "host_dev_name": tap_name,
+                }),
+            )
+            .await?;
 
-        Self::fc_api_call(
-            api_socket,
-            "PUT",
-            "/actions",
-            &serde_json::json!({ "action_type": "InstanceStart" }),
-        )
-        .await?;
+            Self::fc_api_call(
+                api_socket,
+                "PUT",
+                "/actions",
+                &serde_json::json!({ "action_type": "InstanceStart" }),
+            )
+            .await
+        }
+        .await;
 
-        Ok(child)
+        match configure_result {
+            Ok(()) => Ok(child),
+            Err(e) => {
+                let mut child = child;
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                Err(e)
+            },
+        }
     }
 
     async fn wait_for_ssh(guest_ip: &str, ssh_key: &Path) -> Result<()> {
@@ -451,7 +476,7 @@ impl Sandbox for FirecrackerSandbox {
         let temp_rootfs = images_dir.join(format!("{tag}.building.ext4"));
         Self::copy_rootfs(&self.fc.rootfs_path, &temp_rootfs).await?;
 
-        let (host_ip, guest_ip, subnet_idx) = self.allocate_subnet();
+        let (host_ip, guest_ip, subnet_idx) = self.allocate_subnet()?;
         let tap_name = format!("moltis-fc{subnet_idx}");
         let api_socket = images_dir.join(format!("{tag}.sock"));
         let _ = std::fs::remove_file(&api_socket);
@@ -551,7 +576,7 @@ impl Sandbox for FirecrackerSandbox {
             )));
         }
 
-        let (host_ip, guest_ip, subnet_idx) = self.allocate_subnet();
+        let (host_ip, guest_ip, subnet_idx) = self.allocate_subnet()?;
         let tap_name = format!("moltis-fc{subnet_idx}");
 
         let data_dir = moltis_config::data_dir();
@@ -683,8 +708,8 @@ mod tests {
             SandboxConfig::default(),
             FirecrackerSandboxConfig::default(),
         );
-        let (host1, guest1, idx1) = sandbox.allocate_subnet();
-        let (host2, guest2, idx2) = sandbox.allocate_subnet();
+        let (host1, guest1, idx1) = sandbox.allocate_subnet().unwrap();
+        let (host2, guest2, idx2) = sandbox.allocate_subnet().unwrap();
 
         assert_eq!(idx1, 1);
         assert_eq!(idx2, 2);
