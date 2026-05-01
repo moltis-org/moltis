@@ -4,6 +4,7 @@ import { signal } from "@preact/signals";
 import type { VNode } from "preact";
 import { render } from "preact";
 import { useEffect } from "preact/hooks";
+import { TabBar } from "../components/forms/Tabs";
 import { localizedApiErrorMessage } from "../helpers";
 import { updateNavCount } from "../nav-counts";
 import { sandboxInfo } from "../signals";
@@ -102,8 +103,15 @@ const vercelProjectId = signal("");
 const vercelTeamId = signal("");
 const daytonaApiKey = signal("");
 const daytonaApiUrl = signal("");
+const activeTab = signal("general");
+const SANDBOX_TABS = [
+	{ id: "general", label: "General" },
+	{ id: "vercel", label: "Vercel" },
+	{ id: "daytona", label: "Daytona" },
+	{ id: "containers", label: "Containers & Images" },
+];
 const SANDBOX_DISABLED_HINT =
-	"No local container runtime detected. Install Docker, configure a remote backend (Vercel or Daytona) below, or deploy on a VM with Docker to enable sandboxes.";
+	"No local container runtime detected. Install Docker, configure a remote backend (Vercel or Daytona), or deploy on a VM with Docker to enable sandboxes.";
 
 function sandboxRuntimeAvailable(): boolean {
 	return ((sandboxInfo.value as SandboxInfoValue | null)?.backend || "none") !== "none";
@@ -896,7 +904,57 @@ function ImageRow({ image: img, sandboxAvailable }: { image: CachedImage; sandbo
 	);
 }
 
-function RemoteBackendsSection(): VNode {
+function ImagesPage(): VNode {
+	useEffect(() => {
+		fetchImages();
+		fetchContainers();
+		fetchDiskUsage();
+		fetchSharedHomeConfig();
+		fetchRemoteBackends();
+	}, []);
+
+	return (
+		<div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+			<div className="px-4 pt-4 pb-0">
+				<h2 className="text-lg font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+					Sandboxes
+				</h2>
+				{!sandboxRuntimeAvailable() && (
+					<div className="alert-warning-text max-w-form" style={{ marginBottom: "8px" }}>
+						<span className="alert-label-warn">Warning: </span>
+						{SANDBOX_DISABLED_HINT}
+					</div>
+				)}
+			</div>
+			<TabBar
+				tabs={SANDBOX_TABS}
+				active={activeTab.value}
+				onChange={(id) => {
+					activeTab.value = id;
+				}}
+				className="flex border-b border-[var(--border)] text-xs px-4"
+			/>
+			<div className="flex-1 flex flex-col p-4 gap-4 overflow-y-auto">
+				{activeTab.value === "general" && <GeneralTabContent />}
+				{activeTab.value === "vercel" && <VercelTabContent />}
+				{activeTab.value === "daytona" && <DaytonaTabContent />}
+				{activeTab.value === "containers" && <ContainersTabContent />}
+			</div>
+		</div>
+	);
+}
+
+function GeneralTabContent(): VNode {
+	return (
+		<>
+			<SandboxBanner />
+			<DefaultImageSelector />
+			<SharedHomeSection />
+		</>
+	);
+}
+
+function VercelTabContent(): VNode {
 	const cfg = remoteConfig.value;
 
 	function saveVercel(): void {
@@ -907,149 +965,75 @@ function RemoteBackendsSection(): VNode {
 		saveRemoteBackend("vercel", config);
 	}
 
-	function saveDaytona(): void {
-		const config: Record<string, unknown> = {};
-		if (daytonaApiKey.value.trim()) config.api_key = daytonaApiKey.value.trim();
-		if (daytonaApiUrl.value.trim()) config.api_url = daytonaApiUrl.value.trim();
-		saveRemoteBackend("daytona", config);
-	}
-
 	return (
-		<div className="max-w-form" style={{ borderTop: "1px solid var(--border)", paddingTop: "16px" }}>
-			<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "4px" }}>
-				Remote sandbox backends
-			</h3>
-			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: "0 0 12px" }}>
-				Configure cloud-based sandbox backends for environments without local Docker. Remote backends create isolated
-				VMs on demand via API.
-			</p>
-
-			{/* Vercel */}
-			<div className="rounded-lg border border-[var(--border)] p-3" style={{ marginBottom: "12px" }}>
-				<div className="flex items-center gap-2" style={{ marginBottom: "8px" }}>
-					<span className="text-sm font-medium text-[var(--text-strong)]">Vercel Sandbox</span>
-					{cfg?.vercel?.configured ? (
-						<span
-							className="text-[10px] px-1.5 py-0.5 rounded-full"
-							style={{ background: "var(--success)", color: "#fff" }}
-						>
-							configured
-						</span>
-					) : (
-						<span
-							className="text-[10px] px-1.5 py-0.5 rounded-full"
-							style={{ background: "var(--muted)", color: "#fff" }}
-						>
-							not configured
-						</span>
-					)}
-				</div>
-				<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
-					Firecracker microVMs via the Vercel API. Requires a Vercel account and access token.
-				</p>
-				<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-					<input
-						type="password"
-						className="provider-key-input"
-						placeholder="Vercel token (VERCEL_TOKEN)"
-						style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-						value={vercelToken.value}
-						onInput={(e) => {
-							vercelToken.value = (e.target as HTMLInputElement).value;
-						}}
-					/>
-					<div style={{ display: "flex", gap: "6px" }}>
-						<input
-							type="text"
-							className="provider-key-input"
-							placeholder="Project ID (optional)"
-							style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-							value={vercelProjectId.value}
-							onInput={(e) => {
-								vercelProjectId.value = (e.target as HTMLInputElement).value;
-							}}
-						/>
-						<input
-							type="text"
-							className="provider-key-input"
-							placeholder="Team ID (optional)"
-							style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-							value={vercelTeamId.value}
-							onInput={(e) => {
-								vercelTeamId.value = (e.target as HTMLInputElement).value;
-							}}
-						/>
-					</div>
-					<button
-						className="provider-btn"
-						style={{ alignSelf: "flex-start" }}
-						onClick={saveVercel}
-						disabled={
-							remoteSaving.value === "vercel" ||
-							!(vercelToken.value.trim() || vercelProjectId.value.trim() || vercelTeamId.value.trim())
-						}
+		<div className="max-w-form">
+			<div className="flex items-center gap-2" style={{ marginBottom: "8px" }}>
+				<h3 className="text-sm font-medium text-[var(--text-strong)]">Vercel Sandbox</h3>
+				{cfg?.vercel?.configured ? (
+					<span
+						className="text-[10px] px-1.5 py-0.5 rounded-full"
+						style={{ background: "var(--success)", color: "#fff" }}
 					>
-						{remoteSaving.value === "vercel" ? "Saving\u2026" : "Save Vercel"}
-					</button>
-				</div>
+						configured
+					</span>
+				) : (
+					<span
+						className="text-[10px] px-1.5 py-0.5 rounded-full"
+						style={{ background: "var(--muted)", color: "#fff" }}
+					>
+						not configured
+					</span>
+				)}
 			</div>
-
-			{/* Daytona */}
-			<div className="rounded-lg border border-[var(--border)] p-3">
-				<div className="flex items-center gap-2" style={{ marginBottom: "8px" }}>
-					<span className="text-sm font-medium text-[var(--text-strong)]">Daytona</span>
-					{cfg?.daytona?.configured ? (
-						<span
-							className="text-[10px] px-1.5 py-0.5 rounded-full"
-							style={{ background: "var(--success)", color: "#fff" }}
-						>
-							configured
-						</span>
-					) : (
-						<span
-							className="text-[10px] px-1.5 py-0.5 rounded-full"
-							style={{ background: "var(--muted)", color: "#fff" }}
-						>
-							not configured
-						</span>
-					)}
-				</div>
-				<p className="text-xs text-[var(--muted)]" style={{ margin: "0 0 8px" }}>
-					Open-source cloud sandboxes. Self-hostable or use the managed Daytona service.
-				</p>
-				<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: "0 0 12px" }}>
+				Firecracker microVMs via the Vercel API. Each session gets an ephemeral isolated VM with millisecond boot times.
+			</p>
+			<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+				<input
+					type="password"
+					className="provider-key-input"
+					placeholder="Vercel token (VERCEL_TOKEN)"
+					style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
+					value={vercelToken.value}
+					onInput={(e) => {
+						vercelToken.value = (e.target as HTMLInputElement).value;
+					}}
+				/>
+				<div style={{ display: "flex", gap: "6px" }}>
 					<input
-						type="password"
+						type="text"
 						className="provider-key-input"
-						placeholder="Daytona API key (DAYTONA_API_KEY)"
-						style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-						value={daytonaApiKey.value}
+						placeholder="Project ID (optional)"
+						style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
+						value={vercelProjectId.value}
 						onInput={(e) => {
-							daytonaApiKey.value = (e.target as HTMLInputElement).value;
+							vercelProjectId.value = (e.target as HTMLInputElement).value;
 						}}
 					/>
 					<input
 						type="text"
 						className="provider-key-input"
-						placeholder="API URL (default: https://app.daytona.io/api)"
-						style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-						value={daytonaApiUrl.value}
+						placeholder="Team ID (optional)"
+						style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
+						value={vercelTeamId.value}
 						onInput={(e) => {
-							daytonaApiUrl.value = (e.target as HTMLInputElement).value;
+							vercelTeamId.value = (e.target as HTMLInputElement).value;
 						}}
 					/>
-					<button
-						className="provider-btn"
-						style={{ alignSelf: "flex-start" }}
-						onClick={saveDaytona}
-						disabled={remoteSaving.value === "daytona" || !daytonaApiKey.value.trim()}
-					>
-						{remoteSaving.value === "daytona" ? "Saving\u2026" : "Save Daytona"}
-					</button>
 				</div>
+				<button
+					className="provider-btn"
+					style={{ alignSelf: "flex-start" }}
+					onClick={saveVercel}
+					disabled={
+						remoteSaving.value === "vercel" ||
+						!(vercelToken.value.trim() || vercelProjectId.value.trim() || vercelTeamId.value.trim())
+					}
+				>
+					{remoteSaving.value === "vercel" ? "Saving\u2026" : "Save"}
+				</button>
 			</div>
-
-			{remoteMsg.value && (
+			{remoteMsg.value && remoteMsg.value.includes("vercel") && (
 				<div className="text-xs" style={{ marginTop: "8px", color: "var(--success)" }}>
 					{remoteMsg.value}
 				</div>
@@ -1063,27 +1047,90 @@ function RemoteBackendsSection(): VNode {
 	);
 }
 
-function ImagesPage(): VNode {
-	useEffect(() => {
-		fetchImages();
-		fetchContainers();
-		fetchDiskUsage();
-		fetchSharedHomeConfig();
-		fetchRemoteBackends();
-	}, []);
+function DaytonaTabContent(): VNode {
+	const cfg = remoteConfig.value;
 
+	function saveDaytona(): void {
+		const config: Record<string, unknown> = {};
+		if (daytonaApiKey.value.trim()) config.api_key = daytonaApiKey.value.trim();
+		if (daytonaApiUrl.value.trim()) config.api_url = daytonaApiUrl.value.trim();
+		saveRemoteBackend("daytona", config);
+	}
+
+	return (
+		<div className="max-w-form">
+			<div className="flex items-center gap-2" style={{ marginBottom: "8px" }}>
+				<h3 className="text-sm font-medium text-[var(--text-strong)]">Daytona</h3>
+				{cfg?.daytona?.configured ? (
+					<span
+						className="text-[10px] px-1.5 py-0.5 rounded-full"
+						style={{ background: "var(--success)", color: "#fff" }}
+					>
+						configured
+					</span>
+				) : (
+					<span
+						className="text-[10px] px-1.5 py-0.5 rounded-full"
+						style={{ background: "var(--muted)", color: "#fff" }}
+					>
+						not configured
+					</span>
+				)}
+			</div>
+			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: "0 0 12px" }}>
+				Open-source cloud sandboxes. Self-hostable on your own infrastructure (Proxmox, bare-metal) or use the managed
+				Daytona service.
+			</p>
+			<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+				<input
+					type="password"
+					className="provider-key-input"
+					placeholder="Daytona API key (DAYTONA_API_KEY)"
+					style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
+					value={daytonaApiKey.value}
+					onInput={(e) => {
+						daytonaApiKey.value = (e.target as HTMLInputElement).value;
+					}}
+				/>
+				<input
+					type="text"
+					className="provider-key-input"
+					placeholder="API URL (default: https://app.daytona.io/api)"
+					style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
+					value={daytonaApiUrl.value}
+					onInput={(e) => {
+						daytonaApiUrl.value = (e.target as HTMLInputElement).value;
+					}}
+				/>
+				<button
+					className="provider-btn"
+					style={{ alignSelf: "flex-start" }}
+					onClick={saveDaytona}
+					disabled={remoteSaving.value === "daytona" || !daytonaApiKey.value.trim()}
+				>
+					{remoteSaving.value === "daytona" ? "Saving\u2026" : "Save"}
+				</button>
+			</div>
+			{remoteMsg.value && remoteMsg.value.includes("daytona") && (
+				<div className="text-xs" style={{ marginTop: "8px", color: "var(--success)" }}>
+					{remoteMsg.value}
+				</div>
+			)}
+			{remoteErr.value && (
+				<div className="alert-error-text" style={{ marginTop: "8px" }}>
+					{remoteErr.value}
+				</div>
+			)}
+		</div>
+	);
+}
+
+function ContainersTabContent(): VNode {
 	const sbInfo = sandboxInfo.value as SandboxInfoValue | null;
 
 	return (
-		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
-			{!sandboxRuntimeAvailable() && (
-				<div className="alert-warning-text max-w-form">
-					<span className="alert-label-warn">Warning: </span>
-					{SANDBOX_DISABLED_HINT}
-				</div>
-			)}
+		<>
 			<div className="flex items-center gap-3">
-				<h2 className="text-lg font-medium text-[var(--text-strong)]">Sandboxes</h2>
 				<button
 					className="text-xs text-[var(--muted)] border border-[var(--border)] px-2.5 py-1 rounded-md hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent"
 					onClick={pruneAll}
@@ -1093,25 +1140,13 @@ function ImagesPage(): VNode {
 					{pruning.value ? "Pruning\u2026" : "Prune all"}
 				</button>
 			</div>
-			<p className="text-sm text-[var(--muted)] leading-relaxed max-w-form" style={{ margin: 0 }}>
-				Container images cached by moltis for sandbox execution. You can delete individual images or prune all. Build
-				custom images from a base with apt packages.
-				{sbInfo?.backend === "apple-container" && (
-					<>
-						<br />
-						<br />
-						Apple Container provides VM-isolated execution but does not support building images. Docker (or OrbStack) is
-						required alongside Apple Container to build and cache custom images. Sandboxed commands run via Apple
-						Container; image builds use Docker.
-					</>
-				)}
-			</p>
-
-			<SandboxBanner />
+			{sbInfo?.backend === "apple-container" && (
+				<p className="text-xs text-[var(--muted)] leading-relaxed max-w-form" style={{ margin: 0 }}>
+					Apple Container provides VM-isolated execution but does not support building images. Docker (or OrbStack) is
+					required alongside Apple Container to build and cache custom images.
+				</p>
+			)}
 			<RunningContainersSection />
-			<DefaultImageSelector />
-			<SharedHomeSection />
-			<RemoteBackendsSection />
 
 			{/* Cached images list */}
 			<div className="max-w-form">
@@ -1211,7 +1246,7 @@ function ImagesPage(): VNode {
 						</div>
 					))}
 			</div>
-		</div>
+		</>
 	);
 }
 
@@ -1235,6 +1270,7 @@ export function initImages(container: HTMLElement): void {
 	sharedHomeSaving.value = false;
 	sharedHomeMsg.value = "";
 	sharedHomeErr.value = "";
+	activeTab.value = "general";
 	remoteConfig.value = null;
 	remoteLoading.value = false;
 	remoteSaving.value = "";
