@@ -779,6 +779,7 @@ fn debian_to_amzn_package(debian_name: &str) -> Option<&str> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
