@@ -15,3 +15,4 @@ export const chatAddMsgWithImages = (...args) => M.chatAddMsgWithImages?.(...arg
 export const updateTokenBar = (...args) => M.updateTokenBar?.(...args);
 export const renderApprovalCard = (...args) => M.renderApprovalCard?.(...args);
 export const updateCommandInputUI = (...args) => M.updateCommandInputUI?.(...args);
+export const smartScrollToBottom = (...args) => M.smartScrollToBottom?.(...args);

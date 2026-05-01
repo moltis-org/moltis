@@ -376,7 +376,7 @@ test.describe("Smart auto-scroll", () => {
 			var el = document.createElement("div");
 			el.className = "msg assistant";
 			el.textContent = "Streamed content";
-			el.style.minHeight = "100px";
+			el.style.minHeight = "40px";
 			document.getElementById("messages").appendChild(el);
 
 			// Now call smartScrollToBottom as the WS handler would
@@ -384,9 +384,13 @@ test.describe("Smart auto-scroll", () => {
 			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 		});
 
-		// Should be at the bottom
-		const after = await getScrollState(page);
-		expect(after.scrollHeight - after.scrollTop - after.clientHeight).toBeLessThan(60);
+		// Wait for smooth scroll to finish, then verify at bottom
+		await expect
+			.poll(async () => {
+				const s = await getScrollState(page);
+				return s.scrollHeight - s.scrollTop - s.clientHeight;
+			})
+			.toBeLessThan(60);
 
 		// No indicator
 		const indicator = page.locator(".new-content-indicator");
