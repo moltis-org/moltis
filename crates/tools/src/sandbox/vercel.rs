@@ -487,14 +487,154 @@ impl Sandbox for VercelSandbox {
         Ok(())
     }
 
-    async fn ensure_ready(&self, id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+    /// Build a Vercel snapshot with packages pre-installed.
+    ///
+    /// Creates a temporary sandbox, installs packages via dnf, takes a
+    /// snapshot, and stops the sandbox. The snapshot ID is returned as
+    /// the "tag" — future `ensure_ready()` calls create sandboxes from
+    /// this snapshot, skipping package installation entirely.
+    async fn build_image(
+        &self,
+        _base: &str,
+        packages: &[String],
+    ) -> Result<Option<super::types::BuildImageResult>> {
+        if packages.is_empty() {
+            return Ok(None);
+        }
+
+        // If a snapshot is already configured, skip building.
+        if self.vercel.snapshot_id.is_some() {
+            return Ok(None);
+        }
+
+        info!("vercel: building snapshot with packages pre-installed");
+
+        let sandbox_id = self.create_sandbox().await?;
+        self.wait_for_running(&sandbox_id).await?;
+
+        // Install packages using the Vercel-specific provisioning.
+        let mapped: Vec<&str> = packages
+            .iter()
+            .filter_map(|p| debian_to_amzn_package(p))
+            .collect();
+        if !mapped.is_empty() {
+            let pkg_list = mapped.join(" ");
+            let cmd = format!("sudo dnf install -y -q {pkg_list}");
+            let opts = ExecOpts {
+                timeout: Duration::from_secs(600),
+                ..Default::default()
+            };
+            let build_id = SandboxId {
+                scope: super::types::SandboxScope::Session,
+                key: "build-snapshot".into(),
+            };
+            // Temporarily register so exec() works.
+            self.active
+                .write()
+                .await
+                .insert(build_id.key.clone(), VercelSession {
+                    sandbox_id: sandbox_id.clone(),
+                });
+            let result = self.run_command(&sandbox_id, &cmd, &opts).await;
+            self.active.write().await.remove(&build_id.key);
+            if let Ok(r) = result
+                && r.exit_code != 0
+            {
+                warn!(
+                    exit_code = r.exit_code,
+                    "vercel: package install for snapshot failed (continuing)"
+                );
+            }
+        }
+
+        // Take a snapshot.
+        let resp = self
+            .request(
+                reqwest::Method::POST,
+                &format!("/v1/sandboxes/{sandbox_id}/snapshot"),
+            )
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .map_err(|e| Error::message(format!("vercel: snapshot request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            warn!("vercel: snapshot failed: {text}");
+            // Stop the build sandbox anyway.
+            let _ = self.stop_sandbox(&sandbox_id).await;
+            return Ok(None);
+        }
+
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| Error::message(format!("vercel: invalid snapshot response: {e}")))?;
+
+        let snapshot_id = data["snapshot"]["id"].as_str().unwrap_or("").to_string();
+
+        // Sandbox is automatically stopped after snapshot.
+        info!(snapshot_id, "vercel: snapshot created with packages");
+
+        if snapshot_id.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(super::types::BuildImageResult {
+            tag: snapshot_id,
+            built: true,
+        }))
+    }
+
+    async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
         if self.session_sandbox_id(id).await.is_some() {
             return Ok(());
         }
 
         info!(%id, runtime = self.vercel.runtime, "vercel: creating sandbox");
 
-        let sandbox_id = self.create_sandbox().await?;
+        // Use snapshot if available (from build_image() or config).
+        let effective_snapshot = image_override
+            .filter(|s| !s.is_empty())
+            .or(self.vercel.snapshot_id.as_deref());
+
+        let sandbox_id = if let Some(snap_id) = effective_snapshot {
+            // Create from snapshot — packages already installed, much faster.
+            debug!(%id, snapshot = snap_id, "vercel: creating from snapshot");
+            let mut body = serde_json::json!({
+                "source": { "type": "snapshot", "snapshotId": snap_id },
+                "runtime": self.vercel.runtime,
+                "timeout": self.vercel.timeout_ms,
+                "resources": { "vcpus": self.vercel.vcpus },
+            });
+            if let Some(ref project_id) = self.vercel.project_id {
+                body["projectId"] = serde_json::Value::String(project_id.clone());
+            }
+            let resp = self
+                .request(reqwest::Method::POST, "/v1/sandboxes")
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| Error::message(format!("vercel: failed to create sandbox: {e}")))?;
+            let status = resp.status();
+            if !status.is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                return Err(Error::message(format!(
+                    "vercel: create from snapshot failed (HTTP {status}): {text}"
+                )));
+            }
+            let data: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| Error::message(format!("vercel: invalid create response: {e}")))?;
+            data["sandbox"]["id"]
+                .as_str()
+                .map(String::from)
+                .ok_or_else(|| Error::message("vercel: missing sandbox.id in response"))?
+        } else {
+            self.create_sandbox().await?
+        };
+
         debug!(%id, vercel_id = sandbox_id, "vercel: sandbox created, waiting for running state");
 
         self.wait_for_running(&sandbox_id).await?;

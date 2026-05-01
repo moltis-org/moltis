@@ -655,9 +655,13 @@ impl AgentTool for ExecTool {
                             );
                         }
 
-                        // Provision default packages in the remote sandbox.
+                        // Provision default packages in the remote sandbox — skip if
+                        // a pre-built image/snapshot was used (packages already baked in).
+                        let has_prebuilt = image != crate::sandbox::types::DEFAULT_SANDBOX_IMAGE
+                            && !image.is_empty();
                         let packages = &router.config().packages;
-                        if !packages.is_empty()
+                        if !has_prebuilt
+                            && !packages.is_empty()
                             && let Err(e) = backend.provision_packages(&id, packages).await
                         {
                             warn!(

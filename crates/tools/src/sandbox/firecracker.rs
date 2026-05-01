@@ -20,7 +20,7 @@ use std::{
 use {
     async_trait::async_trait,
     tokio::sync::RwLock,
-    tracing::{debug, info},
+    tracing::{debug, info, warn},
 };
 
 use crate::{
@@ -390,7 +390,137 @@ impl Sandbox for FirecrackerSandbox {
         true
     }
 
-    async fn ensure_ready(&self, id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+    /// Build a pre-provisioned rootfs with packages baked in.
+    ///
+    /// Boots a temporary VM from the base rootfs, installs packages via
+    /// apt-get, shuts down, and saves the rootfs as the "built image".
+    /// Future `ensure_ready()` calls copy from this pre-built rootfs
+    /// instead of the bare one, avoiding per-session package installation.
+    async fn build_image(
+        &self,
+        _base: &str,
+        packages: &[String],
+    ) -> Result<Option<super::types::BuildImageResult>> {
+        use sha2::{Digest, Sha256};
+
+        if packages.is_empty() {
+            return Ok(None);
+        }
+
+        // Deterministic tag from package list (same as Docker image builder).
+        let mut hasher = Sha256::new();
+        for pkg in packages {
+            hasher.update(pkg.as_bytes());
+            hasher.update(b"\n");
+        }
+        let hash = format!("{:x}", hasher.finalize());
+        let tag = format!("moltis-fc-{}", &hash[..12]);
+
+        let data_dir = moltis_config::data_dir();
+        let images_dir = data_dir.join("sandbox").join("firecracker").join("images");
+        let image_path = images_dir.join(format!("{tag}.ext4"));
+
+        // Check if image already exists (cache hit).
+        if image_path.exists() {
+            info!(
+                tag,
+                "firecracker: pre-built rootfs already exists (cache hit)"
+            );
+            return Ok(Some(super::types::BuildImageResult {
+                tag: image_path.display().to_string(),
+                built: false,
+            }));
+        }
+
+        info!(
+            tag,
+            packages = packages.len(),
+            "firecracker: building pre-provisioned rootfs"
+        );
+
+        std::fs::create_dir_all(&images_dir).map_err(|e| {
+            Error::message(format!("firecracker: failed to create images dir: {e}"))
+        })?;
+
+        // Boot a temporary VM, install packages, shut down, keep the rootfs.
+        let build_id = SandboxId {
+            scope: super::types::SandboxScope::Session,
+            key: format!("build-{tag}"),
+        };
+        let temp_rootfs = images_dir.join(format!("{tag}.building.ext4"));
+        Self::copy_rootfs(&self.fc.rootfs_path, &temp_rootfs).await?;
+
+        let (host_ip, guest_ip, subnet_idx) = self.allocate_subnet();
+        let tap_name = format!("moltis-fc{subnet_idx}");
+        let api_socket = images_dir.join(format!("{tag}.sock"));
+        let _ = std::fs::remove_file(&api_socket);
+
+        Self::create_tap(&tap_name, &host_ip).await?;
+
+        let mut process = match self
+            .boot_vm(&api_socket, &temp_rootfs, &tap_name, &guest_ip, &host_ip)
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => {
+                Self::remove_tap(&tap_name).await;
+                let _ = std::fs::remove_file(&temp_rootfs);
+                return Err(e);
+            },
+        };
+
+        if let Err(e) = Self::wait_for_ssh(&guest_ip, &self.fc.ssh_key_path).await {
+            Self::remove_tap(&tap_name).await;
+            let _ = process.kill().await;
+            let _ = std::fs::remove_file(&temp_rootfs);
+            return Err(e);
+        }
+
+        // Install packages.
+        let pkg_list = packages.join(" ");
+        let install_cmd = format!(
+            "apt-get update -qq && apt-get install -y -qq --no-install-recommends {pkg_list}"
+        );
+        let opts = ExecOpts {
+            timeout: Duration::from_secs(600),
+            ..Default::default()
+        };
+        let result = Self::ssh_run(&guest_ip, &self.fc.ssh_key_path, &install_cmd, &opts).await?;
+        if result.exit_code != 0 {
+            warn!(
+                tag,
+                exit_code = result.exit_code,
+                "firecracker: package install during image build failed (continuing)"
+            );
+        }
+
+        // Graceful shutdown.
+        let _ = Self::fc_api_call(
+            &api_socket,
+            "PUT",
+            "/actions",
+            &serde_json::json!({ "action_type": "SendCtrlAltDel" }),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let _ = process.kill().await;
+        let _ = process.wait().await;
+        Self::remove_tap(&tap_name).await;
+        let _ = std::fs::remove_file(&api_socket);
+
+        // Rename to final path (atomic on same filesystem).
+        std::fs::rename(&temp_rootfs, &image_path)
+            .map_err(|e| Error::message(format!("firecracker: failed to finalize image: {e}")))?;
+
+        info!(tag, path = %image_path.display(), "firecracker: pre-built rootfs ready");
+
+        Ok(Some(super::types::BuildImageResult {
+            tag: image_path.display().to_string(),
+            built: true,
+        }))
+    }
+
+    async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
         if self.session_vm(id).await.is_some() {
             return Ok(());
         }
@@ -431,9 +561,15 @@ impl Sandbox for FirecrackerSandbox {
         let api_socket = vm_dir.join("api.sock");
         let _ = std::fs::remove_file(&api_socket);
 
-        info!(%id, tap = tap_name, guest_ip, "firecracker: booting VM");
+        // Use pre-built rootfs if available (from build_image()), otherwise base.
+        let source_rootfs = image_override
+            .map(std::path::Path::new)
+            .filter(|p| p.exists())
+            .unwrap_or(&self.fc.rootfs_path);
 
-        Self::copy_rootfs(&self.fc.rootfs_path, &rootfs_copy).await?;
+        info!(%id, tap = tap_name, guest_ip, source = %source_rootfs.display(), "firecracker: booting VM");
+
+        Self::copy_rootfs(source_rootfs, &rootfs_copy).await?;
         Self::create_tap(&tap_name, &host_ip).await?;
 
         let process = match self
