@@ -216,7 +216,7 @@ test.describe("Daytona Sandbox live integration", () => {
 		// Create a sandbox (retry on transient 5xx errors from Daytona).
 		let createResp;
 		for (let attempt = 0; attempt < 3; attempt++) {
-			createResp = await fetch(`${DAYTONA_API}/workspace`, {
+			createResp = await fetch(`${DAYTONA_API}/sandbox`, {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${DAYTONA_API_KEY}`,
@@ -238,7 +238,7 @@ test.describe("Daytona Sandbox live integration", () => {
 		const execDeadline = Date.now() + 60000;
 		let execResp;
 		while (Date.now() < execDeadline) {
-			execResp = await fetch(`${DAYTONA_API}/workspace/${sandboxId}/toolbox/process/execute`, {
+			execResp = await fetch(`${DAYTONA_API}/toolbox/${sandboxId}/toolbox/process/execute`, {
 				method: "POST",
 				headers: {
 					Authorization: `Bearer ${DAYTONA_API_KEY}`,

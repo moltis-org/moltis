@@ -115,7 +115,7 @@ impl DaytonaSandbox {
         }
 
         let resp = self
-            .request(reqwest::Method::POST, "/workspace")
+            .request(reqwest::Method::POST, "/sandbox")
             .timeout(Duration::from_secs(120))
             .json(&body)
             .send()
@@ -177,7 +177,7 @@ impl DaytonaSandbox {
         let resp = self
             .request(
                 reqwest::Method::POST,
-                &format!("/workspace/{sandbox_id}/toolbox/process/execute"),
+                &format!("/toolbox/{sandbox_id}/toolbox/process/execute"),
             )
             .timeout(opts.timeout + Duration::from_secs(10))
             .json(&body)
@@ -211,7 +211,7 @@ impl DaytonaSandbox {
         if let Ok(resp) = self
             .request(
                 reqwest::Method::POST,
-                &format!("/workspace/{sandbox_id}/toolbox/process/execute"),
+                &format!("/toolbox/{sandbox_id}/toolbox/process/execute"),
             )
             .timeout(Duration::from_secs(10))
             .json(&stderr_body)
@@ -249,7 +249,7 @@ impl DaytonaSandbox {
         let resp = self
             .request(
                 reqwest::Method::POST,
-                &format!("/workspace/{sandbox_id}/toolbox/files/upload"),
+                &format!("/toolbox/{sandbox_id}/toolbox/files/upload"),
             )
             .query(&[("path", path)])
             .multipart(form)
@@ -272,7 +272,7 @@ impl DaytonaSandbox {
         let resp = self
             .request(
                 reqwest::Method::GET,
-                &format!("/workspace/{sandbox_id}/toolbox/files/download"),
+                &format!("/toolbox/{sandbox_id}/toolbox/files/download"),
             )
             .query(&[("path", path)])
             .send()
@@ -301,7 +301,7 @@ impl DaytonaSandbox {
     /// Delete a sandbox.
     async fn delete_sandbox(&self, sandbox_id: &str) -> Result<()> {
         let resp = self
-            .request(reqwest::Method::DELETE, &format!("/workspace/{sandbox_id}"))
+            .request(reqwest::Method::DELETE, &format!("/sandbox/{sandbox_id}"))
             .send()
             .await
             .map_err(|e| Error::message(format!("daytona: delete request failed: {e}")))?;
