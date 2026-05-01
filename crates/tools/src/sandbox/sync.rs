@@ -66,7 +66,7 @@ pub async fn sync_in(
     backend.write_file(id, tar_path, &tar_bytes).await?;
 
     let cmd = format!(
-        "mkdir -p {sandbox_workspace} && tar -xzf {tar_path} -C {sandbox_workspace} && rm -f {tar_path}"
+        "mkdir -p '{sandbox_workspace}' && tar -xzf {tar_path} -C '{sandbox_workspace}' && rm -f {tar_path}"
     );
     let opts = ExecOpts {
         timeout: std::time::Duration::from_secs(120),
@@ -102,7 +102,7 @@ pub async fn sync_out(
 
     // Check if sandbox workspace has content.
     let check_cmd = format!(
-        "if [ -d {sandbox_workspace} ] && [ \"$(ls -A {sandbox_workspace} 2>/dev/null)\" ]; then echo non-empty; fi"
+        "if [ -d '{sandbox_workspace}' ] && [ \"$(ls -A '{sandbox_workspace}' 2>/dev/null)\" ]; then echo non-empty; fi"
     );
     let check = backend.exec(id, &check_cmd, &opts).await?;
     if !check.stdout.contains("non-empty") {
@@ -119,7 +119,7 @@ pub async fn sync_out(
 
     // Create tarball in sandbox.
     let tar_path = "/tmp/moltis-sync-out.tar.gz";
-    let tar_cmd = format!("tar -czf {tar_path} -C {sandbox_workspace} .");
+    let tar_cmd = format!("tar -czf {tar_path} -C '{sandbox_workspace}' .");
     let tar_result = backend.exec(id, &tar_cmd, &opts).await?;
     if tar_result.exit_code != 0 {
         return Err(Error::message(format!(
