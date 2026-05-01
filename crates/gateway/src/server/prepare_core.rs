@@ -33,7 +33,7 @@ use {
     secrecy::{ExposeSecret, Secret},
     std::{
         path::PathBuf,
-        sync::{Arc, atomic::Ordering},
+        sync::Arc,
     },
     tracing::{debug, info, warn},
 };
