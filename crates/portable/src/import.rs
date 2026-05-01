@@ -14,6 +14,15 @@ use {
 
 use crate::manifest::{ExportManifest, FORMAT_VERSION};
 
+/// Drop guard that removes a temporary file when it goes out of scope.
+struct TempFileGuard(std::path::PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// How to handle conflicts with existing data.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -342,16 +351,19 @@ async fn merge_moltis_db(
         return Ok(vec![("(full copy)".into(), 1)]);
     }
 
-    // Write imported data to a temporary file.
+    // Write imported data to a temporary file, with a drop guard so it is
+    // cleaned up even if an error occurs during the merge sequence.
     let import_path = data_dir.join("moltis.db.import-tmp");
     std::fs::write(&import_path, imported_data)?;
+    let _guard = TempFileGuard(import_path.clone());
 
     let db_url = format!("sqlite:{}?mode=rwc", live_db.display());
     let pool = sqlx::SqlitePool::connect(&db_url).await?;
 
     // Attach the imported database.
     let import_path_str = import_path.display().to_string();
-    sqlx::query(&format!("ATTACH DATABASE '{import_path_str}' AS import_db"))
+    let escaped = import_path_str.replace('\'', "''");
+    sqlx::query(&format!("ATTACH DATABASE '{escaped}' AS import_db"))
         .execute(&pool)
         .await?;
 
@@ -404,7 +416,7 @@ async fn merge_moltis_db(
         .await?;
     pool.close().await;
 
-    let _ = std::fs::remove_file(&import_path);
+    // _guard drops here, removing the temp file.
     Ok(counts)
 }
 

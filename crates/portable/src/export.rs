@@ -15,6 +15,16 @@ use {
 
 use crate::manifest::{ArchiveInventory, ExportManifest, FORMAT_VERSION};
 
+/// Drop guard that removes a temporary file when it goes out of scope,
+/// ensuring cleanup even on early `?` returns.
+struct TempFileGuard(PathBuf);
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Options controlling what gets included in the export.
 #[derive(Debug, Clone)]
 pub struct ExportOptions {
@@ -119,9 +129,9 @@ pub async fn export_archive<W: Write>(
     let moltis_db = data_dir.join("moltis.db");
     if moltis_db.exists() {
         let snapshot = vacuum_snapshot(&moltis_db).await?;
+        let _guard = TempFileGuard(snapshot.clone());
         strip_auth_tables(&snapshot).await?;
         add_file_to_tar(&mut builder, &snapshot, &format!("{prefix}/db/moltis.db"))?;
-        let _ = std::fs::remove_file(&snapshot);
         inventory.has_moltis_db = true;
         info!("exported moltis.db snapshot");
     }
@@ -129,8 +139,8 @@ pub async fn export_archive<W: Write>(
     let memory_db = data_dir.join("memory.db");
     if memory_db.exists() {
         let snapshot = vacuum_snapshot(&memory_db).await?;
+        let _guard = TempFileGuard(snapshot.clone());
         add_file_to_tar(&mut builder, &snapshot, &format!("{prefix}/db/memory.db"))?;
-        let _ = std::fs::remove_file(&snapshot);
         inventory.has_memory_db = true;
         info!("exported memory.db snapshot");
     }
@@ -283,7 +293,8 @@ async fn vacuum_snapshot(db_path: &Path) -> anyhow::Result<PathBuf> {
     let pool = sqlx::SqlitePool::connect(&db_url).await?;
 
     let snapshot_str = snapshot_path.display().to_string();
-    sqlx::query(&format!("VACUUM INTO '{snapshot_str}'"))
+    let escaped = snapshot_str.replace('\'', "''");
+    sqlx::query(&format!("VACUUM INTO '{escaped}'"))
         .execute(&pool)
         .await?;
     pool.close().await;

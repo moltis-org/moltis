@@ -15,6 +15,7 @@ use {
     },
     moltis_portable::{ConflictStrategy, ExportOptions, ImportOptions},
     serde::Deserialize,
+    tokio_util::io::ReaderStream,
     tracing::warn,
 };
 
@@ -56,6 +57,10 @@ pub fn data_router() -> Router<AppState> {
 }
 
 /// `GET /api/data/export`
+///
+/// Writes the archive to a temporary file, then streams it to the client.
+/// This avoids buffering the entire archive in memory while still allowing
+/// the synchronous `tar`/`flate2` writers to work naturally.
 async fn export_handler(Query(query): Query<ExportQuery>) -> impl IntoResponse {
     let config_dir = match moltis_config::config_dir() {
         Some(d) => d,
@@ -74,37 +79,80 @@ async fn export_handler(Query(query): Query<ExportQuery>) -> impl IntoResponse {
         include_media: query.include_media,
     };
 
-    let mut buf = Vec::new();
-    match moltis_portable::export_archive(&config_dir, &data_dir, &opts, &mut buf).await {
-        Ok(_manifest) => {
-            let now = time::OffsetDateTime::now_utc();
-            let filename = format!(
-                "moltis-backup-{:04}{:02}{:02}-{:02}{:02}{:02}.tar.gz",
-                now.year(),
-                now.month() as u8,
-                now.day(),
-                now.hour(),
-                now.minute(),
-                now.second(),
-            );
-            let headers = [
-                (header::CONTENT_TYPE, "application/gzip".to_owned()),
-                (
-                    header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"{filename}\""),
-                ),
-            ];
-            (headers, buf).into_response()
-        },
+    // Write to a temp file so we don't buffer the full archive in memory.
+    let tmp_file = match tempfile::NamedTempFile::new() {
+        Ok(f) => f,
         Err(e) => {
+            warn!(error = %e, "failed to create temp file for export");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"ok": false, "error": "failed to create temp file"})),
+            )
+                .into_response();
+        },
+    };
+
+    let tmp_path = tmp_file.path().to_path_buf();
+    {
+        let file = match std::fs::File::create(&tmp_path) {
+            Ok(f) => f,
+            Err(e) => {
+                warn!(error = %e, "failed to open temp file for export");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"ok": false, "error": "failed to open temp file"})),
+                )
+                    .into_response();
+            },
+        };
+
+        if let Err(e) = moltis_portable::export_archive(&config_dir, &data_dir, &opts, file).await {
             warn!(error = %e, "data export failed");
-            (
+            return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({"ok": false, "error": e.to_string()})),
             )
-                .into_response()
-        },
+                .into_response();
+        }
     }
+
+    // Stream the temp file to the client.
+    let async_file = match tokio::fs::File::open(&tmp_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            warn!(error = %e, "failed to reopen temp file for streaming");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"ok": false, "error": "failed to read export"})),
+            )
+                .into_response();
+        },
+    };
+
+    // Keep the NamedTempFile alive so it isn't deleted until streaming completes.
+    // The file will be cleaned up when `tmp_file` is dropped after the response.
+    let stream = ReaderStream::new(tokio::io::BufReader::new(async_file));
+    let body = axum::body::Body::from_stream(stream);
+
+    let now = time::OffsetDateTime::now_utc();
+    let filename = format!(
+        "moltis-backup-{:04}{:02}{:02}-{:02}{:02}{:02}.tar.gz",
+        now.year(),
+        now.month() as u8,
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+    );
+
+    let headers = [
+        (header::CONTENT_TYPE, "application/gzip".to_owned()),
+        (
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        ),
+    ];
+    (headers, body).into_response()
 }
 
 /// `POST /api/data/import`
@@ -148,7 +196,8 @@ async fn run_import(query: ImportQuery, body: Bytes, dry_run: bool) -> impl Into
 
     let opts = ImportOptions { conflict, dry_run };
 
-    let reader = std::io::Cursor::new(body.to_vec());
+    // Cursor<Bytes> implements Read without copying the data.
+    let reader = std::io::Cursor::new(body);
     match moltis_portable::import_archive(&config_dir, &data_dir, &opts, reader).await {
         Ok(result) => Json(serde_json::json!({
             "ok": true,
