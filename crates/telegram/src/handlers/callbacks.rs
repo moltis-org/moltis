@@ -357,7 +357,7 @@ pub(super) async fn handle_callback_query(
         None
     } else {
         if let Some(ref bot) = bot {
-            let _ = bot.answer_callback_query(&query.id).await;
+            let _ = bot.answer_callback_query(query.id.clone()).await;
         }
         return Ok(());
     };
@@ -399,7 +399,7 @@ pub(super) async fn handle_callback_query(
 
     if let Some(provider_name) = data.strip_prefix("model_provider:") {
         if let Some(ref bot) = bot {
-            let _ = bot.answer_callback_query(&query.id).await;
+            let _ = bot.answer_callback_query(query.id.clone()).await;
         }
         if let Some(ref sink) = event_sink {
             let cmd = format!("model provider:{provider_name}");
@@ -439,7 +439,10 @@ pub(super) async fn handle_callback_query(
         };
 
         if let Some(ref bot) = bot {
-            let _ = bot.answer_callback_query(&query.id).text(&response).await;
+            let _ = bot
+                .answer_callback_query(query.id.clone())
+                .text(&response)
+                .await;
         }
 
         if let Err(e) = outbound
@@ -449,7 +452,7 @@ pub(super) async fn handle_callback_query(
             warn!(account_id, "failed to send callback response: {e}");
         }
     } else if let Some(ref bot) = bot {
-        let _ = bot.answer_callback_query(&query.id).await;
+        let _ = bot.answer_callback_query(query.id.clone()).await;
     }
 
     Ok(())

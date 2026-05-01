@@ -71,7 +71,6 @@ pub struct HandlerContext {
 /// Build the teloxide update handler.
 pub fn build_handler() -> Handler<
     'static,
-    DependencyMap,
     Result<(), Box<dyn std::error::Error + Send + Sync>>,
     teloxide::dispatching::DpHandlerDescription,
 > {
@@ -895,7 +894,7 @@ pub async fn handle_callback_query(
         Some(format!("{cmd_part} {val}"))
     } else {
         if let Some(ref bot) = bot {
-            let _ = bot.answer_callback_query(&query.id).await;
+            let _ = bot.answer_callback_query(query.id.clone()).await;
         }
         return Ok(());
     };
@@ -938,7 +937,7 @@ pub async fn handle_callback_query(
     // Provider selection → fetch models for that provider and show a new keyboard.
     if let Some(provider_name) = data.strip_prefix("model_provider:") {
         if let Some(ref bot) = bot {
-            let _ = bot.answer_callback_query(&query.id).await;
+            let _ = bot.answer_callback_query(query.id.clone()).await;
         }
         if let Some(ref sink) = event_sink {
             let cmd = format!("model provider:{provider_name}");
@@ -979,7 +978,10 @@ pub async fn handle_callback_query(
 
         // Answer callback query with the response text (shows as toast).
         if let Some(ref bot) = bot {
-            let _ = bot.answer_callback_query(&query.id).text(&response).await;
+            let _ = bot
+                .answer_callback_query(query.id.clone())
+                .text(&response)
+                .await;
         }
 
         // Also send as a regular message for visibility.
@@ -990,7 +992,7 @@ pub async fn handle_callback_query(
             warn!(account_id, "failed to send callback response: {e}");
         }
     } else if let Some(ref bot) = bot {
-        let _ = bot.answer_callback_query(&query.id).await;
+        let _ = bot.answer_callback_query(query.id.clone()).await;
     }
 
     Ok(())

@@ -238,7 +238,7 @@ sha2               = "0.10"
 slack-morphism     = { features = ["axum", "hyper"], version = "2.20" }
 sled               = "0.34"
 sysinfo            = "0.34"
-teloxide           = { features = ["macros"], version = "0.13" }
+teloxide           = { features = ["macros"], version = "0.17" }
 # WhatsApp (sqlite-storage disabled to avoid libsqlite3-sys conflict with sqlx;
 # re-enable once sqlx 0.9 stabilises).
 wacore                         = { default-features = false, version = "0.5" }
