@@ -26,7 +26,8 @@ pub fn build_commands() -> Vec<CreateCommand> {
             let mut cmd = CreateCommand::new(c.name).description(c.description);
             if let Some(arg) = &c.arg {
                 let mut opt =
-                    CreateCommandOption::new(CommandOptionType::String, arg.name, arg.description);
+                    CreateCommandOption::new(CommandOptionType::String, arg.name, arg.description)
+                        .required(arg.required);
                 for &(label, value) in arg.choices {
                     opt = opt.add_string_choice(label, value);
                 }

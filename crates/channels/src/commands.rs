@@ -19,6 +19,11 @@ pub struct CommandArg {
     /// Platforms like Discord render these as a dropdown. An empty slice means
     /// free-form input.
     pub choices: &'static [(&'static str, &'static str)],
+    /// Whether the argument must be provided.
+    ///
+    /// When `true`, platforms like Discord enforce the argument at the UI level
+    /// and won't allow bare invocation.
+    pub required: bool,
 }
 
 /// A channel command definition.
@@ -52,6 +57,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "id",
                 description: "Session ID to switch to",
                 choices: &[],
+                required: false,
             }),
         },
         CommandDef {
@@ -61,6 +67,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "id",
                 description: "Session ID to attach",
                 choices: &[],
+                required: true,
             }),
         },
         CommandDef {
@@ -70,6 +77,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "title",
                 description: "Optional title for the fork",
                 choices: &[],
+                required: false,
             }),
         },
         CommandDef {
@@ -105,6 +113,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "id",
                 description: "Approval ID",
                 choices: &[],
+                required: true,
             }),
         },
         CommandDef {
@@ -114,6 +123,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "id",
                 description: "Approval ID",
                 choices: &[],
+                required: true,
             }),
         },
         CommandDef {
@@ -123,6 +133,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "name",
                 description: "Agent name",
                 choices: &[],
+                required: false,
             }),
         },
         CommandDef {
@@ -132,6 +143,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "mode",
                 description: "Mode number or name",
                 choices: &[],
+                required: false,
             }),
         },
         CommandDef {
@@ -141,6 +153,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "model",
                 description: "Model name or provider:model",
                 choices: &[],
+                required: false,
             }),
         },
         CommandDef {
@@ -150,6 +163,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "action",
                 description: "Sandbox action",
                 choices: &[("Toggle", "toggle"), ("On", "on"), ("Off", "off")],
+                required: false,
             }),
         },
         CommandDef {
@@ -164,6 +178,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                     ("Exit", "exit"),
                     ("Status", "status"),
                 ],
+                required: false,
             }),
         },
         CommandDef {
@@ -183,6 +198,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "version",
                 description: "Version to update to",
                 choices: &[],
+                required: false,
             }),
         },
         CommandDef {
@@ -192,6 +208,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "id",
                 description: "Checkpoint ID to restore",
                 choices: &[],
+                required: false,
             }),
         },
         // Quick actions
@@ -202,6 +219,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "question",
                 description: "Your question",
                 choices: &[],
+                required: true,
             }),
         },
         CommandDef {
@@ -211,6 +229,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "toggle",
                 description: "Enable or disable",
                 choices: &[("On", "on"), ("Off", "off")],
+                required: false,
             }),
         },
         CommandDef {
@@ -220,6 +239,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "scope",
                 description: "Scope or filter",
                 choices: &[],
+                required: false,
             }),
         },
         CommandDef {
@@ -229,6 +249,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "guidance",
                 description: "Guidance text",
                 choices: &[],
+                required: true,
             }),
         },
         CommandDef {
@@ -238,6 +259,7 @@ pub fn all_commands() -> &'static [CommandDef] {
                 name: "message",
                 description: "Message to queue",
                 choices: &[],
+                required: true,
             }),
         },
         // Meta
