@@ -69,6 +69,7 @@ pub fn inspect_archive<R: Read>(reader: R) -> anyhow::Result<ExportManifest> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

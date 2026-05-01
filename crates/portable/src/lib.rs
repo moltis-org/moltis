@@ -14,6 +14,7 @@ pub use {
 };
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod integration_tests {
     use {super::*, std::io::Cursor};
 

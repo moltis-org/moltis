@@ -231,6 +231,7 @@ async fn respond_ephemeral(ctx: &Context, command: &CommandInteraction, text: &s
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -409,7 +410,7 @@ mod tests {
                     }
                 }
             } else {
-                let is_empty = options.map_or(true, |o| o.is_empty());
+                let is_empty = options.is_none_or(|o| o.is_empty());
                 assert!(
                     is_empty,
                     "command /{} has no arg but has Discord options",

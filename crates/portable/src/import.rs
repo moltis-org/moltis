@@ -442,6 +442,7 @@ async fn apply_memory_db(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
