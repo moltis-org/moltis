@@ -635,18 +635,17 @@ impl AgentTool for ExecTool {
                         image: image.clone(),
                     });
 
-                    // Sync workspace for isolated backends on first run.
-                    if backend.is_isolated()
-                        && let Some(host_workspace) =
+                    // Sync workspace and provision packages for isolated backends on first run.
+                    if backend.is_isolated() {
+                        if let Some(host_workspace) =
                             crate::sandbox::sync::resolve_sync_workspace(router.config(), &id)
-                    {
-                        if let Err(e) = crate::sandbox::sync::sync_in(
-                            &*backend,
-                            &id,
-                            &host_workspace,
-                            backend.workspace_dir(),
-                        )
-                        .await
+                            && let Err(e) = crate::sandbox::sync::sync_in(
+                                &*backend,
+                                &id,
+                                &host_workspace,
+                                backend.workspace_dir(),
+                            )
+                            .await
                         {
                             warn!(
                                 session = sk,
@@ -655,6 +654,20 @@ impl AgentTool for ExecTool {
                                 "workspace sync-in failed, sandbox starts with empty workspace"
                             );
                         }
+
+                        // Provision default packages in the remote sandbox.
+                        let packages = &router.config().packages;
+                        if !packages.is_empty()
+                            && let Err(e) = backend.provision_packages(&id, packages).await
+                        {
+                            warn!(
+                                session = sk,
+                                sandbox_id = %id,
+                                error = %e,
+                                "package provisioning failed (non-fatal)"
+                            );
+                        }
+
                         router.mark_synced(sk).await;
                     }
                 } else if backend.is_isolated() && !router.is_synced(sk).await {

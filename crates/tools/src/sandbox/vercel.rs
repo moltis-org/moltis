@@ -456,6 +456,37 @@ impl Sandbox for VercelSandbox {
         "/vercel/sandbox"
     }
 
+    /// Vercel sandboxes run Amazon Linux 2023 which uses `dnf`, not `apt-get`.
+    async fn provision_packages(&self, id: &SandboxId, packages: &[String]) -> Result<()> {
+        if packages.is_empty() {
+            return Ok(());
+        }
+        // Map common Debian package names to Amazon Linux equivalents.
+        let mapped: Vec<&str> = packages
+            .iter()
+            .filter_map(|p| debian_to_amzn_package(p))
+            .collect();
+        if mapped.is_empty() {
+            return Ok(());
+        }
+        let pkg_list = mapped.join(" ");
+        let cmd = format!("sudo dnf install -y -q {pkg_list}");
+        let opts = ExecOpts {
+            timeout: Duration::from_secs(600),
+            ..Default::default()
+        };
+        let result = self.exec(id, &cmd, &opts).await?;
+        if result.exit_code != 0 {
+            tracing::warn!(
+                %id,
+                exit_code = result.exit_code,
+                stderr = result.stderr.trim(),
+                "vercel: package provisioning failed (non-fatal)"
+            );
+        }
+        Ok(())
+    }
+
     async fn ensure_ready(&self, id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
         if self.session_sandbox_id(id).await.is_some() {
             return Ok(());
@@ -537,6 +568,73 @@ impl Sandbox for VercelSandbox {
             }
         }
         Ok(())
+    }
+}
+
+/// Map a Debian/Ubuntu package name to its Amazon Linux 2023 equivalent.
+/// Returns `None` for packages that have no equivalent or are unavailable.
+fn debian_to_amzn_package(debian_name: &str) -> Option<&str> {
+    // Direct matches (same name on both distros).
+    const DIRECT: &[&str] = &[
+        "curl",
+        "wget",
+        "git",
+        "jq",
+        "rsync",
+        "tar",
+        "zip",
+        "unzip",
+        "bzip2",
+        "xz",
+        "zstd",
+        "lz4",
+        "cmake",
+        "autoconf",
+        "automake",
+        "libtool",
+        "make",
+        "gcc",
+        "gcc-c++",
+        "clang",
+        "tmux",
+        "sqlite",
+        "vim",
+        "ImageMagick",
+        "ffmpeg",
+        "pandoc",
+        "gnupg2",
+    ];
+
+    // Debian → Amazon Linux name mappings.
+    match debian_name {
+        // Direct matches
+        p if DIRECT.contains(&p) => Some(p),
+        // Common renames
+        "build-essential" => Some("gcc gcc-c++ make"),
+        "ca-certificates" => Some("ca-certificates"),
+        "python3" | "python3-dev" => Some("python3"),
+        "python3-pip" => Some("python3-pip"),
+        "python3-venv" => Some("python3"),
+        "python-is-python3" => None, // not needed on AL2023
+        "nodejs" => None,            // already available on Vercel's node runtime
+        "ruby" | "ruby-dev" => Some("ruby"),
+        "golang-go" => Some("golang"),
+        "default-jdk" => Some("java-17-amazon-corretto-devel"),
+        "openssh-client" => Some("openssh-clients"),
+        "iproute2" => Some("iproute"),
+        "net-tools" => Some("net-tools"),
+        "imagemagick" => Some("ImageMagick"),
+        "graphicsmagick" => Some("GraphicsMagick"),
+        "sqlite3" => Some("sqlite"),
+        "postgresql-client" => Some("postgresql15"),
+        "shellcheck" => Some("ShellCheck"),
+        "p7zip" | "p7zip-full" => Some("p7zip"),
+        // Skip packages that don't exist on Amazon Linux
+        "dnsutils" | "netcat-openbsd" | "csvtool" | "datamash" | "miller" | "antiword" | "khal"
+        | "vdirsyncer" | "isync" | "notmuch" | "aerc" | "mutt" | "neomutt" | "php-cli"
+        | "php-mbstring" | "php-xml" | "php-curl" | "perl" | "maven" | "ninja-build" => None,
+        // For anything else, try the name directly (dnf will skip unknown ones)
+        _ => None,
     }
 }
 

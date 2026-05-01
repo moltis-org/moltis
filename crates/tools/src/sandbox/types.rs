@@ -496,6 +496,38 @@ pub trait Sandbox: Send + Sync {
         false
     }
 
+    /// Install packages inside the sandbox.
+    ///
+    /// Default implementation uses `apt-get` (Ubuntu/Debian). Backends with
+    /// different package managers (e.g. Vercel/Amazon Linux uses `dnf`)
+    /// override this method.
+    ///
+    /// Called once per session after `ensure_ready()` for isolated backends
+    /// that don't have packages pre-baked into the image.
+    async fn provision_packages(&self, id: &SandboxId, packages: &[String]) -> Result<()> {
+        if packages.is_empty() {
+            return Ok(());
+        }
+        let pkg_list = packages.join(" ");
+        let cmd = format!(
+            "apt-get update -qq && apt-get install -y -qq --no-install-recommends {pkg_list}"
+        );
+        let opts = ExecOpts {
+            timeout: std::time::Duration::from_secs(600),
+            ..Default::default()
+        };
+        let result = self.exec(id, &cmd, &opts).await?;
+        if result.exit_code != 0 {
+            tracing::warn!(
+                %id,
+                exit_code = result.exit_code,
+                stderr = result.stderr.trim(),
+                "package provisioning failed (non-fatal)"
+            );
+        }
+        Ok(())
+    }
+
     /// Pre-build a container image with packages baked in.
     /// Returns `None` for backends that don't support image building.
     async fn build_image(
