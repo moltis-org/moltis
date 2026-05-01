@@ -64,7 +64,7 @@ pub struct RemoteBackendUpdateRequest {
     /// Which backend: "vercel" or "daytona".
     backend: String,
     /// Fields to save. Keys like "token", "api_url", "project_id", etc.
-    config: std::collections::HashMap<String, serde_json::Value>,
+    config: HashMap<String, serde_json::Value>,
 }
 
 fn shared_home_config_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
