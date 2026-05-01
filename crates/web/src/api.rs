@@ -1095,12 +1095,21 @@ WORKDIR /home/sandbox\n"
     }
 
     let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+    tracing::debug!(
+        name,
+        cli = builder.cli_name(),
+        "starting image build via API"
+    );
     let result = builder.ensure_image(name, &dockerfile_path, &tmp_dir).await;
     let _ = std::fs::remove_dir_all(&tmp_dir);
     match result {
-        Ok(tag) => Json(serde_json::json!({ "tag": tag })).into_response(),
+        Ok(tag) => {
+            tracing::info!(name, tag, "image build succeeded via API");
+            Json(serde_json::json!({ "tag": tag })).into_response()
+        },
         Err(e) => {
             let detail = e.to_string();
+            tracing::warn!(name, error = %detail, "image build failed via API");
             let message = if detail.contains("Cannot connect")
                 || detail.contains("connect to the Docker daemon")
                 || detail.contains("No such file or directory")

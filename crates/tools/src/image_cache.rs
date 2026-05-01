@@ -12,7 +12,7 @@ use std::path::Path;
 use {
     async_trait::async_trait,
     serde::{Deserialize, Serialize},
-    tracing::{debug, info},
+    tracing::{debug, info, warn},
 };
 
 use crate::{
@@ -67,6 +67,11 @@ impl DockerImageBuilder {
         Self {
             cli: crate::sandbox::container_cli(),
         }
+    }
+
+    /// Return the container CLI name (e.g. "docker" or "podman").
+    pub fn cli_name(&self) -> &'static str {
+        self.cli
     }
 
     /// Compute the image tag for a skill's Dockerfile.
@@ -126,6 +131,7 @@ impl ImageBuilder for DockerImageBuilder {
 
         info!(tag, dockerfile = %dockerfile.display(), "building tool image");
 
+        debug!(cli = self.cli, tag, context = %context.display(), "spawning image build");
         let output = tokio::process::Command::new(self.cli)
             .args([
                 "build",
@@ -139,10 +145,24 @@ impl ImageBuilder for DockerImageBuilder {
             .stderr(std::process::Stdio::piped())
             .output()
             .await
-            .with_context(|| format!("failed to run {} build", self.cli))?;
+            .with_context(|| {
+                format!(
+                    "failed to run `{} build` — is {} installed and in PATH?",
+                    self.cli, self.cli
+                )
+            })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            warn!(
+                cli = self.cli,
+                tag,
+                exit_code = output.status.code().unwrap_or(-1),
+                stderr = %stderr.trim(),
+                stdout = %stdout.chars().take(200).collect::<String>(),
+                "image build failed"
+            );
             return Err(Error::message(format!(
                 "{} build failed for {tag}: {}",
                 self.cli,
