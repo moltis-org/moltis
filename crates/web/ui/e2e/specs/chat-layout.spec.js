@@ -25,7 +25,7 @@ async function waitForSessionReady(page) {
 async function injectLongMessages(page, count) {
 	await page.evaluate((msgCount) => {
 		var box = document.getElementById("messages");
-		if (!box) throw new Error("chatMsgBox not mounted");
+		if (!box) throw new Error("#messages element not found");
 		var longText =
 			"This is a fairly long message that contains enough text to potentially cause horizontal overflow " +
 			"if the container does not properly constrain its width. It includes some inline code like " +
