@@ -445,7 +445,7 @@ impl Sandbox for DaytonaSandbox {
             let _ = self
                 .run_command(
                     &sandbox_id,
-                    &format!("mkdir -p '{parent_str}'"),
+                    &format!("mkdir -p '{}'", parent_str.replace('\'', "'\\''")),
                     "/",
                     &mkdir_opts,
                 )

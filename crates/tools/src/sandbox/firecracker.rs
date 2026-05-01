@@ -587,7 +587,9 @@ impl Sandbox for FirecrackerSandbox {
 
         if let Err(e) = Self::wait_for_ssh(&guest_ip, &self.fc.ssh_key_path).await {
             Self::remove_tap(&tap_name).await;
-            drop(process);
+            let mut process = process;
+            let _ = process.kill().await;
+            let _ = process.wait().await;
             let _ = std::fs::remove_dir_all(&vm_dir);
             return Err(e);
         }
