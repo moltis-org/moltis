@@ -24,6 +24,7 @@ apps/ios/local.xcconfig
 crates/web/ui/node_modules/
 crates/web/ui/playwright-report/
 crates/web/ui/test-results/
+test-results/
 
 # Generated web assets (run `just build-web-assets` to regenerate)
 crates/web/src/assets/dist/
