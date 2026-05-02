@@ -441,9 +441,11 @@ function saveRemoteBackend(backend: string, config: Record<string, unknown>): vo
 		})
 		.then((data) => {
 			if (data?.config) remoteConfig.value = data.config;
-			remoteMsg.value = `${backend} configuration saved. Restart Moltis to apply.`;
-			vercelToken.value = "";
-			daytonaApiKey.value = "";
+			if (backend !== "_global") {
+				remoteMsg.value = `${backend} configuration saved. Restart Moltis to apply.`;
+				vercelToken.value = "";
+				daytonaApiKey.value = "";
+			}
 		})
 		.catch((e: Error) => {
 			remoteErr.value = e.message;
@@ -734,7 +736,8 @@ function SandboxBanner(): VNode | null {
 			{backends.length > 0 ? (
 				<div className="flex flex-wrap gap-2" style={{ marginBottom: "12px" }}>
 					{backends.map((b) => {
-						const isDefault = b.id === info.backend;
+						const isDefault =
+							b.id === defaultBackendId.value || (defaultBackendId.value === "auto" && b.id === info.backend);
 						return (
 							<button
 								type="button"
@@ -1204,7 +1207,7 @@ function ContainersTabContent(): VNode {
 		<>
 			<div className="flex items-center gap-3">
 				<button
-					className="provider-btn"
+					className="provider-btn-secondary provider-btn-sm"
 					onClick={pruneAll}
 					disabled={pruning.value || !sandboxRuntimeAvailable()}
 					title={sandboxRuntimeAvailable() ? "Prune all" : SANDBOX_DISABLED_HINT}
