@@ -702,7 +702,15 @@ pub async fn api_skills_search_handler(
 // ── Images ───────────────────────────────────────────────────────────────────
 
 pub async fn api_cached_images_handler() -> impl IntoResponse {
-    let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+    // Use the correct CLI for the configured backend (same logic as build).
+    let config = moltis_config::discover_and_load();
+    let cli: &str = match config.tools.exec.sandbox.backend.as_str() {
+        "apple-container" => "docker",
+        "docker" => "docker",
+        "podman" => "podman",
+        _ => moltis_tools::sandbox::container_cli(),
+    };
+    let builder = moltis_tools::image_cache::DockerImageBuilder::with_cli(cli);
     let (cached, sandbox) = tokio::join!(
         builder.list_cached(),
         moltis_tools::sandbox::list_sandbox_images(),
