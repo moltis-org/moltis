@@ -384,12 +384,7 @@ fn create_wasm_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
 fn create_vercel_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     use super::vercel::{VercelSandbox, VercelSandboxConfig};
 
-    let token = config
-        .vercel_token
-        .clone()
-        .or_else(|| std::env::var("VERCEL_TOKEN").ok())
-        .or_else(|| std::env::var("VERCEL_OIDC_TOKEN").ok())
-        .unwrap_or_default();
+    let token = config.vercel_token.clone().unwrap_or_default();
 
     if token.is_empty() {
         tracing::warn!(
@@ -401,14 +396,8 @@ fn create_vercel_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
 
     let vercel_config = VercelSandboxConfig {
         token: secrecy::Secret::new(token),
-        project_id: config
-            .vercel_project_id
-            .clone()
-            .or_else(|| std::env::var("VERCEL_PROJECT_ID").ok()),
-        team_id: config
-            .vercel_team_id
-            .clone()
-            .or_else(|| std::env::var("VERCEL_TEAM_ID").ok()),
+        project_id: config.vercel_project_id.clone(),
+        team_id: config.vercel_team_id.clone(),
         runtime: config
             .vercel_runtime
             .clone()
@@ -431,11 +420,7 @@ fn create_vercel_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
 fn create_daytona_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     use super::daytona::{DaytonaSandbox, DaytonaSandboxConfig};
 
-    let api_key = config
-        .daytona_api_key
-        .clone()
-        .or_else(|| std::env::var("DAYTONA_API_KEY").ok())
-        .unwrap_or_default();
+    let api_key = config.daytona_api_key.clone().unwrap_or_default();
 
     if api_key.is_empty() {
         tracing::warn!(
@@ -450,12 +435,8 @@ fn create_daytona_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         api_url: config
             .daytona_api_url
             .clone()
-            .or_else(|| std::env::var("DAYTONA_API_URL").ok())
             .unwrap_or_else(|| "https://app.daytona.io/api".into()),
-        target: config
-            .daytona_target
-            .clone()
-            .or_else(|| std::env::var("DAYTONA_TARGET").ok()),
+        target: config.daytona_target.clone(),
         image: config.daytona_image.clone(),
         language: None,
     };
@@ -607,28 +588,16 @@ pub fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     }
 
     // No local container runtime available — try remote backends.
+    // Env vars are resolved into config fields by the config crate.
     #[cfg(feature = "vercel-sandbox")]
-    {
-        let has_vercel_token = config.vercel_token.is_some()
-            || std::env::var("VERCEL_TOKEN").is_ok()
-            || std::env::var("VERCEL_OIDC_TOKEN").is_ok();
-        if has_vercel_token {
-            tracing::info!(
-                "no local container runtime; using vercel sandbox (VERCEL_TOKEN detected)"
-            );
-            return create_vercel_backend(config);
-        }
+    if config.vercel_token.is_some() {
+        tracing::info!("no local container runtime; using vercel sandbox");
+        return create_vercel_backend(config);
     }
 
-    {
-        let has_daytona_key =
-            config.daytona_api_key.is_some() || std::env::var("DAYTONA_API_KEY").is_ok();
-        if has_daytona_key {
-            tracing::info!(
-                "no local container runtime; using daytona sandbox (DAYTONA_API_KEY detected)"
-            );
-            return create_daytona_backend(config);
-        }
+    if config.daytona_api_key.is_some() {
+        tracing::info!("no local container runtime; using daytona sandbox");
+        return create_daytona_backend(config);
     }
 
     // Use restricted-host sandbox as last resort.

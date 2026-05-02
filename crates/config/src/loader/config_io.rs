@@ -762,7 +762,76 @@ pub(super) fn apply_env_overrides_with(
         },
     };
 
+    // Third-party env var aliases: standard env vars that map to config paths.
+    // These are only applied if the config field is empty/unset, so explicit
+    // config always takes precedence.
+    const ENV_ALIASES: &[(&str, &[&str])] = &[
+        ("VERCEL_TOKEN", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "vercel_token",
+        ]),
+        ("VERCEL_OIDC_TOKEN", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "vercel_token",
+        ]),
+        ("VERCEL_PROJECT_ID", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "vercel_project_id",
+        ]),
+        ("VERCEL_TEAM_ID", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "vercel_team_id",
+        ]),
+        ("DAYTONA_API_KEY", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "daytona_api_key",
+        ]),
+        ("DAYTONA_API_URL", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "daytona_api_url",
+        ]),
+        ("DAYTONA_TARGET", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "daytona_target",
+        ]),
+    ];
+
     for (key, val) in vars {
+        // Check third-party aliases first (before the MOLTIS_ prefix check).
+        let mut matched_alias = false;
+        for &(alias_key, path) in ENV_ALIASES {
+            if key == alias_key {
+                let path_parts: Vec<String> = path.iter().map(|s| s.to_string()).collect();
+                // Only apply if the field is currently null/empty.
+                let current = get_nested(&root, &path_parts);
+                if current.is_none()
+                    || current == Some(&Value::Null)
+                    || current.and_then(|v| v.as_str()).unwrap_or("x").is_empty()
+                {
+                    set_nested(&mut root, &path_parts, parse_env_value(&val));
+                }
+                matched_alias = true;
+                break;
+            }
+        }
+        if matched_alias {
+            continue;
+        }
+
         if !key.starts_with("MOLTIS_") {
             continue;
         }
@@ -869,6 +938,15 @@ pub(super) fn parse_env_value(val: &str) -> serde_json::Value {
 }
 
 /// Set a value at a nested JSON path, creating intermediate objects as needed.
+/// Read a nested value from a JSON tree by path.
+fn get_nested<'a>(root: &'a serde_json::Value, path: &[String]) -> Option<&'a serde_json::Value> {
+    let mut current = root;
+    for key in path {
+        current = current.get(key.as_str())?;
+    }
+    Some(current)
+}
+
 pub(super) fn set_nested(root: &mut serde_json::Value, path: &[String], val: serde_json::Value) {
     if path.is_empty() {
         return;

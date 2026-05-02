@@ -978,9 +978,7 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
     }
 
     // Remote backends.
-    let has_vercel = !sb.vercel_token.as_deref().unwrap_or("").is_empty()
-        || std::env::var("VERCEL_TOKEN").is_ok()
-        || std::env::var("VERCEL_OIDC_TOKEN").is_ok();
+    let has_vercel = !sb.vercel_token.as_deref().unwrap_or("").is_empty();
     if has_vercel {
         backends.push(serde_json::json!({
             "id": "vercel",
@@ -990,8 +988,7 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
         }));
     }
 
-    let has_daytona = !sb.daytona_api_key.as_deref().unwrap_or("").is_empty()
-        || std::env::var("DAYTONA_API_KEY").is_ok();
+    let has_daytona = !sb.daytona_api_key.as_deref().unwrap_or("").is_empty();
     if has_daytona {
         backends.push(serde_json::json!({
             "id": "daytona",
@@ -1019,11 +1016,8 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
 
 fn remote_backends_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
     let sb = &config.tools.exec.sandbox;
-    let vercel_configured = !sb.vercel_token.as_deref().unwrap_or("").is_empty()
-        || std::env::var("VERCEL_TOKEN").is_ok()
-        || std::env::var("VERCEL_OIDC_TOKEN").is_ok();
-    let daytona_configured = !sb.daytona_api_key.as_deref().unwrap_or("").is_empty()
-        || std::env::var("DAYTONA_API_KEY").is_ok();
+    let vercel_configured = !sb.vercel_token.as_deref().unwrap_or("").is_empty();
+    let daytona_configured = !sb.daytona_api_key.as_deref().unwrap_or("").is_empty();
     serde_json::json!({
         "backend": sb.backend,
         "vercel": {

@@ -30,17 +30,11 @@ pub(super) fn build_sandbox_router(
     let mut router = moltis_tools::sandbox::SandboxRouter::new(config.clone());
 
     // Register additional remote backends that have credentials configured.
+    // Env vars (VERCEL_TOKEN, DAYTONA_API_KEY) are resolved by the config crate
+    // into the config fields, so checking config.*.is_some() is sufficient.
     for (name, has_creds) in [
-        (
-            "vercel",
-            config.vercel_token.is_some()
-                || std::env::var("VERCEL_TOKEN").is_ok()
-                || std::env::var("VERCEL_OIDC_TOKEN").is_ok(),
-        ),
-        (
-            "daytona",
-            config.daytona_api_key.is_some() || std::env::var("DAYTONA_API_KEY").is_ok(),
-        ),
+        ("vercel", config.vercel_token.is_some()),
+        ("daytona", config.daytona_api_key.is_some()),
         (
             "firecracker",
             config.firecracker_bin.is_some()
