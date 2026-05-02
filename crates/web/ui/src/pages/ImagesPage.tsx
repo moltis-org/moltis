@@ -713,11 +713,10 @@ function SandboxBanner(): VNode | null {
 	const backends = availableBackendsList.value;
 	const rec = backendRecommendation(info);
 
-	function changeDefault(e: Event): void {
-		const value = (e.target as HTMLSelectElement).value;
+	function changeDefault(backendId: string): void {
 		backendSaving.value = true;
-		saveRemoteBackend("_global", { backend: value });
-		defaultBackendId.value = value;
+		saveRemoteBackend("_global", { backend: backendId });
+		defaultBackendId.value = backendId;
 		setTimeout(() => {
 			backendSaving.value = false;
 		}, 1500);
@@ -737,19 +736,24 @@ function SandboxBanner(): VNode | null {
 					{backends.map((b) => {
 						const isDefault = b.id === info.backend;
 						return (
-							<div
+							<button
+								type="button"
 								key={b.id}
-								className="rounded-md border px-3 py-1.5 text-xs"
+								className="rounded-md border px-3 py-1.5 text-xs cursor-pointer bg-transparent transition-colors"
 								style={{
 									borderColor: isDefault ? "var(--accent)" : "var(--border)",
 									color: isDefault ? "var(--accent)" : "var(--text)",
 									fontFamily: "var(--font-mono)",
+									fontWeight: isDefault ? "600" : "400",
 								}}
+								onClick={() => changeDefault(b.id)}
+								disabled={backendSaving.value}
+								title={isDefault ? "Active default backend" : `Set ${b.label} as default`}
 							>
 								{b.label}
 								{b.kind === "remote" && <span style={{ marginLeft: "4px", opacity: 0.6 }}>{"\u2601"}</span>}
-								{isDefault && <span style={{ marginLeft: "6px", fontSize: "0.6rem", opacity: 0.7 }}>(active)</span>}
-							</div>
+								{isDefault && <span style={{ marginLeft: "6px", fontSize: "0.6rem", opacity: 0.7 }}>(default)</span>}
+							</button>
 						);
 					})}
 				</div>
@@ -758,26 +762,6 @@ function SandboxBanner(): VNode | null {
 					Loading backends...
 				</div>
 			)}
-
-			<div style={{ marginBottom: "12px" }}>
-				<label className="text-xs text-[var(--muted)]" style={{ display: "block", marginBottom: "4px" }}>
-					Default backend for new sessions:
-				</label>
-				<select
-					className="provider-key-input"
-					style={{ width: "auto", minWidth: "200px", fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-					value={defaultBackendId.value}
-					onChange={changeDefault}
-					disabled={backendSaving.value}
-				>
-					<option value="auto">auto (detect best available)</option>
-					{backends.map((b) => (
-						<option key={b.id} value={b.id}>
-							{b.label}
-						</option>
-					))}
-				</select>
-			</div>
 
 			{rec && (
 				<div className={rec.level === "warn" ? "alert-warning-text" : "alert-info-text"}>
@@ -1139,15 +1123,15 @@ function DaytonaTabContent(): VNode {
 				<h3 className="text-sm font-medium text-[var(--text-strong)]">Daytona</h3>
 				{cfg?.daytona?.configured ? (
 					<span
-						className="text-[10px] px-1.5 py-0.5 rounded-full"
-						style={{ background: "var(--success)", color: "#fff" }}
+						className="text-[10px] px-1.5 py-0.5 rounded-full border"
+						style={{ borderColor: "var(--success)", color: "var(--success)" }}
 					>
 						configured
 					</span>
 				) : (
 					<span
-						className="text-[10px] px-1.5 py-0.5 rounded-full"
-						style={{ background: "var(--muted)", color: "#fff" }}
+						className="text-[10px] px-1.5 py-0.5 rounded-full border"
+						style={{ borderColor: "var(--muted)", color: "var(--muted)" }}
 					>
 						not configured
 					</span>
@@ -1220,7 +1204,7 @@ function ContainersTabContent(): VNode {
 		<>
 			<div className="flex items-center gap-3">
 				<button
-					className="text-xs text-[var(--muted)] border border-[var(--border)] px-2.5 py-1 rounded-md hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent"
+					className="provider-btn"
 					onClick={pruneAll}
 					disabled={pruning.value || !sandboxRuntimeAvailable()}
 					title={sandboxRuntimeAvailable() ? "Prune all" : SANDBOX_DISABLED_HINT}
