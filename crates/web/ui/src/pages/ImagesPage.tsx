@@ -684,79 +684,99 @@ function backendRecommendation(info: SandboxInfoValue | null): { level: string; 
 	return null;
 }
 
+interface AvailableBackendInfo {
+	id: string;
+	label: string;
+	kind: string;
+	available: boolean;
+}
+const availableBackendsList = signal<AvailableBackendInfo[]>([]);
+const defaultBackendId = signal("auto");
 const backendSaving = signal(false);
+
+function fetchAvailableBackends(): void {
+	fetch("/api/sandbox/available-backends")
+		.then((r) => r.json())
+		.then((data) => {
+			availableBackendsList.value = data.backends || [];
+			defaultBackendId.value = data.default || "auto";
+		})
+		.catch(() => {});
+}
 
 function SandboxBanner(): VNode | null {
 	const info = sandboxInfo.value as SandboxInfoValue | null;
 	if (!info) return null;
 
-	const label = BACKEND_LABELS[info.backend] || info.backend;
+	const backends = availableBackendsList.value;
 	const rec = backendRecommendation(info);
 
-	const isRemote = info.backend === "vercel" || info.backend === "daytona";
-	const badgeColor =
-		info.backend === "none"
-			? "var(--error)"
-			: info.backend === "apple-container"
-				? "var(--accent)"
-				: info.backend === "wasm" || isRemote
-					? "var(--success)"
-					: info.backend === "restricted-host"
-						? "var(--warning, var(--muted))"
-						: "var(--muted)";
-
-	const availableBackends: SandboxBackendId[] = [
-		"auto" as SandboxBackendId,
-		"docker",
-		"podman",
-		"apple-container",
-		"wasm",
-		"vercel",
-		"daytona",
-		"restricted-host",
-	];
-
-	const configuredBackend = remoteConfig.value as (RemoteBackendsConfig & { backend?: string }) | null;
-	const currentConfigBackend = configuredBackend?.backend || "auto";
-
-	function changeBackend(e: Event): void {
+	function changeDefault(e: Event): void {
 		const value = (e.target as HTMLSelectElement).value;
 		backendSaving.value = true;
 		saveRemoteBackend("_global", { backend: value });
-		// saveRemoteBackend sets remoteSaving which we can watch, but for simplicity:
+		defaultBackendId.value = value;
 		setTimeout(() => {
 			backendSaving.value = false;
-		}, 2000);
+		}, 1500);
 	}
 
 	return (
 		<div className="max-w-form">
-			<div className="info-bar" style={{ marginBottom: "8px" }}>
-				<span className="info-field">
-					<span className="info-label">Active backend:</span>
-					<span className="info-value-strong" style={{ color: badgeColor, fontFamily: "var(--font-mono)" }}>
-						{label}
-					</span>
-				</span>
-			</div>
+			<h3 className="text-sm font-medium text-[var(--text-strong)]" style={{ marginBottom: "8px" }}>
+				Available backends
+			</h3>
+			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: "0 0 10px" }}>
+				Backends available for sandbox execution. Select one per session in the chat panel, or set a default below.
+			</p>
+
+			{backends.length > 0 ? (
+				<div className="flex flex-wrap gap-2" style={{ marginBottom: "12px" }}>
+					{backends.map((b) => {
+						const isDefault = b.id === info.backend;
+						return (
+							<div
+								key={b.id}
+								className="rounded-md border px-3 py-1.5 text-xs"
+								style={{
+									borderColor: isDefault ? "var(--accent)" : "var(--border)",
+									color: isDefault ? "var(--accent)" : "var(--text)",
+									fontFamily: "var(--font-mono)",
+								}}
+							>
+								{b.label}
+								{b.kind === "remote" && <span style={{ marginLeft: "4px", opacity: 0.6 }}>{"\u2601"}</span>}
+								{isDefault && <span style={{ marginLeft: "6px", fontSize: "0.6rem", opacity: 0.7 }}>(active)</span>}
+							</div>
+						);
+					})}
+				</div>
+			) : (
+				<div className="text-xs text-[var(--muted)]" style={{ marginBottom: "12px" }}>
+					Loading backends...
+				</div>
+			)}
+
 			<div style={{ marginBottom: "12px" }}>
 				<label className="text-xs text-[var(--muted)]" style={{ display: "block", marginBottom: "4px" }}>
-					Preferred backend (requires restart):
+					Default backend for new sessions:
 				</label>
 				<select
 					className="provider-key-input"
 					style={{ width: "auto", minWidth: "200px", fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
-					value={currentConfigBackend}
-					onChange={changeBackend}
+					value={defaultBackendId.value}
+					onChange={changeDefault}
 					disabled={backendSaving.value}
 				>
-					{availableBackends.map((id) => (
-						<option key={id} value={id}>
-							{id === ("auto" as SandboxBackendId) ? "auto (detect best available)" : BACKEND_LABELS[id] || id}
+					<option value="auto">auto (detect best available)</option>
+					{backends.map((b) => (
+						<option key={b.id} value={b.id}>
+							{b.label}
 						</option>
 					))}
 				</select>
 			</div>
+
 			{rec && (
 				<div className={rec.level === "warn" ? "alert-warning-text" : "alert-info-text"}>
 					<span className={rec.level === "warn" ? "alert-label-warn" : "alert-label-info"}>
@@ -955,6 +975,7 @@ function ImagesPage(): VNode {
 		fetchDiskUsage();
 		fetchSharedHomeConfig();
 		fetchRemoteBackends();
+		fetchAvailableBackends();
 	}, []);
 
 	return (
@@ -1312,6 +1333,7 @@ export function initImages(container: HTMLElement): void {
 	sharedHomeMsg.value = "";
 	sharedHomeErr.value = "";
 	activeTab.value = "general";
+	availableBackendsList.value = [];
 	remoteConfig.value = null;
 	remoteLoading.value = false;
 	remoteSaving.value = "";
