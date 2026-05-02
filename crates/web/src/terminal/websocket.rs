@@ -361,6 +361,7 @@ pub(crate) async fn handle_terminal_ws_connection(
                                             current_rows,
                                             persistence_available,
                                             current_window_target.as_deref(),
+                                            container_target.as_deref(),
                                         ) {
                                             Ok(next_runtime) => {
                                                 runtime = next_runtime;
