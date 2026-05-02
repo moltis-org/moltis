@@ -702,15 +702,10 @@ pub async fn api_skills_search_handler(
 // ── Images ───────────────────────────────────────────────────────────────────
 
 pub async fn api_cached_images_handler() -> impl IntoResponse {
-    // Use the correct CLI for the configured backend (same logic as build).
     let config = moltis_config::discover_and_load();
-    let cli: &str = match config.tools.exec.sandbox.backend.as_str() {
-        "apple-container" => "docker",
-        "docker" => "docker",
-        "podman" => "podman",
-        _ => moltis_tools::sandbox::container_cli(),
-    };
-    let builder = moltis_tools::image_cache::DockerImageBuilder::with_cli(cli);
+    let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+        &config.tools.exec.sandbox.backend,
+    );
     let (cached, sandbox) = tokio::join!(
         builder.list_cached(),
         moltis_tools::sandbox::list_sandbox_images(),
@@ -757,7 +752,10 @@ pub async fn api_delete_cached_image_handler(Path(tag): Path<String>) -> impl In
     let result = if tag.contains("-sandbox:") {
         moltis_tools::sandbox::remove_sandbox_image(&tag).await
     } else {
-        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let cfg = moltis_config::discover_and_load();
+        let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+            &cfg.tools.exec.sandbox.backend,
+        );
         let full_tag = if tag.starts_with("moltis-cache/") {
             tag
         } else {
@@ -776,7 +774,10 @@ pub async fn api_delete_cached_image_handler(Path(tag): Path<String>) -> impl In
 }
 
 pub async fn api_prune_cached_images_handler() -> impl IntoResponse {
-    let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+    let config = moltis_config::discover_and_load();
+    let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+        &config.tools.exec.sandbox.backend,
+    );
     let (tool_result, sandbox_result) = tokio::join!(
         builder.prune_all(),
         moltis_tools::sandbox::clean_sandbox_images(),
@@ -832,7 +833,11 @@ pub async fn api_check_packages_handler(Json(body): Json<serde_json::Value>) -> 
         .collect();
     let script = checks.join("\n");
 
-    let cli = moltis_tools::sandbox::container_cli();
+    let config = moltis_config::discover_and_load();
+    let cli = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+        &config.tools.exec.sandbox.backend,
+    )
+    .cli_name();
     let output = tokio::process::Command::new(cli)
         .args(["run", "--rm", "--entrypoint", "sh", &base, "-c", &script])
         .stdout(std::process::Stdio::piped())
@@ -1102,21 +1107,16 @@ WORKDIR /home/sandbox\n"
         );
     }
 
-    // Pick the container CLI based on the configured sandbox backend.
-    // Apple Container delegates builds to Docker; explicit docker/podman
-    // selections use their respective CLI; "auto" and others use the
-    // auto-detected CLI (which has fallback on daemon errors).
     let config = moltis_config::discover_and_load();
-    let cli: &str = match config.tools.exec.sandbox.backend.as_str() {
-        "apple-container" => "docker",
-        "docker" => "docker",
-        "podman" => "podman",
-        _ => moltis_tools::sandbox::container_cli(),
-    };
-    let builder = moltis_tools::image_cache::DockerImageBuilder::with_cli(cli);
-    tracing::debug!(name, cli, "starting image build via API");
+    let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+        &config.tools.exec.sandbox.backend,
+    );
+    tracing::debug!(
+        name,
+        cli = builder.cli_name(),
+        "starting image build via API"
+    );
     let result = builder.ensure_image(name, &dockerfile_path, &tmp_dir).await;
-    let _ = std::fs::remove_dir_all(&tmp_dir);
     let _ = std::fs::remove_dir_all(&tmp_dir);
     match result {
         Ok(tag) => {

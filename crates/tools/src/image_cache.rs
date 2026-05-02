@@ -74,6 +74,22 @@ impl DockerImageBuilder {
         Self { cli }
     }
 
+    /// Create for a specific sandbox backend configuration value.
+    ///
+    /// Maps backend names to the correct build CLI:
+    /// - `apple-container` → `docker` (Apple Container delegates builds to Docker)
+    /// - `docker` → `docker`
+    /// - `podman` → `podman`
+    /// - `auto` / others → auto-detected via `container_cli()`
+    pub fn for_backend(backend: &str) -> Self {
+        let cli = match backend {
+            "apple-container" | "docker" => "docker",
+            "podman" => "podman",
+            _ => crate::sandbox::container_cli(),
+        };
+        Self { cli }
+    }
+
     /// Return the container CLI name (e.g. "docker" or "podman").
     pub fn cli_name(&self) -> &'static str {
         self.cli

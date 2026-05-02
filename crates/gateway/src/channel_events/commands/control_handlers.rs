@@ -495,7 +495,10 @@ pub(in crate::channel_events) async fn handle_sandbox(
         };
 
         // List available images.
-        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let cfg = moltis_config::discover_and_load();
+        let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+            &cfg.tools.exec.sandbox.backend,
+        );
         let cached = builder.list_cached().await.unwrap_or_default();
 
         let default_img = moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string();
@@ -563,7 +566,10 @@ pub(in crate::channel_events) async fn handle_sandbox(
             .map_err(|_| ChannelError::invalid_input("usage: /sandbox image [number]"))?;
 
         let default_img = moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string();
-        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let cfg = moltis_config::discover_and_load();
+        let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+            &cfg.tools.exec.sandbox.backend,
+        );
         let cached = builder.list_cached().await.unwrap_or_default();
         let mut images: Vec<String> = vec![default_img];
         for img in &cached {
