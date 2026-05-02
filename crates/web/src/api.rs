@@ -940,6 +940,81 @@ pub async fn api_set_shared_home_handler(
     }
 }
 
+// ── Available sandbox backends ────────────────────────────────────────────────
+
+/// Returns which sandbox backends are available/configured on this instance.
+/// Used by the UI to populate backend selectors.
+pub async fn api_available_backends_handler() -> impl IntoResponse {
+    let config = moltis_config::discover_and_load();
+    let sb = &config.tools.exec.sandbox;
+
+    let mut backends: Vec<serde_json::Value> = Vec::new();
+
+    // Local container backends.
+    if moltis_tools::sandbox::is_cli_available("docker") {
+        backends.push(serde_json::json!({
+            "id": "docker",
+            "label": "Docker",
+            "kind": "local",
+            "available": true,
+        }));
+    }
+    if moltis_tools::sandbox::is_cli_available("podman") {
+        backends.push(serde_json::json!({
+            "id": "podman",
+            "label": "Podman",
+            "kind": "local",
+            "available": true,
+        }));
+    }
+    #[cfg(target_os = "macos")]
+    if moltis_tools::sandbox::is_cli_available("container") {
+        backends.push(serde_json::json!({
+            "id": "apple-container",
+            "label": "Apple Container (VM)",
+            "kind": "local",
+            "available": true,
+        }));
+    }
+
+    // Remote backends.
+    let has_vercel = !sb.vercel_token.as_deref().unwrap_or("").is_empty()
+        || std::env::var("VERCEL_TOKEN").is_ok()
+        || std::env::var("VERCEL_OIDC_TOKEN").is_ok();
+    if has_vercel {
+        backends.push(serde_json::json!({
+            "id": "vercel",
+            "label": "Vercel Sandbox (Firecracker)",
+            "kind": "remote",
+            "available": true,
+        }));
+    }
+
+    let has_daytona = !sb.daytona_api_key.as_deref().unwrap_or("").is_empty()
+        || std::env::var("DAYTONA_API_KEY").is_ok();
+    if has_daytona {
+        backends.push(serde_json::json!({
+            "id": "daytona",
+            "label": "Daytona (Cloud)",
+            "kind": "remote",
+            "available": true,
+        }));
+    }
+
+    // Always include restricted-host as fallback.
+    backends.push(serde_json::json!({
+        "id": "restricted-host",
+        "label": "Restricted Host (no isolation)",
+        "kind": "local",
+        "available": true,
+    }));
+
+    Json(serde_json::json!({
+        "backends": backends,
+        "default": sb.backend,
+    }))
+}
+
 // ── Remote sandbox backend configuration ──────────────────────────────────────
 
 fn remote_backends_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {

@@ -235,33 +235,92 @@ function populateImageDropdown(): void {
 	if (!dropdown) return;
 	dropdown.textContent = "";
 
-	// Default option
-	addImageOption(dropdown, DEFAULT_IMAGE, !S.sessionSandboxImage);
-
-	// Fetch cached images
+	// Fetch available backends and images in parallel.
+	interface AvailableBackend {
+		id: string;
+		label: string;
+		kind: string;
+	}
+	interface BackendsResponse {
+		backends?: AvailableBackend[];
+		default?: string;
+	}
 	interface CachedImage {
 		tag: string;
 		skill_name?: string;
 		size?: string;
 	}
-
 	interface CachedImagesResponse {
 		images?: CachedImage[];
 	}
 
-	fetch("/api/images/cached")
-		.then((r) => r.json())
-		.then((data: CachedImagesResponse) => {
-			const images = data.images || [];
-			for (const img of images) {
-				const isCurrent = S.sessionSandboxImage === img.tag;
-				addImageOption(dropdown, img.tag, isCurrent, `${img.skill_name} (${img.size})`);
+	Promise.all([
+		fetch("/api/sandbox/available-backends")
+			.then((r) => r.json())
+			.catch(() => ({ backends: [] })),
+		fetch("/api/images/cached")
+			.then((r) => r.json())
+			.catch(() => ({ images: [] })),
+	]).then(([backendsData, imagesData]: [BackendsResponse, CachedImagesResponse]) => {
+		const backends = backendsData.backends || [];
+		const images = imagesData.images || [];
+
+		// Backend section header.
+		if (backends.length > 0) {
+			const header = document.createElement("div");
+			header.className = "px-3 py-1 text-[10px] font-medium text-[var(--muted)] uppercase tracking-wider";
+			header.textContent = "Backend";
+			dropdown.appendChild(header);
+
+			for (const b of backends) {
+				const isCurrent = S.sessionSandboxBackend === b.id;
+				const opt = document.createElement("div");
+				opt.className =
+					"px-3 py-1.5 text-xs cursor-pointer hover:bg-[var(--surface2)] transition-colors flex items-center gap-2";
+				if (isCurrent) {
+					opt.style.color = "var(--accent, #f59e0b)";
+					opt.style.fontWeight = "600";
+				}
+				const kindBadge = b.kind === "remote" ? " \u2601" : "";
+				opt.textContent = `${b.label}${kindBadge}`;
+				opt.addEventListener("click", (e: MouseEvent): void => {
+					e.stopPropagation();
+					selectBackend(b.id);
+				});
+				dropdown.appendChild(opt);
 			}
-			requestAnimationFrame(positionImageDropdown);
-		})
-		.catch(() => {
-			// Silently ignore fetch errors for image list
-		});
+		}
+
+		// Image section (only relevant for container backends).
+		const divider = document.createElement("div");
+		divider.className = "border-t border-[var(--border)] my-1";
+		dropdown.appendChild(divider);
+
+		const imgHeader = document.createElement("div");
+		imgHeader.className = "px-3 py-1 text-[10px] font-medium text-[var(--muted)] uppercase tracking-wider";
+		imgHeader.textContent = "Image";
+		dropdown.appendChild(imgHeader);
+
+		addImageOption(dropdown, DEFAULT_IMAGE, !S.sessionSandboxImage);
+		for (const img of images) {
+			const isCurrent = S.sessionSandboxImage === img.tag;
+			addImageOption(dropdown, img.tag, isCurrent, `${img.skill_name} (${img.size})`);
+		}
+
+		requestAnimationFrame(positionImageDropdown);
+	});
+}
+
+function selectBackend(backendId: string): void {
+	sendRpc<SessionPatchResult>("sessions.patch", {
+		key: S.activeSessionKey,
+		sandboxBackend: backendId,
+	});
+	S.setSessionSandboxBackend(backendId);
+	const dropdown = S.sandboxImageDropdown;
+	if (dropdown) {
+		dropdown.classList.add("hidden");
+	}
 }
 
 function addImageOption(dropdown: HTMLElement, tag: string, isActive: boolean, subtitle?: string): void {

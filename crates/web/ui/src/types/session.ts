@@ -26,6 +26,7 @@ export interface SessionMeta {
 	projectId?: string;
 	sandbox_enabled?: boolean;
 	sandbox_image?: string | null;
+	sandbox_backend?: string | null;
 	worktree_branch?: string;
 	channelBinding?: ChannelBinding | null;
 	activeChannel?: string;

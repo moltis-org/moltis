@@ -114,6 +114,7 @@ export function restoreSessionState(entry: SessionMeta, projectId?: string): voi
 	}
 	updateSandboxUI(entry.sandbox_enabled !== false);
 	updateSandboxImageUI(entry.sandbox_image || null);
+	S.setSessionSandboxBackend(entry.sandbox_backend || null);
 	const sandboxRuntimeAvailable = ((S.sandboxInfo as SandboxInfoPayload | null)?.backend || "none") !== "none";
 	const effectiveSandboxRoute = entry.sandbox_enabled !== false && sandboxRuntimeAvailable;
 	S.setSessionExecMode(effectiveSandboxRoute ? "sandbox" : "host");
