@@ -20,7 +20,7 @@ use {
     moltis_common::secret_serde,
     secrecy::{ExposeSecret, Secret},
     serde::{Deserialize, Serialize},
-    tracing::{info, instrument, warn},
+    tracing::{debug, info, instrument, warn},
     url::Url,
 };
 
@@ -177,22 +177,18 @@ fn normalize_loopback_redirect(redirect_uri: &Url) -> Url {
     }
 }
 
+/// Build OIDC client metadata for dynamic registration.
+///
+/// `redirect_uri` must already be normalized (loopback https→http) via
+/// [`normalize_loopback_redirect`] before calling this.
 fn build_client_metadata(redirect_uri: &Url) -> ChannelResult<ClientMetadata> {
     let client_uri_url: Url = MOLTIS_CLIENT_URI
         .parse()
         .map_err(|error| ChannelError::external("matrix oidc parse client uri", error))?;
     let client_uri = Localized::new(client_uri_url, std::iter::empty());
-    let is_loopback = is_loopback_uri(redirect_uri);
-    let registration_redirect = if is_loopback && redirect_uri.scheme() == "https" {
-        let mut normalized = redirect_uri.clone();
-        let _ = normalized.set_scheme("http");
-        normalized
-    } else {
-        redirect_uri.clone()
-    };
     // MAS requires `Native` for loopback redirect URIs (RFC 8252) and `Web`
     // for non-loopback URIs (e.g. behind a reverse proxy).
-    let app_type = if is_loopback {
+    let app_type = if is_loopback_uri(redirect_uri) {
         ApplicationType::Native
     } else {
         ApplicationType::Web
@@ -200,7 +196,7 @@ fn build_client_metadata(redirect_uri: &Url) -> ChannelResult<ClientMetadata> {
     Ok(ClientMetadata::new(
         app_type,
         vec![OAuthGrantType::AuthorizationCode {
-            redirect_uris: vec![registration_redirect],
+            redirect_uris: vec![redirect_uri.clone()],
         }],
         client_uri,
     ))
@@ -218,16 +214,44 @@ pub(crate) async fn start_oidc_login(
     device_id: Option<&str>,
 ) -> ChannelResult<OidcLoginPending> {
     // Verify the homeserver supports OIDC.
-    client
-        .oauth()
-        .server_metadata()
-        .await
-        .map_err(|error| ChannelError::external("matrix oidc server metadata discovery", error))?;
+    let server_metadata =
+        client.oauth().server_metadata().await.map_err(|error| {
+            ChannelError::external("matrix oidc server metadata discovery", error)
+        })?;
+
+    debug!(
+        account_id,
+        issuer = %server_metadata.issuer,
+        registration_endpoint = ?server_metadata.registration_endpoint,
+        "matrix OIDC server metadata discovered"
+    );
 
     let registration_redirect = normalize_loopback_redirect(redirect_uri);
-    let metadata = build_client_metadata(redirect_uri)?;
+    let metadata = build_client_metadata(&registration_redirect)?;
+
+    let is_loopback = is_loopback_uri(redirect_uri);
+    debug!(
+        account_id,
+        original_redirect_uri = %redirect_uri,
+        registration_redirect_uri = %registration_redirect,
+        is_loopback,
+        application_type = ?metadata.application_type,
+        "matrix OIDC client registration parameters"
+    );
+
     let raw_metadata: Raw<ClientMetadata> = Raw::new(&metadata)
         .map_err(|error| ChannelError::external("matrix oidc serialize client metadata", error))?;
+
+    // Log the serialized metadata so operators can see exactly what is sent
+    // to the MAS registration endpoint.
+    if let Ok(json) = serde_json::to_string(&raw_metadata) {
+        debug!(
+            account_id,
+            client_metadata = %json,
+            "matrix OIDC client metadata for dynamic registration"
+        );
+    }
+
     let registration_data = ClientRegistrationData::new(raw_metadata);
 
     let device_id_owned = device_id
@@ -247,7 +271,18 @@ pub(crate) async fn start_oidc_login(
         )
         .build()
         .await
-        .map_err(|error| ChannelError::external("matrix oidc authorization code build", error))?;
+        .map_err(|error| {
+            warn!(
+                account_id,
+                original_redirect_uri = %redirect_uri,
+                error = %error,
+                error_debug = ?error,
+                "matrix OIDC client registration failed — \
+                 check that redirect_uri is reachable and the homeserver's \
+                 MAS allows dynamic client registration with this URI"
+            );
+            ChannelError::external("matrix oidc authorization code build", error)
+        })?;
 
     info!(account_id, auth_url = %url, "matrix OIDC login started");
 
@@ -437,11 +472,13 @@ mod tests {
     }
 
     #[test]
-    fn build_client_metadata_normalizes_loopback_and_uses_project_client_uri() {
+    fn build_client_metadata_uses_pre_normalized_loopback_and_project_client_uri() {
+        // Caller must normalize before passing to build_client_metadata.
         let redirect: Url = "https://localhost:52979/auth/callback"
             .parse()
             .unwrap_or_else(|error| panic!("{error}"));
-        let metadata = build_client_metadata(&redirect).unwrap_or_else(|error| panic!("{error}"));
+        let normalized = normalize_loopback_redirect(&redirect);
+        let metadata = build_client_metadata(&normalized).unwrap_or_else(|error| panic!("{error}"));
         match &metadata.grant_types[0] {
             OAuthGrantType::AuthorizationCode { redirect_uris } => {
                 assert_eq!(
