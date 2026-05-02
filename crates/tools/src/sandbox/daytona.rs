@@ -393,11 +393,14 @@ impl Sandbox for DaytonaSandbox {
             .await
             .ok_or_else(|| Error::message(format!("daytona: no active sandbox for {id}")))?;
 
-        let cwd = opts
-            .working_dir
-            .as_ref()
-            .and_then(|p| p.to_str())
-            .unwrap_or(&workspace_dir);
+        // Map the generic /home/sandbox to the actual Daytona workspace dir.
+        let cwd = match opts.working_dir.as_ref().and_then(|p| p.to_str()) {
+            Some(p) if p == "/home/sandbox" || p.starts_with("/home/sandbox/") => {
+                workspace_dir.as_str()
+            },
+            Some(p) => p,
+            None => workspace_dir.as_str(),
+        };
 
         self.run_command(&sandbox_id, command, cwd, opts).await
     }

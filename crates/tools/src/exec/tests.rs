@@ -600,7 +600,9 @@ async fn test_exec_tool_sandbox_rewrites_host_absolute_working_dir() {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    assert_eq!(captured, Some(PathBuf::from("/home/sandbox")));
+    // Absolute paths outside the sandbox are passed through — the backend
+    // handles remapping to its own workspace if needed.
+    assert_eq!(captured, Some(PathBuf::from("/Users/fabien")));
 }
 
 #[tokio::test]

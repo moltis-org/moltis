@@ -206,9 +206,11 @@ impl VercelSandbox {
         let body = serde_json::json!({
             "command": "sh",
             "args": ["-c", command],
-            "cwd": opts.working_dir.as_ref()
-                .and_then(|p| p.to_str())
-                .unwrap_or(VERCEL_WORKSPACE),
+            "cwd": match opts.working_dir.as_ref().and_then(|p| p.to_str()) {
+                Some(p) if p == "/home/sandbox" || p.starts_with("/home/sandbox/") => VERCEL_WORKSPACE,
+                Some(p) => p,
+                None => VERCEL_WORKSPACE,
+            },
             "wait": true,
         });
 

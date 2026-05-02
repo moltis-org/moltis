@@ -498,15 +498,9 @@ impl AgentTool for ExecTool {
                 Some(ref dir) if !dir.is_absolute() => {
                     Some(PathBuf::from("/home/sandbox").join(dir))
                 },
-                // Absolute paths are only allowed inside the sandbox home.
-                Some(ref dir) if dir.starts_with("/home/sandbox") => explicit_working_dir,
-                Some(ref dir) => {
-                    debug!(
-                        path = %dir.display(),
-                        "explicit working_dir is outside /home/sandbox while sandboxed, using default"
-                    );
-                    None
-                },
+                // Absolute paths are passed through (the backend's exec()
+                // will map them to its own workspace if needed).
+                Some(_) => explicit_working_dir,
                 None => None,
             }
         };
@@ -514,6 +508,8 @@ impl AgentTool for ExecTool {
         let using_default_working_dir = validated_explicit.is_none();
         let mut working_dir = validated_explicit.or_else(|| {
             if !runs_on_host {
+                // Use the generic sandbox home as default. Each backend's exec()
+                // method uses its own workspace_dir() if working_dir doesn't exist.
                 Some(PathBuf::from("/home/sandbox"))
             } else {
                 Some(host_default_dir())
