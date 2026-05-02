@@ -1036,15 +1036,15 @@ function VercelTabContent(): VNode {
 				<h3 className="text-sm font-medium text-[var(--text-strong)]">Vercel Sandbox</h3>
 				{cfg?.vercel?.configured ? (
 					<span
-						className="text-[10px] px-1.5 py-0.5 rounded-full"
-						style={{ background: "var(--success)", color: "#fff" }}
+						className="text-[10px] px-1.5 py-0.5 rounded-full border"
+						style={{ borderColor: "var(--success)", color: "var(--success)" }}
 					>
 						configured
 					</span>
 				) : (
 					<span
-						className="text-[10px] px-1.5 py-0.5 rounded-full"
-						style={{ background: "var(--muted)", color: "#fff" }}
+						className="text-[10px] px-1.5 py-0.5 rounded-full border"
+						style={{ borderColor: "var(--muted)", color: "var(--muted)" }}
 					>
 						not configured
 					</span>
@@ -1057,7 +1057,11 @@ function VercelTabContent(): VNode {
 				<input
 					type="password"
 					className="provider-key-input"
-					placeholder="Vercel token (VERCEL_TOKEN)"
+					placeholder={
+						cfg?.vercel?.configured
+							? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set via env or config)"
+							: "Vercel token (VERCEL_TOKEN)"
+					}
 					style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
 					value={vercelToken.value}
 					onInput={(e) => {
@@ -1147,7 +1151,11 @@ function DaytonaTabContent(): VNode {
 				<input
 					type="password"
 					className="provider-key-input"
-					placeholder="Daytona API key (DAYTONA_API_KEY)"
+					placeholder={
+						cfg?.daytona?.configured
+							? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set via env or config)"
+							: "Daytona API key (DAYTONA_API_KEY)"
+					}
 					style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
 					value={daytonaApiKey.value}
 					onInput={(e) => {
