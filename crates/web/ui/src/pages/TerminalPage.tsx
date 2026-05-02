@@ -134,6 +134,8 @@ let FitAddonCtorRef: FitAddonCtorType | null = null;
 let oscHandlerDisposables: { dispose: () => void }[] = [];
 
 let terminalAvailable = false;
+let selectedContainer: string | null = null; // null = host, "container-name" = exec into container
+let targetSelectorEl: HTMLSelectElement | null = null;
 let lastSentCols = 0;
 let lastSentRows = 0;
 let tmuxInstallCommand = "";
@@ -774,8 +776,11 @@ function connectTerminalSocket(): void {
 	lastSentRows = 0;
 	const proto = location.protocol === "https:" ? "wss:" : "ws:";
 	let wsUrl = `${proto}//${location.host}/api/terminal/ws`;
+	const params: string[] = [];
 	const tw = pendingWindowId || activeWindowId;
-	if (tmuxPersistenceEnabled && tw) wsUrl += `?window=${encodeURIComponent(tw)}`;
+	if (tmuxPersistenceEnabled && tw) params.push(`window=${encodeURIComponent(tw)}`);
+	if (selectedContainer) params.push(`container=${encodeURIComponent(selectedContainer)}`);
+	if (params.length > 0) wsUrl += `?${params.join("&")}`;
 	socket = new WebSocket(wsUrl);
 	setStatus("Connecting terminal websocket...");
 	socket.onopen = () => setStatus("Terminal websocket connected.", "ok");
@@ -837,6 +842,30 @@ function bindEvents(): void {
 		});
 }
 
+// ── Target selector (host vs container) ──────────────────────
+
+function populateTargetSelector(): void {
+	if (!targetSelectorEl) return;
+	// Keep existing "Host" option, add running containers.
+	fetch("/api/sandbox/containers")
+		.then((r) => r.json())
+		.then((data) => {
+			const containers: { name: string; state: string; backend: string }[] = data.containers || [];
+			const running = containers.filter((c) => c.state === "running");
+			// Remove old container options (keep first "Host" option).
+			while (targetSelectorEl!.options.length > 1) {
+				targetSelectorEl!.remove(1);
+			}
+			for (const c of running) {
+				const opt = document.createElement("option");
+				opt.value = c.name;
+				opt.textContent = `\u{1F4E6} ${c.name}`;
+				targetSelectorEl!.appendChild(opt);
+			}
+		})
+		.catch(() => {});
+}
+
 // Static HTML template for terminal page layout. No user input is interpolated.
 function buildTerminalHtml(): string {
 	return [
@@ -853,6 +882,9 @@ function buildTerminalHtml(): string {
 		'<button id="terminalRestart" class="logs-btn" type="button">Restart</button>',
 		"</div></div>",
 		'<div class="terminal-tabs-bar">',
+		'<select id="terminalTarget" class="logs-btn" style="font-size:0.75rem;padding:2px 8px;margin-right:8px;" title="Terminal target">',
+		'<option value="">Host</option>',
+		"</select>",
 		'<div id="terminalTabs" class="terminal-tabs" aria-label="tmux windows"></div>',
 		'<button id="terminalNewTab" class="logs-btn terminal-new-tab" type="button" title="Create tmux window">+ Tab</button>',
 		"</div>",
@@ -895,6 +927,16 @@ export async function initTerminal(container: HTMLElement): Promise<void> {
 	restartBtn = container.querySelector("#terminalRestart");
 	installTmuxBtn = container.querySelector("#terminalInstallTmux");
 	copyInstallBtn = container.querySelector("#terminalCopyInstall");
+	targetSelectorEl = container.querySelector("#terminalTarget");
+
+	// Populate container selector and bind change event.
+	if (targetSelectorEl) {
+		targetSelectorEl.addEventListener("change", () => {
+			selectedContainer = targetSelectorEl!.value || null;
+			connectTerminalSocket();
+		});
+		populateTargetSelector();
+	}
 
 	setStatus("Initializing terminal...");
 	setControlsEnabled(false);
