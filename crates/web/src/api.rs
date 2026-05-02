@@ -1017,11 +1017,15 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
 fn remote_backends_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
     let sb = &config.tools.exec.sandbox;
     let vercel_configured = !sb.vercel_token.as_deref().unwrap_or("").is_empty();
+    let vercel_from_env =
+        std::env::var("VERCEL_TOKEN").is_ok() || std::env::var("VERCEL_OIDC_TOKEN").is_ok();
     let daytona_configured = !sb.daytona_api_key.as_deref().unwrap_or("").is_empty();
+    let daytona_from_env = std::env::var("DAYTONA_API_KEY").is_ok();
     serde_json::json!({
         "backend": sb.backend,
         "vercel": {
             "configured": vercel_configured,
+            "from_env": vercel_from_env,
             "project_id": sb.vercel_project_id,
             "team_id": sb.vercel_team_id,
             "runtime": sb.vercel_runtime.as_deref().unwrap_or("node24"),
@@ -1030,6 +1034,7 @@ fn remote_backends_payload(config: &moltis_config::MoltisConfig) -> serde_json::
         },
         "daytona": {
             "configured": daytona_configured,
+            "from_env": daytona_from_env,
             "api_url": sb.daytona_api_url.as_deref().unwrap_or("https://app.daytona.io/api"),
             "target": sb.daytona_target,
         },

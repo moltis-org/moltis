@@ -53,6 +53,7 @@ interface SharedHomeConfig {
 interface RemoteBackendsConfig {
 	vercel: {
 		configured: boolean;
+		from_env?: boolean;
 		project_id?: string;
 		team_id?: string;
 		runtime: string;
@@ -61,6 +62,7 @@ interface RemoteBackendsConfig {
 	};
 	daytona: {
 		configured: boolean;
+		from_env?: boolean;
 		api_url: string;
 		target?: string;
 	};
@@ -1058,16 +1060,24 @@ function VercelTabContent(): VNode {
 					type="password"
 					className="provider-key-input"
 					placeholder={
-						cfg?.vercel?.configured
-							? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set via env or config)"
-							: "Vercel token (VERCEL_TOKEN)"
+						cfg?.vercel?.from_env
+							? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set via VERCEL_TOKEN env var)"
+							: cfg?.vercel?.configured
+								? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set in config)"
+								: "Vercel token (VERCEL_TOKEN)"
 					}
 					style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
 					value={vercelToken.value}
+					disabled={cfg?.vercel?.from_env}
 					onInput={(e) => {
 						vercelToken.value = (e.target as HTMLInputElement).value;
 					}}
 				/>
+				{cfg?.vercel?.from_env && (
+					<div className="text-[10px] text-[var(--muted)]">
+						Token managed by environment variable. Remove VERCEL_TOKEN from env to configure here.
+					</div>
+				)}
 				<div style={{ display: "flex", gap: "6px" }}>
 					<input
 						type="text"
@@ -1152,16 +1162,24 @@ function DaytonaTabContent(): VNode {
 					type="password"
 					className="provider-key-input"
 					placeholder={
-						cfg?.daytona?.configured
-							? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set via env or config)"
-							: "Daytona API key (DAYTONA_API_KEY)"
+						cfg?.daytona?.from_env
+							? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set via DAYTONA_API_KEY env var)"
+							: cfg?.daytona?.configured
+								? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022 (set in config)"
+								: "Daytona API key (DAYTONA_API_KEY)"
 					}
 					style={{ fontFamily: "var(--font-mono)", fontSize: ".8rem" }}
 					value={daytonaApiKey.value}
+					disabled={cfg?.daytona?.from_env}
 					onInput={(e) => {
 						daytonaApiKey.value = (e.target as HTMLInputElement).value;
 					}}
 				/>
+				{cfg?.daytona?.from_env && (
+					<div className="text-[10px] text-[var(--muted)]">
+						Token managed by environment variable. Remove DAYTONA_API_KEY from env to configure here.
+					</div>
+				)}
 				<input
 					type="text"
 					className="provider-key-input"
