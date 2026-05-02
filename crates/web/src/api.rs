@@ -1094,16 +1094,21 @@ WORKDIR /home/sandbox\n"
         );
     }
 
-    // Use the container CLI that's available and running. On macOS with
-    // Apple Container, this typically falls back to Docker or Podman for
-    // image building since Apple Container can't build images directly.
-    let builder = moltis_tools::image_cache::DockerImageBuilder::new();
-    tracing::debug!(
-        name,
-        cli = builder.cli_name(),
-        "starting image build via API"
-    );
+    // Pick the container CLI based on the configured sandbox backend.
+    // Apple Container delegates builds to Docker; explicit docker/podman
+    // selections use their respective CLI; "auto" and others use the
+    // auto-detected CLI (which has fallback on daemon errors).
+    let config = moltis_config::discover_and_load();
+    let cli: &str = match config.tools.exec.sandbox.backend.as_str() {
+        "apple-container" => "docker",
+        "docker" => "docker",
+        "podman" => "podman",
+        _ => moltis_tools::sandbox::container_cli(),
+    };
+    let builder = moltis_tools::image_cache::DockerImageBuilder::with_cli(cli);
+    tracing::debug!(name, cli, "starting image build via API");
     let result = builder.ensure_image(name, &dockerfile_path, &tmp_dir).await;
+    let _ = std::fs::remove_dir_all(&tmp_dir);
     let _ = std::fs::remove_dir_all(&tmp_dir);
     match result {
         Ok(tag) => {
