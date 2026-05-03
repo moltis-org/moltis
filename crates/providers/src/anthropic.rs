@@ -543,6 +543,7 @@ fn to_anthropic_messages(
             ChatMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 if tool_calls.is_empty() {
                     out.push(serde_json::json!({

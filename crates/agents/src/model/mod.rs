@@ -72,7 +72,7 @@ mod tests {
     fn assistant_message_text() {
         let msg = ChatMessage::assistant("Hi there");
         assert!(
-            matches!(msg, ChatMessage::Assistant { content: Some(t), tool_calls } if t == "Hi there" && tool_calls.is_empty())
+            matches!(msg, ChatMessage::Assistant { content: Some(t), tool_calls, .. } if t == "Hi there" && tool_calls.is_empty())
         );
     }
 
@@ -324,11 +324,13 @@ mod tests {
             ChatMessage::Assistant {
                 content,
                 tool_calls,
+                reasoning,
             } => {
                 assert_eq!(content.as_deref(), Some("thinking"));
                 assert_eq!(tool_calls.len(), 1);
                 assert_eq!(tool_calls[0].name, "exec");
                 assert_eq!(tool_calls[0].arguments["cmd"], "ls");
+                assert!(reasoning.is_none());
             },
             _ => panic!("expected assistant message"),
         }
@@ -413,6 +415,7 @@ mod tests {
                     arguments: serde_json::json!({}),
                     metadata: None,
                 }],
+                reasoning: None,
             },
             ChatMessage::tool("call_1", "result"),
         ];
@@ -435,6 +438,7 @@ mod tests {
                 }),
                 metadata: None,
             }],
+            reasoning: None,
         }];
         let values: Vec<serde_json::Value> = original.iter().map(|m| m.to_openai_value()).collect();
         let roundtripped = values_to_chat_messages(&values);
@@ -570,6 +574,37 @@ mod tests {
                 assert!(content.contains("file.txt"));
             },
             other => panic!("expected Tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn convert_tool_result_reasoning_attaches_to_assistant_tool_call() {
+        let values = vec![
+            serde_json::json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "exec", "arguments": "{\"command\":\"ls\"}"}
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "exec",
+                "success": true,
+                "result": {"stdout": "file.txt"},
+                "reasoning": "I should inspect the directory first."
+            }),
+        ];
+        let msgs = values_to_chat_messages(&values);
+
+        match &msgs[0] {
+            ChatMessage::Assistant { reasoning, .. } => assert_eq!(
+                reasoning.as_deref(),
+                Some("I should inspect the directory first.")
+            ),
+            other => panic!("expected Assistant, got {other:?}"),
         }
     }
 
@@ -870,6 +905,7 @@ mod tests {
                 arguments: serde_json::json!({}),
                 metadata: Some(meta),
             }],
+            reasoning: None,
         }];
         let values: Vec<serde_json::Value> = original.iter().map(|m| m.to_openai_value()).collect();
         match &values_to_chat_messages(&values)[0] {

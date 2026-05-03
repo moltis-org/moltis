@@ -238,6 +238,7 @@ impl OpenAiCodexProvider {
                     ChatMessage::Assistant {
                         content,
                         tool_calls,
+                        ..
                     } => {
                         if !tool_calls.is_empty() {
                             let mut items: Vec<serde_json::Value> = vec![];

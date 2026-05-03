@@ -20,6 +20,7 @@ pub enum ChatMessage {
     Assistant {
         content: Option<String>,
         tool_calls: Vec<ToolCall>,
+        reasoning: Option<String>,
     },
     Tool {
         tool_call_id: String,
@@ -93,6 +94,7 @@ impl ChatMessage {
         Self::Assistant {
             content: Some(content.into()),
             tool_calls: vec![],
+            reasoning: None,
         }
     }
 
@@ -101,6 +103,7 @@ impl ChatMessage {
         Self::Assistant {
             content,
             tool_calls,
+            reasoning: None,
         }
     }
 
@@ -182,6 +185,7 @@ impl ChatMessage {
             ChatMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 if tool_calls.is_empty() {
                     serde_json::json!({

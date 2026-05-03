@@ -214,6 +214,7 @@ pub fn to_responses_input(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
             ChatMessage::Assistant {
                 content,
                 tool_calls,
+                ..
             } => {
                 if !tool_calls.is_empty() {
                     let mut items: Vec<serde_json::Value> = tool_calls
