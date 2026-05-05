@@ -221,7 +221,7 @@ json_schema_ast = "0.3.1"
 # GraphQL
 async-graphql      = "7"
 async-graphql-axum = "7"
-gix                = "0.78"
+gix                = "0.83"
 hex                = "0.4"
 hmac               = "0.12"
 jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
