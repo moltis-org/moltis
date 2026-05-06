@@ -647,12 +647,15 @@ impl Sandbox for VercelSandbox {
             return Ok(None);
         };
 
-        // Sandbox is automatically stopped after snapshot.
         info!(snapshot_id, "vercel: snapshot created with packages");
 
         if snapshot_id.is_empty() {
             let _ = self.stop_sandbox(&sandbox_id).await;
             return Ok(None);
+        }
+
+        if let Err(e) = self.stop_sandbox(&sandbox_id).await {
+            warn!(error = %e, "vercel: sandbox stop failed after snapshot creation");
         }
 
         Ok(Some(super::types::BuildImageResult {

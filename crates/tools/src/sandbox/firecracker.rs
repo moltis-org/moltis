@@ -616,7 +616,10 @@ impl Sandbox for FirecrackerSandbox {
         let api_socket = images_dir.join(format!("{tag}.sock"));
         let _ = std::fs::remove_file(&api_socket);
 
-        Self::create_tap(&tap_name, &host_ip).await?;
+        if let Err(e) = Self::create_tap(&tap_name, &host_ip).await {
+            let _ = std::fs::remove_file(&temp_rootfs);
+            return Err(e);
+        }
 
         let mut process = match self
             .boot_vm(&api_socket, &temp_rootfs, &tap_name, &guest_ip, &host_ip)
@@ -733,7 +736,10 @@ impl Sandbox for FirecrackerSandbox {
         info!(%id, tap = tap_name, guest_ip, source = %source_rootfs.display(), "firecracker: booting VM");
 
         Self::copy_rootfs(source_rootfs, &rootfs_copy).await?;
-        Self::create_tap(&tap_name, &host_ip).await?;
+        if let Err(e) = Self::create_tap(&tap_name, &host_ip).await {
+            let _ = std::fs::remove_dir_all(&vm_dir);
+            return Err(e);
+        }
 
         let process = match self
             .boot_vm(&api_socket, &rootfs_copy, &tap_name, &guest_ip, &host_ip)
