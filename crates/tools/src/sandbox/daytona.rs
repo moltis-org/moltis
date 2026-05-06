@@ -30,6 +30,10 @@ const DEFAULT_API_URL: &str = "https://app.daytona.io/api";
 /// Default workspace directory inside Daytona sandboxes.
 const DAYTONA_WORKSPACE: &str = "/home/daytona";
 
+/// Generic workspace path used by the shared sandbox tool contract.
+const GENERIC_WORKSPACE: &str = "/home/sandbox";
+const GENERIC_WORKSPACE_PREFIX: &str = "/home/sandbox/";
+
 /// State of a live Daytona sandbox session.
 struct DaytonaSession {
     sandbox_id: String,
@@ -96,6 +100,17 @@ impl DaytonaSandbox {
 
     async fn existing_creation_permit(&self, id: &SandboxId) -> Option<Arc<Semaphore>> {
         self.creation_permits.read().await.get(&id.key).cloned()
+    }
+
+    fn translate_working_dir(working_dir: Option<&str>, workspace_dir: &str) -> String {
+        match working_dir {
+            Some(path) if path == GENERIC_WORKSPACE => workspace_dir.to_string(),
+            Some(path) if path.starts_with(GENERIC_WORKSPACE_PREFIX) => {
+                format!("{workspace_dir}{}", &path[GENERIC_WORKSPACE.len()..])
+            },
+            Some(path) => path.to_string(),
+            None => workspace_dir.to_string(),
+        }
     }
 
     /// Build an authenticated request.
@@ -403,15 +418,12 @@ impl Sandbox for DaytonaSandbox {
             .ok_or_else(|| Error::message(format!("daytona: no active sandbox for {id}")))?;
 
         // Map the generic /home/sandbox to the actual Daytona workspace dir.
-        let cwd = match opts.working_dir.as_ref().and_then(|p| p.to_str()) {
-            Some(p) if p == "/home/sandbox" || p.starts_with("/home/sandbox/") => {
-                workspace_dir.as_str()
-            },
-            Some(p) => p,
-            None => workspace_dir.as_str(),
-        };
+        let cwd = Self::translate_working_dir(
+            opts.working_dir.as_ref().and_then(|p| p.to_str()),
+            &workspace_dir,
+        );
 
-        self.run_command(&sandbox_id, command, cwd, opts).await
+        self.run_command(&sandbox_id, command, &cwd, opts).await
     }
 
     async fn read_file(
@@ -513,6 +525,29 @@ mod tests {
         assert!(config.target.is_none());
         assert!(config.image.is_none());
         assert!(config.language.is_none());
+    }
+
+    #[test]
+    fn test_translate_working_dir_preserves_workspace_subdirectory() {
+        assert_eq!(
+            DaytonaSandbox::translate_working_dir(
+                Some("/home/sandbox/myproject/src"),
+                "/workspace/custom",
+            ),
+            "/workspace/custom/myproject/src"
+        );
+        assert_eq!(
+            DaytonaSandbox::translate_working_dir(Some("/home/sandbox"), "/workspace/custom"),
+            "/workspace/custom"
+        );
+        assert_eq!(
+            DaytonaSandbox::translate_working_dir(Some("/tmp/build"), "/workspace/custom"),
+            "/tmp/build"
+        );
+        assert_eq!(
+            DaytonaSandbox::translate_working_dir(None, "/workspace/custom"),
+            "/workspace/custom"
+        );
     }
 
     #[tokio::test]

@@ -31,6 +31,10 @@ const VERCEL_API_BASE: &str = "https://vercel.com/api";
 /// Default sandbox workspace directory inside Vercel sandboxes.
 const VERCEL_WORKSPACE: &str = "/vercel/sandbox";
 
+/// Generic workspace path used by the shared sandbox tool contract.
+const GENERIC_WORKSPACE: &str = "/home/sandbox";
+const GENERIC_WORKSPACE_PREFIX: &str = "/home/sandbox/";
+
 /// Default timeout for sandbox creation (5 minutes).
 const DEFAULT_TIMEOUT_MS: u64 = 300_000;
 
@@ -103,6 +107,17 @@ impl VercelSandbox {
 
     async fn existing_creation_permit(&self, id: &SandboxId) -> Option<Arc<Semaphore>> {
         self.creation_permits.read().await.get(&id.key).cloned()
+    }
+
+    fn translate_working_dir(working_dir: Option<&str>) -> String {
+        match working_dir {
+            Some(path) if path == GENERIC_WORKSPACE => VERCEL_WORKSPACE.to_string(),
+            Some(path) if path.starts_with(GENERIC_WORKSPACE_PREFIX) => {
+                format!("{VERCEL_WORKSPACE}{}", &path[GENERIC_WORKSPACE.len()..])
+            },
+            Some(path) => path.to_string(),
+            None => VERCEL_WORKSPACE.to_string(),
+        }
     }
 
     /// Build an authenticated request with team scoping.
@@ -220,14 +235,11 @@ impl VercelSandbox {
         command: &str,
         opts: &ExecOpts,
     ) -> Result<ExecResult> {
+        let cwd = Self::translate_working_dir(opts.working_dir.as_ref().and_then(|p| p.to_str()));
         let body = serde_json::json!({
             "command": "sh",
             "args": ["-c", command],
-            "cwd": match opts.working_dir.as_ref().and_then(|p| p.to_str()) {
-                Some(p) if p == "/home/sandbox" || p.starts_with("/home/sandbox/") => VERCEL_WORKSPACE,
-                Some(p) => p,
-                None => VERCEL_WORKSPACE,
-            },
+            "cwd": cwd,
             "wait": true,
         });
 
@@ -839,6 +851,26 @@ mod tests {
         assert!(config.project_id.is_none());
         assert!(config.team_id.is_none());
         assert!(config.snapshot_id.is_none());
+    }
+
+    #[test]
+    fn test_translate_working_dir_preserves_workspace_subdirectory() {
+        assert_eq!(
+            VercelSandbox::translate_working_dir(Some("/home/sandbox/myproject/src")),
+            "/vercel/sandbox/myproject/src"
+        );
+        assert_eq!(
+            VercelSandbox::translate_working_dir(Some("/home/sandbox")),
+            "/vercel/sandbox"
+        );
+        assert_eq!(
+            VercelSandbox::translate_working_dir(Some("/tmp/build")),
+            "/tmp/build"
+        );
+        assert_eq!(
+            VercelSandbox::translate_working_dir(None),
+            "/vercel/sandbox"
+        );
     }
 
     #[test]
