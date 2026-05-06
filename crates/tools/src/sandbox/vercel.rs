@@ -606,7 +606,7 @@ impl Sandbox for VercelSandbox {
         }
 
         // Take a snapshot.
-        let resp = self
+        let resp = match self
             .request(
                 reqwest::Method::POST,
                 &format!("/v1/sandboxes/{sandbox_id}/snapshot"),
@@ -614,7 +614,15 @@ impl Sandbox for VercelSandbox {
             .json(&serde_json::json!({}))
             .send()
             .await
-            .map_err(|e| Error::message(format!("vercel: snapshot request failed: {e}")))?;
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                let _ = self.stop_sandbox(&sandbox_id).await;
+                return Err(Error::message(format!(
+                    "vercel: snapshot request failed: {e}"
+                )));
+            },
+        };
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
