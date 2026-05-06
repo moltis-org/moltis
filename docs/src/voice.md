@@ -178,7 +178,7 @@ the [`coqui-tts` PyPI package](https://pypi.org/project/coqui-tts/).
 
    # Or via Docker
    docker run --rm -p 5002:5002 --entrypoint /bin/bash ghcr.io/idiap/coqui-tts-cpu \
-     -lc 'python3 TTS/server/server.py --model_name tts_models/en/vctk/vits'
+     -lc 'python3 TTS/server/server.py --model_name tts_models/en/ljspeech/tacotron2-DDC'
    ```
 
 2. Configure in `moltis.toml`:
