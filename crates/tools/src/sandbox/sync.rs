@@ -265,7 +265,15 @@ async fn extract_tar_gz(dir: &Path, tar_bytes: &[u8]) -> Result<()> {
             tar::EntryType::Regular => {
                 ensure_parent_directory(dir, &relative_path)?;
                 let target = dir.join(&relative_path);
-                reject_existing_symlink(&target)?;
+                if let Err(e) = reject_existing_symlink(&target) {
+                    warn!(
+                        path = %relative_path.display(),
+                        target = %target.display(),
+                        error = %e,
+                        "sync: skipping regular file that would overwrite a symlink"
+                    );
+                    continue;
+                }
                 let mut file = std::fs::File::create(&target).map_err(|e| {
                     Error::message(format!(
                         "sync: failed to create extracted file '{}': {e}",
@@ -494,8 +502,24 @@ fn extract_hardlink(root: &Path, relative_path: &Path, link_target: &Path) -> Re
     ensure_parent_directory(root, relative_path)?;
     let source = root.join(&relative_link_target);
     let target = root.join(relative_path);
-    reject_existing_symlink(&source)?;
-    reject_existing_symlink(&target)?;
+    if let Err(e) = reject_existing_symlink(&source) {
+        warn!(
+            path = %relative_path.display(),
+            target = %relative_link_target.display(),
+            error = %e,
+            "sync: skipping hardlink whose source is a symlink"
+        );
+        return Ok(());
+    }
+    if let Err(e) = reject_existing_symlink(&target) {
+        warn!(
+            path = %relative_path.display(),
+            target = %relative_link_target.display(),
+            error = %e,
+            "sync: skipping hardlink that would overwrite a symlink"
+        );
+        return Ok(());
+    }
 
     match std::fs::symlink_metadata(&source) {
         Ok(metadata) if metadata.is_file() => {
@@ -580,14 +604,28 @@ fn reject_existing_symlink(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn tar_gz_with_file(path: &str, content: &[u8]) -> Vec<u8> {
+    fn tar_gz_with_two_files(first_path: &str, second_path: &str) -> Vec<u8> {
         let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         let mut archive = tar::Builder::new(enc);
-        let mut header = tar::Header::new_gnu();
-        header.set_size(content.len() as u64);
-        header.set_mode(0o644);
-        header.set_cksum();
-        archive.append_data(&mut header, path, content).unwrap();
+
+        let first = b"first";
+        let mut first_header = tar::Header::new_gnu();
+        first_header.set_size(first.len() as u64);
+        first_header.set_mode(0o644);
+        first_header.set_cksum();
+        archive
+            .append_data(&mut first_header, first_path, &first[..])
+            .unwrap();
+
+        let second = b"second";
+        let mut second_header = tar::Header::new_gnu();
+        second_header.set_size(second.len() as u64);
+        second_header.set_mode(0o644);
+        second_header.set_cksum();
+        archive
+            .append_data(&mut second_header, second_path, &second[..])
+            .unwrap();
+
         archive.into_inner().and_then(|enc| enc.finish()).unwrap()
     }
 
@@ -791,17 +829,21 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_extract_rejects_existing_symlink_target() {
+    async fn test_extract_skips_existing_symlink_target_and_continues() {
         let dst = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         let outside_file = outside.path().join("target.txt");
         std::fs::write(&outside_file, "original").unwrap();
         std::os::unix::fs::symlink(&outside_file, dst.path().join("link.txt")).unwrap();
 
-        let tar_bytes = tar_gz_with_file("link.txt", b"overwrite");
-        let result = extract_tar_gz(dst.path(), &tar_bytes).await;
-        assert!(result.is_err());
+        let tar_bytes = tar_gz_with_two_files("link.txt", "safe.txt");
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
         assert_eq!(std::fs::read_to_string(outside_file).unwrap(), "original");
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("safe.txt")).unwrap(),
+            "second"
+        );
     }
 
     #[cfg(unix)]
@@ -890,6 +932,45 @@ mod tests {
 
         assert!(dst.path().join("store/dir").is_dir());
         assert!(!dst.path().join("node_modules/pkg/dir").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_extract_skips_hardlink_from_existing_symlink_source() {
+        let dst = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("target.txt");
+        std::fs::write(&outside_file, "original").unwrap();
+        std::fs::create_dir_all(dst.path().join("store")).unwrap();
+        std::os::unix::fs::symlink(&outside_file, dst.path().join("store/link")).unwrap();
+
+        let tar_bytes = tar_gz_with_hardlink("node_modules/pkg/file.txt", "store/link");
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
+        assert!(!dst.path().join("node_modules/pkg/file.txt").exists());
+        assert_eq!(std::fs::read_to_string(outside_file).unwrap(), "original");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_extract_skips_hardlink_to_existing_symlink_target() {
+        let dst = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("target.txt");
+        std::fs::write(&outside_file, "original").unwrap();
+        std::fs::create_dir_all(dst.path().join("node_modules/pkg")).unwrap();
+        std::os::unix::fs::symlink(&outside_file, dst.path().join("node_modules/pkg/file.txt"))
+            .unwrap();
+
+        let tar_bytes =
+            tar_gz_with_file_and_hardlink("store/content.txt", "node_modules/pkg/file.txt");
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
+        assert_eq!(std::fs::read_to_string(outside_file).unwrap(), "original");
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("store/content.txt")).unwrap(),
+            "shared content"
+        );
     }
 
     #[tokio::test]
