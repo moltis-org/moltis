@@ -604,27 +604,36 @@ impl Sandbox for VercelSandbox {
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
             warn!("vercel: snapshot failed: {text}");
-            // Stop the build sandbox anyway.
             let _ = self.stop_sandbox(&sandbox_id).await;
             return Ok(None);
         }
 
-        let data: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| Error::message(format!("vercel: invalid snapshot response: {e}")))?;
+        let data: serde_json::Value = match resp.json().await {
+            Ok(data) => data,
+            Err(e) => {
+                let _ = self.stop_sandbox(&sandbox_id).await;
+                return Err(Error::message(format!(
+                    "vercel: invalid snapshot response: {e}"
+                )));
+            },
+        };
 
-        let snapshot_id = data["snapshot"]["id"].as_str().unwrap_or("").to_string();
+        let Some(snapshot_id) = data["snapshot"]["id"].as_str() else {
+            let _ = self.stop_sandbox(&sandbox_id).await;
+            warn!("vercel: snapshot response missing snapshot.id");
+            return Ok(None);
+        };
 
         // Sandbox is automatically stopped after snapshot.
         info!(snapshot_id, "vercel: snapshot created with packages");
 
         if snapshot_id.is_empty() {
+            let _ = self.stop_sandbox(&sandbox_id).await;
             return Ok(None);
         }
 
         Ok(Some(super::types::BuildImageResult {
-            tag: snapshot_id,
+            tag: snapshot_id.to_string(),
             built: true,
         }))
     }

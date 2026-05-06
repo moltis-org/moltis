@@ -478,16 +478,22 @@ fn extract_hardlink(root: &Path, relative_path: &Path, link_target: &Path) -> Re
             })?;
             Ok(())
         },
-        Ok(metadata) if metadata.is_dir() => Err(Error::message(format!(
-            "sync: refusing hardlink '{}' to directory '{}'",
-            relative_path.display(),
-            relative_link_target.display()
-        ))),
-        Ok(_) => Err(Error::message(format!(
-            "sync: refusing hardlink '{}' to special file '{}'",
-            relative_path.display(),
-            relative_link_target.display()
-        ))),
+        Ok(metadata) if metadata.is_dir() => {
+            warn!(
+                path = %relative_path.display(),
+                target = %relative_link_target.display(),
+                "sync: skipping hardlink to directory"
+            );
+            Ok(())
+        },
+        Ok(_) => {
+            warn!(
+                path = %relative_path.display(),
+                target = %relative_link_target.display(),
+                "sync: skipping hardlink to special file"
+            );
+            Ok(())
+        },
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             warn!(
                 path = %relative_path.display(),
@@ -589,6 +595,31 @@ mod tests {
         header.set_mode(0o644);
         header.set_cksum();
         archive.append_link(&mut header, path, target).unwrap();
+        archive.into_inner().and_then(|enc| enc.finish()).unwrap()
+    }
+
+    fn tar_gz_with_directory_and_hardlink(dir_path: &str, hardlink_path: &str) -> Vec<u8> {
+        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(enc);
+
+        let mut dir_header = tar::Header::new_gnu();
+        dir_header.set_entry_type(tar::EntryType::Directory);
+        dir_header.set_size(0);
+        dir_header.set_mode(0o755);
+        dir_header.set_cksum();
+        archive
+            .append_data(&mut dir_header, dir_path, io::empty())
+            .unwrap();
+
+        let mut link_header = tar::Header::new_gnu();
+        link_header.set_entry_type(tar::EntryType::Link);
+        link_header.set_size(0);
+        link_header.set_mode(0o644);
+        link_header.set_cksum();
+        archive
+            .append_link(&mut link_header, hardlink_path, dir_path)
+            .unwrap();
+
         archive.into_inner().and_then(|enc| enc.finish()).unwrap()
     }
 
@@ -803,6 +834,17 @@ mod tests {
         extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
 
         assert!(!dst.path().join("node_modules/pkg/file.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_extract_skips_hardlink_to_directory() {
+        let dst = tempfile::tempdir().unwrap();
+        let tar_bytes = tar_gz_with_directory_and_hardlink("store/dir", "node_modules/pkg/dir");
+
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
+        assert!(dst.path().join("store/dir").is_dir());
+        assert!(!dst.path().join("node_modules/pkg/dir").exists());
     }
 
     #[tokio::test]

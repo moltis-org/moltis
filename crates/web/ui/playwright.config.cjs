@@ -64,6 +64,7 @@ function defaultSpecFiles() {
 		/openai-live\.spec\.js$/,
 		/ollama-qwen-live\.spec\.js$/,
 		/oauth\.spec\.js$/,
+		/remote-sandbox-live\.spec\.js$/,
 	];
 	return readdirSync(path.join(__dirname, "e2e/specs"))
 		.filter((file) => file.endsWith(".spec.js") && !ignored.some((pattern) => pattern.test(file)))
@@ -165,6 +166,7 @@ const defaultProjectIgnore = [
 	/openai-live\.spec/,
 	/ollama-qwen-live\.spec/,
 	/oauth\.spec/,
+	/remote-sandbox-live\.spec/,
 ];
 const defaultProjects = (() => {
 	if (skipDefaultProjects || !includeProject("default")) return [];
@@ -278,6 +280,13 @@ if (ollamaQwenLiveEnabled && includeProject("ollama-qwen-live")) {
 		use: {
 			baseURL: ollamaQwenLiveBaseURL,
 		},
+	});
+}
+
+if (includeProject("remote-sandbox-live")) {
+	projects.push({
+		name: "remote-sandbox-live",
+		testMatch: /remote-sandbox-live\.spec/,
 	});
 }
 

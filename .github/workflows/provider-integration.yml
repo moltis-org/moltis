@@ -249,6 +249,76 @@ jobs:
       - name: Run provider E2E scenarios
         run: ./scripts/run-provider-e2e-daily.sh
 
+  cloud-sandbox-live-e2e:
+    name: Cloud Sandbox Live E2E
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Check cloud sandbox secrets
+        run: |
+          if [ -z "$VERCEL_TOKEN" ] && [ -z "$DAYTONA_API_KEY" ]; then
+            echo "::warning::No cloud sandbox secrets are configured, skipping live cloud sandbox E2E"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$VERCEL_TOKEN" ] && [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::warning::VERCEL_TOKEN is configured but VERCEL_PROJECT_ID is missing, skipping live Vercel sandbox E2E"
+          fi
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: env.SKIP != 'true'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/web/ui/package-lock.json
+
+      - name: Install npm dependencies
+        if: env.SKIP != 'true'
+        working-directory: crates/web/ui
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        if: env.SKIP != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('crates/web/ui/package-lock.json') }}
+
+      - name: Install Playwright browsers
+        if: env.SKIP != 'true'
+        timeout-minutes: 2
+        working-directory: crates/web/ui
+        run: npx playwright install chromium
+
+      - name: Run cloud sandbox live E2E
+        if: env.SKIP != 'true'
+        working-directory: crates/web/ui
+        env:
+          CI: "true"
+          MOLTIS_E2E_ONLY_PROJECT: remote-sandbox-live
+          MOLTIS_E2E_SKIP_DEFAULT_PROJECTS: "1"
+        run: npx playwright test --project=remote-sandbox-live e2e/specs/remote-sandbox-live.spec.js
+
+      - name: Upload cloud sandbox live E2E results
+        if: ${{ !cancelled() && env.SKIP != 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cloud-sandbox-live-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            crates/web/ui/playwright-report/
+            crates/web/ui/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   openai-live-e2e:
     name: OpenAI Live E2E
     runs-on: ubuntu-latest
@@ -428,6 +498,7 @@ jobs:
     needs:
       - provider-tests
       - provider-e2e-scenarios
+      - cloud-sandbox-live-e2e
       - openai-live-e2e
       - ollama-qwen-live-e2e
     if: always()
