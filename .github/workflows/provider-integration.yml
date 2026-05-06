@@ -270,6 +270,10 @@ jobs:
           if [ -n "$VERCEL_TOKEN" ] && [ -z "$VERCEL_PROJECT_ID" ]; then
             echo "::warning::VERCEL_TOKEN is configured but VERCEL_PROJECT_ID is missing, skipping live Vercel sandbox E2E"
             echo "VERCEL_TOKEN=" >> "$GITHUB_ENV"
+            echo "VERCEL_TEAM_ID=" >> "$GITHUB_ENV"
+            if [ -z "$DAYTONA_API_KEY" ]; then
+              echo "SKIP=true" >> "$GITHUB_ENV"
+            fi
           elif [ -n "$VERCEL_TOKEN" ]; then
             usable_backend=true
           fi

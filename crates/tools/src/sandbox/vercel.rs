@@ -126,11 +126,36 @@ impl VercelSandbox {
             .collect()
     }
 
-    fn sandbox_id_from_create_response(data: &serde_json::Value) -> Option<String> {
-        data["sandbox"]["id"]
-            .as_str()
-            .or_else(|| data["id"].as_str())
+    fn non_empty_id(value: Option<&str>) -> Option<String> {
+        value
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
             .map(ToOwned::to_owned)
+    }
+
+    fn sandbox_id_from_create_response(data: &serde_json::Value) -> Option<String> {
+        Self::non_empty_id(data["sandbox"]["id"].as_str())
+            .or_else(|| Self::non_empty_id(data["sandbox"]["sandboxId"].as_str()))
+            .or_else(|| Self::non_empty_id(data["sandbox"]["sandbox_id"].as_str()))
+            .or_else(|| Self::non_empty_id(data["id"].as_str()))
+            .or_else(|| Self::non_empty_id(data["sandboxId"].as_str()))
+            .or_else(|| Self::non_empty_id(data["sandbox_id"].as_str()))
+    }
+
+    fn sandbox_id_from_location(location: Option<&reqwest::header::HeaderValue>) -> Option<String> {
+        let location = location.and_then(|value| value.to_str().ok())?;
+        let path = location.split('?').next().unwrap_or(location);
+        Self::non_empty_id(path.rsplit('/').next())
+            .filter(|id| id.starts_with("sb_") || id.starts_with("sandbox_"))
+    }
+
+    fn snapshot_id_from_response(data: &serde_json::Value) -> Option<String> {
+        Self::non_empty_id(data["snapshot"]["id"].as_str())
+            .or_else(|| Self::non_empty_id(data["snapshot"]["snapshotId"].as_str()))
+            .or_else(|| Self::non_empty_id(data["snapshot"]["snapshot_id"].as_str()))
+            .or_else(|| Self::non_empty_id(data["id"].as_str()))
+            .or_else(|| Self::non_empty_id(data["snapshotId"].as_str()))
+            .or_else(|| Self::non_empty_id(data["snapshot_id"].as_str()))
     }
 
     /// Build an authenticated request with team scoping.
@@ -188,12 +213,14 @@ impl VercelSandbox {
             )));
         }
 
+        let location = resp.headers().get(reqwest::header::LOCATION).cloned();
         let data: serde_json::Value = resp
             .json()
             .await
             .map_err(|e| Error::message(format!("vercel: invalid create response: {e}")))?;
 
         Self::sandbox_id_from_create_response(&data)
+            .or_else(|| Self::sandbox_id_from_location(location.as_ref()))
             .ok_or_else(|| Error::message("vercel: missing sandbox.id in create response"))
     }
 
@@ -587,19 +614,7 @@ impl Sandbox for VercelSandbox {
                 timeout: Duration::from_secs(600),
                 ..Default::default()
             };
-            let build_id = SandboxId {
-                scope: super::types::SandboxScope::Session,
-                key: "build-snapshot".into(),
-            };
-            // Temporarily register so exec() works.
-            self.active
-                .write()
-                .await
-                .insert(build_id.key.clone(), VercelSession {
-                    sandbox_id: sandbox_id.clone(),
-                });
             let result = self.run_command(&sandbox_id, &cmd, &opts).await;
-            self.active.write().await.remove(&build_id.key);
             if let Ok(r) = result
                 && r.exit_code != 0
             {
@@ -646,9 +661,9 @@ impl Sandbox for VercelSandbox {
             },
         };
 
-        let Some(snapshot_id) = data["snapshot"]["id"].as_str() else {
+        let Some(snapshot_id) = Self::snapshot_id_from_response(&data) else {
             let _ = self.stop_sandbox(&sandbox_id).await;
-            warn!("vercel: snapshot response missing snapshot.id");
+            warn!("vercel: snapshot response missing snapshot id");
             return Ok(None);
         };
 
@@ -664,7 +679,7 @@ impl Sandbox for VercelSandbox {
         }
 
         Ok(Some(super::types::BuildImageResult {
-            tag: snapshot_id.to_string(),
+            tag: snapshot_id,
             built: true,
         }))
     }
@@ -714,12 +729,14 @@ impl Sandbox for VercelSandbox {
                     "vercel: create from snapshot failed (HTTP {status}): {text}"
                 )));
             }
+            let location = resp.headers().get(reqwest::header::LOCATION).cloned();
             let text = resp.text().await.map_err(|e| {
                 Error::message(format!("vercel: failed to read create response: {e}"))
             })?;
             let data: serde_json::Value = serde_json::from_str(&text)
                 .map_err(|e| Error::message(format!("vercel: invalid create response: {e}")))?;
             Self::sandbox_id_from_create_response(&data)
+                .or_else(|| Self::sandbox_id_from_location(location.as_ref()))
                 .ok_or_else(|| Error::message("vercel: missing sandbox.id in response"))?
         } else {
             self.create_sandbox().await?
@@ -942,6 +959,84 @@ mod tests {
         assert_eq!(
             env.get("SESSION_ID").and_then(serde_json::Value::as_str),
             Some("abc123")
+        );
+    }
+
+    #[test]
+    fn test_sandbox_id_from_create_response_accepts_known_shapes() {
+        assert_eq!(
+            VercelSandbox::sandbox_id_from_create_response(&serde_json::json!({
+                "sandbox": { "id": "sb_nested" },
+            }))
+            .as_deref(),
+            Some("sb_nested")
+        );
+        assert_eq!(
+            VercelSandbox::sandbox_id_from_create_response(&serde_json::json!({
+                "sandboxId": "sb_top",
+            }))
+            .as_deref(),
+            Some("sb_top")
+        );
+        assert_eq!(
+            VercelSandbox::sandbox_id_from_create_response(&serde_json::json!({
+                "sandbox": { "sandbox_id": "sb_snake" },
+            }))
+            .as_deref(),
+            Some("sb_snake")
+        );
+        assert_eq!(
+            VercelSandbox::sandbox_id_from_create_response(&serde_json::json!({
+                "sandbox": { "id": "" },
+            })),
+            None
+        );
+    }
+
+    #[test]
+    fn test_sandbox_id_from_location_header() {
+        let location =
+            reqwest::header::HeaderValue::from_static("/api/v1/sandboxes/sb_from_location?x=1");
+        assert_eq!(
+            VercelSandbox::sandbox_id_from_location(Some(&location)).as_deref(),
+            Some("sb_from_location")
+        );
+
+        let invalid = reqwest::header::HeaderValue::from_static("/api/v1/sandboxes/");
+        assert_eq!(
+            VercelSandbox::sandbox_id_from_location(Some(&invalid)),
+            None
+        );
+    }
+
+    #[test]
+    fn test_snapshot_id_from_response_accepts_known_shapes() {
+        assert_eq!(
+            VercelSandbox::snapshot_id_from_response(&serde_json::json!({
+                "snapshot": { "id": "snap_nested" },
+            }))
+            .as_deref(),
+            Some("snap_nested")
+        );
+        assert_eq!(
+            VercelSandbox::snapshot_id_from_response(&serde_json::json!({
+                "snapshot": { "snapshotId": "snap_camel" },
+            }))
+            .as_deref(),
+            Some("snap_camel")
+        );
+        assert_eq!(
+            VercelSandbox::snapshot_id_from_response(&serde_json::json!({
+                "snapshot_id": "snap_snake",
+            }))
+            .as_deref(),
+            Some("snap_snake")
+        );
+        assert_eq!(
+            VercelSandbox::snapshot_id_from_response(&serde_json::json!({
+                "snapshot": { "snapshotId": "" },
+            })),
+            None
         );
     }
 
