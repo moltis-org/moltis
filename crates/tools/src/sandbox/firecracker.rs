@@ -14,12 +14,13 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
 use {
     async_trait::async_trait,
-    tokio::sync::RwLock,
+    tokio::sync::{RwLock, Semaphore},
     tracing::{debug, info, warn},
 };
 
@@ -74,6 +75,7 @@ pub struct FirecrackerSandbox {
     config: SandboxConfig,
     fc: FirecrackerSandboxConfig,
     active: RwLock<HashMap<String, FirecrackerVm>>,
+    creation_permits: RwLock<HashMap<String, Arc<Semaphore>>>,
     subnet_counter: std::sync::atomic::AtomicU16,
 }
 
@@ -86,8 +88,24 @@ impl FirecrackerSandbox {
             config,
             fc,
             active: RwLock::new(HashMap::new()),
+            creation_permits: RwLock::new(HashMap::new()),
             subnet_counter: std::sync::atomic::AtomicU16::new(1),
         }
+    }
+
+    async fn creation_permit(&self, id: &SandboxId) -> Arc<Semaphore> {
+        if let Some(permit) = self.creation_permits.read().await.get(&id.key).cloned() {
+            return permit;
+        }
+        let mut permits = self.creation_permits.write().await;
+        permits
+            .entry(id.key.clone())
+            .or_insert_with(|| Arc::new(Semaphore::new(1)))
+            .clone()
+    }
+
+    async fn existing_creation_permit(&self, id: &SandboxId) -> Option<Arc<Semaphore>> {
+        self.creation_permits.read().await.get(&id.key).cloned()
     }
 
     fn allocate_subnet(&self) -> Result<(String, String, u16)> {
@@ -561,6 +579,13 @@ impl Sandbox for FirecrackerSandbox {
         if self.session_vm(id).await.is_some() {
             return Ok(());
         }
+        let permit = self.creation_permit(id).await;
+        let _permit = permit.acquire_owned().await.map_err(|e| {
+            Error::message(format!("firecracker: sandbox creation permit closed: {e}"))
+        })?;
+        if self.session_vm(id).await.is_some() {
+            return Ok(());
+        }
 
         if !self.fc.firecracker_bin.exists() {
             return Err(Error::message(format!(
@@ -656,10 +681,19 @@ impl Sandbox for FirecrackerSandbox {
     }
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
+        let permit = self.existing_creation_permit(id).await;
+        let _permit = match permit {
+            Some(permit) => Some(permit.acquire_owned().await.map_err(|e| {
+                Error::message(format!("firecracker: sandbox creation permit closed: {e}"))
+            })?),
+            None => None,
+        };
+
         // Take ownership and drop the lock immediately so concurrent
         // exec()/ensure_ready() calls for other sessions are not blocked
         // during the async teardown below.
         let vm = self.active.write().await.remove(&id.key);
+        self.creation_permits.write().await.remove(&id.key);
         if let Some(mut vm) = vm {
             debug!(%id, guest_ip = vm.guest_ip, "firecracker: stopping VM");
 

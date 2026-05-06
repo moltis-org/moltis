@@ -6,12 +6,12 @@
 //!
 //! Requires `DAYTONA_API_KEY` and optionally `DAYTONA_API_URL`.
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use {
     async_trait::async_trait,
     secrecy::{ExposeSecret, Secret},
-    tokio::sync::RwLock,
+    tokio::sync::{RwLock, Semaphore},
     tracing::{debug, info, warn},
 };
 
@@ -65,6 +65,7 @@ pub struct DaytonaSandbox {
     daytona: DaytonaSandboxConfig,
     client: reqwest::Client,
     active: RwLock<HashMap<String, DaytonaSession>>,
+    creation_permits: RwLock<HashMap<String, Arc<Semaphore>>>,
 }
 
 impl DaytonaSandbox {
@@ -78,7 +79,23 @@ impl DaytonaSandbox {
             daytona,
             client,
             active: RwLock::new(HashMap::new()),
+            creation_permits: RwLock::new(HashMap::new()),
         }
+    }
+
+    async fn creation_permit(&self, id: &SandboxId) -> Arc<Semaphore> {
+        if let Some(permit) = self.creation_permits.read().await.get(&id.key).cloned() {
+            return permit;
+        }
+        let mut permits = self.creation_permits.write().await;
+        permits
+            .entry(id.key.clone())
+            .or_insert_with(|| Arc::new(Semaphore::new(1)))
+            .clone()
+    }
+
+    async fn existing_creation_permit(&self, id: &SandboxId) -> Option<Arc<Semaphore>> {
+        self.creation_permits.read().await.get(&id.key).cloned()
     }
 
     /// Build an authenticated request.
@@ -353,6 +370,14 @@ impl Sandbox for DaytonaSandbox {
         if self.session_state(id).await.is_some() {
             return Ok(());
         }
+        let permit = self.creation_permit(id).await;
+        let _permit = permit
+            .acquire_owned()
+            .await
+            .map_err(|e| Error::message(format!("daytona: sandbox creation permit closed: {e}")))?;
+        if self.session_state(id).await.is_some() {
+            return Ok(());
+        }
 
         info!(%id, "daytona: creating sandbox");
 
@@ -447,7 +472,15 @@ impl Sandbox for DaytonaSandbox {
     }
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
+        let permit = self.existing_creation_permit(id).await;
+        let _permit = match permit {
+            Some(permit) => Some(permit.acquire_owned().await.map_err(|e| {
+                Error::message(format!("daytona: sandbox creation permit closed: {e}"))
+            })?),
+            None => None,
+        };
         let session = self.active.write().await.remove(&id.key);
+        self.creation_permits.write().await.remove(&id.key);
         if let Some(session) = session {
             debug!(%id, daytona_id = session.sandbox_id, "daytona: deleting sandbox");
             if let Err(e) = self.delete_sandbox(&session.sandbox_id).await {

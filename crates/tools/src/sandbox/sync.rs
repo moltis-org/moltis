@@ -285,6 +285,19 @@ async fn extract_tar_gz(dir: &Path, tar_bytes: &[u8]) -> Result<()> {
                 replace_existing_symlink_path(&target)?;
                 create_symlink(&link_target, &target)?;
             },
+            tar::EntryType::Link => {
+                let link_target = entry
+                    .link_name()
+                    .map_err(|e| Error::message(format!("sync: invalid hardlink target: {e}")))?
+                    .ok_or_else(|| {
+                        Error::message(format!(
+                            "sync: hardlink '{}' is missing a target",
+                            path.display()
+                        ))
+                    })?
+                    .into_owned();
+                extract_hardlink(dir, &relative_path, &link_target)?;
+            },
             other => {
                 return Err(Error::message(format!(
                     "sync: refusing unsupported tar entry type {other:?} for '{}'",
@@ -427,6 +440,58 @@ fn replace_existing_symlink_path(path: &Path) -> Result<()> {
     }
 }
 
+fn extract_hardlink(root: &Path, relative_path: &Path, link_target: &Path) -> Result<()> {
+    let Some(relative_link_target) = validate_tar_path(link_target)? else {
+        warn!(
+            path = %relative_path.display(),
+            target = %link_target.display(),
+            "sync: skipping hardlink with empty target"
+        );
+        return Ok(());
+    };
+
+    ensure_parent_directory(root, relative_path)?;
+    let source = root.join(&relative_link_target);
+    let target = root.join(relative_path);
+    reject_existing_symlink(&source)?;
+    reject_existing_symlink(&target)?;
+
+    match std::fs::symlink_metadata(&source) {
+        Ok(metadata) if metadata.is_file() => {
+            std::fs::copy(&source, &target).map_err(|e| {
+                Error::message(format!(
+                    "sync: failed to copy hardlink '{}' from '{}': {e}",
+                    target.display(),
+                    source.display()
+                ))
+            })?;
+            Ok(())
+        },
+        Ok(metadata) if metadata.is_dir() => Err(Error::message(format!(
+            "sync: refusing hardlink '{}' to directory '{}'",
+            relative_path.display(),
+            relative_link_target.display()
+        ))),
+        Ok(_) => Err(Error::message(format!(
+            "sync: refusing hardlink '{}' to special file '{}'",
+            relative_path.display(),
+            relative_link_target.display()
+        ))),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            warn!(
+                path = %relative_path.display(),
+                target = %relative_link_target.display(),
+                "sync: skipping hardlink whose target has not been extracted"
+            );
+            Ok(())
+        },
+        Err(e) => Err(Error::message(format!(
+            "sync: failed to inspect hardlink target '{}': {e}",
+            source.display()
+        ))),
+    }
+}
+
 #[cfg(unix)]
 fn create_symlink(link_target: &Path, target: &Path) -> Result<()> {
     std::os::unix::fs::symlink(link_target, target).map_err(|e| {
@@ -501,6 +566,43 @@ mod tests {
         header.set_mode(0o777);
         header.set_cksum();
         archive.append_link(&mut header, path, target).unwrap();
+        archive.into_inner().and_then(|enc| enc.finish()).unwrap()
+    }
+
+    fn tar_gz_with_hardlink(path: &str, target: &str) -> Vec<u8> {
+        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(enc);
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Link);
+        header.set_size(0);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive.append_link(&mut header, path, target).unwrap();
+        archive.into_inner().and_then(|enc| enc.finish()).unwrap()
+    }
+
+    fn tar_gz_with_file_and_hardlink(file_path: &str, hardlink_path: &str) -> Vec<u8> {
+        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(enc);
+
+        let content = b"shared content";
+        let mut file_header = tar::Header::new_gnu();
+        file_header.set_size(content.len() as u64);
+        file_header.set_mode(0o644);
+        file_header.set_cksum();
+        archive
+            .append_data(&mut file_header, file_path, content.as_slice())
+            .unwrap();
+
+        let mut link_header = tar::Header::new_gnu();
+        link_header.set_entry_type(tar::EntryType::Link);
+        link_header.set_size(0);
+        link_header.set_mode(0o644);
+        link_header.set_cksum();
+        archive
+            .append_link(&mut link_header, hardlink_path, file_path)
+            .unwrap();
+
         archive.into_inner().and_then(|enc| enc.finish()).unwrap()
     }
 
@@ -612,5 +714,40 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!dst.path().join("bin/tool").exists());
+    }
+
+    #[tokio::test]
+    async fn test_extract_copies_hardlink_to_regular_file() {
+        let dst = tempfile::tempdir().unwrap();
+        let tar_bytes =
+            tar_gz_with_file_and_hardlink("store/content.txt", "node_modules/pkg/file.txt");
+
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("node_modules/pkg/file.txt")).unwrap(),
+            "shared content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_extract_skips_missing_hardlink_target() {
+        let dst = tempfile::tempdir().unwrap();
+        let tar_bytes = tar_gz_with_hardlink("node_modules/pkg/file.txt", "store/missing.txt");
+
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
+        assert!(!dst.path().join("node_modules/pkg/file.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_extract_rejects_escaping_hardlink_target() {
+        let dst = tempfile::tempdir().unwrap();
+        let tar_bytes = tar_gz_with_hardlink("node_modules/pkg/file.txt", "../escape.txt");
+
+        let result = extract_tar_gz(dst.path(), &tar_bytes).await;
+
+        assert!(result.is_err());
+        assert!(!dst.path().join("node_modules/pkg/file.txt").exists());
     }
 }

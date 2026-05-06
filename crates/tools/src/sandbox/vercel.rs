@@ -6,13 +6,13 @@
 //!
 //! Requires `VERCEL_TOKEN` (or `VERCEL_OIDC_TOKEN`) and a Vercel project.
 
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use {
     async_trait::async_trait,
     flate2::{Compression, write::GzEncoder},
     secrecy::{ExposeSecret, Secret},
-    tokio::sync::RwLock,
+    tokio::sync::{RwLock, Semaphore},
     tracing::{debug, info, warn},
 };
 
@@ -72,6 +72,7 @@ pub struct VercelSandbox {
     vercel: VercelSandboxConfig,
     client: reqwest::Client,
     active: RwLock<HashMap<String, VercelSession>>,
+    creation_permits: RwLock<HashMap<String, Arc<Semaphore>>>,
 }
 
 impl VercelSandbox {
@@ -85,7 +86,23 @@ impl VercelSandbox {
             vercel,
             client,
             active: RwLock::new(HashMap::new()),
+            creation_permits: RwLock::new(HashMap::new()),
         }
+    }
+
+    async fn creation_permit(&self, id: &SandboxId) -> Arc<Semaphore> {
+        if let Some(permit) = self.creation_permits.read().await.get(&id.key).cloned() {
+            return permit;
+        }
+        let mut permits = self.creation_permits.write().await;
+        permits
+            .entry(id.key.clone())
+            .or_insert_with(|| Arc::new(Semaphore::new(1)))
+            .clone()
+    }
+
+    async fn existing_creation_permit(&self, id: &SandboxId) -> Option<Arc<Semaphore>> {
+        self.creation_permits.read().await.get(&id.key).cloned()
     }
 
     /// Build an authenticated request with team scoping.
@@ -595,6 +612,14 @@ impl Sandbox for VercelSandbox {
         if self.session_sandbox_id(id).await.is_some() {
             return Ok(());
         }
+        let permit = self.creation_permit(id).await;
+        let _permit = permit
+            .acquire_owned()
+            .await
+            .map_err(|e| Error::message(format!("vercel: sandbox creation permit closed: {e}")))?;
+        if self.session_sandbox_id(id).await.is_some() {
+            return Ok(());
+        }
 
         info!(%id, runtime = self.vercel.runtime, "vercel: creating sandbox");
 
@@ -705,7 +730,15 @@ impl Sandbox for VercelSandbox {
     }
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
+        let permit = self.existing_creation_permit(id).await;
+        let _permit = match permit {
+            Some(permit) => Some(permit.acquire_owned().await.map_err(|e| {
+                Error::message(format!("vercel: sandbox creation permit closed: {e}"))
+            })?),
+            None => None,
+        };
         let session = self.active.write().await.remove(&id.key);
+        self.creation_permits.write().await.remove(&id.key);
         if let Some(session) = session {
             debug!(%id, vercel_id = session.sandbox_id, "vercel: stopping sandbox");
             if let Err(e) = self.stop_sandbox(&session.sandbox_id).await {
