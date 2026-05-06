@@ -1,4 +1,4 @@
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, Secret};
 
 use super::*;
 
@@ -570,8 +570,8 @@ fn sandbox_defaults_include_go_runtime() {
 #[test]
 fn sandbox_config_debug_redacts_remote_backend_credentials() {
     let sandbox = SandboxConfig {
-        vercel_token: Some("vercel-secret-value".into()),
-        daytona_api_key: Some("daytona-secret-value".into()),
+        vercel_token: Some(Secret::new("vercel-secret-value".into())),
+        daytona_api_key: Some(Secret::new("daytona-secret-value".into())),
         ..SandboxConfig::default()
     };
 
@@ -579,8 +579,36 @@ fn sandbox_config_debug_redacts_remote_backend_credentials() {
 
     assert!(!debug.contains("vercel-secret-value"));
     assert!(!debug.contains("daytona-secret-value"));
-    assert!(debug.contains("vercel_token: Some(\"[REDACTED]\")"));
-    assert!(debug.contains("daytona_api_key: Some(\"[REDACTED]\")"));
+    assert!(debug.contains("vercel_token"));
+    assert!(debug.contains("daytona_api_key"));
+}
+
+#[test]
+fn sandbox_config_deserializes_remote_backend_credentials_as_secrets() {
+    let sandbox: SandboxConfig = toml::from_str(
+        r#"
+vercel_token = "vercel-secret-value"
+daytona_api_key = "daytona-secret-value"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        sandbox
+            .vercel_token
+            .as_ref()
+            .map(ExposeSecret::expose_secret)
+            .map(String::as_str),
+        Some("vercel-secret-value")
+    );
+    assert_eq!(
+        sandbox
+            .daytona_api_key
+            .as_ref()
+            .map(ExposeSecret::expose_secret)
+            .map(String::as_str),
+        Some("daytona-secret-value")
+    );
 }
 
 #[test]

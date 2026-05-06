@@ -11,6 +11,7 @@ use {
     },
     moltis_httpd::AppState,
     moltis_tools::image_cache::ImageBuilder,
+    secrecy::{ExposeSecret, Secret},
     tracing::warn,
 };
 
@@ -53,6 +54,12 @@ fn api_error_response(status: StatusCode, code: &str, error: impl Into<String>) 
     (status, Json(api_error(code, error))).into_response()
 }
 
+fn configured_secret(secret: &Option<Secret<String>>) -> bool {
+    secret
+        .as_ref()
+        .is_some_and(|secret| !secret.expose_secret().is_empty())
+}
+
 #[derive(serde::Deserialize)]
 pub struct SandboxSharedHomeUpdateRequest {
     enabled: bool,
@@ -63,8 +70,21 @@ pub struct SandboxSharedHomeUpdateRequest {
 pub struct RemoteBackendUpdateRequest {
     /// Which backend: "vercel" or "daytona".
     backend: String,
-    /// Fields to save. Keys like "token", "api_url", "project_id", etc.
-    config: HashMap<String, serde_json::Value>,
+    config: RemoteBackendConfigUpdate,
+}
+
+#[derive(Default, serde::Deserialize)]
+struct RemoteBackendConfigUpdate {
+    backend: Option<String>,
+    token: Option<Secret<String>>,
+    api_key: Option<Secret<String>>,
+    project_id: Option<Option<String>>,
+    team_id: Option<Option<String>>,
+    runtime: Option<String>,
+    timeout_ms: Option<u64>,
+    vcpus: Option<u64>,
+    api_url: Option<String>,
+    target: Option<Option<String>>,
 }
 
 fn shared_home_config_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
@@ -978,7 +998,7 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
     }
 
     // Remote backends.
-    let has_vercel = !sb.vercel_token.as_deref().unwrap_or("").is_empty();
+    let has_vercel = configured_secret(&sb.vercel_token);
     if has_vercel {
         backends.push(serde_json::json!({
             "id": "vercel",
@@ -988,7 +1008,7 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
         }));
     }
 
-    let has_daytona = !sb.daytona_api_key.as_deref().unwrap_or("").is_empty();
+    let has_daytona = configured_secret(&sb.daytona_api_key);
     if has_daytona {
         backends.push(serde_json::json!({
             "id": "daytona",
@@ -1016,10 +1036,10 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
 
 fn remote_backends_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
     let sb = &config.tools.exec.sandbox;
-    let vercel_configured = !sb.vercel_token.as_deref().unwrap_or("").is_empty();
+    let vercel_configured = configured_secret(&sb.vercel_token);
     let vercel_from_env =
         std::env::var("VERCEL_TOKEN").is_ok() || std::env::var("VERCEL_OIDC_TOKEN").is_ok();
-    let daytona_configured = !sb.daytona_api_key.as_deref().unwrap_or("").is_empty();
+    let daytona_configured = configured_secret(&sb.daytona_api_key);
     let daytona_from_env = std::env::var("DAYTONA_API_KEY").is_ok();
     serde_json::json!({
         "backend": sb.backend,
@@ -1052,39 +1072,39 @@ pub async fn api_set_remote_backend_handler(
     let update_result = moltis_config::update_config(|cfg| {
         let sb = &mut cfg.tools.exec.sandbox;
         // Allow changing the default backend (auto/docker/podman/apple-container/vercel/daytona).
-        if let Some(v) = body.config.get("backend").and_then(|v| v.as_str()) {
+        if let Some(v) = body.config.backend.as_deref() {
             sb.backend = v.to_string();
         }
         match body.backend.as_str() {
             "vercel" => {
-                if let Some(v) = body.config.get("token").and_then(|v| v.as_str()) {
-                    sb.vercel_token = Some(v.to_string());
+                if let Some(v) = body.config.token.clone() {
+                    sb.vercel_token = Some(v);
                 }
-                if let Some(v) = body.config.get("project_id") {
-                    sb.vercel_project_id = v.as_str().map(|s| s.to_string());
+                if let Some(v) = body.config.project_id.clone() {
+                    sb.vercel_project_id = v;
                 }
-                if let Some(v) = body.config.get("team_id") {
-                    sb.vercel_team_id = v.as_str().map(|s| s.to_string());
+                if let Some(v) = body.config.team_id.clone() {
+                    sb.vercel_team_id = v;
                 }
-                if let Some(v) = body.config.get("runtime").and_then(|v| v.as_str()) {
+                if let Some(v) = body.config.runtime.as_deref() {
                     sb.vercel_runtime = Some(v.to_string());
                 }
-                if let Some(v) = body.config.get("timeout_ms").and_then(|v| v.as_u64()) {
+                if let Some(v) = body.config.timeout_ms {
                     sb.vercel_timeout_ms = Some(v);
                 }
-                if let Some(v) = body.config.get("vcpus").and_then(|v| v.as_u64()) {
+                if let Some(v) = body.config.vcpus {
                     sb.vercel_vcpus = Some(v as u32);
                 }
             },
             "daytona" => {
-                if let Some(v) = body.config.get("api_key").and_then(|v| v.as_str()) {
-                    sb.daytona_api_key = Some(v.to_string());
+                if let Some(v) = body.config.api_key.clone() {
+                    sb.daytona_api_key = Some(v);
                 }
-                if let Some(v) = body.config.get("api_url").and_then(|v| v.as_str()) {
+                if let Some(v) = body.config.api_url.as_deref() {
                     sb.daytona_api_url = Some(v.to_string());
                 }
-                if let Some(v) = body.config.get("target") {
-                    sb.daytona_target = v.as_str().map(|s| s.to_string());
+                if let Some(v) = body.config.target.clone() {
+                    sb.daytona_target = v;
                 }
             },
             _ => {},

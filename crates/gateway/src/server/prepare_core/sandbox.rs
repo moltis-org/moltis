@@ -5,6 +5,7 @@ use std::sync::{Arc, atomic::Ordering};
 
 use {
     moltis_tools::sandbox::SandboxConfig,
+    secrecy::{ExposeSecret, Secret},
     tracing::{debug, info, warn},
 };
 
@@ -16,6 +17,12 @@ use crate::{
 
 /// Type alias for the deferred state used in prepare_core.
 type DeferredState = tokio::sync::OnceCell<Arc<GatewayState>>;
+
+fn has_secret(secret: &Option<Secret<String>>) -> bool {
+    secret
+        .as_ref()
+        .is_some_and(|secret| !secret.expose_secret().is_empty())
+}
 
 /// Build the sandbox router with all configured backends registered.
 pub(super) fn build_sandbox_router(
@@ -31,10 +38,10 @@ pub(super) fn build_sandbox_router(
 
     // Register additional remote backends that have credentials configured.
     // Env vars (VERCEL_TOKEN, DAYTONA_API_KEY) are resolved by the config crate
-    // into the config fields, so checking config.*.is_some() is sufficient.
+    // into the config fields.
     for (name, has_creds) in [
-        ("vercel", config.vercel_token.is_some()),
-        ("daytona", config.daytona_api_key.is_some()),
+        ("vercel", has_secret(&config.vercel_token)),
+        ("daytona", has_secret(&config.daytona_api_key)),
         (
             "firecracker",
             config.firecracker_bin.is_some()

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use {
     async_trait::async_trait,
+    secrecy::Secret,
     serde::{Deserialize, Serialize},
 };
 
@@ -187,7 +188,7 @@ pub struct ResourceLimits {
 pub use moltis_network_filter::NetworkPolicy;
 
 /// Configuration for sandbox behavior.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct SandboxConfig {
     pub mode: SandboxMode,
@@ -229,7 +230,7 @@ pub struct SandboxConfig {
 
     // ── Vercel sandbox configuration ────────────────────────────────────
     /// Vercel API token (`VERCEL_TOKEN` or `VERCEL_OIDC_TOKEN`).
-    pub vercel_token: Option<String>,
+    pub vercel_token: Option<Secret<String>>,
     /// Vercel project ID.
     pub vercel_project_id: Option<String>,
     /// Vercel team ID.
@@ -245,7 +246,7 @@ pub struct SandboxConfig {
 
     // ── Daytona sandbox configuration ───────────────────────────────────
     /// Daytona API key (`DAYTONA_API_KEY`).
-    pub daytona_api_key: Option<String>,
+    pub daytona_api_key: Option<Secret<String>>,
     /// Daytona API URL (default: `https://app.daytona.io/api`).
     pub daytona_api_url: Option<String>,
     /// Daytona target region/environment.
@@ -266,56 +267,6 @@ pub struct SandboxConfig {
     pub firecracker_vcpus: Option<u32>,
     /// Memory in MiB per Firecracker VM.
     pub firecracker_memory_mb: Option<u32>,
-}
-
-impl std::fmt::Debug for SandboxConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SandboxConfig")
-            .field("mode", &self.mode)
-            .field("scope", &self.scope)
-            .field("workspace_mount", &self.workspace_mount)
-            .field("host_data_dir", &self.host_data_dir)
-            .field("home_persistence", &self.home_persistence)
-            .field("shared_home_dir", &self.shared_home_dir)
-            .field("image", &self.image)
-            .field("container_prefix", &self.container_prefix)
-            .field("no_network", &self.no_network)
-            .field("network", &self.network)
-            .field("trusted_domains", &self.trusted_domains)
-            .field("backend", &self.backend)
-            .field("resource_limits", &self.resource_limits)
-            .field("gpus", &self.gpus)
-            .field("packages", &self.packages)
-            .field("timezone", &self.timezone)
-            .field("wasm_fuel_limit", &self.wasm_fuel_limit)
-            .field("wasm_epoch_interval_ms", &self.wasm_epoch_interval_ms)
-            .field("wasm_tool_limits", &self.wasm_tool_limits)
-            .field("vercel_token", &redact_secret_option(&self.vercel_token))
-            .field("vercel_project_id", &self.vercel_project_id)
-            .field("vercel_team_id", &self.vercel_team_id)
-            .field("vercel_runtime", &self.vercel_runtime)
-            .field("vercel_timeout_ms", &self.vercel_timeout_ms)
-            .field("vercel_vcpus", &self.vercel_vcpus)
-            .field("vercel_snapshot_id", &self.vercel_snapshot_id)
-            .field(
-                "daytona_api_key",
-                &redact_secret_option(&self.daytona_api_key),
-            )
-            .field("daytona_api_url", &self.daytona_api_url)
-            .field("daytona_target", &self.daytona_target)
-            .field("daytona_image", &self.daytona_image)
-            .field("firecracker_bin", &self.firecracker_bin)
-            .field("firecracker_kernel", &self.firecracker_kernel)
-            .field("firecracker_rootfs", &self.firecracker_rootfs)
-            .field("firecracker_ssh_key", &self.firecracker_ssh_key)
-            .field("firecracker_vcpus", &self.firecracker_vcpus)
-            .field("firecracker_memory_mb", &self.firecracker_memory_mb)
-            .finish()
-    }
-}
-
-fn redact_secret_option(value: &Option<String>) -> Option<&'static str> {
-    value.as_ref().map(|_| "[REDACTED]")
 }
 
 impl Default for SandboxConfig {
@@ -653,13 +604,15 @@ pub(crate) fn sanitize_path_component(input: &str) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use secrecy::{ExposeSecret, Secret};
+
     use crate::sandbox::SandboxConfig;
 
     #[test]
     fn sandbox_config_debug_redacts_remote_backend_credentials() {
         let config = SandboxConfig {
-            vercel_token: Some("vercel-secret-value".into()),
-            daytona_api_key: Some("daytona-secret-value".into()),
+            vercel_token: Some(Secret::new("vercel-secret-value".into())),
+            daytona_api_key: Some(Secret::new("daytona-secret-value".into())),
             ..SandboxConfig::default()
         };
 
@@ -667,7 +620,35 @@ mod tests {
 
         assert!(!debug.contains("vercel-secret-value"));
         assert!(!debug.contains("daytona-secret-value"));
-        assert!(debug.contains("vercel_token: Some(\"[REDACTED]\")"));
-        assert!(debug.contains("daytona_api_key: Some(\"[REDACTED]\")"));
+        assert!(debug.contains("vercel_token"));
+        assert!(debug.contains("daytona_api_key"));
+    }
+
+    #[test]
+    fn sandbox_config_deserializes_remote_backend_credentials_as_secrets() {
+        let config: SandboxConfig = serde_json::from_str(
+            r#"{
+                "vercel_token": "vercel-secret-value",
+                "daytona_api_key": "daytona-secret-value"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config
+                .vercel_token
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("vercel-secret-value")
+        );
+        assert_eq!(
+            config
+                .daytona_api_key
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("daytona-secret-value")
+        );
     }
 }

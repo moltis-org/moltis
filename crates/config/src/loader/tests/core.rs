@@ -1,3 +1,5 @@
+use secrecy::{ExposeSecret, Secret};
+
 use crate::{AgentIdentity, UserProfile, schema::MoltisConfig};
 
 use super::*;
@@ -1062,7 +1064,14 @@ fn apply_env_overrides_vercel_token_alias() {
     let vars = vec![("VERCEL_TOKEN".into(), "ver_test_123".into())];
     let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
     assert_eq!(
-        config.tools.exec.sandbox.vercel_token.as_deref(),
+        config
+            .tools
+            .exec
+            .sandbox
+            .vercel_token
+            .as_ref()
+            .map(ExposeSecret::expose_secret)
+            .map(String::as_str),
         Some("ver_test_123"),
         "VERCEL_TOKEN env var should map to tools.exec.sandbox.vercel_token"
     );
@@ -1073,7 +1082,14 @@ fn apply_env_overrides_daytona_api_key_alias() {
     let vars = vec![("DAYTONA_API_KEY".into(), "dyt_test_456".into())];
     let config = apply_env_overrides_with(MoltisConfig::default(), vars.into_iter());
     assert_eq!(
-        config.tools.exec.sandbox.daytona_api_key.as_deref(),
+        config
+            .tools
+            .exec
+            .sandbox
+            .daytona_api_key
+            .as_ref()
+            .map(ExposeSecret::expose_secret)
+            .map(String::as_str),
         Some("dyt_test_456"),
         "DAYTONA_API_KEY env var should map to tools.exec.sandbox.daytona_api_key"
     );
@@ -1083,10 +1099,17 @@ fn apply_env_overrides_daytona_api_key_alias() {
 fn apply_env_overrides_alias_does_not_overwrite_explicit() {
     let vars = vec![("VERCEL_TOKEN".into(), "from_env".into())];
     let mut config = MoltisConfig::default();
-    config.tools.exec.sandbox.vercel_token = Some("from_config".into());
+    config.tools.exec.sandbox.vercel_token = Some(Secret::new("from_config".into()));
     let config = apply_env_overrides_with(config, vars.into_iter());
     assert_eq!(
-        config.tools.exec.sandbox.vercel_token.as_deref(),
+        config
+            .tools
+            .exec
+            .sandbox
+            .vercel_token
+            .as_ref()
+            .map(ExposeSecret::expose_secret)
+            .map(String::as_str),
         Some("from_config"),
         "explicit config should take precedence over env alias"
     );

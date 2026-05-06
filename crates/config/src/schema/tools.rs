@@ -2,7 +2,7 @@ use {
     super::*,
     secrecy::Secret,
     serde::{Deserialize, Serialize},
-    std::{collections::HashMap, fmt},
+    std::collections::HashMap,
 };
 
 /// Tools configuration (exec, sandbox, policy, web, browser).
@@ -662,7 +662,7 @@ pub enum HomePersistenceConfig {
 }
 
 /// Sandbox configuration.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SandboxConfig {
     pub mode: String,
@@ -714,8 +714,13 @@ pub struct SandboxConfig {
 
     // ── Remote sandbox backends ─────────────────────────────────────────
     /// Vercel API token for the Vercel Sandbox backend.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vercel_token: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub vercel_token: Option<Secret<String>>,
     /// Vercel project ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vercel_project_id: Option<String>,
@@ -733,8 +738,13 @@ pub struct SandboxConfig {
     pub vercel_vcpus: Option<u32>,
 
     /// Daytona API key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub daytona_api_key: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub daytona_api_key: Option<Secret<String>>,
     /// Daytona API URL (default: https://app.daytona.io/api).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daytona_api_url: Option<String>,
@@ -767,56 +777,6 @@ pub struct SandboxConfig {
     /// Memory in MiB per Firecracker VM.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub firecracker_memory_mb: Option<u32>,
-}
-
-impl fmt::Debug for SandboxConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SandboxConfig")
-            .field("mode", &self.mode)
-            .field("scope", &self.scope)
-            .field("workspace_mount", &self.workspace_mount)
-            .field("host_data_dir", &self.host_data_dir)
-            .field("home_persistence", &self.home_persistence)
-            .field("shared_home_dir", &self.shared_home_dir)
-            .field("image", &self.image)
-            .field("container_prefix", &self.container_prefix)
-            .field("no_network", &self.no_network)
-            .field("network", &self.network)
-            .field("trusted_domains", &self.trusted_domains)
-            .field("backend", &self.backend)
-            .field("resource_limits", &self.resource_limits)
-            .field("gpus", &self.gpus)
-            .field("packages", &self.packages)
-            .field("wasm_fuel_limit", &self.wasm_fuel_limit)
-            .field("wasm_epoch_interval_ms", &self.wasm_epoch_interval_ms)
-            .field("wasm_tool_limits", &self.wasm_tool_limits)
-            .field("tools_policy", &self.tools_policy)
-            .field("vercel_token", &redact_secret_option(&self.vercel_token))
-            .field("vercel_project_id", &self.vercel_project_id)
-            .field("vercel_team_id", &self.vercel_team_id)
-            .field("vercel_runtime", &self.vercel_runtime)
-            .field("vercel_timeout_ms", &self.vercel_timeout_ms)
-            .field("vercel_vcpus", &self.vercel_vcpus)
-            .field(
-                "daytona_api_key",
-                &redact_secret_option(&self.daytona_api_key),
-            )
-            .field("daytona_api_url", &self.daytona_api_url)
-            .field("daytona_target", &self.daytona_target)
-            .field("daytona_image", &self.daytona_image)
-            .field("vercel_snapshot_id", &self.vercel_snapshot_id)
-            .field("firecracker_bin", &self.firecracker_bin)
-            .field("firecracker_kernel", &self.firecracker_kernel)
-            .field("firecracker_rootfs", &self.firecracker_rootfs)
-            .field("firecracker_ssh_key", &self.firecracker_ssh_key)
-            .field("firecracker_vcpus", &self.firecracker_vcpus)
-            .field("firecracker_memory_mb", &self.firecracker_memory_mb)
-            .finish()
-    }
-}
-
-fn redact_secret_option(value: &Option<String>) -> Option<&'static str> {
-    value.as_ref().map(|_| "[REDACTED]")
 }
 
 /// Default packages installed in sandbox containers.

@@ -7,6 +7,7 @@ use std::{
 
 use {
     async_trait::async_trait,
+    secrecy::ExposeSecret,
     tokio::sync::RwLock,
     tracing::{debug, info, warn},
 };
@@ -392,18 +393,20 @@ fn create_wasm_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
 fn create_vercel_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     use super::vercel::{VercelSandbox, VercelSandboxConfig};
 
-    let token = config.vercel_token.clone().unwrap_or_default();
-
-    if token.is_empty() {
+    let Some(token) = config
+        .vercel_token
+        .clone()
+        .filter(|token| !token.expose_secret().is_empty())
+    else {
         tracing::warn!(
             "vercel sandbox requested but no token configured (set VERCEL_TOKEN); \
              using restricted-host"
         );
         return Arc::new(RestrictedHostSandbox::new(config));
-    }
+    };
 
     let vercel_config = VercelSandboxConfig {
-        token: secrecy::Secret::new(token),
+        token,
         project_id: config.vercel_project_id.clone(),
         team_id: config.vercel_team_id.clone(),
         runtime: config
@@ -428,18 +431,20 @@ fn create_vercel_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
 fn create_daytona_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     use super::daytona::{DaytonaSandbox, DaytonaSandboxConfig};
 
-    let api_key = config.daytona_api_key.clone().unwrap_or_default();
-
-    if api_key.is_empty() {
+    let Some(api_key) = config
+        .daytona_api_key
+        .clone()
+        .filter(|api_key| !api_key.expose_secret().is_empty())
+    else {
         tracing::warn!(
             "daytona sandbox requested but no API key configured (set DAYTONA_API_KEY); \
              using restricted-host"
         );
         return Arc::new(RestrictedHostSandbox::new(config));
-    }
+    };
 
     let daytona_config = DaytonaSandboxConfig {
-        api_key: secrecy::Secret::new(api_key),
+        api_key,
         api_url: config
             .daytona_api_url
             .clone()
@@ -454,6 +459,12 @@ fn create_daytona_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         "sandbox backend: daytona (cloud sandbox)"
     );
     Arc::new(DaytonaSandbox::new(config, daytona_config))
+}
+
+fn has_secret(secret: &Option<secrecy::Secret<String>>) -> bool {
+    secret
+        .as_ref()
+        .is_some_and(|secret| !secret.expose_secret().is_empty())
 }
 
 /// Create a Firecracker sandbox backend.
@@ -598,12 +609,12 @@ pub fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     // No local container runtime available — try remote backends.
     // Env vars are resolved into config fields by the config crate.
     #[cfg(feature = "vercel-sandbox")]
-    if config.vercel_token.is_some() {
+    if has_secret(&config.vercel_token) {
         tracing::info!("no local container runtime; using vercel sandbox");
         return create_vercel_backend(config);
     }
 
-    if config.daytona_api_key.is_some() {
+    if has_secret(&config.daytona_api_key) {
         tracing::info!("no local container runtime; using daytona sandbox");
         return create_daytona_backend(config);
     }
