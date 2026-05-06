@@ -154,7 +154,6 @@ impl VercelSandbox {
         let location = location.and_then(|value| value.to_str().ok())?;
         let path = location.split('?').next().unwrap_or(location);
         Self::non_empty_id(path.rsplit('/').next())
-            .filter(|id| id.starts_with("sb_") || id.starts_with("sandbox_"))
     }
 
     fn snapshot_id_from_response(data: &serde_json::Value) -> Option<String> {
@@ -333,9 +332,20 @@ impl VercelSandbox {
             .await
             .map_err(|e| Error::message(format!("vercel: invalid create response: {e}")))?;
 
-        Self::sandbox_id_from_create_response(&data)
+        match Self::sandbox_id_from_create_response(&data)
             .or_else(|| Self::sandbox_id_from_location(location.as_ref()))
-            .ok_or_else(|| Error::message("vercel: missing sandbox.id in create response"))
+        {
+            Some(id) => Ok(id),
+            None => {
+                warn!(
+                    "vercel: sandbox create response contained no parseable sandbox ID; \
+                    the VM will run until its timeout"
+                );
+                Err(Error::message(
+                    "vercel: missing sandbox.id in create response",
+                ))
+            },
+        }
     }
 
     /// Wait for a sandbox to reach "running" status.
@@ -839,9 +849,21 @@ impl Sandbox for VercelSandbox {
             })?;
             let data: serde_json::Value = serde_json::from_str(&text)
                 .map_err(|e| Error::message(format!("vercel: invalid create response: {e}")))?;
-            Self::sandbox_id_from_create_response(&data)
+            match Self::sandbox_id_from_create_response(&data)
                 .or_else(|| Self::sandbox_id_from_location(location.as_ref()))
-                .ok_or_else(|| Error::message("vercel: missing sandbox.id in response"))?
+            {
+                Some(sandbox_id) => sandbox_id,
+                None => {
+                    warn!(
+                        %id,
+                        "vercel: sandbox created from snapshot but response contained no \
+                        parseable sandbox ID; the VM will run until its timeout"
+                    );
+                    return Err(Error::message(
+                        "vercel: missing sandbox.id in snapshot-create response",
+                    ));
+                },
+            }
         } else {
             self.create_sandbox().await?
         };
@@ -1104,6 +1126,14 @@ mod tests {
         assert_eq!(
             VercelSandbox::sandbox_id_from_location(Some(&location)).as_deref(),
             Some("sb_from_location")
+        );
+
+        let uuid_location = reqwest::header::HeaderValue::from_static(
+            "/api/v1/sandboxes/6f9619ff-8b86-d011-b42d-00cf4fc964ff",
+        );
+        assert_eq!(
+            VercelSandbox::sandbox_id_from_location(Some(&uuid_location)).as_deref(),
+            Some("6f9619ff-8b86-d011-b42d-00cf4fc964ff")
         );
 
         let invalid = reqwest::header::HeaderValue::from_static("/api/v1/sandboxes/");
