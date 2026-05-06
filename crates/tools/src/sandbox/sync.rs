@@ -268,6 +268,23 @@ async fn extract_tar_gz(dir: &Path, tar_bytes: &[u8]) -> Result<()> {
                     ))
                 })?;
             },
+            tar::EntryType::Symlink => {
+                let link_target = entry
+                    .link_name()
+                    .map_err(|e| Error::message(format!("sync: invalid symlink target: {e}")))?
+                    .ok_or_else(|| {
+                        Error::message(format!(
+                            "sync: symlink '{}' is missing a target",
+                            path.display()
+                        ))
+                    })?
+                    .into_owned();
+                validate_symlink_target(&relative_path, &link_target)?;
+                ensure_parent_directory(dir, &relative_path)?;
+                let target = dir.join(&relative_path);
+                replace_existing_symlink_path(&target)?;
+                create_symlink(&link_target, &target)?;
+            },
             other => {
                 return Err(Error::message(format!(
                     "sync: refusing unsupported tar entry type {other:?} for '{}'",
@@ -354,6 +371,83 @@ fn ensure_parent_directory(root: &Path, relative_path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn validate_symlink_target(link_path: &Path, link_target: &Path) -> Result<()> {
+    let mut resolved = link_path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .to_path_buf();
+    for component in link_target.components() {
+        match component {
+            Component::Normal(part) => resolved.push(part),
+            Component::CurDir => {},
+            Component::ParentDir => {
+                if !resolved.pop() {
+                    return Err(Error::message(format!(
+                        "sync: refusing symlink '{}' with escaping target '{}'",
+                        link_path.display(),
+                        link_target.display()
+                    )));
+                }
+            },
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(Error::message(format!(
+                    "sync: refusing symlink '{}' with unsafe target '{}'",
+                    link_path.display(),
+                    link_target.display()
+                )));
+            },
+        }
+    }
+    Ok(())
+}
+
+fn replace_existing_symlink_path(path: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || metadata.is_file() => {
+            std::fs::remove_file(path).map_err(|e| {
+                Error::message(format!(
+                    "sync: failed to replace existing path '{}': {e}",
+                    path.display()
+                ))
+            })
+        },
+        Ok(metadata) if metadata.is_dir() => Err(Error::message(format!(
+            "sync: refusing to replace directory '{}' with symlink",
+            path.display()
+        ))),
+        Ok(_) => Err(Error::message(format!(
+            "sync: refusing to replace special file '{}' with symlink",
+            path.display()
+        ))),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Error::message(format!(
+            "sync: failed to inspect '{}': {e}",
+            path.display()
+        ))),
+    }
+}
+
+#[cfg(unix)]
+fn create_symlink(link_target: &Path, target: &Path) -> Result<()> {
+    std::os::unix::fs::symlink(link_target, target).map_err(|e| {
+        Error::message(format!(
+            "sync: failed to create symlink '{}' -> '{}': {e}",
+            target.display(),
+            link_target.display()
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+fn create_symlink(link_target: &Path, target: &Path) -> Result<()> {
+    warn!(
+        link = %target.display(),
+        target = %link_target.display(),
+        "sync: skipping symlink extraction on unsupported platform"
+    );
+    Ok(())
+}
+
 fn reject_existing_symlink(path: &Path) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(Error::message(format!(
@@ -394,6 +488,19 @@ mod tests {
         header.set_mode(0o644);
         header.set_cksum();
         archive.append(&header, content).unwrap();
+        archive.into_inner().and_then(|enc| enc.finish()).unwrap()
+    }
+
+    #[cfg(unix)]
+    fn tar_gz_with_symlink(path: &str, target: &str) -> Vec<u8> {
+        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(enc);
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_size(0);
+        header.set_mode(0o777);
+        header.set_cksum();
+        archive.append_link(&mut header, path, target).unwrap();
         archive.into_inner().and_then(|enc| enc.finish()).unwrap()
     }
 
@@ -467,5 +574,43 @@ mod tests {
         let result = extract_tar_gz(dst.path(), &tar_bytes).await;
         assert!(result.is_err());
         assert_eq!(std::fs::read_to_string(outside_file).unwrap(), "original");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_extract_preserves_relative_symlink() {
+        let dst = tempfile::tempdir().unwrap();
+        let tar_bytes = tar_gz_with_symlink("bin/tool", "../lib/tool");
+
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
+        assert_eq!(
+            std::fs::read_link(dst.path().join("bin/tool")).unwrap(),
+            PathBuf::from("../lib/tool")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_extract_rejects_absolute_symlink_target() {
+        let dst = tempfile::tempdir().unwrap();
+        let tar_bytes = tar_gz_with_symlink("bin/tool", "/etc/passwd");
+
+        let result = extract_tar_gz(dst.path(), &tar_bytes).await;
+
+        assert!(result.is_err());
+        assert!(!dst.path().join("bin/tool").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_extract_rejects_escaping_symlink_target() {
+        let dst = tempfile::tempdir().unwrap();
+        let tar_bytes = tar_gz_with_symlink("bin/tool", "../../escape");
+
+        let result = extract_tar_gz(dst.path(), &tar_bytes).await;
+
+        assert!(result.is_err());
+        assert!(!dst.path().join("bin/tool").exists());
     }
 }
