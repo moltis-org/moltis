@@ -324,6 +324,31 @@ impl FirecrackerSandbox {
         }
     }
 
+    async fn stop_build_vm(process: &mut tokio::process::Child, api_socket: &Path, tap_name: &str) {
+        let _ = Self::fc_api_call(
+            api_socket,
+            "PUT",
+            "/actions",
+            &serde_json::json!({ "action_type": "SendCtrlAltDel" }),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let _ = process.kill().await;
+        let _ = process.wait().await;
+        Self::remove_tap(tap_name).await;
+        let _ = std::fs::remove_file(api_socket);
+    }
+
+    async fn cleanup_failed_build_vm(
+        process: &mut tokio::process::Child,
+        api_socket: &Path,
+        tap_name: &str,
+        temp_rootfs: &Path,
+    ) {
+        Self::stop_build_vm(process, api_socket, tap_name).await;
+        let _ = std::fs::remove_file(temp_rootfs);
+    }
+
     async fn wait_for_ssh(guest_ip: &str, ssh_key: &Path) -> Result<()> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         loop {
@@ -558,9 +583,7 @@ impl Sandbox for FirecrackerSandbox {
         };
 
         if let Err(e) = Self::wait_for_ssh(&guest_ip, &self.fc.ssh_key_path).await {
-            Self::remove_tap(&tap_name).await;
-            let _ = process.kill().await;
-            let _ = std::fs::remove_file(&temp_rootfs);
+            Self::cleanup_failed_build_vm(&mut process, &api_socket, &tap_name, &temp_rootfs).await;
             return Err(e);
         }
 
@@ -573,7 +596,16 @@ impl Sandbox for FirecrackerSandbox {
             timeout: Duration::from_secs(600),
             ..Default::default()
         };
-        let result = Self::ssh_run(&guest_ip, &self.fc.ssh_key_path, &install_cmd, &opts).await?;
+        let result = match Self::ssh_run(&guest_ip, &self.fc.ssh_key_path, &install_cmd, &opts)
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                Self::cleanup_failed_build_vm(&mut process, &api_socket, &tap_name, &temp_rootfs)
+                    .await;
+                return Err(e);
+            },
+        };
         if result.exit_code != 0 {
             warn!(
                 tag,
@@ -582,19 +614,7 @@ impl Sandbox for FirecrackerSandbox {
             );
         }
 
-        // Graceful shutdown.
-        let _ = Self::fc_api_call(
-            &api_socket,
-            "PUT",
-            "/actions",
-            &serde_json::json!({ "action_type": "SendCtrlAltDel" }),
-        )
-        .await;
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        let _ = process.kill().await;
-        let _ = process.wait().await;
-        Self::remove_tap(&tap_name).await;
-        let _ = std::fs::remove_file(&api_socket);
+        Self::stop_build_vm(&mut process, &api_socket, &tap_name).await;
 
         // Rename to final path (atomic on same filesystem).
         std::fs::rename(&temp_rootfs, &image_path)

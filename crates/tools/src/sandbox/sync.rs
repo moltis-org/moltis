@@ -452,14 +452,35 @@ fn replace_existing_symlink_path(path: &Path) -> Result<()> {
 }
 
 fn extract_hardlink(root: &Path, relative_path: &Path, link_target: &Path) -> Result<()> {
-    let Some(relative_link_target) = validate_tar_path(link_target)? else {
+    let relative_link_target = match validate_tar_path(link_target) {
+        Ok(Some(target)) => target,
+        Ok(None) => {
+            warn!(
+                path = %relative_path.display(),
+                target = %link_target.display(),
+                "sync: skipping hardlink with empty target"
+            );
+            return Ok(());
+        },
+        Err(e) => {
+            warn!(
+                path = %relative_path.display(),
+                target = %link_target.display(),
+                error = %e,
+                "sync: skipping hardlink with unsafe target"
+            );
+            return Ok(());
+        },
+    };
+
+    if relative_link_target.as_os_str().is_empty() {
         warn!(
             path = %relative_path.display(),
             target = %link_target.display(),
             "sync: skipping hardlink with empty target"
         );
         return Ok(());
-    };
+    }
 
     ensure_parent_directory(root, relative_path)?;
     let source = root.join(&relative_link_target);
@@ -848,13 +869,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_extract_rejects_escaping_hardlink_target() {
+    async fn test_extract_skips_escaping_hardlink_target() {
         let dst = tempfile::tempdir().unwrap();
         let tar_bytes = tar_gz_with_hardlink("node_modules/pkg/file.txt", "../escape.txt");
 
-        let result = extract_tar_gz(dst.path(), &tar_bytes).await;
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
 
-        assert!(result.is_err());
+        assert!(!dst.path().join("node_modules/pkg/file.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_extract_skips_absolute_hardlink_target() {
+        let dst = tempfile::tempdir().unwrap();
+        let tar_bytes = tar_gz_with_hardlink("node_modules/pkg/file.txt", "/etc/passwd");
+
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
         assert!(!dst.path().join("node_modules/pkg/file.txt").exists());
     }
 }
