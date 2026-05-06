@@ -602,8 +602,14 @@ impl GatewayState {
         })
     }
 
-    /// Whether the connection to the client is secure (TLS active on the
-    /// gateway itself, or TLS terminated by an upstream reverse proxy).
+    /// Whether the gateway *may* be serving over a secure channel.
+    ///
+    /// Returns `true` when TLS is active on the gateway listener **or** the
+    /// server is configured behind a reverse proxy.  Note: `behind_proxy`
+    /// alone does not guarantee HTTPS — the proxy-to-client leg may be plain
+    /// HTTP.  For cookie `Secure` attribute decisions, prefer the per-request
+    /// `should_secure_cookie()` helper in `httpd::auth_routes` which inspects
+    /// the `X-Forwarded-Proto` header.
     pub fn is_secure(&self) -> bool {
         self.tls_active || self.behind_proxy
     }

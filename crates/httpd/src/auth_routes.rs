@@ -729,7 +729,12 @@ fn should_secure_cookie(
         return headers
             .get("x-forwarded-proto")
             .and_then(|v| v.to_str().ok())
-            .is_some_and(|proto| proto.eq_ignore_ascii_case("https"));
+            .is_some_and(|proto| {
+                // Take only the first value in case of a comma-separated list
+                // (e.g. "https, http" from a multi-hop proxy chain).
+                let first = proto.split(',').next().unwrap_or("").trim();
+                first.eq_ignore_ascii_case("https")
+            });
     }
     false
 }

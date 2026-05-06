@@ -436,6 +436,26 @@ mod tests {
             "plain HTTP direct connection must not set Secure"
         );
     }
+
+    #[test]
+    fn should_secure_cookie_proxy_with_comma_separated_forwarded_proto() {
+        let mut h = headers_with_host("example.com");
+        h.insert("x-forwarded-proto", "https, http".parse().unwrap());
+        assert!(
+            should_secure_cookie(false, true, &h),
+            "first value in comma-separated X-Forwarded-Proto should be used"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_with_padded_forwarded_proto() {
+        let mut h = headers_with_host("example.com");
+        h.insert("x-forwarded-proto", " https ".parse().unwrap());
+        assert!(
+            should_secure_cookie(false, true, &h),
+            "whitespace-padded X-Forwarded-Proto should be trimmed"
+        );
+    }
 }
 
 #[cfg(test)]

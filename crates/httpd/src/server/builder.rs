@@ -253,7 +253,10 @@ pub fn finalize_gateway_app(
         crate::request_throttle::throttle_gate,
     ));
     // HSTS: instruct browsers to always use HTTPS once they've connected securely.
-    let router = if app_state.gateway.is_secure() {
+    // Only set when the gateway itself terminates TLS. When behind a proxy, the
+    // proxy is responsible for HSTS — we cannot know from a static layer whether
+    // the client-to-proxy leg is HTTPS.
+    let router = if app_state.gateway.tls_active {
         use axum::http::{HeaderValue, header};
         router.layer(SetResponseHeaderLayer::overriding(
             header::STRICT_TRANSPORT_SECURITY,
