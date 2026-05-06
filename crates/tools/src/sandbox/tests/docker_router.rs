@@ -250,6 +250,49 @@ fn test_docker_container_name() {
     assert_eq!(docker.container_name(&id), "my-prefix-abc123");
 }
 
+#[tokio::test]
+async fn test_docker_startup_gate_serializes_same_container() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    let first = docker.startup_gate_for("moltis-sandbox-session").await;
+    let second = docker.startup_gate_for("moltis-sandbox-session").await;
+    assert!(Arc::ptr_eq(&first, &second));
+
+    let permit = first.acquire().await.unwrap();
+    assert!(second.try_acquire().is_err());
+    drop(permit);
+
+    let _second_permit = second.try_acquire().unwrap();
+}
+
+#[tokio::test]
+async fn test_docker_startup_gate_allows_different_containers() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    let first = docker.startup_gate_for("moltis-sandbox-session-a").await;
+    let second = docker.startup_gate_for("moltis-sandbox-session-b").await;
+    assert!(!Arc::ptr_eq(&first, &second));
+
+    let _first_permit = first.acquire().await.unwrap();
+    let _second_permit = second.try_acquire().unwrap();
+}
+
+#[test]
+fn test_container_name_conflict_detection() {
+    assert!(is_container_name_conflict(
+        "docker: Error response from daemon: Conflict. The container name \
+         \"/moltis-myagent-sandbox-cron-57120844\" is already in use by container \
+         \"7587022e73ff\"."
+    ));
+    assert!(is_container_name_conflict(
+        "Error: creating container storage: the name \"moltis-sandbox-main\" is already in use"
+    ));
+    assert!(!is_container_name_conflict(
+        "Error response from daemon: pull access denied for image"
+    ));
+    assert!(!is_container_name_conflict(
+        "Error: creating container storage: the namespace \"moltis-sandbox-main\" is already in use"
+    ));
+}
+
 /// Helper: build a `SandboxRouter` with a deterministic backend so tests
 /// don't depend on the host having Docker / Apple Container installed.
 fn router_with_real_backend(config: SandboxConfig) -> SandboxRouter {
