@@ -8,7 +8,7 @@ import { TabBar } from "../components/forms/Tabs";
 import { localizedApiErrorMessage } from "../helpers";
 import { updateNavCount } from "../nav-counts";
 import { sandboxInfo } from "../signals";
-import type { SandboxBackendId, SandboxGonInfo } from "../types/gon";
+import type { SandboxGonInfo } from "../types/gon";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -624,19 +624,6 @@ function RunningContainersSection(): VNode {
 		</div>
 	);
 }
-
-const BACKEND_LABELS: Record<SandboxBackendId, string> = {
-	"apple-container": "Apple Container (VM-isolated)",
-	docker: "Docker",
-	podman: "Podman",
-	cgroup: "cgroup (systemd-run)",
-	"restricted-host": "Restricted Host (env + rlimits)",
-	wasm: "Wasmtime (WASM-isolated)",
-	vercel: "Vercel Sandbox (Firecracker microVM)",
-	daytona: "Daytona (cloud sandbox)",
-	firecracker: "Firecracker (local microVM)",
-	none: "None (host execution)",
-};
 
 function backendRecommendation(info: SandboxInfoValue | null): { level: string; text: string; link?: string } | null {
 	if (!info) return null;
