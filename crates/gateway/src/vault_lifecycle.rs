@@ -84,10 +84,17 @@ async fn auto_unseal_secret_from_env() -> Option<AutoUnsealSecret> {
 
     match (key, key_file) {
         (None, None) => None,
-        (Some(value), None) => Some(AutoUnsealSecret {
-            value: Secret::new(value),
-            kind: AutoUnsealSourceKind::Env,
-        }),
+        (Some(value), None) => {
+            tracing::warn!(
+                key_env = AUTO_UNSEAL_KEY_ENV,
+                file_env = AUTO_UNSEAL_KEY_FILE_ENV,
+                "vault auto-unseal recovery key supplied directly through the process environment; use a secret file when possible"
+            );
+            Some(AutoUnsealSecret {
+                value: Secret::new(value),
+                kind: AutoUnsealSourceKind::Env,
+            })
+        },
         (env_value, Some(path)) => {
             if env_value.is_some() {
                 tracing::warn!(
@@ -257,6 +264,25 @@ mod tests {
         .await;
 
         assert_eq!(result, AutoUnsealResult::Unsealed);
+        assert_eq!(
+            vault.status().await.unwrap(),
+            moltis_vault::VaultStatus::Unsealed
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_unseal_already_unsealed_is_successful_noop() {
+        let vault = test_vault().await;
+        let recovery_key = vault.initialize("test-password-123").await.unwrap();
+        let recovery_phrase = recovery_key.phrase().to_owned();
+
+        let result = auto_unseal_with_secret(&vault, AutoUnsealSecret {
+            value: Secret::new(recovery_phrase),
+            kind: AutoUnsealSourceKind::Env,
+        })
+        .await;
+
+        assert_eq!(result, AutoUnsealResult::AlreadyUnsealed);
         assert_eq!(
             vault.status().await.unwrap(),
             moltis_vault::VaultStatus::Unsealed

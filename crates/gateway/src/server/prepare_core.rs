@@ -450,6 +450,7 @@ pub async fn prepare_gateway_core(
                 let auto_unsealed = matches!(
                     auto_unseal_result,
                     crate::vault_lifecycle::AutoUnsealResult::Unsealed
+                        | crate::vault_lifecycle::AutoUnsealResult::AlreadyUnsealed
                 );
                 (Some(vault), auto_unsealed)
             },
