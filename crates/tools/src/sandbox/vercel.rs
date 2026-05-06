@@ -126,6 +126,13 @@ impl VercelSandbox {
             .collect()
     }
 
+    fn sandbox_id_from_create_response(data: &serde_json::Value) -> Option<String> {
+        data["sandbox"]["id"]
+            .as_str()
+            .or_else(|| data["id"].as_str())
+            .map(ToOwned::to_owned)
+    }
+
     /// Build an authenticated request with team scoping.
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let mut url = format!("{VERCEL_API_BASE}{path}");
@@ -186,9 +193,7 @@ impl VercelSandbox {
             .await
             .map_err(|e| Error::message(format!("vercel: invalid create response: {e}")))?;
 
-        data["sandbox"]["id"]
-            .as_str()
-            .map(String::from)
+        Self::sandbox_id_from_create_response(&data)
             .ok_or_else(|| Error::message("vercel: missing sandbox.id in create response"))
     }
 
@@ -709,13 +714,12 @@ impl Sandbox for VercelSandbox {
                     "vercel: create from snapshot failed (HTTP {status}): {text}"
                 )));
             }
-            let data: serde_json::Value = resp
-                .json()
-                .await
+            let text = resp.text().await.map_err(|e| {
+                Error::message(format!("vercel: failed to read create response: {e}"))
+            })?;
+            let data: serde_json::Value = serde_json::from_str(&text)
                 .map_err(|e| Error::message(format!("vercel: invalid create response: {e}")))?;
-            data["sandbox"]["id"]
-                .as_str()
-                .map(String::from)
+            Self::sandbox_id_from_create_response(&data)
                 .ok_or_else(|| Error::message("vercel: missing sandbox.id in response"))?
         } else {
             self.create_sandbox().await?

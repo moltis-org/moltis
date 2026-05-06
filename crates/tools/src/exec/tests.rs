@@ -674,6 +674,10 @@ async fn test_exec_tool_marks_synced_when_isolated_ensure_ready_fails() {
 
     assert!(result.is_err());
     assert!(router.is_synced(session_key).await);
+    assert_eq!(
+        router.sync_failure(session_key).await.as_deref(),
+        Some("ensure_ready failed")
+    );
     assert!(router.mark_preparing_once(session_key).await);
 }
 

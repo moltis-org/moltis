@@ -617,7 +617,7 @@ impl AgentTool for ExecTool {
                     if announce_prepare {
                         router.clear_prepared_session(sk).await;
                         if backend.is_isolated() {
-                            router.mark_synced(sk).await;
+                            router.mark_sync_failed(sk, error.to_string()).await;
                         }
                         router.emit_event(crate::sandbox::SandboxEvent::PrepareFailed {
                             session_key: sk.to_string(),
@@ -652,13 +652,18 @@ impl AgentTool for ExecTool {
                             {
                                 Ok(()) => true,
                                 Err(e) => {
+                                    let error = e.to_string();
                                     warn!(
                                         session = sk,
                                         sandbox_id = %id,
-                                        error = %e,
-                                        "workspace sync-in failed, sandbox starts with empty workspace"
+                                        error = %error,
+                                        "workspace sync-in failed"
                                     );
-                                    false
+                                    router.mark_sync_failed(sk, error.clone()).await;
+                                    return Err(Error::message(format!(
+                                        "workspace sync-in failed: {error}"
+                                    ))
+                                    .into());
                                 },
                             }
                         } else {
@@ -700,6 +705,11 @@ impl AgentTool for ExecTool {
                         }
                         tokio::time::sleep(Duration::from_millis(200)).await;
                     }
+                }
+                if let Some(error) = router.sync_failure(sk).await {
+                    return Err(
+                        Error::message(format!("sandbox preparation failed: {error}")).into(),
+                    );
                 }
                 debug!(session = sk, sandbox_id = %id, command, "sandbox running command");
                 let mut sandbox_result = backend.exec(&id, command, &opts).await?;

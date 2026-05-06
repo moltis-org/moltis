@@ -689,6 +689,9 @@ pub struct SandboxRouter {
     /// Session keys where workspace sync-in has completed.
     /// Subsequent exec calls wait until sync_in finishes before proceeding.
     synced_sessions: RwLock<HashSet<String>>,
+    /// Per-session first-run failures that should unblock waiters without
+    /// allowing them to run against an incomplete sandbox workspace.
+    sync_failures: RwLock<HashMap<String, String>>,
     /// Whether a sandbox image pre-build is currently in progress.
     /// Used by the gateway to show a banner in the UI.
     pub building_flag: std::sync::atomic::AtomicBool,
@@ -721,6 +724,7 @@ impl SandboxRouter {
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
             synced_sessions: RwLock::new(HashSet::new()),
+            sync_failures: RwLock::new(HashMap::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
             build_complete: tokio::sync::Notify::new(),
         }
@@ -743,6 +747,7 @@ impl SandboxRouter {
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
             synced_sessions: RwLock::new(HashSet::new()),
+            sync_failures: RwLock::new(HashMap::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
             build_complete: tokio::sync::Notify::new(),
         }
@@ -774,6 +779,19 @@ impl SandboxRouter {
 
     /// Mark a session as having completed workspace sync-in.
     pub async fn mark_synced(&self, session_key: &str) {
+        self.sync_failures.write().await.remove(session_key);
+        self.synced_sessions
+            .write()
+            .await
+            .insert(session_key.to_string());
+    }
+
+    /// Mark a session as unblocked after first-run preparation failed.
+    pub async fn mark_sync_failed(&self, session_key: &str, error: String) {
+        self.sync_failures
+            .write()
+            .await
+            .insert(session_key.to_string(), error);
         self.synced_sessions
             .write()
             .await
@@ -785,9 +803,15 @@ impl SandboxRouter {
         self.synced_sessions.read().await.contains(session_key)
     }
 
+    /// Return the first-run preparation failure for a session, if any.
+    pub async fn sync_failure(&self, session_key: &str) -> Option<String> {
+        self.sync_failures.read().await.get(session_key).cloned()
+    }
+
     /// Clear sync marker for a session (used on cleanup).
     pub async fn clear_synced_session(&self, session_key: &str) {
         self.synced_sessions.write().await.remove(session_key);
+        self.sync_failures.write().await.remove(session_key);
     }
 
     /// Clear runtime initialization markers for a session.
