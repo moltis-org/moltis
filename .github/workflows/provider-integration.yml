@@ -266,12 +266,19 @@ jobs:
 
       - name: Check cloud sandbox secrets
         run: |
-          if [ -z "$VERCEL_TOKEN" ] && [ -z "$DAYTONA_API_KEY" ]; then
-            echo "::warning::No cloud sandbox secrets are configured, skipping live cloud sandbox E2E"
-            echo "SKIP=true" >> "$GITHUB_ENV"
-          fi
+          usable_backend=false
           if [ -n "$VERCEL_TOKEN" ] && [ -z "$VERCEL_PROJECT_ID" ]; then
             echo "::warning::VERCEL_TOKEN is configured but VERCEL_PROJECT_ID is missing, skipping live Vercel sandbox E2E"
+            echo "VERCEL_TOKEN=" >> "$GITHUB_ENV"
+          elif [ -n "$VERCEL_TOKEN" ]; then
+            usable_backend=true
+          fi
+          if [ -n "$DAYTONA_API_KEY" ]; then
+            usable_backend=true
+          fi
+          if [ "$usable_backend" != "true" ]; then
+            echo "::warning::No usable cloud sandbox secrets are configured, skipping live cloud sandbox E2E"
+            echo "SKIP=true" >> "$GITHUB_ENV"
           fi
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

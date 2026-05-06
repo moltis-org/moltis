@@ -996,6 +996,15 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
             "available": true,
         }));
     }
+    #[cfg(target_os = "linux")]
+    if sb.firecracker_bin.is_some() || std::path::Path::new("/usr/local/bin/firecracker").exists() {
+        backends.push(serde_json::json!({
+            "id": "firecracker",
+            "label": "Firecracker (microVM)",
+            "kind": "local",
+            "available": true,
+        }));
+    }
 
     // Remote backends.
     let has_vercel = configured_secret(&sb.vercel_token);
