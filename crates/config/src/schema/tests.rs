@@ -568,6 +568,22 @@ fn sandbox_defaults_include_go_runtime() {
 }
 
 #[test]
+fn sandbox_config_debug_redacts_remote_backend_credentials() {
+    let sandbox = SandboxConfig {
+        vercel_token: Some("vercel-secret-value".into()),
+        daytona_api_key: Some("daytona-secret-value".into()),
+        ..SandboxConfig::default()
+    };
+
+    let debug = format!("{sandbox:?}");
+
+    assert!(!debug.contains("vercel-secret-value"));
+    assert!(!debug.contains("daytona-secret-value"));
+    assert!(debug.contains("vercel_token: Some(\"[REDACTED]\")"));
+    assert!(debug.contains("daytona_api_key: Some(\"[REDACTED]\")"));
+}
+
+#[test]
 fn wasm_tool_limits_config_defaults() {
     let limits = WasmToolLimitsConfig::default();
     assert_eq!(limits.default_memory, 16 * 1024 * 1024);
