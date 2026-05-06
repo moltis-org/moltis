@@ -66,10 +66,11 @@ pub async fn sync_in(
     );
 
     let tar_path = "/tmp/moltis-sync-in.tar.gz";
+    let sandbox_workspace = shell_single_quote(sandbox_workspace);
     backend.write_file(id, tar_path, &tar_bytes).await?;
 
     let cmd = format!(
-        "mkdir -p '{sandbox_workspace}' && tar -xzf {tar_path} -C '{sandbox_workspace}' && rm -f {tar_path}"
+        "mkdir -p {sandbox_workspace} && tar -xzf {tar_path} -C {sandbox_workspace} && rm -f {tar_path}"
     );
     let opts = ExecOpts {
         timeout: std::time::Duration::from_secs(120),
@@ -104,8 +105,9 @@ pub async fn sync_out(
     };
 
     // Check if sandbox workspace has content.
+    let sandbox_workspace_shell = shell_single_quote(sandbox_workspace);
     let check_cmd = format!(
-        "if [ -d '{sandbox_workspace}' ] && [ \"$(ls -A '{sandbox_workspace}' 2>/dev/null)\" ]; then echo non-empty; fi"
+        "if [ -d {sandbox_workspace_shell} ] && [ \"$(ls -A {sandbox_workspace_shell} 2>/dev/null)\" ]; then echo non-empty; fi"
     );
     let check = backend.exec(id, &check_cmd, &opts).await?;
     if !check.stdout.contains("non-empty") {
@@ -122,7 +124,7 @@ pub async fn sync_out(
 
     // Create tarball in sandbox.
     let tar_path = "/tmp/moltis-sync-out.tar.gz";
-    let tar_cmd = format!("tar -czf {tar_path} -C '{sandbox_workspace}' .");
+    let tar_cmd = format!("tar -czf {tar_path} -C {sandbox_workspace_shell} .");
     let tar_result = backend.exec(id, &tar_cmd, &opts).await?;
     if tar_result.exit_code != 0 {
         return Err(Error::message(format!(
@@ -279,7 +281,9 @@ async fn extract_tar_gz(dir: &Path, tar_bytes: &[u8]) -> Result<()> {
                         ))
                     })?
                     .into_owned();
-                validate_symlink_target(&relative_path, &link_target)?;
+                if !is_safe_symlink_target(&relative_path, &link_target) {
+                    continue;
+                }
                 ensure_parent_directory(dir, &relative_path)?;
                 let target = dir.join(&relative_path);
                 replace_existing_symlink_path(&target)?;
@@ -299,10 +303,11 @@ async fn extract_tar_gz(dir: &Path, tar_bytes: &[u8]) -> Result<()> {
                 extract_hardlink(dir, &relative_path, &link_target)?;
             },
             other => {
-                return Err(Error::message(format!(
-                    "sync: refusing unsupported tar entry type {other:?} for '{}'",
-                    path.display()
-                )));
+                warn!(
+                    entry_type = ?other,
+                    path = %path.display(),
+                    "sync: skipping unsupported tar entry type"
+                );
             },
         }
     }
@@ -384,7 +389,11 @@ fn ensure_parent_directory(root: &Path, relative_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_symlink_target(link_path: &Path, link_target: &Path) -> Result<()> {
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn is_safe_symlink_target(link_path: &Path, link_target: &Path) -> bool {
     let mut resolved = link_path
         .parent()
         .unwrap_or_else(|| Path::new(""))
@@ -395,23 +404,25 @@ fn validate_symlink_target(link_path: &Path, link_target: &Path) -> Result<()> {
             Component::CurDir => {},
             Component::ParentDir => {
                 if !resolved.pop() {
-                    return Err(Error::message(format!(
-                        "sync: refusing symlink '{}' with escaping target '{}'",
-                        link_path.display(),
-                        link_target.display()
-                    )));
+                    warn!(
+                        link = %link_path.display(),
+                        target = %link_target.display(),
+                        "sync: skipping symlink with escaping target"
+                    );
+                    return false;
                 }
             },
             Component::RootDir | Component::Prefix(_) => {
-                return Err(Error::message(format!(
-                    "sync: refusing symlink '{}' with unsafe target '{}'",
-                    link_path.display(),
-                    link_target.display()
-                )));
+                warn!(
+                    link = %link_path.display(),
+                    target = %link_target.display(),
+                    "sync: skipping symlink with unsafe target"
+                );
+                return false;
             },
         }
     }
-    Ok(())
+    true
 }
 
 fn replace_existing_symlink_path(path: &Path) -> Result<()> {
@@ -606,6 +617,37 @@ mod tests {
         archive.into_inner().and_then(|enc| enc.finish()).unwrap()
     }
 
+    fn tar_gz_with_unsupported_entry_between_files() -> Vec<u8> {
+        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(enc);
+
+        let mut first_header = tar::Header::new_gnu();
+        first_header.set_size(5);
+        first_header.set_mode(0o644);
+        first_header.set_cksum();
+        archive
+            .append_data(&mut first_header, "before.txt", &b"start"[..])
+            .unwrap();
+
+        let mut fifo_header = tar::Header::new_gnu();
+        fifo_header.set_entry_type(tar::EntryType::Fifo);
+        fifo_header.set_path("pipe").unwrap();
+        fifo_header.set_size(0);
+        fifo_header.set_mode(0o644);
+        fifo_header.set_cksum();
+        archive.append(&fifo_header, io::empty()).unwrap();
+
+        let mut second_header = tar::Header::new_gnu();
+        second_header.set_size(3);
+        second_header.set_mode(0o644);
+        second_header.set_cksum();
+        archive
+            .append_data(&mut second_header, "after.txt", &b"end"[..])
+            .unwrap();
+
+        archive.into_inner().and_then(|enc| enc.finish()).unwrap()
+    }
+
     #[test]
     fn test_is_dir_empty_nonexistent() {
         assert!(is_dir_empty(Path::new("/nonexistent/path/xyz")));
@@ -622,6 +664,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("test.txt"), "hello").unwrap();
         assert!(!is_dir_empty(dir.path()));
+    }
+
+    #[test]
+    fn test_shell_single_quote_escapes_embedded_quotes() {
+        assert_eq!(
+            shell_single_quote("/home/daytona/work' && touch /tmp/pwned && echo '"),
+            "'/home/daytona/work'\\'' && touch /tmp/pwned && echo '\\'''"
+        );
     }
 
     #[tokio::test]
@@ -694,26 +744,41 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_extract_rejects_absolute_symlink_target() {
+    async fn test_extract_skips_absolute_symlink_target() {
         let dst = tempfile::tempdir().unwrap();
         let tar_bytes = tar_gz_with_symlink("bin/tool", "/etc/passwd");
 
-        let result = extract_tar_gz(dst.path(), &tar_bytes).await;
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
 
-        assert!(result.is_err());
         assert!(!dst.path().join("bin/tool").exists());
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn test_extract_rejects_escaping_symlink_target() {
+    async fn test_extract_skips_escaping_symlink_target() {
         let dst = tempfile::tempdir().unwrap();
         let tar_bytes = tar_gz_with_symlink("bin/tool", "../../escape");
 
-        let result = extract_tar_gz(dst.path(), &tar_bytes).await;
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
 
-        assert!(result.is_err());
         assert!(!dst.path().join("bin/tool").exists());
+    }
+
+    #[tokio::test]
+    async fn test_extract_skips_unsupported_tar_entry_type() {
+        let dst = tempfile::tempdir().unwrap();
+        let tar_bytes = tar_gz_with_unsupported_entry_between_files();
+
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("before.txt")).unwrap(),
+            "start"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("after.txt")).unwrap(),
+            "end"
+        );
     }
 
     #[tokio::test]
