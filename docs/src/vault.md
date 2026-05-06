@@ -62,9 +62,10 @@ Uninitialized ──────────────► Unsealed
                               Sealed
 ```
 
-After a server restart, the vault is always in the **Sealed** state until
+After a server restart, the vault is normally in the **Sealed** state until
 the user logs in (which provides the password needed to derive the KEK and
-unwrap the DEK).
+unwrap the DEK). For unattended deployments, Moltis can also auto-unseal at
+startup from an explicitly configured recovery key.
 
 ## Lifecycle Integration
 
@@ -98,8 +99,36 @@ No new recovery key is generated during normal password rotation.
 
 ### Server restart
 
-The vault starts in **Sealed** state. All encrypted data is unreadable
-until the user logs in, which triggers unseal.
+The vault starts in **Sealed** state unless unattended auto-unseal is
+configured. All encrypted data is unreadable until the user logs in or the
+configured auto-unseal recovery key is accepted.
+
+### Unattended auto-unseal
+
+For servers that need to recover fully after a reboot or `/update`, set one
+of these environment variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `MOLTIS_VAULT_AUTO_UNSEAL_KEY_FILE` | Path to a file containing the vault recovery key. Preferred for Docker/Kubernetes secrets. |
+| `MOLTIS_VAULT_AUTO_UNSEAL_KEY` | Vault recovery key value directly in the process environment. |
+
+If both are set, Moltis logs a warning and uses
+`MOLTIS_VAULT_AUTO_UNSEAL_KEY_FILE`.
+
+Auto-unseal runs immediately after the vault is opened from SQLite and before
+Moltis loads persisted environment variables, MCP server configuration, cron
+runtime environment, and stored channel accounts. That means encrypted env vars
+and channel credentials are available during normal startup rather than only
+after a manual browser unlock.
+
+```admonish warning
+Auto-unseal trades manual recovery for unattended availability. If an attacker
+can read both the Moltis database and the configured recovery-key env/file, they
+can decrypt vault-protected secrets. Prefer a Docker/Kubernetes secret file over
+a plain env var, restrict file permissions, and keep the recovery key out of
+`moltis.toml`.
+```
 
 ## Recovery Key
 

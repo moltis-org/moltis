@@ -441,15 +441,21 @@ pub async fn prepare_gateway_core(
     startup_mem_probe.checkpoint("sqlite.migrations.complete");
 
     #[cfg(feature = "vault")]
-    let vault: Option<Arc<moltis_vault::Vault>> = {
+    let (vault, auto_unsealed_vault): (Option<Arc<moltis_vault::Vault>>, bool) = {
         match moltis_vault::Vault::new(db_pool.clone()).await {
             Ok(v) => {
                 info!(status = ?v.status().await, "vault ready");
-                Some(Arc::new(v))
+                let vault = Arc::new(v);
+                let auto_unseal_result = crate::vault_lifecycle::auto_unseal_from_env(&vault).await;
+                let auto_unsealed = matches!(
+                    auto_unseal_result,
+                    crate::vault_lifecycle::AutoUnsealResult::Unsealed
+                );
+                (Some(vault), auto_unsealed)
             },
             Err(e) => {
                 warn!(error = %e, "vault init failed, encryption disabled");
-                None
+                (None, false)
             },
         }
     };
@@ -460,6 +466,10 @@ pub async fn prepare_gateway_core(
             .await
             .expect("failed to init credential store"),
     );
+    #[cfg(feature = "vault")]
+    if auto_unsealed_vault {
+        crate::vault_lifecycle::run_vault_env_migration(&credential_store).await;
+    }
     #[cfg(not(feature = "vault"))]
     let credential_store = Arc::new(
         auth::CredentialStore::new(db_pool.clone())

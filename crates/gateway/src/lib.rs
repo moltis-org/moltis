@@ -58,6 +58,8 @@ pub mod teams_agent_tools;
 pub mod tts_phrases;
 pub mod update_check;
 pub mod updater;
+#[cfg(feature = "vault")]
+pub mod vault_lifecycle;
 pub mod voice;
 pub mod voice_agent_tools;
 pub mod voice_persona;
