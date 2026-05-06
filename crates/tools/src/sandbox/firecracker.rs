@@ -13,6 +13,7 @@
 
 use std::{
     collections::HashMap,
+    io::Write as _,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -21,6 +22,7 @@ use std::{
 
 use {
     async_trait::async_trait,
+    serde_json::json,
     tokio::{
         io::AsyncReadExt,
         sync::{RwLock, Semaphore},
@@ -40,6 +42,8 @@ use crate::{
 const GUEST_USER: &str = "sandbox";
 const SUBNET_BASE: &str = "172.16";
 const FC_WORKSPACE: &str = "/home/sandbox";
+const EXIT_SYMLINK: i32 = 14;
+const EXIT_PARENT_MISSING: i32 = 20;
 
 struct FirecrackerVm {
     process: tokio::process::Child,
@@ -551,6 +555,95 @@ impl FirecrackerSandbox {
             .get(&id.key)
             .map(|vm| (vm.guest_ip.clone(), self.fc.ssh_key_path.clone()))
     }
+
+    fn scp_target(guest_ip: &str, file_path: &str) -> String {
+        format!("{GUEST_USER}@{guest_ip}:{}", shell_words::quote(file_path))
+    }
+
+    async fn scp_upload(
+        guest_ip: &str,
+        ssh_key: &Path,
+        local_path: &Path,
+        remote_path: &str,
+    ) -> Result<()> {
+        let mut child = tokio::process::Command::new("scp")
+            .args([
+                "-i",
+                &ssh_key.display().to_string(),
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "BatchMode=yes",
+                "-q",
+            ])
+            .arg(local_path)
+            .arg(Self::scp_target(guest_ip, remote_path))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| Error::message(format!("firecracker: scp upload failed: {e}")))?;
+
+        let Some(mut stdout_pipe) = child.stdout.take() else {
+            let _ = child.start_kill();
+            return Err(Error::message("firecracker: scp stdout pipe unavailable"));
+        };
+        let Some(mut stderr_pipe) = child.stderr.take() else {
+            let _ = child.start_kill();
+            return Err(Error::message("firecracker: scp stderr pipe unavailable"));
+        };
+
+        let stdout_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            stdout_pipe.read_to_end(&mut bytes).await.map(|_| bytes)
+        });
+        let stderr_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            stderr_pipe.read_to_end(&mut bytes).await.map(|_| bytes)
+        });
+
+        let status = match tokio::time::timeout(Duration::from_secs(300), child.wait()).await {
+            Ok(Ok(status)) => status,
+            Ok(Err(e)) => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                stdout_task.abort();
+                stderr_task.abort();
+                return Err(Error::message(format!("firecracker: scp wait failed: {e}")));
+            },
+            Err(_) => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                stdout_task.abort();
+                stderr_task.abort();
+                return Err(Error::message("firecracker: scp upload timed out"));
+            },
+        };
+
+        let _ = Self::collect_ssh_pipe("scp stdout", stdout_task).await?;
+        let stderr_bytes = Self::collect_ssh_pipe("scp stderr", stderr_task).await?;
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&stderr_bytes);
+            return Err(Error::message(format!(
+                "firecracker: scp upload failed: {}",
+                stderr.trim()
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn write_file_denied(file_path: &str) -> serde_json::Value {
+        json!({
+            "kind": "path_denied",
+            "file_path": file_path,
+            "error": "target is a symbolic link; refusing to follow",
+            "detail": "firecracker Write rejects symlinks",
+        })
+    }
 }
 
 #[async_trait]
@@ -711,7 +804,7 @@ impl Sandbox for FirecrackerSandbox {
             return Ok(());
         }
 
-        if !self.fc.firecracker_bin.exists() {
+        if !firecracker_bin_available(Some(&self.fc.firecracker_bin)) {
             return Err(Error::message(format!(
                 "firecracker: binary not found at {}",
                 self.fc.firecracker_bin.display()
@@ -807,6 +900,96 @@ impl Sandbox for FirecrackerSandbox {
         Self::ssh_run(&guest_ip, &ssh_key, command, opts).await
     }
 
+    async fn write_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        let (guest_ip, ssh_key) = self
+            .session_vm(id)
+            .await
+            .ok_or_else(|| Error::message(format!("firecracker: no active VM for {id}")))?;
+
+        let quoted_path = shell_words::quote(file_path);
+        let remote_tmp = format!("{file_path}.moltis-{}", uuid::Uuid::new_v4());
+        let quoted_tmp = shell_words::quote(&remote_tmp);
+        let preflight = format!(
+            "path={quoted_path}; parent=$(dirname \"$path\"); \
+             if [ ! -d \"$parent\" ]; then exit {EXIT_PARENT_MISSING}; fi; \
+             if [ -L \"$path\" ]; then exit {EXIT_SYMLINK}; fi"
+        );
+        let opts = ExecOpts {
+            timeout: Duration::from_secs(30),
+            ..Default::default()
+        };
+        let result = Self::ssh_run(&guest_ip, &ssh_key, &preflight, &opts).await?;
+        match result.exit_code {
+            0 => {},
+            EXIT_PARENT_MISSING => {
+                return Err(Error::message(format!(
+                    "cannot resolve parent of '{file_path}': directory does not exist in sandbox"
+                )));
+            },
+            EXIT_SYMLINK => return Ok(Some(Self::write_file_denied(file_path))),
+            other => {
+                let detail = if result.stderr.trim().is_empty() {
+                    format!("firecracker write preflight exited with code {other}")
+                } else {
+                    result.stderr.trim().to_string()
+                };
+                return Err(Error::message(format!(
+                    "firecracker write of '{file_path}' failed: {detail}"
+                )));
+            },
+        }
+
+        let mut local_temp = tempfile::NamedTempFile::new()
+            .map_err(|e| Error::message(format!("firecracker: temp file create failed: {e}")))?;
+        local_temp
+            .write_all(content)
+            .map_err(|e| Error::message(format!("firecracker: temp file write failed: {e}")))?;
+        local_temp
+            .flush()
+            .map_err(|e| Error::message(format!("firecracker: temp file flush failed: {e}")))?;
+
+        if let Err(e) = Self::scp_upload(&guest_ip, &ssh_key, local_temp.path(), &remote_tmp).await
+        {
+            let cleanup = format!("rm -f -- {quoted_tmp}");
+            let _ = Self::ssh_run(&guest_ip, &ssh_key, &cleanup, &opts).await;
+            return Err(e);
+        }
+
+        let finalize = format!(
+            "path={quoted_path}; tmp={quoted_tmp}; \
+             if [ -L \"$path\" ]; then rm -f \"$tmp\"; exit {EXIT_SYMLINK}; fi; \
+             sync \"$tmp\" 2>/dev/null || sync; \
+             if ! mv \"$tmp\" \"$path\"; then status=$?; rm -f \"$tmp\"; exit \"$status\"; fi"
+        );
+        let result = match Self::ssh_run(&guest_ip, &ssh_key, &finalize, &opts).await {
+            Ok(result) => result,
+            Err(e) => {
+                let cleanup = format!("rm -f -- {quoted_tmp}");
+                let _ = Self::ssh_run(&guest_ip, &ssh_key, &cleanup, &opts).await;
+                return Err(e);
+            },
+        };
+        match result.exit_code {
+            0 => Ok(None),
+            EXIT_SYMLINK => Ok(Some(Self::write_file_denied(file_path))),
+            other => {
+                let detail = if result.stderr.trim().is_empty() {
+                    format!("firecracker write finalize exited with code {other}")
+                } else {
+                    result.stderr.trim().to_string()
+                };
+                Err(Error::message(format!(
+                    "firecracker write of '{file_path}' failed: {detail}"
+                )))
+            },
+        }
+    }
+
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
         let permit = self.existing_creation_permit(id).await;
         let _permit = match permit {
@@ -887,6 +1070,14 @@ mod tests {
     fn test_resolve_firecracker_bin_prefers_configured_path() {
         let configured = PathBuf::from("/custom/firecracker");
         assert_eq!(resolve_firecracker_bin(Some(&configured)), configured);
+    }
+
+    #[test]
+    fn test_scp_target_quotes_remote_path() {
+        assert_eq!(
+            FirecrackerSandbox::scp_target("172.16.1.2", "/home/sandbox/a b.txt"),
+            "sandbox@172.16.1.2:'/home/sandbox/a b.txt'"
+        );
     }
 
     #[test]
