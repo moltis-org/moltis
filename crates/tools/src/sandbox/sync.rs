@@ -247,8 +247,17 @@ async fn extract_tar_gz(dir: &Path, tar_bytes: &[u8]) -> Result<()> {
             .path()
             .map_err(|e| Error::message(format!("sync: invalid tar path: {e}")))?;
         let path = path.into_owned();
-        let Some(relative_path) = validate_tar_path(&path)? else {
-            continue;
+        let relative_path = match validate_tar_path(&path) {
+            Ok(Some(path)) => path,
+            Ok(None) => continue,
+            Err(e) => {
+                warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "sync: skipping tar entry with unsafe path"
+                );
+                continue;
+            },
         };
 
         match entry.header().entry_type() {
@@ -582,15 +591,25 @@ mod tests {
         archive.into_inner().and_then(|enc| enc.finish()).unwrap()
     }
 
-    fn tar_gz_with_raw_file_path(path: &[u8], content: &[u8]) -> Vec<u8> {
+    fn tar_gz_with_raw_file_path_and_safe_file(path: &[u8], content: &[u8]) -> Vec<u8> {
         let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         let mut archive = tar::Builder::new(enc);
-        let mut header = tar::Header::new_gnu();
-        header.as_mut_bytes()[..path.len()].copy_from_slice(path);
-        header.set_size(content.len() as u64);
-        header.set_mode(0o644);
-        header.set_cksum();
-        archive.append(&header, content).unwrap();
+
+        let mut unsafe_header = tar::Header::new_gnu();
+        unsafe_header.as_mut_bytes()[..path.len()].copy_from_slice(path);
+        unsafe_header.set_size(content.len() as u64);
+        unsafe_header.set_mode(0o644);
+        unsafe_header.set_cksum();
+        archive.append(&unsafe_header, content).unwrap();
+
+        let mut safe_header = tar::Header::new_gnu();
+        safe_header.set_size(4);
+        safe_header.set_mode(0o644);
+        safe_header.set_cksum();
+        archive
+            .append_data(&mut safe_header, "safe.txt", &b"safe"[..])
+            .unwrap();
+
         archive.into_inner().and_then(|enc| enc.finish()).unwrap()
     }
 
@@ -757,12 +776,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_extract_rejects_parent_traversal() {
+    async fn test_extract_skips_parent_traversal() {
         let dst = tempfile::tempdir().unwrap();
-        let tar_bytes = tar_gz_with_raw_file_path(b"../escape.txt", b"nope");
-        let result = extract_tar_gz(dst.path(), &tar_bytes).await;
-        assert!(result.is_err());
+        let tar_bytes = tar_gz_with_raw_file_path_and_safe_file(b"../escape.txt", b"nope");
+
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
         assert!(!dst.path().join("../escape.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("safe.txt")).unwrap(),
+            "safe"
+        );
     }
 
     #[cfg(unix)]

@@ -599,8 +599,10 @@ impl AgentTool for ExecTool {
             let sk = session_key.unwrap_or("main");
             if is_sandboxed {
                 let id = router.sandbox_id_for(sk);
-                let image = router.resolve_image_nowait(sk, None).await;
                 let backend = router.resolve_backend(sk).await;
+                let image = router
+                    .resolve_image_for_backend_nowait(sk, None, backend.backend_name())
+                    .await;
                 info!(session = sk, sandbox_id = %id, backend = backend.backend_name(), image, "sandbox ensure_ready");
                 let announce_prepare = router.mark_preparing_once(sk).await;
                 if announce_prepare {

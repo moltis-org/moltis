@@ -677,6 +677,8 @@ pub struct SandboxRouter {
     backend_overrides: RwLock<HashMap<String, String>>,
     /// Per-session image overrides.
     image_overrides: RwLock<HashMap<String, String>>,
+    /// Runtime image overrides scoped to a backend.
+    backend_image_overrides: RwLock<HashMap<String, String>>,
     /// Runtime override for the global default image (set via API, persisted externally).
     global_image_override: RwLock<Option<String>>,
     /// Event channel for sandbox lifecycle events (prepare/provision/build feedback).
@@ -714,6 +716,7 @@ impl SandboxRouter {
             overrides: RwLock::new(HashMap::new()),
             backend_overrides: RwLock::new(HashMap::new()),
             image_overrides: RwLock::new(HashMap::new()),
+            backend_image_overrides: RwLock::new(HashMap::new()),
             global_image_override: RwLock::new(None),
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
@@ -735,6 +738,7 @@ impl SandboxRouter {
             overrides: RwLock::new(HashMap::new()),
             backend_overrides: RwLock::new(HashMap::new()),
             image_overrides: RwLock::new(HashMap::new()),
+            backend_image_overrides: RwLock::new(HashMap::new()),
             global_image_override: RwLock::new(None),
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
@@ -784,6 +788,16 @@ impl SandboxRouter {
     /// Clear sync marker for a session (used on cleanup).
     pub async fn clear_synced_session(&self, session_key: &str) {
         self.synced_sessions.write().await.remove(session_key);
+    }
+
+    /// Clear runtime initialization markers for a session.
+    ///
+    /// Backend and image changes invalidate the prepared/synced state. The
+    /// next exec must run `ensure_ready` and, for isolated backends, sync the
+    /// workspace for the newly selected runtime.
+    pub async fn clear_runtime_state(&self, session_key: &str) {
+        self.clear_prepared_session(session_key).await;
+        self.clear_synced_session(session_key).await;
     }
 
     /// Check whether a session should run sandboxed.
@@ -910,6 +924,11 @@ impl SandboxRouter {
         self.backends.keys().map(String::as_str).collect()
     }
 
+    /// List all available backend instances.
+    pub fn available_backend_instances(&self) -> Vec<Arc<dyn Sandbox>> {
+        self.backends.values().cloned().collect()
+    }
+
     /// Set a per-session backend override.
     ///
     /// Returns `Err` if `backend_name` is not registered.
@@ -924,12 +943,14 @@ impl SandboxRouter {
             .write()
             .await
             .insert(session_key.to_string(), backend_name.to_string());
+        self.clear_runtime_state(session_key).await;
         Ok(())
     }
 
     /// Remove a per-session backend override (revert to default).
     pub async fn remove_backend_override(&self, session_key: &str) {
         self.backend_overrides.write().await.remove(session_key);
+        self.clear_runtime_state(session_key).await;
     }
 
     /// Access the global sandbox mode.
@@ -953,17 +974,39 @@ impl SandboxRouter {
             .write()
             .await
             .insert(session_key.to_string(), image);
+        self.clear_runtime_state(session_key).await;
     }
 
     /// Remove a per-session image override.
     pub async fn remove_image_override(&self, session_key: &str) {
         self.image_overrides.write().await.remove(session_key);
+        self.clear_runtime_state(session_key).await;
     }
 
     /// Set a runtime override for the global default image.
     /// Pass `None` to revert to the config/hardcoded default.
     pub async fn set_global_image(&self, image: Option<String>) {
         *self.global_image_override.write().await = image;
+    }
+
+    /// Set a runtime image override for a specific backend.
+    ///
+    /// Background pre-builds are backend-specific: a Docker image tag is not a
+    /// Firecracker rootfs path, and vice versa. Keep those outputs scoped so a
+    /// session routed to a secondary backend gets the image/rootfs built for
+    /// that backend.
+    pub async fn set_backend_image(&self, backend_name: &str, image: String) -> Result<()> {
+        if !self.backends.contains_key(backend_name) {
+            return Err(Error::message(format!(
+                "unknown sandbox backend: {backend_name:?} (available: {:?})",
+                self.available_backends()
+            )));
+        }
+        self.backend_image_overrides
+            .write()
+            .await
+            .insert(backend_name.to_string(), image);
+        Ok(())
     }
 
     /// If a background image build is in progress, wait for it to finish
@@ -984,17 +1027,31 @@ impl SandboxRouter {
         .await;
     }
 
-    /// Get the current effective default image WITHOUT waiting for a build
-    /// to finish. Used by request paths that must not block on the initial
-    /// sandbox image build.
-    pub async fn resolve_default_image_nowait(&self) -> String {
-        if let Some(ref img) = *self.global_image_override.read().await {
-            return img.clone();
-        }
+    async fn config_default_image(&self) -> String {
         self.config
             .image
             .clone()
             .unwrap_or_else(|| DEFAULT_SANDBOX_IMAGE.to_string())
+    }
+
+    /// Get the current effective default image for a backend WITHOUT waiting
+    /// for a build to finish.
+    pub async fn resolve_default_image_for_backend_nowait(&self, backend_name: &str) -> String {
+        if let Some(img) = self.backend_image_overrides.read().await.get(backend_name) {
+            return img.clone();
+        }
+        if let Some(ref img) = *self.global_image_override.read().await {
+            return img.clone();
+        }
+        self.config_default_image().await
+    }
+
+    /// Get the current effective default image WITHOUT waiting for a build
+    /// to finish. Used by request paths that must not block on the initial
+    /// sandbox image build.
+    pub async fn resolve_default_image_nowait(&self) -> String {
+        self.resolve_default_image_for_backend_nowait(self.backend_name())
+            .await
     }
 
     /// Resolve the container image without waiting for any background image
@@ -1004,6 +1061,19 @@ impl SandboxRouter {
         &self,
         session_key: &str,
         skill_image: Option<&str>,
+    ) -> String {
+        let backend = self.resolve_backend(session_key).await;
+        self.resolve_image_for_backend_nowait(session_key, skill_image, backend.backend_name())
+            .await
+    }
+
+    /// Resolve the container image for a session/backend without waiting for
+    /// a background image build.
+    pub async fn resolve_image_for_backend_nowait(
+        &self,
+        session_key: &str,
+        skill_image: Option<&str>,
+        backend_name: &str,
     ) -> String {
         if let Some(img) = skill_image {
             return img.to_string();
@@ -1020,19 +1090,20 @@ impl SandboxRouter {
                 "sandbox image build in progress, resolving image without waiting"
             );
         }
-        self.resolve_default_image_nowait().await
+        self.resolve_default_image_for_backend_nowait(backend_name)
+            .await
+    }
+
+    /// Get the current effective default image for a backend.
+    pub async fn default_image_for_backend(&self, backend_name: &str) -> String {
+        self.wait_for_build_if_needed().await;
+        self.resolve_default_image_for_backend_nowait(backend_name)
+            .await
     }
 
     /// Get the current effective default image (runtime override > config > hardcoded).
     pub async fn default_image(&self) -> String {
-        self.wait_for_build_if_needed().await;
-        if let Some(ref img) = *self.global_image_override.read().await {
-            return img.clone();
-        }
-        self.config
-            .image
-            .clone()
-            .unwrap_or_else(|| DEFAULT_SANDBOX_IMAGE.to_string())
+        self.default_image_for_backend(self.backend_name()).await
     }
 
     /// Resolve the container image for a session.
@@ -1040,16 +1111,29 @@ impl SandboxRouter {
     /// Priority (highest to lowest):
     /// 1. `skill_image` — from a skill's Dockerfile cache
     /// 2. Per-session override (`session.sandbox_image`)
-    /// 3. Runtime global override (`set_global_image`)
-    /// 4. Global config (`config.tools.exec.sandbox.image`)
-    /// 5. Default constant (`DEFAULT_SANDBOX_IMAGE`)
+    /// 3. Runtime backend override (`set_backend_image`)
+    /// 4. Runtime global override (`set_global_image`)
+    /// 5. Global config (`config.tools.exec.sandbox.image`)
+    /// 6. Default constant (`DEFAULT_SANDBOX_IMAGE`)
     pub async fn resolve_image(&self, session_key: &str, skill_image: Option<&str>) -> String {
+        let backend = self.resolve_backend(session_key).await;
+        self.resolve_image_for_backend(session_key, skill_image, backend.backend_name())
+            .await
+    }
+
+    /// Resolve the container image for a session/backend.
+    pub async fn resolve_image_for_backend(
+        &self,
+        session_key: &str,
+        skill_image: Option<&str>,
+        backend_name: &str,
+    ) -> String {
         if let Some(img) = skill_image {
             return img.to_string();
         }
         if let Some(img) = self.image_overrides.read().await.get(session_key) {
             return img.clone();
         }
-        self.default_image().await
+        self.default_image_for_backend(backend_name).await
     }
 }

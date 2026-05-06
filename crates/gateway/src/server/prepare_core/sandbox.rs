@@ -68,7 +68,8 @@ pub(super) fn spawn_sandbox_background_tasks(
     // Background image pre-build.
     {
         let router = Arc::clone(sandbox_router);
-        let backend = Arc::clone(router.backend());
+        let backends = router.available_backend_instances();
+        let default_backend_name = router.backend_name().to_string();
         let packages = router.config().packages.clone();
         let base_image = router
             .config()
@@ -97,61 +98,112 @@ pub(super) fn spawn_sandbox_background_tasks(
                     .await;
                 }
 
-                match backend.build_image(&base_image, &packages).await {
-                    Ok(Some(result)) => {
-                        info!(
-                            tag = %result.tag,
-                            built = result.built,
-                            "sandbox image pre-build complete"
-                        );
-                        router.set_global_image(Some(result.tag.clone())).await;
-                        build_router.building_flag.store(false, Ordering::Relaxed);
-                        build_router.build_complete.notify_waiters();
+                let mut built_any = false;
+                let mut images = Vec::new();
+                let mut errors = Vec::new();
+                let mut default_result = None;
 
-                        if let Some(state) = deferred_for_build.get() {
-                            broadcast(
-                                state,
-                                "sandbox.image.build",
-                                serde_json::json!({
-                                    "phase": "done",
-                                    "tag": result.tag,
-                                    "built": result.built,
-                                }),
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
-                            .await;
+                for backend in backends {
+                    let backend_name = backend.backend_name();
+                    match backend.build_image(&base_image, &packages).await {
+                        Ok(Some(result)) => {
+                            info!(
+                                backend = backend_name,
+                                tag = %result.tag,
+                                built = result.built,
+                                "sandbox image pre-build complete"
+                            );
+                            built_any |= result.built;
+                            if let Err(error) = router
+                                .set_backend_image(backend_name, result.tag.clone())
+                                .await
+                            {
+                                warn!(
+                                    backend = backend_name,
+                                    %error,
+                                    "sandbox image pre-build result could not be registered"
+                                );
+                                errors.push(serde_json::json!({
+                                    "backend": backend_name,
+                                    "error": error.to_string(),
+                                }));
+                                continue;
+                            }
+                            if backend_name == default_backend_name {
+                                router.set_global_image(Some(result.tag.clone())).await;
+                                default_result = Some(result.clone());
+                            }
+                            images.push(serde_json::json!({
+                                "backend": backend_name,
+                                "tag": result.tag,
+                                "built": result.built,
+                            }));
+                        },
+                        Ok(None) => {
+                            debug!(
+                                backend = backend_name,
+                                "sandbox image pre-build: no-op (no packages or unsupported backend)"
+                            );
+                        },
+                        Err(error) => {
+                            warn!(
+                                backend = backend_name,
+                                "sandbox image pre-build failed: {error}"
+                            );
+                            errors.push(serde_json::json!({
+                                "backend": backend_name,
+                                "error": error.to_string(),
+                            }));
+                        },
+                    }
+                }
+
+                build_router.building_flag.store(false, Ordering::Relaxed);
+                build_router.build_complete.notify_waiters();
+
+                if images.is_empty() && errors.is_empty() {
+                    debug!("sandbox image pre-build: no-op (no packages or unsupported backends)");
+                }
+
+                if let Some(state) = deferred_for_build.get() {
+                    if !images.is_empty() {
+                        let mut payload = serde_json::json!({
+                            "phase": "done",
+                            "built": built_any,
+                            "images": images,
+                            "errors": errors,
+                        });
+                        if let Some(result) = default_result
+                            && let Some(payload) = payload.as_object_mut()
+                        {
+                            payload.insert("tag".to_string(), serde_json::json!(result.tag));
                         }
-                    },
-                    Ok(None) => {
+
+                        broadcast(state, "sandbox.image.build", payload, BroadcastOpts {
+                            drop_if_slow: true,
+                            ..Default::default()
+                        })
+                        .await;
+                    } else if errors.is_empty() {
                         debug!(
                             "sandbox image pre-build: no-op (no packages or unsupported backend)"
                         );
-                        build_router.building_flag.store(false, Ordering::Relaxed);
-                        build_router.build_complete.notify_waiters();
-                    },
-                    Err(e) => {
-                        warn!("sandbox image pre-build failed: {e}");
-                        build_router.building_flag.store(false, Ordering::Relaxed);
-                        build_router.build_complete.notify_waiters();
-                        if let Some(state) = deferred_for_build.get() {
-                            broadcast(
-                                state,
-                                "sandbox.image.build",
-                                serde_json::json!({
-                                    "phase": "error",
-                                    "error": e.to_string(),
-                                }),
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
-                            .await;
-                        }
-                    },
+                    } else {
+                        broadcast(
+                            state,
+                            "sandbox.image.build",
+                            serde_json::json!({
+                                "phase": "error",
+                                "error": "sandbox image pre-build failed",
+                                "errors": errors,
+                            }),
+                            BroadcastOpts {
+                                drop_if_slow: true,
+                                ..Default::default()
+                            },
+                        )
+                        .await;
+                    }
                 }
             });
         }
