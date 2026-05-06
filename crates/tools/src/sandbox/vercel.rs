@@ -390,6 +390,22 @@ impl VercelSandbox {
         }
     }
 
+    async fn prepare_created_sandbox(&self, id: &SandboxId, sandbox_id: &str) -> Result<()> {
+        debug!(%id, vercel_id = sandbox_id, "vercel: sandbox created, waiting for running state");
+
+        if let Err(e) = self.wait_for_running(sandbox_id).await {
+            self.stop_after_setup_failure(sandbox_id, "wait_for_running")
+                .await;
+            return Err(e);
+        }
+        if let Err(e) = self.mkdir(sandbox_id, VERCEL_WORKSPACE).await {
+            self.stop_after_setup_failure(sandbox_id, "mkdir").await;
+            return Err(e);
+        }
+
+        Ok(())
+    }
+
     /// Run a command and wait for completion via NDJSON streaming.
     async fn run_command(
         &self,
@@ -868,17 +884,7 @@ impl Sandbox for VercelSandbox {
             self.create_sandbox().await?
         };
 
-        debug!(%id, vercel_id = sandbox_id, "vercel: sandbox created, waiting for running state");
-
-        if let Err(e) = self.wait_for_running(&sandbox_id).await {
-            self.stop_after_setup_failure(&sandbox_id, "wait_for_running")
-                .await;
-            return Err(e);
-        }
-        if let Err(e) = self.mkdir(&sandbox_id, VERCEL_WORKSPACE).await {
-            self.stop_after_setup_failure(&sandbox_id, "mkdir").await;
-            return Err(e);
-        }
+        self.prepare_created_sandbox(id, &sandbox_id).await?;
 
         info!(%id, vercel_id = sandbox_id, "vercel: sandbox ready");
 

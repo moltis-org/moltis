@@ -16,6 +16,8 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use flate2::{Compression, write::GzEncoder};
+
 use tracing::{debug, warn};
 
 use crate::{
@@ -211,23 +213,24 @@ fn is_dir_empty(dir: &Path) -> bool {
 }
 
 /// Create a gzipped tarball of a directory, returning the raw bytes.
-/// Uses the host `tar` command (available on Linux and macOS).
 async fn create_tar_gz(dir: &Path) -> Result<Vec<u8>> {
-    let output = tokio::process::Command::new("tar")
-        .args(["-czf", "-", "-C"])
-        .arg(dir)
-        .arg(".")
-        .output()
-        .await
-        .map_err(|e| Error::message(format!("sync: failed to run tar: {e}")))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::message(format!(
-            "sync: tar creation failed: {stderr}"
-        )));
-    }
-    Ok(output.stdout)
+    let dir = dir.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        let mut archive = tar::Builder::new(encoder);
+        archive.follow_symlinks(false);
+        archive
+            .append_dir_all(".", &dir)
+            .map_err(|e| Error::message(format!("sync: failed to build tar archive: {e}")))?;
+        let encoder = archive
+            .into_inner()
+            .map_err(|e| Error::message(format!("sync: failed to finish tar archive: {e}")))?;
+        encoder
+            .finish()
+            .map_err(|e| Error::message(format!("sync: failed to gzip tar archive: {e}")))
+    })
+    .await
+    .map_err(|e| Error::message(format!("sync: tar creation task failed: {e}")))?
 }
 
 async fn extract_tar_gz(dir: &Path, tar_bytes: &[u8]) -> Result<()> {
@@ -636,7 +639,7 @@ mod tests {
     use super::*;
 
     fn tar_gz_with_two_files(first_path: &str, second_path: &str) -> Vec<u8> {
-        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
         let mut archive = tar::Builder::new(enc);
 
         let first = b"first";
@@ -661,7 +664,7 @@ mod tests {
     }
 
     fn tar_gz_with_raw_file_path_and_safe_file(path: &[u8], content: &[u8]) -> Vec<u8> {
-        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
         let mut archive = tar::Builder::new(enc);
 
         let mut unsafe_header = tar::Header::new_gnu();
@@ -684,7 +687,7 @@ mod tests {
 
     #[cfg(unix)]
     fn tar_gz_with_symlink(path: &str, target: &str) -> Vec<u8> {
-        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
         let mut archive = tar::Builder::new(enc);
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(tar::EntryType::Symlink);
@@ -696,7 +699,7 @@ mod tests {
     }
 
     fn tar_gz_with_hardlink(path: &str, target: &str) -> Vec<u8> {
-        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
         let mut archive = tar::Builder::new(enc);
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(tar::EntryType::Link);
@@ -708,7 +711,7 @@ mod tests {
     }
 
     fn tar_gz_with_directory_and_hardlink(dir_path: &str, hardlink_path: &str) -> Vec<u8> {
-        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
         let mut archive = tar::Builder::new(enc);
 
         let mut dir_header = tar::Header::new_gnu();
@@ -733,7 +736,7 @@ mod tests {
     }
 
     fn tar_gz_with_directory_and_safe_file(dir_path: &str) -> Vec<u8> {
-        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
         let mut archive = tar::Builder::new(enc);
 
         let mut dir_header = tar::Header::new_gnu();
@@ -757,7 +760,7 @@ mod tests {
     }
 
     fn tar_gz_with_file_and_hardlink(file_path: &str, hardlink_path: &str) -> Vec<u8> {
-        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
         let mut archive = tar::Builder::new(enc);
 
         let content = b"shared content";
@@ -782,7 +785,7 @@ mod tests {
     }
 
     fn tar_gz_with_unsupported_entry_between_files() -> Vec<u8> {
-        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let enc = GzEncoder::new(Vec::new(), Compression::fast());
         let mut archive = tar::Builder::new(enc);
 
         let mut first_header = tar::Header::new_gnu();
