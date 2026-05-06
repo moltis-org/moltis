@@ -14,10 +14,36 @@ function detectLang(acceptLanguage) {
   });
   parts.sort(function (a, b) { return b.q - a.q; });
   for (const { tag } of parts) {
-    const primary = tag.split('-')[0];
-    if (SUPPORTED.includes(primary)) return primary;
+    const lang = resolveSupportedLang(tag);
+    if (lang) return lang;
   }
   return DEFAULT_LANG;
+}
+
+function isTraditionalChineseTag(tag) {
+  return (
+    tag === 'zh-tw' ||
+    tag.startsWith('zh-tw-') ||
+    tag === 'zh-hk' ||
+    tag.startsWith('zh-hk-') ||
+    tag === 'zh-mo' ||
+    tag.startsWith('zh-mo-') ||
+    tag === 'zh-hant' ||
+    tag.startsWith('zh-hant-')
+  );
+}
+
+function resolveSupportedLang(tag) {
+  if (!tag) return null;
+  const normalized = String(tag).trim().replace('_', '-').toLowerCase();
+  if (!normalized) return null;
+
+  if (normalized === 'zh' || normalized.startsWith('zh-')) {
+    return isTraditionalChineseTag(normalized) ? 'zh-TW' : 'zh';
+  }
+
+  const primary = normalized.split('-')[0];
+  return SUPPORTED.includes(primary) ? primary : null;
 }
 
 /** Inject shared partials (<!--NAV-->) into HTML responses. */
@@ -48,8 +74,8 @@ export default {
     if (url.pathname === "/") {
       try {
         const cookie = request.headers.get("Cookie") || "";
-        const langMatch = cookie.match(/(?:^|;\s*)lang=([a-z]{2})(?:;|$)/);
-        let lang = langMatch && SUPPORTED.includes(langMatch[1]) ? langMatch[1] : null;
+        const langMatch = cookie.match(/(?:^|;\s*)lang=([a-zA-Z0-9_-]{2,32})(?:;|$)/);
+        let lang = langMatch ? resolveSupportedLang(langMatch[1]) : null;
 
         if (!lang) {
           lang = detectLang(request.headers.get("Accept-Language"));

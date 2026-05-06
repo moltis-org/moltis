@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use std::env;
+use std::{env, sync::atomic::Ordering};
 
 use super::*;
 
@@ -250,6 +250,49 @@ fn test_docker_container_name() {
     assert_eq!(docker.container_name(&id), "my-prefix-abc123");
 }
 
+#[tokio::test]
+async fn test_docker_startup_gate_serializes_same_container() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    let first = docker.startup_gate_for("moltis-sandbox-session").await;
+    let second = docker.startup_gate_for("moltis-sandbox-session").await;
+    assert!(Arc::ptr_eq(&first, &second));
+
+    let permit = first.acquire().await.unwrap();
+    assert!(second.try_acquire().is_err());
+    drop(permit);
+
+    let _second_permit = second.try_acquire().unwrap();
+}
+
+#[tokio::test]
+async fn test_docker_startup_gate_allows_different_containers() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    let first = docker.startup_gate_for("moltis-sandbox-session-a").await;
+    let second = docker.startup_gate_for("moltis-sandbox-session-b").await;
+    assert!(!Arc::ptr_eq(&first, &second));
+
+    let _first_permit = first.acquire().await.unwrap();
+    let _second_permit = second.try_acquire().unwrap();
+}
+
+#[test]
+fn test_container_name_conflict_detection() {
+    assert!(is_container_name_conflict(
+        "docker: Error response from daemon: Conflict. The container name \
+         \"/moltis-myagent-sandbox-cron-57120844\" is already in use by container \
+         \"7587022e73ff\"."
+    ));
+    assert!(is_container_name_conflict(
+        "Error: creating container storage: the name \"moltis-sandbox-main\" is already in use"
+    ));
+    assert!(!is_container_name_conflict(
+        "Error response from daemon: pull access denied for image"
+    ));
+    assert!(!is_container_name_conflict(
+        "Error: creating container storage: the namespace \"moltis-sandbox-main\" is already in use"
+    ));
+}
+
 /// Helper: build a `SandboxRouter` with a deterministic backend so tests
 /// don't depend on the host having Docker / Apple Container installed.
 fn router_with_real_backend(config: SandboxConfig) -> SandboxRouter {
@@ -470,6 +513,25 @@ async fn test_resolve_image_config_override() {
     };
     let router = SandboxRouter::new(config);
     let img = router.resolve_image("main", None).await;
+    assert_eq!(img, "my-org/image:v1");
+}
+
+#[tokio::test]
+async fn test_resolve_image_nowait_ignores_active_build() {
+    let config = SandboxConfig {
+        image: Some("my-org/image:v1".into()),
+        ..Default::default()
+    };
+    let router = SandboxRouter::new(config);
+    router.building_flag.store(true, Ordering::Relaxed);
+
+    let img = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        router.resolve_image_nowait("main", None),
+    )
+    .await
+    .expect("resolve_image_nowait must not wait for background image builds");
+
     assert_eq!(img, "my-org/image:v1");
 }
 

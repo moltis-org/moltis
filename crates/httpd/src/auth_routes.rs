@@ -308,7 +308,7 @@ async fn setup_handler(
     match state.credential_store.create_session().await {
         Ok(token) => {
             let bp = state.gateway_state.behind_proxy;
-            let secure = state.gateway_state.is_secure();
+            let secure = should_secure_cookie(state.gateway_state.tls_active, bp, &headers);
             #[cfg(feature = "vault")]
             if let Some(rk) = vault_recovery_key {
                 let domain_attr = localhost_cookie_domain(&headers, bp);
@@ -386,7 +386,8 @@ async fn login_handler(
             match state.credential_store.create_session().await {
                 Ok(token) => {
                     let bp = state.gateway_state.behind_proxy;
-                    session_response(token, &headers, bp, state.gateway_state.is_secure())
+                    let secure = should_secure_cookie(state.gateway_state.tls_active, bp, &headers);
+                    session_response(token, &headers, bp, secure)
                 },
                 Err(e) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -423,7 +424,8 @@ async fn logout_handler(
         let _ = state.credential_store.delete_session(token).await;
     }
     let bp = state.gateway_state.behind_proxy;
-    clear_session_response(&headers, bp, state.gateway_state.is_secure())
+    let secure = should_secure_cookie(state.gateway_state.tls_active, bp, &headers);
+    clear_session_response(&headers, bp, secure)
 }
 
 // ── Reset all auth (requires session) ─────────────────────────────────────────
@@ -448,7 +450,8 @@ async fn reset_auth_handler(
                 inner.setup_code_created_at = Some(std::time::Instant::now());
             }
             let bp = state.gateway_state.behind_proxy;
-            clear_session_response(&headers, bp, state.gateway_state.tls_active || bp)
+            let secure = should_secure_cookie(state.gateway_state.tls_active, bp, &headers);
+            clear_session_response(&headers, bp, secure)
         },
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -707,6 +710,35 @@ async fn rename_passkey_handler(
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+/// Whether the session cookie should include the `Secure` attribute.
+///
+/// - TLS active on the gateway listener → always secure.
+/// - Behind a reverse proxy → secure only when the proxy reports HTTPS via
+///   `X-Forwarded-Proto`.  This avoids setting `Secure` on cookies when the
+///   proxy-to-client leg is plain HTTP (e.g. LAN Docker setups).
+/// - Neither → not secure (plain HTTP direct connection).
+fn should_secure_cookie(
+    tls_active: bool,
+    behind_proxy: bool,
+    headers: &axum::http::HeaderMap,
+) -> bool {
+    if tls_active {
+        return true;
+    }
+    if behind_proxy {
+        return headers
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|proto| {
+                // Take only the first value in case of a comma-separated list
+                // (e.g. "https, http" from a multi-hop proxy chain).
+                let first = proto.split(',').next().unwrap_or("").trim();
+                first.eq_ignore_ascii_case("https")
+            });
+    }
+    false
+}
+
 /// Build a session cookie string, adding `Domain=localhost` when the request
 /// arrived on a `.localhost` subdomain (e.g. `moltis.localhost`) so the cookie
 /// is shared across all loopback names per RFC 6761.
@@ -962,7 +994,8 @@ async fn passkey_auth_finish_handler(
             match state.credential_store.create_session().await {
                 Ok(token) => {
                     let bp = state.gateway_state.behind_proxy;
-                    session_response(token, &headers, bp, state.gateway_state.tls_active || bp)
+                    let secure = should_secure_cookie(state.gateway_state.tls_active, bp, &headers);
+                    session_response(token, &headers, bp, secure)
                 },
                 Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
             }
@@ -1111,7 +1144,8 @@ async fn setup_passkey_register_finish_handler(
     match state.credential_store.create_session().await {
         Ok(token) => {
             let bp = state.gateway_state.behind_proxy;
-            session_response(token, &headers, bp, state.gateway_state.tls_active || bp)
+            let secure = should_secure_cookie(state.gateway_state.tls_active, bp, &headers);
+            session_response(token, &headers, bp, secure)
         },
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

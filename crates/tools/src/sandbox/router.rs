@@ -8,7 +8,7 @@ use std::{
 use {
     async_trait::async_trait,
     tokio::sync::RwLock,
-    tracing::{debug, warn},
+    tracing::{debug, info, warn},
 };
 
 #[cfg(target_os = "macos")]
@@ -961,6 +961,45 @@ impl SandboxRouter {
             self.build_complete.notified(),
         )
         .await;
+    }
+
+    /// Get the current effective default image WITHOUT waiting for a build
+    /// to finish. Used by request paths that must not block on the initial
+    /// sandbox image build.
+    pub async fn resolve_default_image_nowait(&self) -> String {
+        if let Some(ref img) = *self.global_image_override.read().await {
+            return img.clone();
+        }
+        self.config
+            .image
+            .clone()
+            .unwrap_or_else(|| DEFAULT_SANDBOX_IMAGE.to_string())
+    }
+
+    /// Resolve the container image without waiting for any background image
+    /// build. This must stay cheap: callers use it from RPC and tool paths
+    /// where blocking on sandbox provisioning would stall user-visible work.
+    pub async fn resolve_image_nowait(
+        &self,
+        session_key: &str,
+        skill_image: Option<&str>,
+    ) -> String {
+        if let Some(img) = skill_image {
+            return img.to_string();
+        }
+        if let Some(img) = self.image_overrides.read().await.get(session_key) {
+            return img.clone();
+        }
+        if self
+            .building_flag
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            info!(
+                session = %session_key,
+                "sandbox image build in progress, resolving image without waiting"
+            );
+        }
+        self.resolve_default_image_nowait().await
     }
 
     /// Get the current effective default image (runtime override > config > hardcoded).

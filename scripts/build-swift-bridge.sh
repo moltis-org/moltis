@@ -9,7 +9,18 @@ OUTPUT_DIR="${MACOS_APP_DIR}/Generated"
 UNIVERSAL_DIR="${REPO_ROOT}/target/universal-macos/release"
 MACOS_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET:-14.0}"
 SWIFT_BRIDGE_TARGETS_CSV="${MOLTIS_SWIFT_BRIDGE_TARGETS:-x86_64-apple-darwin,aarch64-apple-darwin}"
+SWIFT_BRIDGE_PROFILE="${MOLTIS_SWIFT_BRIDGE_PROFILE:-release}"
+SWIFT_BRIDGE_TARGET_DIR="release"
+if [ "${SWIFT_BRIDGE_PROFILE}" != "release" ]; then
+  SWIFT_BRIDGE_TARGET_DIR="${SWIFT_BRIDGE_PROFILE}"
+fi
 SKIP_WASM_PRECOMPILE="${MOLTIS_SWIFT_BRIDGE_SKIP_WASM_PRECOMPILE:-0}"
+SKIP_WASM_BUILD="${MOLTIS_SWIFT_BRIDGE_SKIP_WASM_BUILD:-0}"
+
+if [ "${SKIP_WASM_BUILD}" = "1" ] && [ "${SWIFT_BRIDGE_PROFILE}" = "release" ]; then
+  echo "error: MOLTIS_SWIFT_BRIDGE_SKIP_WASM_BUILD=1 requires a non-release bridge profile" >&2
+  exit 1
+fi
 
 if ! command -v cbindgen >/dev/null 2>&1; then
   echo "error: cbindgen is required (install with: cargo install cbindgen)" >&2
@@ -45,15 +56,23 @@ if [ "${#TARGETS[@]}" -eq 0 ]; then
   exit 1
 fi
 
-rustup target add wasm32-wasip2 "${TARGETS[@]}"
-
-# Build and pre-compile embedded WASM guest components before release host builds.
-# moltis-tools includes these bytes at compile time in release mode.
-cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
-if [ "${SKIP_WASM_PRECOMPILE}" = "1" ]; then
-  echo "Skipping wasm precompile (MOLTIS_SWIFT_BRIDGE_SKIP_WASM_PRECOMPILE=1)"
+if [ "${SKIP_WASM_BUILD}" = "1" ]; then
+  rustup target add "${TARGETS[@]}"
 else
-  cargo run -p moltis-wasm-precompile --release
+  rustup target add wasm32-wasip2 "${TARGETS[@]}"
+fi
+
+if [ "${SKIP_WASM_BUILD}" = "1" ]; then
+  echo "Skipping wasm guest build (MOLTIS_SWIFT_BRIDGE_SKIP_WASM_BUILD=1)"
+else
+  # Build and pre-compile embedded WASM guest components before release host builds.
+  # moltis-tools includes these bytes at compile time in release-like profiles.
+  cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
+  if [ "${SKIP_WASM_PRECOMPILE}" = "1" ]; then
+    echo "Skipping wasm precompile (MOLTIS_SWIFT_BRIDGE_SKIP_WASM_PRECOMPILE=1)"
+  else
+    cargo run -p moltis-wasm-precompile --release
+  fi
 fi
 
 # Keep Rust and C/C++ deps aligned with Xcode app link settings to avoid min-version mismatch.
@@ -75,19 +94,19 @@ for target in "${TARGETS[@]}"; do
 done
 
 for target in "${TARGETS[@]}"; do
-  cargo build -p moltis-swift-bridge --release --target "${target}"
+  cargo build -p moltis-swift-bridge --profile "${SWIFT_BRIDGE_PROFILE}" --target "${target}"
 done
 
 mkdir -p "${UNIVERSAL_DIR}" "${OUTPUT_DIR}"
 
 if [ "${#TARGETS[@]}" -eq 1 ]; then
   cp \
-    "${REPO_ROOT}/target/${TARGETS[0]}/release/libmoltis_swift_bridge.a" \
+    "${REPO_ROOT}/target/${TARGETS[0]}/${SWIFT_BRIDGE_TARGET_DIR}/libmoltis_swift_bridge.a" \
     "${UNIVERSAL_DIR}/libmoltis_bridge.a"
 else
   LIPO_INPUTS=()
   for target in "${TARGETS[@]}"; do
-    LIPO_INPUTS+=("${REPO_ROOT}/target/${target}/release/libmoltis_swift_bridge.a")
+    LIPO_INPUTS+=("${REPO_ROOT}/target/${target}/${SWIFT_BRIDGE_TARGET_DIR}/libmoltis_swift_bridge.a")
   done
   lipo -create "${LIPO_INPUTS[@]}" -output "${UNIVERSAL_DIR}/libmoltis_bridge.a"
 fi

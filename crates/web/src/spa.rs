@@ -15,7 +15,9 @@ use crate::templates::{
 };
 
 pub async fn spa_fallback(State(state): State<AppState>, uri: Uri) -> impl IntoResponse {
+    let spa_start = std::time::Instant::now();
     let path = uri.path();
+    tracing::warn!(path, "spa_fallback: entered");
     if let Some(canonical) = canonical_standalone_path(path) {
         return Redirect::to(canonical).into_response();
     }
@@ -37,7 +39,12 @@ pub async fn spa_fallback(State(state): State<AppState>, uri: Uri) -> impl IntoR
         );
     }
 
-    render_spa_template(&state.gateway, SpaTemplate::Index).await
+    let response = render_spa_template(&state.gateway, SpaTemplate::Index).await;
+    let elapsed = spa_start.elapsed().as_millis();
+    if elapsed > 1000 {
+        tracing::warn!(path, elapsed_ms = elapsed, "spa_fallback: SLOW response");
+    }
+    response
 }
 
 pub async fn onboarding_handler(State(state): State<AppState>) -> impl IntoResponse {

@@ -204,7 +204,7 @@ pub(super) async fn start_stored_channels_on_vault_unseal(state: &AuthState) {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use super::*;
+    use {super::*, crate::auth_routes::should_secure_cookie};
 
     fn headers_with_host(host: &str) -> axum::http::HeaderMap {
         let mut h = axum::http::HeaderMap::new();
@@ -380,7 +380,80 @@ mod tests {
         );
         assert!(
             cookie.contains("; Secure"),
-            "cookie should include Secure in proxy mode (proxy implies TLS), got: {cookie}"
+            "cookie should include Secure when explicitly passed as secure, got: {cookie}"
+        );
+    }
+
+    // ── should_secure_cookie tests ────────────────────────────────────────
+
+    #[test]
+    fn should_secure_cookie_tls_active() {
+        let h = headers_with_host("example.com");
+        assert!(should_secure_cookie(true, false, &h));
+    }
+
+    #[test]
+    fn should_secure_cookie_tls_active_ignores_proxy_header() {
+        let mut h = headers_with_host("example.com");
+        h.insert("x-forwarded-proto", "http".parse().unwrap());
+        assert!(
+            should_secure_cookie(true, false, &h),
+            "TLS active should always produce Secure, regardless of proxy headers"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_with_https_forwarded_proto() {
+        let mut h = headers_with_host("example.com");
+        h.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert!(should_secure_cookie(false, true, &h));
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_with_http_forwarded_proto() {
+        let mut h = headers_with_host("192.168.1.100:8080");
+        h.insert("x-forwarded-proto", "http".parse().unwrap());
+        assert!(
+            !should_secure_cookie(false, true, &h),
+            "plain HTTP behind proxy must not set Secure"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_without_forwarded_proto() {
+        let h = headers_with_host("192.168.1.100:8080");
+        assert!(
+            !should_secure_cookie(false, true, &h),
+            "proxy without X-Forwarded-Proto must not set Secure"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_no_tls_no_proxy() {
+        let h = headers_with_host("192.168.1.100:8080");
+        assert!(
+            !should_secure_cookie(false, false, &h),
+            "plain HTTP direct connection must not set Secure"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_with_comma_separated_forwarded_proto() {
+        let mut h = headers_with_host("example.com");
+        h.insert("x-forwarded-proto", "https, http".parse().unwrap());
+        assert!(
+            should_secure_cookie(false, true, &h),
+            "first value in comma-separated X-Forwarded-Proto should be used"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_with_padded_forwarded_proto() {
+        let mut h = headers_with_host("example.com");
+        h.insert("x-forwarded-proto", " https ".parse().unwrap());
+        assert!(
+            should_secure_cookie(false, true, &h),
+            "whitespace-padded X-Forwarded-Proto should be trimmed"
         );
     }
 }

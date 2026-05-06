@@ -443,7 +443,7 @@ async function createTerminalWindow(): Promise<void> {
 	if (!(tmuxPersistenceEnabled && terminalAvailable) || creatingWindow) return;
 	creatingWindow = true;
 	setWindowControlsEnabled();
-	setStatus("Creating tmux window...", "ok");
+	setStatus("Creating new tab...", "ok");
 	try {
 		const r = await fetch("/api/terminal/windows", {
 			method: "POST",
@@ -456,24 +456,26 @@ async function createTerminalWindow(): Promise<void> {
 		} catch {
 			p = {};
 		}
-		if (!r.ok) throw new Error(localizedApiErrorMessage(p as never, "Failed to create tmux window"));
+		if (!r.ok) throw new Error(localizedApiErrorMessage(p as never, "Failed to create new tab"));
 		const cid = p?.window?.id || p?.windowId || null;
 		if (Array.isArray(p?.windows)) {
 			tmuxPersistenceEnabled = true;
 			applyWindowsState(p, cid);
 		} else await refreshTerminalWindows({ preferredWindowId: cid, silent: true });
-		if (cid && activeWindowId !== cid) {
-			if (!requestWindowSwitch(cid)) {
-				if (xterm) xterm.reset();
-				connectTerminalSocket();
-			}
-		} else {
-			if (xterm) xterm.reset();
-			connectTerminalSocket();
+		// Always reconnect for new tab creation rather than using requestWindowSwitch.
+		// The existing PTY is attached to the previous window; a fresh connection picks
+		// up the correct window. requestWindowSwitch would fail if the new window exited
+		// before the switch message arrives (race condition), showing a spurious error.
+		if (cid && cid !== activeWindowId) {
+			activeWindowId = cid;
+			pendingWindowId = null;
+			renderWindowTabs();
 		}
-		setStatus("Created tmux window.", "ok");
+		setStatus("New tab created.", "ok");
+		if (xterm) xterm.reset();
+		connectTerminalSocket();
 	} catch (e) {
-		setStatus((e as Error)?.message || "Failed to create tmux window", "error");
+		setStatus((e as Error)?.message || "Failed to create tab", "error");
 	} finally {
 		creatingWindow = false;
 		setWindowControlsEnabled();
@@ -886,7 +888,7 @@ function buildTerminalHtml(): string {
 		'<option value="">Host</option>',
 		"</select>",
 		'<div id="terminalTabs" class="terminal-tabs" aria-label="tmux windows"></div>',
-		'<button id="terminalNewTab" class="logs-btn terminal-new-tab" type="button" title="Create tmux window">+ Tab</button>',
+		'<button id="terminalNewTab" class="logs-btn terminal-new-tab" type="button" title="Create new tab">+ Tab</button>',
 		"</div>",
 		'<div class="terminal-output-wrap">',
 		'<div id="terminalOutput" class="terminal-output" aria-label="Host terminal output"></div>',

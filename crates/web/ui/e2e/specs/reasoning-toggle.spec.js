@@ -81,11 +81,13 @@ test.describe("reasoning effort toggle", () => {
 		await expect(dropdown).toBeVisible();
 
 		const items = page.locator("#reasoningDropdownList .model-dropdown-item");
-		await expect(items).toHaveCount(4);
+		await expect(items).toHaveCount(6);
 		await expect(items.nth(0)).toHaveText("Off");
-		await expect(items.nth(1)).toHaveText("Low");
-		await expect(items.nth(2)).toHaveText("Medium");
-		await expect(items.nth(3)).toHaveText("High");
+		await expect(items.nth(1)).toHaveText("Minimal");
+		await expect(items.nth(2)).toHaveText("Low");
+		await expect(items.nth(3)).toHaveText("Medium");
+		await expect(items.nth(4)).toHaveText("High");
+		await expect(items.nth(5)).toHaveText("Extra High");
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -104,7 +106,7 @@ test.describe("reasoning effort toggle", () => {
 		await comboBtn.click();
 
 		// Wait for dropdown to be visible before selecting
-		const highItem = page.locator("#reasoningDropdownList .model-dropdown-item", { hasText: "High" });
+		const highItem = page.locator("#reasoningDropdownList .model-dropdown-item").filter({ hasText: /^High$/ });
 		await expect(highItem).toBeVisible();
 		await highItem.click();
 

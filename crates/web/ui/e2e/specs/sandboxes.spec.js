@@ -146,7 +146,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 	});
 
 	test.afterEach(async ({ page }) => {
-		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
+		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
 	});
 
 	test("running containers section renders with heading and refresh button", async ({ page }) => {
@@ -211,6 +211,11 @@ test.describe("Sandboxes page – Running Containers", () => {
 		await page.route("**/api/sandbox/containers", (route, request) => {
 			if (request.method() === "GET") {
 				containersFetched = true;
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ containers: [] }),
+				});
 			}
 			return route.continue();
 		});
@@ -348,7 +353,7 @@ test.describe("Sandboxes page – Container error handling", () => {
 	});
 
 	test.afterEach(async ({ page }) => {
-		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
+		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
 	});
 
 	test("delete failure shows error message that clears on refresh", async ({ page }) => {

@@ -636,7 +636,7 @@ pub async fn prepare_gateway_core(
         let st = Arc::clone(&sys_state);
         tokio::spawn(async move {
             if let Some(state) = st.get() {
-                let chat = state.chat().await;
+                let chat = state.chat();
                 let params = serde_json::json!({ "text": text });
                 if let Err(e) = chat.send(params).await {
                     tracing::error!("cron system event failed: {e}");
@@ -686,7 +686,7 @@ pub async fn prepare_gateway_core(
                 }
             }
 
-            let chat = state.chat().await;
+            let chat = state.chat();
             let session_key = match &req.session_target {
                 moltis_cron::types::SessionTarget::Named(name) => {
                     format!("cron:{name}")

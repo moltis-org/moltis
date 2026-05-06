@@ -402,7 +402,7 @@ pub(crate) async fn build_prompt_runtime_context(
                 mode: Some(config.mode.to_string()),
                 backend: Some(backend_name.to_string()),
                 scope: Some(config.scope.to_string()),
-                image: Some(router.resolve_image(session_key, None).await),
+                image: Some(router.resolve_image_nowait(session_key, None).await),
                 home: Some("/home/sandbox".to_string()),
                 workspace_mount: Some(workspace_mount),
                 workspace_path,

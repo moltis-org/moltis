@@ -22,8 +22,19 @@ use {
 
 use moltis_providers::ProviderRegistry;
 
-/// Spin up a test gateway on an ephemeral port, return the bound address.
-async fn start_test_server() -> SocketAddr {
+struct TestServer {
+    addr: SocketAddr,
+    _config_dir: tempfile::TempDir,
+    _data_dir: tempfile::TempDir,
+}
+
+/// Spin up a test gateway on an ephemeral port.
+async fn start_test_server() -> TestServer {
+    let config_dir = tempfile::tempdir().unwrap();
+    let data_dir = tempfile::tempdir().unwrap();
+    moltis_config::set_config_dir(config_dir.path().to_path_buf());
+    moltis_config::set_data_dir(data_dir.path().to_path_buf());
+
     let resolved_auth = auth::resolve_auth(None, None);
     let services = GatewayServices::noop();
     let state = GatewayState::new(resolved_auth, services);
@@ -46,15 +57,21 @@ async fn start_test_server() -> SocketAddr {
         .await
         .unwrap();
     });
-    addr
+    TestServer {
+        addr,
+        _config_dir: config_dir,
+        _data_dir: data_dir,
+    }
 }
 
 #[cfg(feature = "web-ui")]
 #[tokio::test]
 async fn root_redirects_to_onboarding_when_not_onboarded() {
-    let addr = start_test_server().await;
+    let server = start_test_server().await;
     // A fresh (non-onboarded) server redirects `/` → `/onboarding`.
-    let resp = reqwest::get(format!("http://{addr}/")).await.unwrap();
+    let resp = reqwest::get(format!("http://{}/", server.addr))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body = resp.text().await.unwrap();
     assert!(body.contains("<title>moltis onboarding</title>"));
@@ -63,8 +80,10 @@ async fn root_redirects_to_onboarding_when_not_onboarded() {
 
 #[tokio::test]
 async fn health_endpoint_returns_json() {
-    let addr = start_test_server().await;
-    let resp = reqwest::get(format!("http://{addr}/health")).await.unwrap();
+    let server = start_test_server().await;
+    let resp = reqwest::get(format!("http://{}/health", server.addr))
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let json: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(json["status"], "ok");
@@ -73,8 +92,8 @@ async fn health_endpoint_returns_json() {
 
 #[tokio::test]
 async fn ws_handshake_returns_hello_ok() {
-    let addr = start_test_server().await;
-    let (mut ws, _) = connect_async(format!("ws://{addr}/ws/chat"))
+    let server = start_test_server().await;
+    let (mut ws, _) = connect_async(format!("ws://{}/ws/chat", server.addr))
         .await
         .expect("ws connect failed");
 
@@ -114,8 +133,8 @@ async fn ws_handshake_returns_hello_ok() {
 
 #[tokio::test]
 async fn ws_health_method_after_handshake() {
-    let addr = start_test_server().await;
-    let (mut ws, _) = connect_async(format!("ws://{addr}/ws/chat"))
+    let server = start_test_server().await;
+    let (mut ws, _) = connect_async(format!("ws://{}/ws/chat", server.addr))
         .await
         .expect("ws connect failed");
 
@@ -163,8 +182,8 @@ async fn ws_health_method_after_handshake() {
 
 #[tokio::test]
 async fn ws_system_presence_shows_connected_client() {
-    let addr = start_test_server().await;
-    let (mut ws, _) = connect_async(format!("ws://{addr}/ws/chat"))
+    let server = start_test_server().await;
+    let (mut ws, _) = connect_async(format!("ws://{}/ws/chat", server.addr))
         .await
         .expect("ws connect failed");
 
@@ -251,15 +270,13 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
         db_pool1,
     ));
     if !registry.read().await.is_empty() {
-        state
-            .set_chat(Arc::new(LiveChatService::new(
-                Arc::clone(&registry),
-                Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
-                moltis_gateway::chat::GatewayChatRuntime::from_state(Arc::clone(&state)),
-                Arc::clone(&session_store1),
-                Arc::clone(&session_metadata1),
-            )))
-            .await;
+        state.set_chat(Arc::new(LiveChatService::new(
+            Arc::clone(&registry),
+            Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
+            moltis_gateway::chat::GatewayChatRuntime::from_state(Arc::clone(&state)),
+            Arc::clone(&session_store1),
+            Arc::clone(&session_metadata1),
+        )));
     }
 
     // Even without real API keys the override path must work.
@@ -282,20 +299,18 @@ async fn gateway_startup_with_llm_wiring_does_not_block() {
     let session_metadata2 = Arc::new(moltis_sessions::metadata::SqliteSessionMetadata::new(
         db_pool2,
     ));
-    state2
-        .set_chat(Arc::new(LiveChatService::new(
-            Arc::clone(&registry2),
-            Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
-            moltis_gateway::chat::GatewayChatRuntime::from_state(Arc::clone(&state2)),
-            Arc::clone(&session_store2),
-            Arc::clone(&session_metadata2),
-        )))
-        .await;
+    state2.set_chat(Arc::new(LiveChatService::new(
+        Arc::clone(&registry2),
+        Arc::new(tokio::sync::RwLock::new(DisabledModelsStore::default())),
+        moltis_gateway::chat::GatewayChatRuntime::from_state(Arc::clone(&state2)),
+        Arc::clone(&session_store2),
+        Arc::clone(&session_metadata2),
+    )));
 
     // Verify chat override is active — chat.send should use the LiveChatService,
     // not the noop. If no providers are configured it errors; if Codex tokens
     // exist on this machine it may succeed (returns a runId).
-    let chat = state2.chat().await;
+    let chat = state2.chat();
     let result = chat.send(serde_json::json!({ "text": "hello" })).await;
     match result {
         Err(e) => assert!(

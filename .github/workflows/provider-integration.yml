@@ -278,7 +278,8 @@ jobs:
         if: env.SKIP != 'true'
         with:
           node-version: "22"
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: crates/web/ui/package-lock.json
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         if: env.SKIP != 'true'
@@ -299,12 +300,21 @@ jobs:
 
       - name: Build moltis binary
         if: env.SKIP != 'true'
+        timeout-minutes: 20
         run: cargo build --bin moltis
+
+      - name: Cache Playwright browsers
+        if: env.SKIP != 'true'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('crates/web/ui/package-lock.json') }}
 
       - name: Install Playwright browsers
         if: env.SKIP != 'true'
+        timeout-minutes: 2
         working-directory: crates/web/ui
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run live OpenAI E2E
         if: env.SKIP != 'true'
@@ -345,7 +355,8 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: crates/web/ui/package-lock.json
 
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
@@ -378,11 +389,19 @@ jobs:
           TAILWINDCSS=./tailwindcss-linux-x64 ./scripts/build-web-assets.sh
 
       - name: Build moltis binary
+        timeout-minutes: 20
         run: cargo build --bin moltis
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('crates/web/ui/package-lock.json') }}
+
       - name: Install Playwright browsers
+        timeout-minutes: 2
         working-directory: crates/web/ui
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run Ollama Qwen live E2E
         working-directory: crates/web/ui

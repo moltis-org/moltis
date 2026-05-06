@@ -254,6 +254,8 @@ pub struct LiveChatService {
     /// Per-session reply medium for active runs, so the frontend can restore
     /// `voicePending` state after a page reload.
     pub(in crate::service) active_reply_medium: Arc<RwLock<HashMap<String, ReplyMedium>>>,
+    /// Startup configuration snapshot for chat hot-path decisions.
+    pub(in crate::service) config: moltis_config::MoltisConfig,
     /// Failover configuration for automatic model/provider failover.
     pub(in crate::service) failover_config: moltis_config::schema::FailoverConfig,
 }
@@ -286,8 +288,14 @@ impl LiveChatService {
             active_tool_calls: Arc::new(RwLock::new(HashMap::new())),
             active_partial_assistant: Arc::new(RwLock::new(HashMap::new())),
             active_reply_medium: Arc::new(RwLock::new(HashMap::new())),
+            config: moltis_config::discover_and_load(),
             failover_config: moltis_config::schema::FailoverConfig::default(),
         }
+    }
+
+    pub fn with_config(mut self, config: moltis_config::MoltisConfig) -> Self {
+        self.config = config;
+        self
     }
 
     pub fn with_failover(mut self, config: moltis_config::schema::FailoverConfig) -> Self {

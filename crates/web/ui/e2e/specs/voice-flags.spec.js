@@ -1,7 +1,7 @@
 // E2E tests: voice.stt.enabled / voice.tts.enabled config flags hide UI buttons.
 
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
+const { navigateAndWait, sendRpcFromPage, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 // ── Gon override helpers ─────────────────────────────────────────────────────
 
@@ -64,40 +64,6 @@ async function applyVoiceFlags(page, { sttEnabled = true, ttsEnabled = true } = 
 		},
 		{ sttEnabled, ttsEnabled },
 	);
-}
-
-// ── RPC helpers (mirrors websocket.spec.js) ──────────────────────────────────
-
-function isRetryableRpcError(message) {
-	if (typeof message !== "string") return false;
-	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
-}
-
-async function sendRpcFromPage(page, method, params) {
-	let lastResponse = null;
-	for (let attempt = 0; attempt < 40; attempt++) {
-		if (attempt > 0) {
-			await waitForWsConnected(page);
-			await page.waitForTimeout(100);
-		}
-		lastResponse = await page
-			.evaluate(
-				async ({ methodName, methodParams }) => {
-					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-					if (!appScript) throw new Error("app module script not found");
-					var appUrl = new URL(appScript.src, window.location.origin);
-					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-					var helpers = await import(`${prefix}js/helpers.js`);
-					return helpers.sendRpc(methodName, methodParams);
-				},
-				{ methodName: method, methodParams: params },
-			)
-			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
-
-		if (lastResponse?.ok) return lastResponse;
-		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
-	}
-	return lastResponse;
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

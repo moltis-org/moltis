@@ -133,9 +133,7 @@ async fn graphql_chat_uses_late_bound_override_after_schema_build() {
     let (addr, state, _tmp) = start_graphql_server().await;
 
     let chat = Arc::new(RecordingChatService::default());
-    state
-        .set_chat(Arc::clone(&chat) as Arc<dyn ChatService>)
-        .await;
+    state.set_chat(Arc::clone(&chat) as Arc<dyn ChatService>);
 
     let client = reqwest::Client::new();
 

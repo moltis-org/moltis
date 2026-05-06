@@ -62,6 +62,8 @@ interface ToolCallArgs {
 	[key: string]: unknown;
 }
 
+type AudioContextConstructor = typeof AudioContext;
+
 interface MapLinks {
 	url?: string;
 	google_maps?: string;
@@ -266,6 +268,7 @@ mdRenderer.link = ({ href, text }) => {
 mdRenderer.html = ({ text }) => esc(text);
 
 const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
+const RPC_TIMEOUT_MS = 5_000;
 
 export function renderMarkdown(raw: string): string {
 	// Extract ASCII tables as placeholders before marked processes the text.
@@ -292,7 +295,19 @@ export function sendRpc<T = unknown>(method: string, params: unknown): Promise<R
 			return;
 		}
 		const id = nextId();
-		S.pending[id] = resolve as (value: RpcResponse) => void;
+		const timer = setTimeout(() => {
+			if (S.pending[id]) {
+				delete S.pending[id];
+				resolve({
+					ok: false,
+					error: { code: "TIMEOUT", message: "WebSocket disconnected" },
+				} as unknown as RpcResponse<T>);
+			}
+		}, RPC_TIMEOUT_MS);
+		S.pending[id] = ((res: RpcResponse) => {
+			clearTimeout(timer);
+			resolve(res as RpcResponse<T>);
+		}) as (value: RpcResponse) => void;
 		S.ws.send(JSON.stringify({ type: "req", id: id, method: method, params: params }));
 	});
 }
@@ -535,6 +550,29 @@ export function updateCountdown(el: HTMLElement, resetsAtMs: number): boolean {
 	return false;
 }
 
+function summarizeExecTool(args: ToolCallArgs): string {
+	const command = args.command || "exec";
+	const nodeRef = typeof args.node === "string" ? args.node.trim() : "";
+	if (!nodeRef) return command;
+	if (nodeRef.startsWith("ssh:target:")) {
+		return `${command} [SSH target]`;
+	}
+	if (nodeRef.startsWith("ssh:")) {
+		return `${command} [SSH: ${nodeRef.slice(4)}]`;
+	}
+	if (nodeRef.includes("@")) {
+		return `${command} [SSH: ${nodeRef}]`;
+	}
+	return `${command} [node: ${nodeRef}]`;
+}
+
+function summarizeBrowserTool(args: ToolCallArgs, executionMode?: string): string {
+	const action = args.action || "browser";
+	const mode = executionMode ? ` (${executionMode})` : "";
+	const url = args.url ? ` ${args.url}` : "";
+	return `browser ${action}${mode}${url}`.trim();
+}
+
 /** Build a short summary string for a tool call card. */
 export function toolCallSummary(
 	name: string | undefined,
@@ -543,31 +581,14 @@ export function toolCallSummary(
 ): string {
 	if (!args) return name || "tool";
 	switch (name) {
-		case "exec": {
-			const command = args.command || "exec";
-			const nodeRef = typeof args.node === "string" ? args.node.trim() : "";
-			if (!nodeRef) return command;
-			if (nodeRef.startsWith("ssh:target:")) {
-				return `${command} [SSH target]`;
-			}
-			if (nodeRef.startsWith("ssh:")) {
-				return `${command} [SSH: ${nodeRef.slice(4)}]`;
-			}
-			if (nodeRef.includes("@")) {
-				return `${command} [SSH: ${nodeRef}]`;
-			}
-			return `${command} [node: ${nodeRef}]`;
-		}
+		case "exec":
+			return summarizeExecTool(args);
 		case "web_fetch":
 			return `web_fetch ${args.url || ""}`.trim();
 		case "web_search":
 			return `web_search "${args.query || ""}"`;
-		case "browser": {
-			const action = args.action || "browser";
-			const mode = executionMode ? ` (${executionMode})` : "";
-			const url = args.url ? ` ${args.url}` : "";
-			return `browser ${action}${mode}${url}`.trim();
-		}
+		case "browser":
+			return summarizeBrowserTool(args, executionMode);
 		default:
 			return name || "tool";
 	}
@@ -767,15 +788,23 @@ export function renderDocument(
 const WAVEFORM_BAR_COUNT = 48;
 const WAVEFORM_MIN_HEIGHT = 0.08;
 
+function audioContextConstructor(): AudioContextConstructor | null {
+	return window.AudioContext ?? window.webkitAudioContext ?? null;
+}
+
 async function extractWaveform(audioSrc: string, barCount: number): Promise<number[]> {
-	const ctx = new (window.AudioContext || window.webkitAudioContext!)();
+	const AudioContextCtor = audioContextConstructor();
+	if (!AudioContextCtor) {
+		return new Array<number>(barCount).fill(WAVEFORM_MIN_HEIGHT);
+	}
+	const ctx = new AudioContextCtor();
 	try {
 		const response = await fetch(audioSrc);
 		const buf = await response.arrayBuffer();
 		const audioBuffer = await ctx.decodeAudioData(buf);
 		const data = audioBuffer.getChannelData(0);
 		if (data.length < barCount) {
-			return new Array(barCount).fill(WAVEFORM_MIN_HEIGHT) as number[];
+			return new Array<number>(barCount).fill(WAVEFORM_MIN_HEIGHT);
 		}
 		const step = Math.floor(data.length / barCount);
 		const peaks: number[] = [];
@@ -864,7 +893,9 @@ let _audioCtx: AudioContext | null = null;
  */
 export function warmAudioPlayback(): void {
 	if (!_audioCtx) {
-		_audioCtx = new (window.AudioContext || window.webkitAudioContext!)();
+		const AudioContextCtor = audioContextConstructor();
+		if (!AudioContextCtor) return;
+		_audioCtx = new AudioContextCtor();
 		console.debug("[audio] created AudioContext, state:", _audioCtx.state);
 	}
 	if (_audioCtx.state === "suspended") {

@@ -42,13 +42,20 @@ app enters onboarding mode. Uses a random free port by default.
 
 ## Playwright Projects
 
-The test suite is split into seven Playwright projects, plus one opt-in live
-project for local Ollama/Qwen validation:
+The local test suite keeps a single `default` project for targeted debugging.
+CI uses `e2e/run-ci.sh` to launch four independent default-suite Playwright
+processes by default, controlled by `MOLTIS_E2E_SHARDS`. Each process runs with
+one worker against its own Moltis process, port, config dir, and data dir. That
+gives parallelism without letting two stateful spec files talk to the same
+gateway at the same time. CI also runs special projects (`agents`, `auth`,
+onboarding variants, OAuth, and optional live-provider suites) as separate
+single-project processes so each one starts only its own web server.
 
 | Project | Port | Spec files | Notes |
 |---------|------|------------|-------|
-| `default` | Random free port (`MOLTIS_E2E_PORT`) | All except `auth.spec.js` and `onboarding.spec.js` | Seeded identity, no password |
-| `auth` | Same as `default` | `auth.spec.js` | Runs after `default`; sets a password to test login |
+| `default` | Random free port (`MOLTIS_E2E_PORT`) | All except isolated project specs, or one CI shard when `MOLTIS_E2E_PROCESS_SHARD_INDEX` is set | Seeded identity, no password |
+| `agents` | Local: same as `default`; CI: random free port (`MOLTIS_E2E_AGENTS_PORT`) | `agents.spec.js` | CI uses isolated runtime state |
+| `auth` | Local: same as `default`; CI: random free port (`MOLTIS_E2E_AUTH_PORT`) | `auth.spec.js` | CI uses isolated runtime state |
 | `onboarding` | Random free port (`MOLTIS_E2E_ONBOARDING_PORT`) | `onboarding.spec.js` | Separate server without seeded identity |
 | `onboarding-auth` | Random free port (`MOLTIS_E2E_ONBOARDING_AUTH_PORT`) | `onboarding-auth.spec.js` | Separate server with remote-auth simulation |
 | `onboarding-anthropic` | Random free port (`MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT`) | `onboarding-anthropic.spec.js` | Separate server proving first-run Anthropic onboarding with zero providers at startup |
@@ -116,5 +123,6 @@ npx playwright show-report
 - **Build the binary first** (`cargo build`) to avoid recompilation on every
   test run. The startup script auto-detects `target/debug/moltis`.
 - Set `MOLTIS_BINARY=/path/to/moltis` to use a specific binary.
-- Tests run serially (`workers: 1`) because they share a single server.
+- Each Playwright process runs serially (`workers: 1`) because a Moltis runtime
+  is stateful. CI gets parallelism by running multiple single-worker processes.
 - On failure, traces, screenshots, and videos are saved in `test-results/`.

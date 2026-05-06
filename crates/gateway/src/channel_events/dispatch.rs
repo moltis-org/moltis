@@ -123,7 +123,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
             None
         };
 
-        let chat = state.chat().await;
+        let chat = state.chat();
         let mut params = serde_json::json!({
             "text": effective_text,
             "channel": &meta,

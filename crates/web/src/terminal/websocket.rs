@@ -15,9 +15,9 @@ use super::{
     tmux::{
         host_terminal_apply_tmux_profile, host_terminal_default_window_target,
         host_terminal_ensure_tmux_session, host_terminal_resolve_window_target,
-        host_terminal_tmux_available, host_terminal_tmux_install_hint,
-        host_terminal_tmux_list_windows, host_terminal_tmux_reset_window_size,
-        host_terminal_tmux_select_window,
+        host_terminal_tmux_available, host_terminal_tmux_create_window,
+        host_terminal_tmux_install_hint, host_terminal_tmux_list_windows,
+        host_terminal_tmux_reset_window_size, host_terminal_tmux_select_window,
     },
     types::{
         HOST_TERMINAL_DEFAULT_COLS, HOST_TERMINAL_DEFAULT_ROWS, HOST_TERMINAL_MAX_INPUT_BYTES,
@@ -120,18 +120,29 @@ pub(crate) async fn handle_terminal_ws_connection(
                         current_window_target = Some(fallback);
                         let _ = terminal_ws_send_status(
                             &mut ws_tx,
-                            "requested terminal window no longer exists, attached to the current window",
+                            "requested terminal tab no longer exists, attached to the current tab",
                             "info",
                         )
                         .await;
                     } else {
-                        let _ = terminal_ws_send_status(
-                            &mut ws_tx,
-                            "requested terminal window does not exist",
-                            "error",
-                        )
-                        .await;
-                        return;
+                        // Session has no windows — create one so the connection stays usable
+                        // rather than hard-failing. This can happen when all tabs exited and
+                        // the session was left alive by a non-default tmux configuration.
+                        match host_terminal_tmux_create_window(None) {
+                            Ok(new_id) => {
+                                current_window_target = Some(new_id);
+                                let _ = terminal_ws_send_status(
+                                    &mut ws_tx,
+                                    "requested terminal tab no longer exists, opened a new tab",
+                                    "info",
+                                )
+                                .await;
+                            },
+                            Err(err) => {
+                                let _ = terminal_ws_send_status(&mut ws_tx, &err, "error").await;
+                                return;
+                            },
+                        }
                     }
                 },
             }
@@ -317,7 +328,7 @@ pub(crate) async fn handle_terminal_ws_connection(
                                 else {
                                     if !terminal_ws_send_status(
                                         &mut ws_tx,
-                                        "requested terminal window does not exist",
+                                        "requested terminal tab does not exist",
                                         "error",
                                     )
                                     .await

@@ -294,6 +294,42 @@ impl Sandbox for CaptureWorkingDirSandbox {
     }
 }
 
+#[derive(Default)]
+struct NonWaitingSandbox {
+    ensure_ready_calls: AtomicUsize,
+    image: std::sync::Mutex<Option<String>>,
+}
+
+#[async_trait]
+impl Sandbox for NonWaitingSandbox {
+    fn backend_name(&self) -> &'static str {
+        "docker"
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        self.ensure_ready_calls.fetch_add(1, Ordering::SeqCst);
+        *self.image.lock().unwrap_or_else(|e| e.into_inner()) =
+            image_override.map(ToOwned::to_owned);
+        Ok(())
+    }
+
+    async fn exec(&self, _id: &SandboxId, _command: &str, _opts: &ExecOpts) -> Result<ExecResult> {
+        Ok(ExecResult {
+            stdout: "ok".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+        })
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn test_exec_tool_retries_container_not_running_with_cleanup() {
     use crate::sandbox::SandboxScope;
@@ -549,6 +585,44 @@ async fn test_exec_tool_with_sandbox_router_session_key() {
         .await
         .unwrap();
     assert_eq!(result["stdout"].as_str().unwrap().trim(), "routed");
+}
+
+#[tokio::test]
+async fn test_exec_tool_with_sandbox_router_does_not_wait_for_background_image_build() {
+    use crate::sandbox::{DEFAULT_SANDBOX_IMAGE, SandboxConfig, SandboxRouter};
+
+    let sandbox = Arc::new(NonWaitingSandbox::default());
+    let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig::default(),
+        sandbox_dyn,
+    ));
+    router.building_flag.store(true, Ordering::Relaxed);
+
+    let result = tokio::time::timeout(
+        Duration::from_millis(100),
+        ExecTool::default()
+            .with_sandbox_router(router)
+            .execute(serde_json::json!({
+                "command": "printf ok",
+                "_session_key": "session:blocking-build"
+            })),
+    )
+    .await
+    .expect("exec must not wait for the background sandbox image build")
+    .unwrap();
+
+    assert_eq!(result["stdout"].as_str().unwrap().trim(), "ok");
+    assert_eq!(result["exit_code"], 0);
+    assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        sandbox
+            .image
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_deref(),
+        Some(DEFAULT_SANDBOX_IMAGE)
+    );
 }
 
 /// Regression test: when SandboxMode=All (the default) but the backend is

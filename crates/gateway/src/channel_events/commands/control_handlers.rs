@@ -480,7 +480,7 @@ pub(in crate::channel_events) async fn handle_sandbox(
                 Some(img) if !img.is_empty() => img,
                 _ => {
                     if let Some(ref router) = state.sandbox_router {
-                        router.default_image().await
+                        router.resolve_default_image_nowait().await
                     } else {
                         moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string()
                     }
@@ -675,7 +675,7 @@ pub(in crate::channel_events) async fn handle_stop(
     state: &Arc<GatewayState>,
     session_key: &str,
 ) -> ChannelResult<String> {
-    let chat = state.chat().await;
+    let chat = state.chat();
     let params = serde_json::json!({ "sessionKey": session_key });
     match chat.abort(params).await {
         Ok(res) => {
@@ -766,7 +766,7 @@ pub(in crate::channel_events) async fn handle_peek(
     state: &Arc<GatewayState>,
     session_key: &str,
 ) -> ChannelResult<String> {
-    let chat = state.chat().await;
+    let chat = state.chat();
     let params = serde_json::json!({ "sessionKey": session_key });
     match chat.peek(params).await {
         Ok(res) => {

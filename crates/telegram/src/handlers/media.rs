@@ -67,7 +67,7 @@ pub(super) fn extract_voice_file(msg: &Message) -> Option<VoiceFileInfo> {
     match &msg.kind {
         MessageKind::Common(common) => match &common.media_kind {
             MediaKind::Voice(v) => Some(VoiceFileInfo {
-                file_id: v.voice.file.id.clone(),
+                file_id: v.voice.file.id.to_string(),
                 format: "ogg".to_string(),
             }),
             MediaKind::Audio(a) => {
@@ -86,7 +86,7 @@ pub(super) fn extract_voice_file(msg: &Message) -> Option<VoiceFileInfo> {
                     .unwrap_or("mp3")
                     .to_string();
                 Some(VoiceFileInfo {
-                    file_id: a.audio.file.id.clone(),
+                    file_id: a.audio.file.id.to_string(),
                     format,
                 })
             },
@@ -105,7 +105,7 @@ pub(super) fn extract_photo_file(msg: &Message) -> Option<PhotoFileInfo> {
     match &msg.kind {
         MessageKind::Common(common) => match &common.media_kind {
             MediaKind::Photo(p) => p.photo.last().map(|ps| PhotoFileInfo {
-                file_id: ps.file.id.clone(),
+                file_id: ps.file.id.to_string(),
                 media_type: "image/jpeg".to_string(),
             }),
             _ => None,
@@ -148,7 +148,7 @@ pub(super) fn extract_document_file(msg: &Message) -> Option<DocumentFileInfo> {
                     normalized
                 };
                 Some(DocumentFileInfo {
-                    file_id: d.document.file.id.clone(),
+                    file_id: d.document.file.id.to_string(),
                     media_type,
                     file_name: d.document.file_name.clone(),
                 })
@@ -429,7 +429,9 @@ impl ToChannelMessageKind for MediaKind {
 }
 
 pub(super) async fn download_telegram_file(bot: &Bot, file_id: &str) -> Result<Vec<u8>> {
-    let file = bot.get_file(file_id).await?;
+    let file = bot
+        .get_file(teloxide::types::FileId(file_id.to_string()))
+        .await?;
     let token = bot.token();
     let base = bot.api_url();
     let url = format!("{base}file/bot{token}/{}", file.path);

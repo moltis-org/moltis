@@ -19,6 +19,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260502.01] - 2026-05-02
+### Added
+- [portable] Add data import/export for config, databases, and sessions (#951)
+- [i18n] Add zh-TW Traditional Chinese locale support (#339)
+
+
+### Fixed
+- [discord] Register slash command arguments and add all thinking levels (#950)
+- [web-ui] Prevent horizontal overflow in chat messages container (#952)
+- [portable] Allow unwrap in test modules to satisfy workspace clippy lint
+- [msteams] Collapse nested if to satisfy clippy collapsible_if lint
+- [discord] Use is_none_or and allow expect in tests for clippy
+- [e2e] Add smartScrollToBottom to chat-ui shim, fix command palette focus test
+- [e2e] Reduce appended element height below isChatAtBottom threshold in autoscroll test
+- [e2e] Add "Import Your Data" heading to auth spec onboarding matcher
+- [i18n] Add missing zh-TW reasoning keys and fix biome formatting
+- [telegram] Upgrade teloxide 0.13→0.17 to fix multipart ThreadId panic (#954)
+- [terminal] Prevent spurious "window does not exist" error on tab creation (#955)
+- [e2e] Update reasoning toggle tests for 6 effort levels (added Minimal and Extra High)
+- [e2e] Use poll-based scroll assertion in sequential messages autoscroll test
+
 ## [20260501.01] - 2026-05-01
 ### Added
 - [providers] Add Zen (opencode.ai) multi-protocol provider (#944)

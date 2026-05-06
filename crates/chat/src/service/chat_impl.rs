@@ -834,7 +834,7 @@ impl ChatService for LiveChatService {
             let session_image = session_entry.as_ref().and_then(|e| e.sandbox_image.clone());
             let effective_image = match session_image {
                 Some(img) if !img.is_empty() => img,
-                _ => router.default_image().await,
+                _ => router.resolve_default_image_nowait().await,
             };
             let container_name = {
                 let id = router.sandbox_id_for(&session_key);

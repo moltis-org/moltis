@@ -493,7 +493,7 @@ async fn api_bootstrap_with_query(
     );
 
     let sandbox = if let Some(ref router) = gw.sandbox_router {
-        let default_image = router.default_image().await;
+        let default_image = router.resolve_default_image_nowait().await;
         serde_json::json!({
             "backend": router.backend_name(),
             "os": std::env::consts::OS,
@@ -865,7 +865,7 @@ pub async fn api_check_packages_handler(Json(body): Json<serde_json::Value>) -> 
 
 pub async fn api_get_default_image_handler(State(state): State<AppState>) -> impl IntoResponse {
     let image = if let Some(ref router) = state.gateway.sandbox_router {
-        router.default_image().await
+        router.resolve_default_image_nowait().await
     } else {
         moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string()
     };
@@ -881,7 +881,7 @@ pub async fn api_set_default_image_handler(
     if let Some(ref router) = state.gateway.sandbox_router {
         let value = image.filter(|s| !s.is_empty()).map(String::from);
         router.set_global_image(value.clone()).await;
-        let effective = router.default_image().await;
+        let effective = router.resolve_default_image_nowait().await;
         Json(serde_json::json!({ "image": effective })).into_response()
     } else {
         api_error_response(

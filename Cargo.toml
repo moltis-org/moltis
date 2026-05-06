@@ -221,7 +221,7 @@ json_schema_ast = "0.3.1"
 # GraphQL
 async-graphql      = "7"
 async-graphql-axum = "7"
-gix                = "0.78"
+gix                = "0.83"
 hex                = "0.4"
 hmac               = "0.12"
 jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
@@ -238,7 +238,7 @@ sha2               = "0.10"
 slack-morphism     = { features = ["axum", "hyper"], version = "2.20" }
 sled               = "0.34"
 sysinfo            = "0.34"
-teloxide           = { features = ["macros"], version = "0.13" }
+teloxide           = { features = ["macros"], version = "0.17" }
 # WhatsApp (sqlite-storage disabled to avoid libsqlite3-sys conflict with sqlx;
 # re-enable once sqlx 0.9 stabilises).
 wacore                         = { default-features = false, version = "0.5" }
@@ -409,6 +409,11 @@ codegen-units = 1
 lto           = "thin"
 panic         = "abort"
 strip         = true
+
+[profile.swift-ci]
+debug    = 0
+inherits = "dev"
+panic    = "abort"
 
 [profile.dev]
 debug = "line-tables-only"

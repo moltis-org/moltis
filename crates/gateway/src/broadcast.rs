@@ -120,14 +120,14 @@ pub async fn broadcast(
     let guards = event_scope_guards();
     let required_scopes = guards.get(event);
 
-    let inner = state.inner.read().await;
+    let registry = state.client_registry.read().await;
     trace!(
         event,
         seq,
-        clients = inner.clients.len(),
+        clients = registry.clients.len(),
         "broadcasting event"
     );
-    for client in inner.clients.values() {
+    for client in registry.clients.values() {
         // Check scope guard: if the event requires a scope, verify the client has it.
         if let Some(required) = required_scopes {
             let client_scopes = client.scopes();
