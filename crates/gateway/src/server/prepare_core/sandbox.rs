@@ -42,12 +42,20 @@ pub(super) fn build_sandbox_router(
     for (name, has_creds) in [
         ("vercel", has_secret(&config.vercel_token)),
         ("daytona", has_secret(&config.daytona_api_key)),
-        (
-            "firecracker",
-            config.firecracker_bin.is_some()
-                || std::path::Path::new("/usr/local/bin/firecracker").exists(),
-        ),
     ] {
+        if has_creds && router.backend_name() != name {
+            let backend = moltis_tools::sandbox::router::select_backend_by_name(name, &config);
+            if backend.backend_name() == name {
+                router.register_backend(backend);
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let name = "firecracker";
+        let has_creds = config.firecracker_bin.is_some()
+            || std::path::Path::new("/usr/local/bin/firecracker").exists();
         if has_creds && router.backend_name() != name {
             let backend = moltis_tools::sandbox::router::select_backend_by_name(name, &config);
             if backend.backend_name() == name {

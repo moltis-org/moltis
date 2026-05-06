@@ -616,6 +616,9 @@ impl AgentTool for ExecTool {
                 if let Err(error) = backend.ensure_ready(&id, Some(&image)).await {
                     if announce_prepare {
                         router.clear_prepared_session(sk).await;
+                        if backend.is_isolated() {
+                            router.mark_synced(sk).await;
+                        }
                         router.emit_event(crate::sandbox::SandboxEvent::PrepareFailed {
                             session_key: sk.to_string(),
                             backend: backend.backend_name().to_string(),

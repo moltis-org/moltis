@@ -330,6 +330,35 @@ impl Sandbox for NonWaitingSandbox {
     }
 }
 
+struct FailingIsolatedSandbox;
+
+#[async_trait]
+impl Sandbox for FailingIsolatedSandbox {
+    fn backend_name(&self) -> &'static str {
+        "docker"
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
+    fn is_isolated(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        Err(Error::message("ensure_ready failed"))
+    }
+
+    async fn exec(&self, _id: &SandboxId, _command: &str, _opts: &ExecOpts) -> Result<ExecResult> {
+        Err(Error::message("no active sandbox"))
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn test_exec_tool_retries_container_not_running_with_cleanup() {
     use crate::sandbox::SandboxScope;
@@ -623,6 +652,29 @@ async fn test_exec_tool_with_sandbox_router_does_not_wait_for_background_image_b
             .as_deref(),
         Some(DEFAULT_SANDBOX_IMAGE)
     );
+}
+
+#[tokio::test]
+async fn test_exec_tool_marks_synced_when_isolated_ensure_ready_fails() {
+    use crate::sandbox::{SandboxConfig, SandboxRouter};
+
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig::default(),
+        Arc::new(FailingIsolatedSandbox),
+    ));
+    let session_key = "session:ensure-ready-fails";
+
+    let result = ExecTool::default()
+        .with_sandbox_router(Arc::clone(&router))
+        .execute(serde_json::json!({
+            "command": "printf ok",
+            "_session_key": session_key
+        }))
+        .await;
+
+    assert!(result.is_err());
+    assert!(router.is_synced(session_key).await);
+    assert!(router.mark_preparing_once(session_key).await);
 }
 
 /// Regression test: when SandboxMode=All (the default) but the backend is
