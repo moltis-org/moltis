@@ -284,4 +284,5 @@ fn attach_reasoning_to_assistant_tool_call(
             return;
         }
     }
+    tracing::debug!(tool_call_id, "no assistant message found for reasoning attachment");
 }

@@ -116,8 +116,6 @@ impl OpenAiProvider {
             || self.base_url.contains("moonshot.ai")
             || self.base_url.contains("moonshot.cn")
             || self.model.starts_with("kimi-")
-            || self.provider_name.eq_ignore_ascii_case("deepseek")
-            || self.base_url.contains("api.deepseek.com")
             || self.model.to_ascii_lowercase().starts_with("deepseek-v4")
     }
 
