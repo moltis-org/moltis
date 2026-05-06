@@ -253,6 +253,25 @@ impl VercelSandbox {
         }
     }
 
+    fn command_output_from_logs(
+        events: VercelCommandEvents,
+        logs: Result<(String, String)>,
+        sandbox_id: &str,
+    ) -> (String, String) {
+        match logs {
+            Ok(logs) if !logs.0.is_empty() || !logs.1.is_empty() => logs,
+            Ok(_) => (events.stdout, events.stderr),
+            Err(e) => {
+                warn!(
+                    vercel_id = sandbox_id,
+                    error = %e,
+                    "vercel: failed to fetch command logs, using inline output"
+                );
+                (events.stdout, events.stderr)
+            },
+        }
+    }
+
     /// Build an authenticated request with team scoping.
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let mut url = format!("{VERCEL_API_BASE}{path}");
@@ -407,13 +426,9 @@ impl VercelSandbox {
         let events = Self::parse_command_events(&text, opts.max_output_bytes);
         let exit_code = events.exit_code.unwrap_or(-1);
 
-        let (stdout, stderr) = if let Some(cmd_id) = events.command_id.as_deref() {
-            let logs = self.fetch_command_logs(sandbox_id, cmd_id, opts).await?;
-            if logs.0.is_empty() && logs.1.is_empty() {
-                (events.stdout, events.stderr)
-            } else {
-                logs
-            }
+        let (stdout, stderr) = if let Some(cmd_id) = events.command_id.clone() {
+            let logs = self.fetch_command_logs(sandbox_id, &cmd_id, opts).await;
+            Self::command_output_from_logs(events, logs, sandbox_id)
         } else {
             (events.stdout, events.stderr)
         };
@@ -1163,6 +1178,57 @@ mod tests {
         assert_eq!(events.command_id.as_deref(), Some("cmd_123"));
         assert_eq!(events.exit_code, Some(0));
         assert_eq!(events.stdout, "abc");
+    }
+
+    #[test]
+    fn test_command_output_from_logs_prefers_non_empty_logs() {
+        let events = VercelCommandEvents {
+            stdout: "inline".into(),
+            stderr: "inline-err".into(),
+            ..Default::default()
+        };
+
+        let output = VercelSandbox::command_output_from_logs(
+            events,
+            Ok(("logs".into(), String::new())),
+            "sb_test",
+        );
+
+        assert_eq!(output, ("logs".into(), String::new()));
+    }
+
+    #[test]
+    fn test_command_output_from_logs_falls_back_on_empty_logs() {
+        let events = VercelCommandEvents {
+            stdout: "inline".into(),
+            stderr: "inline-err".into(),
+            ..Default::default()
+        };
+
+        let output = VercelSandbox::command_output_from_logs(
+            events,
+            Ok((String::new(), String::new())),
+            "sb_test",
+        );
+
+        assert_eq!(output, ("inline".into(), "inline-err".into()));
+    }
+
+    #[test]
+    fn test_command_output_from_logs_falls_back_on_fetch_error() {
+        let events = VercelCommandEvents {
+            stdout: "inline".into(),
+            stderr: "inline-err".into(),
+            ..Default::default()
+        };
+
+        let output = VercelSandbox::command_output_from_logs(
+            events,
+            Err(Error::message("logs unavailable")),
+            "sb_test",
+        );
+
+        assert_eq!(output, ("inline".into(), "inline-err".into()));
     }
 
     #[test]
