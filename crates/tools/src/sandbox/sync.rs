@@ -261,9 +261,25 @@ async fn extract_tar_gz(dir: &Path, tar_bytes: &[u8]) -> Result<()> {
         };
 
         match entry.header().entry_type() {
-            tar::EntryType::Directory => ensure_directory(dir, &relative_path)?,
+            tar::EntryType::Directory => {
+                if let Err(e) = ensure_directory(dir, &relative_path) {
+                    warn!(
+                        path = %relative_path.display(),
+                        error = %e,
+                        "sync: skipping directory entry with unsafe parent path"
+                    );
+                    continue;
+                }
+            },
             tar::EntryType::Regular => {
-                ensure_parent_directory(dir, &relative_path)?;
+                if let Err(e) = ensure_parent_directory(dir, &relative_path) {
+                    warn!(
+                        path = %relative_path.display(),
+                        error = %e,
+                        "sync: skipping regular file with unsafe parent path"
+                    );
+                    continue;
+                }
                 let target = dir.join(&relative_path);
                 if let Err(e) = reject_existing_symlink(&target) {
                     warn!(
@@ -301,7 +317,14 @@ async fn extract_tar_gz(dir: &Path, tar_bytes: &[u8]) -> Result<()> {
                 if !is_safe_symlink_target(&relative_path, &link_target) {
                     continue;
                 }
-                ensure_parent_directory(dir, &relative_path)?;
+                if let Err(e) = ensure_parent_directory(dir, &relative_path) {
+                    warn!(
+                        path = %relative_path.display(),
+                        error = %e,
+                        "sync: skipping symlink with unsafe parent path"
+                    );
+                    continue;
+                }
                 let target = dir.join(&relative_path);
                 replace_existing_symlink_path(&target)?;
                 create_symlink(&link_target, &target)?;
@@ -499,7 +522,15 @@ fn extract_hardlink(root: &Path, relative_path: &Path, link_target: &Path) -> Re
         return Ok(());
     }
 
-    ensure_parent_directory(root, relative_path)?;
+    if let Err(e) = ensure_parent_directory(root, relative_path) {
+        warn!(
+            path = %relative_path.display(),
+            target = %relative_link_target.display(),
+            error = %e,
+            "sync: skipping hardlink with unsafe parent path"
+        );
+        return Ok(());
+    }
     let source = root.join(&relative_link_target);
     let target = root.join(relative_path);
     if let Err(e) = reject_existing_symlink(&source) {
@@ -701,6 +732,30 @@ mod tests {
         archive.into_inner().and_then(|enc| enc.finish()).unwrap()
     }
 
+    fn tar_gz_with_directory_and_safe_file(dir_path: &str) -> Vec<u8> {
+        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(enc);
+
+        let mut dir_header = tar::Header::new_gnu();
+        dir_header.set_entry_type(tar::EntryType::Directory);
+        dir_header.set_size(0);
+        dir_header.set_mode(0o755);
+        dir_header.set_cksum();
+        archive
+            .append_data(&mut dir_header, dir_path, io::empty())
+            .unwrap();
+
+        let mut safe_header = tar::Header::new_gnu();
+        safe_header.set_size(4);
+        safe_header.set_mode(0o644);
+        safe_header.set_cksum();
+        archive
+            .append_data(&mut safe_header, "safe.txt", &b"safe"[..])
+            .unwrap();
+
+        archive.into_inner().and_then(|enc| enc.finish()).unwrap()
+    }
+
     fn tar_gz_with_file_and_hardlink(file_path: &str, hardlink_path: &str) -> Vec<u8> {
         let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         let mut archive = tar::Builder::new(enc);
@@ -840,6 +895,40 @@ mod tests {
         extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
 
         assert_eq!(std::fs::read_to_string(outside_file).unwrap(), "original");
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("safe.txt")).unwrap(),
+            "second"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_extract_skips_directory_under_symlink_parent_and_continues() {
+        let dst = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), dst.path().join("lib64")).unwrap();
+
+        let tar_bytes = tar_gz_with_directory_and_safe_file("lib64/python3.11");
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
+        assert!(!outside.path().join("python3.11").exists());
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("safe.txt")).unwrap(),
+            "safe"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_extract_skips_regular_file_under_symlink_parent_and_continues() {
+        let dst = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), dst.path().join("lib64")).unwrap();
+
+        let tar_bytes = tar_gz_with_two_files("lib64/python3.11/foo.py", "safe.txt");
+        extract_tar_gz(dst.path(), &tar_bytes).await.unwrap();
+
+        assert!(!outside.path().join("python3.11/foo.py").exists());
         assert_eq!(
             std::fs::read_to_string(dst.path().join("safe.txt")).unwrap(),
             "second"
