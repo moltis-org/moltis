@@ -24,7 +24,10 @@ const DAYTONA_API_KEY = process.env.DAYTONA_API_KEY;
 const VERCEL_API = "https://vercel.com/api";
 
 test.describe("Vercel Sandbox live integration", () => {
-	test.skip(!VERCEL_TOKEN || !VERCEL_PROJECT_ID, "VERCEL_TOKEN or VERCEL_PROJECT_ID not set — skipping live Vercel tests");
+	test.skip(
+		!(VERCEL_TOKEN && VERCEL_PROJECT_ID),
+		"VERCEL_TOKEN or VERCEL_PROJECT_ID not set — skipping live Vercel tests",
+	);
 
 	let sandboxId = null;
 
