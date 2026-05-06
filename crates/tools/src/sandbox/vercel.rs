@@ -467,6 +467,17 @@ impl VercelSandbox {
         Ok(())
     }
 
+    async fn stop_after_setup_failure(&self, sandbox_id: &str, step: &str) {
+        if let Err(e) = self.stop_sandbox(sandbox_id).await {
+            warn!(
+                vercel_id = sandbox_id,
+                step,
+                error = %e,
+                "vercel: failed to stop sandbox after setup failure"
+            );
+        }
+    }
+
     /// Get the sandbox ID for a session, or None.
     async fn session_sandbox_id(&self, id: &SandboxId) -> Option<String> {
         self.active
@@ -553,7 +564,11 @@ impl Sandbox for VercelSandbox {
         info!("vercel: building snapshot with packages pre-installed");
 
         let sandbox_id = self.create_sandbox().await?;
-        self.wait_for_running(&sandbox_id).await?;
+        if let Err(e) = self.wait_for_running(&sandbox_id).await {
+            self.stop_after_setup_failure(&sandbox_id, "wait_for_running")
+                .await;
+            return Err(e);
+        }
 
         // Install packages using the Vercel-specific provisioning.
         let mapped: Vec<&str> = packages
@@ -697,8 +712,15 @@ impl Sandbox for VercelSandbox {
 
         debug!(%id, vercel_id = sandbox_id, "vercel: sandbox created, waiting for running state");
 
-        self.wait_for_running(&sandbox_id).await?;
-        self.mkdir(&sandbox_id, VERCEL_WORKSPACE).await?;
+        if let Err(e) = self.wait_for_running(&sandbox_id).await {
+            self.stop_after_setup_failure(&sandbox_id, "wait_for_running")
+                .await;
+            return Err(e);
+        }
+        if let Err(e) = self.mkdir(&sandbox_id, VERCEL_WORKSPACE).await {
+            self.stop_after_setup_failure(&sandbox_id, "mkdir").await;
+            return Err(e);
+        }
 
         info!(%id, vercel_id = sandbox_id, "vercel: sandbox ready");
 
