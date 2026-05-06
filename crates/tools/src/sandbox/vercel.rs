@@ -120,6 +120,12 @@ impl VercelSandbox {
         }
     }
 
+    fn env_object(env: &[(String, String)]) -> serde_json::Map<String, serde_json::Value> {
+        env.iter()
+            .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
+            .collect()
+    }
+
     /// Build an authenticated request with team scoping.
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let mut url = format!("{VERCEL_API_BASE}{path}");
@@ -236,12 +242,15 @@ impl VercelSandbox {
         opts: &ExecOpts,
     ) -> Result<ExecResult> {
         let cwd = Self::translate_working_dir(opts.working_dir.as_ref().and_then(|p| p.to_str()));
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "command": "sh",
             "args": ["-c", command],
             "cwd": cwd,
             "wait": true,
         });
+        if !opts.env.is_empty() {
+            body["env"] = serde_json::Value::Object(Self::env_object(&opts.env));
+        }
 
         let resp = self
             .request(
@@ -870,6 +879,23 @@ mod tests {
         assert_eq!(
             VercelSandbox::translate_working_dir(None),
             "/vercel/sandbox"
+        );
+    }
+
+    #[test]
+    fn test_env_object_includes_exec_env() {
+        let env = VercelSandbox::env_object(&[
+            ("API_TOKEN".to_string(), "secret-value".to_string()),
+            ("SESSION_ID".to_string(), "abc123".to_string()),
+        ]);
+
+        assert_eq!(
+            env.get("API_TOKEN").and_then(serde_json::Value::as_str),
+            Some("secret-value")
+        );
+        assert_eq!(
+            env.get("SESSION_ID").and_then(serde_json::Value::as_str),
+            Some("abc123")
         );
     }
 

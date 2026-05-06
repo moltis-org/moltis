@@ -113,6 +113,12 @@ impl DaytonaSandbox {
         }
     }
 
+    fn env_object(env: &[(String, String)]) -> serde_json::Map<String, serde_json::Value> {
+        env.iter()
+            .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
+            .collect()
+    }
+
     /// Build an authenticated request.
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{path}", self.daytona.api_url);
@@ -192,11 +198,14 @@ impl DaytonaSandbox {
         let encoded = base64::engine::general_purpose::STANDARD.encode(command.as_bytes());
         let wrapped = format!("eval \"$(echo '{encoded}' | base64 -d)\" 2>{stderr_file}");
         let timeout_secs = opts.timeout.as_secs().max(1);
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "command": wrapped,
             "cwd": cwd,
             "timeout": timeout_secs,
         });
+        if !opts.env.is_empty() {
+            body["env"] = serde_json::Value::Object(Self::env_object(&opts.env));
+        }
 
         let resp = self
             .request(
@@ -547,6 +556,23 @@ mod tests {
         assert_eq!(
             DaytonaSandbox::translate_working_dir(None, "/workspace/custom"),
             "/workspace/custom"
+        );
+    }
+
+    #[test]
+    fn test_env_object_includes_exec_env() {
+        let env = DaytonaSandbox::env_object(&[
+            ("API_TOKEN".to_string(), "secret-value".to_string()),
+            ("SESSION_ID".to_string(), "abc123".to_string()),
+        ]);
+
+        assert_eq!(
+            env.get("API_TOKEN").and_then(serde_json::Value::as_str),
+            Some("secret-value")
+        );
+        assert_eq!(
+            env.get("SESSION_ID").and_then(serde_json::Value::as_str),
+            Some("abc123")
         );
     }
 

@@ -361,6 +361,40 @@ impl FirecrackerSandbox {
         }
     }
 
+    fn validate_env_key(key: &str) -> Result<()> {
+        let mut chars = key.chars();
+        let Some(first) = chars.next() else {
+            return Err(Error::message(
+                "firecracker: empty environment variable name",
+            ));
+        };
+        if !(first == '_' || first.is_ascii_alphabetic()) {
+            return Err(Error::message(format!(
+                "firecracker: invalid environment variable name '{key}'"
+            )));
+        }
+        if chars.any(|ch| !(ch == '_' || ch.is_ascii_alphanumeric())) {
+            return Err(Error::message(format!(
+                "firecracker: invalid environment variable name '{key}'"
+            )));
+        }
+        Ok(())
+    }
+
+    fn remote_shell_command(cwd: &str, command: &str, env: &[(String, String)]) -> Result<String> {
+        let inner = format!("cd {} && {command}", shell_words::quote(cwd));
+        let mut words = Vec::with_capacity(env.len() + 3);
+        words.push("env".to_string());
+        for (key, value) in env {
+            Self::validate_env_key(key)?;
+            words.push(format!("{key}={value}"));
+        }
+        words.push("sh".to_string());
+        words.push("-lc".to_string());
+        words.push(inner);
+        Ok(shell_words::join(words))
+    }
+
     async fn ssh_run(
         guest_ip: &str,
         ssh_key: &Path,
@@ -373,15 +407,16 @@ impl FirecrackerSandbox {
             .and_then(|p| p.to_str())
             .unwrap_or(FC_WORKSPACE);
 
-        let quoted_cwd = cwd.replace('\'', "'\\''");
-        let full_cmd = format!("cd '{quoted_cwd}' && {command}");
+        let remote_command = Self::remote_shell_command(cwd, command, &opts.env)?;
+        let ssh_key = ssh_key.display().to_string();
+        let destination = format!("{GUEST_USER}@{guest_ip}");
 
         let output = tokio::time::timeout(
             opts.timeout,
             tokio::process::Command::new("ssh")
                 .args([
                     "-i",
-                    &ssh_key.display().to_string(),
+                    &ssh_key,
                     "-o",
                     "StrictHostKeyChecking=no",
                     "-o",
@@ -390,10 +425,8 @@ impl FirecrackerSandbox {
                     "BatchMode=yes",
                     "-o",
                     "ConnectTimeout=5",
-                    &format!("{GUEST_USER}@{guest_ip}"),
-                    "sh",
-                    "-c",
-                    &full_cmd,
+                    &destination,
+                    &remote_command,
                 ])
                 .output(),
         )
@@ -762,6 +795,42 @@ mod tests {
         assert_ne!(guest1, guest2);
         assert!(host1.starts_with("172.16."));
         assert!(guest1.starts_with("172.16."));
+    }
+
+    #[test]
+    fn test_remote_shell_command_quotes_exec_env() {
+        let command = FirecrackerSandbox::remote_shell_command(
+            "/home/sandbox/project dir",
+            "printf '%s' \"$API_TOKEN\"",
+            &[
+                ("API_TOKEN".to_string(), "secret'value".to_string()),
+                ("SESSION_ID".to_string(), "abc 123".to_string()),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            command,
+            "env 'API_TOKEN=secret'\\''value' 'SESSION_ID=abc 123' sh -lc 'cd '\\''/home/sandbox/project dir'\\'' && printf '\\''%s'\\'' \"$API_TOKEN\"'"
+        );
+    }
+
+    #[test]
+    fn test_remote_shell_command_without_env() {
+        let command =
+            FirecrackerSandbox::remote_shell_command("/home/sandbox", "pwd", &[]).unwrap();
+
+        assert_eq!(command, "env sh -lc 'cd /home/sandbox && pwd'");
+    }
+
+    #[test]
+    fn test_remote_shell_command_rejects_invalid_keys() {
+        let result = FirecrackerSandbox::remote_shell_command("/home/sandbox", "env", &[(
+            "BAD-KEY".to_string(),
+            "value".to_string(),
+        )]);
+
+        assert!(result.is_err());
     }
 
     #[tokio::test]

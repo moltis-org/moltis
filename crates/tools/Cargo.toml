@@ -21,7 +21,7 @@ fs-tools = [
   "dep:pdf-extract",
 ]
 metrics = ["dep:moltis-metrics"]
-wasm = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
+wasm = ["dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
 
 [dependencies]
 anyhow                = { workspace = true }
@@ -57,7 +57,7 @@ secrecy               = { workspace = true }
 serde                 = { workspace = true }
 serde_json            = { workspace = true }
 sha2                  = { workspace = true }
-shell-words           = { optional = true, workspace = true }
+shell-words           = { workspace = true }
 sqlx                  = { workspace = true }
 tar                   = { workspace = true }
 tempfile              = { workspace = true }
