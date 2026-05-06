@@ -89,6 +89,7 @@
 - [Metrics & Tracing](metrics-and-tracing.md)
 - [Tool Registry](tool-registry.md)
 - [Tool Policy](tool-policy.md)
+- [Agent Identity & Onboarding](agent-identity.md)
 - [Agent Presets](agent-presets.md)
 - [Session Tools](session-tools.md)
 
