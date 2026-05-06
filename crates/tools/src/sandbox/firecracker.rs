@@ -14,13 +14,17 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::Arc,
     time::Duration,
 };
 
 use {
     async_trait::async_trait,
-    tokio::sync::{RwLock, Semaphore},
+    tokio::{
+        io::AsyncReadExt,
+        sync::{RwLock, Semaphore},
+    },
     tracing::{debug, info, warn},
 };
 
@@ -420,6 +424,15 @@ impl FirecrackerSandbox {
         Ok(shell_words::join(words))
     }
 
+    async fn collect_ssh_pipe(
+        name: &str,
+        task: tokio::task::JoinHandle<std::io::Result<Vec<u8>>>,
+    ) -> Result<Vec<u8>> {
+        task.await
+            .map_err(|e| Error::message(format!("firecracker: SSH {name} reader failed: {e}")))?
+            .map_err(|e| Error::message(format!("firecracker: SSH {name} read failed: {e}")))
+    }
+
     async fn ssh_run(
         guest_ip: &str,
         ssh_key: &Path,
@@ -436,43 +449,78 @@ impl FirecrackerSandbox {
         let ssh_key = ssh_key.display().to_string();
         let destination = format!("{GUEST_USER}@{guest_ip}");
 
-        let output = tokio::time::timeout(
-            opts.timeout,
-            tokio::process::Command::new("ssh")
-                .args([
-                    "-i",
-                    &ssh_key,
-                    "-o",
-                    "StrictHostKeyChecking=no",
-                    "-o",
-                    "UserKnownHostsFile=/dev/null",
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "ConnectTimeout=5",
-                    &destination,
-                    &remote_command,
-                ])
-                .output(),
-        )
-        .await
-        .map_err(|_| {
-            Error::message(format!(
-                "firecracker: SSH command timed out after {}s",
-                opts.timeout.as_secs()
-            ))
-        })?
-        .map_err(|e| Error::message(format!("firecracker: SSH run failed: {e}")))?;
+        let mut child = tokio::process::Command::new("ssh")
+            .args([
+                "-i",
+                &ssh_key,
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                &destination,
+                &remote_command,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| Error::message(format!("firecracker: SSH run failed: {e}")))?;
 
-        let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let Some(mut stdout_pipe) = child.stdout.take() else {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(Error::message("firecracker: SSH stdout pipe unavailable"));
+        };
+        let Some(mut stderr_pipe) = child.stderr.take() else {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(Error::message("firecracker: SSH stderr pipe unavailable"));
+        };
+
+        let stdout_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            stdout_pipe.read_to_end(&mut bytes).await.map(|_| bytes)
+        });
+        let stderr_task = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            stderr_pipe.read_to_end(&mut bytes).await.map(|_| bytes)
+        });
+
+        let status = match tokio::time::timeout(opts.timeout, child.wait()).await {
+            Ok(Ok(status)) => status,
+            Ok(Err(e)) => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                stdout_task.abort();
+                stderr_task.abort();
+                return Err(Error::message(format!("firecracker: SSH wait failed: {e}")));
+            },
+            Err(_) => {
+                let _ = child.start_kill();
+                let _ = child.wait().await;
+                stdout_task.abort();
+                stderr_task.abort();
+                return Err(Error::message(format!(
+                    "firecracker: SSH command timed out after {}s",
+                    opts.timeout.as_secs()
+                )));
+            },
+        };
+
+        let stdout_bytes = Self::collect_ssh_pipe("stdout", stdout_task).await?;
+        let stderr_bytes = Self::collect_ssh_pipe("stderr", stderr_task).await?;
+        let mut stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
+        let mut stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
         stdout.truncate(stdout.floor_char_boundary(opts.max_output_bytes));
         stderr.truncate(stderr.floor_char_boundary(opts.max_output_bytes));
 
         Ok(ExecResult {
             stdout,
             stderr,
-            exit_code: output.status.code().unwrap_or(-1),
+            exit_code: status.code().unwrap_or(-1),
         })
     }
 

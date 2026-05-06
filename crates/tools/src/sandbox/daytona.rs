@@ -119,6 +119,22 @@ impl DaytonaSandbox {
             .collect()
     }
 
+    fn wrapped_command(command: &str, stderr_file: &str) -> String {
+        use base64::Engine;
+
+        let encoded = base64::engine::general_purpose::STANDARD.encode(command.as_bytes());
+        let encoded = shell_words::quote(&encoded);
+        let stderr_file = shell_words::quote(stderr_file);
+
+        format!(
+            "decoded=$(mktemp /tmp/moltis-cmd.XXXXXX) || exit 125; \
+             printf %s {encoded} | base64 -d > \"$decoded\"; status=$?; \
+             if [ \"$status\" -ne 0 ]; then rm -f \"$decoded\"; exit \"$status\"; fi; \
+             sh \"$decoded\" 2>{stderr_file}; status=$?; \
+             rm -f \"$decoded\"; exit \"$status\""
+        )
+    }
+
     /// Build an authenticated request.
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         let url = format!("{}{path}", self.daytona.api_url);
@@ -194,9 +210,7 @@ impl DaytonaSandbox {
         let stderr_file = format!("/tmp/moltis-stderr-{}", uuid::Uuid::new_v4());
         // Base64-encode the command to avoid any shell metacharacter issues
         // (braces, parentheses, quotes, etc.) in the wrapper.
-        use base64::Engine;
-        let encoded = base64::engine::general_purpose::STANDARD.encode(command.as_bytes());
-        let wrapped = format!("eval \"$(echo '{encoded}' | base64 -d)\" 2>{stderr_file}");
+        let wrapped = Self::wrapped_command(command, &stderr_file);
         let timeout_secs = opts.timeout.as_secs().max(1);
         let mut body = serde_json::json!({
             "command": wrapped,
@@ -574,6 +588,16 @@ mod tests {
             env.get("SESSION_ID").and_then(serde_json::Value::as_str),
             Some("abc123")
         );
+    }
+
+    #[test]
+    fn test_wrapped_command_guards_base64_decode_failure() {
+        let wrapped = DaytonaSandbox::wrapped_command("echo '; } weird'", "/tmp/stderr.log");
+
+        assert!(wrapped.contains("base64 -d > \"$decoded\"; status=$?;"));
+        assert!(wrapped.contains("if [ \"$status\" -ne 0 ]; then"));
+        assert!(wrapped.contains("sh \"$decoded\" 2>/tmp/stderr.log"));
+        assert!(!wrapped.contains("eval"));
     }
 
     #[tokio::test]
