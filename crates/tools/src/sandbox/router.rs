@@ -765,10 +765,15 @@ impl SandboxRouter {
     /// Mark a session as preparing for sandbox first-run work.
     /// Returns `true` only the first time for a session key.
     pub async fn mark_preparing_once(&self, session_key: &str) -> bool {
-        self.prepared_sessions
+        let inserted = self
+            .prepared_sessions
             .write()
             .await
-            .insert(session_key.to_string())
+            .insert(session_key.to_string());
+        if inserted {
+            self.clear_synced_session(session_key).await;
+        }
+        inserted
     }
 
     /// Clear preparation marker for a session (used on cleanup or prepare failure).

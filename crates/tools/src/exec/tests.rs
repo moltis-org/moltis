@@ -727,6 +727,8 @@ async fn test_exec_tool_marks_synced_when_isolated_ensure_ready_fails() {
         Some("ensure_ready failed")
     );
     assert!(router.mark_preparing_once(session_key).await);
+    assert!(!router.is_synced(session_key).await);
+    assert!(router.sync_failure(session_key).await.is_none());
 }
 
 #[tokio::test]
@@ -763,6 +765,8 @@ async fn test_exec_tool_clears_prepared_session_when_sync_in_fails() {
         Some("upload failed")
     );
     assert!(router.mark_preparing_once(session_key).await);
+    assert!(!router.is_synced(session_key).await);
+    assert!(router.sync_failure(session_key).await.is_none());
 }
 
 /// Regression test: when SandboxMode=All (the default) but the backend is
