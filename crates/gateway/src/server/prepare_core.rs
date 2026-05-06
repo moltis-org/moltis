@@ -1098,31 +1098,11 @@ pub async fn prepare_gateway_core(
         });
     }
 
-    // Load persisted sandbox overrides from session metadata.
-    {
-        for entry in session_metadata.list().await {
-            if let Some(enabled) = entry.sandbox_enabled {
-                sandbox_router.set_override(&entry.key, enabled).await;
-            }
-            if let Some(ref image) = entry.sandbox_image {
-                sandbox_router
-                    .set_image_override(&entry.key, image.clone())
-                    .await;
-            }
-            if let Some(ref backend) = entry.sandbox_backend
-                && let Err(e) = sandbox_router
-                    .set_backend_override(&entry.key, backend)
-                    .await
-            {
-                tracing::debug!(
-                    session = entry.key,
-                    backend = backend.as_str(),
-                    error = %e,
-                    "skipping persisted sandbox backend override (backend not available)"
-                );
-            }
-        }
-    }
+    LiveSessionService::restore_sandbox_router_overrides_from_metadata(
+        &session_metadata,
+        &sandbox_router,
+    )
+    .await;
 
     // ── Channel initialization ───────────────────────────────────────────
     let channel_result = init_channels::init_channels(

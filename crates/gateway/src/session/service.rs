@@ -85,6 +85,38 @@ impl LiveSessionService {
         self
     }
 
+    pub async fn restore_sandbox_router_overrides(&self) {
+        let Some(router) = self.sandbox_router.as_ref() else {
+            return;
+        };
+
+        Self::restore_sandbox_router_overrides_from_metadata(&self.metadata, router).await;
+    }
+
+    pub async fn restore_sandbox_router_overrides_from_metadata(
+        metadata: &SqliteSessionMetadata,
+        router: &SandboxRouter,
+    ) {
+        for entry in metadata.list().await {
+            if let Some(enabled) = entry.sandbox_enabled {
+                router.set_override(&entry.key, enabled).await;
+            }
+            if let Some(ref image) = entry.sandbox_image {
+                router.set_image_override(&entry.key, image.clone()).await;
+            }
+            if let Some(ref backend) = entry.sandbox_backend
+                && let Err(e) = router.set_backend_override(&entry.key, backend).await
+            {
+                tracing::debug!(
+                    session = entry.key,
+                    backend = backend.as_str(),
+                    error = %e,
+                    "skipping persisted sandbox backend override (backend not available)"
+                );
+            }
+        }
+    }
+
     pub fn with_agent_persona_store(mut self, store: Arc<AgentPersonaStore>) -> Self {
         self.agent_persona_store = Some(store);
         self
