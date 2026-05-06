@@ -659,6 +659,7 @@ impl AgentTool for ExecTool {
                                         error = %error,
                                         "workspace sync-in failed"
                                     );
+                                    router.clear_prepared_session(sk).await;
                                     router.mark_sync_failed(sk, error.clone()).await;
                                     return Err(Error::message(format!(
                                         "workspace sync-in failed: {error}"

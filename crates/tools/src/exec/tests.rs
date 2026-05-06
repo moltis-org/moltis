@@ -359,6 +359,54 @@ impl Sandbox for FailingIsolatedSandbox {
     }
 }
 
+#[derive(Default)]
+struct SyncUploadFailingSandbox {
+    ensure_ready_calls: AtomicUsize,
+    write_file_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl Sandbox for SyncUploadFailingSandbox {
+    fn backend_name(&self) -> &'static str {
+        "docker"
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
+    fn is_isolated(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        self.ensure_ready_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn exec(&self, _id: &SandboxId, _command: &str, _opts: &ExecOpts) -> Result<ExecResult> {
+        Ok(ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        })
+    }
+
+    async fn write_file(
+        &self,
+        _id: &SandboxId,
+        _file_path: &str,
+        _content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        self.write_file_calls.fetch_add(1, Ordering::SeqCst);
+        Err(Error::message("upload failed"))
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn test_exec_tool_retries_container_not_running_with_cleanup() {
     use crate::sandbox::SandboxScope;
@@ -677,6 +725,42 @@ async fn test_exec_tool_marks_synced_when_isolated_ensure_ready_fails() {
     assert_eq!(
         router.sync_failure(session_key).await.as_deref(),
         Some("ensure_ready failed")
+    );
+    assert!(router.mark_preparing_once(session_key).await);
+}
+
+#[tokio::test]
+async fn test_exec_tool_clears_prepared_session_when_sync_in_fails() {
+    use crate::sandbox::{SandboxConfig, SandboxRouter};
+
+    let host_workspace = tempfile::tempdir().unwrap();
+    std::fs::write(host_workspace.path().join("input.txt"), "needs upload").unwrap();
+
+    let sandbox = Arc::new(SyncUploadFailingSandbox::default());
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig {
+            shared_home_dir: Some(host_workspace.path().to_path_buf()),
+            ..Default::default()
+        },
+        Arc::clone(&sandbox) as Arc<dyn Sandbox>,
+    ));
+    let session_key = "session:sync-in-fails";
+
+    let result = ExecTool::default()
+        .with_sandbox_router(Arc::clone(&router))
+        .execute(serde_json::json!({
+            "command": "printf ok",
+            "_session_key": session_key
+        }))
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sandbox.write_file_calls.load(Ordering::SeqCst), 1);
+    assert!(router.is_synced(session_key).await);
+    assert_eq!(
+        router.sync_failure(session_key).await.as_deref(),
+        Some("upload failed")
     );
     assert!(router.mark_preparing_once(session_key).await);
 }
