@@ -43,6 +43,14 @@ struct VercelSession {
     sandbox_id: String,
 }
 
+#[derive(Debug, Default)]
+struct VercelCommandEvents {
+    command_id: Option<String>,
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
 /// Vercel Sandbox backend configuration.
 #[derive(Debug, Clone)]
 pub struct VercelSandboxConfig {
@@ -156,6 +164,93 @@ impl VercelSandbox {
             .or_else(|| Self::non_empty_id(data["id"].as_str()))
             .or_else(|| Self::non_empty_id(data["snapshotId"].as_str()))
             .or_else(|| Self::non_empty_id(data["snapshot_id"].as_str()))
+    }
+
+    fn parse_command_events(text: &str, max_output_bytes: usize) -> VercelCommandEvents {
+        let mut events = VercelCommandEvents::default();
+        for line in text.lines().filter(|line| !line.is_empty()) {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+
+            if let Some(code) = value["command"]["exitCode"]
+                .as_i64()
+                .or_else(|| value["command"]["exit_code"].as_i64())
+                .or_else(|| value["exitCode"].as_i64())
+                .or_else(|| value["exit_code"].as_i64())
+            {
+                events.exit_code = Some(code as i32);
+            }
+
+            if events.command_id.is_none() {
+                events.command_id = value["command"]["id"]
+                    .as_str()
+                    .or_else(|| value["command"]["commandId"].as_str())
+                    .or_else(|| value["command"]["command_id"].as_str())
+                    .or_else(|| value["id"].as_str())
+                    .or_else(|| value["commandId"].as_str())
+                    .or_else(|| value["command_id"].as_str())
+                    .and_then(|id| Self::non_empty_id(Some(id)));
+            }
+
+            Self::append_inline_command_output(&value, &mut events.stdout, &mut events.stderr);
+        }
+
+        events
+            .stdout
+            .truncate(events.stdout.floor_char_boundary(max_output_bytes));
+        events
+            .stderr
+            .truncate(events.stderr.floor_char_boundary(max_output_bytes));
+        events
+    }
+
+    fn append_inline_command_output(
+        value: &serde_json::Value,
+        stdout: &mut String,
+        stderr: &mut String,
+    ) {
+        for candidate in [
+            &value["stdout"],
+            &value["command"]["stdout"],
+            &value["result"]["stdout"],
+            &value["command"]["result"]["stdout"],
+        ] {
+            if let Some(text) = candidate.as_str() {
+                stdout.push_str(text);
+            }
+        }
+
+        for candidate in [
+            &value["stderr"],
+            &value["command"]["stderr"],
+            &value["result"]["stderr"],
+            &value["command"]["result"]["stderr"],
+        ] {
+            if let Some(text) = candidate.as_str() {
+                stderr.push_str(text);
+            }
+        }
+
+        let stream = value["stream"]
+            .as_str()
+            .or_else(|| value["command"]["stream"].as_str())
+            .unwrap_or("stdout");
+        for candidate in [
+            &value["data"],
+            &value["output"],
+            &value["result"],
+            &value["command"]["data"],
+            &value["command"]["output"],
+            &value["command"]["result"],
+        ] {
+            if let Some(text) = candidate.as_str() {
+                match stream {
+                    "stderr" => stderr.push_str(text),
+                    _ => stdout.push_str(text),
+                }
+            }
+        }
     }
 
     /// Build an authenticated request with team scoping.
@@ -309,21 +404,19 @@ impl VercelSandbox {
             .await
             .map_err(|e| Error::message(format!("vercel: failed to read command response: {e}")))?;
 
-        let mut exit_code: i32 = -1;
-        let mut cmd_id = String::new();
-        for line in text.lines().filter(|l| !l.is_empty()) {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                if let Some(code) = v["command"]["exitCode"].as_i64() {
-                    exit_code = code as i32;
-                }
-                if let Some(id) = v["command"]["id"].as_str() {
-                    cmd_id = id.to_string();
-                }
-            }
-        }
+        let events = Self::parse_command_events(&text, opts.max_output_bytes);
+        let exit_code = events.exit_code.unwrap_or(-1);
 
-        // Fetch stdout/stderr logs for the command.
-        let (stdout, stderr) = self.fetch_command_logs(sandbox_id, &cmd_id, opts).await?;
+        let (stdout, stderr) = if let Some(cmd_id) = events.command_id.as_deref() {
+            let logs = self.fetch_command_logs(sandbox_id, cmd_id, opts).await?;
+            if logs.0.is_empty() && logs.1.is_empty() {
+                (events.stdout, events.stderr)
+            } else {
+                logs
+            }
+        } else {
+            (events.stdout, events.stderr)
+        };
 
         Ok(ExecResult {
             stdout,
@@ -339,10 +432,6 @@ impl VercelSandbox {
         cmd_id: &str,
         opts: &ExecOpts,
     ) -> Result<(String, String)> {
-        if cmd_id.is_empty() {
-            return Ok((String::new(), String::new()));
-        }
-
         let resp = self
             .request(
                 reqwest::Method::GET,
@@ -1038,6 +1127,42 @@ mod tests {
             })),
             None
         );
+    }
+
+    #[test]
+    fn test_parse_command_events_uses_inline_output_without_command_id() {
+        let events =
+            VercelSandbox::parse_command_events(r#"{"stream":"stdout","data":"hello\n"}"#, 1024);
+
+        assert_eq!(events.command_id, None);
+        assert_eq!(events.exit_code, None);
+        assert_eq!(events.stdout, "hello\n");
+        assert_eq!(events.stderr, "");
+    }
+
+    #[test]
+    fn test_parse_command_events_accepts_result_output_and_exit_code() {
+        let events = VercelSandbox::parse_command_events(
+            r#"{"exitCode":7,"result":{"stdout":"ok","stderr":"bad"}}"#,
+            1024,
+        );
+
+        assert_eq!(events.command_id, None);
+        assert_eq!(events.exit_code, Some(7));
+        assert_eq!(events.stdout, "ok");
+        assert_eq!(events.stderr, "bad");
+    }
+
+    #[test]
+    fn test_parse_command_events_accepts_command_id_and_truncates() {
+        let events = VercelSandbox::parse_command_events(
+            r#"{"command":{"commandId":"cmd_123","exit_code":0},"output":"abcdef"}"#,
+            3,
+        );
+
+        assert_eq!(events.command_id.as_deref(), Some("cmd_123"));
+        assert_eq!(events.exit_code, Some(0));
+        assert_eq!(events.stdout, "abc");
     }
 
     #[test]
