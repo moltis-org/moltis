@@ -8385,6 +8385,7 @@ dependencies = [
  "uuid",
  "wasmtime",
  "wasmtime-wasi",
+ "which 8.0.2",
 ]
 
 [[package]]

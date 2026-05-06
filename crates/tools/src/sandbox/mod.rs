@@ -28,7 +28,10 @@ mod tests;
 #[cfg(target_os = "macos")]
 pub use apple::{AppleContainerSandbox, ensure_apple_container_service};
 #[cfg(target_os = "linux")]
-pub use firecracker::{FirecrackerSandbox, FirecrackerSandboxConfig};
+pub use firecracker::{
+    FirecrackerSandbox, FirecrackerSandboxConfig, firecracker_bin_available,
+    resolve_firecracker_bin,
+};
 #[cfg(target_os = "linux")]
 pub use platform::CgroupSandbox;
 #[cfg(feature = "vercel-sandbox")]

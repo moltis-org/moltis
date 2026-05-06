@@ -54,8 +54,8 @@ pub(super) fn build_sandbox_router(
     #[cfg(target_os = "linux")]
     {
         let name = "firecracker";
-        let has_creds = config.firecracker_bin.is_some()
-            || std::path::Path::new("/usr/local/bin/firecracker").exists();
+        let has_creds =
+            moltis_tools::sandbox::firecracker_bin_available(config.firecracker_bin.as_deref());
         if has_creds && router.backend_name() != name {
             let backend = moltis_tools::sandbox::router::select_backend_by_name(name, &config);
             if backend.backend_name() == name {

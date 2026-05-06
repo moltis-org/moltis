@@ -997,7 +997,7 @@ pub async fn api_available_backends_handler() -> impl IntoResponse {
         }));
     }
     #[cfg(target_os = "linux")]
-    if sb.firecracker_bin.is_some() || std::path::Path::new("/usr/local/bin/firecracker").exists() {
+    if moltis_tools::sandbox::firecracker_bin_available(sb.firecracker_bin.as_deref()) {
         backends.push(serde_json::json!({
             "id": "firecracker",
             "label": "Firecracker (microVM)",

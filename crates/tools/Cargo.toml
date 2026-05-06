@@ -6,9 +6,9 @@ version.workspace = true
 [features]
 bundled-skills = ["moltis-skills/bundled-skills"]
 default        = ["firecrawl", "fs-tools", "metrics", "vercel-sandbox", "wasm"]
+embedded-wasm  = []
+firecrawl      = []
 vercel-sandbox = []
-embedded-wasm = []
-firecrawl     = []
 # Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep).
 # See moltis-org/moltis#657. Default-on; build with
 # --no-default-features to omit them from minimal builds.
@@ -69,6 +69,7 @@ url                   = { workspace = true }
 uuid                  = { workspace = true }
 wasmtime              = { optional = true, workspace = true }
 wasmtime-wasi         = { optional = true, workspace = true }
+which                 = { workspace = true }
 
 [dev-dependencies]
 mockito      = { workspace = true }

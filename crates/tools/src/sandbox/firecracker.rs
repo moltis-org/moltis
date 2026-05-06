@@ -63,7 +63,7 @@ pub struct FirecrackerSandboxConfig {
 impl Default for FirecrackerSandboxConfig {
     fn default() -> Self {
         Self {
-            firecracker_bin: PathBuf::from("/usr/local/bin/firecracker"),
+            firecracker_bin: PathBuf::from("firecracker"),
             kernel_path: PathBuf::from("/opt/moltis/vmlinux"),
             rootfs_path: PathBuf::from("/opt/moltis/rootfs.ext4"),
             ssh_key_path: PathBuf::from("/opt/moltis/ssh_key"),
@@ -71,6 +71,26 @@ impl Default for FirecrackerSandboxConfig {
             memory_mb: 512,
         }
     }
+}
+
+pub fn resolve_firecracker_bin(configured: Option<&Path>) -> PathBuf {
+    configured.map_or_else(
+        || which::which("firecracker").unwrap_or_else(|_| PathBuf::from("firecracker")),
+        Path::to_path_buf,
+    )
+}
+
+pub fn firecracker_bin_available(configured: Option<&Path>) -> bool {
+    configured.map_or_else(
+        || which::which("firecracker").is_ok(),
+        |path| {
+            if path.components().count() == 1 {
+                which::which(path).is_ok()
+            } else {
+                path.exists()
+            }
+        },
+    )
 }
 
 /// Firecracker sandbox backend.
@@ -848,10 +868,25 @@ mod tests {
         let config = FirecrackerSandboxConfig::default();
         assert_eq!(config.vcpus, 2);
         assert_eq!(config.memory_mb, 512);
-        assert_eq!(
-            config.firecracker_bin,
-            PathBuf::from("/usr/local/bin/firecracker")
-        );
+        assert_eq!(config.firecracker_bin, PathBuf::from("firecracker"));
+    }
+
+    #[test]
+    fn test_firecracker_bin_available_checks_configured_path() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let bin = tempdir.path().join("firecracker");
+        std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
+
+        assert!(firecracker_bin_available(Some(&bin)));
+        assert!(!firecracker_bin_available(Some(
+            &tempdir.path().join("missing-firecracker")
+        )));
+    }
+
+    #[test]
+    fn test_resolve_firecracker_bin_prefers_configured_path() {
+        let configured = PathBuf::from("/custom/firecracker");
+        assert_eq!(resolve_firecracker_bin(Some(&configured)), configured);
     }
 
     #[test]

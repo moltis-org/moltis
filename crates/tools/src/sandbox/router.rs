@@ -474,10 +474,9 @@ fn create_firecracker_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
     use super::firecracker::{FirecrackerSandbox, FirecrackerSandboxConfig};
 
     let fc_config = FirecrackerSandboxConfig {
-        firecracker_bin: config
-            .firecracker_bin
-            .clone()
-            .unwrap_or_else(|| std::path::PathBuf::from("/usr/local/bin/firecracker")),
+        firecracker_bin: super::firecracker::resolve_firecracker_bin(
+            config.firecracker_bin.as_deref(),
+        ),
         kernel_path: config
             .firecracker_kernel
             .clone()
