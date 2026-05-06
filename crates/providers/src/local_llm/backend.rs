@@ -68,6 +68,11 @@ pub trait LocalBackend: Send + Sync {
     /// Get the context window size.
     fn context_window(&self) -> u32;
 
+    /// Approximate model size in bytes (for display and lifecycle events).
+    fn model_size_bytes(&self) -> u64 {
+        0
+    }
+
     /// Whether this backend supports grammar-constrained tool calling.
     fn supports_tools(&self) -> bool {
         false
@@ -453,10 +458,10 @@ pub mod gguf {
             let mut sampler = LlamaSampler::chain_simple(samplers);
 
             let mut output_tokens = Vec::new();
-            let mut pos = tokens.len() as i32;
+            let base_pos = tokens.len() as i32;
             let eos_token = model.token_eos();
 
-            for _ in 0..max_tokens {
+            for (i, _) in (0..max_tokens).enumerate() {
                 let token = sampler.sample(&ctx, batch.n_tokens() - 1);
 
                 if token == eos_token {
@@ -469,12 +474,10 @@ pub mod gguf {
 
                 batch.clear();
                 batch
-                    .add(token, pos, &[0], true)
+                    .add(token, base_pos + i as i32, &[0], true)
                     .map_err(|e| anyhow::anyhow!("batch add token failed: {e}"))?;
                 ctx.decode(&mut batch)
                     .map_err(|e| anyhow::anyhow!("token decode failed: {e}"))?;
-
-                pos += 1;
             }
 
             let output_text = detokenize(&model, &output_tokens)?;
@@ -508,6 +511,10 @@ pub mod gguf {
 
         fn context_window(&self) -> u32 {
             self.context_size
+        }
+
+        fn model_size_bytes(&self) -> u64 {
+            self.model.model_size_bytes
         }
 
         fn supports_tools(&self) -> bool {
@@ -563,6 +570,7 @@ pub mod gguf {
                     id: tc.id,
                     name: tc.name,
                     arguments: tc.arguments,
+                    metadata: None,
                 })
                 .collect();
 
@@ -682,11 +690,11 @@ pub mod gguf {
             ]);
 
             let mut output_tokens = 0u32;
-            let mut pos = tokens.len() as i32;
+            let base_pos = tokens.len() as i32;
             let eos_token = model.token_eos();
             let mut decoder = encoding_rs::UTF_8.new_decoder();
 
-            for _ in 0..max_tokens {
+            for (i, _) in (0..max_tokens).enumerate() {
                 let token = sampler.sample(&ctx, batch.n_tokens() - 1);
 
                 if token == eos_token {
@@ -706,12 +714,10 @@ pub mod gguf {
 
                 batch.clear();
                 batch
-                    .add(token, pos, &[0], true)
+                    .add(token, base_pos + i as i32, &[0], true)
                     .map_err(|e| anyhow::anyhow!("batch add token failed: {e}"))?;
                 ctx.decode(&mut batch)
                     .map_err(|e| anyhow::anyhow!("token decode failed: {e}"))?;
-
-                pos += 1;
             }
 
             Ok((input_tokens, output_tokens))
@@ -905,7 +911,7 @@ print(json.dumps({{"text": response, "input_tokens": input_tokens, "output_token
     }
 
     /// Strip common chat template stop tokens from model output.
-    fn strip_chat_template_tokens(text: &str) -> String {
+    pub(crate) fn strip_chat_template_tokens(text: &str) -> String {
         // Common stop tokens from various chat templates
         const STOP_TOKENS: &[&str] = &[
             "<|im_end|>",    // ChatML (Qwen, Yi, etc.)
@@ -1076,6 +1082,8 @@ import mlx_lm
 from mlx_lm.sample_utils import make_sampler
 import sys
 
+STOP_TOKENS = frozenset(["<|im_end|>", "<|eot_id|>", "</s>", "<|end|>", "<|endoftext|>"])
+
 model, tokenizer = mlx_lm.load("{model_path}")
 prompt = {prompt_json}
 sampler = make_sampler(temp={temperature})
@@ -1090,6 +1098,8 @@ for token in mlx_lm.stream_generate(
     max_tokens={max_tokens},
     sampler=sampler,
 ):
+    if str(token) in STOP_TOKENS:
+        break
     output_tokens += 1
     print(token, end="", flush=True)
 
@@ -1126,8 +1136,9 @@ print(f"\n__TOKENS__:{{input_tokens}}:{{output_tokens}}", flush=True)
                     output_tokens = parts[2].parse().unwrap_or(0);
                 }
             } else {
-                // Send as delta
-                if tx.blocking_send(StreamEvent::Delta(line)).is_err() {
+                // Strip any chat template stop tokens that slipped through
+                let cleaned = strip_chat_template_tokens(&line);
+                if !cleaned.is_empty() && tx.blocking_send(StreamEvent::Delta(cleaned)).is_err() {
                     break;
                 }
             }
@@ -1326,5 +1337,70 @@ mod tests {
         assert_ne!(python, homebrew);
         assert_eq!(python, MlxInstallation::PythonPackage);
         assert_eq!(homebrew, MlxInstallation::HomebrewCli);
+    }
+
+    // ── strip_chat_template_tokens tests ──────────────────────────────────
+
+    #[test]
+    fn test_strip_im_end_at_end() {
+        let input = "Hello! How can I help you today?<|im_end|>";
+        let result = mlx::strip_chat_template_tokens(input);
+        assert_eq!(result, "Hello! How can I help you today?");
+    }
+
+    #[test]
+    fn test_strip_eot_id_at_end() {
+        let result = mlx::strip_chat_template_tokens("Sure, here you go.<|eot_id|>");
+        assert_eq!(result, "Sure, here you go.");
+    }
+
+    #[test]
+    fn test_strip_eos_token_at_end() {
+        let result = mlx::strip_chat_template_tokens("Done.</s>");
+        assert_eq!(result, "Done.");
+    }
+
+    #[test]
+    fn test_strip_phi_end_token() {
+        let result = mlx::strip_chat_template_tokens("Answer<|end|>");
+        assert_eq!(result, "Answer");
+    }
+
+    #[test]
+    fn test_strip_endoftext_token() {
+        let result = mlx::strip_chat_template_tokens("Response<|endoftext|>");
+        assert_eq!(result, "Response");
+    }
+
+    #[test]
+    fn test_strip_mid_response_stop_token() {
+        let input = "Hello<|im_end|>\nassistant";
+        let result = mlx::strip_chat_template_tokens(input);
+        assert_eq!(result, "Hello");
+    }
+
+    #[test]
+    fn test_no_stop_tokens_unchanged() {
+        let input = "Just a normal response with no special tokens.";
+        let result = mlx::strip_chat_template_tokens(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_strip_empty_string() {
+        let result = mlx::strip_chat_template_tokens("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_strip_only_stop_token() {
+        let result = mlx::strip_chat_template_tokens("<|im_end|>");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_strip_trailing_whitespace_after_token_removal() {
+        let result = mlx::strip_chat_template_tokens("Hello   <|im_end|>");
+        assert_eq!(result, "Hello");
     }
 }

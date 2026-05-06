@@ -119,10 +119,27 @@ hardening flags by default:
 | `--tmpfs /tmp:rw,nosuid,size=256m` | Writable tmpfs for temp files (noexec on real root) |
 | `--tmpfs /run:rw,nosuid,size=64m` | Writable tmpfs for runtime files |
 | `--read-only` | Read-only root filesystem (prebuilt images only) |
+| `--hostname sandbox` | Prevents host hostname leakage |
+| `--tmpfs /sys/firmware:ro,nosuid` | Masks BIOS/UEFI firmware data (Docker only) |
+| `--tmpfs /sys/class/dmi:ro,nosuid` | Masks system serial numbers and identifiers (Docker only) |
+| `--tmpfs /sys/devices/virtual/dmi:ro,nosuid` | Masks DMI attributes (Docker only) |
+| `--tmpfs /sys/class/block:ro,nosuid` | Masks block device info (Docker only) |
 
 The `--read-only` flag is applied only to prebuilt sandbox images (where
 packages are already baked in). Non-prebuilt images need a writable root
 filesystem for `apt-get` provisioning on first start.
+
+The `/sys` tmpfs overlays prevent host hardware metadata (serial numbers, disk
+models, LUKS UUIDs) from being visible inside the container. Note that
+`tools.fs.deny_paths` only restricts Moltis file-access tools — these kernel
+filesystem masks prevent leakage via shell commands as well.
+
+> **Podman note:** The sysfs tmpfs overlays are applied on Docker only. Podman's
+> OCI runtime performs "tmpcopyup" when mounting tmpfs over sysfs paths, which
+> fails under `--cap-drop ALL` because some sysfs files are permission-denied
+> even for root. Podman masks `/sys/firmware` via its built-in OCI
+> `MaskedPaths`; `/sys/class/dmi`, `/sys/devices/virtual/dmi`, and
+> `/sys/class/block` remain readable inside the container on Podman.
 
 ## WASM Sandbox (Wasmtime + WASI)
 
@@ -298,6 +315,24 @@ home_persistence = "session"   # "off", "session", or "shared" (default)
   (defaults to `data_dir()/sandbox/home/shared`, or `shared_home_dir` if set)
 
 Moltis stores persisted homes under `data_dir()/sandbox/home/`.
+
+## Docker-in-Docker workspace mounts
+
+When Moltis runs inside a container and launches Docker-backed sandboxes via a
+mounted container socket, the sandbox bind mount source must be a host-visible
+path. Moltis auto-detects this by inspecting the parent container's mounts. If
+that lookup fails or you want to pin the value explicitly, set
+`host_data_dir`:
+
+```toml
+[tools.exec.sandbox]
+host_data_dir = "/srv/moltis/data"
+```
+
+This remaps sandbox workspace mounts and default sandbox persistence paths from
+the guest `data_dir()` to the host path you provide. It is mainly an override
+for Docker-in-Docker deployments where mount auto-detection is unavailable or
+ambiguous.
 
 ## Network policy
 

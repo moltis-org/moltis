@@ -27,6 +27,11 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
     /// Provider name associated with the model.
     fn model_provider(&self) -> Option<&str>;
 
+    /// Default agent id for this channel account.
+    fn agent_id(&self) -> Option<&str> {
+        None
+    }
+
     // ── Per-channel / per-user override methods ─────────────────────────────
 
     /// Model override for a specific channel/chat ID.
@@ -49,6 +54,16 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
         None
     }
 
+    /// Agent override for a specific channel/chat ID.
+    fn channel_agent_id(&self, _channel_id: &str) -> Option<&str> {
+        None
+    }
+
+    /// Agent override for a specific user.
+    fn user_agent_id(&self, _user_id: &str) -> Option<&str> {
+        None
+    }
+
     /// Resolve effective model: user > channel > account default.
     fn resolve_model(&self, channel_id: &str, user_id: &str) -> Option<&str> {
         self.user_model(user_id)
@@ -61,5 +76,12 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
         self.user_model_provider(user_id)
             .or_else(|| self.channel_model_provider(channel_id))
             .or_else(|| self.model_provider())
+    }
+
+    /// Resolve effective agent id: user > channel > account default.
+    fn resolve_agent_id(&self, channel_id: &str, user_id: &str) -> Option<&str> {
+        self.user_agent_id(user_id)
+            .or_else(|| self.channel_agent_id(channel_id))
+            .or_else(|| self.agent_id())
     }
 }

@@ -13,6 +13,7 @@ use {
         validate::{self, Severity},
     },
     secrecy::ExposeSecret,
+    tokio::process::Command,
 };
 
 // ── ANSI helpers ────────────────────────────────────────────────────────────
@@ -166,6 +167,9 @@ pub async fn handle_doctor() -> Result<()> {
     // 7. MCP server health
     sections.push(check_mcp_servers(&config));
 
+    // 8. Remote execution readiness
+    sections.push(check_remote_exec(&config, &data_dir).await);
+
     let (errors, warnings) = print_report(&sections);
 
     eprintln!("{BOLD}Summary:{RESET} {errors} error(s), {warnings} warning(s)");
@@ -218,14 +222,9 @@ fn check_config(config_dir: Option<&Path>) -> Section {
         }
     }
 
-    // Semantic warnings (security, etc.)
+    // Semantic warnings (security, deprecated fields, etc.)
     for d in &result.diagnostics {
-        if d.category == "security" || d.category == "unknown-provider" {
-            let status = match d.severity {
-                Severity::Error => Status::Fail,
-                Severity::Warning => Status::Warn,
-                Severity::Info => Status::Info,
-            };
+        if let Some(status) = config_validation_status(d) {
             let msg = if d.path.is_empty() {
                 d.message.clone()
             } else {
@@ -257,6 +256,21 @@ fn check_config(config_dir: Option<&Path>) -> Section {
     }
 
     section
+}
+
+fn config_validation_status(diagnostic: &moltis_config::Diagnostic) -> Option<Status> {
+    if diagnostic.category != "security"
+        && diagnostic.category != "unknown-provider"
+        && diagnostic.category != "deprecated-field"
+    {
+        return None;
+    }
+
+    Some(match diagnostic.severity {
+        Severity::Error => Status::Fail,
+        Severity::Warning => Status::Warn,
+        Severity::Info => Status::Info,
+    })
 }
 
 // ── 2. Security audit ───────────────────────────────────────────────────────
@@ -545,7 +559,7 @@ fn check_tls(config: &MoltisConfig) -> Section {
 
     // Auto-generated certs
     if config.tls.auto_generate {
-        match moltis_gateway::tls::cert_dir() {
+        match moltis_httpd::tls::cert_dir() {
             Ok(cert_dir) => {
                 let ca_path = cert_dir.join("ca.pem");
                 let server_cert = cert_dir.join("server.pem");
@@ -675,369 +689,311 @@ fn check_mcp_servers(config: &MoltisConfig) -> Section {
     section
 }
 
+struct RemoteExecInventory {
+    managed_key_count: i64,
+    encrypted_key_count: i64,
+    managed_target_count: i64,
+    pinned_target_count: i64,
+    default_target_label: Option<String>,
+    default_target_auth_mode: Option<String>,
+    default_target_is_pinned: bool,
+}
+
+async fn detect_ssh_version() -> Option<String> {
+    let output = Command::new("ssh").arg("-V").output().await.ok()?;
+    let text = if output.stdout.is_empty() {
+        String::from_utf8_lossy(&output.stderr).trim().to_string()
+    } else {
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    (!text.is_empty()).then_some(text)
+}
+
+async fn read_remote_exec_inventory(data_dir: &Path) -> Result<Option<RemoteExecInventory>> {
+    let db_path = data_dir.join("moltis.db");
+    if !db_path.exists() {
+        return Ok(None);
+    }
+
+    let db_url = format!("sqlite:{}?mode=ro", db_path.display());
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(&db_url)
+        .await?;
+
+    let ssh_keys_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'ssh_keys'",
+    )
+    .fetch_one(&pool)
+    .await?
+        > 0;
+    let ssh_targets_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = 'ssh_targets'",
+    )
+    .fetch_one(&pool)
+    .await?
+        > 0;
+
+    if !ssh_keys_exists && !ssh_targets_exists {
+        pool.close().await;
+        return Ok(Some(RemoteExecInventory {
+            managed_key_count: 0,
+            encrypted_key_count: 0,
+            managed_target_count: 0,
+            pinned_target_count: 0,
+            default_target_label: None,
+            default_target_auth_mode: None,
+            default_target_is_pinned: false,
+        }));
+    }
+
+    let ssh_targets_has_known_host = if ssh_targets_exists {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(1) FROM pragma_table_info('ssh_targets') WHERE name = 'known_host'",
+        )
+        .fetch_one(&pool)
+        .await?
+            > 0
+    } else {
+        false
+    };
+
+    let managed_key_count = if ssh_keys_exists {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(1) FROM ssh_keys")
+            .fetch_one(&pool)
+            .await?
+    } else {
+        0
+    };
+    let encrypted_key_count = if ssh_keys_exists {
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(SUM(encrypted), 0) FROM ssh_keys")
+            .fetch_one(&pool)
+            .await?
+    } else {
+        0
+    };
+
+    let (
+        managed_target_count,
+        pinned_target_count,
+        default_target_label,
+        default_target_auth_mode,
+        default_target_is_pinned,
+    ) = if ssh_targets_exists && ssh_targets_has_known_host {
+        let row = sqlx::query_as::<_, (i64, i64, Option<String>, Option<String>, i64)>(
+                "SELECT
+                    (SELECT COUNT(1) FROM ssh_targets),
+                    (SELECT COUNT(1) FROM ssh_targets WHERE known_host IS NOT NULL AND TRIM(known_host) <> ''),
+                    (SELECT label FROM ssh_targets WHERE is_default = 1 ORDER BY updated_at DESC, id DESC LIMIT 1),
+                    (SELECT auth_mode FROM ssh_targets WHERE is_default = 1 ORDER BY updated_at DESC, id DESC LIMIT 1),
+                    COALESCE((SELECT CASE WHEN known_host IS NOT NULL AND TRIM(known_host) <> '' THEN 1 ELSE 0 END FROM ssh_targets WHERE is_default = 1 ORDER BY updated_at DESC, id DESC LIMIT 1), 0)",
+            )
+            .fetch_one(&pool)
+            .await?;
+        (row.0, row.1, row.2, row.3, row.4 != 0)
+    } else if ssh_targets_exists {
+        let row = sqlx::query_as::<_, (i64, Option<String>, Option<String>)>(
+                "SELECT
+                    (SELECT COUNT(1) FROM ssh_targets),
+                    (SELECT label FROM ssh_targets WHERE is_default = 1 ORDER BY updated_at DESC, id DESC LIMIT 1),
+                    (SELECT auth_mode FROM ssh_targets WHERE is_default = 1 ORDER BY updated_at DESC, id DESC LIMIT 1)",
+            )
+            .fetch_one(&pool)
+            .await?;
+        (row.0, 0, row.1, row.2, false)
+    } else {
+        (0, 0, None, None, false)
+    };
+
+    pool.close().await;
+
+    Ok(Some(RemoteExecInventory {
+        managed_key_count,
+        encrypted_key_count,
+        managed_target_count,
+        pinned_target_count,
+        default_target_label,
+        default_target_auth_mode,
+        default_target_is_pinned,
+    }))
+}
+
+async fn check_remote_exec(config: &MoltisConfig, data_dir: &Path) -> Section {
+    let mut section = Section::new("Remote Execution");
+    let exec_host = config.tools.exec.host.trim();
+    let ssh_binary_path = which::which("ssh").ok();
+    let ssh_version = if ssh_binary_path.is_some() {
+        detect_ssh_version().await
+    } else {
+        None
+    };
+    let configured_node = config
+        .tools
+        .exec
+        .node
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let legacy_target = config
+        .tools
+        .exec
+        .ssh_target
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    section.push(Status::Ok, match exec_host {
+        "ssh" => "Backend mode: ssh",
+        "node" => "Backend mode: node",
+        _ => "Backend mode: local",
+    });
+
+    match ssh_binary_path {
+        Some(path) => {
+            if let Some(version) = ssh_version {
+                section.push(
+                    Status::Ok,
+                    format!("SSH client found at {} ({version})", path.display()),
+                );
+            } else {
+                section.push(
+                    Status::Ok,
+                    format!("SSH client found at {}", path.display()),
+                );
+            }
+        },
+        None => {
+            let status = if exec_host == "ssh" {
+                Status::Fail
+            } else {
+                Status::Warn
+            };
+            section.push(
+                status,
+                "SSH client not found in PATH, SSH targets will not work".to_string(),
+            );
+        },
+    }
+
+    let inventory = match read_remote_exec_inventory(data_dir).await {
+        Ok(inventory) => inventory,
+        Err(error) => {
+            section.push(
+                Status::Fail,
+                format!("Failed to read managed SSH inventory from moltis.db: {error}"),
+            );
+            return section;
+        },
+    };
+
+    if let Some(inventory) = inventory {
+        section.push(
+            Status::Info,
+            format!(
+                "Managed SSH inventory: {} key(s), {} target(s), {} pinned target(s), {} encrypted key(s)",
+                inventory.managed_key_count,
+                inventory.managed_target_count,
+                inventory.pinned_target_count,
+                inventory.encrypted_key_count
+            ),
+        );
+        if let Some(default_label) = inventory.default_target_label.as_deref() {
+            let auth_mode = inventory
+                .default_target_auth_mode
+                .as_deref()
+                .unwrap_or("unknown");
+            section.push(
+                Status::Info,
+                format!(
+                    "Default managed target: {default_label} ({auth_mode}, {})",
+                    if inventory.default_target_is_pinned {
+                        "host pinned"
+                    } else {
+                        "inherits known_hosts policy"
+                    }
+                ),
+            );
+        }
+
+        if exec_host == "ssh" && legacy_target.is_none() && inventory.default_target_label.is_none()
+        {
+            section.push(
+                Status::Fail,
+                "SSH backend is active, but there is no default managed target and no legacy ssh_target configured".to_string(),
+            );
+        } else if exec_host == "ssh"
+            && inventory.default_target_label.is_some()
+            && !inventory.default_target_is_pinned
+        {
+            section.push(
+                Status::Warn,
+                "Active managed SSH route is not host-pinned, paste a known_hosts line in Settings → SSH".to_string(),
+            );
+        }
+    } else {
+        section.push(
+            Status::Skip,
+            "moltis.db not found, managed SSH inventory unavailable",
+        );
+    }
+
+    if let Some(target) = legacy_target {
+        let status = if exec_host == "ssh" {
+            Status::Warn
+        } else {
+            Status::Info
+        };
+        section.push(
+            status,
+            format!(
+                "Legacy ssh_target is configured as '{target}', move it into Settings → SSH if you want named targets, host pinning, and managed keys"
+            ),
+        );
+    }
+
+    match exec_host {
+        "node" => {
+            if let Some(node) = configured_node {
+                section.push(
+                    Status::Info,
+                    format!("Default paired-node preference: {node}"),
+                );
+            } else {
+                section.push(
+                    Status::Warn,
+                    "Node backend is active, but tools.exec.node is not set. Session picks or runtime routing will decide.".to_string(),
+                );
+            }
+            section.push(
+                Status::Info,
+                "Live paired-node presence and active-route tests are available from the Nodes page when the gateway is running".to_string(),
+            );
+        },
+        "ssh" => {
+            if configured_node.is_some() {
+                section.push(
+                    Status::Info,
+                    "tools.exec.node is set but ignored while the SSH backend is active"
+                        .to_string(),
+                );
+            }
+        },
+        _ => {
+            if legacy_target.is_some() || configured_node.is_some() {
+                section.push(
+                    Status::Info,
+                    "Remote targets are configured, but local execution remains the default until you switch tools.exec.host or pick a route in chat".to_string(),
+                );
+            }
+        },
+    }
+
+    section
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
-mod tests {
-    use {super::*, moltis_config::MoltisConfig};
-
-    #[test]
-    fn status_labels() {
-        assert_eq!(Status::Ok.label(), "ok");
-        assert_eq!(Status::Warn.label(), "warn");
-        assert_eq!(Status::Fail.label(), "fail");
-        assert_eq!(Status::Skip.label(), "skip");
-        assert_eq!(Status::Info.label(), "info");
-    }
-
-    #[test]
-    fn section_push_counts() {
-        let mut section = Section::new("test");
-        section.push(Status::Ok, "good");
-        section.push(Status::Warn, "attention");
-        section.push(Status::Fail, "bad");
-        assert_eq!(section.items.len(), 3);
-        assert_eq!(section.items[0].status, Status::Ok);
-        assert_eq!(section.items[1].status, Status::Warn);
-        assert_eq!(section.items[2].status, Status::Fail);
-    }
-
-    #[test]
-    fn print_report_counts_errors_and_warnings() {
-        let mut section = Section::new("test");
-        section.push(Status::Ok, "fine");
-        section.push(Status::Warn, "caution");
-        section.push(Status::Warn, "caution2");
-        section.push(Status::Fail, "broken");
-        section.push(Status::Info, "note");
-
-        let (errors, warnings) = print_report(&[section]);
-        assert_eq!(errors, 1);
-        assert_eq!(warnings, 2);
-    }
-
-    #[test]
-    fn check_providers_empty_config() {
-        let config = MoltisConfig::default();
-        let section = check_providers(&config);
-        assert_eq!(section.items.len(), 1);
-        assert_eq!(section.items[0].status, Status::Info);
-        assert!(section.items[0].message.contains("No providers configured"));
-    }
-
-    #[test]
-    fn check_providers_with_config_key() {
-        let mut config = MoltisConfig::default();
-        let entry = moltis_config::schema::ProviderEntry {
-            api_key: Some(secrecy::Secret::new("sk-test-fake".to_string())),
-            ..Default::default()
-        };
-        config
-            .providers
-            .providers
-            .insert("anthropic".to_string(), entry);
-
-        let section = check_providers(&config);
-        let anthropic_item = section
-            .items
-            .iter()
-            .find(|i| i.message.contains("anthropic"));
-        assert!(anthropic_item.is_some());
-        assert_eq!(anthropic_item.unwrap().status, Status::Ok);
-    }
-
-    #[test]
-    fn check_providers_missing_key_warns() {
-        let mut config = MoltisConfig::default();
-        // Use a provider unlikely to have its env var set in CI
-        config.providers.providers.insert(
-            "minimax".to_string(),
-            moltis_config::schema::ProviderEntry::default(),
-        );
-
-        // Only assert warning if the env var is genuinely absent
-        if std::env::var("MINIMAX_API_KEY").is_err() {
-            let section = check_providers(&config);
-            let item = section.items.iter().find(|i| i.message.contains("minimax"));
-            assert!(item.is_some());
-            assert_eq!(item.unwrap().status, Status::Warn);
-        }
-    }
-
-    #[test]
-    fn check_providers_ollama_optional() {
-        let mut config = MoltisConfig::default();
-        config.providers.providers.insert(
-            "ollama".to_string(),
-            moltis_config::schema::ProviderEntry::default(),
-        );
-
-        // Ollama key is optional — if the env var happens to be set,
-        // it will report Ok; if not, it should be Info (not Warn).
-        let section = check_providers(&config);
-        let ollama_item = section.items.iter().find(|i| i.message.contains("ollama"));
-        assert!(ollama_item.is_some());
-        let status = ollama_item.unwrap().status;
-        assert!(
-            status == Status::Info || status == Status::Ok,
-            "ollama should be Info or Ok, got {status:?}",
-        );
-    }
-
-    #[test]
-    fn check_providers_disabled_skipped() {
-        let mut config = MoltisConfig::default();
-        let entry = moltis_config::schema::ProviderEntry {
-            enabled: false,
-            ..Default::default()
-        };
-        config
-            .providers
-            .providers
-            .insert("openai".to_string(), entry);
-
-        let section = check_providers(&config);
-        let openai_item = section.items.iter().find(|i| i.message.contains("openai"));
-        assert!(openai_item.is_some());
-        assert_eq!(openai_item.unwrap().status, Status::Skip);
-    }
-
-    #[test]
-    fn check_providers_oauth_skipped() {
-        let mut config = MoltisConfig::default();
-        config.providers.providers.insert(
-            "github-copilot".to_string(),
-            moltis_config::schema::ProviderEntry::default(),
-        );
-
-        let section = check_providers(&config);
-        let gh_item = section
-            .items
-            .iter()
-            .find(|i| i.message.contains("github-copilot"));
-        assert!(gh_item.is_some());
-        assert_eq!(gh_item.unwrap().status, Status::Skip);
-    }
-
-    #[test]
-    fn check_mcp_servers_empty() {
-        let config = MoltisConfig::default();
-        let section = check_mcp_servers(&config);
-        assert_eq!(section.items.len(), 1);
-        assert_eq!(section.items[0].status, Status::Info);
-    }
-
-    #[test]
-    fn check_mcp_servers_disabled_skipped() {
-        let mut config = MoltisConfig::default();
-        let entry = moltis_config::schema::McpServerEntry {
-            command: "node".to_string(),
-            args: vec![],
-            env: Default::default(),
-            enabled: false,
-            transport: String::new(),
-            url: None,
-            oauth: None,
-        };
-        config.mcp.servers.insert("test".to_string(), entry);
-
-        let section = check_mcp_servers(&config);
-        let test_item = section.items.iter().find(|i| i.message.contains("test"));
-        assert!(test_item.is_some());
-        assert_eq!(test_item.unwrap().status, Status::Skip);
-    }
-
-    #[test]
-    fn check_mcp_servers_missing_command_fails() {
-        let mut config = MoltisConfig::default();
-        let entry = moltis_config::schema::McpServerEntry {
-            command: String::new(),
-            args: vec![],
-            env: Default::default(),
-            enabled: true,
-            transport: String::new(),
-            url: None,
-            oauth: None,
-        };
-        config.mcp.servers.insert("broken".to_string(), entry);
-
-        let section = check_mcp_servers(&config);
-        let broken_item = section.items.iter().find(|i| i.message.contains("broken"));
-        assert!(broken_item.is_some());
-        assert_eq!(broken_item.unwrap().status, Status::Fail);
-    }
-
-    #[test]
-    fn check_mcp_servers_sse_with_url_ok() {
-        let mut config = MoltisConfig::default();
-        let entry = moltis_config::schema::McpServerEntry {
-            command: String::new(),
-            args: vec![],
-            env: Default::default(),
-            enabled: true,
-            transport: "sse".to_string(),
-            url: Some("http://localhost:3000/sse".to_string()),
-            oauth: None,
-        };
-        config.mcp.servers.insert("remote".to_string(), entry);
-
-        let section = check_mcp_servers(&config);
-        let remote_item = section.items.iter().find(|i| i.message.contains("remote"));
-        assert!(remote_item.is_some());
-        assert_eq!(remote_item.unwrap().status, Status::Ok);
-    }
-
-    #[test]
-    fn check_mcp_servers_sse_without_url_fails() {
-        let mut config = MoltisConfig::default();
-        let entry = moltis_config::schema::McpServerEntry {
-            command: String::new(),
-            args: vec![],
-            env: Default::default(),
-            enabled: true,
-            transport: "sse".to_string(),
-            url: None,
-            oauth: None,
-        };
-        config.mcp.servers.insert("broken-sse".to_string(), entry);
-
-        let section = check_mcp_servers(&config);
-        let item = section
-            .items
-            .iter()
-            .find(|i| i.message.contains("broken-sse"));
-        assert!(item.is_some());
-        assert_eq!(item.unwrap().status, Status::Fail);
-    }
-
-    #[test]
-    fn check_mcp_servers_nonexistent_command_fails() {
-        let mut config = MoltisConfig::default();
-        let entry = moltis_config::schema::McpServerEntry {
-            command: "definitely-not-a-real-command-xyz123".to_string(),
-            args: vec![],
-            env: Default::default(),
-            enabled: true,
-            transport: String::new(),
-            url: None,
-            oauth: None,
-        };
-        config.mcp.servers.insert("bad".to_string(), entry);
-
-        let section = check_mcp_servers(&config);
-        let item = section.items.iter().find(|i| i.message.contains("bad"));
-        assert!(item.is_some());
-        assert_eq!(item.unwrap().status, Status::Fail);
-    }
-
-    #[test]
-    fn check_directories_with_temp_dirs() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let config_dir = temp.path().join("config");
-        let data_dir = temp.path().join("data");
-        std::fs::create_dir_all(&config_dir).unwrap();
-        std::fs::create_dir_all(&data_dir).unwrap();
-
-        let section = check_directories(Some(&config_dir), &data_dir);
-
-        let ok_count = section
-            .items
-            .iter()
-            .filter(|i| i.status == Status::Ok)
-            .count();
-        // Config dir + data dir should be ok at minimum
-        assert!(
-            ok_count >= 2,
-            "expected at least 2 OK items, got {ok_count}"
-        );
-    }
-
-    #[test]
-    fn check_directories_missing_config_dir() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let missing = temp.path().join("nonexistent");
-        let data_dir = temp.path().join("data");
-        std::fs::create_dir_all(&data_dir).unwrap();
-
-        let section = check_directories(Some(&missing), &data_dir);
-
-        let fail_item = section
-            .items
-            .iter()
-            .find(|i| i.status == Status::Fail && i.message.contains("Config directory missing"));
-        assert!(fail_item.is_some());
-    }
-
-    #[tokio::test]
-    async fn check_database_missing_file() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let section = check_database(temp.path()).await;
-        assert_eq!(section.items.len(), 1);
-        assert_eq!(section.items[0].status, Status::Skip);
-    }
-
-    #[tokio::test]
-    async fn check_database_valid_db() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let db_path = temp.path().join("moltis.db");
-
-        // Create a minimal SQLite database
-        let db_url = format!("sqlite:{}?mode=rwc", db_path.display());
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(&db_url)
-            .await
-            .unwrap();
-        pool.close().await;
-
-        let section = check_database(temp.path()).await;
-        let ok_item = section.items.iter().find(|i| i.status == Status::Ok);
-        assert!(
-            ok_item.is_some(),
-            "expected OK for valid db, got: {:?}",
-            section
-                .items
-                .iter()
-                .map(|i| (&i.status, &i.message))
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn check_security_no_api_keys_in_config() {
-        let config = MoltisConfig::default();
-        let temp = tempfile::TempDir::new().unwrap();
-        let section = check_security(&config, Some(temp.path()), temp.path());
-
-        let ok_item = section
-            .items
-            .iter()
-            .find(|i| i.message.contains("No API keys in config file"));
-        assert!(ok_item.is_some());
-        assert_eq!(ok_item.unwrap().status, Status::Ok);
-    }
-
-    #[test]
-    fn check_security_api_keys_in_config_warns() {
-        let mut config = MoltisConfig::default();
-        let entry = moltis_config::schema::ProviderEntry {
-            api_key: Some(secrecy::Secret::new("sk-test".to_string())),
-            ..Default::default()
-        };
-        config
-            .providers
-            .providers
-            .insert("anthropic".to_string(), entry);
-
-        let temp = tempfile::TempDir::new().unwrap();
-        let section = check_security(&config, Some(temp.path()), temp.path());
-
-        let warn_item = section
-            .items
-            .iter()
-            .find(|i| i.message.contains("API keys found in config"));
-        assert!(warn_item.is_some());
-        assert_eq!(warn_item.unwrap().status, Status::Warn);
-    }
-}
+#[path = "doctor_commands_tests.rs"]
+mod tests;

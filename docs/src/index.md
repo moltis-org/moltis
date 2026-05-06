@@ -5,7 +5,7 @@ Running an AI assistant on your own machine or server is still new territory. Tr
 ```
 
 <div style="text-align: center; margin: 2em 0;">
-<strong style="font-size: 1.2em;">A personal AI gateway written in Rust.<br>One binary, no runtime, no npm.</strong>
+<strong style="font-size: 1.2em;">A secure persistent personal agent server written in Rust.<br>One binary, no runtime, no npm.</strong>
 </div>
 
 Moltis compiles your entire AI gateway — web UI, LLM providers, tools, and all assets — into a single self-contained executable. There's no Node.js to babysit, no `node_modules` to sync, no V8 garbage collector introducing latency spikes.
@@ -34,6 +34,10 @@ curl -fsSL https://www.moltis.org/install.sh | sh
 - **Multi-Channel** — Web UI, Telegram, Discord, API access with synchronized responses
 - **Built-in Throttling** — Per-IP endpoint limits with strict login protection
 - **Long-Term Memory** — Embeddings-powered knowledge base with hybrid search
+- **Cross-Session Recall** — Search earlier sessions for relevant snippets and prior decisions
+- **Automatic Checkpoints** — Restore built-in skill and memory mutations without touching git history
+- **Remote Exec Targets** — Route command execution locally, through a paired node, or over SSH
+- **Context Hardening** — Load `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, and rule directories with safety scanning
 - **Hook System** — Observe, modify, or block actions at any lifecycle point
 - **Compile-Time Safety** — Misconfigurations caught by `cargo check`, not runtime crashes
 

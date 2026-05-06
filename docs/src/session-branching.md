@@ -5,16 +5,29 @@ conversation at any point. The new session diverges without affecting the
 original — useful for exploring alternative approaches, running "what if"
 scenarios, or preserving a checkpoint before a risky prompt.
 
+## /fork Command
+
+The quickest way to fork — type in the chat input or on any channel:
+
+```
+/fork                    # fork with auto-generated label
+/fork experiment-a       # fork with a custom label
+```
+
+Available in the web UI, Telegram, Discord, Slack, Matrix, and all other
+channels. See [Slash Commands](commands.md) for the full list.
+
 ## Forking from the UI
 
-There are two ways to fork a session in the web UI:
+There are three ways to fork a session:
 
+- **`/fork` command** — type `/fork [label]` in the chat input.
 - **Chat header** — click the **Fork** button in the header bar (next to
   Delete). This is visible for every session except cron sessions.
 - **Sidebar** — hover over a session in the sidebar and click the fork icon
   that appears in the action buttons.
 
-Both create a new session that copies all messages from the current one and
+All three create a new session that copies all messages from the current one and
 immediately switch you to it.
 
 Forked sessions appear **indented** under their parent in the sidebar, with a
@@ -27,26 +40,29 @@ The agent can also fork programmatically using the `branch_session` tool:
 
 ```json
 {
-  "at_message": 5,
+  "fork_point": 5,
   "label": "explore-alternative"
 }
 ```
 
-- **`at_message`** — the message index to fork at (messages 0..N are copied).
-  If omitted, all messages are copied.
-- **`label`** — optional human-readable label for the new session.
+- **`label`** — label for the new session (required).
+- **`fork_point`** — the message index to fork at (0-based). Messages at
+  indices 0 through N-1 are copied; the message at index N becomes the
+  first new message in the forked session. If omitted, all messages are
+  copied.
 
-The tool returns the new session key.
+The tool returns `{ "key": "<session-key>", "forkPoint": N }`.
 
 ## RPC Method
 
 The `sessions.fork` RPC method is the underlying mechanism:
 
 ```json
-{ "key": "main", "at_message": 5, "label": "my-fork" }
+{ "key": "main", "forkPoint": 5, "label": "my-fork" }
 ```
 
-On success the response payload contains `{ "sessionKey": "session:<uuid>" }`.
+On success the response payload contains `{ "sessionKey": "session:<uuid>",
+"forkPoint": N, "label": "..." }`.
 
 ## What Gets Inherited
 
@@ -57,7 +73,9 @@ When forking, the new session inherits:
 | Messages (up to fork point) | Worktree branch |
 | Model selection | Sandbox settings |
 | Project assignment | Channel binding |
+| Agent ID | |
 | MCP disabled flag | |
+| Node assignment | |
 
 ## Parent-Child Relationships
 
@@ -80,6 +98,20 @@ their visual nesting in the sidebar.
 When you delete a forked session, the UI navigates back to its parent session.
 If the deleted session had no parent (or the parent no longer exists), it falls
 back to the next sibling or `main`.
+
+## Archive in the UI
+
+The web UI also lets you archive sessions when you want to keep them without
+leaving them in the main sidebar list.
+
+- Open **More controls** for a session and click **Archive**.
+- Archived sessions are hidden from the default sidebar list.
+- Enable **Show archived sessions** in the sidebar to reveal and restore them.
+
+Archive is available for any non-`main` session, including cron and
+channel-bound chats, except when the session is the current active session for
+its bound channel chat. That prevents hiding the live Telegram, Discord, or
+similar chat out from under the channel router.
 
 ```admonish info title="Independence"
 A forked session is fully independent after creation. Changes to the parent

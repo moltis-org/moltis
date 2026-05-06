@@ -90,7 +90,7 @@ impl<C: Cipher> Vault<C> {
 
         // Generate random DEK.
         let mut dek = Zeroizing::new([0u8; 32]);
-        rand::RngCore::fill_bytes(&mut rand::rng(), dek.as_mut());
+        rand::Rng::fill_bytes(&mut rand::rng(), dek.as_mut());
 
         // Derive KEK from password.
         let salt_b64 = kdf::generate_salt();

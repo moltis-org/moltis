@@ -10,10 +10,11 @@ version.workspace      = true
 crate-type = ["staticlib"]
 
 [features]
-default = ["metrics", "qmd", "tracing"]
-metrics = ["dep:metrics"]
-qmd     = ["moltis-gateway/qmd"]
-tracing = ["dep:tracing"]
+default         = ["metrics", "qmd", "tracing", "trusted-network"]
+metrics         = ["dep:metrics"]
+qmd             = ["moltis-gateway/qmd"]
+tracing         = ["dep:tracing"]
+trusted-network = ["moltis-httpd/trusted-network"]
 
 [dependencies]
 anyhow                = { workspace = true }
@@ -22,6 +23,7 @@ metrics               = { optional = true, workspace = true }
 moltis-agents         = { workspace = true }
 moltis-config         = { workspace = true }
 moltis-gateway        = { default-features = true, features = ["file-watcher", "metrics", "voice", "web-ui"], workspace = true }
+moltis-httpd          = { workspace = true }
 moltis-network-filter = { features = ["proxy", "service"], workspace = true }
 moltis-projects       = { workspace = true }
 moltis-provider-setup = { workspace = true }

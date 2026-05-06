@@ -22,6 +22,7 @@ Configure providers through the web UI or directly in configuration files.
 | **Moonshot (Kimi)** | `moonshot` | `MOONSHOT_API_KEY` | Streaming, tools, model discovery |
 | **Venice** | `venice` | `VENICE_API_KEY` | Streaming, tools, model discovery |
 | **Z.AI (Zhipu)** | `zai` | `Z_API_KEY` | Streaming, tools, model discovery |
+| **Z.AI Coding Plan** | `zai-code` | `Z_CODE_API_KEY` | Streaming, tools, model discovery (Coding plan billing endpoint) |
 
 ### OAuth Providers
 

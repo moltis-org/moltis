@@ -17,7 +17,7 @@ body:
     attributes:
       label: Preflight Checklist
       options:
-        - label: I have searched [existing issues](https://github.com/moltisorg/moltis/issues?q=is%3Aissue+label%3Amodel-behavior) for similar reports
+        - label: I have searched [existing issues](https://github.com/moltis-org/moltis/issues?q=is%3Aissue+label%3Amodel-behavior) for similar reports
           required: true
         - label: This report does NOT contain sensitive information (API keys, passwords, personal data)
           required: true

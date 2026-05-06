@@ -1,0 +1,496 @@
+use std::{net::SocketAddr, sync::Arc};
+
+use axum::{
+    extract::{ConnectInfo, FromRef, FromRequestParts},
+    http::{HeaderMap, StatusCode, request::Parts},
+};
+
+#[cfg(any(feature = "web-ui", feature = "vault"))]
+use axum::{
+    extract::State,
+    middleware::Next,
+    response::{IntoResponse, Json, Redirect},
+};
+#[cfg(feature = "web-ui")]
+use tracing::{debug, warn};
+
+use {
+    moltis_auth::locality::is_local_connection,
+    moltis_gateway::{
+        auth::{AuthIdentity, AuthMethod, CredentialStore},
+        state::GatewayState,
+    },
+};
+
+/// Session cookie name.
+pub const SESSION_COOKIE: &str = "moltis_session";
+#[cfg(feature = "web-ui")]
+const AUTH_SETUP_REQUIRED: &str = "AUTH_SETUP_REQUIRED";
+#[cfg(feature = "web-ui")]
+const AUTH_NOT_AUTHENTICATED: &str = "AUTH_NOT_AUTHENTICATED";
+
+// ── AuthResult — single source of truth for auth decisions ──────────────────
+
+/// Outcome of an auth check against a credential store.
+#[derive(Debug, Clone)]
+pub enum AuthResult {
+    /// Request is authorized.
+    Allowed(AuthIdentity),
+    /// No credentials configured yet; only local connections may pass.
+    SetupRequired,
+    /// Credentials exist but request is not authenticated.
+    Unauthorized,
+}
+
+/// Single source of truth for auth decisions.
+///
+/// Every code path that needs to decide "is this request authenticated?" must
+/// call this function instead of reimplementing the logic. This prevents the
+/// split-brain bugs that arise when `is_setup_complete()` and `has_password()`
+/// diverge (e.g. passkey-only setups).
+pub async fn check_auth(
+    store: &CredentialStore,
+    headers: &HeaderMap,
+    is_local: bool,
+) -> AuthResult {
+    if store.is_auth_disabled() {
+        return if is_local {
+            AuthResult::Allowed(AuthIdentity {
+                method: AuthMethod::Loopback,
+                scopes: Vec::new(),
+            })
+        } else {
+            AuthResult::SetupRequired
+        };
+    }
+
+    if !store.is_setup_complete() {
+        return if is_local {
+            AuthResult::Allowed(AuthIdentity {
+                method: AuthMethod::Loopback,
+                scopes: Vec::new(),
+            })
+        } else {
+            AuthResult::SetupRequired
+        };
+    }
+
+    // Check session cookie.
+    if let Some(token) = cookie_header(headers).and_then(|h| parse_cookie(h, SESSION_COOKIE))
+        && store.validate_session(token).await.unwrap_or(false)
+    {
+        return AuthResult::Allowed(AuthIdentity {
+            method: AuthMethod::Password,
+            scopes: Vec::new(),
+        });
+    }
+
+    // Check Bearer API key.
+    if let Some(key) = bearer_token(headers)
+        && let Some(verification) = store.verify_api_key(key).await.ok().flatten()
+    {
+        return AuthResult::Allowed(AuthIdentity {
+            method: AuthMethod::ApiKey,
+            scopes: verification.scopes,
+        });
+    }
+
+    AuthResult::Unauthorized
+}
+
+// ── auth_gate — covers the entire router ────────────────────────────────────
+
+/// Middleware that applies auth to **all** routes.
+///
+/// Public paths (assets, auth endpoints, health, etc.) are allowed through
+/// without authentication. Everything else goes through [`check_auth()`].
+#[cfg(feature = "web-ui")]
+pub async fn auth_gate(
+    State(state): State<super::server::AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    mut request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> axum::response::Response {
+    let path = request.uri().path();
+
+    // Trace every SPA page request to diagnose CI hangs.
+    if !path.starts_with("/api/")
+        && !path.starts_with("/assets/")
+        && path != "/health"
+        && path != "/ws"
+    {
+        tracing::warn!(path, "auth_gate: SPA request entering middleware");
+    }
+
+    // Public paths — no auth needed.
+    if is_public_path(path) {
+        return next.run(request).await;
+    }
+
+    let Some(ref store) = state.gateway.credential_store else {
+        // No credential store configured — pass through.
+        return next.run(request).await;
+    };
+
+    let is_local = is_local_connection(request.headers(), addr, state.gateway.behind_proxy);
+
+    match check_auth(store, request.headers(), is_local).await {
+        AuthResult::Allowed(identity) => {
+            request.extensions_mut().insert(identity);
+            next.run(request).await
+        },
+        AuthResult::SetupRequired => {
+            if path.starts_with("/api/") || path.starts_with("/ws/") {
+                if path.starts_with("/ws/") {
+                    warn!(
+                        path,
+                        remote = %addr,
+                        is_local,
+                        "auth reject: setup required for websocket connection"
+                    );
+                }
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({
+                        "code": AUTH_SETUP_REQUIRED,
+                        "error": "setup required"
+                    })),
+                )
+                    .into_response()
+            } else if is_local || path == "/onboarding" || path == "/onboarding/" {
+                // Local connections and /onboarding pass through during
+                // setup.  Local: the SPA handles onboarding redirects
+                // itself.  Remote /onboarding: the page's own auth step
+                // (step 0) requires a setup code, so it is safe to
+                // render without full auth (#310, #350).
+                request.extensions_mut().insert(AuthIdentity {
+                    method: AuthMethod::Loopback,
+                    scopes: Vec::new(),
+                });
+                next.run(request).await
+            } else {
+                // Remote connections to other pages when auth is not
+                // configured yet: send them to /onboarding so they can
+                // complete first-time setup via the setup-code flow
+                // (#350, #646).  The original redirect loop between `/`
+                // and `/onboarding` was fixed separately at the SPA
+                // template layer via `should_redirect_from_onboarding`,
+                // which keeps remote visitors on /onboarding while auth
+                // setup is pending.  The setup code (printed to stdout)
+                // still prevents an unauthorized remote visitor from
+                // claiming the instance.
+                Redirect::to("/onboarding").into_response()
+            }
+        },
+        AuthResult::Unauthorized => {
+            // During onboarding, local requests may lack a valid session
+            // cookie (e.g. STT test button uses HTTP fetch, not WS).
+            // Allow only the paths the wizard needs — not all of /api/*.
+            if is_local && is_onboarding_bypass_path(path) {
+                let onboarded = state
+                    .gateway
+                    .services
+                    .onboarding
+                    .wizard_status()
+                    .await
+                    .ok()
+                    .and_then(|v| v.get("onboarded").and_then(|v| v.as_bool()))
+                    .unwrap_or(true);
+                if !onboarded {
+                    debug!(path, remote = %addr, "auth bypass: local request during onboarding");
+                    request.extensions_mut().insert(AuthIdentity {
+                        method: AuthMethod::Loopback,
+                        scopes: Vec::new(),
+                    });
+                    return next.run(request).await;
+                }
+            }
+
+            if path.starts_with("/api/") || path.starts_with("/ws/") {
+                if path.starts_with("/ws/") {
+                    let has_bearer = bearer_token(request.headers()).is_some();
+                    let has_session_cookie = cookie_header(request.headers())
+                        .is_some_and(|h| parse_cookie(h, SESSION_COOKIE).is_some());
+                    warn!(
+                        path,
+                        remote = %addr,
+                        is_local,
+                        has_bearer,
+                        has_session_cookie,
+                        "auth reject: unauthorized websocket connection"
+                    );
+                }
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(serde_json::json!({
+                        "code": AUTH_NOT_AUTHENTICATED,
+                        "error": "not authenticated"
+                    })),
+                )
+                    .into_response()
+            } else {
+                Redirect::to("/login").into_response()
+            }
+        },
+    }
+}
+
+/// Paths that never require authentication.
+#[cfg(feature = "web-ui")]
+fn is_public_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/health"
+            | "/auth/callback"
+            | "/manifest.json"
+            | "/sw.js"
+            | "/login"
+            | "/setup-required"
+            | "/ws"
+    ) || path.starts_with("/api/auth/")
+        || path.starts_with("/api/public/")
+        || {
+            #[cfg(feature = "msteams")]
+            {
+                path.starts_with("/api/channels/msteams/")
+            }
+            #[cfg(not(feature = "msteams"))]
+            {
+                false
+            }
+        }
+        || path.starts_with("/api/webhooks/ingest/")
+        || path.starts_with("/assets/")
+        || path.starts_with("/share/")
+}
+
+/// Paths eligible for the onboarding auth bypass (local + not-yet-onboarded).
+///
+/// Kept narrow so that privileged endpoints like `/api/config` or
+/// `/api/restart` are never reachable without credentials.
+#[cfg(feature = "web-ui")]
+fn is_onboarding_bypass_path(path: &str) -> bool {
+    path.starts_with("/api/sessions/")  // STT upload / media
+        || path.starts_with("/api/bootstrap")
+        || path == "/api/gon"
+        || path.starts_with("/api/tailscale/")
+        || path.starts_with("/ws/") // WS RPCs (voice, provider config)
+}
+
+// ── Vault guard ─────────────────────────────────────────────────────────────
+
+/// Whether an API path should bypass the sealed-vault guard.
+///
+/// Session history/media and bootstrap payloads are not currently encrypted by
+/// the vault, so they remain accessible while sealed. This keeps the UI honest
+/// about what is actually protected today. If per-session encryption lands,
+/// narrow the `/api/sessions/*` exemption to only the remaining unencrypted
+/// sub-paths instead of blindly allowing the whole tree.
+#[cfg(feature = "vault")]
+fn is_vault_guard_exempt_path(path: &str) -> bool {
+    path.starts_with("/api/auth/")
+        || path.starts_with("/api/public/")
+        || path == "/api/gon"
+        || path == "/api/bootstrap"
+        || path == "/api/sessions"
+        || path.starts_with("/api/sessions/")
+}
+
+/// Middleware that blocks vault-protected API requests when the vault is
+/// sealed.
+///
+/// Returns 423 Locked for encrypted API surfaces when the vault is in
+/// `Sealed` state. `Uninitialized` is not blocked because there's nothing to
+/// protect yet.
+#[cfg(feature = "vault")]
+pub async fn vault_guard(
+    State(state): State<super::server::AppState>,
+    request: axum::http::Request<axum::body::Body>,
+    next: Next,
+) -> axum::response::Response {
+    let Some(ref vault) = state.gateway.vault else {
+        return next.run(request).await;
+    };
+    let path = request.uri().path();
+    // Allow non-API routes and unencrypted API surfaces through.
+    if !path.starts_with("/api/") || is_vault_guard_exempt_path(path) {
+        return next.run(request).await;
+    }
+    // Only block when Sealed (not Uninitialized).
+    if matches!(vault.status().await, Ok(moltis_vault::VaultStatus::Sealed)) {
+        return (
+            StatusCode::LOCKED,
+            Json(serde_json::json!({"error": "vault is sealed", "status": "sealed"})),
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
+
+// ── AuthSession extractor ───────────────────────────────────────────────────
+
+/// Axum extractor that validates the session cookie and produces an
+/// `AuthIdentity`. Returns 401 if the session is missing or invalid.
+///
+/// When `auth_gate` has already run, it reads the [`AuthIdentity`] the
+/// middleware inserted into extensions. For auth routes (on the public
+/// allowlist, where `auth_gate` skips auth), it falls back to validating
+/// the session cookie directly.
+pub struct AuthSession(pub AuthIdentity);
+
+impl<S> FromRequestParts<S> for AuthSession
+where
+    S: Send + Sync,
+    Arc<CredentialStore>: FromRef<S>,
+    Arc<GatewayState>: FromRef<S>,
+{
+    type Rejection = (StatusCode, &'static str);
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        // If auth_gate already ran and set identity, use it.
+        if let Some(id) = parts.extensions.get::<AuthIdentity>() {
+            return Ok(AuthSession(id.clone()));
+        }
+
+        // Fallback for auth routes (allowlisted, middleware skipped):
+        // validate session cookie directly, or check the local-bypass logic.
+        let store = Arc::<CredentialStore>::from_ref(state);
+        let gw = Arc::<GatewayState>::from_ref(state);
+
+        let is_local = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .is_some_and(|ci| is_local_connection(&parts.headers, ci.0, gw.behind_proxy));
+
+        match check_auth(&store, &parts.headers, is_local).await {
+            AuthResult::Allowed(identity) => Ok(AuthSession(identity)),
+            _ => Err((StatusCode::UNAUTHORIZED, "not authenticated")),
+        }
+    }
+}
+
+// ── RequireAdmin extractor ───────────────────────────────────────────────────
+
+/// Axum extractor that requires the `operator.admin` scope.
+///
+/// Use on routes that modify server configuration, restart the process,
+/// or manage credentials. Returns 403 if the authenticated identity lacks
+/// the required scope.
+pub struct RequireAdmin(pub AuthIdentity);
+
+impl<S> FromRequestParts<S> for RequireAdmin
+where
+    S: Send + Sync,
+    Arc<CredentialStore>: FromRef<S>,
+    Arc<GatewayState>: FromRef<S>,
+{
+    type Rejection = (StatusCode, &'static str);
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let AuthSession(identity) = AuthSession::from_request_parts(parts, state).await?;
+        if identity.has_scope("operator.admin") {
+            Ok(RequireAdmin(identity))
+        } else {
+            Err((
+                StatusCode::FORBIDDEN,
+                "insufficient scope: operator.admin required",
+            ))
+        }
+    }
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Extract the Cookie header value.
+fn cookie_header(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+}
+
+/// Extract a Bearer token from the Authorization header.
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+}
+
+/// Parse a specific cookie value from a Cookie header string.
+pub fn parse_cookie<'a>(header: &'a str, name: &str) -> Option<&'a str> {
+    for part in header.split(';') {
+        let part = part.trim();
+        if let Some(value) = part.strip_prefix(name)
+            && let Some(value) = value.strip_prefix('=')
+        {
+            return Some(value);
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, sqlx::SqlitePool};
+
+    #[test]
+    fn test_parse_cookie() {
+        assert_eq!(
+            parse_cookie("moltis_session=abc123; other=def", "moltis_session"),
+            Some("abc123")
+        );
+        assert_eq!(
+            parse_cookie("other=def; moltis_session=xyz", "moltis_session"),
+            Some("xyz")
+        );
+        assert_eq!(parse_cookie("other=def", "moltis_session"), None);
+        assert_eq!(parse_cookie("", "moltis_session"), None);
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn terminal_ws_path_is_not_public() {
+        assert!(!is_public_path("/api/terminal/ws"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn chat_ws_path_is_not_public() {
+        assert!(!is_public_path("/ws/chat"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn graphql_paths_are_not_public() {
+        assert!(!is_public_path("/graphql"));
+    }
+
+    #[cfg(feature = "web-ui")]
+    #[test]
+    fn public_identity_path_is_public() {
+        assert!(is_public_path("/api/public/identity"));
+    }
+
+    #[tokio::test]
+    async fn auth_disabled_still_requires_setup_for_remote_requests()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let pool = SqlitePool::connect("sqlite::memory:").await?;
+        let auth_config = moltis_config::AuthConfig { disabled: true };
+        let store = CredentialStore::with_config(pool, &auth_config).await?;
+        let headers = HeaderMap::new();
+
+        assert!(matches!(
+            check_auth(&store, &headers, true).await,
+            AuthResult::Allowed(AuthIdentity {
+                method: AuthMethod::Loopback,
+                ..
+            })
+        ));
+        assert!(matches!(
+            check_auth(&store, &headers, false).await,
+            AuthResult::SetupRequired
+        ));
+
+        Ok(())
+    }
+}

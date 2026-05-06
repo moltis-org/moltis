@@ -6,6 +6,7 @@ version.workspace = true
 [dependencies]
 axum           = { workspace = true }
 base64         = { workspace = true }
+moltis-common  = { workspace = true }
 moltis-config  = { workspace = true }
 moltis-metrics = { optional = true, workspace = true }
 rand           = { workspace = true }

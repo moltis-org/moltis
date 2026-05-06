@@ -275,3 +275,21 @@ impl PushService {
         Ok(())
     }
 }
+
+/// Send a push notification to all subscribers.
+pub async fn send_push_notification(
+    push_service: &Arc<PushService>,
+    title: &str,
+    body: &str,
+    url: Option<&str>,
+    session_key: Option<&str>,
+) -> Result<usize> {
+    let payload = PushPayload {
+        title: title.to_string(),
+        body: body.to_string(),
+        url: url.map(String::from),
+        session_key: session_key.map(String::from),
+    };
+
+    push_service.send_to_all(&payload).await
+}

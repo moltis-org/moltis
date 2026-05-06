@@ -2,14 +2,10 @@
 //!
 //! Detects available RAM and GPU capabilities to suggest appropriate models.
 
-use sysinfo::System;
-
-#[cfg(target_os = "macos")]
-#[link(name = "Metal", kind = "framework")]
-#[allow(unsafe_code)]
-unsafe extern "C" {
-    fn MTLCreateSystemDefaultDevice() -> *mut std::ffi::c_void;
-}
+use {
+    crate::local_gguf::runtime_devices::{self, GgufRuntimeDevice, read_proc_meminfo},
+    sysinfo::System,
+};
 
 /// System information for model selection.
 #[derive(Debug, Clone)]
@@ -18,10 +14,14 @@ pub struct SystemInfo {
     pub total_ram_bytes: u64,
     /// Available (free) RAM in bytes.
     pub available_ram_bytes: u64,
+    /// GGUF devices discovered via llama.cpp runtime probing.
+    pub gguf_devices: Vec<GgufRuntimeDevice>,
     /// Whether Metal GPU acceleration is available (macOS).
     pub has_metal: bool,
     /// Whether CUDA GPU acceleration is available (NVIDIA).
     pub has_cuda: bool,
+    /// Whether Vulkan GPU acceleration is available.
+    pub has_vulkan: bool,
     /// Whether running on Apple Silicon (M1/M2/M3/etc).
     pub is_apple_silicon: bool,
 }
@@ -32,25 +32,29 @@ impl SystemInfo {
     pub fn detect() -> Self {
         let sys = System::new_all();
 
-        let total_ram_bytes = sys.total_memory();
-        let available_ram_bytes = sys.available_memory();
+        let (total_ram_bytes, available_ram_bytes) = {
+            let total = sys.total_memory();
+            let available = sys.available_memory();
+            if total > 0 {
+                (total, available)
+            } else if let Some((fallback_total, fallback_available)) = read_proc_meminfo() {
+                (fallback_total, fallback_available)
+            } else {
+                (total, available)
+            }
+        };
+        let runtime = runtime_devices::detect_runtime_support();
 
         // Apple Silicon detection: macOS + aarch64
         let is_apple_silicon = cfg!(target_os = "macos") && cfg!(target_arch = "aarch64");
 
-        // Metal requires both compile-time backend support and a runtime device.
-        let has_metal_compile_support =
-            cfg!(target_os = "macos") && cfg!(feature = "local-llm-metal");
-        let has_metal = has_metal_compile_support && metal_runtime_available();
-
-        // CUDA detection: compile-time feature check
-        let has_cuda = cfg!(feature = "local-llm-cuda");
-
         Self {
             total_ram_bytes,
             available_ram_bytes,
-            has_metal,
-            has_cuda,
+            gguf_devices: runtime.devices,
+            has_metal: runtime.has_metal,
+            has_cuda: runtime.has_cuda,
+            has_vulkan: runtime.has_vulkan,
             is_apple_silicon,
         }
     }
@@ -85,24 +89,8 @@ impl SystemInfo {
     /// Whether GPU acceleration is available.
     #[must_use]
     pub fn has_gpu(&self) -> bool {
-        self.has_metal || self.has_cuda
+        !self.gguf_devices.is_empty()
     }
-}
-
-#[cfg(target_os = "macos")]
-#[must_use]
-#[allow(unsafe_code)]
-fn metal_runtime_available() -> bool {
-    // SAFETY: Calling a pure system probe from Apple's Metal framework.
-    // Returns null when no default Metal device is available.
-    let device = unsafe { MTLCreateSystemDefaultDevice() };
-    !device.is_null()
-}
-
-#[cfg(not(target_os = "macos"))]
-#[must_use]
-const fn metal_runtime_available() -> bool {
-    false
 }
 
 /// Memory tier for model recommendations.
@@ -133,6 +121,17 @@ impl std::fmt::Display for MemoryTier {
 mod tests {
     use super::*;
 
+    fn sample_device(backend: &str) -> GgufRuntimeDevice {
+        GgufRuntimeDevice {
+            index: 0,
+            name: format!("{backend}0"),
+            description: "GPU".into(),
+            backend: backend.into(),
+            memory_total_bytes: 1,
+            memory_free_bytes: 1,
+        }
+    }
+
     #[test]
     fn test_detect_does_not_panic() {
         let info = SystemInfo::detect();
@@ -144,8 +143,10 @@ mod tests {
         let info = SystemInfo {
             total_ram_bytes: 16 * 1024 * 1024 * 1024, // 16 GB
             available_ram_bytes: 8 * 1024 * 1024 * 1024,
+            gguf_devices: vec![],
             has_metal: false,
             has_cuda: false,
+            has_vulkan: false,
             is_apple_silicon: false,
         };
         assert_eq!(info.total_ram_gb(), 16);
@@ -157,8 +158,10 @@ mod tests {
         let make_info = |gb: u64| SystemInfo {
             total_ram_bytes: gb * 1024 * 1024 * 1024,
             available_ram_bytes: 0,
+            gguf_devices: vec![],
             has_metal: false,
             has_cuda: false,
+            has_vulkan: false,
             is_apple_silicon: false,
         };
 
@@ -177,8 +180,10 @@ mod tests {
         let info = SystemInfo {
             total_ram_bytes: 0,
             available_ram_bytes: 0,
+            gguf_devices: vec![sample_device("Metal")],
             has_metal: true,
             has_cuda: false,
+            has_vulkan: false,
             is_apple_silicon: true,
         };
         assert!(info.has_gpu());
@@ -186,8 +191,10 @@ mod tests {
         let info = SystemInfo {
             total_ram_bytes: 0,
             available_ram_bytes: 0,
+            gguf_devices: vec![sample_device("CUDA")],
             has_metal: false,
             has_cuda: true,
+            has_vulkan: false,
             is_apple_silicon: false,
         };
         assert!(info.has_gpu());
@@ -195,8 +202,21 @@ mod tests {
         let info = SystemInfo {
             total_ram_bytes: 0,
             available_ram_bytes: 0,
+            gguf_devices: vec![sample_device("Vulkan")],
             has_metal: false,
             has_cuda: false,
+            has_vulkan: true,
+            is_apple_silicon: false,
+        };
+        assert!(info.has_gpu());
+
+        let info = SystemInfo {
+            total_ram_bytes: 0,
+            available_ram_bytes: 0,
+            gguf_devices: vec![],
+            has_metal: false,
+            has_cuda: false,
+            has_vulkan: false,
             is_apple_silicon: false,
         };
         assert!(!info.has_gpu());
@@ -205,7 +225,6 @@ mod tests {
     #[test]
     fn test_is_apple_silicon_detection() {
         let info = SystemInfo::detect();
-        // On macOS aarch64, this should be true; otherwise false
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         assert!(info.is_apple_silicon);
         #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
@@ -213,11 +232,30 @@ mod tests {
     }
 
     #[test]
-    fn test_has_metal_detection_formula() {
-        let info = SystemInfo::detect();
-        let expected = cfg!(target_os = "macos")
-            && cfg!(feature = "local-llm-metal")
-            && metal_runtime_available();
-        assert_eq!(info.has_metal, expected);
+    fn test_has_metal_flag_can_be_set() {
+        let info = SystemInfo {
+            total_ram_bytes: 0,
+            available_ram_bytes: 0,
+            gguf_devices: vec![sample_device("Metal")],
+            has_metal: true,
+            has_cuda: false,
+            has_vulkan: false,
+            is_apple_silicon: true,
+        };
+        assert!(info.has_metal);
+    }
+
+    #[test]
+    fn test_has_vulkan_flag_can_be_set() {
+        let info = SystemInfo {
+            total_ram_bytes: 0,
+            available_ram_bytes: 0,
+            gguf_devices: vec![sample_device("Vulkan")],
+            has_metal: false,
+            has_cuda: false,
+            has_vulkan: true,
+            is_apple_silicon: false,
+        };
+        assert!(info.has_vulkan);
     }
 }

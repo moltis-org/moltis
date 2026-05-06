@@ -339,8 +339,8 @@ final class AppSettings: ObservableObject {
     }
 
     func changeAuthenticationPassword(currentPassword: String?, newPassword: String) {
-        guard newPassword.count >= 8 else {
-            securityError = "New password must be at least 8 characters."
+        guard newPassword.count >= 12 else {
+            securityError = "New password must be at least 12 characters."
             securityMessage = nil
             return
         }

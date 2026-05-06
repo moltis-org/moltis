@@ -39,7 +39,7 @@ impl ChatTemplateHint {
 fn role_content(msg: &ChatMessage) -> (&str, &str) {
     match msg {
         ChatMessage::System { content } => ("system", content.as_str()),
-        ChatMessage::User { content } => match content {
+        ChatMessage::User { content, .. } => match content {
             UserContent::Text(text) => ("user", text.as_str()),
             UserContent::Multimodal(_) => ("user", ""),
         },

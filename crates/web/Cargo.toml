@@ -17,6 +17,7 @@ moltis-channels = { workspace = true }
 moltis-config   = { workspace = true }
 moltis-cron     = { workspace = true }
 moltis-gateway  = { workspace = true }
+moltis-httpd    = { workspace = true }
 moltis-media    = { workspace = true }
 moltis-skills   = { workspace = true }
 moltis-tools    = { workspace = true }
@@ -32,16 +33,26 @@ url             = { workspace = true }
 uuid            = { workspace = true }
 which           = { workspace = true }
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [features]
 agent              = ["moltis-gateway/agent"]
+bundled-skills     = ["moltis-skills/bundled-skills"]
 default            = ["embedded-assets"]
 embedded-assets    = ["dep:include_dir"]
-graphql            = []
-metrics            = ["moltis-gateway/metrics"]
-push-notifications = ["moltis-gateway/push-notifications"]
-tailscale          = ["moltis-gateway/tailscale"]
-vault              = ["moltis-gateway/vault"]
+graphql            = ["moltis-gateway/graphql", "moltis-httpd/graphql"]
+mdns               = ["moltis-httpd/mdns"]
+metrics            = ["moltis-httpd/metrics"]
+ngrok              = ["moltis-httpd/ngrok"]
+push-notifications = ["moltis-httpd/push-notifications"]
+slack              = ["moltis-httpd/slack"]
+tailscale          = ["moltis-httpd/tailscale"]
+tls                = ["moltis-httpd/tls"]
+trusted-network    = ["moltis-httpd/trusted-network"]
+vault              = ["moltis-httpd/vault"]
 voice              = []
+web-ui             = ["moltis-httpd/web-ui"]
 
 [lints]
 workspace = true

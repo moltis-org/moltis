@@ -73,6 +73,26 @@ async function openProviderPicker(page) {
 	return codexCard;
 }
 
+async function waitForOAuthConnectionComplete(page) {
+	var successBanner = page.getByText(/connected successfully/i);
+	var modalTitle = page.locator("#providerModalTitle");
+	var modelPickerHint = page.getByText("Select models to add", { exact: true });
+
+	await expect
+		.poll(
+			async () => {
+				if (await successBanner.isVisible().catch(() => false)) return true;
+				if (await modalTitle.isVisible().catch(() => false)) {
+					var titleText = (await modalTitle.textContent()) || "";
+					if (/Select Models?/i.test(titleText)) return true;
+				}
+				return modelPickerHint.isVisible().catch(() => false);
+			},
+			{ timeout: 15_000 },
+		)
+		.toBe(true);
+}
+
 test.describe("OAuth provider connection", () => {
 	var mockPort;
 
@@ -129,7 +149,7 @@ test.describe("OAuth provider connection", () => {
 
 		// Back in the main page, wait for the polling to detect the authenticated state.
 		// The UI should either show "connected" or transition to a model selector.
-		await expect(page.getByText(/connected successfully|Select Model/i)).toBeVisible({ timeout: 15_000 });
+		await waitForOAuthConnectionComplete(page);
 
 		// Verify mock server received the expected calls
 		var calls = await getMockCalls(mockPort);
@@ -182,7 +202,7 @@ test.describe("OAuth provider connection", () => {
 		await callbackInput.fill(redirectUrl);
 		await page.getByRole("button", { name: "Submit Callback" }).click();
 
-		await expect(page.getByText(/connected successfully|Select Model/i)).toBeVisible({ timeout: 15_000 });
+		await waitForOAuthConnectionComplete(page);
 
 		var calls = await getMockCalls(mockPort);
 		var tokenCalls = calls.filter((c) => c.path === "/token");
@@ -224,7 +244,7 @@ test.describe("OAuth provider connection", () => {
 		}
 
 		// Wait for connection to complete.
-		await expect(page.getByText(/connected successfully|Select Model/i)).toBeVisible({ timeout: 15_000 });
+		await waitForOAuthConnectionComplete(page);
 
 		// Close the modal if a model picker is still open.
 		var modalClose = page.locator("#providerModalClose");

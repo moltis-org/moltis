@@ -72,7 +72,9 @@ fn vision_support_lookup(model_id: &str) -> bool {
 
 #[divan::bench]
 fn namespaced_model_id() -> String {
-    divan::black_box(moltis_providers::namespaced_model_id("openai", "gpt-4o"))
+    divan::black_box(moltis_providers::model_id::namespaced_model_id(
+        "openai", "gpt-4o",
+    ))
 }
 
 // ── Session store ───────────────────────────────────────────────────────────

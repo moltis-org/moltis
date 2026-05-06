@@ -103,6 +103,17 @@ impl SlackPlugin {
     ) -> ChannelResult<()> {
         crate::webhook::handle_verified_interaction_webhook(account_id, body, &self.accounts).await
     }
+
+    /// Ingest an already-verified slash command webhook.
+    ///
+    /// Returns the response text to send back to the Slack user.
+    pub async fn ingest_verified_command_webhook(
+        &self,
+        account_id: &str,
+        body: &[u8],
+    ) -> ChannelResult<String> {
+        crate::webhook::handle_verified_command_webhook(account_id, body, &self.accounts).await
+    }
 }
 
 impl Default for SlackPlugin {
@@ -214,7 +225,7 @@ impl ChannelPlugin for SlackPlugin {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
-            .and_then(|s| serde_json::to_value(&s.config).ok())
+            .and_then(|s| serde_json::to_value(crate::config::RedactedConfig(&s.config)).ok())
     }
 
     fn update_account_config(
@@ -276,12 +287,14 @@ impl ChannelStatus for SlackPlugin {
                 connected,
                 account_id: state.account_id.clone(),
                 details: Some(details),
+                extra: None,
             })
         } else {
             Ok(ChannelHealthSnapshot {
                 connected: false,
                 account_id: account_id.to_string(),
                 details: Some("account not started".into()),
+                extra: None,
             })
         }
     }

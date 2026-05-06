@@ -9,10 +9,11 @@ pub mod tts;
 
 pub use {
     config::{
-        CoquiTtsConfig, DeepgramConfig, ElevenLabsConfig, ElevenLabsSttConfig, GoogleSttConfig,
-        GoogleTtsConfig, GroqSttConfig, MistralSttConfig, OpenAiTtsConfig, PiperTtsConfig,
-        SherpaOnnxConfig, SttConfig, SttProviderId, TtsAutoMode, TtsConfig, TtsProviderId,
-        VoiceConfig, VoxtralLocalConfig, WhisperCliConfig, WhisperConfig,
+        CoquiTtsConfig, DeepgramConfig, ElevenLabsConfig, ElevenLabsSttConfig, FallbackPolicy,
+        GoogleSttConfig, GoogleTtsConfig, GroqSttConfig, MistralSttConfig, OpenAiTtsConfig,
+        PiperTtsConfig, SherpaOnnxConfig, SttConfig, SttProviderId, TtsAutoMode, TtsConfig,
+        TtsProviderId, VoiceConfig, VoicePersona, VoicePersonaPrompt, VoicePersonaProviderBinding,
+        VoxtralLocalConfig, WhisperCliConfig, WhisperConfig,
     },
     stt::{
         DeepgramStt, ElevenLabsStt, GoogleStt, GroqStt, MistralStt, SherpaOnnxStt, SttProvider,
@@ -20,7 +21,7 @@ pub use {
     },
     tts::{
         AudioFormat, AudioOutput, CoquiTts, ElevenLabsTts, GoogleTts, OpenAiTts, PiperTts,
-        SynthesizeRequest, TtsProvider, Voice, contains_ssml, sanitize_text_for_tts,
-        strip_ssml_tags,
+        SynthesizeRequest, TtsDirectives, TtsProvider, Voice, contains_ssml, parse_tts_directives,
+        sanitize_text_for_tts, strip_ssml_tags,
     },
 };

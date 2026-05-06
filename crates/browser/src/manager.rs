@@ -24,7 +24,10 @@ use crate::{
     snapshot::{
         extract_snapshot, find_element_by_ref, focus_element_by_ref, scroll_element_into_view,
     },
-    types::{BrowserAction, BrowserConfig, BrowserPreference, BrowserRequest, BrowserResponse},
+    types::{
+        BrowserAction, BrowserConfig, BrowserKind, BrowserPreference, BrowserRequest,
+        BrowserResponse,
+    },
 };
 
 /// Extract session_id or return an error for actions that require an existing session.
@@ -176,6 +179,30 @@ impl BrowserManager {
         ))
     }
 
+    fn unsupported_screenshot_error(kind: BrowserKind) -> Error {
+        Error::ScreenshotFailed(format!(
+            "Screenshots are not supported by {kind}. \
+             Use 'snapshot' for DOM content, or switch to Chrome/Chromium \
+             (set \"browser\": \"auto\") for pixel screenshots."
+        ))
+    }
+
+    async fn unsupported_screenshot_kind_before_launch(
+        &self,
+        session_id: Option<&str>,
+        browser: Option<BrowserPreference>,
+    ) -> Option<BrowserKind> {
+        if let Some(sid) = session_id.filter(|sid| !sid.is_empty())
+            && let Some(kind) = self.pool.browser_kind(sid).await
+        {
+            return (!kind.supports_screenshots()).then_some(kind);
+        }
+
+        browser
+            .and_then(BrowserPreference::preferred_kind)
+            .filter(|kind| !kind.supports_screenshots())
+    }
+
     /// Execute a browser action.
     async fn execute_action(
         &self,
@@ -324,10 +351,24 @@ impl BrowserManager {
         sandbox: bool,
         browser: Option<BrowserPreference>,
     ) -> Result<(String, BrowserResponse), Error> {
+        if let Some(kind) = self
+            .unsupported_screenshot_kind_before_launch(session_id, browser)
+            .await
+        {
+            return Err(Self::unsupported_screenshot_error(kind));
+        }
+
         let sid = self
             .pool
             .get_or_create(session_id, sandbox, browser)
             .await?;
+
+        if let Some(kind) = self.pool.browser_kind(&sid).await
+            && !kind.supports_screenshots()
+        {
+            return Err(Self::unsupported_screenshot_error(kind));
+        }
+
         let page = self.pool.get_page(&sid).await?;
 
         // Optionally highlight an element before screenshot
@@ -962,6 +1003,62 @@ mod tests {
         let manager = BrowserManager::default();
         manager.shutdown().await;
         assert_eq!(manager.active_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn screenshot_with_obscura_preference_fails_without_launching() {
+        let manager = BrowserManager::default();
+        let response = manager
+            .handle_request(BrowserRequest {
+                session_id: None,
+                action: BrowserAction::Screenshot {
+                    full_page: false,
+                    highlight_ref: None,
+                },
+                timeout_ms: 1000,
+                sandbox: Some(false),
+                browser: Some(BrowserPreference::Obscura),
+            })
+            .await;
+
+        assert!(!response.success);
+        assert_eq!(manager.active_count().await, 0);
+        assert!(
+            response
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Screenshots are not supported by obscura")),
+            "expected Obscura screenshot unsupported error, got: {:?}",
+            response.error
+        );
+    }
+
+    #[tokio::test]
+    async fn screenshot_with_lightpanda_preference_fails_without_launching() {
+        let manager = BrowserManager::default();
+        let response = manager
+            .handle_request(BrowserRequest {
+                session_id: None,
+                action: BrowserAction::Screenshot {
+                    full_page: false,
+                    highlight_ref: None,
+                },
+                timeout_ms: 1000,
+                sandbox: Some(false),
+                browser: Some(BrowserPreference::Lightpanda),
+            })
+            .await;
+
+        assert!(!response.success);
+        assert_eq!(manager.active_count().await, 0);
+        assert!(
+            response
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Screenshots are not supported by lightpanda")),
+            "expected Lightpanda screenshot unsupported error, got: {:?}",
+            response.error
+        );
     }
 
     #[tokio::test]

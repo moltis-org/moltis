@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use {
-    anyhow::{Result, anyhow},
+    anyhow::anyhow,
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     moltis_config::CalDavConfig,
@@ -13,6 +13,7 @@ use {
 use crate::{
     client::{LibDavCalDavClient, SharedCalDavClient},
     discovery,
+    error::Error,
     types::{NewEvent, TimeRange, UpdateEvent},
 };
 
@@ -39,7 +40,10 @@ impl CalDavTool {
     }
 
     /// Resolve which account to use and return its client.
-    async fn resolve_client(&self, account: Option<&str>) -> Result<SharedCalDavClient> {
+    async fn resolve_client(
+        &self,
+        account: Option<&str>,
+    ) -> crate::error::Result<SharedCalDavClient> {
         let account_name = account
             .or(self.config.default_account.as_deref())
             .or_else(|| {
@@ -52,11 +56,11 @@ impl CalDavTool {
             })
             .ok_or_else(|| {
                 let names: Vec<&str> = self.config.accounts.keys().map(String::as_str).collect();
-                anyhow!(
+                Error::Validation(format!(
                     "multiple CalDAV accounts configured ({}), \
                      specify 'account' parameter or set caldav.default_account",
                     names.join(", ")
-                )
+                ))
             })?;
 
         // Check if already connected
@@ -68,32 +72,29 @@ impl CalDavTool {
         }
 
         // Need to connect — get config and build client
-        let account_config = self
-            .config
-            .accounts
-            .get(account_name)
-            .ok_or_else(|| anyhow!("unknown CalDAV account '{account_name}'"))?;
+        let account_config =
+            self.config.accounts.get(account_name).ok_or_else(|| {
+                Error::Validation(format!("unknown CalDAV account '{account_name}'"))
+            })?;
 
         let base_url = discovery::resolve_base_url(
             account_config.provider.as_deref(),
             account_config.url.as_deref(),
         )
         .ok_or_else(|| {
-            anyhow!(
+            Error::Validation(format!(
                 "CalDAV account '{account_name}' has no URL and provider '{}' requires one",
                 account_config.provider.as_deref().unwrap_or("generic")
-            )
+            ))
         })?;
 
-        let username = account_config
-            .username
-            .as_deref()
-            .ok_or_else(|| anyhow!("CalDAV account '{account_name}' has no username"))?;
+        let username = account_config.username.as_deref().ok_or_else(|| {
+            Error::Validation(format!("CalDAV account '{account_name}' has no username"))
+        })?;
 
-        let password = account_config
-            .password
-            .as_ref()
-            .ok_or_else(|| anyhow!("CalDAV account '{account_name}' has no password"))?;
+        let password = account_config.password.as_ref().ok_or_else(|| {
+            Error::Validation(format!("CalDAV account '{account_name}' has no password"))
+        })?;
 
         #[cfg(feature = "tracing")]
         tracing::info!(
@@ -186,7 +187,7 @@ impl AgentTool for CalDavTool {
         })
     }
 
-    async fn execute(&self, params: Value) -> Result<Value> {
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let operation = params
             .get("operation")
             .and_then(|v| v.as_str())
@@ -315,7 +316,7 @@ impl AgentTool for CalDavTool {
                 Ok(json!({ "ok": true }))
             },
 
-            _ => anyhow::bail!("unknown operation: {operation}"),
+            _ => Err(anyhow!("unknown operation: {operation}")),
         }
     }
 }
@@ -333,7 +334,7 @@ pub(crate) struct MockCalDavClient {
 #[cfg(test)]
 #[async_trait]
 impl crate::client::CalDavClient for MockCalDavClient {
-    async fn list_calendars(&self) -> Result<Vec<crate::types::CalendarInfo>> {
+    async fn list_calendars(&self) -> crate::error::Result<Vec<crate::types::CalendarInfo>> {
         Ok(self.calendars.clone())
     }
 
@@ -341,7 +342,7 @@ impl crate::client::CalDavClient for MockCalDavClient {
         &self,
         _calendar_href: &str,
         _range: Option<TimeRange>,
-    ) -> Result<Vec<crate::types::EventSummary>> {
+    ) -> crate::error::Result<Vec<crate::types::EventSummary>> {
         let events = self
             .events
             .lock()
@@ -354,7 +355,7 @@ impl crate::client::CalDavClient for MockCalDavClient {
         &self,
         _calendar_href: &str,
         _event: NewEvent,
-    ) -> Result<crate::types::CreatedEvent> {
+    ) -> crate::error::Result<crate::types::CreatedEvent> {
         let uid = format!("mock-{}@moltis", uuid::Uuid::new_v4());
         Ok(crate::types::CreatedEvent {
             href: format!("/cal/{uid}.ics"),
@@ -368,14 +369,14 @@ impl crate::client::CalDavClient for MockCalDavClient {
         href: &str,
         _etag: &str,
         _updates: UpdateEvent,
-    ) -> Result<crate::types::UpdatedEvent> {
+    ) -> crate::error::Result<crate::types::UpdatedEvent> {
         Ok(crate::types::UpdatedEvent {
             href: href.to_string(),
             etag: Some("\"mock-etag-updated\"".to_string()),
         })
     }
 
-    async fn delete_event(&self, _href: &str, _etag: &str) -> Result<()> {
+    async fn delete_event(&self, _href: &str, _etag: &str) -> crate::error::Result<()> {
         Ok(())
     }
 }

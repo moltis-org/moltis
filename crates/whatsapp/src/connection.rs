@@ -10,7 +10,7 @@ use moltis_channels::{ChannelEventSink, message_log::MessageLog};
 use crate::{
     config::WhatsAppAccountConfig,
     handlers,
-    state::{AccountState, AccountStateMap},
+    state::{AccountState, AccountStateMap, ShutdownState},
 };
 
 /// Start a WhatsApp connection for the given account.
@@ -42,6 +42,8 @@ pub async fn start_connection(
 
     let cancel = CancellationToken::new();
     let cancel_clone = cancel.clone();
+    let shutdown = Arc::new(ShutdownState::new());
+    let shutdown_clone = Arc::clone(&shutdown);
 
     // Build the bot.
     let account_id_clone = account_id.clone();
@@ -61,6 +63,14 @@ pub async fn start_connection(
             whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory::new(),
         )
         .with_http_client(whatsapp_rust_ureq_http_client::UreqHttpClient::new())
+        .with_runtime(whatsapp_rust::TokioRuntime)
+        .skip_history_sync()
+        .with_device_props(
+            Some("Moltis".to_string()),
+            None,
+            Some(waproto::whatsapp::device_props::PlatformType::Desktop),
+        )
+        .with_push_name("Moltis")
         .on_event(move |event, client| {
             let state_ref = Arc::clone(&state_ref_handler);
             let accounts = Arc::clone(&accounts_handler);
@@ -85,6 +95,7 @@ pub async fn start_connection(
         account_id: account_id_clone.clone(),
         config,
         cancel: cancel_clone,
+        shutdown: Arc::clone(&shutdown),
         message_log: message_log_clone,
         event_sink: event_sink_clone,
         latest_qr: std::sync::RwLock::new(None),
@@ -104,6 +115,7 @@ pub async fn start_connection(
             account_id: account_id.clone(),
             config: account_state.config.clone(),
             cancel: cancel.clone(),
+            shutdown: Arc::clone(&shutdown),
             message_log: account_state.message_log.clone(),
             event_sink: account_state.event_sink.clone(),
             latest_qr: std::sync::RwLock::new(None),
@@ -120,12 +132,17 @@ pub async fn start_connection(
             result = bot.run() => {
                 match result {
                     Ok(handle) => {
+                        tokio::pin!(handle);
                         tokio::select! {
-                            _ = handle => {
+                            _ = &mut handle => {
                                 info!(account_id = %account_id_task, "WhatsApp bot task completed");
                             },
                             _ = cancel.cancelled() => {
-                                info!(account_id = %account_id_task, "WhatsApp account cancelled");
+                                info!(account_id = %account_id_task, "WhatsApp account cancelled, aborting bot task");
+                                handle.abort();
+                                // Wait for the task to finish after abort so the
+                                // sled store is fully released before we signal done.
+                                let _ = handle.await;
                             },
                         }
                     },
@@ -138,6 +155,7 @@ pub async fn start_connection(
                 info!(account_id = %account_id_task, "WhatsApp account cancelled before start");
             },
         }
+        shutdown_clone.mark_done();
     });
 
     Ok(())

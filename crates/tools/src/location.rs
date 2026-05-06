@@ -112,6 +112,14 @@ pub trait LocationRequester: Send + Sync {
     }
 }
 
+fn session_key_supports_channel_location(session_key: &str) -> bool {
+    let Some((prefix, _rest)) = session_key.split_once(':') else {
+        return false;
+    };
+
+    !matches!(prefix, "" | "web" | "cron")
+}
+
 // ── Reverse geocoding ────────────────────────────────────────────────────────
 
 /// Nominatim reverse-geocode response (subset of fields we care about).
@@ -367,9 +375,7 @@ impl moltis_agents::tool_registry::AgentTool for LocationTool {
 
         // No browser connection — try channel-based location request.
         if let Some(session_key) = params.get("_session_key").and_then(|v| v.as_str())
-            && (session_key.starts_with("telegram:")
-                || session_key.starts_with("msteams:")
-                || session_key.starts_with("discord:"))
+            && session_key_supports_channel_location(session_key)
         {
             let result = self.requester.request_channel_location(session_key).await?;
             return match result.location {
@@ -626,6 +632,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn channel_location_success_for_matrix_session() {
+        let tool = LocationTool::new(Arc::new(MockRequester {
+            cached: None,
+            response: LocationResult {
+                location: None,
+                error: None,
+            },
+            channel_response: Some(LocationResult {
+                location: Some(BrowserLocation {
+                    latitude: 38.7223,
+                    longitude: -9.1393,
+                    accuracy: 0.0,
+                }),
+                error: None,
+            }),
+        }));
+
+        let result = tool
+            .execute(serde_json::json!({ "_session_key": "matrix:bot1:!room:matrix.org" }))
+            .await
+            .unwrap();
+        assert_eq!(result["latitude"], 38.7223);
+        assert_eq!(result["longitude"], -9.1393);
+        assert_eq!(result["source"], "channel");
+    }
+
+    #[tokio::test]
     async fn channel_location_not_supported_for_non_channel_session() {
         let tool = LocationTool::new(Arc::new(MockRequester {
             cached: None,
@@ -642,6 +675,20 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("no client connection"));
+    }
+
+    #[test]
+    fn session_key_supports_channel_location_rejects_non_channel_prefixes() {
+        assert!(!session_key_supports_channel_location("web:session:123"));
+        assert!(!session_key_supports_channel_location("cron:heartbeat"));
+        assert!(!session_key_supports_channel_location("nocolon"));
+    }
+
+    #[test]
+    fn session_key_supports_channel_location_accepts_channel_like_prefixes() {
+        assert!(session_key_supports_channel_location("matrix:bot:room"));
+        assert!(session_key_supports_channel_location("telegram:bot:chat"));
+        assert!(session_key_supports_channel_location("slack:team:channel"));
     }
 
     #[tokio::test]

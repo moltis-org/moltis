@@ -8,8 +8,8 @@ and the agent itself to persist context across messages within a session.
 Session state is scoped to a `(session_key, namespace, key)` triple, backed by
 SQLite. Each entry stores a string value and is automatically timestamped.
 
-The agent accesses state through the `session_state` tool, which supports three
-operations: `get`, `set`, and `list`.
+The agent accesses state through the `session_state` tool, which supports five
+operations: `get`, `set`, `delete`, `list`, and `clear`.
 
 ## Agent Tool
 
@@ -20,31 +20,60 @@ session.
 
 ```json
 {
-  "op": "get",
+  "operation": "get",
   "namespace": "my-skill",
   "key": "last_query"
 }
 ```
 
+Returns `{ "value": "<value or null>" }`.
+
 ### Set a value
 
 ```json
 {
-  "op": "set",
+  "operation": "set",
   "namespace": "my-skill",
   "key": "last_query",
   "value": "SELECT * FROM users"
 }
 ```
 
+Returns `{ "ok": true }`. Insert-or-update semantics.
+
 ### List all keys in a namespace
 
 ```json
 {
-  "op": "list",
+  "operation": "list",
   "namespace": "my-skill"
 }
 ```
+
+Returns `{ "entries": [{ "key": "...", "value": "..." }] }`.
+
+### Delete a single key
+
+```json
+{
+  "operation": "delete",
+  "namespace": "my-skill",
+  "key": "last_query"
+}
+```
+
+Returns `{ "deleted": true }` if the key existed, `{ "deleted": false }` otherwise.
+
+### Clear all keys in a namespace
+
+```json
+{
+  "operation": "clear",
+  "namespace": "my-skill"
+}
+```
+
+Returns `{ "deleted": <count> }` with the number of entries removed.
 
 ## Namespacing
 

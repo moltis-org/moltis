@@ -138,10 +138,11 @@ mod tests {
         PersistedMessage::User {
             content: MessageContent::Text(text.into()),
             created_at: None,
+            audio: None,
+            documents: None,
             channel: None,
             seq: None,
             run_id: None,
-            audio: None,
         }
         .to_value()
     }

@@ -10,32 +10,46 @@ default-members = [
   "crates/canvas",
   "crates/channels",
   "crates/chat",
+  "crates/claude-import",
   "crates/cli",
+  "crates/code-index",
+  "crates/codex-import",
   "crates/common",
   "crates/config",
   "crates/cron",
+  "crates/ctl",
   "crates/discord",
   "crates/gateway",
   "crates/graphql",
+  "crates/hermes-import",
+  "crates/home-assistant",
+  "crates/httpd",
+  "crates/import-core",
+  "crates/matrix",
   "crates/mcp",
+  "crates/mcp-agent-bridge",
   "crates/media",
   "crates/memory",
   "crates/metrics",
   "crates/msteams",
   "crates/network-filter",
   "crates/node-host",
+  "crates/nostr",
   "crates/oauth",
   "crates/onboarding",
   "crates/openclaw-import",
   "crates/plugins",
+  "crates/portable",
   "crates/projects",
   "crates/protocol",
   "crates/provider-setup",
   "crates/providers",
   "crates/qmd",
   "crates/routing",
+  "crates/secret-store",
   "crates/service-traits",
   "crates/sessions",
+  "crates/signal",
   "crates/skills",
   "crates/slack",
   "crates/swift-bridge",
@@ -50,6 +64,7 @@ default-members = [
   "crates/wasm-tools/web-fetch",
   "crates/wasm-tools/web-search",
   "crates/web",
+  "crates/webhooks",
   "crates/whatsapp",
 ]
 members = [
@@ -63,22 +78,33 @@ members = [
   "crates/canvas",
   "crates/channels",
   "crates/chat",
+  "crates/claude-import",
   "crates/cli",
+  "crates/code-index",
+  "crates/codex-import",
   "crates/common",
   "crates/config",
   "crates/cron",
+  "crates/ctl",
   "crates/gateway",
   "crates/graphql",
+  "crates/hermes-import",
+  "crates/home-assistant",
+  "crates/httpd",
+  "crates/import-core",
+  "crates/matrix",
   "crates/mcp",
   "crates/media",
   "crates/memory",
   "crates/metrics",
   "crates/msteams",
   "crates/node-host",
+  "crates/nostr",
   "crates/oauth",
   "crates/onboarding",
   "crates/openclaw-import",
   "crates/plugins",
+  "crates/portable",
   "crates/projects",
   "crates/protocol",
   "crates/provider-setup",
@@ -86,10 +112,13 @@ members = [
   "crates/qmd",
   "crates/routing",
   "crates/schema-export",
+  "crates/secret-store",
   "crates/service-traits",
   "crates/sessions",
+  "crates/signal",
   "crates/skills",
   "crates/slack",
+  "crates/splitter",
   "crates/swift-bridge",
   "crates/tailscale",
   "crates/telegram",
@@ -102,9 +131,17 @@ members = [
   "crates/wasm-tools/web-fetch",
   "crates/wasm-tools/web-search",
   "crates/web",
+  "crates/webhooks",
   "crates/whatsapp",
 ]
 resolver = "2"
+
+[patch.crates-io]
+# Widen libsqlite3-sys pin (0.30.1 → >=0.30.1,<0.36.0) so sqlx-sqlite 0.8.6
+# can coexist with matrix-sdk-sqlite's rusqlite 0.37 (libsqlite3-sys 0.35).
+# Remove once sqlx ≥ 0.9 ships stable.
+sqlx-core   = { git = "https://github.com/moltis-org/sqlx", rev = "33747ad2e2d0c7962c6450faf31591c4e0782c23" }
+sqlx-sqlite = { git = "https://github.com/moltis-org/sqlx", rev = "33747ad2e2d0c7962c6450faf31591c4e0782c23" }
 
 [workspace.lints.rust]
 unsafe_code           = "deny"
@@ -119,7 +156,7 @@ edition      = "2024"
 license      = "MIT"
 repository   = "https://github.com/moltis-org/moltis"
 rust-version = "1.91"
-version      = "0.10.18"
+version      = "0.1.0"
 
 [workspace.dependencies]
 # APNS
@@ -131,6 +168,8 @@ askama     = "0.15"
 axum       = { features = ["ws"], version = "0.8" }
 axum-extra = "0.10"
 # Serialization
+postcard   = { features = ["alloc"], version = "1.1" }
+schemars   = "1.2"
 serde      = { features = ["derive"], version = "1" }
 serde_json = "1"
 # Error handling
@@ -150,7 +189,7 @@ clap = { features = ["derive", "env"], version = "4" }
 # Database
 sqlx = { features = ["migrate", "runtime-tokio", "sqlite"], version = "0.8" }
 # HTTP client
-reqwest = { features = ["json", "multipart", "stream"], version = "0.12" }
+reqwest = { features = ["form", "json", "multipart", "query", "socks", "stream"], version = "0.13" }
 # UUID
 uuid = { features = ["v4"], version = "1" }
 # Async
@@ -159,6 +198,7 @@ async-trait  = "0.1"
 directories  = "6"
 dotenvy      = "0.15"
 futures      = "0.3"
+futures-util = "0.3"
 once_cell    = "1"
 tokio-stream = "0.1"
 tokio-test   = "0.4"
@@ -168,39 +208,45 @@ serde_yaml        = "0.9"
 tokio-tungstenite = "0.26"
 toml              = "0.8"
 toml_edit         = "0.22"
+zip               = { default-features = false, features = ["deflate"], version = "2" }
 # LLM provider crates (optional, behind feature flags)
-async-openai = { features = ["chat-completion"], version = "0.32" }
-base64       = "0.22"
-bytemuck     = { features = ["derive"], version = "1" }
-bytes        = "1"
-encoding_rs  = "0.8"
-fd-lock      = "4"
-genai        = "0.5"
+async-openai    = { features = ["chat-completion"], version = "0.32" }
+base64          = "0.22"
+bytemuck        = { features = ["derive"], version = "1" }
+bytes           = "1"
+encoding_rs     = "0.8"
+fd-lock         = "4"
+genai           = "0.5"
+json_schema_ast = "0.3.1"
 # GraphQL
 async-graphql      = "7"
 async-graphql-axum = "7"
-gix                = "0.78"
+gix                = "0.83"
+hex                = "0.4"
 hmac               = "0.12"
+jsonwebtoken       = { features = ["aws_lc_rs"], version = "10" }
 llama-cpp-2        = "0.1"
+matrix-sdk         = { default-features = false, features = ["e2e-encryption", "markdown", "native-tls", "sqlite"], version = "0.16" }
 mockito            = "1.7"
+nostr-sdk          = { features = ["nip04", "nip44", "nip59"], version = "0.44" }
 open               = "5.3"
-rand               = "0.9"
+rand               = "0.10"
 regex              = "1"
 secrecy            = { features = ["serde"], version = "0.8" }
 serenity           = { features = ["cache", "client", "gateway", "model", "rustls_backend"], version = "0.12" }
 sha2               = "0.10"
-slack-morphism     = { features = ["axum", "hyper"], version = "2.6" }
+slack-morphism     = { features = ["axum", "hyper"], version = "2.20" }
 sled               = "0.34"
 sysinfo            = "0.34"
-teloxide           = { features = ["macros"], version = "0.13" }
+teloxide           = { features = ["macros"], version = "0.17" }
 # WhatsApp (sqlite-storage disabled to avoid libsqlite3-sys conflict with sqlx;
 # re-enable once sqlx 0.9 stabilises).
-wacore                         = "0.2"
-wacore-binary                  = "0.2"
-waproto                        = "0.2"
-whatsapp-rust                  = { default-features = false, features = ["tokio-native", "tokio-transport", "ureq-client"], version = "0.2" }
-whatsapp-rust-tokio-transport  = "0.2"
-whatsapp-rust-ureq-http-client = "0.2"
+wacore                         = { default-features = false, version = "0.5" }
+wacore-binary                  = { default-features = false, version = "0.5" }
+waproto                        = "0.5"
+whatsapp-rust                  = { default-features = false, features = ["tokio-native", "tokio-runtime", "tokio-transport", "ureq-client"], version = "0.5" }
+whatsapp-rust-tokio-transport  = "0.5"
+whatsapp-rust-ureq-http-client = "0.5"
 # QR code rendering
 qrcode = "0.14"
 # TLS / certificate generation
@@ -224,19 +270,22 @@ hostname    = "0.4"
 http        = "1"
 hyper       = { features = ["client", "http1", "http2", "server"], version = "1" }
 hyper-util  = { features = ["client-legacy", "http1", "http2", "server-auto", "service", "tokio"], version = "0.1" }
+ngrok       = "0.18"
 tower       = "0.5"
 tower-http  = "0.6"
 url         = "2"
 urlencoding = "2"
-web-push    = "0.10"
+web-push    = "0.11"
 # Metrics
 metrics                     = "0.24"
 metrics-exporter-prometheus = "0.16"
 metrics-tracing-context     = "0.16"
 # Content processing
+html2text      = "0.16"
 image          = { default-features = false, features = ["jpeg", "png", "webp"], version = "0.25" }
 ipnet          = "2"
 mdns-sd        = "0.18"
+mime_guess     = "2"
 pulldown-cmark = { default-features = false, version = "0.12" }
 # Code splitting (tree-sitter based)
 text-splitter          = { default-features = false, features = ["code"], version = "0.29" }
@@ -263,9 +312,15 @@ chrono-tz             = { features = ["serde"], version = "0.10" }
 cron                  = "0.13"
 dirs-next             = "2"
 flate2                = "1"
+globset               = "0.4"
+grep-matcher          = "0.1"
+grep-regex            = "0.1"
+grep-searcher         = "0.1"
+ignore                = "0.4"
 include_dir           = "0.7"
 json5                 = "0.4"
 notify-debouncer-full = "0.7"
+pdf-extract           = "0.10"
 portable-pty          = "0.9"
 rstest                = "0.25"
 serial_test           = "3"
@@ -276,6 +331,7 @@ walkdir               = "2"
 wasmtime              = { features = ["component-model"], version = "36" }
 wasmtime-wasi         = "36"
 which                 = "8"
+wiremock              = "0.6"
 wit-bindgen           = "0.41"
 wit-bindgen-rt        = { features = ["bitflags"], version = "0.41" }
 # CalDAV / iCalendar
@@ -286,55 +342,78 @@ tower-service = "0.3"
 zeroize       = { features = ["derive"], version = "1" }
 
 # Workspace crates
-moltis                 = { path = "crates/cli" }
-moltis-agents          = { path = "crates/agents" }
-moltis-auth            = { path = "crates/auth" }
-moltis-auto-reply      = { path = "crates/auto-reply" }
-moltis-browser         = { path = "crates/browser" }
-moltis-caldav          = { path = "crates/caldav" }
-moltis-canvas          = { path = "crates/canvas" }
-moltis-channels        = { path = "crates/channels" }
-moltis-chat            = { path = "crates/chat" }
-moltis-common          = { path = "crates/common" }
-moltis-config          = { path = "crates/config" }
-moltis-cron            = { path = "crates/cron" }
-moltis-discord         = { path = "crates/discord" }
-moltis-gateway         = { default-features = false, path = "crates/gateway" }
-moltis-graphql         = { path = "crates/graphql" }
-moltis-mcp             = { path = "crates/mcp" }
-moltis-media           = { path = "crates/media" }
-moltis-memory          = { path = "crates/memory" }
-moltis-metrics         = { path = "crates/metrics" }
-moltis-msteams         = { path = "crates/msteams" }
-moltis-network-filter  = { default-features = false, path = "crates/network-filter" }
-moltis-node-host       = { path = "crates/node-host" }
-moltis-oauth           = { path = "crates/oauth" }
-moltis-onboarding      = { path = "crates/onboarding" }
-moltis-openclaw-import = { path = "crates/openclaw-import" }
-moltis-plugins         = { path = "crates/plugins" }
-moltis-projects        = { path = "crates/projects" }
-moltis-protocol        = { path = "crates/protocol" }
-moltis-provider-setup  = { path = "crates/provider-setup" }
-moltis-providers       = { features = ["provider-github-copilot", "provider-kimi-code", "provider-openai-codex"], path = "crates/providers" }
-moltis-qmd             = { path = "crates/qmd" }
-moltis-routing         = { path = "crates/routing" }
-moltis-schema-export   = { path = "crates/schema-export" }
-moltis-service-traits  = { path = "crates/service-traits" }
-moltis-sessions        = { path = "crates/sessions" }
-moltis-skills          = { path = "crates/skills" }
-moltis-slack           = { path = "crates/slack" }
-moltis-swift-bridge    = { path = "crates/swift-bridge" }
-moltis-tailscale       = { path = "crates/tailscale" }
-moltis-telegram        = { path = "crates/telegram" }
-moltis-tls             = { path = "crates/tls" }
-moltis-tools           = { path = "crates/tools" }
-moltis-vault           = { path = "crates/vault" }
-moltis-voice           = { path = "crates/voice" }
-moltis-web             = { default-features = false, path = "crates/web" }
-moltis-whatsapp        = { path = "crates/whatsapp" }
+moltis                  = { path = "crates/cli" }
+moltis-agents           = { path = "crates/agents" }
+moltis-auth             = { path = "crates/auth" }
+moltis-auto-reply       = { path = "crates/auto-reply" }
+moltis-browser          = { path = "crates/browser" }
+moltis-caldav           = { path = "crates/caldav" }
+moltis-canvas           = { path = "crates/canvas" }
+moltis-channels         = { path = "crates/channels" }
+moltis-chat             = { path = "crates/chat" }
+moltis-claude-import    = { path = "crates/claude-import" }
+moltis-code-index       = { path = "crates/code-index" }
+moltis-codex-import     = { path = "crates/codex-import" }
+moltis-common           = { path = "crates/common" }
+moltis-config           = { path = "crates/config" }
+moltis-cron             = { path = "crates/cron" }
+moltis-discord          = { path = "crates/discord" }
+moltis-gateway          = { default-features = false, path = "crates/gateway" }
+moltis-graphql          = { path = "crates/graphql" }
+moltis-hermes-import    = { path = "crates/hermes-import" }
+moltis-home-assistant   = { path = "crates/home-assistant" }
+moltis-httpd            = { default-features = false, path = "crates/httpd" }
+moltis-import-core      = { path = "crates/import-core" }
+moltis-matrix           = { path = "crates/matrix" }
+moltis-mcp              = { path = "crates/mcp" }
+moltis-mcp-agent-bridge = { path = "crates/mcp-agent-bridge" }
+moltis-media            = { path = "crates/media" }
+moltis-memory           = { path = "crates/memory" }
+moltis-metrics          = { path = "crates/metrics" }
+moltis-msteams          = { path = "crates/msteams" }
+moltis-network-filter   = { default-features = false, path = "crates/network-filter" }
+moltis-node-host        = { path = "crates/node-host" }
+moltis-nostr            = { path = "crates/nostr" }
+moltis-oauth            = { path = "crates/oauth" }
+moltis-onboarding       = { path = "crates/onboarding" }
+moltis-openclaw-import  = { path = "crates/openclaw-import" }
+moltis-plugins          = { path = "crates/plugins" }
+moltis-portable         = { path = "crates/portable" }
+moltis-projects         = { path = "crates/projects" }
+moltis-protocol         = { path = "crates/protocol" }
+moltis-provider-setup   = { path = "crates/provider-setup" }
+moltis-providers        = { features = ["provider-github-copilot", "provider-kimi-code", "provider-openai-codex"], path = "crates/providers" }
+moltis-qmd              = { path = "crates/qmd" }
+moltis-routing          = { path = "crates/routing" }
+moltis-schema-export    = { path = "crates/schema-export" }
+moltis-secret-store     = { default-features = false, path = "crates/secret-store" }
+moltis-service-traits   = { path = "crates/service-traits" }
+moltis-sessions         = { path = "crates/sessions" }
+moltis-signal           = { path = "crates/signal" }
+moltis-skills           = { path = "crates/skills" }
+moltis-slack            = { path = "crates/slack" }
+moltis-splitter         = { path = "crates/splitter" }
+moltis-swift-bridge     = { path = "crates/swift-bridge" }
+moltis-tailscale        = { path = "crates/tailscale" }
+moltis-telegram         = { path = "crates/telegram" }
+moltis-tls              = { path = "crates/tls" }
+moltis-tools            = { path = "crates/tools" }
+moltis-vault            = { path = "crates/vault" }
+moltis-voice            = { path = "crates/voice" }
+moltis-web              = { default-features = false, path = "crates/web" }
+moltis-webhooks         = { path = "crates/webhooks" }
+moltis-whatsapp         = { path = "crates/whatsapp" }
 
 [profile.release]
 codegen-units = 1
 lto           = "thin"
 panic         = "abort"
 strip         = true
+
+[profile.swift-ci]
+debug    = 0
+inherits = "dev"
+panic    = "abort"
+
+[profile.dev]
+debug = "line-tables-only"

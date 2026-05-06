@@ -2,9 +2,138 @@ use std::time::Duration;
 
 use moltis_protocol::{ErrorShape, error_codes};
 
-use crate::broadcast::{BroadcastOpts, broadcast};
+use crate::{
+    auth::{SshAuthMode, SshResolvedTarget, SshTargetEntry},
+    broadcast::{BroadcastOpts, broadcast},
+};
 
 use super::MethodRegistry;
+
+fn configured_legacy_ssh_target() -> Option<String> {
+    let config = moltis_config::discover_and_load();
+    config
+        .tools
+        .exec
+        .ssh_target
+        .map(|target| target.trim().to_string())
+        .filter(|target| !target.is_empty())
+}
+
+fn ssh_summary_json(target: &str) -> serde_json::Value {
+    serde_json::json!({
+        "nodeId": crate::node_exec::ssh_node_id(target),
+        "displayName": format!("SSH: {target}"),
+        "platform": "ssh",
+        "version": serde_json::Value::Null,
+        "capabilities": ["system.run"],
+        "commands": ["system.run"],
+        "remoteIp": serde_json::Value::Null,
+        "telemetry": {
+            "memTotal": serde_json::Value::Null,
+            "memAvailable": serde_json::Value::Null,
+            "cpuCount": serde_json::Value::Null,
+            "cpuUsage": serde_json::Value::Null,
+            "uptimeSecs": serde_json::Value::Null,
+            "services": ["ssh"],
+            "diskTotal": serde_json::Value::Null,
+            "diskAvailable": serde_json::Value::Null,
+            "runtimes": [],
+            "stale": false,
+        },
+        "providers": [],
+    })
+}
+
+fn ssh_target_summary_json(target: &SshTargetEntry) -> serde_json::Value {
+    let auth_service = match target.auth_mode {
+        SshAuthMode::System => "ssh-system",
+        SshAuthMode::Managed => "ssh-managed",
+    };
+    serde_json::json!({
+        "nodeId": format!("ssh:target:{}", target.id),
+        "displayName": format!("SSH: {}", target.label),
+        "platform": "ssh",
+        "version": serde_json::Value::Null,
+        "capabilities": ["system.run"],
+        "commands": ["system.run"],
+        "remoteIp": serde_json::Value::Null,
+        "hostPinned": target.known_host.is_some(),
+        "telemetry": {
+            "memTotal": serde_json::Value::Null,
+            "memAvailable": serde_json::Value::Null,
+            "cpuCount": serde_json::Value::Null,
+            "cpuUsage": serde_json::Value::Null,
+            "uptimeSecs": serde_json::Value::Null,
+            "services": ["ssh", auth_service],
+            "diskTotal": serde_json::Value::Null,
+            "diskAvailable": serde_json::Value::Null,
+            "runtimes": [],
+            "stale": false,
+        },
+        "providers": [],
+    })
+}
+
+fn ssh_detail_json(target: &str) -> serde_json::Value {
+    serde_json::json!({
+        "nodeId": crate::node_exec::ssh_node_id(target),
+        "displayName": format!("SSH: {target}"),
+        "platform": "ssh",
+        "version": serde_json::Value::Null,
+        "capabilities": ["system.run"],
+        "commands": ["system.run"],
+        "permissions": [],
+        "pathEnv": serde_json::Value::Null,
+        "remoteIp": serde_json::Value::Null,
+        "connectedAt": serde_json::Value::Null,
+        "telemetry": {
+            "memTotal": serde_json::Value::Null,
+            "memAvailable": serde_json::Value::Null,
+            "cpuCount": serde_json::Value::Null,
+            "cpuUsage": serde_json::Value::Null,
+            "uptimeSecs": serde_json::Value::Null,
+            "services": ["ssh"],
+            "diskTotal": serde_json::Value::Null,
+            "diskAvailable": serde_json::Value::Null,
+            "runtimes": [],
+            "stale": false,
+        },
+        "providers": [],
+    })
+}
+
+fn ssh_target_detail_json(target: &SshResolvedTarget) -> serde_json::Value {
+    let auth_service = match target.auth_mode {
+        SshAuthMode::System => "ssh-system",
+        SshAuthMode::Managed => "ssh-managed",
+    };
+    serde_json::json!({
+        "nodeId": target.node_id,
+        "displayName": format!("SSH: {}", target.label),
+        "platform": "ssh",
+        "version": serde_json::Value::Null,
+        "capabilities": ["system.run"],
+        "commands": ["system.run"],
+        "permissions": [],
+        "pathEnv": serde_json::Value::Null,
+        "remoteIp": serde_json::Value::Null,
+        "hostPinned": target.known_host.is_some(),
+        "connectedAt": serde_json::Value::Null,
+        "telemetry": {
+            "memTotal": serde_json::Value::Null,
+            "memAvailable": serde_json::Value::Null,
+            "cpuCount": serde_json::Value::Null,
+            "cpuUsage": serde_json::Value::Null,
+            "uptimeSecs": serde_json::Value::Null,
+            "services": ["ssh", auth_service],
+            "diskTotal": serde_json::Value::Null,
+            "diskAvailable": serde_json::Value::Null,
+            "runtimes": [],
+            "stale": false,
+        },
+        "providers": [],
+    })
+}
 
 pub(super) fn register(reg: &mut MethodRegistry) {
     // node.list
@@ -13,7 +142,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         Box::new(|ctx| {
             Box::pin(async move {
                 let inner = ctx.state.inner.read().await;
-                let list: Vec<_> = inner
+                let mut list: Vec<_> = inner
                     .nodes
                     .list()
                     .iter()
@@ -49,6 +178,20 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         })
                     })
                     .collect();
+                drop(inner);
+                if let Some(store) = ctx.state.credential_store.as_ref() {
+                    match store.list_ssh_targets().await {
+                        Ok(targets) => {
+                            for target in targets {
+                                list.push(ssh_target_summary_json(&target));
+                            }
+                        },
+                        Err(error) => tracing::warn!(%error, "failed to list managed ssh targets"),
+                    }
+                }
+                if let Some(target) = configured_legacy_ssh_target() {
+                    list.push(ssh_summary_json(&target));
+                }
                 Ok(serde_json::json!(list))
             })
         }),
@@ -66,6 +209,20 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .ok_or_else(|| {
                         ErrorShape::new(error_codes::INVALID_REQUEST, "missing nodeId")
                     })?;
+                if let Some(store) = ctx.state.credential_store.as_ref() {
+                    match store.resolve_ssh_target(node_id).await {
+                        Ok(Some(target)) => return Ok(ssh_target_detail_json(&target)),
+                        Ok(None) => {},
+                        Err(error) => {
+                            tracing::warn!(%error, node_id, "failed to resolve managed ssh target")
+                        },
+                    }
+                }
+                if let Some(target) = configured_legacy_ssh_target()
+                    && crate::node_exec::ssh_target_matches(node_id, &target)
+                {
+                    return Ok(ssh_detail_json(&target));
+                }
                 let inner = ctx.state.inner.read().await;
                 let node = inner
                     .nodes
@@ -153,17 +310,31 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     })?;
                 // node_id can be null to clear the node assignment.
                 let node_id = ctx.params.get("node_id").and_then(|v| v.as_str());
-
-                // Validate that the node exists if one is specified.
-                if let Some(nid) = node_id {
-                    let inner = ctx.state.inner.read().await;
-                    if inner.nodes.get(nid).is_none() {
-                        return Err(ErrorShape::new(
-                            error_codes::INVALID_REQUEST,
-                            format!("node '{nid}' not found or not connected"),
-                        ));
+                let resolved_node_id = if let Some(nid) = node_id {
+                    if let Some(store) = ctx.state.credential_store.as_ref()
+                        && let Some(target) = store
+                            .resolve_ssh_target(nid)
+                            .await
+                            .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?
+                    {
+                        Some(target.node_id)
+                    } else if let Some(target) = configured_legacy_ssh_target()
+                        && crate::node_exec::ssh_target_matches(nid, &target)
+                    {
+                        Some(crate::node_exec::ssh_node_id(&target))
+                    } else {
+                        let inner = ctx.state.inner.read().await;
+                        if inner.nodes.get(nid).is_none() {
+                            return Err(ErrorShape::new(
+                                error_codes::INVALID_REQUEST,
+                                format!("node '{nid}' not found or not connected"),
+                            ));
+                        }
+                        Some(nid.to_string())
                     }
-                }
+                } else {
+                    None
+                };
 
                 let Some(ref meta) = ctx.state.services.session_metadata else {
                     return Err(ErrorShape::new(
@@ -174,10 +345,10 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 meta.upsert(session_key, None)
                     .await
                     .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
-                meta.set_node_id(session_key, node_id)
+                meta.set_node_id(session_key, resolved_node_id.as_deref())
                     .await
                     .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
-                Ok(serde_json::json!({ "ok": true, "node_id": node_id }))
+                Ok(serde_json::json!({ "ok": true, "node_id": resolved_node_id }))
             })
         }),
     );
@@ -231,8 +402,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string()))?;
 
                 {
-                    let inner = ctx.state.inner.read().await;
-                    let node_client = inner.clients.get(&conn_id).ok_or_else(|| {
+                    let registry = ctx.state.client_registry.read().await;
+                    let node_client = registry.clients.get(&conn_id).ok_or_else(|| {
                         ErrorShape::new(error_codes::UNAVAILABLE, "node connection lost")
                     })?;
                     if !node_client.send(&event_json) {
@@ -426,11 +597,15 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         let geo = moltis_config::GeoLocation::now(lat, lon, None);
                         ctx.state.inner.write().await.cached_location = Some(geo.clone());
 
-                        // Persist to USER.md (best-effort).
-                        let mut user = moltis_config::load_user().unwrap_or_default();
-                        user.location = Some(geo);
-                        if let Err(e) = moltis_config::save_user(&user) {
-                            tracing::warn!(error = %e, "failed to persist location to USER.md");
+                        let write_mode = moltis_config::discover_and_load()
+                            .memory
+                            .user_profile_write_mode;
+                        if write_mode.allows_auto_write() {
+                            let mut user = moltis_config::resolve_user_profile();
+                            user.location = Some(geo);
+                            if let Err(e) = moltis_config::save_user_with_mode(&user, write_mode) {
+                                tracing::warn!(error = %e, "failed to persist location to USER.md");
+                            }
                         }
                     }
                     serde_json::json!({ "location": ctx.params.get("location") })

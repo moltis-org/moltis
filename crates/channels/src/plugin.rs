@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use {async_trait::async_trait, moltis_common::types::ReplyPayload, tokio::sync::mpsc};
+use {
+    async_trait::async_trait,
+    moltis_common::{hooks::ChannelBinding, types::ReplyPayload},
+    tokio::sync::mpsc,
+};
 
 use crate::{Error, Result, config_view::ChannelConfigView};
 
@@ -17,6 +21,9 @@ pub enum ChannelType {
     MsTeams,
     Discord,
     Slack,
+    Matrix,
+    Nostr,
+    Signal,
 }
 
 impl ChannelType {
@@ -28,6 +35,9 @@ impl ChannelType {
             Self::MsTeams => "msteams",
             Self::Discord => "discord",
             Self::Slack => "slack",
+            Self::Matrix => "matrix",
+            Self::Nostr => "nostr",
+            Self::Signal => "signal",
         }
     }
 
@@ -39,6 +49,48 @@ impl ChannelType {
             Self::MsTeams => "Microsoft Teams",
             Self::Discord => "Discord",
             Self::Slack => "Slack",
+            Self::Matrix => "Matrix",
+            Self::Nostr => "Nostr",
+            Self::Signal => "Signal",
+        }
+    }
+
+    /// Best-effort chat classification for hook and prompt context.
+    #[must_use]
+    pub fn classify_chat(&self, chat_id: &str) -> Option<String> {
+        match self {
+            Self::Telegram => {
+                if chat_id.starts_with("-100") {
+                    Some("channel_or_supergroup".to_string())
+                } else if chat_id.starts_with('-') {
+                    Some("group".to_string())
+                } else {
+                    Some("private".to_string())
+                }
+            },
+            Self::Signal => {
+                if chat_id.starts_with("group:") {
+                    Some("group".to_string())
+                } else {
+                    Some("direct".to_string())
+                }
+            },
+            Self::Nostr => Some("dm".to_string()),
+            _ => None,
+        }
+    }
+
+    /// Top-level config fields that must be treated as persisted secrets.
+    pub fn secret_fields(&self) -> &'static [&'static str] {
+        match self {
+            Self::Telegram => &["token"],
+            Self::Whatsapp => &[],
+            Self::MsTeams => &["app_password", "webhook_secret"],
+            Self::Discord => &["token"],
+            Self::Slack => &["bot_token", "app_token", "signing_secret"],
+            Self::Matrix => &["access_token", "password"],
+            Self::Nostr => &["secret_key"],
+            Self::Signal => &[],
         }
     }
 }
@@ -59,6 +111,9 @@ impl std::str::FromStr for ChannelType {
             "msteams" | "microsoft_teams" | "microsoft-teams" | "teams" => Ok(Self::MsTeams),
             "discord" => Ok(Self::Discord),
             "slack" => Ok(Self::Slack),
+            "matrix" | "element" => Ok(Self::Matrix),
+            "nostr" => Ok(Self::Nostr),
+            "signal" => Ok(Self::Signal),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),
@@ -74,6 +129,9 @@ impl ChannelType {
         Self::MsTeams,
         Self::Discord,
         Self::Slack,
+        Self::Matrix,
+        Self::Nostr,
+        Self::Signal,
     ];
 
     /// Returns the static descriptor for this channel type.
@@ -119,12 +177,12 @@ impl ChannelType {
                     inbound_mode: InboundMode::Webhook,
                     supports_outbound: true,
                     supports_streaming: true,
-                    supports_interactive: false,
-                    supports_threads: false,
+                    supports_interactive: true,
+                    supports_threads: true,
                     supports_voice_ingest: false,
                     supports_pairing: false,
                     supports_otp: false,
-                    supports_reactions: false,
+                    supports_reactions: true,
                     supports_location: true,
                 },
             },
@@ -137,7 +195,7 @@ impl ChannelType {
                     supports_streaming: true,
                     supports_interactive: true,
                     supports_threads: true,
-                    supports_voice_ingest: false,
+                    supports_voice_ingest: true,
                     supports_pairing: false,
                     supports_otp: false,
                     supports_reactions: false,
@@ -157,6 +215,54 @@ impl ChannelType {
                     supports_pairing: false,
                     supports_otp: false,
                     supports_reactions: true,
+                    supports_location: false,
+                },
+            },
+            Self::Matrix => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Matrix",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: true,
+                    supports_interactive: true,
+                    supports_threads: true,
+                    supports_voice_ingest: true,
+                    supports_pairing: false,
+                    supports_otp: true,
+                    supports_reactions: true,
+                    supports_location: true,
+                },
+            },
+            Self::Nostr => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Nostr",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: false,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: true,
+                    supports_reactions: false,
+                    supports_location: false,
+                },
+            },
+            Self::Signal => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Signal",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: false,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: true,
+                    supports_reactions: false,
                     supports_location: false,
                 },
             },
@@ -274,6 +380,11 @@ pub enum ChannelEvent {
         account_id: String,
         reason: String,
     },
+    /// Channel account status changed (e.g. ownership bootstrap complete).
+    StatusChanged {
+        channel_type: ChannelType,
+        account_id: String,
+    },
 }
 
 /// Sink for channel events — the gateway provides the concrete implementation.
@@ -294,8 +405,17 @@ pub trait ChannelEventSink: Send + Sync {
 
     /// Dispatch a slash command (e.g. "new", "clear", "compact", "context")
     /// and return a text result to send back to the channel.
-    async fn dispatch_command(&self, command: &str, reply_to: ChannelReplyTarget)
-    -> Result<String>;
+    ///
+    /// `sender_id` identifies the message sender. Privileged commands
+    /// (`/approve`, `/deny`) are restricted to senders on the channel
+    /// account's allowlist — authorization is enforced centrally by the
+    /// gateway, so channel implementations do not need to handle it.
+    async fn dispatch_command(
+        &self,
+        command: &str,
+        reply_to: ChannelReplyTarget,
+        sender_id: Option<&str>,
+    ) -> Result<String>;
 
     /// Request disabling a channel account due to a runtime error.
     ///
@@ -326,6 +446,19 @@ pub trait ChannelEventSink: Send + Sync {
         _filename: &str,
         _reply_to: &ChannelReplyTarget,
     ) -> Option<String> {
+        None
+    }
+
+    /// Save a non-audio inbound file to the session's media directory.
+    ///
+    /// Returns both the relative media reference and the absolute local path
+    /// on success so the agent can inspect the exact saved file.
+    async fn save_channel_attachment(
+        &self,
+        _file_data: &[u8],
+        _filename: &str,
+        _reply_to: &ChannelReplyTarget,
+    ) -> Option<SavedChannelFile> {
         None
     }
 
@@ -404,15 +537,25 @@ pub struct ChannelMessageMeta {
     pub channel_type: ChannelType,
     pub sender_name: Option<String>,
     pub username: Option<String>,
+    /// Platform-specific sender/peer ID (e.g. Telegram user ID, Discord user ID).
+    /// Used for per-sender tool policy resolution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_id: Option<String>,
     /// Original inbound message media kind (voice, audio, photo, etc.).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_kind: Option<ChannelMessageKind>,
     /// Default model configured for this channel account.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Default agent configured for this channel account or chat override.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
     /// Filename of saved voice audio (set by `save_channel_voice`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_filename: Option<String>,
+    /// Saved inbound documents/files attached to this user message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub documents: Option<Vec<ChannelDocumentFile>>,
 }
 
 /// Inbound channel message media kind.
@@ -438,6 +581,28 @@ pub struct ChannelAttachment {
     pub data: Vec<u8>,
 }
 
+/// Metadata for a saved inbound channel document.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChannelDocumentFile {
+    /// User-facing original filename when available.
+    pub display_name: String,
+    /// Sanitized stored filename inside session media.
+    pub stored_filename: String,
+    /// MIME type reported by the channel.
+    pub mime_type: String,
+}
+
+/// Metadata for an inbound channel file saved to session media.
+#[derive(Debug, Clone)]
+pub struct SavedChannelFile {
+    /// Original or generated filename used in session media storage.
+    pub filename: String,
+    /// Relative media reference (e.g. `media/main/report.pdf`).
+    pub media_ref: String,
+    /// Absolute filesystem path for local tooling access.
+    pub absolute_path: String,
+}
+
 /// Where to send the LLM response back.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChannelReplyTarget {
@@ -449,6 +614,77 @@ pub struct ChannelReplyTarget {
     /// Used to thread replies (e.g. Telegram `reply_to_message_id`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_id: Option<String>,
+    /// Forum-topic / thread identifier (e.g. Telegram `message_thread_id`).
+    /// When present, outbound messages are routed to this topic instead of the
+    /// top-level chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+}
+
+impl ChannelReplyTarget {
+    /// Returns the address string for outbound sends.
+    ///
+    /// For Telegram forum topics this encodes both chat and thread as
+    /// `"chat_id:thread_id"` so the outbound implementation can route to the
+    /// correct topic. All other channels return the plain `chat_id`.
+    pub fn outbound_to(&self) -> std::borrow::Cow<'_, str> {
+        match &self.thread_id {
+            Some(tid) => std::borrow::Cow::Owned(format!("{}:{}", self.chat_id, tid)),
+            None => std::borrow::Cow::Borrowed(&self.chat_id),
+        }
+    }
+}
+
+impl From<&ChannelReplyTarget> for ChannelBinding {
+    fn from(target: &ChannelReplyTarget) -> Self {
+        let channel_type = target.channel_type.as_str().to_string();
+        Self {
+            surface: Some(channel_type.clone()),
+            session_kind: Some("channel".to_string()),
+            channel_type: Some(channel_type),
+            account_id: Some(target.account_id.clone()),
+            chat_id: Some(target.chat_id.clone()),
+            chat_type: target.channel_type.classify_chat(&target.chat_id),
+            sender_id: None,
+        }
+    }
+}
+
+#[must_use]
+pub fn web_session_channel_binding() -> ChannelBinding {
+    ChannelBinding {
+        surface: Some("web".to_string()),
+        session_kind: Some("web".to_string()),
+        ..Default::default()
+    }
+}
+
+pub fn resolve_session_channel_binding(
+    session_key: &str,
+    binding_json: Option<&str>,
+) -> std::result::Result<ChannelBinding, serde_json::Error> {
+    if session_key == "cron:heartbeat" {
+        return Ok(ChannelBinding {
+            surface: Some("heartbeat".to_string()),
+            session_kind: Some("cron".to_string()),
+            ..Default::default()
+        });
+    }
+
+    if session_key.starts_with("cron:") {
+        return Ok(ChannelBinding {
+            surface: Some("cron".to_string()),
+            session_kind: Some("cron".to_string()),
+            ..Default::default()
+        });
+    }
+
+    if let Some(binding_json) = binding_json {
+        let binding = serde_json::from_str::<ChannelReplyTarget>(binding_json)?;
+        return Ok((&binding).into());
+    }
+
+    Ok(web_session_channel_binding())
 }
 
 // ── Interactive messages ─────────────────────────────────────────────────────
@@ -520,6 +756,14 @@ pub trait ChannelPlugin: Send + Sync {
     /// Stop an account connection.
     async fn stop_account(&mut self, account_id: &str) -> Result<()>;
 
+    /// Retry account-specific setup that is waiting on some external action.
+    ///
+    /// Most channels do not need this. Matrix uses it to resume a pending
+    /// browser-approved cross-signing reset without tearing down the account.
+    async fn retry_account_setup(&mut self, _account_id: &str) -> Result<()> {
+        Err(Error::unavailable("account setup retry not supported"))
+    }
+
     /// Get outbound adapter for sending messages.
     fn outbound(&self) -> Option<&dyn ChannelOutbound>;
 
@@ -572,6 +816,29 @@ pub trait ChannelPlugin: Send + Sync {
         _account_id: &str,
     ) -> Option<Box<dyn crate::channel_webhook_middleware::ChannelWebhookVerifier>> {
         None
+    }
+
+    /// Start an OAuth/OIDC login flow. Returns auth URL and CSRF state.
+    async fn oidc_start(
+        &self,
+        _account_id: &str,
+        _config: serde_json::Value,
+        _redirect_uri: &str,
+    ) -> Result<serde_json::Value> {
+        Err(Error::unavailable(
+            "OIDC login not supported for this channel",
+        ))
+    }
+
+    /// Complete an OAuth/OIDC login after browser redirect.
+    async fn oidc_complete(
+        &self,
+        _csrf_state: &str,
+        _callback_url: &str,
+    ) -> Result<serde_json::Value> {
+        Err(Error::unavailable(
+            "OIDC login not supported for this channel",
+        ))
     }
 }
 
@@ -718,6 +985,7 @@ pub struct ChannelHealthSnapshot {
     pub connected: bool,
     pub account_id: String,
     pub details: Option<String>,
+    pub extra: Option<serde_json::Value>,
 }
 
 /// Stream event for edit-in-place streaming.
@@ -778,6 +1046,7 @@ mod tests {
             &self,
             _command: &str,
             _reply_to: ChannelReplyTarget,
+            _sender_id: Option<&str>,
         ) -> Result<String> {
             Ok(String::new())
         }
@@ -805,8 +1074,56 @@ mod tests {
             account_id: "bot1".into(),
             chat_id: "42".into(),
             message_id: None,
+            thread_id: None,
         };
         assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
+    }
+
+    #[test]
+    fn outbound_to_without_thread_id() {
+        let target = ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: "bot1".into(),
+            chat_id: "12345".into(),
+            message_id: None,
+            thread_id: None,
+        };
+        assert_eq!(target.outbound_to().as_ref(), "12345");
+    }
+
+    #[test]
+    fn outbound_to_with_thread_id() {
+        let target = ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: "bot1".into(),
+            chat_id: "-100999".into(),
+            message_id: None,
+            thread_id: Some("42".into()),
+        };
+        assert_eq!(target.outbound_to().as_ref(), "-100999:42");
+    }
+
+    #[test]
+    fn reply_target_thread_id_serde_roundtrip() {
+        let target = ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: "bot1".into(),
+            chat_id: "-100999".into(),
+            message_id: None,
+            thread_id: Some("42".into()),
+        };
+        let json = serde_json::to_string(&target).unwrap();
+        assert!(json.contains("\"thread_id\":\"42\""));
+        let restored: ChannelReplyTarget = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.thread_id.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn reply_target_without_thread_id_deserializes() {
+        // Existing JSON without thread_id should deserialize with None.
+        let json = r#"{"channel_type":"telegram","account_id":"bot1","chat_id":"123"}"#;
+        let target: ChannelReplyTarget = serde_json::from_str(json).unwrap();
+        assert!(target.thread_id.is_none());
     }
 
     #[test]
@@ -952,9 +1269,11 @@ mod tests {
     fn channel_type_round_trip() {
         for (s, expected) in [
             ("telegram", ChannelType::Telegram),
+            ("whatsapp", ChannelType::Whatsapp),
             ("msteams", ChannelType::MsTeams),
             ("discord", ChannelType::Discord),
             ("slack", ChannelType::Slack),
+            ("matrix", ChannelType::Matrix),
         ] {
             let parsed: ChannelType = s.parse().unwrap_or_else(|e| panic!("parse {s}: {e}"));
             assert_eq!(parsed, expected);
@@ -973,9 +1292,11 @@ mod tests {
     fn channel_type_serde_round_trip() {
         for ct in [
             ChannelType::Telegram,
+            ChannelType::Whatsapp,
             ChannelType::MsTeams,
             ChannelType::Discord,
             ChannelType::Slack,
+            ChannelType::Matrix,
         ] {
             let json = serde_json::to_string(&ct).unwrap_or_else(|e| panic!("serialize: {e}"));
             let back: ChannelType =
@@ -987,7 +1308,7 @@ mod tests {
     #[test]
     fn all_covers_every_variant() {
         // If a new variant is added to ChannelType, this test forces updating ALL.
-        assert_eq!(ChannelType::ALL.len(), 5);
+        assert_eq!(ChannelType::ALL.len(), 8);
         for ct in ChannelType::ALL {
             // descriptor() must not panic
             let desc = ct.descriptor();
@@ -1005,6 +1326,8 @@ mod tests {
         );
         assert_eq!(ChannelType::Discord.descriptor().display_name, "Discord");
         assert_eq!(ChannelType::Slack.descriptor().display_name, "Slack");
+        assert_eq!(ChannelType::Matrix.descriptor().display_name, "Matrix");
+        assert_eq!(ChannelType::Nostr.descriptor().display_name, "Nostr");
     }
 
     #[test]
@@ -1017,6 +1340,26 @@ mod tests {
             );
             assert_eq!(desc.display_name, ct.display_name());
         }
+    }
+
+    #[test]
+    fn channel_type_secret_fields_are_declared() {
+        assert_eq!(ChannelType::Telegram.secret_fields(), ["token"]);
+        assert_eq!(ChannelType::Whatsapp.secret_fields(), &[] as &[&str]);
+        assert_eq!(ChannelType::MsTeams.secret_fields(), [
+            "app_password",
+            "webhook_secret"
+        ]);
+        assert_eq!(ChannelType::Discord.secret_fields(), ["token"]);
+        assert_eq!(ChannelType::Slack.secret_fields(), [
+            "bot_token",
+            "app_token",
+            "signing_secret"
+        ]);
+        assert_eq!(ChannelType::Matrix.secret_fields(), [
+            "access_token",
+            "password"
+        ]);
     }
 
     #[test]
@@ -1042,5 +1385,91 @@ mod tests {
         assert_eq!(json, "\"socket_mode\"");
         let json = serde_json::to_string(&InboundMode::Webhook).unwrap();
         assert_eq!(json, "\"webhook\"");
+    }
+
+    #[test]
+    fn telegram_chat_classification_matches_chat_id_shape() {
+        assert_eq!(
+            ChannelType::Telegram.classify_chat("-100123").as_deref(),
+            Some("channel_or_supergroup")
+        );
+        assert_eq!(
+            ChannelType::Telegram.classify_chat("-42").as_deref(),
+            Some("group")
+        );
+        assert_eq!(
+            ChannelType::Telegram.classify_chat("123").as_deref(),
+            Some("private")
+        );
+        assert!(ChannelType::Discord.classify_chat("123").is_none());
+    }
+
+    #[test]
+    fn channel_reply_target_converts_to_hook_channel_binding() {
+        let target = ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: "bot1".into(),
+            chat_id: "-100999".into(),
+            message_id: Some("7".into()),
+            thread_id: Some("42".into()),
+        };
+
+        let binding: ChannelBinding = (&target).into();
+        assert_eq!(binding.surface.as_deref(), Some("telegram"));
+        assert_eq!(binding.session_kind.as_deref(), Some("channel"));
+        assert_eq!(binding.channel_type.as_deref(), Some("telegram"));
+        assert_eq!(binding.account_id.as_deref(), Some("bot1"));
+        assert_eq!(binding.chat_id.as_deref(), Some("-100999"));
+        assert_eq!(binding.chat_type.as_deref(), Some("channel_or_supergroup"));
+        assert!(binding.sender_id.is_none());
+    }
+
+    #[test]
+    fn resolve_session_channel_binding_classifies_special_sessions() {
+        let heartbeat = resolve_session_channel_binding("cron:heartbeat", None)
+            .unwrap_or_else(|error| panic!("heartbeat binding should resolve: {error}"));
+        assert_eq!(heartbeat.surface.as_deref(), Some("heartbeat"));
+        assert_eq!(heartbeat.session_kind.as_deref(), Some("cron"));
+
+        let cron = resolve_session_channel_binding("cron:nightly", None)
+            .unwrap_or_else(|error| panic!("cron binding should resolve: {error}"));
+        assert_eq!(cron.surface.as_deref(), Some("cron"));
+        assert_eq!(cron.session_kind.as_deref(), Some("cron"));
+
+        let web = resolve_session_channel_binding("main", None)
+            .unwrap_or_else(|error| panic!("web binding should resolve: {error}"));
+        assert_eq!(web.surface.as_deref(), Some("web"));
+        assert_eq!(web.session_kind.as_deref(), Some("web"));
+    }
+
+    #[test]
+    fn resolve_session_channel_binding_extracts_channel_target() {
+        let binding_json = serde_json::to_string(&ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: "bot-main".into(),
+            chat_id: "-100123".into(),
+            message_id: Some("11".into()),
+            thread_id: None,
+        })
+        .unwrap_or_else(|error| panic!("serialize binding: {error}"));
+
+        let binding =
+            resolve_session_channel_binding("telegram:bot-main:-100123", Some(&binding_json))
+                .unwrap_or_else(|error| panic!("channel binding should resolve: {error}"));
+
+        assert_eq!(binding.surface.as_deref(), Some("telegram"));
+        assert_eq!(binding.session_kind.as_deref(), Some("channel"));
+        assert_eq!(binding.channel_type.as_deref(), Some("telegram"));
+        assert_eq!(binding.account_id.as_deref(), Some("bot-main"));
+        assert_eq!(binding.chat_id.as_deref(), Some("-100123"));
+        assert_eq!(binding.chat_type.as_deref(), Some("channel_or_supergroup"));
+    }
+
+    #[test]
+    fn resolve_session_channel_binding_returns_error_for_invalid_json() {
+        let error = resolve_session_channel_binding("telegram:bot-main:-100123", Some("{not-json"))
+            .err()
+            .unwrap_or_else(|| panic!("invalid binding json should fail"));
+        assert!(error.is_syntax());
     }
 }

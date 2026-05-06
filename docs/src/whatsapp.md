@@ -51,6 +51,19 @@ whatsapp = ["moltis-gateway/whatsapp"]
 When disabled, all WhatsApp code is compiled out — no QR code library, no
 Signal Protocol store, no WhatsApp event handlers.
 
+```admonish important title="Enable in Channel List"
+WhatsApp is not shown in the web UI by default. Add it to the offered
+channels list in `moltis.toml`:
+
+\`\`\`toml
+[channels]
+offered = ["telegram", "discord", "slack", "whatsapp"]
+\`\`\`
+
+Restart Moltis after changing this setting. The **+ Add Channel** menu
+will then include the WhatsApp option.
+```
+
 ## Quick Start (Web UI)
 
 The fastest way to connect WhatsApp:
@@ -117,8 +130,10 @@ Each WhatsApp account is a named entry under `[channels.whatsapp]`:
 | `store_path` | string | — | Custom path to sled store; defaults to `~/.moltis/whatsapp/<account_id>/` |
 | `model` | string | — | Default LLM model ID for this account |
 | `model_provider` | string | — | Provider name for the model |
+| `agent_id` | string | — | Default agent ID for this account |
 | `dm_policy` | string | `"open"` | DM access policy: `"open"`, `"allowlist"`, or `"disabled"` |
 | `group_policy` | string | `"open"` | Group access policy: `"open"`, `"allowlist"`, or `"disabled"` |
+| `mention_mode` | string | `"always"` | Group reply mode: `"always"`, `"mention"`, or `"none"` |
 | `allowlist` | array | `[]` | Users allowed to DM (usernames or phone numbers) |
 | `group_allowlist` | array | `[]` | Group JIDs allowed for bot responses |
 | `otp_self_approval` | bool | `true` | Allow non-allowlisted users to self-approve via OTP |
@@ -133,6 +148,7 @@ display_name = "John's iPhone"
 phone_number = "+15551234567"
 model = "anthropic/claude-sonnet-4-20250514"
 model_provider = "anthropic"
+agent_id = "personal"
 dm_policy = "allowlist"
 allowlist = ["alice", "bob", "+15559876543"]
 group_policy = "disabled"
@@ -146,6 +162,26 @@ group_policy = "allowlist"
 group_allowlist = ["120363456789@g.us"]
 model = "openai/gpt-4.1"
 model_provider = "openai"
+mention_mode = "mention"
+```
+
+### Per-Chat and Per-User Overrides
+
+WhatsApp also supports optional per-chat and per-user overrides for models and
+agents:
+
+```toml
+[channels.whatsapp."work-bot"]
+paired = true
+model = "openai/gpt-4.1"
+agent_id = "support"
+
+[channels.whatsapp."work-bot.channel_overrides"."120363456789@g.us"]
+agent_id = "triage"
+
+[channels.whatsapp."work-bot.user_overrides"."15551234567@s.whatsapp.net"]
+model = "anthropic/claude-sonnet-4-20250514"
+agent_id = "research"
 ```
 
 ## Access Control
@@ -164,9 +200,17 @@ WhatsApp uses the same access control model as Telegram channels.
 
 | Policy | Behavior |
 |--------|----------|
-| `open` | Bot responds in all groups it's part of |
-| `allowlist` | Bot only responds in groups on the `group_allowlist` |
+| `open` | Bot responds in all groups it's part of, subject to `mention_mode` |
+| `allowlist` | Bot only responds in groups on the `group_allowlist`, subject to `mention_mode` |
 | `disabled` | Bot ignores all group messages |
+
+### Mention Mode
+
+| Mode | Behavior |
+|------|----------|
+| `always` | Bot may respond to allowed group messages without an @mention |
+| `mention` | Bot only responds in allowed groups when the account is @mentioned |
+| `none` | Bot never responds in groups |
 
 ### OTP Self-Approval
 
@@ -336,6 +380,21 @@ Switch to the **Senders** tab to see everyone who has messaged the bot:
 
 ## Troubleshooting
 
+### WhatsApp Not in Add Channel Menu
+
+- WhatsApp is not offered by default. Add `"whatsapp"` to the `offered` list in `moltis.toml`:
+  ```toml
+  [channels]
+  offered = ["telegram", "discord", "slack", "whatsapp"]
+  ```
+- Restart Moltis after changing this setting
+
+### "Can't Understand That Message Type"
+
+- This means the bot received a message type it doesn't handle (e.g. stickers, reactions, polls)
+- Check the server logs for an `info` entry that lists which message fields were present
+- Supported types: text, images, audio, voice notes, video, documents, and locations
+
 ### QR Code Not Appearing
 
 - Ensure the `whatsapp` feature is enabled (it is by default)
@@ -370,6 +429,7 @@ crates/whatsapp/
 │   ├── lib.rs           # Crate entry, WhatsAppPlugin
 │   ├── config.rs        # WhatsAppAccountConfig
 │   ├── connection.rs    # Bot startup, sled store, event loop
+│   ├── error.rs         # Error types
 │   ├── handlers.rs      # Event routing, message handling, media
 │   ├── outbound.rs      # WhatsAppOutbound (ChannelOutbound impl)
 │   ├── state.rs         # AccountState, loop detection, watermark

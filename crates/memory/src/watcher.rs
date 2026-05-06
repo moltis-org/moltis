@@ -1,5 +1,5 @@
 /// Real-time file watching for memory sync using notify-debouncer-full.
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use {
     anyhow::Result,
@@ -18,6 +18,53 @@ pub enum WatchEvent {
     Removed(PathBuf),
 }
 
+/// A filesystem path plus the recursion mode to use when watching it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchSpec {
+    pub path: PathBuf,
+    pub recursive_mode: RecursiveMode,
+}
+
+/// Convert configured memory scan paths into a minimal set of watch roots.
+///
+/// File paths are watched via their parent directory in non-recursive mode so
+/// root-level files like `MEMORY.md` do not force a recursive watch on the
+/// entire data directory. Directory paths keep recursive watching.
+pub fn build_watch_specs(paths: &[PathBuf]) -> Vec<WatchSpec> {
+    let mut specs = BTreeMap::<PathBuf, RecursiveMode>::new();
+
+    for path in paths {
+        let recursive_mode = if path.is_dir() {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
+        };
+
+        let watch_path = if recursive_mode == RecursiveMode::Recursive {
+            path.clone()
+        } else {
+            path.parent().unwrap_or(path.as_path()).to_path_buf()
+        };
+
+        specs
+            .entry(watch_path)
+            .and_modify(|mode| {
+                if recursive_mode == RecursiveMode::Recursive {
+                    *mode = RecursiveMode::Recursive;
+                }
+            })
+            .or_insert(recursive_mode);
+    }
+
+    specs
+        .into_iter()
+        .map(|(path, recursive_mode)| WatchSpec {
+            path,
+            recursive_mode,
+        })
+        .collect()
+}
+
 /// Watches directories for markdown file changes with debouncing.
 pub struct MemoryFileWatcher {
     debouncer: Debouncer<notify_debouncer_full::notify::RecommendedWatcher, RecommendedCache>,
@@ -25,7 +72,7 @@ pub struct MemoryFileWatcher {
 
 impl MemoryFileWatcher {
     /// Start watching the given directories. Returns the watcher and a receiver for events.
-    pub fn start(dirs: Vec<PathBuf>) -> Result<(Self, mpsc::UnboundedReceiver<WatchEvent>)> {
+    pub fn start(specs: Vec<WatchSpec>) -> Result<(Self, mpsc::UnboundedReceiver<WatchEvent>)> {
         let (tx, rx) = mpsc::unbounded_channel();
 
         let debouncer = new_debouncer(
@@ -67,13 +114,69 @@ impl MemoryFileWatcher {
 
         let mut watcher = Self { debouncer };
 
-        for dir in &dirs {
-            if dir.exists() {
-                watcher.debouncer.watch(dir, RecursiveMode::Recursive)?;
-                info!(dir = %dir.display(), "file watcher: watching directory");
+        for spec in &specs {
+            if spec.path.exists() {
+                watcher.debouncer.watch(&spec.path, spec.recursive_mode)?;
+                info!(
+                    path = %spec.path.display(),
+                    recursive = matches!(spec.recursive_mode, RecursiveMode::Recursive),
+                    "file watcher: watching path"
+                );
             }
         }
 
         Ok((watcher, rx))
+    }
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn has_spec(
+        specs: &[WatchSpec],
+        path: &std::path::Path,
+        recursive_mode: RecursiveMode,
+    ) -> bool {
+        specs
+            .iter()
+            .any(|spec| spec.path == path && spec.recursive_mode == recursive_mode)
+    }
+
+    #[test]
+    fn build_watch_specs_does_not_recurse_over_data_dir_for_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path();
+        let specs = build_watch_specs(&[
+            data_dir.join("MEMORY.md"),
+            data_dir.join("memory.md"),
+            data_dir.join("memory"),
+            data_dir.join("agents"),
+        ]);
+
+        assert!(has_spec(&specs, data_dir, RecursiveMode::NonRecursive));
+        assert!(!has_spec(&specs, data_dir, RecursiveMode::Recursive));
+    }
+
+    #[test]
+    fn build_watch_specs_recurse_only_existing_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path();
+        let memory_dir = data_dir.join("memory");
+        let agents_dir = data_dir.join("agents");
+        std::fs::create_dir_all(&memory_dir).unwrap();
+        std::fs::create_dir_all(&agents_dir).unwrap();
+
+        let specs = build_watch_specs(&[
+            data_dir.join("MEMORY.md"),
+            data_dir.join("memory.md"),
+            memory_dir.clone(),
+            agents_dir.clone(),
+        ]);
+
+        assert!(has_spec(&specs, data_dir, RecursiveMode::NonRecursive));
+        assert!(has_spec(&specs, &memory_dir, RecursiveMode::Recursive));
+        assert!(has_spec(&specs, &agents_dir, RecursiveMode::Recursive));
     }
 }

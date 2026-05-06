@@ -42,15 +42,25 @@ app enters onboarding mode. Uses a random free port by default.
 
 ## Playwright Projects
 
-The test suite is split into five Playwright projects:
+The local test suite keeps a single `default` project for targeted debugging.
+CI uses `e2e/run-ci.sh` to launch four independent default-suite Playwright
+processes by default, controlled by `MOLTIS_E2E_SHARDS`. Each process runs with
+one worker against its own Moltis process, port, config dir, and data dir. That
+gives parallelism without letting two stateful spec files talk to the same
+gateway at the same time. CI also runs special projects (`agents`, `auth`,
+onboarding variants, OAuth, and optional live-provider suites) as separate
+single-project processes so each one starts only its own web server.
 
 | Project | Port | Spec files | Notes |
 |---------|------|------------|-------|
-| `default` | Random free port (`MOLTIS_E2E_PORT`) | All except `auth.spec.js` and `onboarding.spec.js` | Seeded identity, no password |
-| `auth` | Same as `default` | `auth.spec.js` | Runs after `default`; sets a password to test login |
+| `default` | Random free port (`MOLTIS_E2E_PORT`) | All except isolated project specs, or one CI shard when `MOLTIS_E2E_PROCESS_SHARD_INDEX` is set | Seeded identity, no password |
+| `agents` | Local: same as `default`; CI: random free port (`MOLTIS_E2E_AGENTS_PORT`) | `agents.spec.js` | CI uses isolated runtime state |
+| `auth` | Local: same as `default`; CI: random free port (`MOLTIS_E2E_AUTH_PORT`) | `auth.spec.js` | CI uses isolated runtime state |
 | `onboarding` | Random free port (`MOLTIS_E2E_ONBOARDING_PORT`) | `onboarding.spec.js` | Separate server without seeded identity |
 | `onboarding-auth` | Random free port (`MOLTIS_E2E_ONBOARDING_AUTH_PORT`) | `onboarding-auth.spec.js` | Separate server with remote-auth simulation |
 | `onboarding-anthropic` | Random free port (`MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT`) | `onboarding-anthropic.spec.js` | Separate server proving first-run Anthropic onboarding with zero providers at startup |
+| `openai-live` | Random free port (`MOLTIS_E2E_OPENAI_LIVE_PORT`) | `openai-live.spec.js` | Separate server that preserves only the existing OpenAI env and proves a real OpenAI chat turn works |
+| `ollama-qwen-live` | Random free port (`MOLTIS_E2E_OLLAMA_QWEN_LIVE_PORT`) + Ollama API port (`MOLTIS_E2E_OLLAMA_QWEN_API_PORT`, default `11435`) | `ollama-qwen-live.spec.js` | Opt-in server that starts a local Ollama instance, seeds a custom OpenAI-compatible Qwen provider, and proves the multiple-system-message regression is fixed |
 
 ## Spec Files
 
@@ -63,6 +73,7 @@ The test suite is split into five Playwright projects:
 | `settings-nav.spec.js` | 17 | Settings subsection routing and rendering |
 | `theme.spec.js` | 3 | Theme toggle, dark mode, localStorage persistence |
 | `providers.spec.js` | 5 | Provider page load, add/detect buttons, guidance |
+| `gemini-tool-signature.spec.js` | 1 | Mock Gemini-compatible provider verifies tool-call `thought_signature` survives a web chat tool round trip |
 | `cron.spec.js` | 4 | Cron jobs page, heartbeat tab, create button |
 | `skills.spec.js` | 4 | Skills page, install input, featured repos |
 | `projects.spec.js` | 4 | Projects page, add input, auto-detect |
@@ -72,6 +83,8 @@ The test suite is split into five Playwright projects:
 | `onboarding.spec.js` | 5 | Onboarding redirect, steps, skip, identity input |
 | `onboarding-auth.spec.js` | 1 | Remote onboarding auth flow with setup code and identity save |
 | `onboarding-anthropic.spec.js` | 1 | Anthropic onboarding from empty startup, model discovery, model selection |
+| `openai-live.spec.js` | 1 | Live OpenAI provider smoke test using the existing env and a real chat turn |
+| `ollama-qwen-live.spec.js` | 1 | Opt-in live Ollama smoke test for the custom OpenAI-compatible Qwen regression path |
 
 ## Shared Helpers
 
@@ -92,6 +105,9 @@ cd crates/web/ui && npx playwright test e2e/specs/sessions.spec.js
 # Run a specific project
 npx playwright test --project=auth
 
+# Run the opt-in Ollama/Qwen live project
+MOLTIS_E2E_OLLAMA_QWEN_LIVE=1 npx playwright test --project=ollama-qwen-live e2e/specs/ollama-qwen-live.spec.js
+
 # Run with visible browser
 just ui-e2e-headed
 
@@ -107,5 +123,6 @@ npx playwright show-report
 - **Build the binary first** (`cargo build`) to avoid recompilation on every
   test run. The startup script auto-detects `target/debug/moltis`.
 - Set `MOLTIS_BINARY=/path/to/moltis` to use a specific binary.
-- Tests run serially (`workers: 1`) because they share a single server.
+- Each Playwright process runs serially (`workers: 1`) because a Moltis runtime
+  is stateful. CI gets parallelism by running multiple single-worker processes.
 - On failure, traces, screenshots, and videos are saved in `test-results/`.

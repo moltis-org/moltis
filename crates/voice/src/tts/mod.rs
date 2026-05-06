@@ -118,6 +118,12 @@ pub struct SynthesizeRequest {
     pub stability: Option<f32>,
     /// Similarity boost (ElevenLabs-specific, 0.0 - 1.0).
     pub similarity_boost: Option<f32>,
+    /// Voice persona instructions injected into providers that support them.
+    ///
+    /// OpenAI `gpt-4o-mini-tts` uses this as the `instructions` field to control
+    /// voice tone, accent, pacing and character. Other providers ignore it or
+    /// map it to provider-specific mechanisms.
+    pub instructions: Option<String>,
 }
 
 /// Audio output from TTS synthesis.
@@ -159,6 +165,83 @@ pub trait TtsProvider: Send + Sync {
 
     /// Convert text to speech.
     async fn synthesize(&self, request: SynthesizeRequest) -> Result<AudioOutput>;
+}
+
+/// Parsed TTS directives from `[[tts:key=value]]` tags in message text.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct TtsDirectives {
+    /// Per-message persona override.
+    pub persona: Option<String>,
+    /// Per-message provider override.
+    pub provider: Option<String>,
+    /// Per-message voice ID override.
+    pub voice_id: Option<String>,
+    /// Per-message model override.
+    pub model: Option<String>,
+    /// Per-message speed override.
+    pub speed: Option<f32>,
+    /// Per-message stability override (ElevenLabs).
+    pub stability: Option<f32>,
+    /// Per-message similarity boost override (ElevenLabs).
+    pub similarity_boost: Option<f32>,
+}
+
+/// Extract `[[tts:...]]` directives from text and return cleaned text.
+///
+/// Supported directives:
+/// - `[[tts:persona=alfred]]` — override the active persona for this message
+/// - `[[tts:provider=openai]]` — override the TTS provider for this message
+/// - `[[tts:voiceId=cedar model=gpt-4o-mini-tts speed=0.9]]` — per-field overrides
+/// - `[[tts]]` — bare tag (used by `TtsAutoMode::Tagged`)
+///
+/// Multiple directives can appear in a single tag: `[[tts:persona=alfred provider=openai]]`.
+/// The directive tags are stripped from the returned text.
+#[must_use]
+pub fn parse_tts_directives(text: &str) -> (Cow<'_, str>, TtsDirectives) {
+    if !text.contains("[[tts") {
+        return (Cow::Borrowed(text), TtsDirectives::default());
+    }
+
+    let mut directives = TtsDirectives::default();
+    let mut cleaned = String::with_capacity(text.len());
+    let mut rest = text;
+
+    while let Some(start) = rest.find("[[tts") {
+        cleaned.push_str(&rest[..start]);
+        let after_tag = &rest[start..];
+        if let Some(end) = after_tag.find("]]") {
+            let tag_content = &after_tag[5..end]; // skip "[[tts"
+            // Parse key=value pairs from the tag content (after optional `:`)
+            let params = tag_content.strip_prefix(':').unwrap_or(tag_content);
+            for token in params.split_whitespace() {
+                if let Some((key, value)) = token.split_once('=') {
+                    match key {
+                        "persona" => directives.persona = Some(value.to_string()),
+                        "provider" => directives.provider = Some(value.to_string()),
+                        "voiceId" | "voice_id" | "voice" => {
+                            directives.voice_id = Some(value.to_string());
+                        },
+                        "model" => directives.model = Some(value.to_string()),
+                        "speed" => directives.speed = value.parse().ok(),
+                        "stability" => directives.stability = value.parse().ok(),
+                        "similarityBoost" | "similarity_boost" => {
+                            directives.similarity_boost = value.parse().ok();
+                        },
+                        _ => {},
+                    }
+                }
+            }
+            rest = &after_tag[end + 2..];
+        } else {
+            // Malformed tag — keep as-is
+            cleaned.push_str(after_tag);
+            rest = "";
+            break;
+        }
+    }
+    cleaned.push_str(rest);
+
+    (Cow::Owned(cleaned), directives)
 }
 
 /// Check whether text contains SSML tags (currently `<break`).
@@ -540,6 +623,57 @@ fn collapse_whitespace(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_tts_directives_no_tags() {
+        let (text, dirs) = parse_tts_directives("Hello world, no directives.");
+        assert!(matches!(text, Cow::Borrowed(_)));
+        assert_eq!(dirs, TtsDirectives::default());
+    }
+
+    #[test]
+    fn test_parse_tts_directives_persona() {
+        let (text, dirs) = parse_tts_directives("Hello [[tts:persona=alfred]] world.");
+        assert_eq!(text.as_ref(), "Hello  world.");
+        assert_eq!(dirs.persona.as_deref(), Some("alfred"));
+        assert_eq!(dirs.provider, None);
+    }
+
+    #[test]
+    fn test_parse_tts_directives_multiple() {
+        let (text, dirs) =
+            parse_tts_directives("Say this [[tts:persona=narrator provider=openai]] please.");
+        assert_eq!(text.as_ref(), "Say this  please.");
+        assert_eq!(dirs.persona.as_deref(), Some("narrator"));
+        assert_eq!(dirs.provider.as_deref(), Some("openai"));
+    }
+
+    #[test]
+    fn test_parse_tts_directives_bare_tag() {
+        let (text, dirs) = parse_tts_directives("Speak this [[tts]] aloud.");
+        assert_eq!(text.as_ref(), "Speak this  aloud.");
+        assert_eq!(dirs, TtsDirectives::default());
+    }
+
+    #[test]
+    fn test_parse_tts_directives_per_field() {
+        let (text, dirs) = parse_tts_directives(
+            "Hello [[tts:voiceId=cedar model=gpt-4o-mini-tts speed=0.9 stability=0.65]] world.",
+        );
+        assert_eq!(text.as_ref(), "Hello  world.");
+        assert_eq!(dirs.voice_id.as_deref(), Some("cedar"));
+        assert_eq!(dirs.model.as_deref(), Some("gpt-4o-mini-tts"));
+        assert_eq!(dirs.speed, Some(0.9));
+        assert_eq!(dirs.stability, Some(0.65));
+        assert_eq!(dirs.persona, None);
+    }
+
+    #[test]
+    fn test_parse_tts_directives_at_boundaries() {
+        let (text, dirs) = parse_tts_directives("[[tts:persona=butler]]Hello");
+        assert_eq!(text.as_ref(), "Hello");
+        assert_eq!(dirs.persona.as_deref(), Some("butler"));
+    }
 
     #[test]
     fn test_sanitize_noop_plain_text() {

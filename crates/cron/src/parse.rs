@@ -5,11 +5,17 @@ use crate::{Error, Result};
 /// Parse a human-friendly duration string into milliseconds.
 ///
 /// Supported suffixes: `s` (seconds), `m` (minutes), `h` (hours), `d` (days).
-/// Examples: `"30s"`, `"5m"`, `"2h"`, `"1d"`.
+/// A bare `"0"` is accepted as a disable sentinel that returns `0`.
+/// Examples: `"30s"`, `"5m"`, `"2h"`, `"1d"`, `"0"`.
 pub fn parse_duration_ms(input: &str) -> Result<u64> {
     let input = input.trim();
     if input.is_empty() {
         return Err(Error::message("empty duration string"));
+    }
+
+    // Bare "0" is the disable sentinel.
+    if input == "0" {
+        return Ok(0);
     }
 
     let (num_str, suffix) = match input.find(|c: char| c.is_alphabetic()) {
@@ -74,6 +80,8 @@ mod tests {
     #[case("2h", 7_200_000)]
     #[case("1d", 86_400_000)]
     #[case("  10m  ", 600_000)]
+    #[case("0", 0)]
+    #[case("  0  ", 0)]
     fn test_parse_duration_ok(#[case] input: &str, #[case] expected: u64) {
         assert_eq!(parse_duration_ms(input).unwrap(), expected);
     }

@@ -2,7 +2,8 @@
   "name": "moltis-website",
   "private": true,
   "scripts": {
-    "build": "node scripts/build-statement.mjs",
+    "build": "node scripts/build-statement.mjs && node scripts/build-changelog.mjs",
+    "build:changelog": "node scripts/build-changelog.mjs",
     "install-manifest:update": "node scripts/generate-install-release-manifest.mjs",
     "i18n:validate": "node scripts/validate-i18n.mjs"
   },

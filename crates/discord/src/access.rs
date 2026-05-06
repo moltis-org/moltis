@@ -77,6 +77,30 @@ fn check_guild_access(
     }
 }
 
+/// Check whether a guild channel passes the channel-name / category filter.
+///
+/// Returns `true` when the channel is allowed. When both
+/// `channel_name_patterns` and `category_allowlist` are empty the filter is
+/// inactive and every channel is allowed. When either (or both) lists are
+/// non-empty, the channel must match at least one entry in either list (OR).
+pub fn channel_matches_filter(
+    config: &DiscordAccountConfig,
+    channel_name: Option<&str>,
+    category_id: Option<&str>,
+) -> bool {
+    if config.channel_name_patterns.is_empty() && config.category_allowlist.is_empty() {
+        return true;
+    }
+
+    let name_match = !config.channel_name_patterns.is_empty()
+        && channel_name.is_some_and(|n| gating::is_allowed(n, &config.channel_name_patterns));
+
+    let cat_match = !config.category_allowlist.is_empty()
+        && category_id.is_some_and(|c| gating::is_allowed(c, &config.category_allowlist));
+
+    name_match || cat_match
+}
+
 /// Reason an inbound message was denied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AccessDenied {
@@ -271,6 +295,51 @@ mod tests {
             check_access(&c, &ChatType::Group, "user", None, Some("grp1"), true),
             Err(AccessDenied::GuildNotOnAllowlist)
         );
+    }
+
+    // ── Channel name / category filter tests ──────────────────
+
+    #[test]
+    fn channel_filter_inactive_allows_all() {
+        let c = cfg();
+        assert!(channel_matches_filter(&c, Some("anything"), None));
+        assert!(channel_matches_filter(&c, None, None));
+    }
+
+    #[test]
+    fn channel_filter_by_name_pattern() {
+        let mut c = cfg();
+        c.channel_name_patterns = vec!["ticket-*".into(), "support-*".into()];
+        assert!(channel_matches_filter(&c, Some("ticket-42"), None));
+        assert!(channel_matches_filter(&c, Some("support-vip"), None));
+        assert!(!channel_matches_filter(&c, Some("general"), None));
+        assert!(!channel_matches_filter(&c, None, None));
+    }
+
+    #[test]
+    fn channel_filter_by_category() {
+        let mut c = cfg();
+        c.category_allowlist = vec!["CAT123".into()];
+        assert!(channel_matches_filter(&c, None, Some("CAT123")));
+        assert!(channel_matches_filter(&c, None, Some("cat123")));
+        assert!(!channel_matches_filter(&c, None, Some("OTHER")));
+        assert!(!channel_matches_filter(&c, None, None));
+    }
+
+    #[test]
+    fn channel_filter_or_logic() {
+        let mut c = cfg();
+        c.channel_name_patterns = vec!["ticket-*".into()];
+        c.category_allowlist = vec!["CAT123".into()];
+
+        // Name matches, category doesn't → allowed
+        assert!(channel_matches_filter(&c, Some("ticket-1"), Some("OTHER")));
+        // Category matches, name doesn't → allowed
+        assert!(channel_matches_filter(&c, Some("general"), Some("CAT123")));
+        // Neither matches → denied
+        assert!(!channel_matches_filter(&c, Some("general"), Some("OTHER")));
+        // Both match → allowed
+        assert!(channel_matches_filter(&c, Some("ticket-1"), Some("CAT123")));
     }
 
     #[test]

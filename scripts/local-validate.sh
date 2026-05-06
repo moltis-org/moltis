@@ -151,16 +151,16 @@ detect_nightly_toolchain() {
     return
   fi
 
-  if [[ -f justfile ]]; then
-    local justfile_toolchain
-    justfile_toolchain="$(sed -nE 's/^nightly_toolchain := "([^"]+)"/\1/p' justfile | head -n1)"
-    if [[ -n "$justfile_toolchain" ]]; then
-      printf '%s' "$justfile_toolchain"
+  if [[ -f rust-toolchain.toml ]]; then
+    local toml_toolchain
+    toml_toolchain="$(sed -nE 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)"/\1/p' rust-toolchain.toml | head -n1)"
+    if [[ -n "$toml_toolchain" ]]; then
+      printf '%s' "$toml_toolchain"
       return
     fi
   fi
 
-  printf '%s' "nightly-2025-11-30"
+  printf '%s' "nightly"
 }
 
 nightly_toolchain="$(detect_nightly_toolchain)"
@@ -172,14 +172,28 @@ elif command -v just >/dev/null 2>&1 && [[ -f justfile ]]; then
 else
   fmt_cmd="cargo +${nightly_toolchain} fmt --all -- --check"
 fi
-biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/web/src/assets/js/}"
+biome_cmd="${LOCAL_VALIDATE_BIOME_CMD:-biome ci --diagnostic-level=error crates/web/ui/src/ crates/web/ui/e2e/}"
+tsc_cmd="${LOCAL_VALIDATE_TSC_CMD:-bash -c 'cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npx tsc --noEmit'}"
 i18n_cmd="${LOCAL_VALIDATE_I18N_CMD:-./scripts/i18n-check.sh}"
 zizmor_cmd="${LOCAL_VALIDATE_ZIZMOR_CMD:-./scripts/run-zizmor-resilient.sh . --min-severity high}"
-lint_cmd="${LOCAL_VALIDATE_LINT_CMD:-cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings}"
-test_cmd="${LOCAL_VALIDATE_TEST_CMD:-cargo +${nightly_toolchain} nextest run --all-features --profile ci}"
+if [[ -n "${LOCAL_VALIDATE_LINT_CMD:-}" ]]; then
+  lint_cmd="$LOCAL_VALIDATE_LINT_CMD"
+elif command -v just >/dev/null 2>&1 && [[ -f justfile ]]; then
+  lint_cmd="just lint"
+else
+  lint_cmd="cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings"
+fi
+if [[ -n "${LOCAL_VALIDATE_TEST_CMD:-}" ]]; then
+  test_cmd="$LOCAL_VALIDATE_TEST_CMD"
+elif command -v just >/dev/null 2>&1 && [[ -f justfile ]]; then
+  test_cmd="just test"
+else
+  test_cmd="cargo +${nightly_toolchain} nextest run --all-features --profile ci"
+fi
 e2e_cmd="${LOCAL_VALIDATE_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && npm run e2e}"
+ollama_qwen_e2e_cmd="${LOCAL_VALIDATE_OLLAMA_QWEN_E2E_CMD:-cd crates/web/ui && if [ ! -d node_modules ]; then npm ci; fi && npm run e2e:install && MOLTIS_E2E_OLLAMA_QWEN_LIVE=1 npx playwright test --project=ollama-qwen-live e2e/specs/ollama-qwen-live.spec.js}"
 coverage_cmd="${LOCAL_VALIDATE_COVERAGE_CMD:-cargo +${nightly_toolchain} llvm-cov --workspace --all-features --html}"
-macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate build}"
+macos_app_cmd="${LOCAL_VALIDATE_MACOS_APP_CMD:-./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination \"platform=macOS\" -derivedDataPath apps/macos/.derivedData-local-validate CODE_SIGNING_ALLOWED=NO build}"
 ios_app_cmd="${LOCAL_VALIDATE_IOS_APP_CMD:-cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination \"generic/platform=iOS\" CODE_SIGNING_ALLOWED=NO build}"
 build_cmd="${LOCAL_VALIDATE_BUILD_CMD:-cargo +${nightly_toolchain} build --workspace --all-features --all-targets}"
 
@@ -194,23 +208,29 @@ strip_all_features_flag() {
 
 if [[ "$(uname -s)" == "Darwin" ]] && ! command -v nvcc >/dev/null 2>&1; then
   if [[ -z "${LOCAL_VALIDATE_LINT_CMD:-}" ]]; then
-    lint_cmd="cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-targets --timings -- -D warnings"
+    if command -v just >/dev/null 2>&1 && [[ -f justfile ]]; then
+      lint_cmd="just lint"
+    else
+      lint_cmd="cargo +${nightly_toolchain} clippy -Z unstable-options --workspace --all-targets --exclude moltis-providers --exclude moltis-gateway --timings -- -D warnings && cargo +${nightly_toolchain} clippy -Z unstable-options -p moltis-providers --all-targets --features local-llm-metal --timings -- -D warnings && cargo +${nightly_toolchain} clippy -Z unstable-options -p moltis-gateway --all-targets --features local-llm-metal --timings -- -D warnings"
+    fi
   fi
   if [[ -z "${LOCAL_VALIDATE_TEST_CMD:-}" ]]; then
-    test_cmd="cargo +${nightly_toolchain} nextest run --profile ci"
+    if command -v just >/dev/null 2>&1 && [[ -f justfile ]]; then
+      test_cmd="just test"
+    else
+      test_cmd="cargo +${nightly_toolchain} nextest run --workspace --all-features --exclude moltis-providers --exclude moltis-gateway && cargo +${nightly_toolchain} nextest run -p moltis-providers --features local-llm-metal && cargo +${nightly_toolchain} nextest run -p moltis-gateway --features local-llm-metal"
+    fi
   fi
   if [[ -z "${LOCAL_VALIDATE_BUILD_CMD:-}" ]]; then
-    build_cmd="cargo +${nightly_toolchain} build --workspace --all-targets"
+    build_cmd="cargo +${nightly_toolchain} build --workspace --all-targets --exclude moltis-providers --exclude moltis-gateway && cargo +${nightly_toolchain} build -p moltis-providers --all-targets --features local-llm-metal && cargo +${nightly_toolchain} build -p moltis-gateway --all-targets --features local-llm-metal"
   fi
   if [[ -z "${LOCAL_VALIDATE_COVERAGE_CMD:-}" ]]; then
     coverage_cmd="cargo +${nightly_toolchain} llvm-cov --workspace --html"
   fi
-  lint_cmd="$(strip_all_features_flag "$lint_cmd")"
-  test_cmd="$(strip_all_features_flag "$test_cmd")"
   build_cmd="$(strip_all_features_flag "$build_cmd")"
   coverage_cmd="$(strip_all_features_flag "$coverage_cmd")"
-  echo "Detected macOS without nvcc; forcing non-CUDA local validation commands (no --all-features)." >&2
-  echo "Override with LOCAL_VALIDATE_LINT_CMD / LOCAL_VALIDATE_TEST_CMD / LOCAL_VALIDATE_BUILD_CMD / LOCAL_VALIDATE_COVERAGE_CMD if needed." >&2
+  echo "Detected macOS without nvcc; using Darwin-native validation commands (metal for provider/gateway, no Linux CUDA path)." >&2
+  echo "CI still covers the Linux/CUDA all-features path. Override with LOCAL_VALIDATE_* if you need a different split." >&2
 fi
 
 ensure_zizmor() {
@@ -260,8 +280,19 @@ cleanup_e2e_ports() {
     return 0
   fi
 
+  local ports=(
+    "${MOLTIS_E2E_PORT:-18789}"
+    "${MOLTIS_E2E_ONBOARDING_PORT:-18790}"
+    "${MOLTIS_E2E_ONBOARDING_AUTH_PORT:-18791}"
+    "${MOLTIS_E2E_OAUTH_PORT:-18792}"
+    "${MOLTIS_E2E_ONBOARDING_ANTHROPIC_PORT:-18793}"
+    "${MOLTIS_E2E_OPENAI_LIVE_PORT:-18794}"
+    "${MOLTIS_E2E_OLLAMA_QWEN_LIVE_PORT:-18795}"
+    "${MOLTIS_E2E_OLLAMA_QWEN_API_PORT:-11435}"
+  )
+
   local port
-  for port in "${MOLTIS_E2E_PORT:-18789}" "${MOLTIS_E2E_ONBOARDING_PORT:-18790}"; do
+  for port in "${ports[@]}"; do
     local pids
     pids="$(lsof -ti "tcp:${port}" -sTCP:LISTEN 2>/dev/null || true)"
     if [[ -z "$pids" ]]; then
@@ -465,6 +496,13 @@ else
   fi
 fi
 
+# Skip validation if this exact commit already passed.
+VALIDATE_MARKER=".local-validate-ok"
+if [[ -f "$VALIDATE_MARKER" ]] && [[ "$(cat "$VALIDATE_MARKER" 2>/dev/null)" == "$SHA" ]]; then
+  echo "Commit ${SHA:0:7} already validated — skipping."
+  exit 0
+fi
+
 # macOS local builds can leave stale cmake output dirs where configure was skipped
 # but no generator files remain. Clean those up before lint/test.
 repair_stale_llama_build_dirs
@@ -474,18 +512,34 @@ run_check_async "local/fmt" "$fmt_cmd"
 fmt_pid="$RUN_CHECK_ASYNC_PID"
 run_check_async "local/biome" "$biome_cmd"
 biome_pid="$RUN_CHECK_ASYNC_PID"
+run_check_async "local/tsc" "$tsc_cmd"
+tsc_pid="$RUN_CHECK_ASYNC_PID"
 run_check_async "local/i18n" "$i18n_cmd"
 i18n_pid="$RUN_CHECK_ASYNC_PID"
 run_check_async "local/zizmor" "$zizmor_cmd"
 zizmor_pid="$RUN_CHECK_ASYNC_PID"
+run_check_async "local/install-names" "./scripts/check-install-package-names.sh"
+install_names_pid="$RUN_CHECK_ASYNC_PID"
+run_check_async "local/install-docs" "./scripts/check-install-docs.sh"
+install_docs_pid="$RUN_CHECK_ASYNC_PID"
+run_check_async "local/file-size" "./scripts/check-file-size.sh"
+file_size_pid="$RUN_CHECK_ASYNC_PID"
 
 parallel_failed=0
 if ! wait "$fmt_pid"; then parallel_failed=1; fi
 if ! report_async_result "local/fmt" "$fmt_pid"; then parallel_failed=1; fi
 if ! wait "$biome_pid"; then parallel_failed=1; fi
 if ! report_async_result "local/biome" "$biome_pid"; then parallel_failed=1; fi
+if ! wait "$tsc_pid"; then parallel_failed=1; fi
+if ! report_async_result "local/tsc" "$tsc_pid"; then parallel_failed=1; fi
 if ! wait "$i18n_pid"; then parallel_failed=1; fi
 if ! report_async_result "local/i18n" "$i18n_pid"; then parallel_failed=1; fi
+if ! wait "$install_names_pid"; then parallel_failed=1; fi
+if ! report_async_result "local/install-names" "$install_names_pid"; then parallel_failed=1; fi
+if ! wait "$install_docs_pid"; then parallel_failed=1; fi
+if ! report_async_result "local/install-docs" "$install_docs_pid"; then parallel_failed=1; fi
+if ! wait "$file_size_pid"; then parallel_failed=1; fi
+if ! report_async_result "local/file-size" "$file_size_pid"; then parallel_failed=1; fi
 
 if [[ "$parallel_failed" -ne 0 ]]; then
   echo "One or more parallel local checks failed." >&2
@@ -495,11 +549,11 @@ fi
 # Verify Cargo.lock is in sync (same as CI's `cargo fetch --locked`).
 run_check "local/lockfile" "cargo fetch --locked"
 
-# Ensure generated CSS exists (Tailwind output is not committed; worktrees and
-# fresh clones won't have it).
-if [[ ! -f crates/web/src/assets/style.css ]]; then
-  echo "style.css missing — building CSS with Tailwind..."
-  run_check "local/build-css" "just build-css"
+# Ensure generated web assets exist (not committed; worktrees and fresh clones
+# won't have them).
+if [[ ! -f crates/web/src/assets/style.css || ! -f crates/web/src/assets/dist/main.js || ! -f crates/web/src/assets/sw.js ]]; then
+  echo "Web assets missing — building with just build-web-assets..."
+  run_check "local/build-web-assets" "just build-web-assets"
 fi
 
 # Lint runs first to warm the cargo build cache (clippy compiles all targets).
@@ -555,6 +609,13 @@ else
   echo "Skipping E2E checks (LOCAL_VALIDATE_SKIP_E2E=1)."
 fi
 
+if [[ "${LOCAL_VALIDATE_OLLAMA_QWEN_E2E:-0}" == "1" ]]; then
+  cleanup_e2e_ports
+  run_check "local/e2e-ollama" "$ollama_qwen_e2e_cmd"
+else
+  echo "Skipping Ollama Qwen live E2E (LOCAL_VALIDATE_OLLAMA_QWEN_E2E=0)."
+fi
+
 # Coverage (optional — requires cargo-llvm-cov).
 # Skipped silently when the tool is not installed. Disable explicitly with
 # LOCAL_VALIDATE_SKIP_COVERAGE=1.
@@ -577,6 +638,9 @@ if [[ "$zizmor_failed" -ne 0 ]]; then
   echo "local/zizmor failed." >&2
   exit 1
 fi
+
+# Record successful validation for this commit.
+printf '%s' "$SHA" > "$VALIDATE_MARKER"
 
 if [[ "$LOCAL_ONLY" -eq 1 ]]; then
   echo "All local checks passed."

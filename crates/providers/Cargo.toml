@@ -9,6 +9,7 @@ default                 = ["metrics", "provider-async-openai", "provider-genai"]
 local-llm               = ["dep:directories", "dep:encoding_rs", "dep:llama-cpp-2", "dep:sysinfo"]
 local-llm-cuda          = ["llama-cpp-2/cuda", "local-llm"]
 local-llm-metal         = ["llama-cpp-2/metal", "local-llm"]
+local-llm-vulkan        = ["llama-cpp-2/vulkan", "local-llm"]
 metrics                 = ["dep:moltis-metrics"]
 provider-async-openai   = ["dep:async-openai"]
 provider-genai          = ["dep:genai"]
@@ -22,10 +23,12 @@ async-stream      = { workspace = true }
 async-trait       = { workspace = true }
 futures           = { workspace = true }
 http              = { workspace = true }
+json_schema_ast   = { workspace = true }
 moltis-agents     = { path = "../agents" }
 moltis-common     = { workspace = true }
 moltis-config     = { workspace = true }
 reqwest           = { workspace = true }
+schemars          = { workspace = true }
 secrecy           = { workspace = true }
 serde             = { workspace = true }
 serde_json        = { workspace = true }

@@ -4,6 +4,9 @@
 #   docker compose up -d
 #   open https://localhost:13131
 #
+# For an unattended first boot, set MOLTIS_PASSWORD, MOLTIS_PROVIDER, and
+# MOLTIS_API_KEY in the service environment below.
+#
 # On first launch, a setup code is printed to the logs:
 #   docker compose logs moltis
 #
@@ -22,6 +25,11 @@ services:
       - "13131:13131"
       - "13132:13132"
       - "1455:1455"   # OAuth callback (OpenAI Codex, etc.)
+    environment:
+      # Uncomment for unattended setup.
+      # MOLTIS_PASSWORD: change-me
+      # MOLTIS_PROVIDER: openai
+      # MOLTIS_API_KEY: sk-...
     volumes:
       # Configuration files (editable from host)
       - ./config:/home/moltis/.config/moltis
@@ -44,4 +52,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-

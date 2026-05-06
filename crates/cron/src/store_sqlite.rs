@@ -41,6 +41,39 @@ impl SqliteStore {
     }
 }
 
+/// Convert raw SQLite rows into `CronRunRecord` values.
+fn runs_to_records(rows: &[sqlx::sqlite::SqliteRow]) -> Result<Vec<CronRunRecord>> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let status_str: String = row.get("status");
+        let status = serde_json::from_str(&status_str)?;
+        out.push(CronRunRecord {
+            job_id: row.get("job_id"),
+            started_at_ms: row.get::<i64, _>("started_at_ms") as u64,
+            finished_at_ms: row.get::<i64, _>("finished_at_ms") as u64,
+            status,
+            error: row.get("error"),
+            duration_ms: row.get::<i64, _>("duration_ms") as u64,
+            output: row.get("output"),
+            input_tokens: row
+                .try_get::<Option<i64>, _>("input_tokens")
+                .ok()
+                .flatten()
+                .map(|v| v as u64),
+            output_tokens: row
+                .try_get::<Option<i64>, _>("output_tokens")
+                .ok()
+                .flatten()
+                .map(|v| v as u64),
+            session_key: row
+                .try_get::<Option<String>, _>("session_key")
+                .ok()
+                .flatten(),
+        });
+    }
+    Ok(out)
+}
+
 #[async_trait]
 impl CronStore for SqliteStore {
     async fn load_jobs(&self) -> Result<Vec<CronJob>> {
@@ -97,8 +130,8 @@ impl CronStore for SqliteStore {
     async fn append_run(&self, job_id: &str, run: &CronRunRecord) -> Result<()> {
         let status = serde_json::to_string(&run.status)?;
         sqlx::query(
-            "INSERT INTO cron_runs (job_id, started_at_ms, finished_at_ms, status, error, duration_ms, output, input_tokens, output_tokens)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO cron_runs (job_id, started_at_ms, finished_at_ms, status, error, duration_ms, output, input_tokens, output_tokens, session_key)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(job_id)
         .bind(run.started_at_ms as i64)
@@ -109,6 +142,7 @@ impl CronStore for SqliteStore {
         .bind(&run.output)
         .bind(run.input_tokens.map(|v| v as i64))
         .bind(run.output_tokens.map(|v| v as i64))
+        .bind(&run.session_key)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -116,7 +150,7 @@ impl CronStore for SqliteStore {
 
     async fn get_runs(&self, job_id: &str, limit: usize) -> Result<Vec<CronRunRecord>> {
         let rows = sqlx::query(
-            "SELECT job_id, started_at_ms, finished_at_ms, status, error, duration_ms, output, input_tokens, output_tokens
+            "SELECT job_id, started_at_ms, finished_at_ms, status, error, duration_ms, output, input_tokens, output_tokens, session_key
              FROM cron_runs
              WHERE job_id = ?
              ORDER BY started_at_ms DESC
@@ -128,32 +162,30 @@ impl CronStore for SqliteStore {
         .await?;
 
         let mut runs = Vec::with_capacity(rows.len());
-        for row in rows {
-            let status_str: String = row.get("status");
-            let status = serde_json::from_str(&status_str)?;
-            runs.push(CronRunRecord {
-                job_id: row.get("job_id"),
-                started_at_ms: row.get::<i64, _>("started_at_ms") as u64,
-                finished_at_ms: row.get::<i64, _>("finished_at_ms") as u64,
-                status,
-                error: row.get("error"),
-                duration_ms: row.get::<i64, _>("duration_ms") as u64,
-                output: row.get("output"),
-                input_tokens: row
-                    .try_get::<Option<i64>, _>("input_tokens")
-                    .ok()
-                    .flatten()
-                    .map(|v| v as u64),
-                output_tokens: row
-                    .try_get::<Option<i64>, _>("output_tokens")
-                    .ok()
-                    .flatten()
-                    .map(|v| v as u64),
-            });
+        for row in runs_to_records(&rows)? {
+            runs.push(row);
         }
         // Reverse so oldest first (consistent with other stores).
         runs.reverse();
         Ok(runs)
+    }
+
+    async fn prune_runs_before(&self, before_ms: u64) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM cron_runs WHERE started_at_ms < ?")
+            .bind(before_ms as i64)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    async fn list_session_keys_before(&self, before_ms: u64) -> Result<Vec<String>> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT session_key FROM cron_runs WHERE session_key IS NOT NULL AND started_at_ms < ?",
+        )
+        .bind(before_ms as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.iter().map(|r| r.get("session_key")).collect())
     }
 }
 
@@ -251,6 +283,7 @@ mod tests {
                 output: None,
                 input_tokens: None,
                 output_tokens: None,
+                session_key: None,
             };
             store.append_run("j1", &run).await.unwrap();
         }
@@ -267,5 +300,90 @@ mod tests {
         let store = make_store().await;
         let runs = store.get_runs("none", 10).await.unwrap();
         assert!(runs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_prune_runs_before() {
+        let store = make_store().await;
+        store.save_job(&make_job("j1")).await.unwrap();
+
+        for i in 0..5 {
+            let run = CronRunRecord {
+                job_id: "j1".into(),
+                started_at_ms: i * 1000,
+                finished_at_ms: i * 1000 + 500,
+                status: RunStatus::Ok,
+                error: None,
+                duration_ms: 500,
+                output: None,
+                input_tokens: None,
+                output_tokens: None,
+                session_key: Some(format!("cron:{i}")),
+            };
+            store.append_run("j1", &run).await.unwrap();
+        }
+
+        // Prune runs started before 3000ms — should remove runs at 0, 1000, 2000.
+        let pruned = store.prune_runs_before(3000).await.unwrap();
+        assert_eq!(pruned, 3);
+
+        let remaining = store.get_runs("j1", 10).await.unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert_eq!(remaining[0].started_at_ms, 3000);
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_list_session_keys_before() {
+        let store = make_store().await;
+        store.save_job(&make_job("j1")).await.unwrap();
+
+        for i in 0..4 {
+            let run = CronRunRecord {
+                job_id: "j1".into(),
+                started_at_ms: i * 1000,
+                finished_at_ms: i * 1000 + 500,
+                status: RunStatus::Ok,
+                error: None,
+                duration_ms: 500,
+                output: None,
+                input_tokens: None,
+                output_tokens: None,
+                session_key: if i < 3 {
+                    Some(format!("cron:sess-{i}"))
+                } else {
+                    None
+                },
+            };
+            store.append_run("j1", &run).await.unwrap();
+        }
+
+        let keys = store.list_session_keys_before(2000).await.unwrap();
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&"cron:sess-0".to_string()));
+        assert!(keys.contains(&"cron:sess-1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_sqlite_run_record_with_session_key() {
+        let store = make_store().await;
+        store.save_job(&make_job("j1")).await.unwrap();
+
+        let run = CronRunRecord {
+            job_id: "j1".into(),
+            started_at_ms: 1000,
+            finished_at_ms: 2000,
+            status: RunStatus::Ok,
+            error: None,
+            duration_ms: 1000,
+            output: None,
+            input_tokens: None,
+            output_tokens: None,
+            session_key: Some("cron:abc-123".into()),
+        };
+        store.append_run("j1", &run).await.unwrap();
+
+        let runs = store.get_runs("j1", 10).await.unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].session_key.as_deref(), Some("cron:abc-123"));
     }
 }

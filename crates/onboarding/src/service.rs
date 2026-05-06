@@ -79,7 +79,7 @@ impl LiveOnboardingService {
             ws.identity = cfg.identity;
             ws.user = cfg.user;
         }
-        if let Some(file_identity) = moltis_config::load_identity() {
+        if let Some(file_identity) = moltis_config::load_identity_for_agent("main") {
             merge_identity(&mut ws.identity, &file_identity);
         }
         if let Some(file_user) = moltis_config::load_user() {
@@ -107,8 +107,10 @@ impl LiveOnboardingService {
             config.identity = ws.identity.clone();
             config.user = ws.user.clone();
             self.save(&config).context("failed to save config")?;
-            moltis_config::save_identity(&ws.identity).context("failed to save IDENTITY.md")?;
-            moltis_config::save_user(&ws.user).context("failed to save USER.md")?;
+            moltis_config::save_identity_for_agent("main", &ws.identity)
+                .context("failed to save IDENTITY.md")?;
+            moltis_config::save_user_with_mode(&ws.user, config.memory.user_profile_write_mode)
+                .context("failed to save USER.md")?;
             self.mark_onboarded();
 
             let resp = json!({
@@ -165,13 +167,10 @@ impl LiveOnboardingService {
             MoltisConfig::default()
         };
         let mut identity = config.identity.clone();
-        if let Some(file_identity) = moltis_config::load_identity() {
+        if let Some(file_identity) = moltis_config::load_identity_for_agent("main") {
             merge_identity(&mut identity, &file_identity);
         }
-        let mut user = config.user.clone();
-        if let Some(file_user) = moltis_config::load_user() {
-            merge_user(&mut user, &file_user);
-        }
+        let mut user = moltis_config::resolve_user_profile_from_config(&config);
 
         /// Extract an optional non-empty string from JSON, mapping `""` to `None`.
         fn str_field(params: &Value, key: &str) -> Option<Option<String>> {
@@ -250,7 +249,8 @@ impl LiveOnboardingService {
             } else {
                 v.as_str().map(|s| s.to_string())
             };
-            moltis_config::save_soul(soul.as_deref()).context("failed to save soul")?;
+            moltis_config::save_soul_for_agent("main", soul.as_deref())
+                .context("failed to save soul")?;
         }
         if let Some(v) = str_field(&params, "user_name") {
             user.name = v;
@@ -268,8 +268,10 @@ impl LiveOnboardingService {
         config.user = user.clone();
 
         self.save(&config)?;
-        moltis_config::save_identity(&identity).context("failed to save identity")?;
-        moltis_config::save_user(&user).context("failed to save user")?;
+        moltis_config::save_identity_for_agent("main", &identity)
+            .context("failed to save identity")?;
+        moltis_config::save_user_with_mode(&user, config.memory.user_profile_write_mode)
+            .context("failed to save user")?;
 
         // Mark onboarding complete once both names are present.
         if identity.name.is_some() && user.name.is_some() {
@@ -280,7 +282,7 @@ impl LiveOnboardingService {
             "name": identity.name,
             "emoji": identity.emoji,
             "theme": identity.theme,
-            "soul": moltis_config::load_soul(),
+            "soul": moltis_config::load_soul_for_agent("main"),
             "user_name": user.name,
             "user_timezone": user.timezone.as_ref().map(|tz| tz.name()),
             "user_location": user.location.as_ref().map(|loc| json!({
@@ -292,9 +294,10 @@ impl LiveOnboardingService {
         }))
     }
 
-    /// Update SOUL.md in the workspace root.
+    /// Update SOUL.md for the main agent.
     pub fn identity_update_soul(&self, soul: Option<String>) -> Result<Value> {
-        moltis_config::save_soul(soul.as_deref()).context("failed to save soul")?;
+        moltis_config::save_soul_for_agent("main", soul.as_deref())
+            .context("failed to save soul")?;
         Ok(json!({}))
     }
 
@@ -423,7 +426,7 @@ mod tests {
         let status = svc.wizard_status();
         assert_eq!(status["onboarded"], true);
 
-        assert!(dir.path().join("IDENTITY.md").exists());
+        assert!(dir.path().join("agents/main/IDENTITY.md").exists());
         assert!(dir.path().join("USER.md").exists());
         moltis_config::clear_data_dir();
     }
@@ -525,8 +528,8 @@ mod tests {
         let res = svc.identity_update(json!({ "soul": null })).unwrap();
         assert!(res["soul"].is_null());
 
-        let soul_path = dir.path().join("SOUL.md");
-        // save_soul(None) writes an empty file (not deleted) to prevent re-seeding
+        let soul_path = dir.path().join("agents/main/SOUL.md");
+        // save_soul_for_agent("main", None) writes an empty file (not deleted) to prevent re-seeding
         assert!(soul_path.exists());
         assert!(std::fs::read_to_string(&soul_path).unwrap().is_empty());
 
@@ -589,6 +592,43 @@ mod tests {
 
         let user = moltis_config::load_user();
         assert!(user.as_ref().and_then(|u| u.location.as_ref()).is_none());
+
+        moltis_config::clear_data_dir();
+    }
+
+    #[test]
+    fn identity_update_persists_user_to_config_when_user_md_writes_are_off() {
+        let _guard = DATA_DIR_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        moltis_config::set_data_dir(dir.path().to_path_buf());
+        let config_path = dir.path().join("moltis.toml");
+        let mut config = MoltisConfig::default();
+        config.memory.user_profile_write_mode = moltis_config::UserProfileWriteMode::Off;
+        moltis_config::loader::save_config_to_path(&config_path, &config).unwrap();
+
+        let svc = LiveOnboardingService::new(config_path.clone());
+        let res = svc
+            .identity_update(json!({
+                "user_name": "Alice",
+                "user_timezone": "Europe/Lisbon",
+                "user_location": {
+                    "latitude": 38.7223,
+                    "longitude": -9.1393,
+                    "place": "Lisbon",
+                }
+            }))
+            .unwrap();
+
+        assert_eq!(res["user_name"], "Alice");
+        assert_eq!(res["user_timezone"], "Europe/Lisbon");
+        assert_eq!(res["user_location"]["place"], "Lisbon");
+        assert!(moltis_config::load_user().is_none());
+        assert!(!dir.path().join("USER.md").exists());
+
+        let saved = std::fs::read_to_string(&config_path).unwrap();
+        assert!(saved.contains("name = \"Alice\""));
+        assert!(saved.contains("timezone = \"Europe/Lisbon\""));
+        assert!(saved.contains("place = \"Lisbon\""));
 
         moltis_config::clear_data_dir();
     }

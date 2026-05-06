@@ -1,10 +1,13 @@
 //! SPA templates, gon data, and template rendering.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 use {
     askama::Template,
-    axum::response::{Html, IntoResponse},
+    axum::{
+        http::StatusCode,
+        response::{Html, IntoResponse},
+    },
     moltis_gateway::state::GatewayState,
     tracing::warn,
 };
@@ -20,7 +23,7 @@ pub(crate) struct SpaRoutes {
     settings: &'static str,
     providers: &'static str,
     security: &'static str,
-    identity: &'static str,
+    profile: &'static str,
     config: &'static str,
     logs: &'static str,
     nodes: &'static str,
@@ -37,7 +40,7 @@ pub(crate) static SPA_ROUTES: SpaRoutes = SpaRoutes {
     settings: "/settings",
     providers: "/settings/providers",
     security: "/settings/security",
-    identity: "/settings/identity",
+    profile: "/settings/profile",
     config: "/settings/config",
     logs: "/settings/logs",
     nodes: "/settings/nodes",
@@ -64,22 +67,34 @@ pub(crate) struct GonData {
     heartbeat_config: moltis_config::schema::HeartbeatConfig,
     heartbeat_runs: Vec<moltis_cron::types::CronRunRecord>,
     voice_enabled: bool,
+    stt_enabled: bool,
+    tts_enabled: bool,
     graphql_enabled: bool,
+    terminal_enabled: bool,
     git_branch: Option<String>,
     mem: MemSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
     deploy_platform: Option<String>,
     channels_offered: Vec<String>,
     channel_descriptors: Vec<moltis_channels::ChannelDescriptor>,
+    channel_storage_db_path: String,
     update: moltis_gateway::update_check::UpdateAvailability,
     sandbox: SandboxGonInfo,
     routes: SpaRoutes,
     started_at: u64,
     /// Whether an OpenClaw installation was detected (for import UI).
     openclaw_detected: bool,
+    /// Whether a Claude Code/Desktop installation was detected (for import UI).
+    claude_detected: bool,
+    /// Whether a Codex CLI installation was detected (for import UI).
+    codex_detected: bool,
+    /// Whether a Hermes installation was detected (for import UI).
+    hermes_detected: bool,
     /// Small recent session snapshot for instant sidebar paint.
     sessions_recent: Vec<serde_json::Value>,
     agents: Vec<serde_json::Value>,
+    webhooks: Vec<serde_json::Value>,
+    webhook_profiles: Vec<serde_json::Value>,
     #[cfg(feature = "vault")]
     vault_status: String,
 }
@@ -93,7 +108,7 @@ struct SandboxGonInfo {
 }
 
 /// Memory snapshot included in gon data and tick broadcasts.
-#[derive(serde::Serialize)]
+#[derive(Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MemSnapshot {
     process: u64,
@@ -176,6 +191,19 @@ fn truncate_preview(text: &str, max_chars: usize) -> String {
     out
 }
 
+fn default_channel_session_key(target: &moltis_channels::ChannelReplyTarget) -> String {
+    match &target.thread_id {
+        Some(thread_id) => format!(
+            "{}:{}:{}:{}",
+            target.channel_type, target.account_id, target.chat_id, thread_id
+        ),
+        None => format!(
+            "{}:{}:{}",
+            target.channel_type, target.account_id, target.chat_id
+        ),
+    }
+}
+
 async fn build_recent_sessions_snapshot(gw: &GatewayState, limit: usize) -> Vec<serde_json::Value> {
     let Some(ref metadata) = gw.services.session_metadata else {
         return Vec::new();
@@ -192,10 +220,11 @@ async fn build_recent_sessions_snapshot(gw: &GatewayState, limit: usize) -> Vec<
                         target.channel_type.as_str(),
                         &target.account_id,
                         &target.chat_id,
+                        target.thread_id.as_deref(),
                     )
                     .await
-                    .map(|key| key == entry.key)
-                    .unwrap_or(false)
+                    .unwrap_or_else(|| default_channel_session_key(&target))
+                    == entry.key
             } else {
                 false
             }
@@ -290,18 +319,22 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         })
         .unwrap_or(0);
 
-    let mut skills = 0usize;
-    if let Ok(path) = moltis_skills::manifest::ManifestStore::default_path() {
+    let skills = tokio::task::spawn_blocking(|| {
+        let path = moltis_skills::manifest::ManifestStore::default_path().ok()?;
         let store = moltis_skills::manifest::ManifestStore::new(path);
-        if let Ok(m) = store.load() {
-            skills = m
-                .repos
+        let m = store.load().ok()?;
+        Some(
+            m.repos
                 .iter()
                 .flat_map(|r| &r.skills)
                 .filter(|s| s.enabled)
-                .count();
-        }
-    }
+                .count(),
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(0);
 
     let mcp = mcp
         .ok()
@@ -329,8 +362,6 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         })
         .unwrap_or(0);
 
-    let hooks = gw.inner.read().await.discovered_hooks.len();
-
     NavCounts {
         projects,
         providers,
@@ -338,7 +369,7 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         skills,
         mcp,
         crons,
-        hooks,
+        hooks: 0, // placeholder — set from a single inner.read() in build_gon_data
     }
 }
 
@@ -346,6 +377,8 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
 
 pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
     const GON_SESSIONS_RECENT_LIMIT: usize = 30;
+
+    let gon_start = std::time::Instant::now();
 
     let port = gw.port;
     let identity = gw
@@ -356,9 +389,53 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: identity"
+    );
 
-    let counts = build_nav_counts(gw).await;
-    let (crons, cron_status) = tokio::join!(gw.services.cron.list(), gw.services.cron.status());
+    let mut counts = build_nav_counts(gw).await;
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: nav_counts"
+    );
+
+    // Read all fields from gw.inner in a SINGLE lock acquisition to avoid
+    // deadlocks with concurrent write-lock requests (tokio's fair RwLock
+    // blocks new reads when a write is queued).
+    let (hooks_count, heartbeat_config, cached_channels_offered, update) = {
+        let inner = gw.inner.read().await;
+        (
+            inner.discovered_hooks.len(),
+            inner.heartbeat_config.clone(),
+            inner.channels_offered.clone(),
+            inner.update.clone(),
+        )
+    };
+    counts.hooks = hooks_count;
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: inner_read"
+    );
+
+    let (crons, cron_status, webhooks_val, webhook_profiles_val) = tokio::join!(
+        gw.services.cron.list(),
+        gw.services.cron.status(),
+        gw.services.webhooks.list(),
+        gw.services.webhooks.profiles(),
+    );
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: crons+webhooks"
+    );
+    let webhooks: Vec<serde_json::Value> = webhooks_val
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
+    let webhook_profiles: Vec<serde_json::Value> = webhook_profiles_val
+        .ok()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
     let crons: Vec<moltis_cron::types::CronJob> = crons
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
@@ -367,13 +444,10 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let (heartbeat_config, channels_offered) = {
-        let inner = gw.inner.read().await;
-        (
-            inner.heartbeat_config.clone(),
-            inner.channels_offered.clone(),
-        )
-    };
+    let channels_offered =
+        tokio::task::spawn_blocking(move || resolve_channels_offered(cached_channels_offered))
+            .await
+            .unwrap_or_default();
     let channel_descriptors: Vec<moltis_channels::ChannelDescriptor> = channels_offered
         .iter()
         .filter_map(|s| s.parse::<moltis_channels::ChannelType>().ok())
@@ -388,12 +462,20 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: heartbeat_runs"
+    );
 
     let sandbox = if let Some(ref router) = gw.sandbox_router {
         SandboxGonInfo {
             backend: router.backend_name().to_owned(),
             os: std::env::consts::OS,
-            default_image: router.default_image().await,
+            // Use resolve_default_image_nowait() to avoid blocking on a
+            // sandbox image build — default_image() waits up to 10 minutes
+            // for build_complete, which hangs every page request during the
+            // initial image build on CI.
+            default_image: router.resolve_default_image_nowait().await,
             image_building: router
                 .building_flag
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -406,6 +488,8 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
             image_building: false,
         }
     };
+
+    tracing::warn!(elapsed_ms = gon_start.elapsed().as_millis(), "gon: sandbox");
 
     // Fetch agent personas for the gon data.
     let agents: Vec<serde_json::Value> = if let Some(ref store) = gw.services.agent_persona_store {
@@ -423,7 +507,20 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         Vec::new()
     };
 
+    tracing::warn!(elapsed_ms = gon_start.elapsed().as_millis(), "gon: agents");
+
     let sessions_recent = build_recent_sessions_snapshot(gw, GON_SESSIONS_RECENT_LIMIT).await;
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: sessions_recent"
+    );
+
+    let total_ms = gon_start.elapsed().as_millis();
+    if total_ms > 1000 {
+        tracing::warn!(elapsed_ms = total_ms, "gon: build_gon_data slow");
+    } else {
+        tracing::warn!(elapsed_ms = total_ms, "gon: build_gon_data complete");
+    }
 
     GonData {
         identity,
@@ -435,19 +532,36 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         heartbeat_config,
         heartbeat_runs,
         voice_enabled: cfg!(feature = "voice"),
+        stt_enabled: cfg!(feature = "voice") && gw.config.voice.stt.enabled,
+        tts_enabled: cfg!(feature = "voice") && gw.config.voice.tts.enabled,
         graphql_enabled: cfg!(feature = "graphql"),
-        git_branch: detect_git_branch(),
-        mem: collect_mem_snapshot(),
+        terminal_enabled: gw.config.server.is_terminal_enabled(),
+        git_branch: tokio::task::spawn_blocking(detect_git_branch)
+            .await
+            .ok()
+            .flatten(),
+        mem: tokio::task::spawn_blocking(collect_mem_snapshot)
+            .await
+            .unwrap_or_default(),
         deploy_platform: gw.deploy_platform.clone(),
         channels_offered,
         channel_descriptors,
-        update: gw.inner.read().await.update.clone(),
+        channel_storage_db_path: moltis_config::data_dir()
+            .join("moltis.db")
+            .display()
+            .to_string(),
+        update,
         sandbox,
         routes: SPA_ROUTES.clone(),
         started_at: *PROCESS_STARTED_AT_MS,
         openclaw_detected: moltis_gateway::server::openclaw_detected_for_ui(),
+        claude_detected: moltis_gateway::server::claude_detected_for_ui(),
+        codex_detected: moltis_gateway::server::codex_detected_for_ui(),
+        hermes_detected: moltis_gateway::server::hermes_detected_for_ui(),
         sessions_recent,
         agents,
+        webhooks,
+        webhook_profiles,
         #[cfg(feature = "vault")]
         vault_status: {
             if let Some(ref vault) = gw.vault {
@@ -458,6 +572,30 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
             } else {
                 "disabled".to_owned()
             }
+        },
+    }
+}
+
+fn load_channels_offered_from_config_path(
+    path: &Path,
+) -> Result<Vec<String>, moltis_config::Error> {
+    moltis_config::loader::load_config(path).map(|config| config.channels.offered)
+}
+
+fn resolve_channels_offered(cached_channels_offered: Vec<String>) -> Vec<String> {
+    let Some(path) = moltis_config::loader::find_config_file() else {
+        return cached_channels_offered;
+    };
+
+    match load_channels_offered_from_config_path(&path) {
+        Ok(channels_offered) => channels_offered,
+        Err(error) => {
+            warn!(
+                path = %path.display(),
+                error = %error,
+                "failed to reload channels.offered for gon data, using startup value"
+            );
+            cached_channels_offered
         },
     }
 }
@@ -475,11 +613,7 @@ pub(crate) static PROCESS_STARTED_AT_MS: std::sync::LazyLock<u64> =
 
 pub(crate) const SHARE_IMAGE_URL: &str = "https://www.moltis.org/og-social.jpg?v=4";
 
-/// Default Shiki CDN URL when `server.shiki_cdn_url` is unset.
-///
-/// Use the bundled esm.sh entrypoint to ensure submodule imports resolve
-/// correctly outside esm.sh origin.
-const DEFAULT_SHIKI_CDN_URL: &str = "https://esm.sh/shiki@3.2.1?bundle";
+// Shiki is now bundled by Vite — no CDN URL needed.
 
 #[derive(Clone, Copy)]
 pub(crate) enum SpaTemplate {
@@ -487,6 +621,12 @@ pub(crate) enum SpaTemplate {
     Login,
     Onboarding,
     SetupRequired,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum ErrorPageKind {
+    NotFound,
+    InternalServerError,
 }
 
 pub(crate) struct ShareMeta {
@@ -509,7 +649,6 @@ struct IndexHtmlTemplate<'a> {
     share_image_url: &'a str,
     share_image_alt: &'a str,
     routes: &'a SpaRoutes,
-    shiki_url: &'a str,
 }
 
 #[derive(Template)]
@@ -536,6 +675,16 @@ struct OnboardingHtmlTemplate<'a> {
 #[template(path = "setup-required.html", escape = "html")]
 struct SetupRequiredHtmlTemplate<'a> {
     asset_prefix: &'a str,
+}
+
+#[derive(Template)]
+#[template(path = "error.html", escape = "html")]
+struct ErrorHtmlTemplate<'a> {
+    asset_prefix: &'a str,
+    nonce: &'a str,
+    page_title: &'a str,
+    eyebrow: &'a str,
+    message: &'a str,
 }
 
 #[derive(serde::Deserialize)]
@@ -598,35 +747,138 @@ pub(crate) fn identity_name(identity: &moltis_config::ResolvedIdentity) -> &str 
     }
 }
 
-pub(crate) async fn render_spa_template(
-    gateway: &GatewayState,
-    template: SpaTemplate,
-) -> axum::response::Response {
-    let (build_ts, asset_prefix) = if is_dev_assets() {
+fn build_asset_prefix() -> String {
+    if is_dev_assets() {
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis();
-        ("dev".to_owned(), format!("/assets/v/{ts}/"))
+        format!("/assets/v/{ts}/")
     } else {
         static HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new(asset_content_hash);
-        (HASH.to_string(), format!("/assets/v/{}/", *HASH))
+        format!("/assets/v/{}/", *HASH)
+    }
+}
+
+fn build_nonce() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+fn insert_standard_headers(response: &mut axum::response::Response, csp: &str) {
+    let headers = response.headers_mut();
+    if let Ok(val) = "no-cache, no-store".parse() {
+        headers.insert(axum::http::header::CACHE_CONTROL, val);
+    }
+    if let Ok(val) = csp.parse() {
+        headers.insert(axum::http::header::CONTENT_SECURITY_POLICY, val);
+    }
+}
+
+fn trim_route_path(path: &str) -> &str {
+    if path.len() > 1 {
+        path.trim_end_matches('/')
+    } else {
+        path
+    }
+}
+
+fn matches_exact_or_nested(path: &str, base: &str) -> bool {
+    path == base
+        || path
+            .strip_prefix(base)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+pub(crate) fn is_known_spa_route(path: &str) -> bool {
+    let path = trim_route_path(path);
+    path == "/"
+        || matches_exact_or_nested(path, SPA_ROUTES.projects)
+        || matches_exact_or_nested(path, SPA_ROUTES.skills)
+        || matches_exact_or_nested(path, SPA_ROUTES.chats)
+        || matches_exact_or_nested(path, SPA_ROUTES.settings)
+        || matches_exact_or_nested(path, SPA_ROUTES.monitoring)
+}
+
+pub(crate) fn render_error_page(
+    status: StatusCode,
+    kind: ErrorPageKind,
+    _requested_path: Option<&str>,
+) -> axum::response::Response {
+    let asset_prefix = build_asset_prefix();
+    let nonce = build_nonce();
+    let (page_title, eyebrow, message) = match kind {
+        ErrorPageKind::NotFound => ("Page not found", "404", "This page could not be found."),
+        ErrorPageKind::InternalServerError => (
+            "Internal server error",
+            "500",
+            "Moltis hit an internal error while building this page.",
+        ),
     };
 
-    let nonce = uuid::Uuid::new_v4().to_string();
+    let template = ErrorHtmlTemplate {
+        asset_prefix: &asset_prefix,
+        nonce: &nonce,
+        page_title,
+        eyebrow,
+        message,
+    };
 
-    // Resolve Shiki URL from config override or default CDN.
-    let shiki_url = gateway
-        .inner
-        .read()
-        .await
-        .shiki_cdn_url
-        .clone()
-        .unwrap_or_else(|| DEFAULT_SHIKI_CDN_URL.to_owned());
+    let body = match template.render() {
+        Ok(html) => html,
+        Err(error) => {
+            warn!(%error, ?status, "failed to render error template");
+            format!(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{status} {page_title}</title></head><body><h1>{eyebrow}</h1><p>{message}</p><p><a href=\"/\">Go home</a></p></body></html>",
+            )
+        },
+    };
+
+    let csp = format!(
+        "default-src 'self'; \
+         script-src 'self' 'nonce-{nonce}'; \
+         style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data:; \
+         font-src 'self'; \
+         frame-ancestors 'none'; \
+         form-action 'self'; \
+         base-uri 'self'; \
+         object-src 'none'",
+    );
+
+    let mut response = (status, Html(body)).into_response();
+    insert_standard_headers(&mut response, &csp);
+    response
+}
+
+pub(crate) async fn render_spa_template(
+    gateway: &GatewayState,
+    template: SpaTemplate,
+) -> axum::response::Response {
+    let build_ts = if is_dev_assets() {
+        "dev".to_owned()
+    } else {
+        asset_content_hash()
+    };
+    let asset_prefix = build_asset_prefix();
+    let nonce = build_nonce();
+
+    let gon =
+        match tokio::time::timeout(std::time::Duration::from_secs(10), build_gon_data(gateway))
+            .await
+        {
+            Ok(gon) => gon,
+            Err(_) => {
+                tracing::error!("build_gon_data timed out after 10s — possible deadlock");
+                return render_error_page(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ErrorPageKind::InternalServerError,
+                    None,
+                );
+            },
+        };
 
     let body = match template {
         SpaTemplate::Index => {
-            let gon = build_gon_data(gateway).await;
             let share_meta = build_share_meta(&gon.identity);
             let gon_json = script_safe_json(&gon);
             let template = IndexHtmlTemplate {
@@ -640,18 +892,20 @@ pub(crate) async fn render_spa_template(
                 share_image_url: SHARE_IMAGE_URL,
                 share_image_alt: &share_meta.image_alt,
                 routes: &SPA_ROUTES,
-                shiki_url: &shiki_url,
             };
             match template.render() {
                 Ok(html) => html,
                 Err(e) => {
                     warn!(error = %e, "failed to render index template");
-                    String::new()
+                    return render_error_page(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ErrorPageKind::InternalServerError,
+                        None,
+                    );
                 },
             }
         },
         SpaTemplate::Login => {
-            let gon = build_gon_data(gateway).await;
             let gon_json = script_safe_json(&gon);
             let page_title = identity_name(&gon.identity).to_owned();
             let template = LoginHtmlTemplate {
@@ -665,12 +919,15 @@ pub(crate) async fn render_spa_template(
                 Ok(html) => html,
                 Err(e) => {
                     warn!(error = %e, "failed to render login template");
-                    String::new()
+                    return render_error_page(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ErrorPageKind::InternalServerError,
+                        None,
+                    );
                 },
             }
         },
         SpaTemplate::Onboarding => {
-            let gon = build_gon_data(gateway).await;
             let gon_json = script_safe_json(&gon);
             let page_title = format!("{} onboarding", identity_name(&gon.identity));
             let template = OnboardingHtmlTemplate {
@@ -684,7 +941,11 @@ pub(crate) async fn render_spa_template(
                 Ok(html) => html,
                 Err(e) => {
                     warn!(error = %e, "failed to render onboarding template");
-                    String::new()
+                    return render_error_page(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ErrorPageKind::InternalServerError,
+                        None,
+                    );
                 },
             }
         },
@@ -696,22 +957,21 @@ pub(crate) async fn render_spa_template(
                 Ok(html) => html,
                 Err(e) => {
                     warn!(error = %e, "failed to render setup-required template");
-                    String::new()
+                    return render_error_page(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        ErrorPageKind::InternalServerError,
+                        None,
+                    );
                 },
             }
         },
     };
 
-    // Extract CDN origin from shiki_url for CSP script-src allowlisting.
-    let shiki_csp_origin = url::Url::parse(&shiki_url)
-        .ok()
-        .and_then(|u| u.host_str().map(|host| format!("{}://{host}", u.scheme())));
-
     let csp = format!(
         "default-src 'self'; \
-         script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'{shiki_origin}; \
+         script-src 'self' 'nonce-{nonce}' 'wasm-unsafe-eval'; \
          style-src 'self' 'unsafe-inline'; \
-         img-src 'self' data: blob:; \
+         img-src 'self' data: blob: https://github.com https://avatars.githubusercontent.com https://clawhub.ai; \
          media-src 'self' blob:; \
          font-src 'self'; \
          connect-src 'self' ws: wss:; \
@@ -719,20 +979,10 @@ pub(crate) async fn render_spa_template(
          form-action 'self'; \
          base-uri 'self'; \
          object-src 'none'",
-        shiki_origin = shiki_csp_origin
-            .as_deref()
-            .map(|o| format!(" {o}"))
-            .unwrap_or_default(),
     );
 
     let mut response = Html(body).into_response();
-    let headers = response.headers_mut();
-    if let Ok(val) = "no-cache, no-store".parse() {
-        headers.insert(axum::http::header::CACHE_CONTROL, val);
-    }
-    if let Ok(val) = csp.parse() {
-        headers.insert(axum::http::header::CONTENT_SECURITY_POLICY, val);
-    }
+    insert_standard_headers(&mut response, &csp);
     response
 }
 
@@ -742,28 +992,27 @@ pub(crate) fn should_redirect_to_onboarding(path: &str, onboarded: bool) -> bool
     !is_onboarding_path(path) && !onboarded
 }
 
-pub(crate) fn should_redirect_from_onboarding(onboarded: bool) -> bool {
-    onboarded
+pub(crate) fn should_redirect_from_onboarding(onboarded: bool, auth_setup_pending: bool) -> bool {
+    onboarded && !auth_setup_pending
 }
 
 fn is_onboarding_path(path: &str) -> bool {
     path == "/onboarding" || path == "/onboarding/"
 }
 
-pub(crate) async fn onboarding_completed(gw: &GatewayState) -> bool {
-    gw.services
-        .onboarding
-        .wizard_status()
+pub(crate) async fn onboarding_completed(_gw: &GatewayState) -> bool {
+    // Check the onboarded sentinel file directly instead of going through
+    // wizard_status() which acquires a std::sync::Mutex and does filesystem
+    // I/O — both block the async runtime on low-CPU runners.
+    tokio::task::spawn_blocking(|| moltis_config::data_dir().join(".onboarded").exists())
         .await
-        .ok()
-        .and_then(|v| v.get("onboarded").and_then(|v| v.as_bool()))
         .unwrap_or(false)
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::*;
+    use {super::*, std::io::Write};
 
     #[test]
     fn parse_git_branch_filters_defaults() {
@@ -786,6 +1035,19 @@ mod tests {
     }
 
     #[test]
+    fn recognizes_known_spa_routes() {
+        assert!(is_known_spa_route("/"));
+        assert!(is_known_spa_route("/projects/123"));
+        assert!(is_known_spa_route("/skills/example"));
+        assert!(is_known_spa_route("/chats/main"));
+        assert!(is_known_spa_route("/settings/providers"));
+        assert!(is_known_spa_route("/monitoring/charts"));
+        assert!(is_known_spa_route("/skills/"));
+        assert!(!is_known_spa_route("/definitely-not-a-route"));
+        assert!(!is_known_spa_route("/api/skills"));
+    }
+
+    #[test]
     fn setup_required_template_renders_html() {
         let template = SetupRequiredHtmlTemplate {
             asset_prefix: "/assets/v/test123/",
@@ -796,12 +1058,16 @@ mod tests {
             "should produce a full HTML document"
         );
         assert!(
-            html.contains("Authentication Not Configured"),
-            "should contain the setup-required heading"
+            html.contains("First-time setup"),
+            "should contain the new setup heading"
         );
         assert!(
-            html.contains("moltis auth reset-password"),
-            "should contain the CLI reset command"
+            html.contains("setup code"),
+            "should mention the one-time setup code"
+        );
+        assert!(
+            html.contains("href=\"/onboarding\""),
+            "should link to the onboarding wizard"
         );
         assert!(
             html.contains("/assets/v/test123/"),
@@ -831,5 +1097,33 @@ mod tests {
         };
         let json = serde_json::to_value(snapshot).unwrap();
         assert_eq!(json.get("localLlamaCpp").and_then(|v| v.as_u64()), Some(4));
+    }
+
+    #[test]
+    fn onboarding_redirect_waits_for_auth_recovery() {
+        assert!(should_redirect_from_onboarding(true, false));
+        assert!(!should_redirect_from_onboarding(true, true));
+        assert!(!should_redirect_from_onboarding(false, false));
+        assert!(!should_redirect_from_onboarding(false, true));
+    }
+
+    #[test]
+    fn load_channels_offered_from_config_path_reads_matrix_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("moltis.toml");
+        let mut file = std::fs::File::create(&path).unwrap();
+        writeln!(
+            file,
+            "[channels]\noffered = [\"telegram\", \"matrix\", \"whatsapp\"]"
+        )
+        .unwrap();
+
+        let offered = load_channels_offered_from_config_path(&path).unwrap();
+
+        assert_eq!(offered, vec![
+            "telegram".to_owned(),
+            "matrix".to_owned(),
+            "whatsapp".to_owned(),
+        ]);
     }
 }

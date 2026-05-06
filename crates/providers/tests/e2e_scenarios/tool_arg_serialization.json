@@ -1,0 +1,145 @@
+{
+  "scenarios": [
+    {
+      "id": "issue-693-falsy-null-serialization",
+      "prompt": "Call serialization_probe with timeout 0, replace_all false, offset 0, multiline false, and type null.",
+      "tool": {
+        "name": "serialization_probe",
+        "description": "You MUST call this tool exactly once with the exact values requested by the user. Do not convert, normalize, or omit values.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "timeout": { "type": "integer" },
+            "replace_all": { "type": "boolean" },
+            "offset": { "type": "integer" },
+            "multiline": { "type": "boolean" },
+            "type": {
+              "type": "null",
+              "description": "Must be literal JSON null, never an empty string, text, or omission."
+            }
+          },
+          "required": ["timeout", "replace_all", "offset", "multiline", "type"]
+        }
+      },
+      "expected_arguments": {
+        "timeout": 0,
+        "replace_all": false,
+        "offset": 0,
+        "multiline": false,
+        "type": null
+      },
+      "providers": {
+        "zai": {
+          "mode": "must_pass"
+        },
+        "openrouter-google": {
+          "mode": "must_pass"
+        },
+        "alibaba-coding": {
+          "mode": "allow_known_mismatch",
+          "reason": "qwen3.5-plus currently serializes null as an empty string on the Alibaba coding endpoint",
+          "observed_arguments": {
+            "timeout": 0,
+            "replace_all": false,
+            "offset": 0,
+            "multiline": false,
+            "type": ""
+          }
+        }
+      }
+    },
+    {
+      "id": "issue-716-nested-optional-booleans",
+      "prompt": "Schedule a cron job named 'db-backup' with schedule '0 0 * * *', enabled true, retry false, mode 'recurring', timeout 300, and verbose false. Use the schedule_cron tool.",
+      "tool": {
+        "name": "schedule_cron",
+        "description": "You MUST call this tool exactly once with the exact values requested by the user. Do not convert, normalize, or omit values.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string", "description": "Job name" },
+            "job": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean", "description": "Whether the job is enabled" },
+                "schedule": { "type": "string", "description": "Cron expression" },
+                "retry": { "type": "boolean", "description": "Retry on failure" },
+                "mode": {
+                  "type": "string",
+                  "enum": ["once", "recurring"],
+                  "description": "Execution mode"
+                },
+                "config": {
+                  "type": "object",
+                  "properties": {
+                    "timeout": { "type": "integer", "description": "Timeout in seconds" },
+                    "verbose": { "type": "boolean", "description": "Enable verbose logging" }
+                  },
+                  "required": ["timeout"]
+                }
+              },
+              "required": ["schedule"]
+            }
+          },
+          "required": ["name", "job"]
+        }
+      },
+      "expected_arguments": {
+        "name": "db-backup",
+        "job": {
+          "enabled": true,
+          "schedule": "0 0 * * *",
+          "retry": false,
+          "mode": "recurring",
+          "config": {
+            "timeout": 300,
+            "verbose": false
+          }
+        }
+      },
+      "providers": {
+        "openrouter-google": {
+          "mode": "must_pass"
+        }
+      }
+    },
+    {
+      "id": "issue-712-nullable-enum-params",
+      "prompt": "Search the web for 'rust async' using the mcp_tavily_search tool. Only set query, leave time_range and country as null.",
+      "tool": {
+        "name": "mcp_tavily_search",
+        "description": "You MUST call this tool exactly once with the exact values requested by the user. Do not convert, normalize, or omit values. Send JSON null for parameters the user says to leave as null.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": { "type": "string", "description": "Search query" },
+            "time_range": {
+              "type": "string",
+              "enum": ["day", "week", "month", "year"],
+              "description": "Time range filter"
+            },
+            "country": {
+              "type": "string",
+              "enum": ["US", "UK", "FR", "DE"],
+              "description": "Country filter"
+            }
+          },
+          "required": ["query"]
+        }
+      },
+      "expected_arguments": {
+        "query": "rust async",
+        "time_range": null,
+        "country": null
+      },
+      "providers": {
+        "zai": {
+          "mode": "must_pass"
+        },
+        "openrouter-google": {
+          "mode": "must_pass"
+        }
+      }
+    }
+  ]
+}

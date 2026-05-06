@@ -54,10 +54,15 @@ impl SessionStore {
         self.base_dir.join("media").join(Self::key_to_filename(key))
     }
 
+    /// Absolute path for a session media file.
+    pub fn media_path_for(&self, key: &str, filename: &str) -> PathBuf {
+        self.media_dir_for(key).join(filename)
+    }
+
     /// Save a media file for a session. Returns the relative path from base_dir.
     pub async fn save_media(&self, key: &str, filename: &str, data: &[u8]) -> Result<String> {
         let dir = self.media_dir_for(key);
-        let file_path = dir.join(filename);
+        let file_path = self.media_path_for(key, filename);
         let data = data.to_vec();
 
         tokio::task::spawn_blocking(move || -> Result<()> {
@@ -73,7 +78,7 @@ impl SessionStore {
 
     /// Read a media file. Returns raw bytes.
     pub async fn read_media(&self, key: &str, filename: &str) -> Result<Vec<u8>> {
-        let file_path = self.media_dir_for(key).join(filename);
+        let file_path = self.media_path_for(key, filename);
 
         tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
             let data = fs::read(&file_path)?;
@@ -698,6 +703,19 @@ mod tests {
 
         let read_back = store.read_media("session:abc", "shot.png").await.unwrap();
         assert_eq!(read_back, data);
+    }
+
+    #[test]
+    fn test_media_path_for_uses_session_media_dir() {
+        let (store, dir) = temp_store();
+        let path = store.media_path_for("session:abc", "report.pdf");
+        assert_eq!(
+            path,
+            dir.path()
+                .join("media")
+                .join("session_abc")
+                .join("report.pdf")
+        );
     }
 
     #[tokio::test]

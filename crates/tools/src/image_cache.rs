@@ -55,11 +55,18 @@ pub trait ImageBuilder: Send + Sync {
 }
 
 /// Docker-based image builder using `docker build`.
-pub struct DockerImageBuilder;
+///
+/// Auto-detects whether to use `podman` or `docker` at construction time.
+/// Prefers podman (daemonless) when available; falls back to docker.
+pub struct DockerImageBuilder {
+    cli: &'static str,
+}
 
 impl DockerImageBuilder {
     pub fn new() -> Self {
-        Self
+        Self {
+            cli: crate::sandbox::container_cli(),
+        }
     }
 
     /// Compute the image tag for a skill's Dockerfile.
@@ -80,9 +87,9 @@ impl DockerImageBuilder {
         format!("moltis-cache/{skill_name}:{short}")
     }
 
-    /// Check whether a Docker image exists locally.
-    async fn image_exists(tag: &str) -> bool {
-        tokio::process::Command::new("docker")
+    /// Check whether a container image exists locally.
+    async fn image_exists(&self, tag: &str) -> bool {
+        tokio::process::Command::new(self.cli)
             .args(["image", "inspect", tag])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -112,14 +119,14 @@ impl ImageBuilder for DockerImageBuilder {
 
         let tag = Self::image_tag(skill_name, &contents);
 
-        if Self::image_exists(&tag).await {
+        if self.image_exists(&tag).await {
             debug!(tag, "image cache hit");
             return Ok(tag);
         }
 
         info!(tag, dockerfile = %dockerfile.display(), "building tool image");
 
-        let output = tokio::process::Command::new("docker")
+        let output = tokio::process::Command::new(self.cli)
             .args([
                 "build",
                 "-t",
@@ -132,12 +139,13 @@ impl ImageBuilder for DockerImageBuilder {
             .stderr(std::process::Stdio::piped())
             .output()
             .await
-            .context("failed to run docker build")?;
+            .with_context(|| format!("failed to run {} build", self.cli))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Error::message(format!(
-                "docker build failed for {tag}: {}",
+                "{} build failed for {tag}: {}",
+                self.cli,
                 stderr.trim()
             )));
         }
@@ -147,7 +155,7 @@ impl ImageBuilder for DockerImageBuilder {
     }
 
     async fn list_cached(&self) -> Result<Vec<CachedImage>> {
-        let output = tokio::process::Command::new("docker")
+        let output = tokio::process::Command::new(self.cli)
             .args([
                 "images",
                 "--filter",
@@ -157,7 +165,7 @@ impl ImageBuilder for DockerImageBuilder {
             ])
             .output()
             .await
-            .context("failed to list docker images")?;
+            .with_context(|| format!("failed to list {} images", self.cli))?;
 
         if !output.status.success() {
             return Ok(Vec::new());
@@ -172,7 +180,12 @@ impl ImageBuilder for DockerImageBuilder {
                 if parts.len() < 3 {
                     return None;
                 }
-                let tag = parts[0].to_string();
+                // Podman prefixes local repos with "localhost/", normalize
+                // so tags are always "moltis-cache/<skill>:<hash>".
+                let tag = parts[0]
+                    .strip_prefix("localhost/")
+                    .unwrap_or(parts[0])
+                    .to_string();
                 // Extract skill name from "moltis-cache/<skill-name>:<hash>"
                 let skill_name = tag
                     .strip_prefix("moltis-cache/")
@@ -199,16 +212,17 @@ impl ImageBuilder for DockerImageBuilder {
             )));
         }
 
-        let output = tokio::process::Command::new("docker")
+        let output = tokio::process::Command::new(self.cli)
             .args(["rmi", tag])
             .output()
             .await
-            .context("failed to run docker rmi")?;
+            .with_context(|| format!("failed to run {} rmi", self.cli))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Error::message(format!(
-                "docker rmi failed for {tag}: {}",
+                "{} rmi failed for {tag}: {}",
+                self.cli,
                 stderr.trim()
             )));
         }

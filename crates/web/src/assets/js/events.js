@@ -1,13 +1,12 @@
-// ── Event bus (pub/sub for WebSocket events) ─────────────────
-export var eventListeners = {};
+// E2E test compatibility shim.
+//
+// With Vite bundling, the real events module lives inside the bundle
+// and is exposed on window.__moltis_modules["events"] from app.tsx.
+//
+// This shim re-exports everything the e2e tests need, proxying to the
+// bundled module so that event subscriptions share the same bus.
 
-export function onEvent(eventName, handler) {
-	(eventListeners[eventName] = eventListeners[eventName] || []).push(handler);
-	return function off() {
-		var arr = eventListeners[eventName];
-		if (arr) {
-			var idx = arr.indexOf(handler);
-			if (idx !== -1) arr.splice(idx, 1);
-		}
-	};
-}
+const M = window.__moltis_modules?.["events"] || {};
+
+export const eventListeners = M.eventListeners || {};
+export const onEvent = (...args) => M.onEvent?.(...args);

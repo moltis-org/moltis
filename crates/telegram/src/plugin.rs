@@ -217,7 +217,7 @@ impl ChannelPlugin for TelegramPlugin {
         let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
         accounts
             .get(account_id)
-            .and_then(|s| serde_json::to_value(&s.config).ok())
+            .and_then(|s| serde_json::to_value(crate::config::RedactedConfig(&s.config)).ok())
     }
 
     fn update_account_config(
@@ -290,17 +290,20 @@ impl ChannelStatus for TelegramPlugin {
                         "Bot: @{}",
                         me.username.as_deref().unwrap_or("unknown")
                     )),
+                    extra: None,
                 },
                 Err(e) => ChannelHealthSnapshot {
                     connected: false,
                     account_id: account_id.to_string(),
                     details: Some(format!("API error: {e}")),
+                    extra: None,
                 },
             },
             None => ChannelHealthSnapshot {
                 connected: false,
                 account_id: account_id.to_string(),
                 details: Some("account not started".into()),
+                extra: None,
             },
         };
 

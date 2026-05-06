@@ -5,7 +5,7 @@
 //! - LLM provider keys and model preferences
 //! - Skills (SKILL.md format)
 //! - Memory (MEMORY.md and daily logs)
-//! - Telegram and Discord channel configuration
+//! - Telegram, Discord, and Signal channel configuration
 //! - Chat sessions (JSONL format)
 
 pub mod agents;
@@ -13,6 +13,7 @@ pub mod channels;
 pub mod detect;
 pub mod error;
 pub mod identity;
+pub mod mcp_servers;
 pub mod memory;
 pub mod providers;
 pub mod report;
@@ -43,6 +44,7 @@ pub struct ImportSelection {
     pub channels: bool,
     pub sessions: bool,
     pub workspace_files: bool,
+    pub mcp_servers: bool,
 }
 
 impl ImportSelection {
@@ -56,6 +58,7 @@ impl ImportSelection {
             channels: true,
             sessions: true,
             workspace_files: true,
+            mcp_servers: true,
         }
     }
 }
@@ -77,6 +80,7 @@ pub struct ImportScan {
     pub channels_available: bool,
     pub telegram_accounts: usize,
     pub discord_accounts: usize,
+    pub signal_accounts: usize,
     pub sessions_count: usize,
     pub unsupported_channels: Vec<String>,
     pub agent_ids: Vec<String>,
@@ -84,6 +88,7 @@ pub struct ImportScan {
     pub workspace_files_available: bool,
     pub workspace_files_count: usize,
     pub workspace_files_found: Vec<String>,
+    pub mcp_servers_available: bool,
 }
 
 /// Scan an OpenClaw installation without importing anything.
@@ -101,6 +106,7 @@ pub fn scan(detection: &OpenClawDetection) -> ImportScan {
     let (_, channels_result) = channels::import_channels(detection);
     let telegram_accounts = channels_result.telegram.len();
     let discord_accounts = channels_result.discord.len();
+    let signal_accounts = channels_result.signal.len();
 
     // Check for provider keys
     let (providers_report, _) = providers::import_providers(detection);
@@ -117,9 +123,10 @@ pub fn scan(detection: &OpenClawDetection) -> ImportScan {
         skills_count: skills.len(),
         memory_available: detection.has_memory,
         memory_files_count,
-        channels_available: telegram_accounts > 0 || discord_accounts > 0,
+        channels_available: telegram_accounts > 0 || discord_accounts > 0 || signal_accounts > 0,
         telegram_accounts,
         discord_accounts,
+        signal_accounts,
         sessions_count: detection.session_count,
         unsupported_channels: detection.unsupported_channels.clone(),
         agent_ids: detection.agent_ids.clone(),
@@ -127,6 +134,7 @@ pub fn scan(detection: &OpenClawDetection) -> ImportScan {
         workspace_files_available: detection.has_workspace_files,
         workspace_files_count: detection.workspace_files_found.len(),
         workspace_files_found: detection.workspace_files_found.clone(),
+        mcp_servers_available: detection.has_mcp_servers,
     }
 }
 
@@ -259,7 +267,9 @@ pub fn import(
     // Channels
     if selection.channels {
         let (cat_report, imported_channels) = channels::import_channels(detection);
-        if (!imported_channels.telegram.is_empty() || !imported_channels.discord.is_empty())
+        if (!imported_channels.telegram.is_empty()
+            || !imported_channels.discord.is_empty()
+            || !imported_channels.signal.is_empty())
             && let Err(e) = persist_channels(&imported_channels, config_dir)
         {
             warn!("failed to persist channels to config: {e}");
@@ -278,6 +288,25 @@ pub fn import(
             &memory_sessions_dir,
             &agent_id_mapping,
         ));
+    }
+
+    // MCP Servers
+    if selection.mcp_servers {
+        let mcp_path = data_dir.join("mcp-servers.json");
+        report.add_category(mcp_servers::import_mcp_servers(detection, &mcp_path));
+    }
+
+    // Convert non-default agents into spawn presets
+    let presets = agents::agents_to_presets(&imported_agents);
+    if !presets.is_empty() {
+        if let Err(e) = persist_agent_presets(&presets, config_dir) {
+            warn!("failed to persist agent presets: {e}");
+        } else {
+            info!(
+                count = presets.len(),
+                "persisted agent presets to moltis.toml"
+            );
+        }
     }
 
     // Always add TODO items for unsupported features
@@ -393,6 +422,28 @@ fn persist_identity(imported: &identity::ImportedIdentity, config_dir: &Path) ->
     save_config_to_path(&config_path, &config)
 }
 
+/// Persist imported agent presets to `[agents.presets.*]` in `moltis.toml`.
+///
+/// Merges with existing presets — existing presets with the same name are
+/// preserved (not overwritten) so re-imports don't discard user tweaks.
+fn persist_agent_presets(
+    presets: &std::collections::HashMap<String, moltis_config::schema::AgentPreset>,
+    config_dir: &Path,
+) -> error::Result<()> {
+    let config_path = config_dir.join("moltis.toml");
+    let mut config = load_or_default_config(&config_path);
+
+    for (id, preset) in presets {
+        if config.agents.presets.contains_key(id) {
+            debug!(preset_id = %id, "agent preset already exists, skipping");
+            continue;
+        }
+        config.agents.presets.insert(id.clone(), preset.clone());
+    }
+
+    save_config_to_path(&config_path, &config)
+}
+
 /// Persist imported channel configs to `[channels.*]` in `moltis.toml`.
 fn persist_channels(imported: &channels::ImportedChannels, config_dir: &Path) -> error::Result<()> {
     let config_path = config_dir.join("moltis.toml");
@@ -444,6 +495,37 @@ fn persist_channels(imported: &channels::ImportedChannels, config_dir: &Path) ->
         config.channels.discord.insert(ch.account_id.clone(), value);
     }
 
+    for ch in &imported.signal {
+        ensure_channel_offered(&mut config.channels.offered, "signal");
+
+        let dm_policy = map_signal_dm_policy(ch.dm_policy.as_deref());
+        let group_policy = map_signal_group_policy(ch.group_policy.as_deref());
+        let mention_mode = map_discord_mention_mode(ch.mention_mode.as_deref());
+
+        let mut value = serde_json::json!({
+            "dm_policy": dm_policy,
+            "group_policy": group_policy,
+            "mention_mode": mention_mode,
+            "allowlist": ch.allowlist,
+            "group_allowlist": ch.group_allowlist,
+            "enabled": ch.enabled.unwrap_or(true),
+        });
+        if let Some(obj) = value.as_object_mut() {
+            if let Some(account) = &ch.account {
+                obj.insert("account".to_string(), serde_json::json!(account));
+            }
+            if let Some(account_uuid) = &ch.account_uuid {
+                obj.insert("account_uuid".to_string(), serde_json::json!(account_uuid));
+            }
+            if let Some(http_url) = &ch.http_url {
+                obj.insert("http_url".to_string(), serde_json::json!(http_url));
+            }
+        }
+
+        debug!(account_id = %ch.account_id, "persisting Signal channel to moltis.toml");
+        config.channels.signal.insert(ch.account_id.clone(), value);
+    }
+
     save_config_to_path(&config_path, &config)
 }
 
@@ -481,6 +563,24 @@ fn map_discord_mention_mode(mode: Option<&str>) -> &'static str {
     }
 }
 
+fn map_signal_dm_policy(policy: Option<&str>) -> &'static str {
+    match policy {
+        Some("open") => "open",
+        Some("disabled") => "disabled",
+        Some("allowlist") | Some("pairing") | Some("otp") => "allowlist",
+        _ => "allowlist",
+    }
+}
+
+fn map_signal_group_policy(policy: Option<&str>) -> &'static str {
+    match policy {
+        Some("open") => "open",
+        Some("allowlist") => "allowlist",
+        Some("disabled") => "disabled",
+        _ => "disabled",
+    }
+}
+
 /// Load a `MoltisConfig` from a TOML file, or return defaults if not found.
 fn load_or_default_config(path: &Path) -> moltis_config::MoltisConfig {
     if !path.is_file() {
@@ -493,21 +593,16 @@ fn load_or_default_config(path: &Path) -> moltis_config::MoltisConfig {
 }
 
 /// Serialize a `MoltisConfig` to TOML and write it to the given path.
+///
+/// Delegates to [`moltis_config::loader::save_config_to_path`] so that
+/// existing comments in the TOML file are preserved during import.
 fn save_config_to_path(path: &Path, config: &moltis_config::MoltisConfig) -> error::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let toml_str = toml::to_string_pretty(config)?;
-    std::fs::write(path, toml_str)?;
+    moltis_config::loader::save_config_to_path(path, config)
+        .map_err(|e| error::Error::message(e.to_string()))?;
     Ok(())
 }
 
 fn add_todos(report: &mut ImportReport, detection: &OpenClawDetection) {
-    report.add_todo(
-        "Sub-agents",
-        "OpenClaw's agent delegation/sub-agent spawning is not yet supported in Moltis.",
-    );
-
     for channel in &detection.unsupported_channels {
         report.add_todo(
             format!("{channel} channel"),
@@ -578,6 +673,13 @@ mod tests {
         )
         .unwrap();
 
+        // MCP servers
+        std::fs::write(
+            dir.join("mcp-servers.json"),
+            r#"{"test-mcp":{"command":"test-mcp","args":["--port","3000"],"env":{},"enabled":true}}"#,
+        )
+        .unwrap();
+
         // Auth profiles
         let agent_dir = dir.join("agents").join("main").join("agent");
         std::fs::create_dir_all(agent_dir.join("sessions")).unwrap();
@@ -634,6 +736,7 @@ mod tests {
         assert_eq!(scan_result.sessions_count, 1);
         assert!(scan_result.workspace_files_available);
         assert_eq!(scan_result.workspace_files_count, 3);
+        assert!(scan_result.mcp_servers_available);
     }
 
     #[test]
@@ -706,10 +809,11 @@ mod tests {
         let report = import(&detection, &ImportSelection::all(), &config_dir, &data_dir);
 
         // Check that all categories have a report
-        assert!(report.categories.len() >= 7);
+        assert!(report.categories.len() >= 8);
 
         // Check specific imports
         assert!(config_dir.join("provider_keys.json").is_file());
+        assert!(data_dir.join("mcp-servers.json").is_file());
         assert!(data_dir.join("MEMORY.md").is_file());
         assert!(
             data_dir
@@ -727,9 +831,9 @@ mod tests {
         // Check import state saved
         assert!(data_dir.join("openclaw-import-state.json").is_file());
 
-        // Check TODOs generated
+        // Check TODOs generated (sub-agents no longer a TODO since presets are supported)
         assert!(!report.todos.is_empty());
-        assert!(report.todos.iter().any(|t| t.feature == "Sub-agents"));
+        assert!(!report.todos.iter().any(|t| t.feature == "Sub-agents"));
     }
 
     #[test]
@@ -1089,5 +1193,161 @@ mod tests {
         // Report should have both
         assert!(report.imported_identity.is_some());
         assert!(report.imported_channels.is_some());
+    }
+
+    #[test]
+    fn import_preserves_toml_comments() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join(".openclaw");
+        setup_full_openclaw(&home);
+
+        let config_dir = tmp.path().join("config");
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        // Write a config file with comments (simulating the template)
+        let template = r#"# Moltis configuration
+# See docs for all options
+
+[identity]
+# name = "My Assistant"
+# theme = "helpful and concise"
+
+[user]
+# name = "Your Name"
+# timezone = "UTC"
+
+[channels]
+# Configure messaging channels below
+"#;
+        std::fs::write(config_dir.join("moltis.toml"), template).unwrap();
+
+        let detection = detect::detect_at(home).unwrap();
+        let selection = ImportSelection {
+            identity: true,
+            ..Default::default()
+        };
+        let report = import(&detection, &selection, &config_dir, &data_dir);
+        assert!(
+            report.imported_identity.is_some(),
+            "identity should have been imported, report: {report:?}"
+        );
+
+        let content = std::fs::read_to_string(config_dir.join("moltis.toml")).unwrap();
+
+        // Imported values should be present
+        let config: moltis_config::MoltisConfig = toml::from_str(&content).unwrap();
+        assert_eq!(config.identity.name.as_deref(), Some("Claude"));
+
+        // Comments from the original template should be preserved
+        assert!(
+            content.contains("# Moltis configuration"),
+            "top-level comment should be preserved, got:\n{content}"
+        );
+        assert!(
+            content.contains("# See docs for all options"),
+            "documentation comment should be preserved, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn import_creates_agent_presets_for_non_default_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join(".openclaw");
+        std::fs::create_dir_all(&home).unwrap();
+
+        // Multi-agent config: main + researcher (with model override)
+        std::fs::write(
+            home.join("openclaw.json"),
+            r#"{
+                "agents": {
+                    "defaults": {
+                        "model": {"primary": "anthropic/claude-opus-4-6"}
+                    },
+                    "list": [
+                        {"id": "main", "default": true, "name": "Claude"},
+                        {"id": "researcher", "name": "Scout", "model": "anthropic/claude-haiku-3-5-20241022"}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let config_dir = tmp.path().join("config");
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        let detection = detect::detect_at(home).unwrap();
+        let _report = import(&detection, &ImportSelection::all(), &config_dir, &data_dir);
+
+        // moltis.toml should contain a preset for the non-default agent
+        let content = std::fs::read_to_string(config_dir.join("moltis.toml")).unwrap();
+        let config: moltis_config::MoltisConfig = toml::from_str(&content).unwrap();
+
+        assert!(
+            config.agents.presets.contains_key("researcher"),
+            "preset 'researcher' should be created"
+        );
+
+        let preset = config.agents.presets.get("researcher").unwrap();
+        assert_eq!(preset.identity.name.as_deref(), Some("Scout"));
+        assert_eq!(
+            preset.model.as_deref(),
+            Some("anthropic/claude-haiku-3-5-20241022")
+        );
+    }
+
+    #[test]
+    fn import_does_not_overwrite_existing_presets() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join(".openclaw");
+        std::fs::create_dir_all(&home).unwrap();
+
+        std::fs::write(
+            home.join("openclaw.json"),
+            r#"{
+                "agents": {
+                    "list": [
+                        {"id": "main", "default": true, "name": "Claude"},
+                        {"id": "helper", "name": "Helper Bot"}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let config_dir = tmp.path().join("config");
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        // Pre-existing config with a customized "helper" preset
+        let mut existing = moltis_config::MoltisConfig::default();
+        existing
+            .agents
+            .presets
+            .insert("helper".to_string(), moltis_config::schema::AgentPreset {
+                identity: moltis_config::AgentIdentity {
+                    name: Some("Custom Helper".to_string()),
+                    ..Default::default()
+                },
+                model: Some("openai/gpt-4o".to_string()),
+                ..Default::default()
+            });
+        let toml_str = toml::to_string_pretty(&existing).unwrap();
+        std::fs::write(config_dir.join("moltis.toml"), &toml_str).unwrap();
+
+        let detection = detect::detect_at(home).unwrap();
+        import(&detection, &ImportSelection::all(), &config_dir, &data_dir);
+
+        let content = std::fs::read_to_string(config_dir.join("moltis.toml")).unwrap();
+        let config: moltis_config::MoltisConfig = toml::from_str(&content).unwrap();
+
+        // Existing preset should be preserved, not overwritten
+        let preset = config.agents.presets.get("helper").unwrap();
+        assert_eq!(preset.identity.name.as_deref(), Some("Custom Helper"));
+        assert_eq!(preset.model.as_deref(), Some("openai/gpt-4o"));
     }
 }

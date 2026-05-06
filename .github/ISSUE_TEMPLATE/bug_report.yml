@@ -11,14 +11,14 @@ body:
 
         Before submitting, please check:
         - You're using the latest version of Moltis (`moltis --version`)
-        - This issue hasn't already been [reported](https://github.com/moltisorg/moltis/issues?q=is%3Aissue+label%3Abug)
+        - This issue hasn't already been [reported](https://github.com/moltis-org/moltis/issues?q=is%3Aissue+label%3Abug)
 
   - type: checkboxes
     id: preflight
     attributes:
       label: Preflight Checklist
       options:
-        - label: I have searched [existing issues](https://github.com/moltisorg/moltis/issues?q=is%3Aissue+label%3Abug) and this hasn't been reported yet
+        - label: I have searched [existing issues](https://github.com/moltis-org/moltis/issues?q=is%3Aissue+label%3Abug) and this hasn't been reported yet
           required: true
         - label: I am using the latest version of Moltis
           required: true

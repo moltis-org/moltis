@@ -5,10 +5,12 @@
 //!
 //! QMD must be installed separately. See: https://github.com/tobi/qmd
 
+pub mod error;
 mod manager;
-mod store;
+mod runtime;
 
 pub use {
-    manager::{QmdManager, QmdManagerConfig},
-    store::QmdStore,
+    error::Error,
+    manager::{QmdCollection, QmdManager, QmdManagerConfig, QmdSearchResult, SearchMode},
+    runtime::QmdMemoryRuntime,
 };

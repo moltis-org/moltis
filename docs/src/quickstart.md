@@ -137,6 +137,8 @@ Add knowledge by placing Markdown files in `~/.moltis/memory/`.
 |---------|-------------|
 | `/new` | Start a new session |
 | `/model <name>` | Switch models |
+| `/agent` | List or switch chat agents |
+| `/mode` | List or switch temporary session modes |
 | `/clear` | Clear chat history |
 | `/help` | Show available commands |
 

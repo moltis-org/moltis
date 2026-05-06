@@ -33,7 +33,7 @@ impl OAuthFlow {
     pub fn new(config: OAuthConfig) -> Self {
         Self {
             config,
-            client: reqwest::Client::new(),
+            client: moltis_common::http_client::build_default_http_client(),
         }
     }
 

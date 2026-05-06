@@ -313,6 +313,7 @@ pub(super) struct VoiceProviderInfo {
     description: String,
     available: bool,
     enabled: bool,
+    preferred: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     key_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -339,6 +340,33 @@ pub(super) struct VoiceProvidersResponse {
     stt: Vec<VoiceProviderInfo>,
 }
 
+fn openai_provider_base_url(config: &moltis_config::MoltisConfig) -> Option<&str> {
+    config
+        .providers
+        .get("openai")
+        .and_then(|provider| provider.base_url.as_deref())
+}
+
+fn openai_tts_base_url(config: &moltis_config::MoltisConfig) -> Option<&str> {
+    config
+        .voice
+        .tts
+        .openai
+        .base_url
+        .as_deref()
+        .or_else(|| openai_provider_base_url(config))
+}
+
+fn whisper_base_url(config: &moltis_config::MoltisConfig) -> Option<&str> {
+    config
+        .voice
+        .stt
+        .whisper
+        .base_url
+        .as_deref()
+        .or_else(|| openai_provider_base_url(config))
+}
+
 /// Detect all available voice providers with their availability status.
 pub(super) async fn detect_voice_providers(
     config: &moltis_config::MoltisConfig,
@@ -361,6 +389,7 @@ pub(super) async fn detect_voice_providers(
         .get("openai")
         .and_then(|p| p.api_key.as_ref())
         .map(|k| k.expose_secret().to_string());
+    let llm_openai_base_url = openai_provider_base_url(config);
     let llm_groq_key = config
         .providers
         .get("groq")
@@ -382,6 +411,7 @@ pub(super) async fn detect_voice_providers(
     let tts_server_binary = check_binary_available("tts-server").await;
 
     // Build TTS providers list
+    let tts_pref = config.voice.tts.provider;
     let tts_providers = vec![
         build_provider_info(
             VoiceProviderId::Elevenlabs,
@@ -389,7 +419,10 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "cloud",
             config.voice.tts.elevenlabs.api_key.is_some() || env_elevenlabs_key.is_some(),
-            config.voice.tts.provider == "elevenlabs" && config.voice.tts.enabled,
+            config.voice.tts.elevenlabs.enabled
+                && config.voice.tts.enabled
+                && (config.voice.tts.elevenlabs.api_key.is_some() || env_elevenlabs_key.is_some()),
+            tts_pref == Some(moltis_config::VoiceTtsProvider::ElevenLabs),
             key_source(
                 config.voice.tts.elevenlabs.api_key.is_some(),
                 env_elevenlabs_key.is_some(),
@@ -404,13 +437,23 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "cloud",
             config.voice.tts.openai.api_key.is_some()
+                || config.voice.tts.openai.base_url.is_some()
                 || env_openai_key.is_some()
-                || llm_openai_key.is_some(),
-            config.voice.tts.provider == "openai" && config.voice.tts.enabled,
+                || llm_openai_key.is_some()
+                || llm_openai_base_url.is_some(),
+            config.voice.tts.openai.enabled
+                && config.voice.tts.enabled
+                && (config.voice.tts.openai.api_key.is_some()
+                    || config.voice.tts.openai.base_url.is_some()
+                    || env_openai_key.is_some()
+                    || llm_openai_key.is_some()
+                    || llm_openai_base_url.is_some()),
+            tts_pref == Some(moltis_config::VoiceTtsProvider::OpenAi),
             key_source(
-                config.voice.tts.openai.api_key.is_some(),
+                config.voice.tts.openai.api_key.is_some()
+                    || config.voice.tts.openai.base_url.is_some(),
                 env_openai_key.is_some(),
-                llm_openai_key.is_some(),
+                llm_openai_key.is_some() || llm_openai_base_url.is_some(),
             ),
             None,
             None,
@@ -421,7 +464,10 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "cloud",
             config.voice.tts.google.api_key.is_some() || env_google_key.is_some(),
-            config.voice.tts.provider == "google" && config.voice.tts.enabled,
+            config.voice.tts.google.enabled
+                && config.voice.tts.enabled
+                && (config.voice.tts.google.api_key.is_some() || env_google_key.is_some()),
+            tts_pref == Some(moltis_config::VoiceTtsProvider::Google),
             key_source(
                 config.voice.tts.google.api_key.is_some(),
                 env_google_key.is_some(),
@@ -436,7 +482,11 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "local",
             piper_available.is_some() && config.voice.tts.piper.model_path.is_some(),
-            config.voice.tts.provider == "piper" && config.voice.tts.enabled,
+            config.voice.tts.piper.enabled
+                && config.voice.tts.enabled
+                && piper_available.is_some()
+                && config.voice.tts.piper.model_path.is_some(),
+            tts_pref == Some(moltis_config::VoiceTtsProvider::Piper),
             None,
             piper_available.clone(),
             if piper_available.is_none() {
@@ -457,7 +507,8 @@ pub(super) async fn detect_voice_providers(
             "tts",
             "local",
             coqui_server_running,
-            config.voice.tts.provider == "coqui" && config.voice.tts.enabled,
+            config.voice.tts.coqui.enabled && config.voice.tts.enabled && coqui_server_running,
+            tts_pref == Some(moltis_config::VoiceTtsProvider::Coqui),
             None,
             tts_server_binary,
             if !coqui_server_running {
@@ -479,14 +530,17 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "cloud",
             config.voice.stt.whisper.api_key.is_some()
+                || config.voice.stt.whisper.base_url.is_some()
                 || env_openai_key.is_some()
-                || llm_openai_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::Whisper)
-                && config.voice.stt.enabled,
+                || llm_openai_key.is_some()
+                || llm_openai_base_url.is_some(),
+            config.voice.stt.whisper.enabled && config.voice.stt.enabled,
+            false,
             key_source(
-                config.voice.stt.whisper.api_key.is_some(),
+                config.voice.stt.whisper.api_key.is_some()
+                    || config.voice.stt.whisper.base_url.is_some(),
                 env_openai_key.is_some(),
-                llm_openai_key.is_some(),
+                llm_openai_key.is_some() || llm_openai_base_url.is_some(),
             ),
             None,
             None,
@@ -499,7 +553,8 @@ pub(super) async fn detect_voice_providers(
             config.voice.stt.groq.api_key.is_some()
                 || env_groq_key.is_some()
                 || llm_groq_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::Groq) && config.voice.stt.enabled,
+            config.voice.stt.groq.enabled && config.voice.stt.enabled,
+            false,
             key_source(
                 config.voice.stt.groq.api_key.is_some(),
                 env_groq_key.is_some(),
@@ -514,8 +569,8 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "cloud",
             config.voice.stt.deepgram.api_key.is_some() || env_deepgram_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::Deepgram)
-                && config.voice.stt.enabled,
+            config.voice.stt.deepgram.enabled && config.voice.stt.enabled,
+            false,
             key_source(
                 config.voice.stt.deepgram.api_key.is_some(),
                 env_deepgram_key.is_some(),
@@ -530,7 +585,8 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "cloud",
             config.voice.stt.google.api_key.is_some() || env_google_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::Google) && config.voice.stt.enabled,
+            config.voice.stt.google.enabled && config.voice.stt.enabled,
+            false,
             key_source(
                 config.voice.stt.google.api_key.is_some(),
                 env_google_key.is_some(),
@@ -545,8 +601,8 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "cloud",
             config.voice.stt.mistral.api_key.is_some() || env_mistral_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::Mistral)
-                && config.voice.stt.enabled,
+            config.voice.stt.mistral.enabled && config.voice.stt.enabled,
+            false,
             key_source(
                 config.voice.stt.mistral.api_key.is_some(),
                 env_mistral_key.is_some(),
@@ -563,8 +619,8 @@ pub(super) async fn detect_voice_providers(
             config.voice.stt.elevenlabs.api_key.is_some()
                 || config.voice.tts.elevenlabs.api_key.is_some()
                 || env_elevenlabs_key.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::ElevenLabs)
-                && config.voice.stt.enabled,
+            config.voice.stt.elevenlabs.enabled && config.voice.stt.enabled,
+            false,
             key_source(
                 config.voice.stt.elevenlabs.api_key.is_some()
                     || config.voice.tts.elevenlabs.api_key.is_some(),
@@ -580,8 +636,8 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "local",
             voxtral_server_running,
-            config.voice.stt.provider == Some(VoiceSttProvider::VoxtralLocal)
-                && config.voice.stt.enabled,
+            config.voice.stt.voxtral_local.enabled && config.voice.stt.enabled,
+            false,
             None,
             None,
             if !voxtral_server_running {
@@ -596,8 +652,8 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "local",
             whisper_cli_available.is_some() && config.voice.stt.whisper_cli.model_path.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::WhisperCli)
-                && config.voice.stt.enabled,
+            config.voice.stt.whisper_cli.enabled && config.voice.stt.enabled,
+            false,
             None,
             whisper_cli_available.clone(),
             if whisper_cli_available.is_none() {
@@ -618,8 +674,8 @@ pub(super) async fn detect_voice_providers(
             "stt",
             "local",
             sherpa_onnx_available.is_some() && config.voice.stt.sherpa_onnx.model_dir.is_some(),
-            config.voice.stt.provider == Some(VoiceSttProvider::SherpaOnnx)
-                && config.voice.stt.enabled,
+            config.voice.stt.sherpa_onnx.enabled && config.voice.stt.enabled,
+            false,
             None,
             sherpa_onnx_available.clone(),
             if sherpa_onnx_available.is_none() {
@@ -689,10 +745,12 @@ fn enrich_voice_provider(
             serde_json::json!({
                 "voiceChoices": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"],
                 "modelChoices": ["tts-1", "tts-1-hd"],
+                "baseUrl": true,
                 "customVoice": true,
                 "customModel": true,
             }),
             serde_json::json!({
+                "baseUrl": openai_tts_base_url(config),
                 "voice": config.voice.tts.openai.voice,
                 "model": config.voice.tts.openai.model,
             }),
@@ -700,6 +758,15 @@ fn enrich_voice_provider(
                 config.voice.tts.openai.voice.clone(),
                 config.voice.tts.openai.model.clone(),
             ),
+        ),
+        VoiceProviderId::Whisper => (
+            serde_json::json!({
+                "baseUrl": true,
+            }),
+            serde_json::json!({
+                "baseUrl": whisper_base_url(config),
+            }),
+            None,
         ),
         VoiceProviderId::Elevenlabs => (
             serde_json::json!({
@@ -903,6 +970,7 @@ fn build_provider_info(
     category: &str,
     available: bool,
     enabled: bool,
+    preferred: bool,
     key_source: Option<&str>,
     binary_path: Option<String>,
     status_message: Option<&str>,
@@ -916,6 +984,7 @@ fn build_provider_info(
         description: meta.description.to_string(),
         available,
         enabled,
+        preferred,
         key_source: key_source.map(str::to_string),
         key_placeholder: meta.key_placeholder.map(str::to_string),
         key_url: meta.key_url.map(str::to_string),
@@ -946,6 +1015,16 @@ pub(super) fn apply_voice_provider_settings(
     provider: &str,
     params: &serde_json::Value,
 ) {
+    let get_nullable_string = |key: &str| -> Option<Option<String>> {
+        params.get(key).map(|value| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned)
+        })
+    };
+
     let get_string = |key: &str| -> Option<String> {
         params
             .get(key)
@@ -957,11 +1036,23 @@ pub(super) fn apply_voice_provider_settings(
 
     match provider {
         "openai" | "openai-tts" => {
+            if let Some(base_url) = get_nullable_string("baseUrl") {
+                cfg.voice.tts.openai.base_url = base_url;
+            }
             if let Some(voice) = get_string("voice") {
                 cfg.voice.tts.openai.voice = Some(voice);
             }
             if let Some(model) = get_string("model") {
                 cfg.voice.tts.openai.model = Some(model);
+            }
+        },
+        "whisper" => {
+            if let Some(base_url) = get_nullable_string("baseUrl") {
+                cfg.voice.stt.whisper.base_url = base_url;
+                if cfg.voice.stt.whisper.base_url.is_some() {
+                    cfg.voice.stt.provider = Some(VoiceSttProvider::Whisper);
+                    cfg.voice.stt.enabled = true;
+                }
             }
         },
         "elevenlabs" => {
@@ -1059,40 +1150,56 @@ pub(super) fn toggle_voice_provider(
     enabled: bool,
     provider_type: &str,
 ) -> Result<(), anyhow::Error> {
-    moltis_config::update_config(|cfg| {
-        match provider_type {
-            "tts" => {
-                if enabled {
-                    // Map provider id to config provider name
-                    let config_provider = match provider {
-                        "openai-tts" => "openai",
-                        "google-tts" => "google",
-                        other => other,
-                    };
-                    cfg.voice.tts.provider = config_provider.to_string();
-                    cfg.voice.tts.enabled = true;
-                } else if cfg.voice.tts.provider == provider
-                    || (provider == "openai-tts" && cfg.voice.tts.provider == "openai")
-                    || (provider == "google-tts" && cfg.voice.tts.provider == "google")
-                {
-                    cfg.voice.tts.enabled = false;
-                }
-            },
-            "stt" => {
+    moltis_config::update_config(|cfg| match provider_type {
+        "tts" => {
+            let config_provider = match provider {
+                "openai-tts" => "openai",
+                "google-tts" => "google",
+                other => other,
+            };
+            match config_provider {
+                "elevenlabs" => cfg.voice.tts.elevenlabs.enabled = enabled,
+                "openai" => cfg.voice.tts.openai.enabled = enabled,
+                "google" => cfg.voice.tts.google.enabled = enabled,
+                "piper" => cfg.voice.tts.piper.enabled = enabled,
+                "coqui" => cfg.voice.tts.coqui.enabled = enabled,
+                _ => {},
+            }
+            if !enabled
+                && cfg.voice.tts.provider == moltis_config::VoiceTtsProvider::parse(config_provider)
+            {
+                cfg.voice.tts.provider = None;
+            }
+            if enabled {
+                cfg.voice.tts.enabled = true;
+            }
+        },
+        "stt" => {
+            match provider {
+                "whisper" => cfg.voice.stt.whisper.enabled = enabled,
+                "groq" => cfg.voice.stt.groq.enabled = enabled,
+                "deepgram" => cfg.voice.stt.deepgram.enabled = enabled,
+                "google" => cfg.voice.stt.google.enabled = enabled,
+                "mistral" => cfg.voice.stt.mistral.enabled = enabled,
+                "elevenlabs" | "elevenlabs-stt" => {
+                    cfg.voice.stt.elevenlabs.enabled = enabled;
+                },
+                "voxtral-local" => cfg.voice.stt.voxtral_local.enabled = enabled,
+                "whisper-cli" => cfg.voice.stt.whisper_cli.enabled = enabled,
+                "sherpa-onnx" => cfg.voice.stt.sherpa_onnx.enabled = enabled,
+                _ => {},
+            }
+            if !enabled {
                 let stt_provider = VoiceSttProvider::parse(provider);
-                if enabled {
-                    if let Some(provider_id) = stt_provider {
-                        cfg.voice.stt.provider = Some(provider_id);
-                        cfg.voice.stt.enabled = true;
-                    }
-                } else if stt_provider
-                    .is_some_and(|provider_id| cfg.voice.stt.provider == Some(provider_id))
-                {
-                    cfg.voice.stt.enabled = false;
+                if cfg.voice.stt.provider == stt_provider {
+                    cfg.voice.stt.provider = None;
                 }
-            },
-            _ => {},
-        }
+            }
+            if enabled {
+                cfg.voice.stt.enabled = true;
+            }
+        },
+        _ => {},
     })?;
     Ok(())
 }
@@ -1111,6 +1218,7 @@ mod tests {
             description: meta.description.to_string(),
             available: false,
             enabled: false,
+            preferred: false,
             key_source: None,
             key_placeholder: meta.key_placeholder.map(str::to_string),
             key_url: meta.key_url.map(str::to_string),
@@ -1194,7 +1302,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn detect_voice_providers_does_not_mark_stt_provider_when_none() {
+    async fn detect_voice_providers_does_not_mark_stt_preferred_when_none() {
         let mut config = moltis_config::MoltisConfig::default();
         config.voice.stt.enabled = true;
         config.voice.stt.provider = None;
@@ -1204,11 +1312,88 @@ mod tests {
         let Some(stt) = detected["stt"].as_array() else {
             panic!("stt list missing");
         };
-        let enabled_count = stt
+        let preferred_count = stt
             .iter()
-            .filter(|provider| provider["enabled"].as_bool() == Some(true))
+            .filter(|provider| provider["preferred"].as_bool() == Some(true))
             .count();
 
-        assert_eq!(enabled_count, 0);
+        assert_eq!(preferred_count, 0);
+    }
+
+    #[test]
+    fn apply_voice_provider_settings_stores_base_urls() {
+        let mut config = moltis_config::MoltisConfig::default();
+
+        apply_voice_provider_settings(
+            &mut config,
+            "openai",
+            &serde_json::json!({
+                "baseUrl": "http://127.0.0.1:8003/v1",
+            }),
+        );
+        apply_voice_provider_settings(
+            &mut config,
+            "whisper",
+            &serde_json::json!({
+                "baseUrl": "http://127.0.0.1:8001/v1",
+            }),
+        );
+
+        assert_eq!(
+            config.voice.tts.openai.base_url.as_deref(),
+            Some("http://127.0.0.1:8003/v1")
+        );
+        assert_eq!(
+            config.voice.stt.whisper.base_url.as_deref(),
+            Some("http://127.0.0.1:8001/v1")
+        );
+        assert_eq!(config.voice.stt.provider, Some(VoiceSttProvider::Whisper));
+        assert!(config.voice.stt.enabled);
+    }
+
+    #[test]
+    fn apply_voice_provider_settings_clears_base_urls_when_requested() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.voice.tts.openai.base_url = Some("http://127.0.0.1:8003/v1".to_string());
+        config.voice.stt.whisper.base_url = Some("http://127.0.0.1:8001/v1".to_string());
+
+        apply_voice_provider_settings(
+            &mut config,
+            "openai",
+            &serde_json::json!({
+                "baseUrl": "",
+            }),
+        );
+        apply_voice_provider_settings(
+            &mut config,
+            "whisper",
+            &serde_json::json!({
+                "baseUrl": "",
+            }),
+        );
+
+        assert_eq!(config.voice.tts.openai.base_url, None);
+        assert_eq!(config.voice.stt.whisper.base_url, None);
+    }
+
+    #[tokio::test]
+    async fn detect_voice_providers_marks_whisper_available_when_base_url_configured() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.voice.stt.whisper.base_url = Some("http://127.0.0.1:8001/v1".to_string());
+
+        let detected = detect_voice_providers(&config).await;
+        let Some(stt) = detected["stt"].as_array() else {
+            panic!("stt list missing");
+        };
+        let Some(whisper) = stt.iter().find(|provider| provider["id"] == "whisper") else {
+            panic!("whisper provider missing");
+        };
+
+        assert_eq!(whisper["available"], serde_json::json!(true));
+        assert_eq!(whisper["keySource"], serde_json::json!("config"));
+        assert_eq!(
+            whisper["settings"]["baseUrl"],
+            serde_json::json!("http://127.0.0.1:8001/v1")
+        );
     }
 }

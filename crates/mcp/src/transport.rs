@@ -7,6 +7,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
 use {
@@ -30,6 +31,7 @@ pub struct StdioTransport {
     stdin: Mutex<tokio::process::ChildStdin>,
     pending: Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>>,
     next_id: AtomicU64,
+    request_timeout: Duration,
     /// Handle to the reader task so we can abort on drop.
     reader_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -40,6 +42,16 @@ impl StdioTransport {
         command: &str,
         args: &[String],
         env: &HashMap<String, String>,
+    ) -> Result<Arc<Self>> {
+        Self::spawn_with_timeout(command, args, env, Duration::from_secs(30)).await
+    }
+
+    /// Spawn the server process with a custom request timeout and start the reader loop.
+    pub async fn spawn_with_timeout(
+        command: &str,
+        args: &[String],
+        env: &HashMap<String, String>,
+        request_timeout: Duration,
     ) -> Result<Arc<Self>> {
         info!(
             command = %command,
@@ -71,6 +83,7 @@ impl StdioTransport {
             stdin: Mutex::new(stdin),
             pending: Arc::clone(&pending),
             next_id: AtomicU64::new(1),
+            request_timeout,
             reader_handle: Mutex::new(None),
         });
 
@@ -171,10 +184,13 @@ impl McpTransport for StdioTransport {
             stdin.flush().await?;
         }
 
-        let resp = tokio::time::timeout(std::time::Duration::from_secs(30), rx)
+        let resp = tokio::time::timeout(self.request_timeout, rx)
             .await
             .with_context(|| {
-                format!("MCP request '{method}' timed out after 30s (no response from server)")
+                format!(
+                    "MCP request '{method}' timed out after {}s (no response from server)",
+                    self.request_timeout.as_secs()
+                )
             })?
             .with_context(|| {
                 format!("MCP reader task dropped while waiting for '{method}' response")
@@ -244,5 +260,23 @@ mod tests {
         let result =
             StdioTransport::spawn("nonexistent_command_xyz_42", &[], &HashMap::new()).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_request_uses_configured_timeout() {
+        let args = vec!["-c".to_string(), "while read line; do :; done".to_string()];
+        let transport = StdioTransport::spawn_with_timeout(
+            "sh",
+            &args,
+            &HashMap::new(),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        let err = transport.request("tools/list", None).await.unwrap_err();
+        assert!(err.to_string().contains("timed out after 1s"));
+
+        transport.kill().await;
     }
 }

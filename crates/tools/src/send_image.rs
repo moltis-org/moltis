@@ -9,23 +9,13 @@ use {
     base64::{Engine as _, engine::general_purpose::STANDARD as BASE64},
     moltis_agents::tool_registry::AgentTool,
     serde_json::{Value, json},
-    std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-        time::Duration,
-    },
-    tracing::{debug, warn},
+    std::{path::Path, sync::Arc},
+    tracing::debug,
 };
 
 use crate::error::Error;
 
-use crate::{exec::ExecOpts, sandbox::SandboxRouter};
-
-/// 20 MB — Telegram's maximum photo upload size.
-const MAX_FILE_SIZE: u64 = 20 * 1024 * 1024;
-/// Enough for a 20 MB binary image encoded as base64 (~26.7 MB) plus margin.
-const MAX_SANDBOX_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
-const SANDBOX_TOO_LARGE_PREFIX: &str = "__MOLTIS_SEND_IMAGE_TOO_LARGE__:";
+use crate::{file_io, sandbox::SandboxRouter};
 
 /// Image-sending tool.
 #[derive(Default)]
@@ -44,150 +34,14 @@ impl SendImageTool {
         self.sandbox_router = Some(router);
         self
     }
-
-    async fn read_host_file(path: &str) -> crate::Result<Vec<u8>> {
-        // Check file metadata before reading.
-        let meta = tokio::fs::metadata(path)
-            .await
-            .map_err(|e| Error::message(format!("cannot access '{path}': {e}")))?;
-
-        if !meta.is_file() {
-            return Err(Error::message(format!("'{path}' is not a regular file")));
-        }
-
-        if meta.len() > MAX_FILE_SIZE {
-            return Err(Error::message(format!(
-                "file is too large ({:.1} MB) — maximum is {:.0} MB",
-                meta.len() as f64 / (1024.0 * 1024.0),
-                MAX_FILE_SIZE as f64 / (1024.0 * 1024.0),
-            )));
-        }
-
-        // Read and encode.
-        let bytes = tokio::fs::read(path)
-            .await
-            .map_err(|e| Error::message(format!("failed to read '{path}': {e}")))?;
-
-        // Post-read size guard against TOCTOU races (file replaced between
-        // metadata check and read).
-        if bytes.len() as u64 > MAX_FILE_SIZE {
-            return Err(Error::message(format!(
-                "file is too large ({:.1} MB) — maximum is {:.0} MB",
-                bytes.len() as f64 / (1024.0 * 1024.0),
-                MAX_FILE_SIZE as f64 / (1024.0 * 1024.0),
-            )));
-        }
-
-        Ok(bytes)
-    }
-
-    async fn read_sandbox_file(
-        router: &SandboxRouter,
-        session_key: &str,
-        path: &str,
-    ) -> crate::Result<Vec<u8>> {
-        let sandbox_id = router.sandbox_id_for(session_key);
-        let image = router.resolve_image(session_key, None).await;
-        let backend = router.backend();
-        backend.ensure_ready(&sandbox_id, Some(&image)).await?;
-
-        let quoted_path = shell_single_quote(path);
-        let command = format!(
-            "if [ ! -f {quoted_path} ]; then \
-                 echo \"path is not a regular file\" >&2; \
-                 exit 2; \
-             fi; \
-             size=$(wc -c < {quoted_path}); \
-             if [ \"$size\" -gt {MAX_FILE_SIZE} ]; then \
-                 echo \"{SANDBOX_TOO_LARGE_PREFIX}$size\" >&2; \
-                 exit 3; \
-             fi; \
-             base64 < {quoted_path} | tr -d '\\n'"
-        );
-
-        let opts = ExecOpts {
-            timeout: Duration::from_secs(30),
-            max_output_bytes: MAX_SANDBOX_OUTPUT_BYTES,
-            working_dir: Some(PathBuf::from("/home/sandbox")),
-            env: Vec::new(),
-        };
-
-        let result = backend.exec(&sandbox_id, &command, &opts).await?;
-        if result.exit_code != 0 {
-            if let Some(size_str) = result
-                .stderr
-                .lines()
-                .find_map(|line| line.strip_prefix(SANDBOX_TOO_LARGE_PREFIX))
-                && let Ok(size) = size_str.trim().parse::<u64>()
-            {
-                return Err(Error::message(format!(
-                    "file is too large ({:.1} MB) — maximum is {:.0} MB",
-                    size as f64 / (1024.0 * 1024.0),
-                    MAX_FILE_SIZE as f64 / (1024.0 * 1024.0),
-                )));
-            }
-
-            let detail = if !result.stderr.trim().is_empty() {
-                result.stderr.trim().to_string()
-            } else if !result.stdout.trim().is_empty() {
-                result.stdout.trim().to_string()
-            } else {
-                format!("sandbox command failed with exit code {}", result.exit_code)
-            };
-            return Err(Error::message(format!(
-                "cannot access '{path}' in sandbox: {detail}"
-            )));
-        }
-
-        let bytes = BASE64
-            .decode(result.stdout.trim())
-            .map_err(|e| Error::message(format!("failed to decode sandbox file '{path}': {e}")))?;
-
-        if bytes.len() as u64 > MAX_FILE_SIZE {
-            return Err(Error::message(format!(
-                "file is too large ({:.1} MB) — maximum is {:.0} MB",
-                bytes.len() as f64 / (1024.0 * 1024.0),
-                MAX_FILE_SIZE as f64 / (1024.0 * 1024.0),
-            )));
-        }
-
-        Ok(bytes)
-    }
-
-    async fn read_file_for_session(&self, session_key: &str, path: &str) -> crate::Result<Vec<u8>> {
-        let Some(ref router) = self.sandbox_router else {
-            return Self::read_host_file(path).await;
-        };
-
-        if !router.is_sandboxed(session_key).await {
-            return Self::read_host_file(path).await;
-        }
-
-        match Self::read_sandbox_file(router, session_key, path).await {
-            Ok(bytes) => Ok(bytes),
-            Err(error) => {
-                warn!(
-                    session_key,
-                    path,
-                    error = %error,
-                    "send_image failed to read from sandbox"
-                );
-                Err(error)
-            },
-        }
-    }
 }
 
-/// Map a file extension to its MIME type.
+/// Map a file extension to its image MIME type.
+///
+/// Delegates to `moltis_media::mime::mime_from_extension` but only accepts
+/// image MIME types — returns `None` for documents, audio, etc.
 fn mime_from_extension(ext: &str) -> Option<&'static str> {
-    match ext.to_ascii_lowercase().as_str() {
-        "png" => Some("image/png"),
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "gif" => Some("image/gif"),
-        "webp" => Some("image/webp"),
-        "ppm" => Some("image/x-portable-pixmap"),
-        _ => None,
-    }
+    moltis_media::mime::mime_from_extension(ext).filter(|m| m.starts_with("image/"))
 }
 
 #[async_trait]
@@ -244,7 +98,13 @@ impl AgentTool for SendImageTool {
             ))
         })?;
 
-        let bytes = self.read_file_for_session(session_key, path).await?;
+        let bytes = file_io::read_file_for_session(
+            self.sandbox_router.as_ref(),
+            session_key,
+            path,
+            "send_image",
+        )
+        .await?;
 
         debug!(
             path,
@@ -271,10 +131,6 @@ impl AgentTool for SendImageTool {
     }
 }
 
-fn shell_single_quote(input: &str) -> String {
-    format!("'{}'", input.replace('\'', "'\\''"))
-}
-
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
@@ -282,7 +138,7 @@ mod tests {
         super::*,
         crate::{
             Result,
-            exec::ExecResult,
+            exec::{ExecOpts, ExecResult},
             sandbox::{Sandbox, SandboxConfig, SandboxId},
         },
         std::io::Write,
@@ -335,8 +191,9 @@ mod tests {
         assert_eq!(mime_from_extension("gif"), Some("image/gif"));
         assert_eq!(mime_from_extension("webp"), Some("image/webp"));
         assert_eq!(mime_from_extension("ppm"), Some("image/x-portable-pixmap"));
-        assert_eq!(mime_from_extension("bmp"), None);
-        assert_eq!(mime_from_extension("svg"), None);
+        assert_eq!(mime_from_extension("bmp"), Some("image/bmp"));
+        assert_eq!(mime_from_extension("svg"), Some("image/svg+xml"));
+        assert_eq!(mime_from_extension("qqqq"), None);
     }
 
     #[tokio::test]
@@ -350,7 +207,7 @@ mod tests {
     async fn rejects_unsupported_extension() {
         let tool = SendImageTool::new();
         let err = tool
-            .execute(json!({ "path": "/tmp/image.bmp" }))
+            .execute(json!({ "path": "/tmp/image.qqqq" }))
             .await
             .unwrap_err();
         assert!(err.to_string().contains("unsupported image format"));
@@ -453,7 +310,7 @@ mod tests {
 
         // Create a sparse file that reports > 20 MB without writing all bytes.
         let file = std::fs::File::create(&path).unwrap();
-        file.set_len(MAX_FILE_SIZE + 1).unwrap();
+        file.set_len(file_io::MAX_FILE_SIZE + 1).unwrap();
 
         let tool = SendImageTool::new();
         let err = tool

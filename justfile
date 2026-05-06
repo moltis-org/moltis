@@ -2,8 +2,8 @@
 default:
     @just --list
 
-# Keep local formatting/linting toolchain aligned with CI/release workflows.
-nightly_toolchain := "nightly-2025-11-30"
+# Read nightly toolchain from rust-toolchain.toml (single source of truth).
+nightly_toolchain := `grep '^channel' rust-toolchain.toml | sed 's/.*"\(.*\)"/\1/'`
 
 # Format Rust code
 format:
@@ -13,25 +13,67 @@ format:
 format-check:
     cargo +{{nightly_toolchain}} fmt --all -- --check
 
+# Run live provider E2E scenarios (sources .envrc when present).
+provider-e2e-daily:
+    ./scripts/run-provider-e2e-daily.sh
+
 # Verify Cargo.lock is in sync with workspace manifests.
 lockfile-check:
     cargo fetch --locked
 
-# Lint Rust code using clippy
+# Lint Rust code using clippy (OS-aware: macOS excludes CUDA features)
 lint: lockfile-check
-    cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname -s)" = "Darwin" ]; then
+        cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-targets --exclude moltis-providers --exclude moltis-gateway --exclude moltis-matrix --timings -- -D warnings
+        cargo +{{nightly_toolchain}} clippy -Z unstable-options -p moltis-providers --all-targets --features local-llm-metal --timings -- -D warnings
+        cargo +{{nightly_toolchain}} clippy -Z unstable-options -p moltis-gateway --all-targets --features local-llm-metal --timings -- -D warnings
+    else
+        cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
+    fi
 
 # Build Tailwind CSS for the web UI.
 build-css:
     cd crates/web/ui && ./build.sh
 
+# Build Vite frontend JS (TS/TSX -> dist/).
+build-frontend:
+    cd crates/web/ui && npm run build
+
+# Build the service worker (sw.ts -> sw.js).
+build-sw:
+    cd crates/web/ui && npm run build:sw
+
+# Build all web assets (Vite JS + Tailwind CSS + service worker).
+build-web-assets:
+    ./scripts/build-web-assets.sh
+
+# Ad-hoc codesign debug binaries (macOS only, requires MACOS_CODESIGN_IDENTITY).
+# Signs the main binary and all test binaries in target/debug/deps/ so Little
+# Snitch doesn't prompt on every rebuild during local dev.
+[private]
+codesign-debug:
+    #!/usr/bin/env bash
+    [ "$(uname -s)" = "Darwin" ] || exit 0
+    [ -n "${MACOS_CODESIGN_IDENTITY:-}" ] || exit 0
+    id="${MACOS_CODESIGN_IDENTIFIER:-org.moltis.dev}"
+    sign() { codesign --force --sign "$MACOS_CODESIGN_IDENTITY" --identifier "$id" "$1" 2>/dev/null || true; }
+    # Main binary
+    if [ -f target/debug/moltis ]; then sign target/debug/moltis; fi
+    # Test binaries (Mach-O executables, skip .d/.fingerprint/dylib)
+    for bin in target/debug/deps/moltis*; do
+        if [ -f "$bin" ] && [ -x "$bin" ] && [[ "$bin" != *.d ]]; then sign "$bin"; fi
+    done
+
 # Build the project
-build: build-css
+build: build-web-assets
     cargo build
+    just codesign-debug
 
 # Build in release mode
 build-release:
-    cargo build --release
+    ./scripts/cargo-build-moltis.sh --release
 
 # Build embedded WASM guest tools and pre-compile to .cwasm for AOT loading.
 wasm-tools:
@@ -44,10 +86,12 @@ build-wasm-artifacts: wasm-tools
 
 # Build release after ensuring embedded WASM artifacts are present.
 build-release-with-wasm: build-wasm-artifacts
-    cargo build --release
+    ./scripts/cargo-build-moltis.sh --release
 
 # Run local dev server with workspace-local config/data dirs.
 dev-server:
+    cargo build --bin moltis
+    just codesign-debug
     MOLTIS_CONFIG_DIR=.moltis/config MOLTIS_DATA_DIR=.moltis/ cargo run --bin moltis
 
 # Build Debian package for the current architecture
@@ -57,13 +101,13 @@ deb: build-release build-wasm-artifacts
 
 # Build Debian package for amd64
 deb-amd64: build-wasm-artifacts
-    cargo build --release --target x86_64-unknown-linux-gnu
+    ./scripts/cargo-build-moltis.sh --release --target x86_64-unknown-linux-gnu
     bash ./scripts/stage-wasm-package-assets.sh target/x86_64-unknown-linux-gnu/release
     cargo deb -p moltis --no-build --target x86_64-unknown-linux-gnu
 
 # Build Debian package for arm64
 deb-arm64: build-wasm-artifacts
-    cargo build --release --target aarch64-unknown-linux-gnu
+    ./scripts/cargo-build-moltis.sh --release --target aarch64-unknown-linux-gnu
     bash ./scripts/stage-wasm-package-assets.sh target/aarch64-unknown-linux-gnu/release
     cargo deb -p moltis --no-build --target aarch64-unknown-linux-gnu
 
@@ -74,7 +118,7 @@ deb-all: deb-amd64 deb-arm64
 arch-pkg: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     ARCH=$(uname -m)
     PKG_DIR="target/arch-pkg"
     rm -rf "$PKG_DIR"
@@ -97,8 +141,8 @@ arch-pkg: build-release
 arch-pkg-x86_64:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release --target x86_64-unknown-linux-gnu
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    ./scripts/cargo-build-moltis.sh --release --target x86_64-unknown-linux-gnu
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     PKG_DIR="target/arch-pkg-x86_64"
     rm -rf "$PKG_DIR"
     mkdir -p "$PKG_DIR/usr/bin"
@@ -120,8 +164,8 @@ arch-pkg-x86_64:
 arch-pkg-aarch64:
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release --target aarch64-unknown-linux-gnu
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    ./scripts/cargo-build-moltis.sh --release --target aarch64-unknown-linux-gnu
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     PKG_DIR="target/arch-pkg-aarch64"
     rm -rf "$PKG_DIR"
     mkdir -p "$PKG_DIR/usr/bin"
@@ -148,12 +192,12 @@ rpm: build-release
 
 # Build RPM package for x86_64
 rpm-x86_64:
-    cargo build --release --target x86_64-unknown-linux-gnu
+    ./scripts/cargo-build-moltis.sh --release --target x86_64-unknown-linux-gnu
     cargo generate-rpm -p crates/cli --target x86_64-unknown-linux-gnu
 
 # Build RPM package for aarch64
 rpm-aarch64:
-    cargo build --release --target aarch64-unknown-linux-gnu
+    ./scripts/cargo-build-moltis.sh --release --target aarch64-unknown-linux-gnu
     cargo generate-rpm -p crates/cli --target aarch64-unknown-linux-gnu
 
 # Build RPM packages for all architectures
@@ -163,7 +207,7 @@ rpm-all: rpm-x86_64 rpm-aarch64
 appimage: build-release
     #!/usr/bin/env bash
     set -euo pipefail
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    VERSION="${MOLTIS_VERSION:-$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')}"
     ARCH=$(uname -m)
     APP_DIR="target/moltis.AppDir"
     rm -rf "$APP_DIR"
@@ -206,23 +250,32 @@ flatpak:
     cd flatpak && flatpak-builder --repo=repo --force-clean builddir org.moltbot.Moltis.yml
 
 # Run all CI checks (format, lint, build, test)
-ci: format-check lint i18n-check build-css build test
+ci: format-check lint i18n-check build-web-assets build test
 
 # Compile once, then run Rust tests and E2E tests in parallel.
 # Uses the same nightly toolchain as clippy/local-validate so the build cache
 # is shared — no double-compilation.
-build-test: build-css
+build-test: build-web-assets
     #!/usr/bin/env bash
     set -euo pipefail
     echo "==> Building all workspace targets (bins + tests)..."
-    cargo +{{nightly_toolchain}} build --workspace --all-features --all-targets
+    if [ "$(uname -s)" = "Darwin" ]; then
+        cargo +{{nightly_toolchain}} build --workspace --all-targets
+    else
+        cargo +{{nightly_toolchain}} build --workspace --all-features --all-targets
+    fi
+    just codesign-debug
     echo "==> Build complete. Running Rust tests and E2E tests in parallel..."
 
     RUST_LOG="$(mktemp)"
     E2E_LOG="$(mktemp)"
     trap 'rm -f "${RUST_LOG}" "${E2E_LOG}"' EXIT
 
-    cargo +{{nightly_toolchain}} nextest run --all-features > "${RUST_LOG}" 2>&1 &
+    if [ "$(uname -s)" = "Darwin" ]; then
+        cargo +{{nightly_toolchain}} nextest run --workspace > "${RUST_LOG}" 2>&1 &
+    else
+        cargo +{{nightly_toolchain}} nextest run --workspace --all-features > "${RUST_LOG}" 2>&1 &
+    fi
     TEST_PID=$!
 
     (cd crates/web/ui && npm run e2e) > "${E2E_LOG}" 2>&1 &
@@ -249,9 +302,8 @@ build-test: build-css
     exit $(( TEST_EXIT > 0 ? TEST_EXIT : E2E_EXIT ))
 
 # Run the same Rust preflight gates used before release packaging.
-release-preflight: lockfile-check
+release-preflight: lint
     cargo +{{nightly_toolchain}} fmt --all -- --check
-    cargo +{{nightly_toolchain}} clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
 # Sync repo-root install.sh into website/install.sh for Cloudflare deployment.
 sync-website-install:
@@ -284,16 +336,27 @@ changelog-unreleased:
 
 # Generate release entries for unreleased commits under the provided version.
 changelog-release version:
-    git-cliff --config cliff.toml --unreleased --tag "v{{version}}" --strip all
+    git-cliff --config cliff.toml --unreleased --tag "{{version}}" --strip all
 
 # Commit all changes, push branch, create/update PR, and run local validation.
 # All args are optional; defaults are auto-generated from branch + changed files.
 ship commit_message='' pr_title='' pr_body='':
     ./scripts/ship-pr.sh {{ quote(commit_message) }} {{ quote(pr_title) }} {{ quote(pr_body) }}
 
-# Run all tests (nightly to share build cache with clippy/lint)
+# Run all tests (nightly to share build cache with clippy/lint, OS-aware).
+# On macOS: single nextest run using default features (includes Metal, not CUDA).
+# On Linux: --all-features (includes CUDA).
+# Builds first so codesign can run before test execution (prevents Little Snitch prompts).
 test:
-    cargo +{{nightly_toolchain}} nextest run --all-features
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "$(uname -s)" = "Darwin" ]; then
+        cargo +{{nightly_toolchain}} build --workspace --all-targets
+        just codesign-debug
+        cargo +{{nightly_toolchain}} nextest run --workspace
+    else
+        cargo +{{nightly_toolchain}} nextest run --workspace --all-features
+    fi
 
 # Run contract test suites (channel, provider, memory, tools)
 contract-tests:
@@ -313,11 +376,13 @@ ui-e2e-install:
 # Run gateway web UI e2e tests (Playwright).
 ui-e2e:
     cargo +{{nightly_toolchain}} build --bin moltis
+    just codesign-debug
     cd crates/web/ui && npm run e2e
 
 # Run gateway web UI e2e tests with headed browser.
 ui-e2e-headed:
     cargo +{{nightly_toolchain}} build --bin moltis
+    just codesign-debug
     cd crates/web/ui && npm run e2e:headed
 
 # Build all Linux packages (deb + rpm + arch + appimage) for all architectures
@@ -387,3 +452,8 @@ courier-deploy:
 # Run the APNS push relay (dev).
 courier-run *ARGS:
     cargo run -p moltis-courier -- {{ARGS}}
+
+# Serve the website locally with SSR partial injection (default port 4000).
+website-dev:
+    node website/scripts/build-changelog.mjs
+    node website/scripts/dev-server.mjs

@@ -53,13 +53,20 @@ test("mobile menu drives settings and sessions", async ({ page }) => {
 	await page.locator("#mobileMenuBtn").click();
 	await expect(page.locator("#mobileMenuPanel")).toHaveClass(/open/);
 	await page.locator("#mobileMenuSettingsBtn").click();
-	await expect(page).toHaveURL(/\/settings\/identity$/);
+	await expect(page).toHaveURL(/\/settings\/profile$/);
 	await expect(page.locator(".settings-sidebar")).toHaveCount(0);
 	await page.locator(".settings-mobile-menu-btn").click();
 	await expect(page.locator(".settings-sidebar")).toBeVisible();
 	await page.locator(".settings-nav-item", { hasText: "Memory" }).click();
 	await expect(page).toHaveURL(/\/settings\/memory$/);
 	await expect(page.locator(".settings-sidebar")).toHaveCount(0);
+	await expect(page.getByText("Memory Style", { exact: true })).toBeVisible();
+	await expect(page.getByText("Prompt Memory Mode", { exact: true })).toBeVisible();
+	await expect(page.getByText("Agent Memory Writes", { exact: true })).toBeVisible();
+	await expect(page.getByText("USER.md Writes", { exact: true })).toBeVisible();
+	await expect(page.getByText("Embedding Provider", { exact: true })).toBeVisible();
+	await expect(page.getByText("Search Merge Strategy", { exact: true })).toBeVisible();
+	await expect(page.getByText("Session Export", { exact: true })).toBeVisible();
 	await page.locator(".settings-mobile-menu-btn").click();
 	var voiceNav = page.locator(".settings-nav-item", { hasText: "Voice" });
 	await voiceNav.scrollIntoViewIfNeeded();
@@ -89,6 +96,71 @@ test("mobile menu drives settings and sessions", async ({ page }) => {
 	expect(pageErrors).toEqual([]);
 });
 
+test("standalone mobile layout avoids double safe-area padding", async ({ page }) => {
+	const pageErrors = watchPageErrors(page);
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.addInitScript(() => {
+		const originalMatchMedia = window.matchMedia.bind(window);
+		window.matchMedia = (query) => {
+			if (query === "(display-mode: standalone)") {
+				return {
+					matches: true,
+					media: query,
+					onchange: null,
+					addListener() {
+						return undefined;
+					},
+					removeListener() {
+						return undefined;
+					},
+					addEventListener() {
+						return undefined;
+					},
+					removeEventListener() {
+						return undefined;
+					},
+					dispatchEvent() {
+						return true;
+					},
+				};
+			}
+			return originalMatchMedia(query);
+		};
+		Object.defineProperty(navigator, "standalone", {
+			configurable: true,
+			get() {
+				return true;
+			},
+		});
+	});
+
+	await page.goto("/");
+	await expect(page).toHaveURL(/\/chats\/main$/);
+	await expectPageContentMounted(page);
+	await expect(page.locator("html")).toHaveClass(/pwa-standalone/);
+
+	await page.evaluate(() => {
+		document.documentElement.style.setProperty("--safe-top", "24px");
+		document.documentElement.style.setProperty("--safe-bottom", "18px");
+	});
+
+	const layout = await page.evaluate(() => {
+		const body = getComputedStyle(document.body);
+		const header = getComputedStyle(document.querySelector("header"));
+		const inputRow = getComputedStyle(document.querySelector(".chat-input-row"));
+		return {
+			bodyPaddingTop: parseFloat(body.paddingTop),
+			headerPaddingTop: parseFloat(header.paddingTop),
+			inputPaddingBottom: parseFloat(inputRow.paddingBottom),
+		};
+	});
+
+	expect(layout.bodyPaddingTop).toBe(0);
+	expect(layout.headerPaddingTop).toBeGreaterThan(24);
+	expect(layout.inputPaddingBottom).toBeGreaterThan(18);
+	expect(pageErrors).toEqual([]);
+});
+
 const routeCases = [
 	{
 		path: "/settings/crons",
@@ -112,9 +184,9 @@ const routeCases = [
 	},
 	{
 		path: "/settings",
-		expectedUrl: /\/settings\/identity$/,
+		expectedUrl: /\/settings\/profile$/,
 		settingsActive: true,
-		heading: "Identity",
+		heading: "User Profile",
 	},
 ];
 

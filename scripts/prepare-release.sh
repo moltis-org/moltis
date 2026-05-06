@@ -4,35 +4,23 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/prepare-release.sh <version> [release-date]
+Usage: ./scripts/prepare-release.sh [version]
 
 Examples:
-  ./scripts/prepare-release.sh 0.8.22
-  ./scripts/prepare-release.sh 0.8.22 2026-02-13
+  ./scripts/prepare-release.sh              # auto: YYYYMMDD.NN from today + next seq
+  ./scripts/prepare-release.sh 20260311.01  # explicit version
+
+Version format: YYYYMMDD.NN (date + two-digit daily sequence number).
 
 This command:
-1) bumps [workspace.package].version in Cargo.toml,
-2) generates release notes for <version> via git-cliff from unreleased commits,
-3) keeps a fresh empty [Unreleased] section at the top of CHANGELOG.md,
-4) syncs Cargo.lock via cargo fetch.
+1) generates release notes for <version> via git-cliff from unreleased commits,
+2) keeps a fresh empty [Unreleased] section at the top of CHANGELOG.md,
+3) syncs Cargo.lock via cargo fetch.
 EOF
 }
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
+if [[ $# -gt 1 ]]; then
   usage
-  exit 1
-fi
-
-new_version="$1"
-release_date="${2:-$(date -u +%Y-%m-%d)}"
-
-if ! [[ "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "invalid version: '$new_version' (expected x.y.z)" >&2
-  exit 1
-fi
-
-if ! [[ "$release_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-  echo "invalid release date: '$release_date' (expected YYYY-MM-DD)" >&2
   exit 1
 fi
 
@@ -49,54 +37,111 @@ if [[ ! -f Cargo.toml || ! -f CHANGELOG.md || ! -f cliff.toml ]]; then
   exit 1
 fi
 
+latest_changelog_version() {
+  awk '
+    /^## \[[0-9]{8}\.[0-9]{1,2}\]/ {
+      version = $2
+      gsub(/^\[/, "", version)
+      gsub(/\]$/, "", version)
+      print version
+      exit
+    }
+  ' CHANGELOG.md
+}
+
+release_commit_for_version() {
+  local version="$1"
+  git log \
+    --format=%H \
+    --fixed-strings \
+    --grep="chore: prepare release ${version}" \
+    --max-count=1
+}
+
+resolve_release_base_ref() {
+  local previous_version="$1"
+
+  if [[ -z "$previous_version" ]]; then
+    return 0
+  fi
+
+  if git rev-parse --verify --quiet "refs/tags/${previous_version}^{commit}" >/dev/null; then
+    printf '%s\n' "$previous_version"
+    return 0
+  fi
+
+  local commit
+  commit="$(release_commit_for_version "$previous_version")"
+  if [[ -n "$commit" ]]; then
+    printf '%s\n' "$commit"
+    return 0
+  fi
+
+  cat >&2 <<EOF
+could not find a tag or release-prep commit for previous changelog version $previous_version
+
+Create the missing tag, or make sure the commit subject is exactly:
+  chore: prepare release $previous_version
+EOF
+  exit 1
+}
+
+previous_changelog_version="$(latest_changelog_version)"
+
+# Compute or validate version
+if [[ $# -eq 1 ]]; then
+  new_version="$1"
+  if ! [[ "$new_version" =~ ^[0-9]{8}\.[0-9]{1,2}$ ]]; then
+    echo "invalid version: '$new_version' (expected YYYYMMDD.NN)" >&2
+    exit 1
+  fi
+else
+  # Auto-compute: today's date + next sequence number
+  today="$(date -u +%Y%m%d)"
+  # Find highest existing seq for today's tags and changelog sections.
+  max_seq=0
+  for version in $(
+    {
+      git tag -l "${today}.*" 2>/dev/null
+      awk -v today="$today" '
+        /^## \[[0-9]{8}\.[0-9]{1,2}\]/ {
+          version = $2
+          gsub(/^\[/, "", version)
+          gsub(/\]$/, "", version)
+          if (index(version, today ".") == 1) {
+            print version
+          }
+        }
+      ' CHANGELOG.md
+    } | sort -u
+  ); do
+    seq="${version#"${today}."}"
+    if [[ "$seq" =~ ^[0-9]+$ ]] && [[ "10#$seq" -gt "10#$max_seq" ]]; then
+      max_seq="$seq"
+    fi
+  done
+  next_seq=$((10#$max_seq + 1))
+  new_version="$(printf '%s.%02d' "$today" "$next_seq")"
+  echo "auto-computed version: $new_version"
+fi
+
+release_date="$(echo "$new_version" | sed 's/^\([0-9]\{4\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)\..*/\1-\2-\3/')"
+release_base_ref="$(resolve_release_base_ref "$previous_changelog_version")"
+
 if rg -q "^## \\[$new_version\\]" CHANGELOG.md; then
   echo "CHANGELOG.md already contains version $new_version" >&2
   exit 1
 fi
 
-cargo_tmp="$(mktemp)"
-if ! awk -v version="$new_version" '
-BEGIN {
-  in_workspace_package = 0
-  updated = 0
-}
-{
-  if ($0 == "[workspace.package]") {
-    in_workspace_package = 1
-    print
-    next
-  }
-  if (in_workspace_package == 1 && $0 ~ /^\[/) {
-    in_workspace_package = 0
-  }
-  if (in_workspace_package == 1 && $0 ~ /^version[[:space:]]*=/) {
-    sub(/"[^"]+"/, "\"" version "\"")
-    updated = 1
-  }
-  print
-}
-END {
-  if (updated == 0) {
-    exit 11
-  }
-}
-' Cargo.toml > "$cargo_tmp"; then
-  rc=$?
-  rm -f "$cargo_tmp"
-  if [[ "$rc" -eq 11 ]]; then
-    echo "failed to locate [workspace.package].version in Cargo.toml" >&2
-  fi
-  exit 1
-fi
-mv "$cargo_tmp" Cargo.toml
-
 release_section_tmp="$(mktemp)"
-if ! git-cliff \
-  --config cliff.toml \
-  --unreleased \
-  --tag "v$new_version" \
-  --strip all \
-  > "$release_section_tmp"; then
+git_cliff_args=(--config cliff.toml --tag "$new_version" --strip all)
+if [[ -n "$release_base_ref" ]]; then
+  git_cliff_args+=("${release_base_ref}..HEAD")
+else
+  git_cliff_args+=(--unreleased)
+fi
+
+if ! git-cliff "${git_cliff_args[@]}" > "$release_section_tmp"; then
   rm -f "$release_section_tmp"
   echo "failed to generate release notes via git-cliff" >&2
   exit 1
@@ -168,7 +213,7 @@ BEGIN {
     next
   }
   if (skipping_old_unreleased == 1) {
-    if ($0 ~ /^## \[[0-9]+\.[0-9]+\.[0-9]+\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$/) {
+    if ($0 ~ /^## \[[0-9]/) {
       skipping_old_unreleased = 0
       print
     }
@@ -194,6 +239,9 @@ rm -f "$release_section_tmp"
 
 cargo fetch
 cargo fetch --locked
+
+# Rebuild changelog HTML for the website
+node website/scripts/build-changelog.mjs
 
 echo "Release prep complete:"
 echo "  version: $new_version"

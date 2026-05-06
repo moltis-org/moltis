@@ -323,20 +323,14 @@ pub(crate) fn parse_workspace_identity(content: &str) -> WorkspaceIdentityFrontm
         };
 
         match key.as_str() {
-            "theme" => {
-                if identity.theme.is_none() {
-                    identity.theme = Some(value);
-                }
+            "theme" if identity.theme.is_none() => {
+                identity.theme = Some(value);
             },
-            "creature" => {
-                if identity.creature.is_none() {
-                    identity.creature = Some(value);
-                }
+            "creature" if identity.creature.is_none() => {
+                identity.creature = Some(value);
             },
-            "vibe" => {
-                if identity.vibe.is_none() {
-                    identity.vibe = Some(value);
-                }
+            "vibe" if identity.vibe.is_none() => {
+                identity.vibe = Some(value);
             },
             _ => {},
         }

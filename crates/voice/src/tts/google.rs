@@ -14,9 +14,18 @@ use {
 };
 
 /// Google Cloud Text-to-Speech provider.
+///
+/// Supports two API modes:
+/// - **Cloud TTS v1** (default): `texttospeech.googleapis.com/v1` — standard
+///   Neural2/WaveNet voices, SSML support, no instructions.
+/// - **Gemini TTS**: `generativelanguage.googleapis.com` — when a `gemini-*`
+///   model is configured or requested. Supports free-form voice direction via
+///   the `instructions` field on [`SynthesizeRequest`].
 pub struct GoogleTts {
     api_key: Option<Secret<String>>,
     voice: Option<String>,
+    /// Default model. When set to a `gemini-*` value, uses the Gemini TTS API.
+    model: Option<String>,
     language_code: String,
     speaking_rate: f32,
     pitch: f32,
@@ -35,6 +44,7 @@ impl GoogleTts {
         Self {
             api_key,
             voice: config.voice.clone(),
+            model: None,
             language_code: config
                 .language_code
                 .clone()
@@ -43,6 +53,18 @@ impl GoogleTts {
             pitch: config.pitch.unwrap_or(0.0),
             client: Client::new(),
         }
+    }
+
+    /// Create with an explicit model override.
+    #[must_use]
+    pub fn with_model(mut self, model: Option<String>) -> Self {
+        self.model = model;
+        self
+    }
+
+    /// Whether to use the Gemini TTS API path for a given model.
+    fn is_gemini_model(model: Option<&str>) -> bool {
+        model.is_some_and(|m| m.starts_with("gemini-"))
     }
 }
 
@@ -122,21 +144,41 @@ impl TtsProvider for GoogleTts {
             .as_ref()
             .ok_or_else(|| anyhow!("Google Cloud TTS API key not configured"))?;
 
+        let model_str = request
+            .model
+            .as_deref()
+            .or(self.model.as_deref())
+            .unwrap_or_default()
+            .to_string();
+
+        if Self::is_gemini_model(Some(&model_str)) {
+            return self.synthesize_gemini(api_key, &model_str, request).await;
+        }
+
+        self.synthesize_cloud_v1(api_key, request).await
+    }
+}
+
+impl GoogleTts {
+    /// Standard Google Cloud TTS v1 synthesis.
+    async fn synthesize_cloud_v1(
+        &self,
+        api_key: &Secret<String>,
+        request: SynthesizeRequest,
+    ) -> Result<AudioOutput> {
         let voice_name = request
             .voice_id
             .or_else(|| self.voice.clone())
             .unwrap_or_else(|| format!("{}-Neural2-A", self.language_code));
 
-        // Map output format to Google's encoding
         let audio_encoding = match request.output_format {
             AudioFormat::Mp3 => "MP3",
             AudioFormat::Opus | AudioFormat::Webm => "OGG_OPUS",
-            AudioFormat::Aac => "MP3", // AAC not supported, fallback to MP3
+            AudioFormat::Aac => "MP3",
             AudioFormat::Pcm => "LINEAR16",
         };
 
         let input = if contains_ssml(&request.text) {
-            // Wrap in <speak> if not already wrapped, use native SSML field
             let ssml = if request.text.trim_start().starts_with("<speak") {
                 request.text.clone()
             } else {
@@ -183,7 +225,6 @@ impl TtsProvider for GoogleTts {
 
         let synth_resp: SynthesizeResponse = resp.json().await?;
 
-        // Decode base64 audio content
         use base64::Engine;
         let audio_data =
             base64::engine::general_purpose::STANDARD.decode(&synth_resp.audio_content)?;
@@ -191,6 +232,92 @@ impl TtsProvider for GoogleTts {
         Ok(AudioOutput {
             data: Bytes::from(audio_data),
             format: request.output_format,
+            duration_ms: None,
+        })
+    }
+
+    /// Gemini TTS synthesis via the Generative Language API.
+    ///
+    /// Uses `generateContent` with `response_modalities: ["AUDIO"]` and an
+    /// optional `speech_config.voice_config.prebuilt_voice_config.voice_name`.
+    /// Voice persona instructions are passed as a system instruction.
+    async fn synthesize_gemini(
+        &self,
+        api_key: &Secret<String>,
+        model: &str,
+        request: SynthesizeRequest,
+    ) -> Result<AudioOutput> {
+        let voice_name = request.voice_id.or_else(|| self.voice.clone());
+
+        // Build the speech config with optional voice name.
+        let speech_config = voice_name.map(|v| {
+            serde_json::json!({
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {
+                        "voiceName": v,
+                    }
+                }
+            })
+        });
+
+        // Build the generation config (Gemini API uses camelCase).
+        let mut generation_config = serde_json::json!({
+            "responseModalities": ["AUDIO"],
+            "responseMimeType": "audio/mp3",
+        });
+        if let Some(sc) = speech_config {
+            generation_config["speechConfig"] = sc;
+        }
+
+        // Build the request body.
+        let mut body = serde_json::json!({
+            "contents": [{
+                "parts": [{ "text": request.text }]
+            }],
+            "generationConfig": generation_config,
+        });
+
+        // Inject persona instructions as a system instruction.
+        if let Some(ref instructions) = request.instructions {
+            body["systemInstruction"] = serde_json::json!({
+                "parts": [{ "text": instructions }]
+            });
+        }
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            model,
+            api_key.expose_secret()
+        );
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("Gemini TTS API error {}: {}", status, err_body));
+        }
+
+        let resp_body: serde_json::Value = resp.json().await?;
+
+        // Extract inline audio data from the Gemini response.
+        let audio_b64 = resp_body
+            .pointer("/candidates/0/content/parts/0/inlineData/data")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Gemini TTS response missing audio data"))?;
+
+        use base64::Engine;
+        let audio_data = base64::engine::general_purpose::STANDARD.decode(audio_b64)?;
+
+        Ok(AudioOutput {
+            data: Bytes::from(audio_data),
+            format: AudioFormat::Mp3,
             duration_ms: None,
         })
     }
@@ -273,6 +400,26 @@ mod tests {
         assert_eq!(tts.id(), "google");
         assert_eq!(tts.name(), "Google Cloud TTS");
         assert!(tts.supports_ssml());
+    }
+
+    #[test]
+    fn test_is_gemini_model() {
+        assert!(GoogleTts::is_gemini_model(Some(
+            "gemini-2.5-flash-preview-tts"
+        )));
+        assert!(GoogleTts::is_gemini_model(Some("gemini-2.0-flash-lite")));
+        assert!(!GoogleTts::is_gemini_model(Some("en-US-Neural2-A")));
+        assert!(!GoogleTts::is_gemini_model(None));
+    }
+
+    #[test]
+    fn test_with_model() {
+        let config = GoogleTtsConfig {
+            api_key: Some(Secret::new("test".to_string())),
+            ..Default::default()
+        };
+        let tts = GoogleTts::new(&config).with_model(Some("gemini-2.5-flash-preview-tts".into()));
+        assert!(GoogleTts::is_gemini_model(tts.model.as_deref()));
     }
 
     #[test]

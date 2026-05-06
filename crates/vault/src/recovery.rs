@@ -48,7 +48,7 @@ const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 32 chars, no I/O/
 
 /// Generate a new random recovery key.
 pub fn generate_recovery_key() -> RecoveryKey {
-    use rand::RngCore;
+    use rand::Rng;
 
     let mut entropy = [0u8; 16]; // 128 bits
     rand::rng().fill_bytes(&mut entropy);

@@ -29,6 +29,7 @@ async function detectOnboardingStep(page) {
 	if (headingText === "Set up your identity") return "identity";
 	if (/^(Add LLMs|Add providers)$/.test(headingText)) return "providers";
 	if (headingText === "Voice (optional)") return "voice";
+	if (headingText === "Remote Access") return "remote-access";
 	if (headingText === "Connect a Channel") return "channel";
 	if (headingText === "Setup Summary") return "summary";
 	return "pending";
@@ -47,7 +48,7 @@ async function advanceToIdentityStep(page) {
 			await completePasswordAuthStep(page);
 			continue;
 		}
-		if (step === "providers" || step === "voice" || step === "channel") {
+		if (step === "providers" || step === "voice" || step === "remote-access" || step === "channel") {
 			if (await clickFirstVisibleButton(page, { name: /skip for now/i })) continue;
 			if (await clickFirstVisibleButton(page, { name: /continue/i })) continue;
 		}
@@ -59,15 +60,44 @@ async function advanceToIdentityStep(page) {
 async function dismissRecoveryKeyIfShown(page) {
 	const recoveryHeading = page.getByText("Password set and vault initialized", { exact: true });
 	if (await isVisible(recoveryHeading)) {
-		// Verify key is displayed in a code block
 		const codeBlock = page.locator(".onboarding-card code");
 		await codeBlock.waitFor({ state: "visible", timeout: 3_000 }).catch(() => {});
-		// Verify copy button exists
+
+		const keyText = ((await codeBlock.textContent()) || "").trim();
+
+		// Stub clipboard so we can assert what gets written without needing
+		// browser clipboard permissions, and verify the copy button feedback.
+		await page.evaluate(() => {
+			window.__recoveryKeyCopied = null;
+			try {
+				Object.defineProperty(navigator.clipboard, "writeText", {
+					configurable: true,
+					value: (text) => {
+						window.__recoveryKeyCopied = text;
+						return Promise.resolve();
+					},
+				});
+			} catch {
+				// clipboard not configurable in this context; skip capture
+			}
+		});
+
 		const copyBtn = page.getByRole("button", { name: /^Copy/, exact: false });
 		if (await isVisible(copyBtn)) {
 			await copyBtn.click();
+			// Button should briefly show "Copied!" feedback
+			await expect(copyBtn)
+				.toHaveText("Copied!", { timeout: 2_000 })
+				.catch(() => {});
+			// The key text passed to clipboard must match what was displayed
+			if (keyText) {
+				const captured = await page.evaluate(() => window.__recoveryKeyCopied);
+				if (captured !== null) {
+					expect(captured).toBe(keyText);
+				}
+			}
 		}
-		// Click Continue to proceed
+
 		if (await clickFirstVisibleButton(page, { name: /^Continue$/ })) return true;
 	}
 	return false;
@@ -126,12 +156,11 @@ test.describe("Onboarding with forced auth (remote)", () => {
 
 	test("completes auth and identity steps via WebSocket", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		// Fresh runs should land on /onboarding (remote setup allows the
-		// onboarding page through for the setup-code auth flow).  Retries
-		// can land on /login if a previous attempt already configured auth.
-		// Navigate directly to /onboarding since / redirects to
-		// /setup-required for remote connections during setup (#350).
-		await page.goto("/onboarding");
+		// Fresh runs visiting `/` on a remote (proxied) connection should
+		// be redirected to /onboarding so the setup-code AuthStep is
+		// shown (#350, #646).  Retries can land on /login if a previous
+		// attempt already configured auth.
+		await page.goto("/");
 		await expect
 			.poll(() => new URL(page.url()).pathname, { timeout: 15_000 })
 			.toMatch(/^\/(?:onboarding|login|chats\/.+)$/);

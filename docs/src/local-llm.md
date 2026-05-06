@@ -10,7 +10,7 @@ Moltis supports two backends for local inference:
 
 | Backend | Format | Platform | GPU Acceleration |
 |---------|--------|----------|------------------|
-| **GGUF** (llama.cpp) | `.gguf` files | macOS, Linux, Windows | Metal (macOS), CUDA (NVIDIA) |
+| **GGUF** (llama.cpp) | `.gguf` files | macOS, Linux, Windows | Metal (macOS), CUDA (NVIDIA), Vulkan (opt-in) |
 | **MLX** | MLX model repos | macOS (Apple Silicon only) | Apple Silicon neural engine |
 
 ### GGUF (llama.cpp)
@@ -22,7 +22,7 @@ memory requirements while maintaining good quality.
 **Advantages:**
 - Cross-platform (macOS, Linux, Windows)
 - Wide model compatibility (any GGUF model)
-- GPU acceleration on both NVIDIA (CUDA) and Apple Silicon (Metal)
+- GPU acceleration on Apple Silicon (Metal), NVIDIA (CUDA), and Vulkan-capable GPUs
 - Mature and well-tested
 
 ### MLX
@@ -92,7 +92,7 @@ Settings UI).
 
 ## Model Storage
 
-Downloaded models are cached in `~/.cache/moltis/models/` by default. This
+Downloaded models are cached in `~/.moltis/models/` by default. This
 directory can grow large (several GB per model).
 
 ## HuggingFace Integration
@@ -103,7 +103,7 @@ You can search and download models directly from HuggingFace:
 2. Enter a search term (e.g., "qwen coder")
 3. Select GGUF or MLX backend
 4. Choose a model from the results
-5. The model will be downloaded on first use
+5. The model will download immediately after you configure it
 
 ### Finding GGUF Models
 
@@ -144,6 +144,30 @@ Requires building with the `local-llm-cuda` feature:
 ```bash
 cargo build --release --features local-llm-cuda
 ```
+
+### Vulkan
+
+Vulkan acceleration is available as an opt-in build. It is not enabled by
+default in Moltis release builds.
+
+Build with:
+
+```bash
+cargo build --release --features local-llm-vulkan
+```
+
+Requirements:
+
+- Linux: install Vulkan development packages, for example on Debian/Ubuntu:
+  `sudo apt-get install libvulkan-dev glslang-tools`
+  (Ubuntu 24.04+ also has a `glslc` package; on 22.04 install it from the
+  [LunarG Vulkan SDK](https://vulkan.lunarg.com/sdk/home) if the build
+  requires the `glslc` binary)
+- Windows: install the LunarG Vulkan SDK and set the `VULKAN_SDK` environment
+  variable before building
+
+If llama.cpp detects a Vulkan device at runtime, Moltis will report GGUF as
+using Vulkan acceleration in the local model setup flow.
 
 ## Limitations
 

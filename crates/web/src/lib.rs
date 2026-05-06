@@ -20,7 +20,7 @@ pub use error::{Error, Result};
 
 use {
     axum::{Router, routing::get},
-    moltis_gateway::server::AppState,
+    moltis_httpd::AppState,
 };
 
 /// Build the web-UI router: pages, API routes, assets, and SPA fallback.
@@ -122,28 +122,79 @@ fn build_api_routes() -> Router<AppState> {
         )
         .route(
             "/api/env",
-            get(moltis_gateway::env_routes::env_list).post(moltis_gateway::env_routes::env_set),
+            get(moltis_httpd::env_routes::env_list).post(moltis_httpd::env_routes::env_set),
         )
         .route(
             "/api/env/{id}",
-            axum::routing::delete(moltis_gateway::env_routes::env_delete),
+            axum::routing::delete(moltis_httpd::env_routes::env_delete),
+        )
+        .route("/api/ssh", get(moltis_httpd::ssh_routes::ssh_status))
+        .route("/api/ssh/doctor", get(moltis_httpd::ssh_routes::ssh_doctor))
+        .route(
+            "/api/ssh/host-key/scan",
+            axum::routing::post(moltis_httpd::ssh_routes::ssh_scan_host_key),
+        )
+        .route(
+            "/api/ssh/doctor/test-active",
+            axum::routing::post(moltis_httpd::ssh_routes::ssh_doctor_test_active),
+        )
+        .route(
+            "/api/ssh/keys/generate",
+            axum::routing::post(moltis_httpd::ssh_routes::ssh_generate_key),
+        )
+        .route(
+            "/api/ssh/keys/import",
+            axum::routing::post(moltis_httpd::ssh_routes::ssh_import_key),
+        )
+        .route(
+            "/api/ssh/keys/{id}",
+            axum::routing::delete(moltis_httpd::ssh_routes::ssh_delete_key),
+        )
+        .route(
+            "/api/ssh/targets",
+            axum::routing::post(moltis_httpd::ssh_routes::ssh_create_target),
+        )
+        .route(
+            "/api/ssh/targets/{id}",
+            axum::routing::delete(moltis_httpd::ssh_routes::ssh_delete_target),
+        )
+        .route(
+            "/api/ssh/targets/{id}/default",
+            axum::routing::post(moltis_httpd::ssh_routes::ssh_set_default_target),
+        )
+        .route(
+            "/api/ssh/targets/{id}/test",
+            axum::routing::post(moltis_httpd::ssh_routes::ssh_test_target),
+        )
+        .route(
+            "/api/ssh/targets/{id}/pin",
+            axum::routing::post(moltis_httpd::ssh_routes::ssh_pin_target_host_key)
+                .delete(moltis_httpd::ssh_routes::ssh_clear_target_host_key),
         )
         .route(
             "/api/config",
-            get(moltis_gateway::tools_routes::config_get)
-                .post(moltis_gateway::tools_routes::config_save),
+            get(moltis_httpd::tools_routes::config_get)
+                .post(moltis_httpd::tools_routes::config_save),
         )
         .route(
             "/api/config/validate",
-            axum::routing::post(moltis_gateway::tools_routes::config_validate),
+            axum::routing::post(moltis_httpd::tools_routes::config_validate),
         )
         .route(
             "/api/config/template",
-            get(moltis_gateway::tools_routes::config_template),
+            get(moltis_httpd::tools_routes::config_template),
+        )
+        .route(
+            "/api/config/provenance",
+            get(moltis_httpd::tools_routes::config_provenance),
         )
         .route(
             "/api/restart",
-            axum::routing::post(moltis_gateway::tools_routes::restart),
+            axum::routing::post(moltis_httpd::tools_routes::restart),
+        )
+        .route(
+            "/api/system/update",
+            axum::routing::post(moltis_httpd::tools_routes::update),
         )
         .route("/api/sessions", get(api::api_sessions_handler))
         .route(
@@ -152,32 +203,35 @@ fn build_api_routes() -> Router<AppState> {
         )
         .route(
             "/api/sessions/{session_key}/upload",
-            axum::routing::post(moltis_gateway::upload_routes::session_upload).layer(
-                axum::extract::DefaultBodyLimit::max(
-                    moltis_gateway::upload_routes::MAX_UPLOAD_SIZE,
-                ),
+            axum::routing::post(moltis_httpd::upload_routes::session_upload).layer(
+                axum::extract::DefaultBodyLimit::max(moltis_httpd::upload_routes::MAX_UPLOAD_SIZE),
             ),
         )
         .route(
             "/api/sessions/{session_key}/media/{filename}",
             get(api::api_session_media_handler),
         )
-        .route("/api/logs/download", get(api::api_logs_download_handler));
+        .route("/api/logs/download", get(api::api_logs_download_handler))
+        .nest("/api/data", moltis_httpd::data_routes::data_router());
 
     // Add metrics API routes (protected).
     #[cfg(feature = "metrics")]
     let protected = protected
         .route(
             "/api/metrics",
-            get(moltis_gateway::metrics_routes::api_metrics_handler),
+            get(moltis_httpd::metrics_routes::api_metrics_handler),
         )
         .route(
             "/api/metrics/summary",
-            get(moltis_gateway::metrics_routes::api_metrics_summary_handler),
+            get(moltis_httpd::metrics_routes::api_metrics_summary_handler),
         )
         .route(
             "/api/metrics/history",
-            get(moltis_gateway::metrics_routes::api_metrics_history_handler),
+            get(moltis_httpd::metrics_routes::api_metrics_history_handler),
+        )
+        .route(
+            "/api/metrics/insights",
+            get(moltis_httpd::metrics_routes::api_metrics_insights_handler),
         );
 
     protected
@@ -185,14 +239,17 @@ fn build_api_routes() -> Router<AppState> {
 
 /// Add feature-specific routes to API routes.
 fn add_feature_routes(routes: Router<AppState>) -> Router<AppState> {
+    #[cfg(feature = "ngrok")]
+    let routes = routes.nest("/api/ngrok", moltis_httpd::ngrok_routes::ngrok_router());
+
     #[cfg(feature = "tailscale")]
     let routes = routes.nest(
         "/api/tailscale",
-        moltis_gateway::tailscale_routes::tailscale_router(),
+        moltis_httpd::tailscale_routes::tailscale_router(),
     );
 
     #[cfg(feature = "push-notifications")]
-    let routes = routes.nest("/api/push", moltis_gateway::push_routes::push_router());
+    let routes = routes.nest("/api/push", moltis_httpd::push_routes::push_router());
 
     routes
 }

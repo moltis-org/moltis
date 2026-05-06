@@ -14,6 +14,8 @@ pub struct MemoryWriteResult {
     pub location: String,
     /// Total number of bytes written.
     pub bytes_written: usize,
+    /// Automatic checkpoint ID created before the write, when available.
+    pub checkpoint_id: Option<String>,
 }
 
 /// Writes content to memory files with validation.

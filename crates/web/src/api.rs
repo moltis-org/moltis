@@ -9,7 +9,7 @@ use {
         http::StatusCode,
         response::{IntoResponse, Response},
     },
-    moltis_gateway::server::AppState,
+    moltis_httpd::AppState,
     moltis_tools::image_cache::ImageBuilder,
     tracing::warn,
 };
@@ -80,6 +80,32 @@ fn shared_home_config_payload(config: &moltis_config::MoltisConfig) -> serde_jso
 }
 
 // ── Session media ────────────────────────────────────────────────────────────
+
+/// Build a `Content-Disposition` header value for a media file.
+/// Uses `inline` for types browsers can render natively (PDF, text, images)
+/// and `attachment` for everything else so they trigger a download.
+/// NOTE: `text/html` is deliberately excluded — serving LLM-generated HTML
+/// inline on our origin would enable stored XSS.
+fn media_content_disposition(filename: &str, content_type: &str) -> String {
+    let inline = content_type.starts_with("image/")
+        || content_type.starts_with("audio/")
+        || matches!(
+            content_type,
+            "application/pdf" | "text/plain" | "text/csv" | "text/markdown"
+        );
+    let disposition = if inline {
+        "inline"
+    } else {
+        "attachment"
+    };
+    // Sanitise filename for the header (strip quotes, newlines, semicolons,
+    // backslashes — all of which can break or inject Content-Disposition).
+    let safe_name: String = filename
+        .chars()
+        .filter(|c| *c != '"' && *c != '\n' && *c != '\r' && *c != ';' && *c != '\\')
+        .collect();
+    format!("{disposition}; filename=\"{safe_name}\"")
+}
 
 #[derive(serde::Deserialize, Default)]
 pub struct SessionListQuery {
@@ -348,15 +374,20 @@ pub async fn api_session_media_handler(
     };
     match store.read_media(&session_key, &filename).await {
         Ok(data) => {
-            let content_type = match filename.rsplit('.').next() {
-                Some("png") => "image/png",
-                Some("jpg" | "jpeg") => "image/jpeg",
-                Some("ogg" | "oga") => "audio/ogg",
-                Some("webm") => "audio/webm",
-                Some("mp3") => "audio/mpeg",
-                _ => "application/octet-stream",
-            };
-            ([(axum::http::header::CONTENT_TYPE, content_type)], data).into_response()
+            let content_type = filename
+                .rsplit('.')
+                .next()
+                .and_then(moltis_media::mime::mime_from_extension)
+                .unwrap_or("application/octet-stream");
+            let disposition = media_content_disposition(&filename, content_type);
+            (
+                [
+                    (axum::http::header::CONTENT_TYPE, content_type.to_string()),
+                    (axum::http::header::CONTENT_DISPOSITION, disposition),
+                ],
+                data,
+            )
+                .into_response()
         },
         Err(_) => (StatusCode::NOT_FOUND, "media file not found").into_response(),
     }
@@ -454,7 +485,7 @@ async fn api_bootstrap_with_query(
     );
 
     let sandbox = if let Some(ref router) = gw.sandbox_router {
-        let default_image = router.default_image().await;
+        let default_image = router.resolve_default_image_nowait().await;
         serde_json::json!({
             "backend": router.backend_name(),
             "os": std::env::consts::OS,
@@ -540,6 +571,9 @@ pub async fn api_skills_handler(State(state): State<AppState>) -> impl IntoRespo
         .and_then(|v| v.as_array().cloned())
         .unwrap_or_default();
 
+    let config = moltis_config::discover_and_load();
+    let disabled_cats = &config.skills.disabled_bundled_categories;
+
     let mut skills = enabled_from_manifest(moltis_skills::manifest::ManifestStore::default_path());
 
     {
@@ -555,14 +589,39 @@ pub async fn api_skills_handler(State(state): State<AppState>) -> impl IntoRespo
                 moltis_skills::types::SkillSource::Project,
             ),
         ];
-        let discoverer = FsSkillDiscoverer::new(search_paths);
-        if let Ok(discovered) = discoverer.discover().await {
+        let fs_discoverer = FsSkillDiscoverer::new(search_paths);
+
+        #[cfg(feature = "bundled-skills")]
+        let discovered = {
+            let bundled = std::sync::Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+            let composite = moltis_skills::discover::CompositeSkillDiscoverer::new(
+                Box::new(fs_discoverer),
+                bundled,
+            );
+            composite.discover().await
+        };
+        #[cfg(not(feature = "bundled-skills"))]
+        let discovered = fs_discoverer.discover().await;
+
+        if let Ok(discovered) = discovered {
             for s in discovered {
+                let protected = moltis_gateway::services::is_protected_discovered_skill(&s.name);
+                let is_bundled = s.source == Some(moltis_skills::types::SkillSource::Bundled);
+                let enabled = if is_bundled {
+                    // Bundled skills are enabled unless their category is disabled.
+                    s.category
+                        .as_deref()
+                        .is_none_or(|cat| !disabled_cats.iter().any(|d| d == cat))
+                } else {
+                    true
+                };
                 skills.push(serde_json::json!({
                     "name": s.name,
                     "description": s.description,
+                    "category": s.category,
                     "source": s.source,
-                    "enabled": true,
+                    "enabled": enabled,
+                    "protected": protected,
                 }));
             }
         }
@@ -609,7 +668,6 @@ async fn api_search_handler(
                 .to_lowercase();
             name.contains(&query) || display.contains(&query) || desc.contains(&query)
         })
-        .take(30)
         .collect();
 
     Json(serde_json::json!({ "skills": skills }))
@@ -758,7 +816,8 @@ pub async fn api_check_packages_handler(Json(body): Json<serde_json::Value>) -> 
         .collect();
     let script = checks.join("\n");
 
-    let output = tokio::process::Command::new("docker")
+    let cli = moltis_tools::sandbox::container_cli();
+    let output = tokio::process::Command::new(cli)
         .args(["run", "--rm", "--entrypoint", "sh", &base, "-c", &script])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -785,7 +844,7 @@ pub async fn api_check_packages_handler(Json(body): Json<serde_json::Value>) -> 
 
 pub async fn api_get_default_image_handler(State(state): State<AppState>) -> impl IntoResponse {
     let image = if let Some(ref router) = state.gateway.sandbox_router {
-        router.default_image().await
+        router.resolve_default_image_nowait().await
     } else {
         moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string()
     };
@@ -801,7 +860,7 @@ pub async fn api_set_default_image_handler(
     if let Some(ref router) = state.gateway.sandbox_router {
         let value = image.filter(|s| !s.is_empty()).map(String::from);
         router.set_global_image(value.clone()).await;
-        let effective = router.default_image().await;
+        let effective = router.resolve_default_image_nowait().await;
         Json(serde_json::json!({ "image": effective })).into_response()
     } else {
         api_error_response(
@@ -1078,5 +1137,90 @@ pub async fn api_restart_daemon_handler() -> impl IntoResponse {
             SANDBOX_DAEMON_RESTART_FAILED,
             e.to_string(),
         ),
+    }
+}
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_disposition_inline_for_pdf() {
+        let result = media_content_disposition("report.pdf", "application/pdf");
+        assert!(result.starts_with("inline;"));
+        assert!(result.contains("report.pdf"));
+    }
+
+    #[test]
+    fn content_disposition_inline_for_text() {
+        let result = media_content_disposition("notes.txt", "text/plain");
+        assert!(result.starts_with("inline;"));
+    }
+
+    #[test]
+    fn content_disposition_attachment_for_html() {
+        // HTML is forced to attachment to prevent stored XSS.
+        let result = media_content_disposition("page.html", "text/html");
+        assert!(result.starts_with("attachment;"));
+    }
+
+    #[test]
+    fn content_disposition_inline_for_csv() {
+        let result = media_content_disposition("data.csv", "text/csv");
+        assert!(result.starts_with("inline;"));
+    }
+
+    #[test]
+    fn content_disposition_inline_for_images() {
+        let result = media_content_disposition("photo.png", "image/png");
+        assert!(result.starts_with("inline;"));
+    }
+
+    #[test]
+    fn content_disposition_attachment_for_zip() {
+        let result = media_content_disposition("archive.zip", "application/zip");
+        assert!(result.starts_with("attachment;"));
+        assert!(result.contains("archive.zip"));
+    }
+
+    #[test]
+    fn content_disposition_attachment_for_docx() {
+        let result = media_content_disposition(
+            "report.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        );
+        assert!(result.starts_with("attachment;"));
+    }
+
+    #[test]
+    fn content_disposition_attachment_for_xlsx() {
+        let result = media_content_disposition(
+            "data.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        );
+        assert!(result.starts_with("attachment;"));
+    }
+
+    #[test]
+    fn content_disposition_sanitises_quotes() {
+        let result = media_content_disposition("my\"file.pdf", "application/pdf");
+        assert!(!result.contains(r#"my""#));
+        assert!(result.contains("myfile.pdf"));
+    }
+
+    #[test]
+    fn content_disposition_attachment_for_octet_stream() {
+        let result = media_content_disposition("data.bin", "application/octet-stream");
+        assert!(result.starts_with("attachment;"));
+    }
+
+    #[test]
+    fn content_disposition_sanitises_semicolons_and_backslashes() {
+        let result = media_content_disposition("my;file\\.pdf", "application/pdf");
+        // The filename should have semicolons and backslashes stripped.
+        assert!(result.contains("myfile.pdf"));
+        assert!(!result.contains("my;"));
+        assert!(!result.contains('\\'));
     }
 }

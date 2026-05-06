@@ -1,0 +1,117 @@
+[package]
+edition.workspace    = true
+name                 = "moltis-httpd"
+repository.workspace = true
+version.workspace    = true
+
+[dependencies]
+anyhow                = { workspace = true }
+async-graphql         = { optional = true, workspace = true }
+async-graphql-axum    = { optional = true, workspace = true }
+async-trait           = { workspace = true }
+axum                  = { workspace = true }
+axum-extra            = { features = ["cookie"], workspace = true }
+base64                = { workspace = true }
+bytes                 = { workspace = true }
+chrono                = { features = ["serde"], optional = true, workspace = true }
+chrono-tz             = { workspace = true }
+dashmap               = { workspace = true }
+futures               = { workspace = true }
+hostname              = { workspace = true }
+ipnet                 = { workspace = true }
+moltis-agents         = { workspace = true }
+moltis-auth           = { workspace = true }
+moltis-browser        = { workspace = true }
+moltis-channels       = { workspace = true }
+moltis-common         = { workspace = true }
+moltis-config         = { workspace = true }
+moltis-cron           = { workspace = true }
+moltis-gateway        = { workspace = true }
+moltis-graphql        = { optional = true, workspace = true }
+moltis-matrix         = { optional = true, workspace = true }
+moltis-metrics        = { optional = true, workspace = true }
+moltis-msteams        = { optional = true, workspace = true }
+moltis-portable       = { workspace = true }
+moltis-protocol       = { workspace = true }
+moltis-service-traits = { workspace = true }
+moltis-sessions       = { workspace = true }
+moltis-skills         = { workspace = true }
+moltis-slack          = { optional = true, workspace = true }
+moltis-tls            = { optional = true, workspace = true }
+moltis-tools          = { workspace = true }
+moltis-vault          = { optional = true, workspace = true }
+moltis-webhooks       = { workspace = true }
+ngrok                 = { optional = true, workspace = true }
+rand                  = { workspace = true }
+reqwest               = { workspace = true }
+rustls                = { optional = true, workspace = true }
+secrecy               = { workspace = true }
+serde                 = { workspace = true }
+serde_json            = { workspace = true }
+sysinfo               = { workspace = true }
+tempfile              = { workspace = true }
+thiserror             = { workspace = true }
+time                  = { workspace = true }
+tokio                 = { workspace = true }
+tokio-tungstenite     = { workspace = true }
+tokio-util            = { workspace = true }
+toml                  = { workspace = true }
+tower-http            = { features = ["catch-panic", "compression-gzip", "compression-zstd", "cors", "limit", "request-id", "sensitive-headers", "set-header", "trace"], workspace = true }
+tracing               = { workspace = true }
+url                   = { workspace = true }
+urlencoding           = { workspace = true }
+uuid                  = { workspace = true }
+webauthn-rs           = { features = ["danger-allow-state-serialisation"], workspace = true }
+
+[features]
+default = [
+  "discord",
+  "graphql",
+  "matrix",
+  "mdns",
+  "metrics",
+  "msteams",
+  "nostr",
+  "prometheus",
+  "push-notifications",
+  "signal",
+  "slack",
+  "tailscale",
+  "tls",
+  "trusted-network",
+  "vault",
+  "voice",
+  "web-ui",
+]
+graphql = [
+  "dep:async-graphql",
+  "dep:async-graphql-axum",
+  "dep:moltis-graphql",
+  "moltis-gateway/graphql",
+]
+matrix = ["dep:moltis-matrix", "moltis-gateway/matrix"]
+mdns = ["moltis-gateway/mdns"]
+metrics = ["dep:moltis-metrics", "moltis-gateway/metrics"]
+ngrok = ["dep:ngrok"]
+nostr = ["moltis-gateway/nostr"]
+prometheus = ["metrics", "moltis-gateway/prometheus"]
+push-notifications = ["dep:chrono", "moltis-gateway/push-notifications"]
+signal = ["moltis-gateway/signal"]
+discord = ["moltis-gateway/discord"]
+msteams = ["dep:moltis-msteams", "moltis-gateway/msteams"]
+slack = ["dep:moltis-slack", "moltis-gateway/slack"]
+tailscale = ["moltis-gateway/tailscale"]
+tls = ["dep:moltis-tls", "dep:rustls", "moltis-gateway/tls"]
+trusted-network = ["moltis-gateway/trusted-network"]
+vault = ["dep:moltis-vault", "moltis-gateway/vault"]
+voice = ["moltis-gateway/voice"]
+web-ui = ["moltis-gateway/web-ui"]
+
+[dev-dependencies]
+moltis-code-index.workspace = true
+moltis-providers = { workspace = true }
+moltis-web       = { workspace = true }
+sqlx             = { workspace = true }
+
+[lints]
+workspace = true

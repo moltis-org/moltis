@@ -13,6 +13,20 @@ Installed marketplace skills/plugins now use a trust gate:
 
 You cannot enable untrusted skills.
 
+Portable bundle imports add one more step:
+
+- `quarantined` - imported from a portable bundle and blocked from enable until explicitly cleared
+
+Imported bundles keep provenance metadata (original source, commit SHA when
+available, bundle path, export time) so you can review where they came from
+before clearing quarantine.
+
+The Skills page exposes these bundle flows directly:
+
+- import a `.tar.gz` bundle from disk
+- export an installed repo back to a portable bundle
+- clear quarantine after reviewing provenance and contents
+
 ## Provenance Pinning
 
 Moltis records a pinned `commit_sha` for installed repos:
@@ -68,3 +82,4 @@ dependency install attempts, and source drift detection.
 3. Review SKILL.md and linked scripts before trust.
 4. Prefer pinned, known repos over ad-hoc installs.
 5. Monitor `security-audit.jsonl` for unusual events.
+6. Keep imported bundles quarantined until you review their contents locally.

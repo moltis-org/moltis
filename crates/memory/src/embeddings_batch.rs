@@ -3,7 +3,7 @@
 /// When enabled and the number of texts exceeds `batch_threshold`, uploads a JSONL file
 /// to the batch API, polls for completion, and downloads results. Falls back to sequential
 /// embedding on failure or timeout.
-use anyhow::Result;
+use crate::error::{Error, Result};
 use {
     async_trait::async_trait,
     secrecy::{ExposeSecret, Secret},
@@ -107,7 +107,9 @@ impl BatchEmbeddingProvider {
 
         loop {
             if tokio::time::Instant::now() > deadline {
-                anyhow::bail!("batch embedding timed out after 60 minutes");
+                return Err(Error::Embedding(
+                    "batch embedding timed out after 60 minutes".into(),
+                ));
             }
 
             tokio::time::sleep(poll_interval).await;
@@ -127,9 +129,9 @@ impl BatchEmbeddingProvider {
 
             match status.status.as_str() {
                 "completed" => {
-                    let output_file_id = status
-                        .output_file_id
-                        .ok_or_else(|| anyhow::anyhow!("batch completed but no output file"))?;
+                    let output_file_id = status.output_file_id.ok_or_else(|| {
+                        Error::Embedding("batch completed but no output file".into())
+                    })?;
 
                     // 5. Download results
                     let content = self
@@ -157,7 +159,7 @@ impl BatchEmbeddingProvider {
                             .strip_prefix("emb-")
                             .and_then(|s| s.parse().ok())
                             .ok_or_else(|| {
-                                anyhow::anyhow!("invalid custom_id: {}", entry.custom_id)
+                                Error::Embedding(format!("invalid custom_id: {}", entry.custom_id))
                             })?;
                         if let Some(body) = entry.response.body
                             && let Some(first) = body.data.into_iter().next()
@@ -172,11 +174,11 @@ impl BatchEmbeddingProvider {
                         results.into_iter().map(|(_, emb)| emb).collect();
 
                     if embeddings.len() != texts.len() {
-                        anyhow::bail!(
+                        return Err(Error::Embedding(format!(
                             "batch returned {} embeddings for {} texts",
                             embeddings.len(),
                             texts.len()
-                        );
+                        )));
                     }
 
                     info!(
@@ -187,7 +189,10 @@ impl BatchEmbeddingProvider {
                     return Ok(embeddings);
                 },
                 "failed" | "expired" | "cancelled" => {
-                    anyhow::bail!("batch {} ended with status: {}", batch_id, status.status);
+                    return Err(Error::Embedding(format!(
+                        "batch {} ended with status: {}",
+                        batch_id, status.status
+                    )));
                 },
                 _ => continue, // in_progress, validating, etc.
             }

@@ -49,6 +49,96 @@ test.describe("Authentication", () => {
 		expect(resp.ok()).toBeTruthy();
 	});
 
+	test("sealed vault does not hide unencrypted session list", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		const session = {
+			key: "main",
+			label: "Main chat",
+			preview: "hello",
+			updatedAt: Date.now(),
+			messageCount: 1,
+		};
+
+		await page.addInitScript((seedSession) => {
+			const origFetch = window.fetch;
+			window.fetch = function (...args) {
+				var url = typeof args[0] === "string" ? args[0] : args[0].url;
+				if (url.endsWith("/api/auth/status")) {
+					return Promise.resolve(
+						new Response(
+							JSON.stringify({
+								authenticated: true,
+								setup_required: false,
+								auth_disabled: false,
+								localhost_only: true,
+								has_password: false,
+								has_passkeys: false,
+								setup_complete: false,
+							}),
+							{
+								status: 200,
+								headers: { "Content-Type": "application/json" },
+							},
+						),
+					);
+				}
+				return origFetch.apply(this, args);
+			};
+
+			Object.defineProperty(window, "__MOLTIS__", {
+				configurable: true,
+				set(value) {
+					var next = value || {};
+					next.vault_status = "sealed";
+					next.sessions_recent = [seedSession];
+					Object.defineProperty(window, "__MOLTIS__", {
+						value: next,
+						writable: true,
+						configurable: true,
+					});
+				},
+				get() {
+					return undefined;
+				},
+			});
+		}, session);
+
+		await page.route("**/api/bootstrap*", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					channels: null,
+					models: [],
+					projects: [],
+					sandbox: null,
+					counts: null,
+				}),
+			});
+		});
+		await page.route("**/api/sessions*", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					sessions: [session],
+					hasMore: false,
+					nextCursor: null,
+					total: 1,
+				}),
+			});
+		});
+
+		await page.goto("/chats/main");
+		await expectPageContentMounted(page);
+		// Verify session is visible in the sidebar (not hidden by vault-sealed state).
+		// Use the sidebar item selector because getByText("Main chat") also matches
+		// hidden modal mounts for the session header.
+		await expect(page.locator('.session-item[data-session-key="main"]')).toBeVisible();
+		await expect(page.getByText("Vault is sealed", { exact: true })).toHaveCount(0);
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("auth disabled banner not shown on localhost", async ({ page }) => {
 		await page.goto("/");
 		await expect.poll(() => new URL(page.url()).pathname).toMatch(/^\/(?:chats\/.+|onboarding)$/);
@@ -134,7 +224,7 @@ test.describe("Authentication", () => {
 		} else {
 			await expect(
 				page.getByRole("heading", {
-					name: /Secure your instance|Set up your identity/,
+					name: /^(Secure your instance|Set up your identity|Import from OpenClaw|Import Your Data|Add LLMs|Add providers|Voice \(optional\)|Remote Access|Connect a Channel|Setup Summary)$/,
 				}),
 			).toBeVisible();
 		}
@@ -304,8 +394,8 @@ test.describe("Authentication", () => {
 		await expect(page.getByRole("heading", { name: /Authentication|Security/ })).toBeVisible();
 		var passwordForm = page.locator("form").first();
 		var passwordInputs = passwordForm.locator("input[type='password']");
-		await passwordInputs.first().fill("testpass123");
-		await passwordInputs.nth(1).fill("testpass123");
+		await passwordInputs.first().fill("testpass1234");
+		await passwordInputs.nth(1).fill("testpass1234");
 		await passwordForm.getByRole("button", { name: "Set password" }).click();
 		await expect(page.getByText("Vault initialized — save this recovery key", { exact: true })).toBeVisible();
 		await expect(page.locator("code.select-all")).toContainText("test-recovery-key-1234");

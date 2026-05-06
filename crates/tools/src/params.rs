@@ -30,6 +30,38 @@ pub fn require_str<'a>(params: &'a Value, key: &str) -> crate::Result<&'a str> {
         .ok_or_else(|| Error::message(format!("missing required parameter: {key}")))
 }
 
+/// Extract an optional array of trimmed, non-empty strings.
+///
+/// Returns an empty vector when the key is absent or explicitly `null`.
+pub fn string_array_param(params: &Value, key: &str) -> crate::Result<Vec<String>> {
+    let Some(raw) = params.get(key) else {
+        return Ok(Vec::new());
+    };
+    if raw.is_null() {
+        return Ok(Vec::new());
+    }
+
+    let arr = raw
+        .as_array()
+        .ok_or_else(|| Error::message(format!("parameter '{key}' must be an array")))?;
+
+    let mut out = Vec::with_capacity(arr.len());
+    for (idx, item) in arr.iter().enumerate() {
+        let name = item
+            .as_str()
+            .ok_or_else(|| Error::message(format!("parameter '{key}[{idx}]' must be a string")))?;
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(Error::message(format!(
+                "parameter '{key}[{idx}]' cannot be empty"
+            )));
+        }
+        out.push(trimmed.to_string());
+    }
+
+    Ok(out)
+}
+
 /// Extract a boolean, defaulting to `default` when absent.
 pub fn bool_param(params: &Value, key: &str, default: bool) -> bool {
     params.get(key).and_then(Value::as_bool).unwrap_or(default)
@@ -83,6 +115,37 @@ mod tests {
     fn require_str_errors_when_missing() {
         let p = json!({});
         assert!(require_str(&p, "key").is_err());
+    }
+
+    #[test]
+    fn string_array_param_returns_empty_for_missing_or_null() {
+        let missing = json!({});
+        let explicit_null = json!({"tools": null});
+        assert!(matches!(
+            string_array_param(&missing, "tools"),
+            Ok(values) if values.is_empty()
+        ));
+        assert!(matches!(
+            string_array_param(&explicit_null, "tools"),
+            Ok(values) if values.is_empty()
+        ));
+    }
+
+    #[test]
+    fn string_array_param_trims_values() {
+        let p = json!({"tools": [" exec ", "task_list"]});
+        assert!(matches!(
+            string_array_param(&p, "tools"),
+            Ok(values) if values == vec!["exec".to_string(), "task_list".to_string()]
+        ));
+    }
+
+    #[test]
+    fn string_array_param_rejects_wrong_types() {
+        let not_array = json!({"tools": true});
+        let non_string = json!({"tools": ["exec", 42]});
+        assert!(string_array_param(&not_array, "tools").is_err());
+        assert!(string_array_param(&non_string, "tools").is_err());
     }
 
     #[test]

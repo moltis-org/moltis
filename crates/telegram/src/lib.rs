@@ -13,6 +13,7 @@ pub mod otp;
 pub mod outbound;
 pub mod plugin;
 pub mod state;
+pub(crate) mod topic;
 
 pub use {
     config::TelegramAccountConfig,

@@ -1,9 +1,12 @@
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex, RwLock},
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
-use {tokio_util::sync::CancellationToken, whatsapp_rust::client::Client};
+use {tokio::sync::Notify, tokio_util::sync::CancellationToken, whatsapp_rust::client::Client};
 
 use moltis_channels::{ChannelEventSink, message_log::MessageLog};
 
@@ -25,18 +28,59 @@ pub(crate) const BOT_WATERMARK: &str = "\u{200D}\u{200C}\u{200D}\u{200C}";
 /// Shared account state map.
 pub type AccountStateMap = Arc<RwLock<HashMap<String, AccountState>>>;
 
+/// Synchronization primitive for graceful bot shutdown.
+pub struct ShutdownState {
+    done: AtomicBool,
+    notify: Notify,
+}
+
+impl Default for ShutdownState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ShutdownState {
+    pub fn new() -> Self {
+        Self {
+            done: AtomicBool::new(false),
+            notify: Notify::new(),
+        }
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.done.load(Ordering::Acquire)
+    }
+
+    pub fn mark_done(&self) {
+        self.done.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    pub async fn wait(&self) {
+        loop {
+            let notified = self.notify.notified();
+            if self.is_done() {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
 /// Per-account runtime state.
 pub struct AccountState {
     pub client: Arc<Client>,
     pub account_id: String,
     pub config: WhatsAppAccountConfig,
     pub cancel: CancellationToken,
+    pub shutdown: Arc<ShutdownState>,
     pub message_log: Option<Arc<dyn MessageLog>>,
     pub event_sink: Option<Arc<dyn ChannelEventSink>>,
     /// Latest QR code data for the pairing flow (updated every ~20s).
     pub latest_qr: RwLock<Option<String>>,
     /// Whether the client is currently connected.
-    pub connected: std::sync::atomic::AtomicBool,
+    pub connected: AtomicBool,
     /// In-memory OTP challenges for self-approval (std::sync::Mutex because
     /// all OTP operations are synchronous HashMap lookups, never held across
     /// `.await` points).
@@ -209,5 +253,21 @@ mod tests {
         watermark_message(&mut msg);
         assert!(msg.conversation.is_none());
         assert!(msg.extended_text_message.is_none());
+    }
+
+    #[tokio::test]
+    async fn shutdown_state_waits_for_completion() {
+        let shutdown = Arc::new(ShutdownState::new());
+        let wait_state = Arc::clone(&shutdown);
+
+        let waiter = tokio::spawn(async move {
+            wait_state.wait().await;
+        });
+
+        tokio::task::yield_now().await;
+        assert!(!shutdown.is_done());
+        shutdown.mark_done();
+        waiter.await.unwrap();
+        assert!(shutdown.is_done());
     }
 }

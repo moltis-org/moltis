@@ -33,6 +33,11 @@ pub async fn start_polling(
 ) -> crate::Result<CancellationToken> {
     // Build bot with a client timeout longer than the long-polling timeout (30s)
     // so the HTTP client doesn't abort the request before Telegram responds.
+    //
+    // NOTE: teloxide bundles reqwest 0.11 internally, so we cannot inject the
+    // reqwest 0.12 upstream proxy directly. Teloxide's reqwest 0.11 honours
+    // the standard HTTPS_PROXY / ALL_PROXY env vars, so users behind a proxy
+    // should set those in addition to `upstream_proxy` in moltis.toml.
     let client = teloxide::net::default_reqwest_settings()
         .timeout(std::time::Duration::from_secs(45))
         .build()
@@ -47,18 +52,10 @@ pub async fn start_polling(
     bot.delete_webhook().send().await?;
 
     // Register slash commands for autocomplete in Telegram clients.
-    let commands = vec![
-        BotCommand::new("new", "Start a new session"),
-        BotCommand::new("sessions", "List and switch sessions"),
-        BotCommand::new("agent", "Switch session agent"),
-        BotCommand::new("model", "Switch provider/model"),
-        BotCommand::new("sandbox", "Toggle sandbox and choose image"),
-        BotCommand::new("sh", "Enable shell command mode"),
-        BotCommand::new("clear", "Clear session history"),
-        BotCommand::new("compact", "Compact session (summarize)"),
-        BotCommand::new("context", "Show session context info"),
-        BotCommand::new("help", "Show available commands"),
-    ];
+    let commands: Vec<BotCommand> = moltis_channels::commands::all_commands()
+        .iter()
+        .map(|c| BotCommand::new(c.name, c.description))
+        .collect();
     if let Err(e) = bot.set_my_commands(commands).await {
         warn!(account_id, "failed to register bot commands: {e}");
     }

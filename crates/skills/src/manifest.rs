@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::types::SkillsManifest;
+use crate::{error::Result, types::SkillsManifest};
 
 /// Persistent manifest storage with atomic writes.
 pub struct ManifestStore {
@@ -13,12 +13,12 @@ impl ManifestStore {
     }
 
     /// Default manifest path: `~/.moltis/skills-manifest.json`.
-    pub fn default_path() -> anyhow::Result<PathBuf> {
+    pub fn default_path() -> Result<PathBuf> {
         Ok(moltis_config::data_dir().join("skills-manifest.json"))
     }
 
     /// Load manifest from disk, returning a default if missing.
-    pub fn load(&self) -> anyhow::Result<SkillsManifest> {
+    pub fn load(&self) -> Result<SkillsManifest> {
         if !self.path.exists() {
             return Ok(SkillsManifest::default());
         }
@@ -28,7 +28,7 @@ impl ManifestStore {
     }
 
     /// Save manifest atomically via temp file + rename.
-    pub fn save(&self, manifest: &SkillsManifest) -> anyhow::Result<()> {
+    pub fn save(&self, manifest: &SkillsManifest) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -73,6 +73,9 @@ mod tests {
             installed_at_ms: 1234567890,
             commit_sha: Some("abc123".into()),
             format: Default::default(),
+            quarantined: false,
+            quarantine_reason: None,
+            provenance: None,
             skills: vec![SkillState {
                 name: "my-skill".into(),
                 relative_path: "skills/my-skill".into(),
@@ -98,6 +101,9 @@ mod tests {
             installed_at_ms: 0,
             commit_sha: None,
             format: Default::default(),
+            quarantined: false,
+            quarantine_reason: None,
+            provenance: None,
             skills: vec![
                 SkillState {
                     name: "s1".into(),
@@ -133,6 +139,9 @@ mod tests {
             installed_at_ms: 0,
             commit_sha: None,
             format: Default::default(),
+            quarantined: false,
+            quarantine_reason: None,
+            provenance: None,
             skills: vec![SkillState {
                 name: "s1".into(),
                 relative_path: "s1".into(),
@@ -155,6 +164,9 @@ mod tests {
             installed_at_ms: 0,
             commit_sha: None,
             format: Default::default(),
+            quarantined: false,
+            quarantine_reason: None,
+            provenance: None,
             skills: vec![],
         });
         m.add_repo(RepoEntry {
@@ -163,6 +175,9 @@ mod tests {
             installed_at_ms: 0,
             commit_sha: None,
             format: Default::default(),
+            quarantined: false,
+            quarantine_reason: None,
+            provenance: None,
             skills: vec![],
         });
 

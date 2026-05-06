@@ -14,7 +14,10 @@ pub mod store_sqlite;
 pub mod system_events;
 pub mod types;
 
-pub use error::{Error, Result};
+pub use {
+    error::{Error, Result},
+    service::{DEFAULT_WAKE_COOLDOWN_MS, WAKE_REASON_CRON_EVENT, WAKE_REASON_EXEC_EVENT},
+};
 
 /// Run database migrations for the cron crate.
 ///

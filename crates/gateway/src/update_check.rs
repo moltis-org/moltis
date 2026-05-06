@@ -41,11 +41,16 @@ pub fn resolve_releases_url(configured: Option<&str>) -> String {
 ///
 /// Returns a default (no update) on any error — 404, parse failure, network
 /// issues — so callers never have to handle errors.
+/// Dev builds (no `MOLTIS_VERSION` at compile time) always return "no update".
 pub async fn fetch_update_availability(
     client: &reqwest::Client,
     releases_url: &str,
     current_version: &str,
 ) -> UpdateAvailability {
+    if moltis_config::version::IS_DEV_BUILD {
+        tracing::debug!("update check skipped: dev build");
+        return UpdateAvailability::default();
+    }
     match try_fetch_update(client, releases_url, current_version).await {
         Ok(update) => update,
         Err(e) => {
@@ -100,14 +105,53 @@ fn is_pre_release(version: &str) -> bool {
     normalized.contains('-')
 }
 
+/// Compare two version strings. Handles three cases:
+/// 1. Both date-based (`YYYYMMDD.NN`) — compare as `(date, seq)` tuples.
+/// 2. Both semver (`x.y.z`) — compare as `(major, minor, patch)` tuples.
+/// 3. Mixed: any date-based version is considered newer than any semver version,
+///    ensuring users on old semver builds see the update to the new scheme.
 fn is_newer_version(latest: &str, current: &str) -> bool {
-    let latest = parse_semver_triplet(latest);
-    let current = parse_semver_triplet(current);
-    matches!((latest, current), (Some(l), Some(c)) if l > c)
+    let latest_n = normalize_version(latest);
+    let current_n = normalize_version(current);
+
+    match (
+        parse_date_version(&latest_n),
+        parse_date_version(&current_n),
+    ) {
+        // Both date-based
+        (Some(l), Some(c)) => l > c,
+        // Latest is date-based, current is semver → latest wins
+        (Some(_), None) => true,
+        // Latest is semver, current is date-based → no update
+        (None, Some(_)) => false,
+        // Neither is date-based — try semver
+        (None, None) => {
+            matches!(
+                (parse_semver_triplet(&latest_n), parse_semver_triplet(&current_n)),
+                (Some(l), Some(c)) if l > c
+            )
+        },
+    }
 }
 
 fn normalize_version(value: &str) -> String {
     value.trim().trim_start_matches(['v', 'V']).to_owned()
+}
+
+/// Parse a date-based version `YYYYMMDD.NN` into `(date, sequence)`.
+fn parse_date_version(version: &str) -> Option<(u32, u32)> {
+    let (date_str, seq_str) = version.split_once('.')?;
+    // Date part must be exactly 8 digits
+    if date_str.len() != 8 || !date_str.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    // Sequence part must be 1-2 digits (no extra segments)
+    if seq_str.contains('.') || !seq_str.chars().all(|c| c.is_ascii_digit()) || seq_str.is_empty() {
+        return None;
+    }
+    let date: u32 = date_str.parse().ok()?;
+    let seq: u32 = seq_str.parse().ok()?;
+    Some((date, seq))
 }
 
 fn parse_semver_triplet(version: &str) -> Option<(u64, u64, u64)> {
@@ -130,6 +174,47 @@ fn parse_semver_triplet(version: &str) -> Option<(u64, u64, u64)> {
 mod tests {
     use super::*;
 
+    // --- date version parsing ---
+
+    #[test]
+    fn parses_valid_date_versions() {
+        assert_eq!(parse_date_version("20260311.01"), Some((20260311, 1)));
+        assert_eq!(parse_date_version("20260311.1"), Some((20260311, 1)));
+        assert_eq!(parse_date_version("20260101.99"), Some((20260101, 99)));
+    }
+
+    #[test]
+    fn rejects_invalid_date_versions() {
+        assert_eq!(parse_date_version("0.10.18"), None);
+        assert_eq!(parse_date_version("v0.10.18"), None);
+        assert_eq!(parse_date_version("latest"), None);
+        assert_eq!(parse_date_version("2026031.01"), None); // 7 digits
+        assert_eq!(parse_date_version("202603110.01"), None); // 9 digits
+    }
+
+    #[test]
+    fn semver_not_confused_with_date() {
+        assert_eq!(parse_date_version("1.2.3"), None);
+        assert_eq!(parse_date_version("0.10.18"), None);
+    }
+
+    // --- semver parsing ---
+
+    #[test]
+    fn parses_valid_semver() {
+        assert_eq!(parse_semver_triplet("0.10.18"), Some((0, 10, 18)));
+        assert_eq!(parse_semver_triplet("v1.2.3"), Some((1, 2, 3)));
+        assert_eq!(parse_semver_triplet("0.11.0-rc.1"), Some((0, 11, 0)));
+    }
+
+    #[test]
+    fn rejects_date_version_as_semver() {
+        // Date versions have only two segments, so semver parse fails
+        assert_eq!(parse_semver_triplet("20260311.01"), None);
+    }
+
+    // --- version comparison ---
+
     #[test]
     fn compares_semver_versions() {
         assert!(is_newer_version("0.3.0", "0.2.9"));
@@ -138,6 +223,29 @@ mod tests {
         assert!(!is_newer_version("0.2.4", "0.2.5"));
         assert!(!is_newer_version("latest", "0.2.5"));
     }
+
+    #[test]
+    fn compares_date_versions() {
+        assert!(is_newer_version("20260312.01", "20260311.01"));
+        assert!(is_newer_version("20260311.02", "20260311.01"));
+        assert!(!is_newer_version("20260311.01", "20260311.01"));
+        assert!(!is_newer_version("20260310.01", "20260311.01"));
+    }
+
+    #[test]
+    fn date_version_newer_than_any_semver() {
+        // Users on old semver builds should see date-based updates
+        assert!(is_newer_version("20260311.01", "0.10.18"));
+        assert!(is_newer_version("20260311.01", "99.99.99"));
+    }
+
+    #[test]
+    fn semver_not_newer_than_date_version() {
+        assert!(!is_newer_version("0.10.18", "20260311.01"));
+        assert!(!is_newer_version("99.99.99", "20260311.01"));
+    }
+
+    // --- existing tests updated ---
 
     #[test]
     fn resolves_releases_url_with_config_override() {
@@ -162,17 +270,29 @@ mod tests {
     #[test]
     fn builds_update_payload_from_release() {
         let update = update_from_release(
-            "v0.3.0",
-            Some("https://github.com/moltis-org/moltis/releases/tag/v0.3.0"),
-            "0.2.5",
+            "20260311.01",
+            Some("https://github.com/moltis-org/moltis/releases/tag/20260311.01"),
+            "0.10.18",
         );
 
         assert!(update.available);
-        assert_eq!(update.latest_version.as_deref(), Some("0.3.0"));
+        assert_eq!(update.latest_version.as_deref(), Some("20260311.01"));
         assert_eq!(
             update.release_url.as_deref(),
-            Some("https://github.com/moltis-org/moltis/releases/tag/v0.3.0")
+            Some("https://github.com/moltis-org/moltis/releases/tag/20260311.01")
         );
+    }
+
+    #[test]
+    fn builds_update_payload_date_to_date() {
+        let update = update_from_release(
+            "20260312.01",
+            Some("https://github.com/moltis-org/moltis/releases/tag/20260312.01"),
+            "20260311.01",
+        );
+
+        assert!(update.available);
+        assert_eq!(update.latest_version.as_deref(), Some("20260312.01"));
     }
 
     #[test]
@@ -181,13 +301,16 @@ mod tests {
         assert!(is_pre_release("v0.11.0-beta.2"));
         assert!(!is_pre_release("0.10.7"));
         assert!(!is_pre_release("v0.10.7"));
+        assert!(!is_pre_release("20260311.01"));
     }
 
     #[test]
     fn selects_channel_based_on_current_version() {
         let stable = ReleaseChannel {
-            version: "0.10.7".into(),
-            release_url: Some("https://github.com/moltis-org/moltis/releases/tag/v0.10.7".into()),
+            version: "20260311.01".into(),
+            release_url: Some(
+                "https://github.com/moltis-org/moltis/releases/tag/20260311.01".into(),
+            ),
         };
         let unstable = ReleaseChannel {
             version: "0.11.0-rc.2".into(),
@@ -196,8 +319,8 @@ mod tests {
             ),
         };
 
-        // Stable current → picks stable channel
-        let current_stable = "0.10.6";
+        // Stable current → picks stable channel, date version is newer
+        let current_stable = "0.10.18";
         assert!(!is_pre_release(current_stable));
         let update = update_from_release(
             &stable.version,
@@ -205,7 +328,7 @@ mod tests {
             current_stable,
         );
         assert!(update.available);
-        assert_eq!(update.latest_version.as_deref(), Some("0.10.7"));
+        assert_eq!(update.latest_version.as_deref(), Some("20260311.01"));
 
         // Pre-release current → would pick unstable channel
         let current_pre = "0.11.0-rc.1";

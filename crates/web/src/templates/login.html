@@ -10,17 +10,6 @@
 <link rel="icon" type="image/png" sizes="32x32" href="{{ asset_prefix }}icons/icon-72.png">
 <meta name="build-ts" content="{{ build_ts }}">
 <script nonce="{{ nonce }}">window.__MOLTIS__={{ gon_json|safe }};</script>
-<script nonce="{{ nonce }}" type="importmap">
-{
-  "imports": {
-    "preact": "{{ asset_prefix }}js/vendor/preact.mjs",
-    "preact/hooks": "{{ asset_prefix }}js/vendor/preact-hooks.mjs",
-    "@preact/signals": "{{ asset_prefix }}js/vendor/preact-signals.mjs",
-    "htm/preact": "{{ asset_prefix }}js/vendor/htm-preact.mjs",
-    "i18next": "{{ asset_prefix }}js/vendor/i18next.mjs"
-  }
-}
-</script>
 <link rel="stylesheet" href="{{ asset_prefix }}css/base.css">
 <link rel="stylesheet" href="{{ asset_prefix }}css/components.css">
 <link rel="stylesheet" href="{{ asset_prefix }}style.css">
@@ -30,6 +19,8 @@
   <span>Your encryption vault is locked. Sign in to unlock it.</span>
 </div>
 <div id="loginRoot" class="auth-page"></div>
+<!-- E2E compat: tests locate the app via this script tag -->
 <script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}js/login-app.js"></script>
+<script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}dist/login.js"></script>
 </body>
 </html>

@@ -89,8 +89,8 @@ pub trait ChatRuntime: Send + Sync {
     /// Per-session sandbox router, if configured.
     fn sandbox_router(&self) -> Option<&Arc<SandboxRouter>>;
 
-    /// Memory manager for long-term memory search.
-    fn memory_manager(&self) -> Option<&Arc<moltis_memory::manager::MemoryManager>>;
+    /// Memory runtime for long-term memory search.
+    fn memory_manager(&self) -> Option<&moltis_memory::runtime::DynMemoryRuntime>;
 
     // ── Cached location ──────────────────────────────────────────────────
 
@@ -147,8 +147,33 @@ pub trait ChatRuntime: Send + Sync {
     /// Ensure a local model is cached/downloaded. No-op if local-llm is disabled.
     async fn ensure_local_model_cached(&self, model_id: &str) -> crate::error::Result<bool>;
 
+    /// Ensure a local model is loaded into RAM (broadcasting lifecycle events).
+    /// No-op if local-llm is disabled or the model is already loaded.
+    async fn ensure_local_model_loaded(&self, model_id: &str) -> crate::error::Result<()> {
+        let _ = model_id;
+        Ok(())
+    }
+
     // ── Remote nodes ─────────────────────────────────────────────────────
 
     /// List currently connected remote nodes.
     async fn connected_nodes(&self) -> Vec<ConnectedNodeSummary>;
+
+    // ── Mid-flight steering ──────────────────────────────────────────────
+
+    /// Take (drain) all pending `/steer` texts for a session.
+    async fn take_steer_text(&self, _session_key: &str) -> Option<Vec<String>> {
+        None
+    }
+
+    /// Check whether fast/priority mode is enabled for a session.
+    async fn is_fast_mode(&self, _session_key: &str) -> bool {
+        false
+    }
+
+    /// Trigger background auto-title generation for a session.
+    ///
+    /// Called after the first assistant response. The gateway implements this
+    /// to spawn a background LLM call; the default is a no-op.
+    async fn trigger_auto_title(&self, _session_key: &str) {}
 }

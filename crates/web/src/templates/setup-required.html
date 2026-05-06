@@ -12,18 +12,22 @@
 <link rel="stylesheet" href="{{ asset_prefix }}style.css">
 <style>
   body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-  .card{max-width:460px;padding:2.5rem;border-radius:12px;border:1px solid var(--border);text-align:center}
+  .card{max-width:480px;padding:2.5rem;border-radius:12px;border:1px solid var(--border);text-align:center}
   h1{margin:0 0 .75rem;font-size:1.35rem}
-  p{margin:.5rem 0;line-height:1.6;color:var(--muted)}
+  p{margin:.6rem 0;line-height:1.6;color:var(--muted)}
   code{background:rgba(128,128,128,.15);padding:.15em .4em;border-radius:4px;font-size:.9em}
+  .cta{display:inline-block;margin-top:1.25rem;text-decoration:none}
+  .note{margin-top:1.5rem;font-size:.85em;opacity:.75}
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>Authentication Not Configured</h1>
-  <p>This instance requires authentication to be set up before it can be accessed remotely.</p>
-  <p>Connect from the local machine or use the CLI:</p>
-  <p><code>moltis auth reset-password</code></p>
+  <h1>First-time setup</h1>
+  <p>This instance has not been configured yet. To finish setup remotely, use the one-time <strong>setup code</strong> printed to the server's standard output when the process started.</p>
+  <p>For a docker-compose deployment, find the code with:</p>
+  <p><code>docker compose logs moltis</code></p>
+  <a class="cta provider-btn provider-btn-secondary" href="/onboarding">Continue setup &rarr;</a>
+  <p class="note">Locked out of an existing instance with filesystem access? The <code>moltis auth reset-password</code> CLI command can recover it &mdash; do not use it on a fresh install.</p>
 </div>
 </body>
 </html>

@@ -19,6 +19,3035 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260502.01] - 2026-05-02
+### Added
+- [portable] Add data import/export for config, databases, and sessions (#951)
+- [i18n] Add zh-TW Traditional Chinese locale support (#339)
+
+
+### Fixed
+- [discord] Register slash command arguments and add all thinking levels (#950)
+- [web-ui] Prevent horizontal overflow in chat messages container (#952)
+- [portable] Allow unwrap in test modules to satisfy workspace clippy lint
+- [msteams] Collapse nested if to satisfy clippy collapsible_if lint
+- [discord] Use is_none_or and allow expect in tests for clippy
+- [e2e] Add smartScrollToBottom to chat-ui shim, fix command palette focus test
+- [e2e] Reduce appended element height below isChatAtBottom threshold in autoscroll test
+- [e2e] Add "Import Your Data" heading to auth spec onboarding matcher
+- [i18n] Add missing zh-TW reasoning keys and fix biome formatting
+- [telegram] Upgrade teloxide 0.13→0.17 to fix multipart ThreadId panic (#954)
+- [terminal] Prevent spurious "window does not exist" error on tab creation (#955)
+- [e2e] Update reasoning toggle tests for 6 effort levels (added Minimal and Extra High)
+- [e2e] Use poll-based scroll assertion in sequential messages autoscroll test
+
+## [20260501.01] - 2026-05-01
+### Added
+- [providers] Add Zen (opencode.ai) multi-protocol provider (#944)
+- [web-ui] Hide voice buttons when stt/tts disabled in config (#943)
+
+## [20260430.02] - 2026-04-30
+### Added
+- [web-ui] Add message action bar to assistant responses (#932)
+- [gateway] Auto-generate session titles from conversation (#933)
+- Add DeepInfra provider, sandbox GPU passthrough, strict model selection (#934)
+- Detect Proxmox VE and offer LXC container install
+- [skills] Add per-skill usage telemetry to /insights and web UI (#935)
+- [sandbox] Add GitHub CLI (gh) to default sandbox packages
+- [web-ui] Show progress indicator during sandbox image build
+
+
+### Fixed
+- Replace completion-based model probe with lightweight catalog check (#931)
+- [deploy] Correct subcommand in systemd service file
+- [web-ui] Clipboard copy button broken on insecure contexts (#936)
+- [deploy] Use bare moltis command in systemd service
+- [web-ui] System-notice text overflows excessively rounded container (#941)
+- [httpd] Handle SIGTERM for graceful Docker shutdown (#940)
+- [sandbox] Wait for image build before launching containers
+- [e2e] Fix clipboard, provider order, and reasoning toggle tests
+- [httpd] Gate msteams-only imports behind feature flag
+- [e2e] Fix settings-nav, voice, onboarding, and command palette tests
+
+## [20260430.01] - 2026-04-30
+### Added
+- Add /btw, /fast, /insights, /steer, /queue commands and auxiliary model config (#926)
+
+
+### Fixed
+- [mcp] Preserve auth_state on expired OAuth token so re-auth button shows (#930)
+- [web-ui] Remove scroll-hijacking ResizeObserver in chat (#922) (#925)
+
+## [20260429.02] - 2026-04-29
+### Added
+- [voice] Add voice personas for deterministic TTS identity (#916)
+
+
+### Fixed
+- [sandbox] Prevent sandbox escape via RestrictedHostSandbox and FailoverSandbox (#924)
+
+## [20260429.01] - 2026-04-29
+### Added
+- [update] Add /update command and web UI update button (#911)
+- [browser] Add Obscura as lightweight sidecar browser backend (#869)
+- [web] Add command palette (Cmd+K / Ctrl+K) (#904)
+- [import] Add multi-source import from Claude Code, Claude Desktop, and Hermes (#914)
+- [import] Add Claude Code and Hermes import to web UI (#917)
+
+
+### Changed
+- [config] Unify provider name validation into single source of truth (#912)
+- [agents] Split model.rs into chat, convert, and stream modules
+
+
+### Removed
+- [e2e] Remove dead tests for deleted UI features
+- Remove CLAUDE.local.md from repo and add to .gitignore
+- Remove unused PathBuf imports in hermes-import
+- Remove unused imports in httpd gateway
+
+
+### Fixed
+- [e2e] Stabilize rename test and skip broken Matrix ownership test
+- [docs] Use $http_host in nginx proxy examples to preserve port (#907)
+- [e2e] Fix rename assertion, unskip Matrix ownership test
+- [gateway] Prevent USER.md from overriding saved user_name
+- [e2e] Unskip clear-all and channel-rename tests, fix for new UI
+- [release] Scope changelog entries to version deltas (#909)
+- [e2e] Rewrite stop action test for thinking indicator UI
+- [tests] Update comment preservation assertion for merge behavior
+- [providers] Sanitize and strip user name field for channel messages (#915)
+- [skills] Add missing origin metadata to data-sync, birdclaw, discrawl, wacrawl, slacrawl
+- Collapse nested if-let in MCP import
+- Collapse nested if-let in claude-import MCP servers
+- Use vec![] macro instead of push-after-init in import commands
+- [e2e] Use Ctrl+K instead of Meta+K in command palette tests
+- Restore HashMap and ChannelPlugin imports in httpd gateway
+- [web] Command palette keyboard navigation in headless Chromium
+- [web] Use capture-phase listener for command palette keyboard nav
+- [web] Eliminate rAF race in session rename input
+- [web] Prevent session switch from stealing focus during rename
+- [build] Align production feature flags
+- [web] Show /mode none hint in slash command popup
+- [web] Only guard chatInput focus against text inputs
+- [e2e] Fix flaky command palette, reasoning toggle, and projects tests
+
+## [20260428.03] - 2026-04-28
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+- [web-ui] Show chat status badges in visible toolbar row (#886)
+- [local-llm] On-demand model loading/unloading with idle timeout (#884)
+- Make telegram channel optional (#891)
+- Make discord and msteams channels optional (#899)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+- [gateway] Split skills service helpers into separate module
+- [gateway] Move skills impl out of mod.rs into service.rs
+
+
+### Removed
+- Remove needless return in skills toggle_bundled_skill
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+- [gateway] Handle bundled skill disable/enable via config (#877)
+- [gateway] Derive bundled skill enabled state from config (#878)
+- [tests] Increase watcher test timeout to accommodate debounce + FSEvents latency
+- [web-ui] Stop auto-enabling all skills on repository import (#882)
+- [skills] Store per-skill relative paths for marketplace repos (#883)
+- [tests] Mark flaky FSEvents watcher test as ignored
+- [tests] Use PollWatcher in watcher tests for reliable cross-platform behavior
+- Use if-let instead of single-arm match in poll watcher test
+- [security] Store voice API keys in credential store, not moltis.toml (#885)
+- [e2e] Update session tests for inline action buttons (#886 follow-up)
+- [tests] Add missing LocalLlmService trait methods to MockLocalLlm
+- Collapse nested if-let in key_store timestamp check
+- Derive Default for ModelLifecycleManager
+- [web-ui] Restore session name and inline rename in chat toolbar (#892)
+- Use ApplicationType::Web for non-loopback Matrix OIDC redirect URIs (#893)
+- Add TSX source to Tailwind content scanning
+- Show RPC error messages in skills UI and auto-trust on install (#897)
+- [config] Add mcp field to agent preset in schema map
+- [e2e] Update tests for identity→profile route rename
+- [e2e] Complete identity→profile rename in remaining tests
+- [e2e] Stabilize session rename test against onBlur race
+- [config] Use atomic writes to prevent moltis.toml corruption
+- [config] Use unique temp file for atomic writes
+- [config] Move tempfile from dev-dependencies to dependencies
+- [e2e] Use .chat-session-name selector for rename assertion
+- [ci] Copy scripts/ into Docker build and improve download retries
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260428.02] - 2026-04-28
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+- [web-ui] Show chat status badges in visible toolbar row (#886)
+- [local-llm] On-demand model loading/unloading with idle timeout (#884)
+- Make telegram channel optional (#891)
+- Make discord and msteams channels optional (#899)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+- [gateway] Split skills service helpers into separate module
+- [gateway] Move skills impl out of mod.rs into service.rs
+
+
+### Removed
+- Remove needless return in skills toggle_bundled_skill
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+- [gateway] Handle bundled skill disable/enable via config (#877)
+- [gateway] Derive bundled skill enabled state from config (#878)
+- [tests] Increase watcher test timeout to accommodate debounce + FSEvents latency
+- [web-ui] Stop auto-enabling all skills on repository import (#882)
+- [skills] Store per-skill relative paths for marketplace repos (#883)
+- [tests] Mark flaky FSEvents watcher test as ignored
+- [tests] Use PollWatcher in watcher tests for reliable cross-platform behavior
+- Use if-let instead of single-arm match in poll watcher test
+- [security] Store voice API keys in credential store, not moltis.toml (#885)
+- [e2e] Update session tests for inline action buttons (#886 follow-up)
+- [tests] Add missing LocalLlmService trait methods to MockLocalLlm
+- Collapse nested if-let in key_store timestamp check
+- Derive Default for ModelLifecycleManager
+- [web-ui] Restore session name and inline rename in chat toolbar (#892)
+- Use ApplicationType::Web for non-loopback Matrix OIDC redirect URIs (#893)
+- Add TSX source to Tailwind content scanning
+- Show RPC error messages in skills UI and auto-trust on install (#897)
+- [config] Add mcp field to agent preset in schema map
+- [e2e] Update tests for identity→profile route rename
+- [e2e] Complete identity→profile rename in remaining tests
+- [e2e] Stabilize session rename test against onBlur race
+- [config] Use atomic writes to prevent moltis.toml corruption
+- [config] Use unique temp file for atomic writes
+- [config] Move tempfile from dev-dependencies to dependencies
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260428.01] - 2026-04-28
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+- [web-ui] Show chat status badges in visible toolbar row (#886)
+- [local-llm] On-demand model loading/unloading with idle timeout (#884)
+- Make telegram channel optional (#891)
+- Make discord and msteams channels optional (#899)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+- [gateway] Split skills service helpers into separate module
+- [gateway] Move skills impl out of mod.rs into service.rs
+
+
+### Removed
+- Remove needless return in skills toggle_bundled_skill
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+- [gateway] Handle bundled skill disable/enable via config (#877)
+- [gateway] Derive bundled skill enabled state from config (#878)
+- [tests] Increase watcher test timeout to accommodate debounce + FSEvents latency
+- [web-ui] Stop auto-enabling all skills on repository import (#882)
+- [skills] Store per-skill relative paths for marketplace repos (#883)
+- [tests] Mark flaky FSEvents watcher test as ignored
+- [tests] Use PollWatcher in watcher tests for reliable cross-platform behavior
+- Use if-let instead of single-arm match in poll watcher test
+- [security] Store voice API keys in credential store, not moltis.toml (#885)
+- [e2e] Update session tests for inline action buttons (#886 follow-up)
+- [tests] Add missing LocalLlmService trait methods to MockLocalLlm
+- Collapse nested if-let in key_store timestamp check
+- Derive Default for ModelLifecycleManager
+- [web-ui] Restore session name and inline rename in chat toolbar (#892)
+- Use ApplicationType::Web for non-loopback Matrix OIDC redirect URIs (#893)
+- Add TSX source to Tailwind content scanning
+- Show RPC error messages in skills UI and auto-trust on install (#897)
+- [config] Add mcp field to agent preset in schema map
+- [e2e] Update tests for identity→profile route rename
+- [e2e] Complete identity→profile rename in remaining tests
+- [e2e] Stabilize session rename test against onBlur race
+- [config] Use atomic writes to prevent moltis.toml corruption
+- [config] Use unique temp file for atomic writes
+- [config] Move tempfile from dev-dependencies to dependencies
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260426.05] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+- [web-ui] Show chat status badges in visible toolbar row (#886)
+- [local-llm] On-demand model loading/unloading with idle timeout (#884)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Removed
+- Remove needless return in skills toggle_bundled_skill
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+- [gateway] Handle bundled skill disable/enable via config (#877)
+- [gateway] Derive bundled skill enabled state from config (#878)
+- [tests] Increase watcher test timeout to accommodate debounce + FSEvents latency
+- [web-ui] Stop auto-enabling all skills on repository import (#882)
+- [skills] Store per-skill relative paths for marketplace repos (#883)
+- [tests] Mark flaky FSEvents watcher test as ignored
+- [tests] Use PollWatcher in watcher tests for reliable cross-platform behavior
+- Use if-let instead of single-arm match in poll watcher test
+- [security] Store voice API keys in credential store, not moltis.toml (#885)
+- [e2e] Update session tests for inline action buttons (#886 follow-up)
+- [tests] Add missing LocalLlmService trait methods to MockLocalLlm
+- Collapse nested if-let in key_store timestamp check
+- Derive Default for ModelLifecycleManager
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260426.04] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260426.03] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+
+## [20260426.02] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+
+## [20260426.01] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+
+## [20260425.09] - 2026-04-25
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+
+## [20260425.08] - 2026-04-25
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+
+## [20260425.07] - 2026-04-25
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+
+## [20260425.06] - 2026-04-25
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+
+## [20260425.05] - 2026-04-25
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+
+## [20260425.04] - 2026-04-25
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+
+## [20260425.03] - 2026-04-25
+### Fixed
+- [e2e] Stabilize flaky gemini, autoscroll, and settings-nav tests
+
+## [20260425.02] - 2026-04-25
+### Fixed
+- [ci] Allow held NCCL packages to be upgraded
+
+## [20260425.01] - 2026-04-25
+### Fixed
+- [ci] Add NCCL to build deps and fix flaky tests
+
+## [20260424.09] - 2026-04-24
+### Fixed
+- Replace expect() with let-else in splitter tests
+- [benchmarks] Update code_index bench to use free-function chunker API
+
+## [20260424.08] - 2026-04-24
+
+## [20260424.07] - 2026-04-24
+### Fixed
+- Replace unwrap() with expect() in splitter tests
+
+## [20260424.06] - 2026-04-24
+### Fixed
+- Remove needless Ok wrapper in refresh_qmd_index
+
+## [20260424.05] - 2026-04-24
+
+## [20260424.04] - 2026-04-24
+### Changed
+- [splitter] Extract moltis-splitter crate for AST-aware chunking (#791)
+
+
+### Fixed
+- [ci] Prevent releases.json from updating before GitHub release exists
+- Revert releases.json to latest published release (20260421.05)
+
+## [20260424.03] - 2026-04-24
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+- [signal] Add signal-cli channel (#841)
+- [home-assistant] Native Home Assistant integration crate (#827)
+- [web-ui] Smart auto-scroll for chat messages (#846)
+- [projects] Add code_index_enabled toggle to project settings (#837)
+- [web] Add push-to-talk, VAD continuous listening, and voice settings (#303)
+- [config] Layered config with defaults.toml and override-only user config (#864)
+- [discord] Channel name pattern filtering and per-pattern overrides (#865)
+- [config] Add default sub-agent presets (#844)
+- [config] Add config compact command and auto-compact on startup
+- [skills] MCP server management skill and post-install recipes (#840)
+
+
+### Changed
+- [providers] Split openai_compat tests into submodules
+- [config] Split loader tests into submodules (file-size limit)
+- [gateway] Extract NoopSkillsService into services/skills.rs (file-size limit)
+
+
+### Removed
+- Remove set -e from codesign-debug recipe that breaks just test
+- [web] Remove stale accountId assertion from signal channel E2E test
+- [ui] Wire up project combo dropdown in chat header (#847)
+- [config] Remove unused imports from test submodule
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+- [mcp] Show re-auth button when OAuth server needs re-authentication (#852)
+- [sandbox] Skip sysfs tmpfs mounts for missing paths (ARM/Raspberry Pi) (#853)
+- [prompt] Move datetime from system message to user content for KV cache stability (#855)
+- [providers] Deep-merge properties in schema union collapse, strip redundant boolean enum (#856)
+- [channels] Update ALL variant count for Signal channel type
+- [web] Align signal channel E2E test with actual modal text
+- [web] Stabilize flaky E2E tests
+- Enforce correct date in silent memory turn daily log filenames (#859)
+- [macos] Configure release signing and notarization (#842)
+- [web] Add vault-sealed banner to main app (#839)
+- [skills] Materialize bundled skill scripts to disk for execution (#861)
+- [web] Biome formatting and i18n parity for projects page
+- [config] Derive Default for HomeAssistantConfig and collapse nested if
+- [config] Allow unwrap in code_index tests
+- [home-assistant] Clippy collapsible-if and field-reassign-with-default
+- [benchmarks] Add missing deps for code_index bench
+- [code-index] Replace redundant closure with PathBuf::from
+- Repair code-index compilation errors in gateway and benchmarks
+- Resolve remaining clippy errors from code-index feature
+- [providers] Strip null from enum arrays for Fireworks AI (#862)
+- [web] Repair chat-autoscroll and projects E2E tests
+- [benchmarks] Wire qmd feature to moltis-qmd dep for --all-features CI
+- [ci] Explicitly set draft: false on release upload to prevent orphaned drafts
+- [agents] Add missing mode field to PromptRuntimeContext in tests
+- [gateway] Collapse nested if for clippy
+- [ctl] Clippy unnecessary_lazy_evaluations
+- [graphql] Add missing SkillsService trait methods to MockSkills
+- [gateway] Collapse nested if for clippy
+
+## [20260424.02] - 2026-04-24
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+- [signal] Add signal-cli channel (#841)
+- [home-assistant] Native Home Assistant integration crate (#827)
+- [web-ui] Smart auto-scroll for chat messages (#846)
+- [projects] Add code_index_enabled toggle to project settings (#837)
+
+
+### Changed
+- [providers] Split openai_compat tests into submodules
+
+
+### Removed
+- Remove set -e from codesign-debug recipe that breaks just test
+- [web] Remove stale accountId assertion from signal channel E2E test
+- [ui] Wire up project combo dropdown in chat header (#847)
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+- [mcp] Show re-auth button when OAuth server needs re-authentication (#852)
+- [sandbox] Skip sysfs tmpfs mounts for missing paths (ARM/Raspberry Pi) (#853)
+- [prompt] Move datetime from system message to user content for KV cache stability (#855)
+- [providers] Deep-merge properties in schema union collapse, strip redundant boolean enum (#856)
+- [channels] Update ALL variant count for Signal channel type
+- [web] Align signal channel E2E test with actual modal text
+- [web] Stabilize flaky E2E tests
+- Enforce correct date in silent memory turn daily log filenames (#859)
+- [macos] Configure release signing and notarization (#842)
+- [web] Add vault-sealed banner to main app (#839)
+- [skills] Materialize bundled skill scripts to disk for execution (#861)
+- [web] Biome formatting and i18n parity for projects page
+- [config] Derive Default for HomeAssistantConfig and collapse nested if
+- [config] Allow unwrap in code_index tests
+- [home-assistant] Clippy collapsible-if and field-reassign-with-default
+- [benchmarks] Add missing deps for code_index bench
+- [code-index] Replace redundant closure with PathBuf::from
+- Repair code-index compilation errors in gateway and benchmarks
+- Resolve remaining clippy errors from code-index feature
+- [providers] Strip null from enum arrays for Fireworks AI (#862)
+- [web] Repair chat-autoscroll and projects E2E tests
+- [benchmarks] Wire qmd feature to moltis-qmd dep for --all-features CI
+
+## [20260424.01] - 2026-04-24
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+- [signal] Add signal-cli channel (#841)
+
+
+### Changed
+- [providers] Split openai_compat tests into submodules
+
+
+### Removed
+- Remove set -e from codesign-debug recipe that breaks just test
+- [web] Remove stale accountId assertion from signal channel E2E test
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+- [mcp] Show re-auth button when OAuth server needs re-authentication (#852)
+- [sandbox] Skip sysfs tmpfs mounts for missing paths (ARM/Raspberry Pi) (#853)
+- [prompt] Move datetime from system message to user content for KV cache stability (#855)
+- [providers] Deep-merge properties in schema union collapse, strip redundant boolean enum (#856)
+- [channels] Update ALL variant count for Signal channel type
+
+## [20260423.01] - 2026-04-23
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+
+## [20260422.01] - 2026-04-22
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+
+## [20260421.05] - 2026-04-21
+### Fixed
+- [code-index] Use discover_opts with permissive trust for gix
+- [web] Render inline markdown in table cells
+- [code-index] Set required_trust to Reduced for gix discovery
+- [code-index] Use struct init for clippy field_reassign_with_default
+- [code-index] Use open_opts with forced Trust::Full for gix
+- [code-index] Skip git-dependent tests when .git is absent
+- [telegram] Infer MIME from filename when Telegram sends octet-stream (#819)
+- [ci] Install git before checkout in CUDA containers
+
+## [20260421.04] - 2026-04-21
+### Fixed
+- [ci] Make safe.directory step non-fatal when git is absent
+
+## [20260421.03] - 2026-04-21
+### Fixed
+- [ci] Restore original step order, fix gix open, revert npm flag
+
+## [20260421.02] - 2026-04-21
+### Fixed
+- [ci] Gix safe.directory, read_ops file_path regression, npm --ignore-scripts
+- [tools] Empty file_path falls through to read_primary, whitespace rejected
+
+## [20260421.01] - 2026-04-21
+### Added
+- [channels] Centralized command registry for all channels (#794)
+- Gemini thought_signature round-tripping and schema validation fixes (#795)
+- Self-improving agent loop — skills, memory lifecycle, deployment (#803)
+- [web] Add GitHub Issues and Discussions links with count badges (#806)
+- [sandbox] Install Node.js 22 LTS via NodeSource (#807)
+- [web] Render markdown as HTML in chat messages (#808)
+- [skills] Bundle 101 default skills with category UI and format fallback (#797)
+
+
+### Changed
+- [tools] Split skill_tools.rs into submodules
+
+
+### Fixed
+- [ci] Add safe.directory for container jobs (gix ownership check)
+- [slack] Strip leading slash from commands before gateway dispatch (#804)
+- [mcp] Implement legacy SSE transport for endpoint discovery (#805)
+- [ci] Biome formatting and file size allowlist
+- [sandbox] Verify image in Podman store after BuildKit build (#811)
+- [providers] Disable strict tools for Fireworks Kimi router (#812)
+- [ci] Npm --ignore-scripts and git install ordering
+- [ci] Pass safe.directory to gix via env vars in rust-ci container
+
+## [20260420.02] - 2026-04-20
+### Fixed
+- [ci] Address main rust failures
+
+## [20260420.01] - 2026-04-20
+### Fixed
+- [ci] Handle .ts locale files in i18n-check on Node <22
+
+## [20260419.01] - 2026-04-19
+### Added
+- [code-index] Add code indexing crate with builtin SQLite+FTS5 backend (#771)
+- [config] Add server.external_url for reverse proxy WebAuthn (#785)
+
+
+### Changed
+- Add thiserror Error types to 8 library crates (#792)
+
+
+### Fixed
+- [task_list] List all tasks by default and add list_lists action (#779)
+- [sandbox] Add observability and prevent repeated package provisioning (#784)
+
+## [20260417.02] - 2026-04-17
+### Added
+- [nostr] Add NIP-59 Gift Wrap support for private DMs (#763)
+- [matrix] Add OIDC authentication via Matrix Authentication Service (#730)
+
+
+### Removed
+- [tests] Remove hardcoded secret fixtures (#768)
+
+
+### Fixed
+- [providers] Strip $schema recursively and downgrade fallback log level (#762)
+- [matrix] Retry sync loop on transient connection failures (#761)
+- [e2e] Stabilize archived-sessions and nostr channel tests
+- [sandbox] Skip sysfs tmpfs overlays on Podman (#765)
+- [slack] Register /commands HTTP endpoint for slash commands (#767)
+- [matrix] Restore main CI after OIDC changes
+
+## [20260417.01] - 2026-04-17
+### Added
+- [web] Add reasoning effort toggle to chat toolbar (#750)
+
+
+### Fixed
+- [providers] Sanitize MCP tool schemas regardless of JSON Schema draft (#746)
+- [node-host] Install rustls CryptoProvider before wss:// connections (#749)
+- [providers] Prune orphaned required entries from tool schemas (#751)
+- [web] Satisfy biome and format gates
+- [testing] Avoid CUDA features in Darwin test recipes
+- [web] Stabilize session delete flow
+- [ci] Harden linux dependency installer
+
+## [20260416.02] - 2026-04-16
+### Added
+- [providers] Configurable context windows + oldest-first compaction (#737)
+
+
+### Changed
+- [tests] Split oversized Rust test modules
+
+
+### Fixed
+- [ci] Repair MCP e2e and iOS chat event handling
+- [providers] Detect Grok 3/4 as reasoning-capable models (#741)
+- [nostr] Replace tokio RwLock with std RwLock to prevent panic (#742)
+- [providers] Restore type annotations stripped by schema canonicalization (#740)
+- [ci] Retry Linux dependency installs and align Darwin validation
+- [ci] Install openssh client in Linux build container
+
+## [20260415.01] - 2026-04-15
+### Added
+- Allow GUIDELINES.md file override for hardcoded tool guidelines
+- [channels] Add WhatsApp to default offered channels
+- [whatsapp] Auto-approve owner, set device name, wrap buttons
+- [whatsapp] Handle PairSuccess event for instant QR dismissal
+- [whatsapp] Make Account ID optional, default to "main"
+- [web] Add Slack channel to onboarding wizard
+
+
+### Changed
+- Clean up provider tests and onboarding UI
+- Move implementation code out of mod.rs and lib.rs (#731)
+
+
+### Removed
+- [web] Remove duplicate assets warn import
+
+
+### Fixed
+- [graphql] Make sessionKey required for all chat operations
+- [graphql] Address PR review — harden subscription filter and tests
+- [onboarding] Show version in server footer
+- [web] Prefer embedded assets over stale share dir
+- [chat] Preserve sender names in user messages
+- [providers] Address sender-name review feedback
+- Move return inside empty-guard in append_guidelines_section (PR 714 review)
+- [providers] Skip strict tool schemas for Google/Gemini via OpenRouter (#716)
+- [providers] Also detect googleapis.com URLs for non-strict tools
+- [providers] Collapse type arrays in strict mode patching (#716)
+- [whatsapp] Upgrade whatsapp-rust ecosystem 0.2 → 0.5
+- [whatsapp] Use time crate for timestamps, fix DashMap sync key ordering
+- [whatsapp] Add QR code polling fallback for pairing
+- [whatsapp] Skip duplicate account start, add QR polling e2e test
+- [whatsapp] Use res.payload not res.result for QR polling
+- [whatsapp] Render QR code as SVG in polling response
+- [whatsapp] Skip history sync on pairing
+- [whatsapp] Detect pairing completion via polling
+- [channels] Add missing useRef import in page-channels.js
+- [whatsapp] Set OS name to Moltis, add no-sync hints
+- [whatsapp] Fix mangled no-sync hints in onboarding view
+- [whatsapp] Auto-approve both PN and LID JIDs, add debug logging
+- [whatsapp] Fix QR code not displaying when Account ID is empty
+- [whatsapp] Instant pairing feedback and owner auto-approve
+- [whatsapp] Subscribe to channel events in onboarding WS
+- [whatsapp] Only auto-approve owner PN JID, not LID
+- [whatsapp] Use PN JID for self-chat replies instead of LID
+- [whatsapp] Show phone number in self-chat footer instead of LID
+- [channels] Don't drop channel_user WS broadcast
+- [whatsapp] Use bare phone number as self-chat session ID
+- [agents] Strip trailing stop tokens leaked by LLMs as content
+- [agents] Address PR review comments
+- [providers] Repair openai compat CI regressions (#722)
+- [agents] Collapse nested if per clippy collapsible_if lint
+- [web] Restore setup onboarding alias
+- [providers] Add null to enum arrays for nullable optional props (#724)
+- [mcp] Treat any HTTP response as alive in health check (#732) (#733)
+- [chat] Broadcast user_message event so API-sent messages appear in web UI (#734)
+
+## [20260414.02] - 2026-04-14
+### Changed
+- [node-exec] Merge node exec types into owners
+- [web] Remove prompt memory toolbar from chat header
+
+
+### Fixed
+- [web] Harden flaky e2e tests for cron delete and identity autosave
+- [sandbox] Mask /proc and /sys host metadata in Docker/Podman containers
+- [sandbox] Address PR review — strengthen test assertions
+- [channels] Use rand::RngExt for random_range after rand 0.10 upgrade
+- Update rand 0.10 imports across workspace
+- [onboarding] Surface local-llm and LM Studio in recommended providers
+- [auth] Update password minimum length strings from 8 to 12 characters
+- [slack] Bump slack-morphism to 2.20 to enable TLS for socket mode
+- Regenerate Cargo.lock for reqwest 0.13 and add query feature
+- [web] Restore clear button for main session modal (#671)
+
+## [20260414.01] - 2026-04-14
+### Changed
+- [node-exec] Merge node exec types into owners
+- [web] Remove prompt memory toolbar from chat header
+
+
+### Fixed
+- [web] Harden flaky e2e tests for cron delete and identity autosave
+- [sandbox] Mask /proc and /sys host metadata in Docker/Podman containers
+- [sandbox] Address PR review — strengthen test assertions
+- [channels] Use rand::RngExt for random_range after rand 0.10 upgrade
+- Update rand 0.10 imports across workspace
+- [onboarding] Surface local-llm and LM Studio in recommended providers
+- [auth] Update password minimum length strings from 8 to 12 characters
+
+## [20260413.06] - 2026-04-13
+### Fixed
+- [web] Gate openai live e2e server on api key
+
+## [20260413.05] - 2026-04-13
+### Added
+- [voice] Add local whisper web setup
+- [chat] Show cached input tokens
+
+
+### Changed
+- [providers] Normalize openai schemas with schema crates
+- [providers] Move schema normalization out of mod.rs
+- [chat] Unify usage propagation paths
+
+
+### Removed
+- [httpd] Remove unused route import
+- [httpd] Drop unused get import
+
+
+### Fixed
+- [providers] Sanitize openai tool schemas
+- [providers] Address PR review feedback
+- [providers] Keep openai compat module under file limit
+- [providers] Avoid expect in schema tests
+- [web] Restore nostr channel icons
+- [voice] Address PR review feedback
+- [chat] Satisfy clippy in cached token tests
+- [agents] Preserve streamed cache token usage
+- [openai] Add live e2e coverage and schema guard
+- [sessions] Wire archived sessions through gateway and web ui
+- [sessions] Address archived review feedback
+- [sessions] Allow archiving non-current channel chats
+- [sessions] Preserve orphaned search hits
+- [sessions] Allow unarchiving active channel chats
+
+## [20260413.04] - 2026-04-13
+### Changed
+- Split oversized rust modules
+- Split remaining oversized rust modules
+- Remove replaced module entrypoints
+
+
+### Removed
+- [agents] Remove duplicate tool arg match arm
+
+
+### Fixed
+- [providers] Preserve native tool arg types
+- [gateway] Repair split module blockers
+- Restore post-merge validation
+- Repair local lint regressions
+- [chat] Clean up split validation fallout
+- [gateway] Remove split warning debt
+- [httpd] Restore split module boundaries
+- [httpd] Drop stale server re-export
+- [httpd] Repair test and bridge lint fallout
+- [httpd] Restore vault test imports
+- [telegram] Mark byte-truncated documents
+- [httpd] Repair ngrok server split
+- [provider-setup] Restore ollama validation payload
+- [gateway] Drop duplicate broadcaster default impl
+- [gateway] Remove stale mcp service doc comment
+- [httpd] Move runtime-only route import
+- [tools] Scope apple sandbox helpers to macos
+- [tools] Restore sandbox test imports
+- [ci] Restore main build stability
+
+## [20260413.03] - 2026-04-13
+### Fixed
+- [gateway] Resolve release CI regressions
+
+## [20260413.02] - 2026-04-13
+### Added
+- [voice] Add base_url config for OpenAI TTS and Whisper STT providers
+
+
+### Changed
+- [browser] Type browserless API version as enum
+- [nodes] Extract core types and constants to dedicated crate
+- [nodes] Move pure ssh and env helper functions to node-exec-types
+- [mcp] Extract config parsing functions to moltis-mcp
+- [mcp] Extract MCP-agent tool bridge to dedicated crate
+- Group lock-free broadcast state into Broadcaster struct
+- [tools] Unify cron schema field helper
+
+
+### Fixed
+- [telegram] Persist inbound documents
+- [review] Make inbound document replay robust
+- [browser] Add Browserless v2 websocket fallback support
+- [browser] Change log level from warn to debug for sandboxed browser websocket connection failures
+- Complete MCP bridge extraction and address Greptile review
+- [broadcast] Make seq private, add #[must_use] to next_seq, add tests
+- [chat] Serialize data dir override tests
+- [voice] Address PR review feedback
+- [tools] Hide wasm internals and relax cron schema
+- [tools] Simplify cron schema unions
+- [agents] Preserve legacy tool-call compatibility
+
+
+### Security
+- [nodes] Define NodeInfoProvider trait for decoupling
+
+## [20260413.01] - 2026-04-13
+
+## [20260412.01] - 2026-04-12
+### Added
+- [discord] Handle inbound voice and image attachments
+- [hooks] Include channel provenance in payloads
+- [web] Add Projects section to Settings sidebar navigation
+- [tools] Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep)
+- [tools] Typed error taxonomy for Read (not_found / permission_denied / too_large / not_regular_file)
+- [tools] Phase 1 polish (byte cap, session key, fs-tools feature, contract tests)
+- [tools] CRLF-tolerant Edit recovery for fs tools
+- [tools] Per-session FsState with must-read-before-write + re-read loop detection
+- [tools] [tools.fs] config + path allow/deny policy (phase 4)
+- [tools] Checkpoint_before_mutation + binary base64 + respect_gitignore + docs page
+- [tools] Phase 2 sandbox bridge for Read/Write/Edit/MultiEdit/Glob
+- [tools] Phase 2b — Grep sandbox routing
+- [tools] Phase 3c — adaptive Read paging coupled to context window
+- [chat] Deterministic compaction with budget discipline
+- [chat] Pluggable compaction modes with config + docs
+- [chat] Implement recency_preserving compaction mode
+- [chat] Implement structured compaction mode
+- [chat] Surface mode + token usage in compaction broadcasts
+- [chat,web] Surface compaction mode + tokens in UI and channels
+- [compaction] Add chat.compaction.show_settings_hint opt-out
+- [tools] Claude Code compat — BOM strip, binary extensions, smart quotes, mtime tracking
+- [tools] PDF text extraction in Read tool
+- [tools] Image dispatch in Read + Grep context alias + Edit param aliases
+- [memory] Add prompt memory styles
+- [memory] Extend config surfaces
+- [provider-setup] Remove automatic model probe, add manual Test button
+- [tools] Auto-page reads and serialize fs mutations
+- [tools] Expose read continuation offsets
+- [tools] Surface sandbox scan truncation
+- [tools] Wire layered tool policy into runtime with per-provider, per-agent, per-channel, and per-sender support
+- [tools] Add sandbox tools_policy as layer 6 in policy resolution
+- [channels] Add Nostr DM channel support
+- [channels] Add Nostr web UI, E2E tests, and documentation
+- [channels] Add Nostr to onboarding flow
+- [nostr] Add metrics, NIP-44 decryption, and integration tests
+- [website] Add slack, matrix, and nostr channels
+- [website] Add Nostr channel SVG icon
+- [chat] Add summary budget discipline for compaction
+- [website] Add community quote from discussion #680 and make quotes horizontally scrollable
+- [web] Add option to disable terminal in Web UI
+- [auth] Add brute-force protection with IP ban and account lockout
+
+
+### Changed
+- [chat] Align multimodal rewrite updates
+- [telegram] Extract STT setup hint constant
+- [discord] Reuse inbound downloader per handler
+- [chat] Simplify deterministic compaction module
+- [chat] Split compaction_run into per-strategy submodules
+- [tools] Use ripgrep crates for fs grep
+- [tools] Split read.rs into read/ module with pdf.rs and image.rs
+- [tools] Centralize sandbox filesystem access
+- [media] Sniff mime and expose sandbox file ops
+- [tools] Add native host sandbox file ops
+- [tools] Add container-aware fs transports
+- [tools] Stream OCI file transfers
+- [tools] Stream OCI reads from cp
+
+
+### Fixed
+- [agents] Dispatch ToolResultPersist hooks
+- [agents] Sanitize ToolResultPersist tool names
+- [agents] Handle Z.AI text tool calls and dedupe providers
+- [gateway] Address PR comment follow-ups
+- [hooks] Honor MessageReceived actions
+- [chat] Harden MessageReceived hook handling
+- [telegram] Avoid placeholder voice fallbacks
+- [telegram] Preserve caption when STT unavailable
+- [discord] Address review feedback
+- [discord] Log stt-unavailable voice notes
+- [common] Block mapped ipv6 ssrf bypass
+- [hooks] Address review feedback
+- [chat] Warn on invalid channel bindings
+- [hooks] Address remaining provenance feedback
+- [agents] Warn on invalid hook channel context
+- [plugins] Refresh hook docs and logger timestamps
+- [common] Update message received fixtures
+- [web] Store container ref in teardownProjects, remove unused settings_projects route
+- [tools] Fs tools require absolute paths, add workspace_root for Glob/Grep
+- [agents] Warn on tool name collision in ToolRegistry::register*
+- [compaction] Address code review issues #1-7
+- [compaction] Address Greptile PR #653 review comments
+- [chat] Correct recent_messages_preserved flag in compaction
+- [compaction] Strip preamble and directive from re-compaction extraction
+- [compaction] Invert candidate order so bullets outlive plain lines
+- [compaction] Protect summary tags from budget-pressure dropping
+- [compaction] Address PR #653 review findings
+- [chat] Memory-file summary lookup across all compaction modes
+- [compaction] Extract_summary_body picks newest summary on iterative re-compaction
+- [chat] Wire chat.compaction.threshold_percent into auto-compact trigger
+- [compaction] Address Greptile round-2 review on #653 (P1 + P2)
+- [web] Track compacting status message per-session to avoid removing compact card
+- [compaction] Restore 0.95 default threshold + remove dead code
+- [chat] Close compact/store race and tag auto_compact broadcast paths
+- [compaction] Address Greptile round-5 P2 findings on #653
+- [tools] Enforce exec allowlist when approval_mode is off
+- [tools] Deny dangerous commands in off mode instead of hanging
+- [tools] Warn when safe-bin bypasses explicit allowlist in off mode
+- [config] List tools.policy.profile in preset silent-policy warning
+- [tools] Address filesystem review comments
+- [tools] Address Greptile round-2 findings (max_read_bytes wiring, sandbox note_fs_mutation, truncated semantics)
+- [tools] Address Greptile round-3 findings (Grep policy, must-read sandbox, Glob root deny)
+- [tools] Address Greptile round-4 findings (binary read tracking, sandbox Write new-file)
+- [tools] Sandbox Grep post-filters results through path policy
+- [tools] PDF/image dispatch now enforces path policy, sandbox guard, and FsState recording
+- [memory] Tighten qmd and rpc validation
+- [chat] Honor [skills] enabled=false at runtime
+- [chat] Replace test Mutex<()> with Semaphore
+- [chat] Reuse existing config in context skill discovery
+- [httpd] Redirect remote setup traffic to onboarding wizard
+- [agents] Detect and break tool-call reflex loops (#658)
+- [agents] Address Greptile review feedback on #658
+- [agents] Loop detector handles mixed-outcome batches correctly (#658)
+- [agents] Treat success=false without error field as failure (#658)
+- [e2e] Wait for Preact render flush in matrix senders test
+- [web] Show Clear button for main session in modal
+- [memory] Add missing runtime module
+- [web] Remove unused VALIDATION_HINT_RUNNING_TEXT, clear stale test results
+- [gateway] Unify config-override test lock to prevent flaky test
+- [tools] Smart-quote recovery preserves file content + sandbox grep uses PCRE
+- [tools] Scope tar helper to tests
+- [tools] Preserve loop warnings for auto-paged reads
+- [chat] Populate sender_id in channel binding and runtime context
+- [chat] Read sandbox state from runtime context in PolicyContext
+- [agents] Add missing channel_sender_id field in test
+- [tools] Use struct init instead of field reassign in test
+- [tools] Expand profile field in provider, sender, and sandbox policy layers
+- [httpd] Start stored channels on vault unseal
+- [httpd] Add missing continue in unsupported channel type guard
+- [config] Revert unintended matrix named field promotion
+- [nostr] Fix integration test DM round-trip reliability
+- [nostr] Prevent panic on UTF-8 boundary when truncating large DMs
+- [website] Use official Nostr protocol logo (CC0, mbarulli/nostr-logo)
+- [web] Preserve Nostr OTP settings on edit modal save
+- [nostr] Resolve clippy collapsible_match and len_without_is_empty
+- [nostr] Implement OTP challenge initiation and DM delivery
+- [nostr] Implement OTP verification path for code replies
+- [nostr] Use std::sync::RwLock for accounts map to avoid blocking panic
+- [web] Remove channel-error class from conditionally-rendered error divs
+- [chat] Correct budget accounting bugs in compress_summary
+- [chat] Address greptile review feedback (greploop iteration 1)
+- [channels] Finish discussion 425 follow-ups
+- [channels] Address review feedback
+- [channels] Harden channel command authorization and session scoping
+- [gateway] Truncate approval previews safely
+- [channels] Chunk unicode safely
+- [chat] Isolate sqlite memory tests
+- [web] Stabilize mocked channel refresh
+- [channels] Address greptile review feedback
+- [channels] Truncate command in approve/deny confirmation messages
+- [auth] Second-pass security hardening
+- [web] Address PR review comments
+- [config] Preserve TOML section order on web UI save
+- Apply local fixes
+
+
+### Security
+- [config] Warn when preset tool policies are set but tools.policy is empty
+- [nostr] Address PR review comments
+- [auth] Harden remote access with 9 security improvements
+
+## [20260410.01] - 2026-04-10
+### Added
+- [oauth] Log loopback redirect URI rewrites at debug level
+- [skills] Ship native read_skill tool
+- [skills] Harden read_skill with assets/, binary files, and metadata surfacing
+
+
+### Changed
+- [oauth] Share loopback redirect normalizer and apply to provider setup
+- [oauth] Eliminate dead branches in normalize_loopback_redirect
+
+
+### Removed
+- [web] Stabilize node selector and fork delete e2e
+
+
+### Fixed
+- [gateway] Dcg-guard PATH augmentation and loud missing-dcg warning
+- [gateway] Refresh stale dcg-guard files and use async subprocess
+- [gateway] Dcg-guard HOME fallback and unconditional startup log
+- [agents] Suppress auto-continue after substantive final answer
+- [agents] Address review feedback on auto-continue fix
+- [mcp] Normalize loopback redirect URIs to http for OAuth registration
+- [provider-setup] Normalize pre-loaded loopback redirect URIs
+- [skills] Address Greptile review feedback on read_skill
+- [skills] Address greptile review feedback (greploop iteration 2)
+- [skills] Cap skill body size in read_primary (greploop iteration 3)
+- [skills] Per-subdir sidecar cap + data_dir-scoped discoverer
+- [voice] Honor whisper.model and whisper.language in STT factory
+
+
+### Security
+- [hooks] Pin dcg install to tag and verify checksum
+
+## [20260409.04] - 2026-04-09
+### Added
+- [providers] Add Alibaba Cloud Coding Plan provider
+
+
+### Fixed
+- [ci] Avoid dynamic provider secrets
+
+## [20260409.03] - 2026-04-09
+### Removed
+- Remove redundant http client fallback check
+
+
+### Fixed
+- [common] Ensure User-Agent survives all HTTP client fallback paths
+- [test] Address PR review — clarify comment and assert no Error events
+- [crons] Persist schedule field values across modal re-renders
+- [crons] Read schedule fields as snake_case from server responses
+- [providers] Deliver MiniMax system prompt via first user message
+- [tests] Use streaming probe for OpenAI integration tests
+- [providers] Bump GPT-5 probe output cap to 16 tokens
+- [tests] Use Secret<T> for API keys in model discovery tests
+- [providers] Handle multimodal content in MiniMax system prompt rewrite
+
+## [20260409.02] - 2026-04-09
+### Added
+- [msteams] Comprehensive Teams channel implementation
+- [providers] Add Gemini 3.x models to catalog and update capability detection
+- [providers] Add ModelCapabilities struct to ModelInfo and DiscoveredModel
+- [chat] Use ModelCapabilities in API responses instead of provider lookups
+
+
+### Fixed
+- [web] Integrate Tailscale Funnel into Teams channel setup
+- [web] Remove 'Requires public URL' badge from Teams card
+- [web] Simplify Teams onboarding now that Remote Access step exists
+- [msteams] Address PR review feedback
+- [msteams] Use Graph token for reactions and thread context
+- [msteams] Prevent streaming retry storm and URL injection in search
+- [web] Disambiguate OAuth E2E selector for model picker
+- [web] Keep new chats at top of sidebar
+- Auto-allow direnv in superset worktree setup
+- Load BOOT.md per-session via system prompt instead of broken hook (#594)
+- Remove stale boot-md assertion from discover_hooks test
+- Update model count assertion for gemini-3 reasoning variants
+- [installer] Address PR review feedback
+- [browser] Include Podman in container availability check
+- [browser] Update stale comment to include Podman
+- [gateway] Narrow skill and memory watch roots
+- [gateway] Avoid blocking skill watcher refresh
+- [providers] Extract MiniMax system messages to top-level field
+- [providers] Warn on non-string MiniMax system message content
+- [providers] Add PartialEq/Eq to ModelCapabilities, use infer() in tests
+- [providers] Narrow gemma exclusion to gemma-3n- only
+- [agents] Surface workspace prompt truncation
+- [gateway] Address review feedback
+- [gateway] Match workspace prompt normalization
+- [agents] Make workspace file truncation limit configurable (#593)
+- Replace magic constant with ChatConfig::default() fallback
+- Eliminate double chars().count() and add zero-value validation
+- Report truncation when max_chars is zero
+- Remove duplicate workspace_file_max_chars key in schema map
+- [tools] Wire ExecConfig timeout and max_output_bytes to ExecTool
+- [tools] Make timeout schema description reflect configured default
+- [providers] Resolve 404 when selecting Ollama model in web UI
+- [web] Preserve ollama pull hint in humanizeProbeError
+- [providers] Forward auth header in Ollama native probe fallback
+- Align auth middleware tests with gateway state
+
+## [20260409.01] - 2026-04-09
+### Added
+- [matrix] Add slash command support
+- [models] Make model detection opt-in and add stop button
+
+
+### Fixed
+- [matrix] Match help command by exact name, not prefix
+- [models] Abort probe tasks on cancel, show feedback, await RPC
+- [tls] Include lan bind SANs in auto-generated certs
+- [tls] Address PR review feedback
+- [agents] Use system message for auto-continue nudge instead of user message
+- [common] Add default User-Agent header to shared HTTP client
+- [common] Use MOLTIS_VERSION for default user-agent and apply headers in apply_proxy
+- [agents] Keep auto-continue nudge as user message
+- [provider-setup] Include lmstudio in known_providers and replace ollama name checks
+- [provider-setup] Add dedicated local_only field to KnownProvider
+- Harden superset setup envrc handling
+
+## [20260408.01] - 2026-04-08
+### Added
+- [agents] Auto-continue when model stops mid-task + max iterations UX
+- [config] Make auto-continue tool-call threshold configurable
+
+
+### Fixed
+- Address PR review — translatable continue message, document tool-call threshold
+- Guard auto-continue against min_tool_calls=0 usize tautology
+- [minimax] Restore system prompts and null tool args
+- [providers] Discover live anthropic models
+- [providers] Mark anthropic recommendations globally
+
+## [20260407.01] - 2026-04-07
+### Added
+- [webhooks] Add generic webhook ingress for triggering AI agents
+- [web] Link to Hoppscotch for webhook testing
+- [web] Add CORS to webhook ingress and copy-curl button
+- [website] Add Webhooks to landing page features
+
+
+### Changed
+- [web] Extract webhooks nav icon to external SVG file
+
+
+### Fixed
+- [cli] Report release version in --version output
+- [providers] Propagate cache tokens in Responses API and custom providers
+- [providers] Read cached_tokens from input_tokens_details in non-streaming Responses SSE
+- [agents] Match provider-specific context window error strings
+- [chat] Honor public sessionKey in GraphQL flows
+- [chat] Address PR review — safer mock assertions and precedence test
+- [web] Use globe icon for webhooks settings nav
+- [web] Use ModelSelect and ComboSelect for webhook agent/model fields
+- [web] Use public URL (ngrok/tailscale) for webhook endpoint display
+- Improve webhook test script with verbose output and TLS support
+- Use OnceLock for webhook state fields instead of Arc::get_mut
+- [web] Show Hoppscotch link below webhook list, not only in empty state
+- [web] Match webhooks layout to cron/sandbox and fix nav icon
+- [web] Add missing space before Hoppscotch link
+- [web] Constrain webhooks list width with max-w-form
+- [web] Revert max-w-form, keep webhooks list full width
+- [web] Add webhooks icon to settings nav via components.css
+- [web] Recommend curl and Hoppscotch desktop for webhook testing
+- Use HeaderValue::from_static for CORS headers, remove warning
+- [web] Improve webhook test command button and footer text
+- Don't dedup generic webhooks by body hash, rebuild i18n
+- Address PR review comments
+- [security] Redact auth secrets from webhook API responses
+- Drain unprocessed webhook deliveries on worker startup
+- Include 'processing' deliveries in crash-recovery drain
+- Gitlab_token auth config key mismatch, add regression tests
+- [security] Fail closed on non-parseable Stripe signature timestamp
+- Enable foreign_keys pragma and explicit cascade delete
+- [ci] Restore CHANGELOG.md to main state (changelog guard)
+- Forward agent_id to chat.send_sync in webhook worker
+- Enforce CIDR allowlist, set foreign_keys on pool options
+- [security] Gate forwarded headers on behind_proxy, fix PagerDuty multi-sig
+- Use ConnectInfo for direct IP, disable source_profile on edit
+- [webhooks] Harden webhook execution and secrets
+- Proactive audit — 6 issues found and fixed
+- Wrap cascade deletes in transactions to prevent partial data loss
+- Resolve settings nav CI regression
+
+
+### Security
+- Add webhooks feature documentation
+
+## [20260406.05] - 2026-04-06
+### Added
+- [openclaw-import] Convert non-default agents to spawn_agent presets
+
+
+### Fixed
+- [web] Allow session sidebar links to open in new tabs
+- [web] Tighten session sidebar link accessibility
+- [docker] Add missing default features to Dockerfile build
+- [docker] Use default features instead of explicit list
+
+## [20260406.04] - 2026-04-06
+### Added
+- [website] Add provider/channel pills section and update branding
+- [website] Add positioning, how-it-works, use cases, and community quote
+
+
+### Changed
+- [providers] Avoid quadratic SSE buffer copies
+- [providers] Align copilot stream error handling
+
+
+### Fixed
+- [providers] Route Copilot enterprise tokens via proxy endpoint (#352)
+- [providers] Address PR review comments on Copilot enterprise
+- [providers] Harden Copilot enterprise proxy security
+- [providers] Reject bare IP addresses in Copilot proxy-ep
+- [providers] Address Copilot enterprise review feedback
+- [providers] Stream enterprise copilot responses
+- [website] Crop MiniMax icon, grayscale raster icons, official GraphQL logo
+- [website] Add Discord source links to community quote
+- [website] Update LoC stats on security page
+- [website] Update LoC stats in all locale files
+- [website] Regenerate all locale files with new homepage sections
+- [website] Update i18n titles and regenerate all locale files
+- [website] Translate new homepage sections in all 9 locale files
+- [website] Translate remaining English strings in all locale files
+- [website] Localize injected nav tabs
+- [website] Address greptile review feedback
+- [website] Sync i18n builder with locale pages
+- [website] Correct i18n generator keys
+
+
+### Security
+- [providers] Redact CopilotTokenResponse token in Debug output
+
+## [20260406.03] - 2026-04-06
+### Fixed
+- [web] Restore all-features build
+
+## [20260406.02] - 2026-04-06
+### Fixed
+- [web] Map config reload errors explicitly
+
+## [20260406.01] - 2026-04-06
+### Added
+- [cron] Auto-clean orphaned sessions and prune sandbox containers
+
+
+### Fixed
+- [swift-bridge] Await embedded httpd shutdown
+- [cron] Use time crate for retention math and fix named-session guard
+- [sandbox] Include remove_image_override in cleanup_session
+- [cron] Skip pruning cycle when session key lookup fails
+- [web] Reload offered channels from config
+- [ci] Await channel preload in settings e2e
+
+## [20260405.06] - 2026-04-05
+### Security
+- Add GitHub artifact attestations to release workflow
+
+## [20260405.05] - 2026-04-05
+
+## [20260405.04] - 2026-04-05
+
+## [20260405.03] - 2026-04-05
+### Fixed
+- [web] Restore matrix onboarding icon
+
+## [20260405.02] - 2026-04-05
+### Added
+- [providers] Add zai-code provider for Z.AI Coding plan
+- [tools] Add cross-session search recall
+- [tools] Add automatic edit checkpoints
+- [projects] Harden context loading
+- [skills] Add portable bundle quarantine flow
+- [exec] Add ssh remote routing
+- [web] Add skills bundle ui and ssh target visibility
+- [web] Clarify ssh execution targets
+- [ssh] Add managed deploy keys and targets
+- [nodes] Add remote exec doctor panel
+- [ssh] Harden managed targets and host pinning
+- [nodes] Repair active ssh host pins from doctor
+- [ssh] Add actionable runtime failure hints
+- [web] Add tools overview to settings
+- [web] Allow renaming channel-bound sessions
+- [security] Add GPG signing for release artifacts
+- [security] Add release verification script
+- [gateway] Add channel settings agent tool
+- [providers] Collapse model lists, hide legacy models, add recommended flag
+- [web] Add live remote access settings
+- [remote] Improve onboarding public access flow
+- [tools] Add Firecrawl integration for web scraping and search
+- [web] Add recommended provider tier in onboarding and docs guide
+- [config] Add upstream_proxy for application-level HTTP proxy support
+- [channels] Add Matrix channel integration
+- [matrix] Complete channel parity and web ui coverage
+- [matrix] Add encrypted chat support and vault-backed channel secrets
+- [matrix] Add account ownership mode
+- [matrix] Harden ownership recovery flow
+- [matrix] Add generic channel location fallback
+
+
+### Changed
+- [ssh] Use secrecy for imported key material
+- Replace vendored sqlx-sqlite with git dependency
+
+
+### Removed
+- [web] Remove unused gon import
+
+
+### Fixed
+- [providers] Address PR review comments for zai-code
+- [vault] Allow unencrypted session history while sealed
+- [vault] Address PR review comments
+- [security] Address PR review feedback
+- [ssh] Tighten timeout and warning handling
+- [ssh] Address latest review follow-ups
+- [gateway] Collapse legacy ssh node lookup
+- [auth] Guard ssh key deletion race
+- [httpd] Satisfy ssh route lint
+- [ssh] Reject option-like targets
+- [ssh] Hide import passphrases from argv
+- [ssh] Quote known hosts path
+- [web] Use browser location port for node join URL
+- [web] Guard e2e assertion for default-port case
+- [e2e] Use sidebar selector for sealed-vault session visibility test
+- [web] Fall back to getRandomValues for session UUID on plain HTTP
+- [web] Address PR review feedback
+- [providers] Speed up model probes
+- [security] Address PR review feedback for GPG signing
+- [security] Prevent gpg --import grep from aborting verify script
+- [security] Show GPG signer identity and failure diagnostics
+- [security] Pin GPG key fingerprint to prevent TOFU attacks
+- [voice] Surface elevenlabs stt failures
+- [gateway] Address channel settings PR feedback
+- [voice] Handle empty stt transcripts
+- [web] Show unsupported model reason inline instead of tooltip-only
+- [web] Show probe error inline in model selector cards
+- [web] Show probe error inline in preferred models selector
+- [web] Preserve server error message for model probes
+- [web] Sort and collapse onboarding model selector like settings
+- [web] Sort models by version number when no date available
+- [httpd] Harden ngrok controller lifecycle
+- [httpd] Retain ngrok controller after startup
+- [ngrok] Harden loopback tunnel handling
+- [ngrok] Avoid fatal startup on tunnel errors
+- [ngrok] Clarify defaults and warnings
+- Update local setup and ElevenLabs error logging
+- [web] Localize toggle button in onboarding and fix JSDoc comment
+- [chat] Use relative timestamps in created_at test
+- [tools] Address firecrawl PR review feedback
+- [tools] Resolve firecrawl web_search registration and timeout race
+- [agents] Stabilize prompt cache and compact tool results
+- [web] Stabilize send-document e2e test
+- [mcp] Address PR review comments for streamable HTTP transport
+- [mcp] Update template docs and log messages for streamable HTTP
+- [providers] Default to vision support for unknown models (#556)
+- [providers] Also exempt gpt-4-vision from denylist
+- [providers] Surface real error on provider probe failure
+- [web] Apply serverMessage pattern to validateProviderConnection
+- [web] Allow multi-model selection during provider setup
+- [web] Scope Select All to visible models, check save_models response
+- [config] Wrap upstream_proxy in Secret<String> and redact credentials in logs
+- [proxy] Use rfind for @ redaction, warn on parse failure, document Slack gap
+- [providers] Rediscover models from /v1/models before probing
+- [providers] Address PR review — move Ollama probes outside lock, use runtime env
+- [providers] Check total model count in RediscoveryResult::is_empty
+- [matrix] Address review feedback
+- [matrix] Address latest review feedback
+- [matrix] Set reply thread ids after main merge
+- [matrix] Gate DM invites through dm_policy instead of room_policy
+- [matrix] Gate poll responses through access control
+- [voice] Use inspect_err in elevenlabs stt
+- [web] Preserve @ in matrix allowlists
+- [matrix] Unify otp approval flow and sender visibility
+- [web] Default matrix setup to password auth
+- [matrix] Improve ownership recovery UX
+- [graphql] Implement retry ownership in test mock
+- [e2e] Correct username assertion in matrix senders test
+- [web] Satisfy biome hook and lint checks
+
+## [20260328.03] - 2026-03-28
+### Fixed
+- [telegram] Route forum-topic replies to correct thread
+- [telegram] Restore raw chat_id in logs, add thread_id to tracing
+- [providers] Increase model probe timeout for local LLM servers
+- [providers] Address PR review feedback
+
+## [20260328.02] - 2026-03-28
+### Added
+- [telegram] Isolate forum-topic sessions by thread_id
+
+
+### Changed
+- [telegram] Consolidate parse_chat_target, fix typing indicator
+
+
+### Fixed
+- [telegram] Propagate thread_id parse errors in parse_chat_target
+- [providers] Skip model discovery for custom providers with explicit models
+- [providers] Replace redundant test with one that pins the new guard
+- [provider-setup] Skip probe for custom providers without model
+- [provider-setup] Remove redundant is_chat_capable_model filter
+- [chat] Use system role for compaction summary
+- [chat] Use user role for compaction summary
+- [providers] Restore MiniMax top-level system prompt extraction
+- [telegram] Allow unwrap in topic tests to satisfy workspace clippy lints
+- [provider-setup] Use Arc<AtomicBool> instead of static in test
+
+## [20260328.01] - 2026-03-28
+### Added
+- [website] Add local dev server with SSR partial injection
+- [web] Add changelog link to header nav
+- [providers] Add prompt caching for Anthropic and OpenRouter
+- [telegram] Extract plaintext and markdown documents from messages
+- [providers] Add Fireworks.ai as primary provider
+
+
+### Changed
+- [website] Shared nav via SSR partial, add Changelog link
+- [telegram] Use std::str::from_utf8 for UTF-8 truncation
+- [telegram] Normalize MIME type once, avoid redundant UTF-8 scans
+
+
+### Fixed
+- [website] Allow nav links without data-page to navigate normally
+- [website] Highlight Changelog tab and show GitHub stars on /changelog
+- [website] Share GitHub stars script via nav partial, fix Changelog click
+- [web] Point report issue link to template chooser
+- [providers] Align indentation in stream_with_tools debug macro
+- [telegram] Address PR review comments on document handling
+- [telegram] Enforce char limit on all document content paths
+- [telegram] Prevent U+FFFD from byte-boundary truncation of CJK text
+- [install] Remove spurious -1 revision from .deb filename in installer
+
+## [20260327.05] - 2026-03-27
+### Changed
+- [release] Build changelog HTML in prepare-release instead of CI
+
+## [20260327.04] - 2026-03-27
+### Fixed
+- [ci] Use file input for changelog blob to avoid argument list too long
+
+## [20260327.03] - 2026-03-27
+### Added
+- [website] Add changelog HTML page and fix RPM version override
+
+## [20260327.02] - 2026-03-27
+### Fixed
+- [install] Support date-based version tags in installer and package builds
+
+## [20260327.01] - 2026-03-27
+### Added
+- [gateway] Embedded web chat UI at root endpoint
+- [gateway] Add services, pairing, expanded methods and auth
+- [agents] Add LLM chat with streaming, multi-provider support and feature flags
+- [gateway] Add Tailwind-based chat UI with dark/light theme
+- [config] Add multi-format config file with provider enable/disable support
+- [gateway] Add model selector and WebSocket auto-reconnect
+- [oauth] Add OpenAI Codex OAuth provider and reusable OAuth infrastructure
+- [tools] Add LLM code execution with agent loop, tool calling, and security layers
+- [agents] Add debug logging and end-to-end exec tool test
+- [agents] Text-based tool calling fallback for non-native providers
+- [gateway] Log user message on chat.send
+- [memory] Implement memory management system with hybrid search
+- [tools] Wire approval gating into exec tool with UI
+- [brew] Add Homebrew formula for tap-based installation
+- [website] Add static site and roadmap for moltis features
+- [website] Rewrite with Tailwind CSS, Inter/JetBrains fonts, and polish
+- [packaging] Add Debian package builds for amd64 and arm64
+- [packaging] Add Arch Linux package builds for x86_64 and aarch64
+- [packaging] Add RPM, Flatpak, Snap, AppImage, Nix, and Homebrew packaging
+- [agents] Register all Codex models in provider registry
+- [gateway] Structured error handling, exec cards, and approval UI
+- [gateway] Add provider management UI with multi-model support
+- [gateway] Persist API keys and add session management
+- [gateway] Add session sidebar UI and fix session management
+- [gateway] Route chat events by session key, add unread dots and thinking restore
+- [agents] Add missing LLM providers and GitHub Copilot OAuth
+- [gateway] Add session search with autocomplete, scroll-to and highlight
+- [gateway] Include model and provider name in chat final events
+- [claude] Save plans and sessions to prompts/ via hooks
+- [gateway] Multi-page SPA with nav panel, crons page and methods page
+- [cron] Wire cron callbacks and register CronTool for LLM use
+- [cron] Implement production-grade cron scheduling system
+- [projects] Add project management with context loading and session binding
+- [gateway] Searchable model selector, per-session model, chat history
+- [gateway] Persist model/provider in chat history and style model footer
+- [gateway] Add token usage display per-message and per-session
+- [gateway] Move model selector to chat page, add providers to nav panel
+- [projects,sessions] Migrate project and session metadata storage to SQLite
+- [gateway] Reorganize navigation, move providers to dedicated page
+- [sandbox] Per-session sandbox toggle with sandbox-on-by-default
+- [gateway] Show LLM thinking text, persist token usage, fix chat scroll
+- [gateway] Add slash commands (/clear, /compact, /context) with autocomplete
+- [context] Display sandbox details in /context command
+- [providers] Add Kimi Code OAuth (device flow) provider
+- [gateway] Add Channels navigation page
+- [gateway] Move enabled toggle to last column in cron job table
+- [telegram] Add username allowlist matching and message log store
+- [compact] Auto-compact on context limit, use session provider, show summary card
+- [worktree] Implement workspace worktree lifecycle features
+- [ui] Project selector combo in chat header with session filtering
+- [telegram] Per-channel sessions, slash commands, and default model config
+- [gateway] Add logs/forensic page with real-time streaming and persistence
+- [telegram] Command autocomplete, /new session, /sessions with inline keyboard
+- [gateway] Live session updates, channel icons, and active session indicator
+- [gateway] Add amber ping dot indicator for active sessions
+- [gateway] UI improvements and provider/context enhancements
+- [skills] Add agent skills system crate with discovery, registry, and CLI
+- [gateway] Add Skills navigation page to web UI
+- [skills] Repository-based skills with per-skill enable/disable
+- [skills] Accept GitHub URLs in skill source input
+- [gateway] Add native HTTPS/TLS support behind `tls` cargo feature
+- [gateway] Hybrid asset serving with filesystem dev and embedded release
+- [sandbox] Configurable images, on-demand caching, Apple Container auto-detection
+- [onboarding] Replace wizard with inline identity editing in Settings
+- [plugins] Add plugins crate with format adapters, install, and chat integration
+- [gateway] Add Images page for managing sandbox container images
+- [telegram] Add /model, /sandbox commands and improve /context display
+- [gateway] Add setup code at startup and configurable config/data dirs
+- [gateway] Clean auth state separation, gon pattern, and identity improvements
+- [env] Add write-only environment variables with sandbox injection
+- [security] Wrap secrets in secrecy::Secret<String> to prevent leaks
+- [hooks] Add hook dispatch system with native and shell handlers
+- [hooks] Add hook discovery, eligibility, metadata, CLI commands, and bundled hooks
+- [memory] Wire memory system into gateway with tools, compaction, and session hooks
+- [memory] Add embedding cache, local GGUF, fallback chain, batch API, file watcher, and pre-compaction flush
+- [tools] Add web_search and web_fetch agent tools
+- [sandbox] Add tracing to Apple Container and exec tool lifecycle
+- [ui] Show container name in /context sandbox section
+- [web] Forward client Accept-Language to web_fetch and web_search
+- [sandbox] Auto-provision curl, python3, nodejs, npm in containers
+- [sandbox] Expand default packages inspired by GitHub runner images
+- [sandbox] Apple Container pre-built images, CLI commands, default config
+- [sandbox] Expand packages from GitHub runner images, use Secret for web search keys
+- [hooks] Wire all 15 hook events and add examples
+- [chat] Add per-session run serialization to prevent history corruption
+- [chat] Add configurable agent-level timeout enforcement
+- [agents] Retry agent loop after compaction on context window overflow
+- [tools] Add SpawnAgentTool for sub-agent / nested agent support
+- [chat] Add message queue modes for concurrent send handling
+- [agents] Sanitize tool results before appending to LLM message history
+- [agents] Execute tool calls concurrently with join_all
+- [mcp] Add MCP client support with discovery UI
+- [gateway] Add nav sidebar count badges and MCP UI improvements
+- [mcp] MCP context in chat, duplicate name handling, and misc improvements
+- [mcp] Add McpTransport and McpClientTrait trait abstractions
+- [mcp] Wire MCP tool bridges into agent ToolRegistry
+- [mcp] SSE transport, health polling, auto-restart, and edit config
+- [gateway] Add tailscale serve/funnel management, UI consistency overhaul, and HTTP/2 support
+- [memory] Log status with DB size after initial sync
+- [tailscale] Add Start Tailscale button when daemon is not running
+- [channels] Assign default model to new telegram sessions
+- [agents] Add model failover with per-provider circuit breakers
+- [gateway] Add report an issue link to nav sidebar
+- [config] Support MOLTIS_* env var overrides for all config fields
+- [cron] Add heartbeat feature with persistent run history
+- [cli] Add cargo-binstall support for binary installation
+- Add Homebrew tap and auto-update workflow
+- Generate random port on first run and make gateway the default command
+- [ci] Add multi-arch Docker build workflow
+- [agents] Enable streaming responses with tool support
+- [metrics] Add Prometheus metrics with feature-gated support
+- [metrics] Expand metrics to all crates with tracing feature
+- [metrics] Add provider alias support for metrics differentiation
+- [metrics] Add SQLite persistence and per-provider charts
+- [db] Add sqlx migrations with per-crate ownership
+- [local-llm] Add local LLM provider with GGUF/MLX backend selection
+- [local-llm] Add MLX models and filter by backend
+- [local-llm] Add HuggingFace search and custom model support
+- [agents] Add unified local-llm provider with pluggable backends
+- [ui] Add auto-search with debounce for HuggingFace search
+- [ui] Show chat-only mode notice when selecting model without tools
+- [ui] Show all configured models in providers page
+- [providers] Add per-model removal and disable support
+- [local-llm] Add tracing and metrics to GGUF provider
+- [cli] Add database management commands (db reset, clear, migrate)
+- [telegram] Auto-disable channel when another bot instance is running
+- Add install script and update URLs to moltis.org
+- Add Pi-inspired features — skill state, self-extension, branching, hot-reload
+- [auth] Add scope support to API keys
+- Typed ToolSource, per-session MCP toggle, debug panel convergence, docs & changelog
+- [gateway] Add Fork button to chat header
+- [gateway] Show warning banner when running on non-main git branch
+- [gateway] Add mobile PWA support with push notifications (#40)
+- [tls] Default HTTP redirect port to gateway port + 1 (#49)
+- [memory] Add QMD backend support, citations, session export, and LLM reranking (#27)
+- [deploy] Add --no-tls flag and one-click cloud deploy configs
+- [gateway] Display process and system memory usage in header
+- [ui] Red favicon and branch-prefixed title for non-main branches
+- [ui] Add security warnings to MCP and Plugins pages
+- [ui] Add click-to-view-source detail panel to enabled plugins table
+- [deploy] Add MOLTIS_DEPLOY_PLATFORM env var to hide local-only providers on cloud
+- [ui] Add allowlist field to onboarding channel step
+- [ui] Prefill agent name and emoji in onboarding identity step
+- [hooks] Add hooks web UI page
+- [hooks] Seed example hook on first run
+- [hooks] Add Preview/Source tabs for HOOK.md content
+- [hooks] Click-to-copy hook source path
+- [hooks] Show built-in hooks in the web UI
+- [hooks] Wire up built-in hooks (boot-md, command-logger, session-memory)
+- [channels] Replace allowlist textarea with tag-style input
+- [workspace] Move persona and startup context to markdown files
+- [browser] Add full browser automation support via CDP
+- [browser] Enable browser tool by default
+- [settings] Add Load Template button and docs link
+- [browser] Display screenshot thumbnails in chat UI
+- Add restart API and improve browser tool integration
+- [browser] Add fullscreen lightbox for screenshot thumbnails
+- [local-llm] Auto-detect backend based on model type
+- [local-llm] Support Homebrew-installed mlx-lm
+- [local-llm] Download and cache MLX models locally
+- [local-llm] Notify user when downloading missing models
+- [ui] Show download progress in chat when model is missing
+- [browser] Add sandboxed browser support using Docker containers
+- [browser] Add sandbox mode visibility in logs and response
+- [browser] Pre-pull container image at startup with UI feedback
+- [browser] Include page content in snapshot response
+- [cli] Add browser command for managing browser configuration
+- [browser] Add detailed logging for browser execution mode
+- [ui] Show browser action and execution mode in chat
+- [browser] Add screenshot download functionality
+- [browser] Increase default viewport to 1920x1080
+- [browser] Increase viewport to 2560x1440 with 2x Retina scaling
+- [telegram] Add screenshot support for browser tool
+- [browser,telegram] Improve screenshot handling and display
+- [browser] Memory-based pool limits instead of fixed count
+- [telegram] Send tool execution status during chat
+- [logs] Show crate/module target in log output
+- [ci] Add local validation gate with CI fallback
+- [security] Add emergency disable for third-party skills
+- [security] Surface commit provenance in skills UI
+- [skills] Add websocket install progress and loading states
+- [skills] Use websocket install status with honest UI messaging
+- [scripts] Support local-only validation without a PR
+- [workspace] Align context files with OpenClaw semantics
+- [heartbeat] Skip LLM turns when HEARTBEAT.md is empty
+- [heartbeat] Surface empty-file skip status in UI
+- [gateway] Surface GitHub release update banner
+- [voice] Add voice crate with TTS and STT providers
+- [gateway] Integrate voice services with TTS and STT support
+- [voice] Add voice UI with feature flag support
+- [voice] Add multiple STT providers
+- [voice] Add voice provider management UI with auto-detection
+- [voice] Add ElevenLabs Scribe STT provider
+- [voice] Integrate ElevenLabs Scribe STT and upgrade to v2
+- [voice] Improve STT/TTS testing UX and fix ElevenLabs API
+- [voice] Send voice messages directly to chat
+- [telegram] Transcribe voice messages before dispatching to chat
+- [telegram] Add info logging for unhandled media types
+- [telegram] Add image support for multimodal LLM messages
+- [channels] Improve voice handling and typed STT config
+- [voice] Add typed provider metadata and voice preference flows
+- [chat] Prefer same reply medium with text fallback
+- [voice] Add provider list allowlists and narrow template defaults
+- [chat] Add runtime host+sandbox prompt context
+- [chat] Add Prompt button to inspect full system prompt
+- [sandbox] Add tmux to default packages
+- [tools] Add process tool and tmux skill for interactive terminal sessions
+- Ship provider onboarding and model discovery improvements
+- [ui] Redesign Voice onboarding step with settings-like experience
+- [ui] Personalize TTS test phrases with user and bot names
+- [gateway] Voice pending UI, TTS phrase generation, and empty message filtering
+- [gateway] Persist TTS audio, per-session media, and silent replies
+- [gateway] Add Context button showing full LLM messages array
+- [gateway] Add queued message UI with cancel support
+- [gateway] Add Copy button to full context panel
+- [gateway] Add client-side message sequence number for ordering diagnostics
+- [gateway] Add run_id and seq to persisted messages for parent/child linking
+- [channels] Add reply threading support for Telegram messages
+- [gateway] Auto-detect browser timezone via Intl.DateTimeFormat
+- [metrics] Populate cache token counters from provider responses
+- [tools] Add get_user_location tool with browser geolocation
+- [sandbox] Add image, audio, media, and data processing packages
+- [sandbox] Add document, office, and search packages
+- [sandbox] Add GIS and OpenStreetMap packages
+- [tools] Add sandbox_packages tool for on-demand package discovery
+- [sandbox] Add communication packages, hybrid sandbox query, and mise
+- [telegram] Add location sharing with live location tracking
+- [onboarding] Redesign provider step as multi-provider list
+- [gateway] Show no-providers card when no LLM models available
+- [gateway] Validate-first provider setup in onboarding and settings
+- [oauth] Import auto-detected tokens into central store at startup
+- [providers] Add model selection for auto-detected providers
+- [onboarding] Add summary step and improve channel UX
+- [gateway] Add Telegram-style waveform audio player
+- [gateway] Add generic session upload endpoint replacing base64-over-WS
+- [gateway] Add drag-and-drop image upload to chat and auth tests
+- [voice] Add TTS text sanitization and voice-friendly LLM prompting
+- [tools] Reverse geocode user location to human-readable place names
+- [agents] Retry once on transient LLM provider errors
+- [tools] Add show_map tool and location precision modes
+- [telegram] Consolidate bot responses into single message with logbook
+- [auth] Passkey UX improvements and mDNS origin support
+- [benchmarks] Add boot-path performance benchmarks for CodSpeed
+- [cli] Add `moltis memory` subcommand with search and status
+- [telegram] Send native location pin for show_map tool
+- [telegram] Send voice replies with text transcript
+- [gateway] Add search to project filter and fix button alignment
+- [gateway] Attach project to new sessions from filtered view
+- [sessions] Add server-side unread tracking via last_seen_message_count
+- [gateway] Auto-detect models after saving provider API key (#83)
+- [sessions] Add entity versioning to prevent stale updates
+- [gateway] Improve logs filter UX and branch favicon contrast
+- [gateway] Add logout button to header bar (#86)
+- [gateway] Add comprehensive e2e test suite for web UI (#87)
+- [gateway] Add auth-aware endpoint throttling and login retry UX
+- [gateway] Auto-detect WebAuthn RP ID from PaaS environment variables
+- [cli] Add --version flag
+- [gateway] Centralize SPA routes and preserve config TOML comments
+- [models] Tighten allowlist matching and support probe output (#91)
+- [config] Add moonshot to default offered providers
+- [onboarding] Preselect passkey auth method when available
+- [config] Auto-create SOUL.md with default content on first run
+- [gateway] Disconnect all WS clients on credential changes
+- [providers] Prefer configured models and merge live model discovery
+- [providers] Multi-select preferred models, keyOptional, createdAt sorting
+- [providers] Filter non-chat models and fix per-model tool support
+- [providers] Show model dates, probe on select, spacebar pause
+- [onboarding] Multi-select model picker with probe badges
+- [memory] Inject MEMORY.md into system prompt and fix file watcher
+- Auto-select and install browser tool backends (#130)
+- [agents] Strip <think> tags from OpenAI-compatible providers and add MiniMax
+- [chat] Preserve reasoning text in tool cards across page reloads
+- [agents] Add Z.AI (Zhipu) as OpenAI-compatible provider
+- Env injection, sandbox recovery, UI fixes, provider improvements (#108)
+- [gateway] Show server start time at bottom of onboarding
+- [browser] Auto-inject low-memory Chromium flags on constrained systems
+- [gateway] Add generic OpenAI-compatible provider support
+- [tools] SSRF allowlist for Docker inter-container networking (#146)
+- [config] Enable openrouter in default offered providers
+- [mcp] Add OAuth 2.1 support for remote MCP servers (#148)
+- [telegram] Add channel streaming with stream_mode fallback (#165)
+- [tools] Add calc tool for safe arithmetic evaluation
+- [cron] Add per-job model and execution target controls (#170)
+- [gateway] Cache session histories and show switch loader
+- [map] Add provider-aware show_map links
+- [gateway] Render markdown and ansi tables in chat
+- [browser] Persist Chrome profile across sessions (#162)
+- [memory] Reduce baseline memory footprint for lightweight devices
+- [telegram] Save voice audio to session media for web UI playback
+- [cron] Add event-driven heartbeat wake with system events queue
+- [telegram] Render markdown tables as formatted pre blocks
+- [gateway] Static file caching for public share pages
+- [cron] Deliver agent turn output to Telegram channels
+- [gateway] Seed dcg-guard hook and polish onboarding badges
+- [graphql] Add GraphQL API exposing all RPC methods (#200)
+- [tools] Add send_image tool for channel image delivery (#224)
+- [gateway] Expand identity emoji picker options (#206)
+- [web] Browsable skills list in repo cards
+- [providers] Add configurable OpenAI websocket stream transport (#227)
+- [sandbox] Install latest gogcli in default sandbox images (#232)
+- [agents] Add multi-agent personas with CRUD UI (#97)
+- [caldav] Add CalDAV integration for calendar CRUD (#84)
+- [channels] Add Microsoft Teams channel integration (#231)
+- [import] Add OpenClaw import crate, CLI, gateway RPC, and UI (#217)
+- [web] Add vault algorithm description to encryption settings page
+- [web] Internationalization (i18n) with English and French locales (#237)
+- [whatsapp] Add WhatsApp channel support (#73)
+- [web] Add sandbox shared-home settings UI and config
+- [protocol] Upgrade WebSocket protocol from v3 to v4 (#247)
+- [agents,providers,chat] Universal tool support for all models
+- [openclaw-import] Import workspace files and add safety messaging
+- [providers] Promote Gemini to first-class OpenAI-compatible provider
+- [i18n] Add full zh-CN (Simplified Chinese) localization (#260)
+- Add channel-aware heartbeat delivery and send_message agent tool (#270)
+- [memory] Add tree-sitter code splitter and RRF search merge
+- [web] Add Shiki syntax highlighting to code blocks
+- [sandbox] Add GitHub runner parity packages and enable corepack (#284)
+- [providers] Add first-class LM Studio provider (#286)
+- [agents] Enrich spawn_agent presets with identity, policies, memory (#271)
+- [web] Show running version at bottom of identity settings
+- [channels] Channel architecture phase 5, contract suites, and observability baseline (#289)
+- [ci] Add release dry-run mode
+- [browser] Add container_host for Docker-in-Docker connectivity (#300)
+- [ios] Auto-discover server identity and show emojis (#297)
+- [website] Migrate cloudflare website into monorepo (#302)
+- [local-llm] Allow arbitrary HuggingFace model IDs for MLX models
+- [web,tools] AOT WASM pre-compilation and Shiki CDN loading
+- [cli] Remove wasm from default features to reduce memory
+- [gateway] Make provider discovery startup non-blocking
+- [monitoring] Track memory history and improve local-llm memory reporting (#325)
+- [ios] Add local llama cpp memory field to GraphQL schema
+- [providers] Include reasoning fields for kimi models (#323)
+- [chat] Tabs to filter chats between sessions and cron (#338)
+- [oauth] Support pasted callback URL fallback (#365)
+- [providers] Add reasoning effort support for models with extended thinking (#363)
+- [providers] Add Responses API support to GitHub Copilot provider (#393)
+- [release] Migrate to date-based versioning (YYYYMMDD.NN) (#394)
+- Support secret remote MCP URLs and headers (#416)
+- [docker] Support generic provider env bootstrap (#401)
+- [skills] Support safe agent-written sidecar files (#413)
+- [mcp] Add custom display names for MCP servers
+- [mcp] Add displayName to iOS GraphQL schema
+- [skills] Gate installer behind install feature
+- [gateway] Embedded web chat UI at root endpoint
+- [gateway] Add services, pairing, expanded methods and auth
+- [agents] Add LLM chat with streaming, multi-provider support and feature flags
+- [gateway] Add Tailwind-based chat UI with dark/light theme
+- [config] Add multi-format config file with provider enable/disable support
+- [gateway] Add model selector and WebSocket auto-reconnect
+- [oauth] Add OpenAI Codex OAuth provider and reusable OAuth infrastructure
+- [tools] Add LLM code execution with agent loop, tool calling, and security layers
+- [agents] Add debug logging and end-to-end exec tool test
+- [agents] Text-based tool calling fallback for non-native providers
+- [gateway] Log user message on chat.send
+- [memory] Implement memory management system with hybrid search
+- [tools] Wire approval gating into exec tool with UI
+- [brew] Add Homebrew formula for tap-based installation
+- [website] Add static site and roadmap for moltis features
+- [website] Rewrite with Tailwind CSS, Inter/JetBrains fonts, and polish
+- [packaging] Add Debian package builds for amd64 and arm64
+- [packaging] Add Arch Linux package builds for x86_64 and aarch64
+- [packaging] Add RPM, Flatpak, Snap, AppImage, Nix, and Homebrew packaging
+- [agents] Register all Codex models in provider registry
+- [gateway] Structured error handling, exec cards, and approval UI
+- [gateway] Add provider management UI with multi-model support
+- [gateway] Persist API keys and add session management
+- [gateway] Add session sidebar UI and fix session management
+- [gateway] Route chat events by session key, add unread dots and thinking restore
+- [agents] Add missing LLM providers and GitHub Copilot OAuth
+- [gateway] Add session search with autocomplete, scroll-to and highlight
+- [gateway] Include model and provider name in chat final events
+- [claude] Save plans and sessions to prompts/ via hooks
+- [gateway] Multi-page SPA with nav panel, crons page and methods page
+- [cron] Wire cron callbacks and register CronTool for LLM use
+- [cron] Implement production-grade cron scheduling system
+- [projects] Add project management with context loading and session binding
+- [gateway] Searchable model selector, per-session model, chat history
+- [gateway] Persist model/provider in chat history and style model footer
+- [gateway] Add token usage display per-message and per-session
+- [gateway] Move model selector to chat page, add providers to nav panel
+- [projects,sessions] Migrate project and session metadata storage to SQLite
+- [gateway] Reorganize navigation, move providers to dedicated page
+- [sandbox] Per-session sandbox toggle with sandbox-on-by-default
+- [gateway] Show LLM thinking text, persist token usage, fix chat scroll
+- [gateway] Add slash commands (/clear, /compact, /context) with autocomplete
+- [context] Display sandbox details in /context command
+- [providers] Add Kimi Code OAuth (device flow) provider
+- [gateway] Add Channels navigation page
+- [gateway] Move enabled toggle to last column in cron job table
+- [telegram] Add username allowlist matching and message log store
+- [compact] Auto-compact on context limit, use session provider, show summary card
+- [worktree] Implement workspace worktree lifecycle features
+- [ui] Project selector combo in chat header with session filtering
+- [telegram] Per-channel sessions, slash commands, and default model config
+- [gateway] Add logs/forensic page with real-time streaming and persistence
+- [telegram] Command autocomplete, /new session, /sessions with inline keyboard
+- [gateway] Live session updates, channel icons, and active session indicator
+- [gateway] Add amber ping dot indicator for active sessions
+- [gateway] UI improvements and provider/context enhancements
+- [skills] Add agent skills system crate with discovery, registry, and CLI
+- [gateway] Add Skills navigation page to web UI
+- [skills] Repository-based skills with per-skill enable/disable
+- [skills] Accept GitHub URLs in skill source input
+- [gateway] Add native HTTPS/TLS support behind `tls` cargo feature
+- [gateway] Hybrid asset serving with filesystem dev and embedded release
+- [sandbox] Configurable images, on-demand caching, Apple Container auto-detection
+- [onboarding] Replace wizard with inline identity editing in Settings
+- [plugins] Add plugins crate with format adapters, install, and chat integration
+- [gateway] Add Images page for managing sandbox container images
+- [telegram] Add /model, /sandbox commands and improve /context display
+- [gateway] Add setup code at startup and configurable config/data dirs
+- [gateway] Clean auth state separation, gon pattern, and identity improvements
+- [env] Add write-only environment variables with sandbox injection
+- [security] Wrap secrets in secrecy::Secret<String> to prevent leaks
+- [hooks] Add hook dispatch system with native and shell handlers
+- [hooks] Add hook discovery, eligibility, metadata, CLI commands, and bundled hooks
+- [memory] Wire memory system into gateway with tools, compaction, and session hooks
+- [memory] Add embedding cache, local GGUF, fallback chain, batch API, file watcher, and pre-compaction flush
+- [tools] Add web_search and web_fetch agent tools
+- [sandbox] Add tracing to Apple Container and exec tool lifecycle
+- [ui] Show container name in /context sandbox section
+- [web] Forward client Accept-Language to web_fetch and web_search
+- [sandbox] Auto-provision curl, python3, nodejs, npm in containers
+- [sandbox] Expand default packages inspired by GitHub runner images
+- [sandbox] Apple Container pre-built images, CLI commands, default config
+- [sandbox] Expand packages from GitHub runner images, use Secret for web search keys
+- [hooks] Wire all 15 hook events and add examples
+- [chat] Add per-session run serialization to prevent history corruption
+- [chat] Add configurable agent-level timeout enforcement
+- [agents] Retry agent loop after compaction on context window overflow
+- [tools] Add SpawnAgentTool for sub-agent / nested agent support
+- [chat] Add message queue modes for concurrent send handling
+- [agents] Sanitize tool results before appending to LLM message history
+- [agents] Execute tool calls concurrently with join_all
+- [mcp] Add MCP client support with discovery UI
+- [gateway] Add nav sidebar count badges and MCP UI improvements
+- [mcp] MCP context in chat, duplicate name handling, and misc improvements
+- [mcp] Add McpTransport and McpClientTrait trait abstractions
+- [mcp] Wire MCP tool bridges into agent ToolRegistry
+- [mcp] SSE transport, health polling, auto-restart, and edit config
+- [gateway] Add tailscale serve/funnel management, UI consistency overhaul, and HTTP/2 support
+- [memory] Log status with DB size after initial sync
+- [tailscale] Add Start Tailscale button when daemon is not running
+- [channels] Assign default model to new telegram sessions
+- [agents] Add model failover with per-provider circuit breakers
+- [gateway] Add report an issue link to nav sidebar
+- [config] Support MOLTIS_* env var overrides for all config fields
+- [cron] Add heartbeat feature with persistent run history
+- [cli] Add cargo-binstall support for binary installation
+- Add Homebrew tap and auto-update workflow
+- Generate random port on first run and make gateway the default command
+- [ci] Add multi-arch Docker build workflow
+- [agents] Enable streaming responses with tool support
+- [metrics] Add Prometheus metrics with feature-gated support
+- [metrics] Expand metrics to all crates with tracing feature
+- [metrics] Add provider alias support for metrics differentiation
+- [metrics] Add SQLite persistence and per-provider charts
+- [db] Add sqlx migrations with per-crate ownership
+- [local-llm] Add local LLM provider with GGUF/MLX backend selection
+- [local-llm] Add MLX models and filter by backend
+- [local-llm] Add HuggingFace search and custom model support
+- [agents] Add unified local-llm provider with pluggable backends
+- [ui] Add auto-search with debounce for HuggingFace search
+- [ui] Show chat-only mode notice when selecting model without tools
+- [ui] Show all configured models in providers page
+- [providers] Add per-model removal and disable support
+- [local-llm] Add tracing and metrics to GGUF provider
+- [cli] Add database management commands (db reset, clear, migrate)
+- [telegram] Auto-disable channel when another bot instance is running
+- Add install script and update URLs to moltis.org
+- Add Pi-inspired features — skill state, self-extension, branching, hot-reload
+- [auth] Add scope support to API keys
+- Typed ToolSource, per-session MCP toggle, debug panel convergence, docs & changelog
+- [gateway] Add Fork button to chat header
+- [gateway] Show warning banner when running on non-main git branch
+- [gateway] Add mobile PWA support with push notifications (#40)
+- [tls] Default HTTP redirect port to gateway port + 1 (#49)
+- [memory] Add QMD backend support, citations, session export, and LLM reranking (#27)
+- [skills] Show confirmation hint after skill creation/update
+- [skills] Add skill editing and forking from the web UI
+- [skills] Show confirmation hint after skill creation/update
+- [skills] Add skill editing and forking from the web UI
+- [mcp] Make request timeout configurable
+- [agents] Lazy tool registry with tool_search meta-tool
+- [local-llm] Add opt-in vulkan gguf support
+- [providers] Add MiniMax M2.7 and missing M2.1 highspeed models
+- [prompt] Stabilize system prompt for local LLM KV cache
+- [scripts] Skip local-validate.sh when commit already passed
+- [docker] Add Node.js/npm to Docker image for MCP servers
+- [ci] Add pre_release option to release workflow
+
+
+### Changed
+- [website] Extract inline CSS to separate styles.css file
+- [gateway] Split monolithic app.js into 24 ES modules
+- [gateway] Extract inline JS styles to CSS and add message dedup
+- [gateway] Preact skills page, REST APIs, biome linting, perf fixes
+- [gateway] Reduce cognitive complexity in JS modules and add biome CI
+- [gateway] Faster log loading with memory-first reads and batch rendering
+- Simplify auth, onboarding, and settings code
+- Simplify hooks and memory code
+- [env] Wrap env var values in secrecy::Secret
+- Remove all unsafe code and add workspace-wide deny(unsafe_code)
+- Keep API keys wrapped in Secret<String> through provider construction
+- [agents] Simplify tool result sanitization
+- [mcp] Remove dead code and deduplicate config parsing
+- [memory] Skip redundant work on sync restart
+- [gateway] Use inline script for identity instead of server-side HTML replace
+- [api] Split /api/skills and /api/plugins into separate endpoints
+- [ui] Use CSS classes for tailscale status bar, single line layout
+- [ui] Rename ts-status-bar to generic info-bar classes and fix image page font size
+- [tailscale] Remove Start Tailscale button and up endpoint
+- [ui] Move session rename/delete to chat header and clean up
+- Remove unsafe set_var in detect.rs tests, resolve merge conflicts
+- [gateway] Reorder nav items alphabetically with Chat first
+- [ci] Extract signing logic into composite action
+- [ui] Move install hint markup to HTML template
+- [ui] Move model notice card HTML to template
+- Rename crate moltis-cli to moltis
+- [deps] Centralize all dependency versions in workspace root
+- [ci] Run lightweight lint jobs on GitHub-hosted runners
+- [ci] Restore Docker jobs to release workflow, remove docker.yml
+- [plugins] Replace hand-rolled date arithmetic with time crate
+- [gateway] Use time::Duration::days in tls expiry check
+- Use moltis_config::data_dir() for all path resolution
+- [browser] Add browser detection and simplify session handling
+- [settings] Rename Tools to Configuration and edit full config
+- [browser] Use typed structs for OpenAI tool schemas
+- [local-llm] Add modular ResponseParser trait for output parsing
+- [browser] Use unified sandbox infrastructure for browser containers
+- [gateway] Add defense-in-depth auth checks and DRY server.rs
+- [browser] Send execution mode from server in tool_call_start
+- [channels] Use ChannelType enum instead of string matching
+- [browser] Sandbox mode follows session, fix tall screenshot lightbox
+- [ci] Move local status check logic into script
+- [ci] Avoid blocking lint and test on local zizmor
+- [security] Use gitoxide metadata and improve trust UX
+- [scripts] Rename local-validate-pr.sh to local-validate.sh
+- [chat] Simplify runtime host+sandbox prompt context
+- [sandbox] Remove redundant mkdir exec from ensure_ready
+- Simplify branch review fixes across UI, gateway, and config
+- [gateway] Use typed structs for chat broadcast payloads
+- [ui] Rename /images and /api/images routes to /sandboxes
+- [gateway] Consolidate GatewayState per-field RwLocks into single RwLock<GatewayInner>
+- [mcp] Consolidate McpManager per-field RwLocks into single RwLock<McpManagerInner>
+- [gateway] Replace project select with custom combo dropdown
+- [gateway] Unify auth into single check_auth() gate
+- [browser] Make stale cleanup path expression-based
+- [ci] Move E2E job into CI workflow
+- [build] Enable thin LTO and binary stripping in release profile
+- [gateway] Extract shared voice, identity, and channel utils
+- [tools] Resolve browser sandbox mode from SandboxRouter directly
+- [gateway] Reorder onboarding screens
+- [session] Typed params for patch and voice_generate (#131)
+- [gateway] Remove standalone /crons route, use /settings/crons
+- [agents] Simplify prompt builder and runtime context
+- [prompt] Compact prompt sections and add server runtime time
+- [web] Extract web UI into dedicated moltis-web crate
+- [identity] Consolidate creature+vibe into single theme field
+- [gateway] Extract moltis-service-traits crate (Phase 0)
+- [gateway] Extract moltis-tls and moltis-tailscale crates (Phase 1)
+- [gateway] Extract moltis-auth crate (Phase 2)
+- [gateway] Extract moltis-provider-setup crate (Phase 3)
+- [gateway] Extract moltis-chat crate (Phase 4)
+- [web] Move share_render.rs from gateway to moltis-web (Phase 1c)
+- [providers] Extract provider implementations into new crate
+- [errors] Move crates to typed thiserror enums (#226)
+- [tools] Replace anyhow bridge with crate::Result for internal APIs (#257)
+- [ffi] Tighten unsafe_code allowances
+- [channels] Registry-driven dispatch for cheap new channels (#277)
+- [gateway] Fetch updates from releases manifest instead of GitHub API
+- [web] Move settings nav icons from JS to CSS
+- Externalize web/wasm assets and reduce memory footprint (#321)
+- [web] Move chat history hydration to paged HTTP
+- [web] Paginate sessions and auto-load older history
+- [tools] Split sandbox.rs into sandbox/ module directory
+- [website] Extract inline CSS to separate styles.css file
+- [gateway] Split monolithic app.js into 24 ES modules
+- [gateway] Extract inline JS styles to CSS and add message dedup
+- [gateway] Preact skills page, REST APIs, biome linting, perf fixes
+- [gateway] Reduce cognitive complexity in JS modules and add biome CI
+- [gateway] Faster log loading with memory-first reads and batch rendering
+- Simplify auth, onboarding, and settings code
+- Simplify hooks and memory code
+- [env] Wrap env var values in secrecy::Secret
+- Remove all unsafe code and add workspace-wide deny(unsafe_code)
+- Keep API keys wrapped in Secret<String> through provider construction
+- [agents] Simplify tool result sanitization
+- [mcp] Remove dead code and deduplicate config parsing
+- [memory] Skip redundant work on sync restart
+- [gateway] Use inline script for identity instead of server-side HTML replace
+- [api] Split /api/skills and /api/plugins into separate endpoints
+- [ui] Use CSS classes for tailscale status bar, single line layout
+- [ui] Rename ts-status-bar to generic info-bar classes and fix image page font size
+- [tailscale] Remove Start Tailscale button and up endpoint
+- [ui] Move session rename/delete to chat header and clean up
+- Remove unsafe set_var in detect.rs tests, resolve merge conflicts
+- [gateway] Reorder nav items alphabetically with Chat first
+- [ci] Extract signing logic into composite action
+- [ui] Move install hint markup to HTML template
+- [ui] Move model notice card HTML to template
+- Rename crate moltis-cli to moltis
+- [media] Replace manual MIME lookup with mime_guess crate
+- [auth] Extract GatewayState::is_secure() to centralise cookie Secure logic
+- [browser] Use match instead of nested if/else for dir creation
+- [httpd] Extract moltis-httpd crate as HTTP transport facade
+- [ci] Restore release.yml clippy runner to self-hosted
+- [tools] Unify rescue helper, add tracing, exclude action-level keys
+- [docker] Split runtime installs into separate layers
+- [dev] Deduplicate release-preflight by delegating to lint
+
+
+### Removed
+- Merge branch 'main' into claude/remove-unsafe-code-ehZlQ
+- [ui] Remove decimal digits from memory display
+- [ci] Add latest Docker tag on tag pushes, remove unused branch tag
+- [ci] Remove template-expanded gate debug output
+- [gateway] Use danger button for session delete
+- [gateway] Size-match delete button with fork and add danger style
+- [gateway] Match delete button size to fork button
+- [browser] Remove linux-only unused mut in stale cleanup
+- [codspeed] Remove noisy n=1 session_store_list case
+- Remove cargo-binstall install path
+- [browser] Remove needless return in match arm
+- [gateway] Remove unnecessary path qualification flagged by clippy
+- [cron] Remove oneOf from tool schema for OpenAI responses
+- [readme] Drop logo icon to save vertical space
+- [readme] Restore 64px favicon, remove link from title
+- Remove trailing whitespace in validate.rs
+- [cli] Remove binstall metadata and fix feature indentation
+- [sandbox] Remove redundant error conversions
+- [web] Remove nested onboarding scroll and restore settings nav icons
+- [web] Declutter chat controls and fix dropdown positioning
+- Merge branch 'main' into claude/remove-unsafe-code-ehZlQ
+- [local-llm] Remove unused gguf runtime helper
+
+
+### Fixed
+- [oauth] Use correct OpenAI client_id, add config layer and tests
+- [agents] Prefer tool-capable provider when tools are registered
+- [agents] Register builtin providers before genai to enable tool calling
+- [gateway] Auto-focus chat input on page load
+- [sessions] Add missing sandbox_enabled column migration, stop swallowing errors
+- [gateway] Move sandbox button next to model select, fix default state
+- Resolve all clippy warnings (collapsible_if, map_flatten, or_default, unused imports)
+- [gateway] Open nav panel by default
+- [gateway] Add session icons and replace spinner in-place
+- [gateway] Add missing renderCompactCard export to page-chat.js
+- [gateway] Fix routing, styling, and layout issues in JS modules
+- [telegram] Remove channel prefix from user messages and log LLM responses
+- [ci] Fix biome version and worktree test default branch
+- [ci] Restore biome version pin and fix cargo fmt
+- Update CLAUDE.md pre-commit checks and fix clippy warnings
+- [ci] Update setup-biome to v2.7.0 and fix sort_by_key clippy lint
+- [tests] Configure git user in worktree test setup for CI
+- Replace sort_by with sort_by_key in project store
+- [assets] Fix biome formatting and empty catch block in sandbox.js
+- [ui] Match settings nav item height and style to main navigation
+- [security] Wrap API keys in Secret<String> for memory subsystem
+- Use RecommendedCache for cross-platform watcher, sort_by_key for clippy
+- [hooks] Ignore broken pipe on stdin write when child doesn't read it
+- [ui] Show URL and query in web tool call cards
+- [sandbox] Restart stopped Apple containers in ensure_ready
+- [sandbox] Pass sleep infinity to Apple Container run
+- [sandbox] Promote exec routing and container logs to info level
+- [sandbox] Handle Apple Container inspect returning empty for nonexistent containers
+- [sandbox] Default working_dir to "/" when running inside container
+- [security] Reject cross-origin WebSocket upgrades (CSWSH protection)
+- [sandbox] Inject env vars in Apple Container backend
+- [exec] Redact env var values from command output
+- [exec] Redact base64 and hex encoded env var values from output
+- [config] Use correct defaults for ToolsConfig when not deserialized
+- [gateway] Nav badge counts and cron page instant load
+- [memory] Write memory files to data dir instead of cwd
+- [gateway] Eliminate identity flash on page load
+- [ui] Use consistent button class for skills Remove button
+- [ui] Fix skills Disable button style and add error feedback
+- [skills] Route disable to correct RPC for plugin-sourced skills
+- [ui] Use inline style for tailscale status green dot
+- [ui] Use status-dot connected class for tailscale green dot
+- [ui] Replace Tailwind arbitrary classes with inline styles in tailscale templates
+- [ui] Make tailscale status bar fit-content width
+- [ui] Make info-bar full width to match warning/error divs
+- [ui] Constrain info-bar to max-width 600px matching alert divs
+- [ui] Add alert-info-text to shared alert base styles
+- [ui] Add btn-row and btn-row-mt CSS classes for button spacing
+- [ui] Space cancel/create buttons apart and normalize height
+- [ui] Improve tailscale loading message to set expectations
+- [tailscale] Open Tailscale.app on macOS instead of running tailscale up
+- [ui] Preserve funnel security warning when rebuilding tailscale DOM
+- [ui] Use alert-warning-text style for funnel auth warning
+- [ui] Replace auth text with green button linking to security settings
+- [ui] Move auth button below the funnel security warning panel
+- [ui] Remove @layer components wrapper to fix nav specificity
+- [ui] Update session list after /clear and select next on delete
+- [ui] Format environment variable timestamps with luxon
+- [gateway] Stop echoing web UI messages to Telegram channel
+- Collapse nested if statements in config loader
+- [ci] Fix package build failures
+- [ci] Correct cargo-deb assets order
+- [local-llm] Detect available package managers for MLX install
+- [local-llm] Detect mlx-lm installed via brew
+- [ui] Show install commands on separate lines
+- [local-llm] Rename provider from local-gguf to local-llm
+- [local-llm] Fix HuggingFace API response parsing
+- [ui] Show searching state on HuggingFace search button
+- [ui] Close modal and prevent multiple clicks on HF model selection
+- [chat] Remove per-message tools warning broadcast
+- [ui] Remove scroll from local model list
+- [ci] Install cmake for llama.cpp build and fix Biome errors
+- [ci] Fix local-llm build in CI
+- [migrations] Use set_ignore_missing to allow multi-crate migrations
+- [cli] Run gateway migrations from db migrate command
+- [telegram] Don't delete channel from database on conflict
+- [gateway] Load images nav count async to avoid blocking page serve
+- [gateway] Replace branch icon, fix fork UX issues
+- Streaming tool calls, skill directory, skills page UX
+- [skills] Handle disable for personal/project skills
+- [skills] Use app modal for delete confirmation instead of system confirm()
+- [skills] Danger button on delete modal, fix disable routing for SkillsService
+- [ui] Use decimal units (MB, GB) for memory display
+- [ui] Strengthen skills security warning
+- [ui] Prevent branch banner error from blanking the page
+- [ci] Deploy docs to gh-pages branch instead of using deploy-pages action
+- [ci] Use GitHub-hosted runners for PRs to protect self-hosted runners
+- [ci] Add persist-credentials: false to docs workflow checkout
+- [ci] Use macOS runners for apple-darwin builds
+- [ci] Use project-local cargo config for cross-compilation
+- [ci] Fix all build failures in release workflow
+- [ci] Migrate release builds to GitHub-hosted runners
+- [ci] Build Docker images natively per arch instead of QEMU emulation
+- [ci] Only build Docker images on release tags, not main pushes
+- [deploy] Persist config directory on cloud providers
+- [ci] Use ubuntu-24.04-arm for Linux ARM jobs
+- [ci] Correct cargo-sbom CycloneDX format flag
+- [ci] Derive release package versions from git tags
+- [ui] Compact memory info display in header bar
+- [docker] Add runtime libgomp and image smoke test
+- [gateway] Route setup through onboarding and stabilize hosted WS auth
+- [ui] Disable sandbox controls when no backend is available
+- [ci] Remove gh dependency from homebrew workflow
+- [ci] Run homebrew update after release assets
+- [ci] Avoid invalid secrets context in release workflow
+- [hooks] Show GitHub source link for built-in hooks instead of editor
+- [hooks] Use checked_div for avg latency calculation
+- [gateway] Keep telegram typing active until reply send
+- [sandbox] Skip prebuild when disabled and require daemon access
+- [gateway] Use instance callback URL for OAuth flows
+- [ci] Apply nightly rustfmt and clarify formatting checklist
+- [ci] Add CUDA static libs and linker paths
+- [ci] Map Debian CUDA libs into CUDA root for static link
+- [browser] Register BrowserTool in tool registry
+- [agents] Correctly pass tools through ProviderChain and detect tool result failures
+- [browser] Include install instructions when browser launch fails
+- [browser] Check macOS app bundles before PATH for browser detection
+- [browser] Improve tool description with explicit examples
+- [agents] Add strict mode to OpenAI-compatible tool schemas
+- [browser] Default to navigate action when only url is provided
+- [chat] Preserve message order when tool calls interleave with text
+- [chat] Hide schema validation error cards from UI
+- [chat] Show validation errors as muted informational cards
+- [browser] Recursively add additionalProperties to nested schemas
+- [browser] Ensure all properties in required for OpenAI strict mode
+- [browser] Use shared to_openai_tools in openai_codex provider
+- [browser] Add to_responses_api_tools for Codex API format
+- [browser] Handle objects without properties in strict mode
+- [browser] Use data URI format for screenshots
+- [browser] Handle both raw base64 and data URI in screenshot display
+- [local-llm] Reject MLX models in GGUF loader with helpful error
+- [local-llm] Route MLX models to MLX backend via local_llm provider
+- [local-llm] Allow HuggingFace repo IDs for MLX models
+- [local-llm] Parse mlx_lm CLI output correctly
+- [gateway] Use LocalLlmProvider for UI-added models
+- [local-llm] Check legacy registry for MLX models
+- [local-llm] Use local cache for MLX models instead of HF repo path
+- [local-llm] Multiple fixes for model download and registration
+- [browser] Improve container detection and settings error handling
+- [lint] Resolve biome errors for CI
+- [browser] Update deprecated rand API calls
+- [browser] Improve tool description to trigger on 'browse' keyword
+- [browser] Don't write screenshot files to disk
+- [sandbox] Resolve race condition where sandbox shows disabled at startup
+- [gateway] Add missing config and metrics routes to push-notifications build
+- [ui] Remove duplicate browser info from result area
+- [browser] Retry on dead WebSocket connections
+- [browser] Validate URLs to reject LLM garbage
+- [browser] Improve screenshot handling and suppress chromiumoxide logs
+- [browser] Ensure viewport is applied to pages and add debug logging
+- [browser] Wait for Chrome to be ready before connecting
+- [browser] Auto-track session_id to prevent pool exhaustion
+- [browser] Use navigation timeout for sandboxed browser connections
+- [telegram] Re-send typing indicator after tool status message
+- [ci] Pin sccache action to commit SHA
+- [ci] Publish local validation statuses to PR head repo
+- [ci] Fallback to gh auth token for local status publishing
+- [ci] Clean stale llama cmake dirs in local validator
+- [ci] Use non-CUDA local validation defaults on macOS
+- [ci] Wait for local statuses before failing PR checks
+- [ci] Correct parallel local check PID handling
+- [ci] Stabilize local validator output and show run URL
+- [security] Harden skill execution and web asset safety
+- [security] Require trust before enabling installed skills
+- [security] Harden tarball extraction and pin install provenance
+- [security] Require re-trust when skill source drifts
+- [security] Block suspicious dependency install commands
+- [security] Recover orphaned installs and protect seed skills
+- [skills] Seed template and quiet invalid skill warnings
+- [memory] Align indexing scope with openclaw defaults
+- [memory] Coalesce stale-index cleanup logs
+- [validation] Require clean tree for local PR status
+- [agents] Replace serde_json::Value with typed ChatMessage in LlmProvider
+- [scripts] Add lockfile check and enforce clean worktree in all modes
+- [clippy] Address nested-if and duplicate branch warnings
+- [ui] Remove redundant heartbeat token-saver panel
+- [chat] Keep skill management tools available at runtime
+- [gateway] Support configured GitHub repo for update checks
+- [update] Disable checks when repo URL is unset
+- [ci] Pin workflow actions to commit SHAs
+- [ci] Expose CUDA compat libs for test runtime
+- [concurrency] Remove Mutex<()> sentinels and harden exec working dir
+- [startup] Ensure data dir exists and isolate exec tests
+- [startup] Fail fast when workspace dirs cannot be created
+- [exec] Satisfy clippy lints in sandbox detection tests
+- Add voice schema to build_schema_map for validation
+- [voice] Auto-enable provider and share ElevenLabs key between TTS/STT
+- [voice] Align transcribing indicator right and fix recording delay
+- [voice-ui] Align mic state timing and preserve settings scroll
+- [chat-ui] Show reply medium badge in assistant footer
+- [sandbox] Create /home/sandbox directory in generated images
+- [sandbox] Create /home/sandbox at container startup via exec
+- [sandbox] Default working directory to /home/sandbox
+- [sandbox] Keep apt index in pre-built images
+- [gateway] Remove no-op or_else closure flagged by clippy
+- [ui] Bust Safari cache in dev mode and fix detected providers border
+- [tools] Handle empty session_name in process tool start action
+- [gateway] Validate config before restart to prevent crash loops
+- [gateway] Use YAML list for allowed-tools in seeded tmux skill
+- [gateway] Auto-enable ElevenLabs counterpart in onboarding voice test
+- [gateway] Persist empty assistant messages for LLM history coherence
+- [gateway] Remove separate voice-generating indicator during TTS
+- [gateway] Enable TTS counterpart when saving ElevenLabs/Google STT key
+- [gateway] Reconstruct tool messages in full context view
+- [gateway] Fix queued message detection and ordering
+- [gateway] Move queued messages to dedicated bottom tray
+- [gateway] Clear queued tray on session switch and add debug logs
+- [gateway] Never attach model footer or timestamp to user messages
+- [gateway] Prevent multi-move race in queued message tray
+- [gateway] Defer user message persist until after semaphore
+- [gateway] Move queued messages only after response is rendered
+- [tools] Fall back to DuckDuckGo when web_search API key is missing
+- [onboarding] Skip finish screen and redirect to chat directly
+- [ui] Rename Images nav item to Sandboxes
+- [ui] Revert API routes to /api/images, remove "live" status text
+- [cron] Skip heartbeat when no prompt configured, fix duplicate runs
+- [tools] Collapse nested if in location tool (clippy)
+- [gateway] Collapse nested if in ws timezone handling (clippy)
+- [agents] Make openai-codex token refresh async to prevent runtime panic
+- [gateway] Ensure session row exists before setting channel binding
+- Sync Cargo.lock with workspace version 0.3.1
+- [gateway] Use is_none_or instead of map_or for clippy
+- [sessions] Use blocking file lock to prevent concurrent write failures
+- Auto-sync Cargo.lock in local-validate.sh
+- [docker] Resolve deployment errors on DigitalOcean Docker containers
+- [install] Add missing -1 revision to .deb filename
+- [gateway] Show real IP in banner when bound to 0.0.0.0
+- [oauth] Downgrade missing token file log from warn to debug
+- [oauth] Downgrade routine token store logs to debug
+- [providers] Show model selector after OAuth in onboarding
+- [onboarding] Improve scroll padding in channel and summary steps
+- [gateway] Use route-specific body limit for upload endpoint
+- [gateway] Reduce global request body limit to 2 MB
+- [agents] Pass multimodal content to LLM providers instead of stripping images
+- [gateway] Unlock audio autoplay via AudioContext on user gesture
+- [tools] Instruct LLM to use lat/lon for searches, not place names
+- [tools] Use place names in map links and skip Brave when unconfigured
+- [tools] Block DuckDuckGo fallback for 1h after CAPTCHA
+- [voice] Add autoplay debug logging, stop audio on mic, Esc cancels
+- [ci] Move coverage job into CI workflow
+- [ci] Slim down coverage job to avoid disk space exhaustion
+- [ci] Exclude moltis-tools from coverage and drop sccache
+- Collapse nested if blocks per clippy
+- Collapse nested if blocks in provider_setup per clippy
+- [tools] Use if-let instead of is_some/unwrap in map test
+- Deny unwrap/expect in production code via clippy lints
+- [gateway] Mark boot_time test as ignored for CI coverage
+- [gateway] Fix session project filter and add clear all sessions
+- [gateway] Prevent layout shift from active session border
+- [gateway] Collapse nested if per clippy collapsible_if lint
+- [ci] Consolidate release uploads into single job
+- [gateway] Reactive session badge with optimistic updates
+- [gateway] Bump session badge for channel messages
+- [gateway] Stop auto-switching session on channel messages
+- [gateway] Broadcast session_cleared so /clear from channels syncs web UI
+- [voice] Add media-src to CSP for TTS playback and improve voice diagnostics
+- [auth] Clear setup_complete when last passkey is removed
+- [gateway] Bump session badge on every WS event
+- [gateway] Shrink passkey action buttons and hide danger zone when no auth configured
+- [ci] Align release clippy with nightly flags and fix test lints
+- [browser] Add lifecycle management for browser containers (#88)
+- [auth] Break onboarding redirect loop for non-local connections
+- [settings] Disable browser password autofill for env fields
+- [gateway] Reconnect WebSocket after remote onboarding auth
+- [docker] Bind 0.0.0.0 and expose CA cert port for TLS setup
+- [ci] Gate release builds on E2E tests and fix onboarding-auth flake
+- [ci] Gate release builds on E2E tests and fix onboarding-auth regex
+- [docker] Add chromium and demote codex token warning to debug
+- [scripts] Skip --all-features for clippy on macOS without CUDA
+- [scripts] Allow dirty working tree in local-only validation
+- [exec] Use host data dir when no container runtime is available
+- [onboarding] Update low memory warning message
+- [ui] Rename "provider" to "LLM" in navigation and headings
+- [gateway] Preserve chat stream event order
+- [auth] Enforce auth after passkey/password setup (#93)
+- [e2e] Make NoopChatService::clear() succeed and handle no-provider errors in tests
+- [config] Resolve lock reentrancy deadlock in update_config
+- [onboarding] Defer WS connection until auth completes
+- [config] Prevent SOUL.md re-seeding after explicit clear
+- [onboarding] Update test for save_soul empty-file behavior
+- [ci] Restore node cache hardening and gate on zizmor
+- [onboarding] Keep voice step visible in auth-gated flow
+- [gateway] Stabilize anthropic onboarding model selection
+- Pin deploy templates to explicit versions and auto-update on release (#98)
+- [ci] Sync workspace version in Docker build
+- [gateway] Update session preview immediately after clear
+- [onboarding] Persist selected llm models on continue
+- [agents] Cap tool-call IDs to OpenAI 40-char limit
+- [config] Isolate stale-key test from env overrides
+- [gateway] Include saveProviderKey extraction in provider-validation
+- [e2e] Handle pre-configured providers in onboarding tests
+- [gateway,tools] Fix sessions.patch camelCase, streaming artifacts, and host working dir
+- [tools] Gate macOS-only sandbox helpers with cfg to fix dead-code errors on Linux CI
+- [tools] Browser tool falls back to host when no container runtime
+- [agents] Add memory_save and memory-anchor hints to system prompt
+- [agents] Guide memory_save toward topic files to keep context lean
+- [gateway] Fix disabled button rendering and add validation progress hints
+- [gateway] Restore voicePending state on session reload
+- [tools] Is_sandboxed() returns false when no container runtime exists
+- [gateway] Constrain sandbox warnings to max-w-form width
+- [memory] Normalize embeddings base_url and add disable_rag mode (#147)
+- [gateway] Hide crons/heartbeat submenu when embedded in settings
+- [cron] Use data_dir for job storage instead of hardcoded ~/.clawdbot/cron
+- [plugins] Set working_dir on shell hooks so relative paths resolve correctly
+- [gateway] Improve onboarding and provider validation flows
+- [gateway] Allow openrouter model discovery without model id
+- [chat] Retry provider 429s across web and channel flows (#149)
+- [gateway] Queue channel replies per message with followup default (#150)
+- [onboarding] Restore saved model selection and stabilize Anthropic e2e
+- [tools] Harden apple container sandbox workdir bootstrap
+- [cron] Normalize shorthand cron tool inputs
+- [e2e] Avoid response listener race in sandboxes test
+- [chat] Compact based on next-request context pressure (#166)
+- [agents] Require explicit /sh for forced exec fallback (#161)
+- [map] Support show_map multipoints and grouped map links (#168)
+- [config] Make agent loop limit configurable and sync docs
+- [skills] Support marketplace skills[] repositories
+- [onboarding] Persist browser timezone and expose prompt today
+- [web-search] Make DuckDuckGo fallback opt-in
+- [gateway] Align show_map listing ratings to the right
+- [prompt] Clarify sandbox vs data_dir path semantics
+- [agents] Append runtime datetime at prompt tail
+- [web-search] Load runtime env keys and robustify brave parsing
+- [prompt] Preserve datetime tail ordering and add profile plan
+- [mcp] Strip internal metadata from MCP tool call arguments
+- [crons] Fix modal default validation and form reset on schedule change (#181)
+- [gateway] Deduplicate voice replies on Telegram channels (#173)
+- [browser] Centralize stale CDP connection detection (#172)
+- [browser] Enable profile persistence on Apple Container
+- [terminal] Force tmux window resize on client viewport change
+- [telegram] Default DM policy to allowlist for new channels
+- Update expired Discord invite link
+- [telegram] Dispatch voice messages with empty transcription to chat
+- [gateway] Broadcast voice audio filename over WebSocket for real-time playback
+- [voice] Improve voice reply prompt and audio player placement
+- [voice] Deliver TTS audio even when text was streamed
+- [tools] Don't register web_search tool when API key is missing
+- [agents] Don't emit regular text as ThinkingText when alongside tool calls
+- [gateway,telegram,voice] Correct web UI stuck on thinking dots, table rendering, and TTS
+- [telegram] Use vertical card layout for wide tables, deliver logbook for streamed voice
+- [telegram] Send activity logbook as raw HTML, not markdown
+- [e2e] Update share page nonce assertion after script externalization
+- [cli] Skip jemalloc on Windows
+- [gateway] Redirect plain HTTP to HTTPS on TLS port and optimize metrics SQLite
+- [agents] Register DeepSeek via OpenAI-compatible provider for tool support
+- [gateway] Sync cron modal signals when editing a job
+- [providers] Prefer subscription OAuth and expose Codex onboarding
+- [gateway] Surface insufficient_quota without retries
+- [voice] Reuse OpenAI LLM API key for TTS and STT providers (#198)
+- [ci] Only tag Docker image as latest for highest semver release (#211)
+- [e2e] Fix provider selector and onboarding voice step tests
+- [e2e] Use exact text match for onboarding provider row selection
+- [graphql] Fix session id type, missing ok fields, chat routing, and add session.active query (#218)
+- [cron] Document delivery fields in tool description and schema (#213)
+- Pass speaking_rate, pitch and speed from config to voice providers (#212)
+- [cli] Forward feature flags to moltis-web optional dependency
+- [gateway] Harden reverse-proxy tls and websocket handling (#230)
+- [cli] Skip jemalloc on linux/aarch64 (#229)
+- [gateway,web] Normalize service error mapping and nav expectations
+- [e2e] Rebuild gateway when startup binary is stale
+- [e2e] Harden session creation wait and anthro cargo env
+- [e2e] Handle no-provider chat state in agent specs
+- [e2e] Skip openclaw step in onboarding openai flow
+- [import] Resolve OpenClaw workspace from config and cross-machine paths
+- [openclaw-import] Collapse nested if chains for clippy
+- [docker] Use modern Docker CLI in published image (#238)
+- [web] Update qmd package references to @tobilu/qmd
+- [ci] Exclude swift-bridge from coverage and increase E2E poll timeout
+- [e2e] Match error code instead of localized message in full context tests
+- [gateway] Remove duplicate /certs/ca.pem route in start_gateway
+- [ci] Unblock clippy and macOS bridge wasm build
+- [oauth] Make OpenAI Codex callback port 1455 work in Docker (#258)
+- [tests] Accept restricted-host auto sandbox backend
+- [ios] Add missing .none case in NWTXTRecord switch
+- [web] Read DOM value in identity blur handlers to prevent stale closure skip
+- [ios] Add cancel button to connection banner for unreachable servers
+- [agents] Resolve clippy collapsible-if and expect-used lints
+- [ci] Add WASM component build step to all release jobs
+- [ci] Parallelize macOS app with release package builds
+- [release] Ship v0.10.2 packaging fixes
+- [sandbox] Make apple container keepalive portable (#269)
+- [local-llm] Combine compile-time and runtime Metal detection
+- [auth] Auto-detect new WebAuthn hosts and prompt passkey refresh (#268)
+- [web] Replace rg with grep in changelog guard and deduplicate passkey status refresh
+- [web] Lazy-load Shiki to prevent blocking page mount
+- [web] Fix Shiki highlighter init failures in E2E tests
+- [web] Make thinking stop button smaller with left spacing
+- [chat] Surface error when LLM returns empty response with zero tokens
+- [providers] Emit StreamEvent::Error on non-success finish_reason
+- [e2e] Make sandboxes container tests deterministic
+- [e2e] Replace remaining racy waitForResponse with route interceptors
+- [mcp] Make optional MCP tool params nullable to prevent empty string errors (#283)
+- [provider-setup] Reorder validation probes to prefer fast models (#280)
+- [sandbox] Resolve host gateway IP for Podman < 5.0 (#287)
+- [e2e] Fix flaky "deleting unmodified fork" test
+- [ci] Stale lockfile, missing Tailwind in macOS job, OAuth e2e setup
+- [ci] Use standalone Tailwind binary for macOS app job
+- [e2e] Fix OAuth token-exchange failure test and add error-context capture
+- [web] Auto-install node_modules in Tailwind build script
+- [web] Retry openclaw onboarding scan until ws is ready
+- [ci] Add Tailwind CSS build step to release workflow, Dockerfile, and snapcraft
+- [e2e] Wait for session history render before DOM injection in chat-abort
+- [ci] Harden tailwindcss cli downloads
+- [swift-bridge] Stabilize gateway migration and stream tests
+- [config] Support provider url alias for remote Ollama config (#299)
+- [ci] Make release dry-run job conditions valid
+- [providers] Use Ollama capabilities for tool support detection (#301)
+- [scripts] Roll back heavy local validation parallelism
+- [web] Skip npm install when TAILWINDCSS binary is provided
+- [ci] Update website/releases.json on release
+- [web] Add missing i18n button key for preferredModels
+- [local-llm] Use sampler API for mlx-lm >= 0.20
+- [gateway] Break redirect loop when onboarded but auth not configured (#310)
+- [gateway] Reduce idle CPU from metrics loop and log broadcast feedback
+- [gateway] Speed up startup by deferring tailscale and log scan
+- [gateway] Improve browser warmup integration
+- [scripts] Run local nextest with ci timeout profile
+- [ci] Build macOS app arm64 in fast path
+- [web] Move session history off websocket and cap payload size
+- [web] Use combo select for session header selectors
+- [web] Externalize SVG icons and restore empty-chat centering
+- [web] Align e2e with controls modal and daily model refresh
+- [ci] Stage wasm assets for cargo-deb packaging
+- [packaging] Use cli-relative web assets in cargo-deb
+- Install rustls CryptoProvider before channel startup (#336)
+- [ci,tools] Unblock dependabot and support wasmtime 36
+- [auth] Honor forwarded host for proxy session cookies
+- [config] Include tmux in default sandbox packages
+- [mdns] Use stable host label to avoid mDNSResponder conflict and double-.local suffix (#349)
+- [web] Prevent Enter key from triggering actions during IME composition (#341)
+- [biome] Update schema to 2.4.6 and move noUnusedExpressions to suspicious
+- [ci] Update biome version to 2.4.6 in CI workflows
+- [macos] Extract makeTextView to fix function body length lint violation
+- [providers] Report compatible client_version for Codex model discovery (#359)
+- [prompt] Omit sandbox/node info from runtime prompt when disabled (#362)
+- [web] Allow deleting cron sessions from chat sidebar (#357)
+- [chat] Skip duplicate text fallback when TTS disabled and voice streamed (#373)
+- [web] Break redirect loop when accessing via Tailscale Serve (#356)
+- Node WebSocket connection and UI connection string (#382)
+- [config] Write IDENTITY.md and SOUL.md to agents/main/ instead of root (#384)
+- [auth] Bypass auth for local API requests during onboarding (#386)
+- [whatsapp] Sled persistence, graceful shutdown, and review fixes (#387)
+- [cron] Add delay_ms to avoid LLM computing absolute timestamps (#377)
+- [gateway] Retain proxy shutdown sender to prevent immediate proxy exit (#368)
+- [agents] Include tool_result messages in LLM conversation history (#389)
+- [sandbox] Auto-detect host data dir for docker-in-docker (#396)
+- [chat] Compact the active channel session (#399)
+- [providers] Strip stop tokens from MLX streaming output (#397)
+- [config] Support legacy memory embedding keys (#400)
+- [web] Address installation feedback from user testing (#398)
+- [tools] Harden apple container bootstrap execs (#405)
+- [telegram] Strip HTML tags from plain fallback (#404)
+- [web] Clarify cron setup modal copy (#409)
+- [web] Keep onboarding accessible after auth reset (#415)
+- [web] Improve onboarding password autofill hints (#406)
+- [chat] Persist aborted partial history (#418)
+- [agents] Retry empty structured tool names (#410)
+- [tools] Make sandbox cfg gates consistent for cross-platform CI
+- [local-llm] Restore custom GGUF setup without restart (#417)
+- [browser] Scope cached browser sessions per chat (#412)
+- [browser] Align sandbox browserless timeout with pool lifecycle (#403)
+- [providers] Keep minimax system messages in history
+- [tools] Only expose exec node parameter when nodes are connected
+- [gateway] Address greptile review feedback
+- [gateway] Create heartbeat cron job on update when missing
+- [gateway] Address review feedback on heartbeat cron job creation
+- [agents] Sanitize model-mangled tool names from parallel calls
+- [agents] Pass sanitized tool name to hook dispatch
+- [agents] Add suffix-stripping invariant comment and functions_ edge case test
+- [mcp] Fix JS bugs in display name edit flow
+- [mcp] Add missing display_name field to doctor test structs
+- [mcp] Destructure props in renderServerName and send null for blank display_name
+- [tools] Replace hand-rolled html_to_text with html2text crate
+- [tools] Address PR review for html_to_text
+- [tools] Address second round of PR review
+- [tools] Collapse consecutive blank lines, fix doc comment
+- [sessions] Use write(true)+seek instead of append(true) for fd_lock on Windows
+- [release] Update conditions for jobs to handle dry-run scenarios correctly
+- [oauth] Use correct OpenAI client_id, add config layer and tests
+- [agents] Prefer tool-capable provider when tools are registered
+- [agents] Register builtin providers before genai to enable tool calling
+- [gateway] Auto-focus chat input on page load
+- [sessions] Add missing sandbox_enabled column migration, stop swallowing errors
+- [gateway] Move sandbox button next to model select, fix default state
+- Resolve all clippy warnings (collapsible_if, map_flatten, or_default, unused imports)
+- [gateway] Open nav panel by default
+- [gateway] Add session icons and replace spinner in-place
+- [gateway] Add missing renderCompactCard export to page-chat.js
+- [gateway] Fix routing, styling, and layout issues in JS modules
+- [telegram] Remove channel prefix from user messages and log LLM responses
+- [ci] Fix biome version and worktree test default branch
+- [ci] Restore biome version pin and fix cargo fmt
+- Update CLAUDE.md pre-commit checks and fix clippy warnings
+- [ci] Update setup-biome to v2.7.0 and fix sort_by_key clippy lint
+- [tests] Configure git user in worktree test setup for CI
+- Replace sort_by with sort_by_key in project store
+- [assets] Fix biome formatting and empty catch block in sandbox.js
+- [ui] Match settings nav item height and style to main navigation
+- [security] Wrap API keys in Secret<String> for memory subsystem
+- Use RecommendedCache for cross-platform watcher, sort_by_key for clippy
+- [hooks] Ignore broken pipe on stdin write when child doesn't read it
+- [ui] Show URL and query in web tool call cards
+- [sandbox] Restart stopped Apple containers in ensure_ready
+- [sandbox] Pass sleep infinity to Apple Container run
+- [sandbox] Promote exec routing and container logs to info level
+- [sandbox] Handle Apple Container inspect returning empty for nonexistent containers
+- [sandbox] Default working_dir to "/" when running inside container
+- [security] Reject cross-origin WebSocket upgrades (CSWSH protection)
+- [sandbox] Inject env vars in Apple Container backend
+- [exec] Redact env var values from command output
+- [exec] Redact base64 and hex encoded env var values from output
+- [config] Use correct defaults for ToolsConfig when not deserialized
+- [gateway] Nav badge counts and cron page instant load
+- [memory] Write memory files to data dir instead of cwd
+- [gateway] Eliminate identity flash on page load
+- [ui] Use consistent button class for skills Remove button
+- [ui] Fix skills Disable button style and add error feedback
+- [skills] Route disable to correct RPC for plugin-sourced skills
+- [ui] Use inline style for tailscale status green dot
+- [ui] Use status-dot connected class for tailscale green dot
+- [ui] Replace Tailwind arbitrary classes with inline styles in tailscale templates
+- [ui] Make tailscale status bar fit-content width
+- [ui] Make info-bar full width to match warning/error divs
+- [ui] Constrain info-bar to max-width 600px matching alert divs
+- [ui] Add alert-info-text to shared alert base styles
+- [ui] Add btn-row and btn-row-mt CSS classes for button spacing
+- [ui] Space cancel/create buttons apart and normalize height
+- [ui] Improve tailscale loading message to set expectations
+- [tailscale] Open Tailscale.app on macOS instead of running tailscale up
+- [ui] Preserve funnel security warning when rebuilding tailscale DOM
+- [ui] Use alert-warning-text style for funnel auth warning
+- [ui] Replace auth text with green button linking to security settings
+- [ui] Move auth button below the funnel security warning panel
+- [ui] Remove @layer components wrapper to fix nav specificity
+- [ui] Update session list after /clear and select next on delete
+- [ui] Format environment variable timestamps with luxon
+- [gateway] Stop echoing web UI messages to Telegram channel
+- Collapse nested if statements in config loader
+- [ci] Fix package build failures
+- [ci] Correct cargo-deb assets order
+- [local-llm] Detect available package managers for MLX install
+- [local-llm] Detect mlx-lm installed via brew
+- [ui] Show install commands on separate lines
+- [local-llm] Rename provider from local-gguf to local-llm
+- [local-llm] Fix HuggingFace API response parsing
+- [ui] Show searching state on HuggingFace search button
+- [ui] Close modal and prevent multiple clicks on HF model selection
+- [chat] Remove per-message tools warning broadcast
+- [ui] Remove scroll from local model list
+- [ci] Install cmake for llama.cpp build and fix Biome errors
+- [ci] Fix local-llm build in CI
+- [migrations] Use set_ignore_missing to allow multi-crate migrations
+- [cli] Run gateway migrations from db migrate command
+- [telegram] Don't delete channel from database on conflict
+- [gateway] Load images nav count async to avoid blocking page serve
+- [gateway] Replace branch icon, fix fork UX issues
+- Streaming tool calls, skill directory, skills page UX
+- [skills] Handle disable for personal/project skills
+- [skills] Use app modal for delete confirmation instead of system confirm()
+- [skills] Danger button on delete modal, fix disable routing for SkillsService
+- [graphql] Add skill_save to MockSkills trait impl
+- [gateway] Warm container_cli OnceLock at startup via spawn_blocking
+- [security] Prevent stored XSS via HTML inline and block script extensions
+- [e2e] Use correct event bus dispatch for send_document tests
+- [e2e] Use system-event RPC to dispatch tool events in send_document tests
+- [sandbox] Fix clippy CI failures on Linux
+- [sandbox] Gate apple-only tests with cfg(target_os = "macos")
+- [e2e] Mock slow sandbox APIs in container tests
+- [e2e] Make send_document icon test more robust on CI
+- [mcp] Address review feedback on is_alive and timeout field naming
+- [mcp] Reorder config update to write memory before disk
+- Add missing request_timeout_secs field and allow expect in test
+- [agents] Address PR review feedback for lazy tool registry
+- [e2e] Mock sandbox backend in container e2e tests
+- [e2e] Add afterEach unrouteAll to sandbox tests
+- [auth] Add Secure attribute to session cookie when TLS is active
+- [tools] Make sandbox off test explicit
+- [ci] Replace glslc with glslang-tools for Ubuntu 22.04
+- [providers] Address PR #408 review feedback
+- [ci] Install glslc from LunarG Vulkan SDK on Ubuntu 22.04
+- [whatsapp] Improve discoverability and debug logging (#460)
+- [whatsapp] Address PR review feedback
+- [channels] Redact secrets in channel config API responses
+- [channels] Address PR review feedback
+- [channels] Compute serialize_struct field counts dynamically
+- [providers] Update stale MiniMax context-window comment to include M2.7
+- [tools] Ignore exec node param when no nodes are connected (#427)
+- [tools] Error on configured default_node when disconnected, not silent fallthrough
+- [anthropic] Document system message merging for alternating-role constraint
+- [chat] Re-inject datetime in context-overflow retry path
+- [browser] Set world-writable permissions on container profile directory
+- [browser] Replace expect() with ? in test to satisfy clippy
+- [server] Support IPv6 bind addresses (#447)
+- [server] Address PR review feedback on IPv6 bind fix
+- [server] Include bind address in oauth error, assert address family in test
+- [import] Preserve config template comments during OpenClaw import
+- [import] Assert on import report in comment-preservation test
+- [httpd] Address greptile review findings on PR #465
+- Address second round of greptile review on PR #465
+- [node-host] Update systemd unit test for quoted ExecStart args
+- [web] Allow delete button on cron sessions
+- Address greptile review round 3 on PR #465
+- [httpd] Align metrics history window and cleanup interval with gateway
+- [providers] Address PR review — double-Done, missing ProviderRaw, URL normalization
+- [tools] Rescue stringified JSON and flat params in cron tool
+- [tools] Exclude "patch" and "job" from flat-param rescue keys
+- [ci] Replace non-existent glslc package with glslang-tools
+- [docker] Use Node 22 LTS via NodeSource, persist npm cache
+- [docker] Avoid silent curl failure, cache npx in container example
+- [docker] Use GPG key + apt source instead of NodeSource setup script
+- [docker] Ensure /etc/apt/keyrings exists before NodeSource GPG import
+- [web] Await event subscriptions before accepting broadcasts
+- [ci] Install vulkan-sdk from LunarG instead of Ubuntu's old libvulkan-dev
+- [dev] Make local checks OS-aware for LLM backends
+- [dev] Merge main and update OS-aware local-LLM checks
+- [dev] Address PR review feedback
+- [skills] Use slug as fallback when skill name fails validation
+- [skills] Address PR review feedback on slug fallback
+- [skills] Address second round of PR review feedback
+- [skills] Use tempdir in slug fallback error tests for isolation
+- [skills] Improve slug error messages and test isolation
+- [gateway] Suppress update banner for dev builds
+
+
+### Security
+- [ci] Add zizmor workflow security scan to deb-packages workflow (#8)
+- [skills] Add requirements system, spec compliance, and markdown rendering
+- [gateway] Add passkey/password auth, API key support, and protected API routes
+- Update README/CLAUDE.md, add From impl for SandboxConfig
+- [readme] Rewrite with introduction, quickstart, how-it-works, and security sections
+- [ui] Replace inline alert/width styles with CSS classes
+- [ui] Replace inline style with ml-2 class and add funnel security warning
+- [ui] Merge funnel security warning into auth warning banner
+- [ui] Split funnel warning into always-visible security text and conditional auth text
+- [ci] Add supply chain security and Docker documentation
+- [ci] Switch to Sigstore keyless signing for all artifacts
+- [ci] Require signed commits
+- [ci] Remove redundant signed commits workflow
+- Update repository URLs from penso/moltis to moltis-org/moltis
+- [security] Add cron rate limiting, job notifications, and fix method auth
+- [cli] Add `moltis config check` command
+- [ui] Add multi-step onboarding wizard at /onboarding
+- [ui] Hide auth banner during onboarding, show auth step for remote users
+- [telegram] OTP self-approval for non-allowlisted DM users
+- [tools] Add BrowserTool for LLM agents with documentation
+- [browser] Add security features and tools settings UI
+- Update CHANGELOG and browser-automation docs
+- Merge remote-tracking branch 'origin/main' into security-skills
+- [security] Add append-only skill security audit log
+- [security] Add third-party skills hardening guide
+- Merge remote-tracking branch 'origin/main' into security-skills
+- Unify plugins and skills into single system
+- Add voice services documentation
+- [gateway] Add logs download, compression, CORS security, and tower middleware stack
+- [onboarding] Add passkey as default auth option in security step
+- [cli] Add `moltis doctor` health check command
+- [hooks] Add BeforeLLMCall/AfterLLMCall hooks and nonce-based CSP
+- [gateway] Consolidate navigation into settings page
+- Gate workflows on zizmor security checks
+- [docs] Update Docker image references from penso/moltis to moltis-org/moltis
+- Keep security controls after auth reset on localhost
+- Unify localhost auth-disabled security warning
+- [tools] Add dangerous command blocklist as approval safety floor
+- [readme] Restructure with comparison matrix and crate architecture
+- [vault] Add encryption-at-rest vault for environment variables (#219)
+- [discord] Add Discord channel integration (#239)
+- [sandbox] Add Wasmtime WASM sandbox, Docker hardening, generic failover (#243)
+- [sandbox] Trusted network mode with domain-filtering proxy (#15)
+- [ios,courier] IOS companion app and APNS push relay (#248)
+- [macos] Wire settings UI to rust config backend (#267)
+- [channels] Shared channel webhook middleware pipeline (#290)
+- [nodes] Add multi-node support with device pairing, remote exec, and UI (#291)
+- [security] Add direct nginx websocket proxy example (#364)
+- [ci] Add zizmor workflow security scan to deb-packages workflow (#8)
+- [skills] Add requirements system, spec compliance, and markdown rendering
+- [gateway] Add passkey/password auth, API key support, and protected API routes
+- Update README/CLAUDE.md, add From impl for SandboxConfig
+- [readme] Rewrite with introduction, quickstart, how-it-works, and security sections
+- [ui] Replace inline alert/width styles with CSS classes
+- [ui] Replace inline style with ml-2 class and add funnel security warning
+- [ui] Merge funnel security warning into auth warning banner
+- [ui] Split funnel warning into always-visible security text and conditional auth text
+- [ci] Add supply chain security and Docker documentation
+- [ci] Switch to Sigstore keyless signing for all artifacts
+- [ci] Require signed commits
+- [ci] Remove redundant signed commits workflow
+- Update repository URLs from penso/moltis to moltis-org/moltis
+- [security] Add cron rate limiting, job notifications, and fix method auth
+- [tools] Add send_document tool for file sharing to channels
+
 ## [0.10.18] - 2026-03-09
 ### Added
 - [gateway] Make provider discovery startup non-blocking

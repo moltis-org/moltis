@@ -16,7 +16,7 @@ pub mod store;
 pub use {
     error::{Error, Result},
     key::SessionKey,
-    message::{ContentBlock, MessageContent, PersistedMessage},
+    message::{ContentBlock, MessageContent, PersistedMessage, UserDocument},
     store::SearchResult,
 };
 

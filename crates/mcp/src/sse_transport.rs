@@ -3,14 +3,17 @@
 //! Uses HTTP POST for JSON-RPC requests and GET for server-initiated SSE events.
 //! Supports optional OAuth Bearer token injection and automatic 401 retry.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
 };
 
 use {
-    reqwest::Client,
-    secrecy::ExposeSecret,
+    reqwest::{Client, header::HeaderMap},
+    secrecy::{ExposeSecret, Secret},
     tokio::sync::RwLock,
     tracing::{debug, info, warn},
 };
@@ -18,6 +21,7 @@ use {
 use crate::{
     auth::SharedAuthProvider,
     error::{Context, Error, Result},
+    remote::{ResolvedRemoteConfig, sanitize_reqwest_error},
     traits::McpTransport,
     types::{
         JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, McpTransportError, PROTOCOL_VERSION,
@@ -31,7 +35,9 @@ const STREAMABLE_ACCEPT_HEADER: &str = "application/json, text/event-stream";
 /// HTTP/SSE-based transport for a remote MCP server.
 pub struct SseTransport {
     client: Client,
-    url: String,
+    request_url: Secret<String>,
+    display_url: String,
+    default_headers: HeaderMap,
     next_id: AtomicU64,
     /// Optional auth provider for Bearer token injection.
     auth: Option<SharedAuthProvider>,
@@ -42,14 +48,36 @@ pub struct SseTransport {
 impl SseTransport {
     /// Create a new SSE transport pointing at the given MCP server URL.
     pub fn new(url: &str) -> Result<Arc<Self>> {
+        Self::new_with_timeout(url, Duration::from_secs(60))
+    }
+
+    /// Create a new SSE transport with a custom request timeout.
+    pub fn new_with_timeout(url: &str, request_timeout: Duration) -> Result<Arc<Self>> {
+        let remote = ResolvedRemoteConfig::from_server_config(
+            &crate::registry::McpServerConfig {
+                transport: crate::registry::TransportType::Sse,
+                url: Some(Secret::new(url.to_string())),
+                ..Default::default()
+            },
+            &std::collections::HashMap::new(),
+        )?;
+        Self::new_with_remote(remote, request_timeout)
+    }
+
+    pub fn new_with_remote(
+        remote: ResolvedRemoteConfig,
+        request_timeout: Duration,
+    ) -> Result<Arc<Self>> {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(request_timeout)
             .build()
             .context("failed to build HTTP client for SSE transport")?;
 
         Ok(Arc::new(Self {
             client,
-            url: url.to_string(),
+            request_url: Secret::new(remote.request_url().to_string()),
+            display_url: remote.display_url().to_string(),
+            default_headers: remote.headers().clone(),
             next_id: AtomicU64::new(1),
             auth: None,
             session_id: RwLock::new(None),
@@ -58,14 +86,41 @@ impl SseTransport {
 
     /// Create a new SSE transport with an OAuth auth provider.
     pub fn with_auth(url: &str, auth: SharedAuthProvider) -> Result<Arc<Self>> {
+        Self::with_auth_and_timeout(url, auth, Duration::from_secs(60))
+    }
+
+    /// Create a new SSE transport with an OAuth auth provider and custom request timeout.
+    pub fn with_auth_and_timeout(
+        url: &str,
+        auth: SharedAuthProvider,
+        request_timeout: Duration,
+    ) -> Result<Arc<Self>> {
+        let remote = ResolvedRemoteConfig::from_server_config(
+            &crate::registry::McpServerConfig {
+                transport: crate::registry::TransportType::Sse,
+                url: Some(Secret::new(url.to_string())),
+                ..Default::default()
+            },
+            &std::collections::HashMap::new(),
+        )?;
+        Self::with_auth_remote(remote, auth, request_timeout)
+    }
+
+    pub fn with_auth_remote(
+        remote: ResolvedRemoteConfig,
+        auth: SharedAuthProvider,
+        request_timeout: Duration,
+    ) -> Result<Arc<Self>> {
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(request_timeout)
             .build()
             .context("failed to build HTTP client for SSE transport")?;
 
         Ok(Arc::new(Self {
             client,
-            url: url.to_string(),
+            request_url: Secret::new(remote.request_url().to_string()),
+            display_url: remote.display_url().to_string(),
+            default_headers: remote.headers().clone(),
             next_id: AtomicU64::new(1),
             auth: Some(auth),
             session_id: RwLock::new(None),
@@ -76,10 +131,12 @@ impl SseTransport {
     async fn build_post(&self) -> Result<reqwest::RequestBuilder> {
         let mut req = self
             .client
-            .post(&self.url)
+            .post(self.request_url.expose_secret())
             .header("Content-Type", "application/json")
             .header("Accept", STREAMABLE_ACCEPT_HEADER)
             .header(MCP_PROTOCOL_VERSION_HEADER, PROTOCOL_VERSION);
+
+        req = self.apply_default_headers(req);
 
         if let Some(session_id) = self.session_id.read().await.clone() {
             req = req.header(MCP_SESSION_ID_HEADER, session_id);
@@ -110,12 +167,22 @@ impl SseTransport {
         let session_id = session_id.to_string();
         if slot.as_ref() != Some(&session_id) {
             debug!(
-                url = %self.url,
+                url = %self.display_url,
                 session_id = %session_id,
                 "updated MCP streamable HTTP session id"
             );
             *slot = Some(session_id);
         }
+    }
+
+    fn apply_default_headers(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        for (name, value) in &self.default_headers {
+            if self.auth.is_some() && name == reqwest::header::AUTHORIZATION {
+                continue;
+            }
+            req = req.header(name, value);
+        }
+        req
     }
 
     fn response_is_event_stream(resp: &reqwest::Response) -> bool {
@@ -175,7 +242,8 @@ impl SseTransport {
             .json(body)
             .send()
             .await
-            .with_context(|| format!("SSE POST to '{}' for '{method}' failed", self.url))?;
+            .map_err(sanitize_reqwest_error)
+            .with_context(|| format!("SSE POST to '{}' for '{method}' failed", self.display_url))?;
 
         if http_resp.status() == reqwest::StatusCode::UNAUTHORIZED {
             let has_session_header = http_resp.headers().contains_key(MCP_SESSION_ID_HEADER);
@@ -194,18 +262,23 @@ impl SseTransport {
                 if has_session_header {
                     info!(
                         method = %method,
-                        url = %self.url,
+                        url = %self.display_url,
                         www_authenticate = ?first_www_auth,
                         "received 401 with session header, replaying request before OAuth re-auth"
                     );
 
                     let req = self.build_post().await?;
-                    let replay_resp = req.json(body).send().await.with_context(|| {
-                        format!(
-                            "SSE POST session replay to '{}' for '{method}' failed",
-                            self.url
-                        )
-                    })?;
+                    let replay_resp = req
+                        .json(body)
+                        .send()
+                        .await
+                        .map_err(sanitize_reqwest_error)
+                        .with_context(|| {
+                            format!(
+                                "SSE POST session replay to '{}' for '{method}' failed",
+                                self.display_url
+                            )
+                        })?;
 
                     if replay_resp.status() != reqwest::StatusCode::UNAUTHORIZED {
                         self.store_session_id_from_response(&replay_resp).await;
@@ -221,16 +294,24 @@ impl SseTransport {
 
                     info!(
                         method = %method,
-                        url = %self.url,
+                        url = %self.display_url,
                         "received 401 after session replay, attempting OAuth re-auth"
                     );
 
                     if auth.handle_unauthorized(replay_www_auth.as_deref()).await? {
                         // Retry with new token
                         let req = self.build_post().await?;
-                        let retry_resp = req.json(body).send().await.with_context(|| {
-                            format!("SSE POST retry to '{}' for '{method}' failed", self.url)
-                        })?;
+                        let retry_resp = req
+                            .json(body)
+                            .send()
+                            .await
+                            .map_err(sanitize_reqwest_error)
+                            .with_context(|| {
+                                format!(
+                                    "SSE POST retry to '{}' for '{method}' failed",
+                                    self.display_url
+                                )
+                            })?;
 
                         if retry_resp.status() == reqwest::StatusCode::UNAUTHORIZED {
                             return Err(McpTransportError::Unauthorized {
@@ -255,7 +336,7 @@ impl SseTransport {
 
                 info!(
                     method = %method,
-                    url = %self.url,
+                    url = %self.display_url,
                     www_authenticate = ?first_www_auth,
                     "received 401, attempting OAuth re-auth"
                 );
@@ -263,9 +344,17 @@ impl SseTransport {
                 if auth.handle_unauthorized(first_www_auth.as_deref()).await? {
                     // Retry with new token
                     let req = self.build_post().await?;
-                    let retry_resp = req.json(body).send().await.with_context(|| {
-                        format!("SSE POST retry to '{}' for '{method}' failed", self.url)
-                    })?;
+                    let retry_resp = req
+                        .json(body)
+                        .send()
+                        .await
+                        .map_err(sanitize_reqwest_error)
+                        .with_context(|| {
+                            format!(
+                                "SSE POST retry to '{}' for '{method}' failed",
+                                self.display_url
+                            )
+                        })?;
 
                     if retry_resp.status() == reqwest::StatusCode::UNAUTHORIZED {
                         return Err(McpTransportError::Unauthorized {
@@ -309,7 +398,7 @@ impl McpTransport for SseTransport {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let req = JsonRpcRequest::new(id, method, params);
 
-        debug!(method = %method, id = %id, url = %self.url, "SSE client -> server");
+        debug!(method = %method, id = %id, url = %self.display_url, "SSE client -> server");
 
         let http_resp = self.send_with_auth_retry(method, &req).await?;
 
@@ -351,7 +440,11 @@ impl McpTransport for SseTransport {
             params,
         };
 
-        debug!(method = %method, url = %self.url, "SSE client -> server (notification)");
+        debug!(
+            method = %method,
+            url = %self.display_url,
+            "SSE client -> server (notification)"
+        );
 
         let http_resp = self.send_with_auth_retry(method, &notif).await?;
 
@@ -367,10 +460,12 @@ impl McpTransport for SseTransport {
         // Try a lightweight GET request to check connectivity and session continuity.
         let mut req = self
             .client
-            .get(&self.url)
+            .get(self.request_url.expose_secret())
             .timeout(std::time::Duration::from_secs(5))
             .header("Accept", STREAMABLE_ACCEPT_HEADER)
             .header(MCP_PROTOCOL_VERSION_HEADER, PROTOCOL_VERSION);
+
+        req = self.apply_default_headers(req);
 
         if let Some(session_id) = self.session_id.read().await.clone() {
             req = req.header(MCP_SESSION_ID_HEADER, session_id);
@@ -387,6 +482,11 @@ impl McpTransport for SseTransport {
         match req.send().await {
             Ok(resp) => {
                 self.store_session_id_from_response(&resp).await;
+                // Any HTTP response proves the server is reachable.
+                // Non-success statuses (401, 403, 405) are common for
+                // Streamable HTTP servers where GET is optional (MCP spec)
+                // or auth headers differ between GET and POST. Only true
+                // network errors (connection refused, timeout, DNS) mean dead.
                 true
             },
             Err(_) => false,
@@ -405,10 +505,12 @@ impl McpTransport for SseTransport {
 
         let mut req = self
             .client
-            .delete(&self.url)
+            .delete(self.request_url.expose_secret())
             .timeout(std::time::Duration::from_secs(5))
             .header(MCP_PROTOCOL_VERSION_HEADER, PROTOCOL_VERSION)
             .header(MCP_SESSION_ID_HEADER, session_id);
+
+        req = self.apply_default_headers(req);
 
         if let Some(token) = match &self.auth {
             Some(auth) => auth.access_token().await.ok().flatten(),
@@ -418,7 +520,11 @@ impl McpTransport for SseTransport {
         }
 
         if let Err(e) = req.send().await {
-            warn!(url = %self.url, error = %e, "failed to close MCP streamable HTTP session");
+            warn!(
+                url = %self.display_url,
+                error = %sanitize_reqwest_error(e),
+                "failed to close MCP streamable HTTP session"
+            );
         }
     }
 }
@@ -427,6 +533,13 @@ impl McpTransport for SseTransport {
 mod tests {
     use super::*;
 
+    fn unused_local_url() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        format!("http://{addr}/mcp")
+    }
+
     #[test]
     fn test_sse_transport_creation() {
         let transport = SseTransport::new("http://localhost:8080/mcp");
@@ -434,21 +547,20 @@ mod tests {
     }
 
     #[test]
-    fn test_sse_transport_invalid_url_still_creates() {
-        // reqwest doesn't validate URLs at build time, only at request time
+    fn test_sse_transport_invalid_url_fails_creation() {
         let transport = SseTransport::new("not-a-url");
-        assert!(transport.is_ok());
+        assert!(transport.is_err());
     }
 
     #[tokio::test]
     async fn test_sse_transport_is_alive_unreachable() {
-        let transport = SseTransport::new("http://127.0.0.1:1/mcp").unwrap();
+        let transport = SseTransport::new(&unused_local_url()).unwrap();
         assert!(!transport.is_alive().await);
     }
 
     #[tokio::test]
     async fn test_sse_transport_request_unreachable() {
-        let transport = SseTransport::new("http://127.0.0.1:1/mcp").unwrap();
+        let transport = SseTransport::new(&unused_local_url()).unwrap();
         let result = transport.request("test", None).await;
         assert!(result.is_err());
     }
@@ -504,10 +616,51 @@ mod tests {
         assert!(resp.result.is_some());
     }
 
+    fn remote_with_headers(
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> crate::remote::ResolvedRemoteConfig {
+        let config = crate::registry::McpServerConfig {
+            transport: crate::registry::TransportType::Sse,
+            url: Some(Secret::new(url.to_string())),
+            headers: headers
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), Secret::new((*value).to_string())))
+                .collect(),
+            ..Default::default()
+        };
+        crate::remote::ResolvedRemoteConfig::from_server_config(
+            &config,
+            &std::collections::HashMap::new(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_sse_transport_custom_headers_injected() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .match_header("x-api-key", "secret-header")
+            .match_header("authorization", "ApiKey raw-secret")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#)
+            .create_async()
+            .await;
+
+        let remote = remote_with_headers(&server.url(), &[
+            ("x-api-key", "secret-header"),
+            ("authorization", "ApiKey raw-secret"),
+        ]);
+        let transport = SseTransport::new_with_remote(remote, Duration::from_secs(60)).unwrap();
+        let resp = transport.request("test", None).await.unwrap();
+        assert!(resp.result.is_some());
+        mock.assert_async().await;
+    }
+
     #[tokio::test]
     async fn test_sse_transport_bearer_header_injected() {
-        use secrecy::Secret;
-
         use crate::auth::{McpAuthProvider, McpAuthState};
 
         /// Test auth provider that always returns a fixed token.
@@ -556,6 +709,66 @@ mod tests {
 
         let auth: SharedAuthProvider = Arc::new(FixedTokenProvider);
         let transport = SseTransport::with_auth(&server.url(), auth).unwrap();
+        let resp = transport.request("test", None).await.unwrap();
+        assert!(resp.result.is_some());
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_sse_transport_oauth_authorization_overrides_custom_header() {
+        use crate::auth::{McpAuthProvider, McpAuthState};
+
+        struct FixedTokenProvider;
+
+        #[async_trait::async_trait]
+        impl McpAuthProvider for FixedTokenProvider {
+            async fn access_token(&self) -> Result<Option<Secret<String>>> {
+                Ok(Some(Secret::new("oauth-token-123".to_string())))
+            }
+
+            async fn handle_unauthorized(&self, _: Option<&str>) -> Result<bool> {
+                Ok(false)
+            }
+
+            async fn start_oauth(
+                &self,
+                _redirect_uri: &str,
+                _www_authenticate: Option<&str>,
+            ) -> Result<Option<String>> {
+                Ok(None)
+            }
+
+            async fn complete_oauth(&self, _state: &str, _code: &str) -> Result<bool> {
+                Ok(false)
+            }
+
+            fn pending_auth_url(&self) -> Option<String> {
+                None
+            }
+
+            fn auth_state(&self) -> McpAuthState {
+                McpAuthState::Authenticated
+            }
+        }
+
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .match_header("x-api-key", "secret-header")
+            .match_header("authorization", "Bearer oauth-token-123")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#)
+            .create_async()
+            .await;
+
+        let remote = remote_with_headers(&server.url(), &[
+            ("x-api-key", "secret-header"),
+            ("authorization", "ApiKey raw-secret"),
+        ]);
+        let auth: SharedAuthProvider = Arc::new(FixedTokenProvider);
+        let transport =
+            SseTransport::with_auth_remote(remote, auth, Duration::from_secs(60)).unwrap();
         let resp = transport.request("test", None).await.unwrap();
         assert!(resp.result.is_some());
         mock.assert_async().await;
@@ -686,6 +899,83 @@ mod tests {
         let transport = SseTransport::new(&server.url()).unwrap();
         let resp = transport.request("initialize", None).await.unwrap();
         assert!(resp.result.is_some());
+    }
+
+    // ── is_alive health-check tests (issue #732) ──────────────────────
+
+    #[tokio::test]
+    async fn test_is_alive_200_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"ok":true}"#)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
+    }
+
+    #[tokio::test]
+    async fn test_is_alive_401_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(401)
+            .with_header("www-authenticate", r#"Bearer realm="test""#)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
+    }
+
+    /// Streamable HTTP servers may not support GET (it's optional in the MCP
+    /// spec). A 405 response proves the server is reachable and alive.
+    #[tokio::test]
+    async fn test_is_alive_405_method_not_allowed_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(405)
+            .with_header("allow", "POST, DELETE")
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
+    }
+
+    /// A 403 Forbidden from the health check still proves the server is
+    /// reachable — it just refused the request. The server is alive.
+    #[tokio::test]
+    async fn test_is_alive_403_forbidden_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(403)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
+    }
+
+    /// A 400 Bad Request still proves the server endpoint is alive.
+    #[tokio::test]
+    async fn test_is_alive_400_bad_request_returns_true() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/")
+            .with_status(400)
+            .with_body(r#"{"error":"bad request"}"#)
+            .create_async()
+            .await;
+
+        let transport = SseTransport::new(&server.url()).unwrap();
+        assert!(transport.is_alive().await);
     }
 
     #[tokio::test]

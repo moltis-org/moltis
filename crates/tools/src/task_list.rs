@@ -67,6 +67,11 @@ pub struct Task {
     pub blocked_by: Vec<String>,
     pub created_at: u64,
     pub updated_at: u64,
+    /// Which list this task belongs to. Always populated since creation
+    /// associates tasks with a list. Persisted to disk as part of the
+    /// task JSON; deserialization defaults to empty for legacy files.
+    #[serde(default)]
+    pub list_id: String,
 }
 
 /// File-backed store for one logical task list.
@@ -172,6 +177,7 @@ impl TaskStore {
             blocked_by: Vec::new(),
             created_at: now,
             updated_at: now,
+            list_id: list_id.to_string(),
         };
         list.tasks.insert(id, task.clone());
         drop(lists);
@@ -179,11 +185,57 @@ impl TaskStore {
         Ok(task)
     }
 
+    /// Return all list IDs that have persisted files or contain tasks.
+    /// Filters out phantom in-memory lists created by failed lookups.
+    ///
+    /// Note: this scans the filesystem and holds a read lock, so results
+    /// may be stale if a concurrent write creates or deletes a list file
+    /// between the directory scan and the filter. This is acceptable for
+    /// a discovery API — callers should not assume strong consistency.
+    pub async fn list_ids(&self) -> crate::Result<Vec<String>> {
+        // Ensure every persisted list is loaded.
+        if self.data_dir.exists() {
+            let mut entries = tokio::fs::read_dir(&self.data_dir)
+                .await
+                .map_err(|e| Error::message(format!("failed to read task dir: {e}")))?;
+            while let Some(entry) = entries
+                .next_entry()
+                .await
+                .map_err(|e| Error::message(format!("failed to read task dir entry: {e}")))?
+            {
+                let path = entry.path();
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    let stem = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    self.ensure_list(&stem).await?;
+                }
+            }
+        }
+        let lists = self.lists.read().await;
+        let mut ids: Vec<String> = lists
+            .iter()
+            .filter(|(id, list)| {
+                // Keep if persisted on disk or has tasks.
+                self.file_path(id).exists() || !list.tasks.is_empty()
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.sort();
+        Ok(ids)
+    }
+
+    /// List tasks from a single list, or all lists when `list_id` is `"*"`.
     pub async fn list_tasks(
         &self,
         list_id: &str,
         status_filter: Option<&TaskStatus>,
     ) -> crate::Result<Vec<Task>> {
+        if list_id == "*" {
+            return self.list_all_tasks(status_filter).await;
+        }
         self.ensure_list(list_id).await?;
         let lists = self.lists.read().await;
         let list = lists
@@ -198,6 +250,30 @@ impl TaskStore {
             .collect();
         tasks.sort_by_key(|t| t.id.parse::<u64>().unwrap_or(0));
         Ok(tasks)
+    }
+
+    /// List tasks across every known list.
+    async fn list_all_tasks(&self, status_filter: Option<&TaskStatus>) -> crate::Result<Vec<Task>> {
+        let ids = self.list_ids().await?;
+        // Collect as (list_id, numeric_id, task) for stable cross-list ordering.
+        let mut all: Vec<(String, u64, Task)> = Vec::new();
+        let lists = self.lists.read().await;
+        for id in &ids {
+            let Some(list) = lists.get(id) else {
+                continue;
+            };
+            for task in list
+                .tasks
+                .values()
+                .filter(|t| status_filter.is_none_or(|s| &t.status == s))
+            {
+                let mut t = task.clone();
+                t.list_id = id.clone();
+                all.push((id.clone(), t.id.parse::<u64>().unwrap_or(0), t));
+            }
+        }
+        all.sort_by_key(|(list_id, num, _)| (list_id.clone(), *num));
+        Ok(all.into_iter().map(|(_, _, t)| t).collect())
     }
 
     pub async fn get(&self, list_id: &str, task_id: &str) -> crate::Result<Option<Task>> {
@@ -327,7 +403,7 @@ impl AgentTool for TaskListTool {
 
     fn description(&self) -> &str {
         "Manage a shared task list for coordinated multi-agent execution. \
-         Actions: create, list, get, update, claim."
+         Actions: create, list, list_lists, get, update, claim."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -336,12 +412,12 @@ impl AgentTool for TaskListTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["create", "list", "get", "update", "claim"],
-                    "description": "Task list action to perform."
+                    "enum": ["create", "list", "list_lists", "get", "update", "claim"],
+                    "description": "Task list action to perform. Use list_lists to discover all lists. Use list with list_id=\"*\" for all tasks."
                 },
                 "list_id": {
                     "type": "string",
-                    "description": "Task list identifier (default: default)."
+                    "description": "Task list identifier. Use \"*\" (or omit) to list across all lists. Pass a specific ID to scope to one list."
                 },
                 "id": {
                     "type": "string",
@@ -392,11 +468,29 @@ impl AgentTool for TaskListTool {
                 let status = str_param(&params, "status")
                     .map(str::parse::<TaskStatus>)
                     .transpose()?;
-                let tasks = self.store.list_tasks(list_id, status.as_ref()).await?;
+                let effective_id = if list_id == "default"
+                    && params.get("list_id").is_none()
+                    && params.get("listId").is_none()
+                {
+                    // When list_id is truly omitted, default to "*" so agents
+                    // see tasks from all lists without guessing.
+                    "*"
+                } else {
+                    list_id
+                };
+                let tasks = self.store.list_tasks(effective_id, status.as_ref()).await?;
                 Ok(serde_json::json!({
                     "ok": true,
                     "tasks": tasks,
                     "count": tasks.len(),
+                }))
+            },
+            "list_lists" => {
+                let ids = self.store.list_ids().await?;
+                Ok(serde_json::json!({
+                    "ok": true,
+                    "list_ids": ids,
+                    "count": ids.len(),
                 }))
             },
             "get" => {
@@ -450,6 +544,7 @@ impl AgentTool for TaskListTool {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -586,6 +681,229 @@ mod tests {
             .err()
             .ok_or_else(|| std::io::Error::other("expected blocked claim failure"))?;
         assert!(err.to_string().contains("blocked by incomplete tasks"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_without_list_id_returns_all_tasks() -> TestResult<()> {
+        let tmp = tempfile::tempdir()?;
+        let task_tool = tool(&tmp);
+
+        // Create tasks in two different lists.
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "list_id": "CURRICULUM_1",
+                "subject": "task-a",
+                "description": "in list 1"
+            }))
+            .await?;
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "list_id": "CURRICULUM_2",
+                "subject": "task-b",
+                "description": "in list 2"
+            }))
+            .await?;
+
+        // Omitting list_id should now default to "*" and return both.
+        let result = task_tool
+            .execute(serde_json::json!({
+                "action": "list"
+            }))
+            .await?;
+        assert_eq!(result["count"], 2);
+
+        let subjects: Vec<&str> = result["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["subject"].as_str().unwrap())
+            .collect();
+        assert!(subjects.contains(&"task-a"));
+        assert!(subjects.contains(&"task-b"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_with_wildcard_returns_all_tasks() -> TestResult<()> {
+        let tmp = tempfile::tempdir()?;
+        let task_tool = tool(&tmp);
+
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "list_id": "ALPHA",
+                "subject": "alpha-task"
+            }))
+            .await?;
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "subject": "default-task"
+            }))
+            .await?;
+
+        let result = task_tool
+            .execute(serde_json::json!({
+                "action": "list",
+                "list_id": "*"
+            }))
+            .await?;
+        assert_eq!(result["count"], 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_lists_returns_all_known_ids() -> TestResult<()> {
+        let tmp = tempfile::tempdir()?;
+        let task_tool = tool(&tmp);
+
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "list_id": "LIST_X",
+                "subject": "x"
+            }))
+            .await?;
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "list_id": "LIST_Y",
+                "subject": "y"
+            }))
+            .await?;
+
+        let result = task_tool
+            .execute(serde_json::json!({
+                "action": "list_lists"
+            }))
+            .await?;
+        assert_eq!(result["count"], 2);
+
+        let ids: Vec<&str> = result["list_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(ids.contains(&"LIST_X"));
+        assert!(ids.contains(&"LIST_Y"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn explicit_default_list_id_still_scopes() -> TestResult<()> {
+        let tmp = tempfile::tempdir()?;
+        let task_tool = tool(&tmp);
+
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "list_id": "default",
+                "subject": "in-default"
+            }))
+            .await?;
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "list_id": "OTHER",
+                "subject": "in-other"
+            }))
+            .await?;
+
+        // Explicitly passing list_id="default" should only return default tasks.
+        let result = task_tool
+            .execute(serde_json::json!({
+                "action": "list",
+                "list_id": "default"
+            }))
+            .await?;
+        assert_eq!(result["count"], 1);
+        assert_eq!(result["tasks"][0]["subject"], "in-default");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn wildcard_list_includes_list_id_field() -> TestResult<()> {
+        let tmp = tempfile::tempdir()?;
+        let task_tool = tool(&tmp);
+
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "list_id": "LIST_A",
+                "subject": "a-task"
+            }))
+            .await?;
+
+        let result = task_tool
+            .execute(serde_json::json!({
+                "action": "list",
+                "list_id": "*"
+            }))
+            .await?;
+        assert_eq!(result["count"], 1);
+        assert_eq!(result["tasks"][0]["list_id"], "LIST_A");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn single_list_includes_list_id_field() -> TestResult<()> {
+        let tmp = tempfile::tempdir()?;
+        let task_tool = tool(&tmp);
+
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "list_id": "X",
+                "subject": "x-task"
+            }))
+            .await?;
+
+        let result = task_tool
+            .execute(serde_json::json!({
+                "action": "list",
+                "list_id": "X"
+            }))
+            .await?;
+        assert_eq!(result["tasks"][0]["list_id"], "X");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_lists_excludes_phantom_empty_lists() -> TestResult<()> {
+        let tmp = tempfile::tempdir()?;
+        let task_tool = tool(&tmp);
+
+        // Create a real list with a task.
+        task_tool
+            .execute(serde_json::json!({
+                "action": "create",
+                "list_id": "REAL",
+                "subject": "real-task"
+            }))
+            .await?;
+
+        // Try to get from a non-existent list — this creates a phantom empty list.
+        let get_result = task_tool
+            .execute(serde_json::json!({
+                "action": "get",
+                "list_id": "PHANTOM",
+                "id": "999"
+            }))
+            .await?;
+        assert_eq!(get_result["ok"], false);
+
+        // list_lists should only return REAL, not PHANTOM.
+        let result = task_tool
+            .execute(serde_json::json!({
+                "action": "list_lists"
+            }))
+            .await?;
+        assert_eq!(result["count"], 1);
+        assert_eq!(result["list_ids"][0], "REAL");
         Ok(())
     }
 }

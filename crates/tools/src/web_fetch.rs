@@ -4,6 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "firecrawl")]
+use secrecy::ExposeSecret;
 use {async_trait::async_trait, tracing::debug, url::Url};
 
 use crate::error::Error;
@@ -29,6 +31,20 @@ pub struct WebFetchTool {
     ssrf_allowlist: Vec<ipnet::IpNet>,
     cache: Mutex<HashMap<String, CacheEntry>>,
     proxy_url: Option<String>,
+    /// Firecrawl fallback: API key for calling Firecrawl when local extraction
+    /// produces poor results.
+    #[cfg(feature = "firecrawl")]
+    firecrawl_api_key: Option<secrecy::Secret<String>>,
+    /// Firecrawl base URL.
+    #[cfg(feature = "firecrawl")]
+    firecrawl_base_url: String,
+    /// Firecrawl: only extract main content.
+    #[cfg(feature = "firecrawl")]
+    firecrawl_only_main_content: bool,
+    /// Whether to use Firecrawl as fallback when readability extraction
+    /// produces poor results.
+    #[cfg(feature = "firecrawl")]
+    firecrawl_fallback: bool,
 }
 
 impl WebFetchTool {
@@ -57,6 +73,14 @@ impl WebFetchTool {
             ssrf_allowlist,
             cache: Mutex::new(HashMap::new()),
             proxy_url: None,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_api_key: None,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_base_url: crate::firecrawl::DEFAULT_BASE_URL.into(),
+            #[cfg(feature = "firecrawl")]
+            firecrawl_only_main_content: true,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_fallback: false,
         })
     }
 
@@ -64,6 +88,33 @@ impl WebFetchTool {
     #[must_use]
     pub fn with_proxy(mut self, url: String) -> Self {
         self.proxy_url = Some(url);
+        self
+    }
+
+    /// Attach Firecrawl config for fallback extraction.
+    ///
+    /// When enabled, `web_fetch` will try Firecrawl as a fallback when local
+    /// readability extraction produces poor results (very short output
+    /// relative to the HTML body).
+    #[cfg(feature = "firecrawl")]
+    #[must_use]
+    pub fn with_firecrawl(mut self, config: &moltis_config::schema::FirecrawlConfig) -> Self {
+        if config.enabled && config.web_fetch_fallback {
+            self.firecrawl_api_key = crate::firecrawl::resolve_api_key(config);
+            self.firecrawl_base_url = if config.base_url.trim().is_empty() {
+                crate::firecrawl::DEFAULT_BASE_URL.into()
+            } else {
+                config.base_url.clone()
+            };
+            self.firecrawl_only_main_content = config.only_main_content;
+            self.firecrawl_fallback = self.firecrawl_api_key.is_some();
+            if !self.firecrawl_fallback {
+                tracing::warn!(
+                    "firecrawl web_fetch_fallback is enabled but no API key found; \
+                     set tools.web.firecrawl.api_key or FIRECRAWL_API_KEY env var"
+                );
+            }
+        }
         self
     }
 
@@ -111,7 +162,11 @@ impl WebFetchTool {
         let mut client_builder = reqwest::Client::builder()
             .timeout(self.timeout)
             .redirect(reqwest::redirect::Policy::none()); // Manual redirect handling.
-        if let Some(ref url) = self.proxy_url
+        // Prefer the sandbox proxy when set, otherwise fall through to the
+        // upstream proxy (if configured).
+        let upstream = moltis_common::http_client::upstream_proxy_url();
+        let effective_proxy = self.proxy_url.as_deref().or(upstream);
+        if let Some(url) = effective_proxy
             && let Ok(proxy) = reqwest::Proxy::all(url)
         {
             let proxy = proxy.no_proxy(reqwest::NoProxy::from_string("localhost,127.0.0.1,::1"));
@@ -179,8 +234,54 @@ impl WebFetchTool {
 
             let body = resp.text().await?;
 
-            let (content, detected_mode) =
+            let (mut content, mut detected_mode) =
                 extract_content(&body, &content_type, extract_mode, self.readability);
+
+            // Firecrawl fallback: when readability extraction produced very
+            // little content relative to the HTML body, try Firecrawl.
+            #[cfg(feature = "firecrawl")]
+            if self.firecrawl_fallback
+                && detected_mode != "json"
+                && content_type.to_lowercase().contains("html")
+                && let Some(ref api_key) = self.firecrawl_api_key
+            {
+                // Heuristic: readability output < 10% of HTML body suggests
+                // extraction failed (JS-rendered page, anti-bot protection, etc.).
+                let ratio_poor = !body.is_empty() && content.len() < body.len() / 10;
+                let content_very_short = content.len() < 200 && body.len() > 1000;
+                if ratio_poor || content_very_short {
+                    debug!(
+                        "web_fetch: readability produced {}/{} chars, trying firecrawl fallback",
+                        content.len(),
+                        body.len()
+                    );
+                    match crate::firecrawl::firecrawl_scrape(
+                        crate::shared_http_client(),
+                        &self.firecrawl_base_url,
+                        api_key.expose_secret(),
+                        current_url.as_str(),
+                        self.firecrawl_only_main_content,
+                        self.timeout,
+                    )
+                    .await
+                    {
+                        Ok(Some(scrape)) => {
+                            content = scrape.markdown;
+                            detected_mode = "firecrawl".into();
+                        },
+                        Ok(None) => {
+                            debug!(
+                                "web_fetch: firecrawl returned no content, keeping local extraction"
+                            );
+                        },
+                        Err(e) => {
+                            debug!(
+                                "web_fetch: firecrawl fallback failed: {e}, keeping local extraction"
+                            );
+                        },
+                    }
+                }
+            }
 
             let truncated = content.len() > max_chars;
             let content = if truncated {
@@ -234,115 +335,30 @@ fn extract_content(
     (cleaned, "text".into())
 }
 
-/// Simple HTML to text conversion: strip tags, decode basic entities,
-/// collapse whitespace. A lightweight alternative to a full readability
-/// crate — good enough for most pages.
+/// Convert HTML to plain text using the `html2text` crate.
+/// Strips tags, decodes all HTML entities, and collapses consecutive
+/// blank lines. Uses `TrivialDecorator` so link URLs and markup
+/// annotations are dropped.
 fn html_to_text(html: &str) -> String {
-    let mut result = String::with_capacity(html.len() / 2);
-    let mut in_tag = false;
-    let mut in_script = false;
-    let mut in_style = false;
-    let mut last_was_space = false;
+    let clean = |text: String| -> String {
+        let mut lines: Vec<&str> = text.lines().map(str::trim_end).collect();
+        lines.dedup_by(|a, b| a.is_empty() && b.is_empty());
+        lines.join("\n").trim().to_string()
+    };
 
-    let html_lower = html.to_lowercase();
-    let bytes = html.as_bytes();
-    let lower_bytes = html_lower.as_bytes();
-
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'<' {
-            // Check for script/style open/close tags.
-            if i + 7 < lower_bytes.len() && &lower_bytes[i..i + 7] == b"<script" {
-                in_script = true;
-            }
-            if i + 9 < lower_bytes.len() && &lower_bytes[i..i + 9] == b"</script>" {
-                in_script = false;
-            }
-            if i + 6 < lower_bytes.len() && &lower_bytes[i..i + 6] == b"<style" {
-                in_style = true;
-            }
-            if i + 8 < lower_bytes.len() && &lower_bytes[i..i + 8] == b"</style>" {
-                in_style = false;
-            }
-
-            // Block-level tags → newline.
-            if !in_script && !in_style {
-                let tag_start = &html_lower[i..];
-                if tag_start.starts_with("<br")
-                    || tag_start.starts_with("<p")
-                    || tag_start.starts_with("</p")
-                    || tag_start.starts_with("<div")
-                    || tag_start.starts_with("</div")
-                    || tag_start.starts_with("<h")
-                    || tag_start.starts_with("</h")
-                    || tag_start.starts_with("<li")
-                {
-                    if !result.ends_with('\n') {
-                        result.push('\n');
-                    }
-                    last_was_space = true;
-                }
-            }
-
-            in_tag = true;
-            i += 1;
-            continue;
-        }
-
-        if bytes[i] == b'>' {
-            in_tag = false;
-            i += 1;
-            continue;
-        }
-
-        if in_tag || in_script || in_style {
-            i += 1;
-            continue;
-        }
-
-        // Decode HTML entities.
-        if bytes[i] == b'&' {
-            let rest = &html[i..];
-            if let Some(semi) = rest.find(';') {
-                let entity = &rest[..semi + 1];
-                let decoded = match entity {
-                    "&amp;" => "&",
-                    "&lt;" => "<",
-                    "&gt;" => ">",
-                    "&quot;" => "\"",
-                    "&apos;" | "&#39;" => "'",
-                    "&nbsp;" | "&#160;" => " ",
-                    _ => {
-                        // Skip unknown entities.
-                        i += 1;
-                        continue;
-                    },
-                };
-                result.push_str(decoded);
-                last_was_space = decoded == " ";
-                i += entity.len();
-                continue;
-            }
-        }
-
-        let ch = bytes[i] as char;
-        if ch.is_ascii_whitespace() {
-            if !last_was_space {
-                result.push(' ');
-                last_was_space = true;
-            }
-        } else {
-            result.push(ch);
-            last_was_space = false;
-        }
-        i += 1;
+    match html2text::config::with_decorator(html2text::render::TrivialDecorator::new())
+        .string_from_read(html.as_bytes(), 1_000_000)
+    {
+        Ok(text) => clean(text),
+        Err(e) => {
+            tracing::warn!("html2text parse failed, returning raw HTML body: {e}");
+            clean(html.to_string())
+        },
     }
-
-    result.trim().to_string()
 }
 
 /// Truncate a string at a char boundary, not mid-UTF-8.
-fn truncate_at_char_boundary(s: &str, max: usize) -> String {
+pub(crate) fn truncate_at_char_boundary(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.into();
     }
@@ -442,6 +458,14 @@ mod tests {
             ssrf_allowlist: vec![],
             cache: Mutex::new(HashMap::new()),
             proxy_url: None,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_api_key: None,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_base_url: crate::firecrawl::DEFAULT_BASE_URL.into(),
+            #[cfg(feature = "firecrawl")]
+            firecrawl_only_main_content: true,
+            #[cfg(feature = "firecrawl")]
+            firecrawl_fallback: false,
         }
     }
 
@@ -577,6 +601,62 @@ mod tests {
         // Should not panic and should be valid UTF-8.
         assert!(truncated.len() <= 3);
         assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
+    }
+
+    // --- Regression tests: multibyte char boundary safety (#420) ---
+
+    #[test]
+    fn test_html_to_text_replacement_chars() {
+        // U+FFFD (3 bytes in UTF-8) from lossy decoding of legacy pages.
+        let html = "<p>Hello \u{FFFD}\u{FFFD}\u{FFFD} world</p>";
+        let text = html_to_text(html);
+        assert!(text.contains("Hello"));
+        assert!(text.contains("world"));
+        assert!(
+            text.contains('\u{FFFD}'),
+            "replacement chars should pass through"
+        );
+    }
+
+    #[test]
+    fn test_html_to_text_cjk_characters() {
+        let html = "<h1>タイトル</h1><p>日本語のテスト</p>";
+        let text = html_to_text(html);
+        assert!(text.contains("タイトル"));
+        assert!(text.contains("日本語のテスト"));
+    }
+
+    #[test]
+    fn test_html_to_text_mixed_encoding_content() {
+        let html =
+            "<div>Price: &lt;¥500&gt;</div><script>var x='テスト';</script><p>End \u{FFFD}</p>";
+        let text = html_to_text(html);
+        assert!(text.contains("Price:"));
+        assert!(text.contains("<¥500>"));
+        assert!(text.contains("End"));
+        assert!(!text.contains("var x"));
+    }
+
+    #[test]
+    fn test_html_to_text_entity_with_multibyte_neighbors() {
+        let html = "<p>東京&amp;大阪</p>";
+        let text = html_to_text(html);
+        assert!(text.contains("東京&大阪"));
+    }
+
+    #[test]
+    fn test_html_to_text_drops_link_urls() {
+        let html = r#"<p>Visit <a href="https://example.com/secret">our site</a> today.</p>"#;
+        let text = html_to_text(html);
+        assert!(text.contains("our site"), "link text should be kept");
+        assert!(
+            !text.contains("https://example.com"),
+            "link href must not appear in plain-text output"
+        );
+        assert!(
+            !text.contains("[1]"),
+            "link footnote references must not appear"
+        );
     }
 
     // --- Cache tests ---

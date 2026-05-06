@@ -17,7 +17,7 @@ For security issues, do not open a public issue. Follow `SECURITY.md` instead.
 Prerequisites:
 
 - Rust toolchain (stable)
-- `rustup` with nightly `nightly-2025-11-30` available
+- `rustup` with the nightly pinned in `rust-toolchain.toml` available
 - `just` task runner
 - `git-cliff` changelog generator
 - Node.js (for web UI e2e tests)

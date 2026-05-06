@@ -45,6 +45,8 @@ pub enum CronPayload {
         #[serde(skip_serializing_if = "Option::is_none")]
         model: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         timeout_secs: Option<u64>,
         #[serde(default)]
         deliver: bool,
@@ -142,6 +144,9 @@ pub struct CronRunRecord {
     pub input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u64>,
+    /// The session key used for this run (links to the session store).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_key: Option<String>,
 }
 
 /// Sandbox configuration for a cron job.
@@ -154,6 +159,10 @@ pub struct CronSandboxConfig {
     /// Override the sandbox image. If `None`, uses the default image.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    /// Whether to auto-prune the sandbox container after cron completion.
+    /// When `None`, falls back to the global `auto_prune_cron_containers` config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_prune_container: Option<bool>,
 }
 
 impl Default for CronSandboxConfig {
@@ -161,6 +170,7 @@ impl Default for CronSandboxConfig {
         Self {
             enabled: true,
             image: None,
+            auto_prune_container: None,
         }
     }
 }
@@ -289,6 +299,7 @@ mod tests {
         let p = CronPayload::AgentTurn {
             message: "check emails".into(),
             model: None,
+            agent_id: None,
             timeout_secs: Some(120),
             deliver: true,
             channel: Some("slack".into()),
@@ -343,13 +354,15 @@ mod tests {
             output: Some("done".into()),
             input_tokens: None,
             output_tokens: None,
+            session_key: None,
         };
         let json = serde_json::to_string(&rec).unwrap();
         let back: CronRunRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(rec, back);
-        // Tokens should be absent from JSON when None.
+        // Optional fields should be absent from JSON when None.
         assert!(!json.contains("inputTokens"));
         assert!(!json.contains("outputTokens"));
+        assert!(!json.contains("sessionKey"));
     }
 
     #[test]
@@ -364,6 +377,7 @@ mod tests {
             output: Some("done".into()),
             input_tokens: Some(150),
             output_tokens: Some(42),
+            session_key: None,
         };
         let json = serde_json::to_string(&rec).unwrap();
         let back: CronRunRecord = serde_json::from_str(&json).unwrap();
@@ -373,12 +387,34 @@ mod tests {
     }
 
     #[test]
+    fn test_run_record_with_session_key() {
+        let rec = CronRunRecord {
+            job_id: "j1".into(),
+            started_at_ms: 1000,
+            finished_at_ms: 2000,
+            status: RunStatus::Ok,
+            error: None,
+            duration_ms: 1000,
+            output: None,
+            input_tokens: None,
+            output_tokens: None,
+            session_key: Some("cron:abc-123".into()),
+        };
+        let json = serde_json::to_string(&rec).unwrap();
+        assert!(json.contains("sessionKey"));
+        let back: CronRunRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(rec, back);
+        assert_eq!(back.session_key.as_deref(), Some("cron:abc-123"));
+    }
+
+    #[test]
     fn test_run_record_deserialize_without_tokens() {
-        // Old records without token fields should deserialize with None.
+        // Old records without token or session_key fields should deserialize with None.
         let json = r#"{"jobId":"j1","startedAtMs":1000,"finishedAtMs":2000,"status":"ok","durationMs":1000}"#;
         let rec: CronRunRecord = serde_json::from_str(json).unwrap();
         assert_eq!(rec.input_tokens, None);
         assert_eq!(rec.output_tokens, None);
+        assert_eq!(rec.session_key, None);
     }
 
     #[test]
@@ -402,6 +438,7 @@ mod tests {
         let cfg = CronSandboxConfig::default();
         assert!(cfg.enabled);
         assert!(cfg.image.is_none());
+        assert!(cfg.auto_prune_container.is_none());
     }
 
     #[test]
@@ -409,6 +446,7 @@ mod tests {
         let cfg = CronSandboxConfig {
             enabled: false,
             image: Some("custom:latest".into()),
+            auto_prune_container: Some(true),
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: CronSandboxConfig = serde_json::from_str(&json).unwrap();
@@ -420,6 +458,14 @@ mod tests {
         let cfg: CronSandboxConfig = serde_json::from_str("{}").unwrap();
         assert!(cfg.enabled);
         assert!(cfg.image.is_none());
+        assert!(cfg.auto_prune_container.is_none());
+    }
+
+    #[test]
+    fn test_sandbox_config_auto_prune_explicit() {
+        let json = r#"{"enabled": true, "autoPruneContainer": false}"#;
+        let cfg: CronSandboxConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.auto_prune_container, Some(false));
     }
 
     #[test]
@@ -436,6 +482,7 @@ mod tests {
             payload: CronPayload::AgentTurn {
                 message: "go".into(),
                 model: None,
+                agent_id: None,
                 timeout_secs: None,
                 deliver: false,
                 channel: None,
@@ -446,6 +493,7 @@ mod tests {
             sandbox: CronSandboxConfig {
                 enabled: false,
                 image: Some("my-image:v1".into()),
+                auto_prune_container: None,
             },
             wake_mode: CronWakeMode::default(),
             system: false,

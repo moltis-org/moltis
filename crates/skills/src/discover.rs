@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 use crate::{
+    error::Result,
     formats::PluginFormat,
     manifest::ManifestStore,
     parse,
@@ -13,7 +14,7 @@ use crate::{
 #[async_trait]
 pub trait SkillDiscoverer: Send + Sync {
     /// Scan configured paths and return metadata for all discovered skills.
-    async fn discover(&self) -> anyhow::Result<Vec<SkillMetadata>>;
+    async fn discover(&self) -> Result<Vec<SkillMetadata>>;
 }
 
 /// Default filesystem-based skill discoverer.
@@ -31,20 +32,30 @@ impl FsSkillDiscoverer {
     ///
     /// Workspace root is always the configured data directory.
     pub fn default_paths() -> Vec<(PathBuf, SkillSource)> {
-        let workspace_root = moltis_config::data_dir();
-        let data = workspace_root.clone();
+        Self::default_paths_for(&moltis_config::data_dir())
+    }
+
+    /// Build the default search paths rooted at an explicit workspace / data
+    /// directory.
+    ///
+    /// Prefer this over [`default_paths`](Self::default_paths) when the caller
+    /// already has a `data_dir` in hand (e.g. the gateway's `bootstrap` scope)
+    /// so the read and write sides stay consistent even if
+    /// `moltis_config::data_dir()` is ever reconfigured at runtime.
+    #[must_use]
+    pub fn default_paths_for(data_dir: &Path) -> Vec<(PathBuf, SkillSource)> {
         vec![
-            (workspace_root.join(".moltis/skills"), SkillSource::Project),
-            (data.join("skills"), SkillSource::Personal),
-            (data.join("installed-skills"), SkillSource::Registry),
-            (data.join("installed-plugins"), SkillSource::Plugin),
+            (data_dir.join(".moltis/skills"), SkillSource::Project),
+            (data_dir.join("skills"), SkillSource::Personal),
+            (data_dir.join("installed-skills"), SkillSource::Registry),
+            (data_dir.join("installed-plugins"), SkillSource::Plugin),
         ]
     }
 }
 
 #[async_trait]
 impl SkillDiscoverer for FsSkillDiscoverer {
-    async fn discover(&self) -> anyhow::Result<Vec<SkillMetadata>> {
+    async fn discover(&self) -> Result<Vec<SkillMetadata>> {
         let mut skills = Vec::new();
 
         for (base_path, source) in &self.search_paths {
@@ -65,12 +76,60 @@ impl SkillDiscoverer for FsSkillDiscoverer {
                 SkillSource::Plugin => {
                     discover_plugins(base_path, &mut skills);
                 },
+                // Bundled skills are handled by CompositeSkillDiscoverer,
+                // not by filesystem path scanning.
+                SkillSource::Bundled => {},
             }
         }
 
         Ok(skills)
     }
 }
+
+// ── Composite discoverer (fs + bundled) ─────────────────────────────────────
+
+#[cfg(feature = "bundled-skills")]
+use std::sync::Arc;
+
+/// Discoverer that merges filesystem-discovered skills with bundled skills.
+///
+/// Bundled skills are appended at lowest priority: any user skill with the
+/// same name takes precedence. This ensures users can override or shadow a
+/// bundled skill by creating one with the same name in their personal or
+/// project skills directory.
+#[cfg(feature = "bundled-skills")]
+pub struct CompositeSkillDiscoverer {
+    inner: Box<dyn SkillDiscoverer>,
+    bundled: Arc<crate::bundled::BundledSkillStore>,
+}
+
+#[cfg(feature = "bundled-skills")]
+impl CompositeSkillDiscoverer {
+    pub fn new(
+        inner: Box<dyn SkillDiscoverer>,
+        bundled: Arc<crate::bundled::BundledSkillStore>,
+    ) -> Self {
+        Self { inner, bundled }
+    }
+}
+
+#[cfg(feature = "bundled-skills")]
+#[async_trait]
+impl SkillDiscoverer for CompositeSkillDiscoverer {
+    async fn discover(&self) -> Result<Vec<SkillMetadata>> {
+        let mut skills = self.inner.discover().await?;
+        let mut seen: std::collections::HashSet<String> =
+            skills.iter().map(|s| s.name.clone()).collect();
+        for bundled in self.bundled.discover() {
+            if seen.insert(bundled.name.clone()) {
+                skills.push(bundled);
+            }
+        }
+        Ok(skills)
+    }
+}
+
+// ── Filesystem scanning helpers ─────────────────────────────────────────────
 
 /// Scan one level deep for SKILL.md dirs (project/personal sources).
 fn discover_flat(base_path: &Path, source: &SkillSource, skills: &mut Vec<SkillMetadata>) {
@@ -98,7 +157,7 @@ fn discover_flat(base_path: &Path, source: &SkillSource, skills: &mut Vec<SkillM
         match parse::parse_metadata(&content, &skill_dir) {
             Ok(mut meta) => {
                 meta.source = Some(source.clone());
-                tracing::info!(
+                tracing::debug!(
                     path = %skill_md.display(),
                     source = ?source,
                     name = %meta.name,
@@ -135,15 +194,9 @@ fn discover_plugins(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
             let skill_dir = install_dir.join(&skill_state.relative_path);
             skills.push(SkillMetadata {
                 name: skill_state.name.clone(),
-                description: String::new(),
-                homepage: None,
-                license: None,
-                compatibility: None,
-                allowed_tools: Vec::new(),
-                requires: Default::default(),
                 path: skill_dir,
                 source: Some(SkillSource::Plugin),
-                dockerfile: None,
+                ..Default::default()
             });
         }
     }
@@ -193,7 +246,7 @@ fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
                     match parse::parse_metadata(&content, &skill_dir) {
                         Ok(mut meta) => {
                             meta.source = Some(SkillSource::Registry);
-                            tracing::info!(
+                            tracing::debug!(
                                 path = %skill_md.display(),
                                 source = "registry",
                                 name = %meta.name,
@@ -211,15 +264,9 @@ fn discover_registry(install_dir: &Path, skills: &mut Vec<SkillMetadata>) {
                     // so prompt_gen uses the path directly (no /SKILL.md append).
                     skills.push(SkillMetadata {
                         name: skill_state.name.clone(),
-                        description: String::new(),
-                        homepage: None,
-                        license: None,
-                        compatibility: None,
-                        allowed_tools: Vec::new(),
-                        requires: Default::default(),
                         path: skill_dir,
                         source: Some(SkillSource::Plugin),
-                        dockerfile: None,
+                        ..Default::default()
                     });
                 },
             }
@@ -234,6 +281,37 @@ mod tests {
         super::*,
         crate::types::{RepoEntry, SkillState, SkillsManifest},
     };
+
+    #[test]
+    fn default_paths_for_returns_expected_layout() {
+        // Regression guard: the gateway wires `ReadSkillTool` through this
+        // helper, so the shape of the returned list is part of the public
+        // contract. If someone reorders or renames any of these paths, the
+        // `<available_skills>` prompt block and the read tool could start
+        // disagreeing about which directories contain skills.
+        let data_dir = PathBuf::from("/tmp/data");
+        let paths = FsSkillDiscoverer::default_paths_for(&data_dir);
+        assert_eq!(paths.len(), 4);
+        assert_eq!(paths[0].0, PathBuf::from("/tmp/data/.moltis/skills"));
+        assert_eq!(paths[0].1, SkillSource::Project);
+        assert_eq!(paths[1].0, PathBuf::from("/tmp/data/skills"));
+        assert_eq!(paths[1].1, SkillSource::Personal);
+        assert_eq!(paths[2].0, PathBuf::from("/tmp/data/installed-skills"));
+        assert_eq!(paths[2].1, SkillSource::Registry);
+        assert_eq!(paths[3].0, PathBuf::from("/tmp/data/installed-plugins"));
+        assert_eq!(paths[3].1, SkillSource::Plugin);
+    }
+
+    #[test]
+    fn default_paths_matches_default_paths_for_with_data_dir() {
+        // The zero-arg helper must reduce to the explicit-`data_dir`
+        // variant applied to `moltis_config::data_dir()`. Any future
+        // refactor that breaks this symmetry would cause the prompt
+        // builder and the read tool to see different filesystem layouts.
+        let explicit = FsSkillDiscoverer::default_paths_for(&moltis_config::data_dir());
+        let implicit = FsSkillDiscoverer::default_paths();
+        assert_eq!(explicit, implicit);
+    }
 
     #[tokio::test]
     async fn test_discover_skills_in_temp_dir() {
@@ -318,6 +396,9 @@ mod tests {
                 installed_at_ms: 0,
                 commit_sha: None,
                 format: PluginFormat::Skill,
+                quarantined: false,
+                quarantine_reason: None,
+                provenance: None,
                 skills: vec![
                     SkillState {
                         name: "a".into(),
@@ -381,6 +462,9 @@ mod tests {
                     installed_at_ms: 0,
                     commit_sha: None,
                     format: PluginFormat::Skill,
+                    quarantined: false,
+                    quarantine_reason: None,
+                    provenance: None,
                     skills: vec![SkillState {
                         name: "my-skill".into(),
                         relative_path: "skill-repo".into(),
@@ -394,6 +478,9 @@ mod tests {
                     installed_at_ms: 0,
                     commit_sha: None,
                     format: PluginFormat::ClaudeCode,
+                    quarantined: false,
+                    quarantine_reason: None,
+                    provenance: None,
                     skills: vec![SkillState {
                         name: "test-plugin:helper".into(),
                         relative_path: "plugin-repo".into(),
@@ -429,15 +516,9 @@ mod tests {
                     _ => {
                         skills.push(SkillMetadata {
                             name: skill_state.name.clone(),
-                            description: String::new(),
-                            homepage: None,
-                            license: None,
-                            compatibility: None,
-                            allowed_tools: Vec::new(),
-                            requires: Default::default(),
                             path: skill_dir,
                             source: Some(SkillSource::Plugin),
-                            dockerfile: None,
+                            ..Default::default()
                         });
                     },
                 }

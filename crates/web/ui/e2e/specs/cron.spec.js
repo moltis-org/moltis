@@ -1,47 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
-
-function isRetryableRpcError(message) {
-	if (typeof message !== "string") return false;
-	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
-}
-
-async function sendRpcFromPage(page, method, params) {
-	let lastResponse = null;
-	for (let attempt = 0; attempt < 40; attempt++) {
-		if (attempt > 0) {
-			await waitForWsConnected(page);
-			await page.waitForTimeout(100);
-		}
-		lastResponse = await page
-			.evaluate(
-				async ({ methodName, methodParams }) => {
-					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-					if (!appScript) throw new Error("app module script not found");
-					var appUrl = new URL(appScript.src, window.location.origin);
-					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-					var helpers = await import(`${prefix}js/helpers.js`);
-					return helpers.sendRpc(methodName, methodParams);
-				},
-				{
-					methodName: method,
-					methodParams: params,
-				},
-			)
-			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
-
-		if (lastResponse?.ok) return lastResponse;
-		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
-	}
-
-	return lastResponse;
-}
-
-async function expectRpcOk(page, method, params) {
-	const response = await sendRpcFromPage(page, method, params);
-	expect(response?.ok, `RPC ${method} failed: ${response?.error?.message || "unknown error"}`).toBeTruthy();
-	return response;
-}
+const { expectRpcOk, navigateAndWait, sendRpcFromPage, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 test.describe("Cron jobs page", () => {
 	test("cron page loads with heading", async ({ page }) => {
@@ -103,6 +61,28 @@ test.describe("Cron jobs page", () => {
 
 		await expect(page.locator('[data-field="payloadKind"]')).toHaveValue("systemEvent");
 		await expect(page.locator('[data-field="target"]')).toHaveValue("main");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("cron modal clarifies schedule, timezone, and payload copy", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+
+		await expect(page.locator('[data-field="schedKind"] option[value="at"]')).toHaveText("Run Once");
+		await expect(page.locator('[data-field="schedKind"]')).toHaveValue("cron");
+		await expect(page.getByText(/Leave blank to use UTC/)).toBeVisible();
+		await expect(page.getByText(/Adds this text to the main session as a system event/)).toBeVisible();
+		await expect(page.locator('[data-field="message"]')).toHaveAttribute(
+			"placeholder",
+			"Message sent to the main session",
+		);
+
+		await page.locator('[data-field="payloadKind"]').selectOption("agentTurn");
+		await expect(page.getByText(/Starts an isolated agent turn with this prompt/)).toBeVisible();
+		await expect(page.locator('[data-field="message"]')).toHaveAttribute("placeholder", "Prompt sent to the agent");
+
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -331,6 +311,141 @@ test.describe("Cron jobs page", () => {
 	test("page has no JS errors", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/crons");
+		expect(pageErrors).toEqual([]);
+	});
+
+	// ── Schedule field persistence tests (fix: signals instead of uncontrolled inputs) ──
+
+	test("every interval persists when payload type changes", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+
+		// Select "Every" schedule and enter a value
+		await page.locator('[data-field="schedKind"]').selectOption("every");
+		await page.locator('[data-field="every"]').fill("900");
+		await expect(page.locator('[data-field="every"]')).toHaveValue("900");
+
+		// Change another field — payload type
+		await page.locator('[data-field="payloadKind"]').selectOption("agentTurn");
+
+		// Interval must survive the re-render
+		await expect(page.locator('[data-field="every"]')).toHaveValue("900");
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("run-once date persists when session target changes", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+
+		// Select "Run Once" schedule and pick a date
+		await page.locator('[data-field="schedKind"]').selectOption("at");
+		await page.locator('[data-field="at"]').fill("2026-12-25T12:00");
+		await expect(page.locator('[data-field="at"]')).toHaveValue("2026-12-25T12:00");
+
+		// Change another field — session target
+		await page.locator('[data-field="target"]').selectOption("isolated");
+
+		// Date must survive the re-render
+		await expect(page.locator('[data-field="at"]')).toHaveValue("2026-12-25T12:00");
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("cron expression persists when model changes", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+
+		// Cron is the default schedule type — enter an expression
+		await page.locator('[data-field="cron"]').fill("*/5 * * * *");
+		await expect(page.locator('[data-field="cron"]')).toHaveValue("*/5 * * * *");
+
+		// Change execution target to trigger re-render
+		await page.locator('[data-field="executionTarget"]').selectOption("host");
+
+		// Expression must survive the re-render
+		await expect(page.locator('[data-field="cron"]')).toHaveValue("*/5 * * * *");
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("empty schedule shows field-error class on Create", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+
+		// Fill only name and message, leave cron expression empty
+		await page.locator('[data-field="name"]').fill("error-test-job");
+		await page.locator('[data-field="message"]').fill("test message");
+
+		// Cron input should not have error class yet
+		await expect(page.locator('[data-field="cron"]')).not.toHaveClass(/field-error/);
+
+		// Click Create
+		await page.getByRole("button", { name: "Create", exact: true }).click();
+
+		// Red border (field-error class) should now appear on cron input
+		await expect(page.locator('[data-field="cron"]')).toHaveClass(/field-error/);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("empty every interval shows field-error class on Create", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+
+		// Select Every, fill name and message, leave interval empty
+		await page.locator('[data-field="schedKind"]').selectOption("every");
+		await page.locator('[data-field="name"]').fill("every-error-test");
+		await page.locator('[data-field="message"]').fill("test message");
+
+		// Click Create
+		await page.getByRole("button", { name: "Create", exact: true }).click();
+
+		// field-error class on every input
+		await expect(page.locator('[data-field="every"]')).toHaveClass(/field-error/);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("full form creates an every-interval job successfully", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/crons");
+		await waitForWsConnected(page);
+
+		await page.getByRole("button", { name: "+ Add Job", exact: true }).click();
+
+		// Fill all required fields
+		await page.locator('[data-field="name"]').fill("e2e-create-every");
+		await page.locator('[data-field="schedKind"]').selectOption("every");
+		await page.locator('[data-field="every"]').fill("900");
+		await page.locator('[data-field="message"]').fill("e2e every job body");
+
+		// Create should succeed
+		await page.getByRole("button", { name: "Create", exact: true }).click();
+
+		// Modal should close
+		await expect(page.locator('[data-field="name"]')).not.toBeVisible();
+
+		// Job should appear in the table
+		const row = page.locator("tr", { hasText: "e2e-create-every" });
+		await expect(row).toBeVisible();
+		await expect(row).toContainText("Every 15m");
+
+		// Clean up
+		await row.getByRole("button", { name: "Delete", exact: true }).click();
+		await page.getByRole("button", { name: "Confirm", exact: true }).click();
+		await expect(page.locator("tr", { hasText: "e2e-create-every" })).not.toBeVisible();
+
 		expect(pageErrors).toEqual([]);
 	});
 });

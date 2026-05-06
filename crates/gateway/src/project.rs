@@ -110,6 +110,8 @@ impl ProjectService for LiveProjectService {
                 serde_json::json!({
                     "path": cf.path.to_string_lossy(),
                     "content": cf.content,
+                    "kind": cf.kind,
+                    "warnings": cf.warnings,
                 })
             })
             .collect();

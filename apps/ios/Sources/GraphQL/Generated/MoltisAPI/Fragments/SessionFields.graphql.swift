@@ -5,7 +5,7 @@
 @_spi(Execution) @_spi(Unsafe) import ApolloAPI
 
 extension MoltisAPI {
-  struct SessionFields: MoltisAPI.SelectionSet, Fragment {
+  nonisolated struct SessionFields: MoltisAPI.SelectionSet, Fragment {
     static var fragmentDefinition: StaticString {
       #"fragment SessionFields on SessionEntry { __typename id key label model preview createdAt updatedAt messageCount lastSeenMessageCount archived }"#
     }

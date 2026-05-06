@@ -264,4 +264,31 @@ mod tests {
         let user1 = senders.iter().find(|s| s.peer_id == "user1").unwrap();
         assert_eq!(user1.message_count, 2);
     }
+
+    #[tokio::test]
+    async fn unique_senders_includes_denied_matrix_senders() {
+        let pool = test_pool().await;
+        let store = SqliteMessageLog::new(pool);
+
+        let entry = MessageLogEntry {
+            id: 0,
+            account_id: "matrix-bot".into(),
+            channel_type: "matrix".into(),
+            peer_id: "@alice:matrix.org".into(),
+            username: Some("@alice:matrix.org".into()),
+            sender_name: Some("Alice".into()),
+            chat_id: "!room:matrix.org".into(),
+            chat_type: "dm".into(),
+            body: "hello".into(),
+            access_granted: false,
+            created_at: 1_700_000_000,
+        };
+
+        store.log(entry).await.unwrap();
+
+        let senders = store.unique_senders("matrix", "matrix-bot").await.unwrap();
+        assert_eq!(senders.len(), 1);
+        assert_eq!(senders[0].peer_id, "@alice:matrix.org");
+        assert!(!senders[0].last_access_granted);
+    }
 }

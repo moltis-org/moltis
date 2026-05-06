@@ -3,9 +3,10 @@
 //! These tools expose cross-session coordination primitives:
 //! - `sessions_list`: list sessions with optional filtering
 //! - `sessions_history`: read paginated history from a session
+//! - `sessions_search`: search past session history for relevant snippets
 //! - `sessions_send`: send a message to another session (async or sync)
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use {async_trait::async_trait, futures::future::BoxFuture, serde_json::Value};
 
@@ -118,6 +119,29 @@ impl SessionsHistoryTool {
     }
 }
 
+/// Tool for searching across session history.
+pub struct SessionsSearchTool {
+    store: Arc<SessionStore>,
+    metadata: Arc<SqliteSessionMetadata>,
+    policy: Option<SessionAccessPolicy>,
+}
+
+impl SessionsSearchTool {
+    pub fn new(store: Arc<SessionStore>, metadata: Arc<SqliteSessionMetadata>) -> Self {
+        Self {
+            store,
+            metadata,
+            policy: None,
+        }
+    }
+
+    /// Attach a session access policy for filtering.
+    pub fn with_policy(mut self, policy: SessionAccessPolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+}
+
 /// Tool for sending a message to another session.
 pub struct SessionsSendTool {
     metadata: Arc<SqliteSessionMetadata>,
@@ -215,6 +239,106 @@ impl AgentTool for SessionsListTool {
         Ok(serde_json::json!({
             "sessions": sessions,
             "count": count,
+        }))
+    }
+}
+
+#[async_trait]
+impl AgentTool for SessionsSearchTool {
+    fn name(&self) -> &str {
+        "sessions_search"
+    }
+
+    fn description(&self) -> &str {
+        "Search past session history for relevant snippets across sessions."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query to match against prior session messages."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum results returned (default: 5, max: 20)."
+                },
+                "exclude_current": {
+                    "type": "boolean",
+                    "description": "Exclude the current session from results when `_session_key` is available. Defaults to true."
+                }
+            },
+            "required": ["query"]
+        })
+    }
+
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
+        let query = require_str(&params, "query")?;
+        let limit = u64_param(&params, "limit", 5).min(20) as usize;
+        let exclude_current = params
+            .get("exclude_current")
+            .or_else(|| params.get("excludeCurrent"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let current_session_key = if exclude_current {
+            str_param(&params, "_session_key")
+        } else {
+            None
+        };
+
+        let search_limit = limit.saturating_mul(4).max(limit);
+        let hits =
+            self.store.search(query, search_limit).await.map_err(|e| {
+                Error::message(format!("failed to search sessions for '{query}': {e}"))
+            })?;
+
+        let entries: HashMap<String, moltis_sessions::metadata::SessionEntry> = self
+            .metadata
+            .list()
+            .await
+            .into_iter()
+            .map(|entry| (entry.key.clone(), entry))
+            .collect();
+
+        let mut results = Vec::with_capacity(limit);
+        for hit in hits {
+            if results.len() >= limit {
+                break;
+            }
+
+            if current_session_key == Some(hit.session_key.as_str()) {
+                continue;
+            }
+
+            if let Some(ref policy) = self.policy
+                && !policy.can_access(&hit.session_key)
+            {
+                continue;
+            }
+
+            let entry = entries.get(&hit.session_key);
+            results.push(serde_json::json!({
+                "key": hit.session_key,
+                "label": entry.and_then(|value| value.label.clone()),
+                "model": entry.and_then(|value| value.model.clone()),
+                "projectId": entry.and_then(|value| value.project_id.clone()),
+                "agentId": entry.and_then(|value| value.agent_id.clone()),
+                "nodeId": entry.and_then(|value| value.node_id.clone()),
+                "createdAt": entry.map(|value| value.created_at),
+                "updatedAt": entry.map(|value| value.updated_at),
+                "messageCount": entry.map(|value| value.message_count),
+                "snippet": hit.snippet,
+                "role": hit.role,
+                "messageIndex": hit.message_index,
+            }));
+        }
+
+        Ok(serde_json::json!({
+            "query": query,
+            "count": results.len(),
+            "results": results,
         }))
     }
 }
@@ -507,6 +631,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sessions_search_finds_matches_and_excludes_current_by_default() -> TestResult<()> {
+        let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
+        metadata
+            .upsert("session:current", Some("Current".to_string()))
+            .await?;
+        metadata
+            .upsert("session:other", Some("Other".to_string()))
+            .await?;
+
+        let tmp = tempfile::tempdir()?;
+        let store = Arc::new(SessionStore::new(tmp.path().to_path_buf()));
+        store
+            .append(
+                "session:current",
+                &serde_json::json!({
+                    "role": "user",
+                    "content": "rust checkpoint design"
+                }),
+            )
+            .await?;
+        store
+            .append(
+                "session:other",
+                &serde_json::json!({
+                    "role": "assistant",
+                    "content": "rust checkpoint design with rollback"
+                }),
+            )
+            .await?;
+
+        let tool = SessionsSearchTool::new(store, metadata);
+        let result = tool
+            .execute(serde_json::json!({
+                "query": "checkpoint",
+                "_session_key": "session:current"
+            }))
+            .await?;
+
+        assert_eq!(result["count"], 1);
+        let results = result
+            .get("results")
+            .and_then(Value::as_array)
+            .ok_or_else(|| std::io::Error::other("missing results array"))?;
+        assert_eq!(results[0]["key"], "session:other");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sessions_search_can_include_current_session() -> TestResult<()> {
+        let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
+        metadata
+            .upsert("session:current", Some("Current".to_string()))
+            .await?;
+
+        let tmp = tempfile::tempdir()?;
+        let store = Arc::new(SessionStore::new(tmp.path().to_path_buf()));
+        store
+            .append(
+                "session:current",
+                &serde_json::json!({
+                    "role": "user",
+                    "content": "needle in current session"
+                }),
+            )
+            .await?;
+
+        let tool = SessionsSearchTool::new(store, metadata);
+        let result = tool
+            .execute(serde_json::json!({
+                "query": "needle",
+                "_session_key": "session:current",
+                "exclude_current": false
+            }))
+            .await?;
+
+        assert_eq!(result["count"], 1);
+        assert_eq!(result["results"][0]["key"], "session:current");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn sessions_send_calls_callback_and_wraps_context() -> TestResult<()> {
         let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
         metadata
@@ -593,6 +798,43 @@ mod tests {
         let result = tool.execute(serde_json::json!({})).await?;
 
         assert_eq!(result["count"], 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_search_filtered_by_key_prefix() -> TestResult<()> {
+        let metadata = Arc::new(SqliteSessionMetadata::new(test_pool().await?));
+        metadata
+            .upsert("agent:scout:1", Some("Scout 1".into()))
+            .await?;
+        metadata
+            .upsert("agent:coder:1", Some("Coder 1".into()))
+            .await?;
+
+        let tmp = tempfile::tempdir()?;
+        let store = Arc::new(SessionStore::new(tmp.path().to_path_buf()));
+        store
+            .append(
+                "agent:scout:1",
+                &serde_json::json!({"role": "user", "content": "shared search term"}),
+            )
+            .await?;
+        store
+            .append(
+                "agent:coder:1",
+                &serde_json::json!({"role": "user", "content": "shared search term"}),
+            )
+            .await?;
+
+        let policy = SessionAccessPolicy {
+            key_prefix: Some("agent:scout:".into()),
+            ..Default::default()
+        };
+        let tool = SessionsSearchTool::new(store, metadata).with_policy(policy);
+        let result = tool.execute(serde_json::json!({"query": "shared"})).await?;
+
+        assert_eq!(result["count"], 1);
+        assert_eq!(result["results"][0]["key"], "agent:scout:1");
         Ok(())
     }
 

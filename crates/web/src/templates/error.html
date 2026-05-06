@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>{{ page_title }} · moltis</title>
+<link rel="icon" type="image/png" sizes="96x96" href="{{ asset_prefix }}icons/icon-96.png">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ asset_prefix }}icons/icon-72.png">
+<link rel="stylesheet" href="{{ asset_prefix }}css/base.css">
+<link rel="stylesheet" href="{{ asset_prefix }}css/components.css">
+<link rel="stylesheet" href="{{ asset_prefix }}style.css">
+<script nonce="{{ nonce }}">document.documentElement.setAttribute("data-theme","light");document.documentElement.style.background="#fff";document.documentElement.style.color="#111"</script>
+<style>
+  html{
+    background:#fff;
+    color:#111;
+  }
+  body{
+    min-height:100vh;
+    margin:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:2rem;
+    background:#fff;
+    color:#111;
+    font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .error-layout{
+    width:auto;
+  }
+  .error-title{
+    margin:0;
+    line-height:1;
+    letter-spacing:-.04em;
+    color:#111;
+  }
+  .error-copy{
+    margin:0;
+    line-height:1.4;
+    color:#111;
+  }
+  .error-actions{
+    margin-top:1rem;
+  }
+  .error-home-link{
+    text-decoration:none;
+    display:inline-block;
+  }
+  .error-row{
+    display:flex;
+    align-items:center;
+    gap:1.5rem;
+  }
+  .error-divider{
+    width:1px;
+    align-self:stretch;
+    background:#d4d4d4;
+  }
+  @media (max-width: 640px){
+    .error-row{
+      flex-direction:column;
+      align-items:center;
+      gap:1rem;
+      text-align:center;
+    }
+    .error-divider{
+      width:3rem;
+      height:1px;
+    }
+  }
+</style>
+</head>
+<body>
+<main class="error-layout">
+  <section>
+    <div class="error-row">
+      <h1 class="error-title">{{ eyebrow }}</h1>
+      <div class="error-divider"></div>
+      <p class="error-copy">{{ message }}</p>
+    </div>
+    <div class="error-actions text-center">
+      <a class="provider-btn error-home-link" href="/">Go to home page</a>
+    </div>
+  </section>
+</main>
+</body>
+</html>

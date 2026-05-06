@@ -75,7 +75,7 @@ impl ChatRuntime for GatewayChatRuntime {
 
     async fn active_session_key(&self, conn_id: &str) -> Option<String> {
         self.state
-            .inner
+            .client_registry
             .read()
             .await
             .active_sessions
@@ -85,7 +85,7 @@ impl ChatRuntime for GatewayChatRuntime {
 
     async fn active_project_id(&self, conn_id: &str) -> Option<String> {
         self.state
-            .inner
+            .client_registry
             .read()
             .await
             .active_projects
@@ -103,7 +103,7 @@ impl ChatRuntime for GatewayChatRuntime {
         self.state.sandbox_router.as_ref()
     }
 
-    fn memory_manager(&self) -> Option<&Arc<moltis_memory::manager::MemoryManager>> {
+    fn memory_manager(&self) -> Option<&moltis_memory::runtime::DynMemoryRuntime> {
         self.state.memory_manager.as_ref()
     }
 
@@ -163,7 +163,7 @@ impl ChatRuntime for GatewayChatRuntime {
     }
 
     async fn chat_service(&self) -> Arc<dyn moltis_service_traits::ChatService> {
-        self.state.chat().await
+        self.state.chat()
     }
 
     async fn last_run_error(&self, run_id: &str) -> Option<String> {
@@ -182,7 +182,7 @@ impl ChatRuntime for GatewayChatRuntime {
         #[cfg(feature = "push-notifications")]
         {
             if let Some(push_service) = self.state.get_push_service().await {
-                return crate::push_routes::send_push_notification(
+                return crate::push::send_push_notification(
                     &push_service,
                     title,
                     body,
@@ -211,6 +211,13 @@ impl ChatRuntime for GatewayChatRuntime {
             let _ = model_id;
             Ok(false)
         }
+    }
+
+    async fn ensure_local_model_loaded(&self, model_id: &str) -> error::Result<()> {
+        let params = serde_json::json!({ "modelId": model_id });
+        // load_model is a no-op if already loaded; broadcasts lifecycle events otherwise.
+        let _ = self.state.services.local_llm.load_model(params).await;
+        Ok(())
     }
 
     // ── Remote nodes ────────────────────────────────────────────────────────
@@ -243,5 +250,21 @@ impl ChatRuntime for GatewayChatRuntime {
                     .collect(),
             })
             .collect()
+    }
+
+    async fn take_steer_text(&self, session_key: &str) -> Option<Vec<String>> {
+        self.state.take_steer_text(session_key).await
+    }
+
+    async fn is_fast_mode(&self, session_key: &str) -> bool {
+        self.state.is_fast_mode(session_key).await
+    }
+
+    async fn trigger_auto_title(&self, session_key: &str) {
+        let state = Arc::clone(&self.state);
+        let key = session_key.to_string();
+        tokio::spawn(async move {
+            crate::session::title::generate_title_if_needed(&state, &key).await;
+        });
     }
 }

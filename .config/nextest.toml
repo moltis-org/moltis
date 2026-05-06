@@ -4,6 +4,15 @@ failure-output = "immediate-final"
 # No retries locally by default.
 retries = 0
 
+# QMD tests spawn shell scripts that time out under heavy parallelism.
+# Run them serially to avoid flaky failures.
+[test-groups.qmd-serial]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = "package(moltis-qmd)"
+test-group = "qmd-serial"
+
 [profile.ci]
 # In CI, retry flaky tests once before failing the run.
 failure-output = "immediate-final"

@@ -2,50 +2,53 @@
 
 use std::path::Path;
 
-use anyhow::{Context, bail};
-
-use crate::types::{InstallKind, InstallSpec, SkillEligibility, SkillMetadata};
+use crate::{
+    error::{Error, Result},
+    types::{InstallKind, InstallSpec, SkillEligibility, SkillMetadata},
+};
 
 /// Resolve install command program + args from an install spec.
-pub fn install_program_and_args(spec: &InstallSpec) -> anyhow::Result<(&'static str, Vec<&str>)> {
+pub fn install_program_and_args(spec: &InstallSpec) -> Result<(&'static str, Vec<&str>)> {
     let (program, args) = match &spec.kind {
         InstallKind::Brew => {
             let formula = spec
                 .formula
                 .as_deref()
-                .context("brew install requires 'formula'")?;
+                .ok_or_else(|| Error::Install("brew install requires 'formula'".into()))?;
             ("brew", vec!["install", formula])
         },
         InstallKind::Npm => {
             let package = spec
                 .package
                 .as_deref()
-                .context("npm install requires 'package'")?;
+                .ok_or_else(|| Error::Install("npm install requires 'package'".into()))?;
             ("npm", vec!["install", "-g", "--ignore-scripts", package])
         },
         InstallKind::Go => {
             let module = spec
                 .module
                 .as_deref()
-                .context("go install requires 'module'")?;
+                .ok_or_else(|| Error::Install("go install requires 'module'".into()))?;
             ("go", vec!["install", module])
         },
         InstallKind::Cargo => {
             let package = spec
                 .package
                 .as_deref()
-                .context("cargo install requires 'package'")?;
+                .ok_or_else(|| Error::Install("cargo install requires 'package'".into()))?;
             ("cargo", vec!["install", package])
         },
         InstallKind::Uv => {
             let package = spec
                 .package
                 .as_deref()
-                .context("uv install requires 'package'")?;
+                .ok_or_else(|| Error::Install("uv install requires 'package'".into()))?;
             ("uv", vec!["tool", "install", package])
         },
         InstallKind::Download => {
-            bail!("download install kind is not yet supported for automatic installation");
+            return Err(Error::Install(
+                "download install kind is not yet supported for automatic installation".into(),
+            ));
         },
     };
 
@@ -53,7 +56,7 @@ pub fn install_program_and_args(spec: &InstallSpec) -> anyhow::Result<(&'static 
 }
 
 /// Render an install spec to a user-visible command preview.
-pub fn install_command_preview(spec: &InstallSpec) -> anyhow::Result<String> {
+pub fn install_command_preview(spec: &InstallSpec) -> Result<String> {
     let (program, args) = install_program_and_args(spec)?;
     Ok(std::iter::once(program)
         .chain(args)
@@ -154,7 +157,7 @@ pub struct InstallResult {
 }
 
 /// Run an install spec command (e.g. `brew install <formula>`).
-pub async fn run_install(spec: &InstallSpec) -> anyhow::Result<InstallResult> {
+pub async fn run_install(spec: &InstallSpec) -> Result<InstallResult> {
     let (program, args) = install_program_and_args(spec)?;
 
     let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
@@ -162,7 +165,7 @@ pub async fn run_install(spec: &InstallSpec) -> anyhow::Result<InstallResult> {
         .args(&args_owned)
         .output()
         .await
-        .with_context(|| format!("failed to run {program}"))?;
+        .map_err(|e| Error::Install(format!("failed to run {program}: {e}")))?;
 
     Ok(InstallResult {
         success: output.status.success(),
@@ -198,15 +201,7 @@ mod tests {
     fn test_no_requirements_is_eligible() {
         let meta = SkillMetadata {
             name: "test".into(),
-            description: String::new(),
-            homepage: None,
-            license: None,
-            compatibility: None,
-            allowed_tools: Vec::new(),
-            dockerfile: None,
-            requires: SkillRequirements::default(),
-            path: Default::default(),
-            source: None,
+            ..Default::default()
         };
         let elig = check_requirements(&meta);
         assert!(elig.eligible);
@@ -217,19 +212,12 @@ mod tests {
     fn test_missing_bin_is_blocked() {
         let meta = SkillMetadata {
             name: "test".into(),
-            description: String::new(),
-            homepage: None,
-            license: None,
-            compatibility: None,
-            allowed_tools: Vec::new(),
-            dockerfile: None,
             requires: SkillRequirements {
                 bins: vec!["__nonexistent_binary_xyz__".into()],
                 any_bins: Vec::new(),
                 install: Vec::new(),
             },
-            path: Default::default(),
-            source: None,
+            ..Default::default()
         };
         let elig = check_requirements(&meta);
         assert!(!elig.eligible);
@@ -240,19 +228,12 @@ mod tests {
     fn test_any_bins_one_present() {
         let meta = SkillMetadata {
             name: "test".into(),
-            description: String::new(),
-            homepage: None,
-            license: None,
-            compatibility: None,
-            allowed_tools: Vec::new(),
-            dockerfile: None,
             requires: SkillRequirements {
                 bins: Vec::new(),
                 any_bins: vec!["ls".into(), "__nonexistent__".into()],
                 install: Vec::new(),
             },
-            path: Default::default(),
-            source: None,
+            ..Default::default()
         };
         #[cfg(unix)]
         {
@@ -265,19 +246,12 @@ mod tests {
     fn test_any_bins_none_present() {
         let meta = SkillMetadata {
             name: "test".into(),
-            description: String::new(),
-            homepage: None,
-            license: None,
-            compatibility: None,
-            allowed_tools: Vec::new(),
-            dockerfile: None,
             requires: SkillRequirements {
                 bins: Vec::new(),
                 any_bins: vec!["__nope1__".into(), "__nope2__".into()],
                 install: Vec::new(),
             },
-            path: Default::default(),
-            source: None,
+            ..Default::default()
         };
         let elig = check_requirements(&meta);
         assert!(!elig.eligible);
@@ -288,12 +262,6 @@ mod tests {
     fn test_install_options_filtered_by_os() {
         let meta = SkillMetadata {
             name: "test".into(),
-            description: String::new(),
-            homepage: None,
-            license: None,
-            compatibility: None,
-            allowed_tools: Vec::new(),
-            dockerfile: None,
             requires: SkillRequirements {
                 bins: vec!["__missing__".into()],
                 any_bins: Vec::new(),
@@ -330,8 +298,7 @@ mod tests {
                     },
                 ],
             },
-            path: Default::default(),
-            source: None,
+            ..Default::default()
         };
         let elig = check_requirements(&meta);
         assert!(!elig.eligible);
@@ -370,7 +337,7 @@ mod tests {
         let spec = InstallSpec {
             kind: InstallKind::Npm,
             formula: None,
-            package: Some("@anthropic/qmd".into()),
+            package: Some("@tobilu/qmd".into()),
             module: None,
             url: None,
             bins: vec!["qmd".into()],
@@ -386,6 +353,6 @@ mod tests {
         );
 
         let preview = install_command_preview(&spec).unwrap();
-        assert_eq!(preview, "npm install -g --ignore-scripts @anthropic/qmd");
+        assert_eq!(preview, "npm install -g --ignore-scripts @tobilu/qmd");
     }
 }

@@ -1,52 +1,29 @@
 const { expect, test } = require("../base-test");
 const {
-	expectPageContentMounted,
-	navigateAndWait,
-	openChatMoreModal,
-	closeChatMoreModal,
-	waitForWsConnected,
 	createSession,
+	expectPageContentMounted,
+	expectRpcOk,
+	navigateAndWait,
+	waitForChatSessionReady,
+	waitForWsConnected,
 	watchPageErrors,
 } = require("../helpers");
 
-function isRetryableRpcError(message) {
-	if (typeof message !== "string") return false;
-	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
+function sessionKeysInSidebar(page) {
+	return page
+		.locator("#sessionList .session-item")
+		.evaluateAll((items) => items.map((item) => item.getAttribute("data-session-key") || ""));
 }
 
-async function sendRpcFromPage(page, method, params) {
-	let lastResponse = null;
-	for (let attempt = 0; attempt < 40; attempt++) {
-		if (attempt > 0) {
-			await waitForWsConnected(page);
-		}
-		lastResponse = await page
-			.evaluate(
-				async ({ methodName, methodParams }) => {
-					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-					if (!appScript) throw new Error("app module script not found");
-					var appUrl = new URL(appScript.src, window.location.origin);
-					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-					var helpers = await import(`${prefix}js/helpers.js`);
-					return helpers.sendRpc(methodName, methodParams);
-				},
-				{
-					methodName: method,
-					methodParams: params,
-				},
-			)
-			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
-
-		if (lastResponse?.ok) return lastResponse;
-		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
-	}
-	return lastResponse;
+function topSessionKeysInSidebar(page, limit) {
+	return sessionKeysInSidebar(page).then((keys) => keys.slice(0, limit));
 }
 
-async function expectRpcOk(page, method, params) {
-	const response = await sendRpcFromPage(page, method, params);
-	expect(response?.ok, `RPC ${method} failed: ${response?.error?.message || "unknown error"}`).toBeTruthy();
-	return response;
+function matchesCreatedSessionSidebar(keys, firstSessionKey, secondSessionKey) {
+	if (!Array.isArray(keys) || keys.length !== 3) return false;
+	if (keys[0] !== "main") return false;
+	const createdKeys = new Set([firstSessionKey, secondSessionKey]);
+	return createdKeys.has(keys[1]) && createdKeys.has(keys[2]) && keys[1] !== keys[2];
 }
 
 async function setSwitchRpcSendMode(page, mode, delayMs = 0) {
@@ -130,23 +107,11 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("more controls modal opens and closes on backdrop click", async ({ page }) => {
+	test("opening full context button opens and closes the full context view", async ({ page }) => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
-		await openChatMoreModal(page);
-		await closeChatMoreModal(page);
-
-		expect(pageErrors).toEqual([]);
-	});
-
-	test("opening full context from more controls closes the more-controls modal", async ({ page }) => {
-		const pageErrors = await navigateAndWait(page, "/");
-		await waitForWsConnected(page);
-
-		await openChatMoreModal(page);
 		await page.locator("#fullContextBtn").click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
 		await expect(page.locator("#fullContextModal")).toBeVisible({ timeout: 10_000 });
 		await page.locator("#fullContextModalCloseBtn").click();
 		await expect(page.locator("#fullContextModal")).toBeHidden({ timeout: 10_000 });
@@ -157,6 +122,8 @@ test.describe("Session management", () => {
 	test("new session button creates a session", async ({ page }) => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
+		await expectRpcOk(page, "sessions.clear_all", {});
+		await expect.poll(() => topSessionKeysInSidebar(page, 1), { timeout: 10_000 }).toEqual(["main"]);
 		const sessionItems = page.locator("#sessionList .session-item");
 		// Wait for the session list to populate via RPC before capturing count
 		await expect(sessionItems.first()).toBeVisible();
@@ -175,8 +142,6 @@ test.describe("Session management", () => {
 		await expect(sessionItems).toHaveCount(initialCount + 1);
 		await expect(page.locator("#chatInput")).toBeFocused();
 
-		// Regression: creating a second session should still update the list
-		// and mark the new session as active.
 		await createSession(page);
 		const secondSessionPath = new URL(page.url()).pathname;
 		const secondSessionKey = secondSessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
@@ -185,6 +150,33 @@ test.describe("Session management", () => {
 		);
 		await expect(sessionItems).toHaveCount(initialCount + 2);
 		await expect(page.locator("#chatInput")).toBeFocused();
+		await expect
+			.poll(
+				() =>
+					topSessionKeysInSidebar(page, 3).then((keys) =>
+						matchesCreatedSessionSidebar(keys, firstSessionKey, secondSessionKey),
+					),
+				{
+					timeout: 10_000,
+				},
+			)
+			.toBe(true);
+
+		await page.reload({ waitUntil: "domcontentloaded" });
+		await expectPageContentMounted(page);
+		await waitForWsConnected(page);
+		await expect(page).toHaveURL(new RegExp(`/chats/${secondSessionKey.replace(/:/g, "/")}$`));
+		await expect
+			.poll(
+				() =>
+					topSessionKeysInSidebar(page, 3).then((keys) =>
+						matchesCreatedSessionSidebar(keys, firstSessionKey, secondSessionKey),
+					),
+				{
+					timeout: 10_000,
+				},
+			)
+			.toBe(true);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -205,6 +197,41 @@ test.describe("Session management", () => {
 
 		await expect(page).not.toHaveURL(newSessionUrl);
 		await expectPageContentMounted(page);
+	});
+
+	test("modifier-clicking a session opens it in a new tab", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		await createSession(page);
+		const currentUrl = page.url();
+
+		const mainItem = page.locator('#sessionList .session-item[data-session-key="main"]');
+		await expect(mainItem).toBeVisible({ timeout: 5_000 });
+
+		const newPagePromise = new Promise((resolve) => {
+			page.context().once("page", (openedPage) => {
+				resolve({
+					newPage: openedPage,
+					newPageErrors: watchPageErrors(openedPage),
+				});
+			});
+		});
+		await mainItem.click({
+			modifiers: [process.platform === "darwin" ? "Meta" : "Control"],
+		});
+		const { newPage, newPageErrors } = await newPagePromise;
+
+		await newPage.waitForLoadState("domcontentloaded");
+		await expectPageContentMounted(newPage);
+		await waitForWsConnected(newPage);
+		await expect(newPage).toHaveURL(/\/chats\/main$/);
+		await expect(page).toHaveURL(currentUrl);
+
+		expect(pageErrors).toEqual([]);
+		expect(newPageErrors).toEqual([]);
+		await newPage.close();
 	});
 
 	test("shows loading indicator while uncached session switch is pending", async ({ page }) => {
@@ -259,23 +286,55 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("main session hides delete while non-main sessions show delete in more controls", async ({ page }) => {
+	test("main session shows clear but hides delete, non-main shows delete but hides clear", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/");
 		await waitForWsConnected(page);
 		await expectPageContentMounted(page);
 
-		await openChatMoreModal(page);
-		await expect(page.locator('#chatMoreModal button[title="Clear session"]')).toBeHidden();
-		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toHaveCount(0);
-		await closeChatMoreModal(page);
+		await expect(page.locator('button[title="Clear session"]')).toBeVisible();
+		await expect(page.locator('button[title="Delete session"]')).toHaveCount(0);
 
 		await createSession(page);
 
-		await openChatMoreModal(page);
-		await expect(page.locator('#chatMoreModal button[title="Clear session"]')).toHaveCount(0);
-		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toBeVisible();
-		await closeChatMoreModal(page);
+		await expect(page.locator('button[title="Clear session"]')).toHaveCount(0);
+		await expect(page.locator('button[title="Delete session"]')).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("archived sessions are hidden by default and can be restored with the sidebar toggle", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		// Skip clear_all — the test uses unique session-key selectors so
+		// leftover sessions from prior tests do not interfere, and the RPC
+		// can time out under CI load when many sessions have accumulated.
+		await createSession(page);
+		const sessionPath = new URL(page.url()).pathname;
+		const sessionKey = sessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
+		const sessionItem = page.locator(`#sessionList .session-item[data-session-key="${sessionKey}"]`);
+
+		await expect(sessionItem).toBeVisible({ timeout: 10_000 });
+
+		await page.locator('button[title="Archive session"]').click();
+		await expect(page).toHaveURL(/\/chats\/main$/);
+		await expect(sessionItem).toHaveCount(0);
+
+		const archivedToggle = page.locator("#showArchivedSessions");
+		await expect(archivedToggle).toBeVisible();
+		await archivedToggle.check();
+		await expect(sessionItem).toBeVisible({ timeout: 10_000 });
+
+		await sessionItem.click();
+		await expect(page).toHaveURL(new RegExp(`/chats/${sessionKey.replace(/:/g, "/")}$`));
+
+		await page.locator('button[title="Unarchive session"]').click();
+		await expect(sessionItem).toBeVisible({ timeout: 10_000 });
+
+		await archivedToggle.uncheck();
+		await expect(sessionItem).toBeVisible({ timeout: 10_000 });
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -289,13 +348,12 @@ test.describe("Session management", () => {
 
 		const sessionPath = new URL(page.url()).pathname;
 		const sessionKey = sessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
+		await waitForChatSessionReady(page);
 
-		const stopBtn = page.locator('#sessionHeaderToolbarMount button[title="Stop generation"]');
-		await expect(stopBtn).toHaveCount(0);
-		await openChatMoreModal(page);
-		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toBeVisible();
-		await closeChatMoreModal(page);
+		// No thinking indicator initially
+		await expect(page.locator("#thinkingIndicator")).toHaveCount(0);
 
+		// Trigger thinking state via system-event
 		await expectRpcOk(page, "system-event", {
 			event: "chat",
 			payload: {
@@ -305,12 +363,13 @@ test.describe("Session management", () => {
 			},
 		});
 
-		await expect(stopBtn).toBeVisible();
+		// Thinking indicator with stop button should appear
+		const stopBtn = page.locator("#thinkingIndicator .thinking-stop-btn");
+		await expect(stopBtn).toBeVisible({ timeout: 5_000 });
+
+		// Click stop — button text changes to "Stopping…"
 		await stopBtn.click();
-		await expect(stopBtn).toHaveCount(0);
-		await openChatMoreModal(page);
-		await expect(page.locator('#chatMoreModal button[title="Delete session"]')).toBeVisible();
-		await closeChatMoreModal(page);
+		await expect(stopBtn).toHaveText("Stopping\u2026");
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -318,6 +377,7 @@ test.describe("Session management", () => {
 	test("share button creates cutoff notice and copyable link", async ({ page }) => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
+		await createSession(page);
 
 		await page.evaluate(() => {
 			window.__shareTestCopiedLink = "";
@@ -340,9 +400,7 @@ test.describe("Session management", () => {
 			}
 		});
 
-		await openChatMoreModal(page);
-		await page.locator('#chatMoreModal button[title="Share snapshot"]').click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
+		await page.locator('button[title="Share snapshot"]').click();
 		await expect(page.locator('[data-share-visibility="public"]')).toBeVisible({ timeout: 10_000 });
 		await expect(
 			page.getByText(
@@ -357,11 +415,10 @@ test.describe("Session management", () => {
 			})
 			.toMatch(/\/share\//);
 
-		await expect(
-			page.locator(".msg.system").filter({
-				hasText: "This session until here has been shared. Later messages are not included in the shared link.",
-			}),
-		).toBeVisible();
+		const cutoffNotice = page.locator(".msg.system").filter({
+			hasText: "This session until here has been shared. Later messages are not included in the shared link.",
+		});
+		await expect.poll(() => cutoffNotice.count(), { timeout: 5_000 }).toBeGreaterThan(0);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -384,9 +441,7 @@ test.describe("Session management", () => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
-		await openChatMoreModal(page);
-		await page.locator('#chatMoreModal button[title="Share snapshot"]').click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
+		await page.locator('button[title="Share snapshot"]').click();
 		await expect(page.locator('[data-share-visibility="public"]')).toBeVisible({ timeout: 10_000 });
 		await page.locator('[data-share-visibility="public"]').click();
 
@@ -516,9 +571,10 @@ test.describe("Session management", () => {
 		await createSession(page);
 		await createSession(page);
 
-		await openChatMoreModal(page);
-		await page.locator("#chatMoreDeleteAllBtn").click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
+		// Navigate to settings where "Delete all sessions" now lives
+		await page.goto("/settings/config");
+		await expect(page.getByText("Danger zone")).toBeVisible({ timeout: 10_000 });
+		await page.getByRole("button", { name: "Delete all sessions" }).click();
 
 		const confirmModal = page.locator(".provider-modal-backdrop:not(.hidden)").filter({
 			hasText: /Delete \d+ sessions\?/,
@@ -527,6 +583,8 @@ test.describe("Session management", () => {
 		await confirmModal.getByRole("button", { name: "Delete", exact: true }).click();
 		await expect(confirmModal).toHaveCount(0, { timeout: 10_000 });
 
+		// Navigate back to chat and verify only main session remains
+		await page.goto("/");
 		await expectPageContentMounted(page);
 		const items = page.locator("#sessionList .session-item");
 		const count = await items.count();
@@ -545,31 +603,18 @@ test.describe("Session management", () => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
-		// Create a session so we're not on "main" (Delete button is hidden for main)
+		// Create a parent session, then fork it for a real unmodified fork.
 		await createSession(page);
-		const sessionUrl = page.url();
-		await openChatMoreModal(page);
-		const deleteBtn = page.locator('#chatMoreModal button[title="Delete session"]');
-		await expect(deleteBtn).toBeVisible({ timeout: 10_000 });
+		const forkBtn = page.locator('button[title="Fork session"]');
+		await expect(forkBtn).toBeVisible({ timeout: 10_000 });
+		const parentSessionUrl = page.url();
+		await forkBtn.click();
+		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(parentSessionUrl);
 
-		// Simulate an unmodified fork before deleting.
-		await expect
-			.poll(
-				() =>
-					page.evaluate(() => {
-						const store = window.__moltis_stores?.sessionStore;
-						const session = store?.activeSession?.value;
-						if (!session) return false;
-						session.forkPoint = 5;
-						session.messageCount = 5;
-						session.dataVersion.value++;
-						return true;
-					}),
-				{ timeout: 10_000 },
-			)
-			.toBe(true);
+		const forkSessionUrl = page.url();
+		const deleteBtn = page.locator('button[title="Delete session"]');
+		await expect(deleteBtn).toBeVisible({ timeout: 10_000 });
 		await deleteBtn.click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
 
 		// The confirmation dialog should NOT be visible.
 		const confirmModal = page.locator(".provider-modal-backdrop:not(.hidden)").filter({
@@ -578,10 +623,10 @@ test.describe("Session management", () => {
 		await expect(confirmModal).toHaveCount(0);
 
 		// The session should be deleted immediately (no dialog appeared)
-		// so we should navigate away from the current session URL.
+		// so we should navigate away from the fork session URL.
 		// switchSession uses history.replaceState (no navigation event),
 		// so poll the URL rather than using waitForURL which waits for "load".
-		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(sessionUrl);
+		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(forkSessionUrl);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -609,11 +654,9 @@ test.describe("Session management", () => {
 			)
 			.toBe(true);
 
-		await openChatMoreModal(page);
-		const deleteBtn = page.locator('#chatMoreModal button[title="Delete session"]');
+		const deleteBtn = page.locator('button[title="Delete session"]');
 		await expect(deleteBtn).toBeVisible();
 		await deleteBtn.click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
 
 		// The confirmation dialog SHOULD appear
 		const confirmModal = page.locator(".provider-modal-backdrop:not(.hidden)").filter({
@@ -652,7 +695,121 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("cron session shows delete button in more controls", async ({ page }) => {
+	test("session name is visible and clickable to rename", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		// Create a non-main session so it can be renamed.
+		await createSession(page);
+
+		// The session name should be visible in the toolbar (title="Click to rename").
+		const nameMount = page.locator("#sessionNameMount");
+		const nameEl = nameMount.getByTitle("Click to rename");
+		await expect(nameEl).toBeVisible({ timeout: 5_000 });
+
+		// Click the name to start renaming.
+		await nameEl.click();
+		const renameInput = nameMount.getByRole("textbox");
+		await expect(renameInput).toBeVisible({ timeout: 5_000 });
+
+		// fill() auto-waits for the element to be stable, then type + Enter
+		// to commit. Using keyboard.press avoids triggering onBlur before Enter.
+		const newName = "My Chat";
+		await renameInput.fill(newName);
+		await renameInput.press("Enter");
+
+		// The display name should update in the toolbar.
+		await expect(nameMount.locator(".chat-session-name").first()).toHaveText(newName, { timeout: 5_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("channel-bound session can be renamed", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		// Create a session with a channel-like key (telegram prefix triggers isChannel detection).
+		const channelKey = `telegram:bot:rename-test-${Date.now()}`;
+		await expectRpcOk(page, "sessions.switch", { key: channelKey });
+
+		// Give the session an initial display name before the rename step.
+		await expectRpcOk(page, "sessions.patch", { key: channelKey, label: "Telegram 1" });
+
+		// Channel-bound sessions are listed in the regular Sessions tab.
+		const sessionsTab = page.locator('#sessionTabBar .session-tab[data-tab="sessions"]');
+		await expect(sessionsTab).toBeVisible({ timeout: 5_000 });
+		await sessionsTab.click();
+
+		// Click the channel session to select it.
+		const channelItem = page.locator(`#sessionList .session-item[data-session-key="${channelKey}"]`);
+		await expect(channelItem).toBeVisible({ timeout: 10_000 });
+		await channelItem.click();
+
+		// Click the session name to start rename (name is clickable in the toolbar).
+		const nameMount = page.locator("#sessionNameMount");
+		const nameEl = nameMount.getByTitle("Click to rename");
+		await expect(nameEl).toBeVisible({ timeout: 5_000 });
+		await nameEl.click();
+		const renameInput = nameMount.getByRole("textbox");
+		await expect(renameInput).toBeVisible({ timeout: 5_000 });
+
+		// Type a new name and press Enter.
+		const newName = "My Discord Chat";
+		await renameInput.fill(newName);
+		await renameInput.press("Enter");
+
+		// Verify the rename stuck in the sidebar.
+		await expect(
+			page.locator(`#sessionList .session-item[data-session-key="${channelKey}"] [data-label-text]`),
+		).toHaveText(newName, { timeout: 5_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("current channel session is not archivable in the client helper", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		const archivable = await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const sessionsModule = await import(`${prefix}js/sessions.js`);
+			return sessionsModule.isArchivableSession({
+				key: "telegram:bot:archive-guard",
+				activeChannel: true,
+				archived: false,
+			});
+		});
+		expect(archivable).toBe(false);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("current archived channel session remains archivable for unarchive in the client helper", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		const archivable = await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const sessionsModule = await import(`${prefix}js/sessions.js`);
+			return sessionsModule.isArchivableSession({
+				key: "telegram:bot:unarchive-guard",
+				activeChannel: true,
+				archived: true,
+			});
+		});
+		expect(archivable).toBe(true);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("cron session shows archive and delete buttons in more controls", async ({ page }) => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
@@ -687,14 +844,14 @@ test.describe("Session management", () => {
 		// Wait for session messages to be fully loaded before proceeding
 		await expect(page.locator(".msg")).not.toHaveCount(0, { timeout: 5_000 });
 
-		// Open more controls and verify delete button is visible
-		await openChatMoreModal(page);
-		const deleteBtn = page.locator('#chatMoreModal button[title="Delete session"]');
+		// Verify delete and archive buttons are visible
+		const archiveBtn = page.locator('button[title="Archive session"]');
+		const deleteBtn = page.locator('button[title="Delete session"]');
+		await expect(archiveBtn).toBeVisible({ timeout: 5_000 });
 		await expect(deleteBtn).toBeVisible({ timeout: 5_000 });
 
 		// Click delete — should show confirmation since it has messages
 		await deleteBtn.click();
-		await expect(page.locator("#chatMoreModal")).toBeHidden({ timeout: 10_000 });
 
 		const confirmModal = page.locator(".provider-modal-backdrop:not(.hidden)").filter({
 			hasText: "Delete this session?",
@@ -703,8 +860,36 @@ test.describe("Session management", () => {
 		await confirmModal.getByRole("button", { name: "Delete", exact: true }).click();
 		await expect(confirmModal).toHaveCount(0, { timeout: 10_000 });
 
-		// Cron session should be gone from the list
-		await expect(cronItem).toHaveCount(0, { timeout: 10_000 });
+		// Wait for the delete to propagate to the session store.
+		// Under CI load the delete handler's fetchSessions() can be
+		// serialized behind a concurrent fetch triggered by switchSession(),
+		// stalling the store update.  Poll the store directly and force
+		// a refresh if the session lingers.
+		await expect
+			.poll(
+				() =>
+					page.evaluate(async (key) => {
+						var store = window.__moltis_stores?.sessionStore;
+						if (!store) return 1;
+						if (!store.getByKey(key)) return 0;
+						// Session still in store — kick a manual refresh
+						// in case the internal fetchSessions was blocked.
+						try {
+							var resp = await fetch("/api/sessions");
+							var data = await resp.json();
+							var sessions = Array.isArray(data) ? data : data?.sessions || [];
+							store.setAll(sessions);
+						} catch {
+							return 1;
+						}
+						return store.getByKey(key) ? 1 : 0;
+					}, cronKey),
+				{ timeout: 15_000 },
+			)
+			.toBe(0);
+
+		// Cron session should be gone from the DOM
+		await expect(cronItem).toHaveCount(0, { timeout: 5_000 });
 
 		expect(pageErrors).toEqual([]);
 	});

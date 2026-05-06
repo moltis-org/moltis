@@ -2,7 +2,7 @@
 
 use {
     axum::{Json, extract::State, response::IntoResponse},
-    moltis_gateway::server::AppState,
+    moltis_httpd::AppState,
 };
 
 use crate::templates::build_gon_data;

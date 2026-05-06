@@ -3,11 +3,16 @@ name: Build Packages
 on:
   push:
     tags:
-      - "v*"
+      - "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9][0-9]"
   workflow_dispatch:
     inputs:
       dry_run:
         description: "Build release packages without publishing artifacts, images, or release assets"
+        required: false
+        default: false
+        type: boolean
+      pre_release:
+        description: "Publish as pre-release (builds and uploads artifacts but skips Homebrew tap, deploy templates, and releases.json updates)"
         required: false
         default: false
         type: boolean
@@ -19,8 +24,10 @@ concurrency:
 permissions: {}
 
 env:
-  NIGHTLY_TOOLCHAIN: nightly-2025-11-30
+  # Must match rust-toolchain.toml (single source of truth for the nightly pin).
+  NIGHTLY_TOOLCHAIN: nightly-2025-12-27
   RELEASE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+  RELEASE_PRE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.pre_release && 'true' || 'false' }}
 
 jobs:
   zizmor:
@@ -29,7 +36,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
@@ -43,6 +50,22 @@ jobs:
           advanced-security: false
           online-audits: false
 
+  validate-tag:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    name: Validate Tag Format
+    permissions:
+      contents: read
+    steps:
+      - name: Check tag matches YYYYMMDD.NN
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^[0-9]{8}\.[0-9]{2}$ ]]; then
+            echo "::error::Tag '$TAG' must match YYYYMMDD.NN format"
+            exit 1
+          fi
+
   biome:
     needs: zizmor
     runs-on: ubuntu-latest
@@ -50,7 +73,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
       - name: Dry-run short-circuit
@@ -61,7 +84,7 @@ jobs:
         with:
           version: "2.4.6"
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
-        run: biome ci crates/web/src/assets/js/
+        run: biome ci crates/web/ui/src/ crates/web/ui/e2e/
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: ./scripts/i18n-check.sh
 
@@ -72,7 +95,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
       - name: Dry-run short-circuit
@@ -97,9 +120,13 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install git for proper clone (CUDA image has none)
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+      - name: Mark workspace safe for gix (container uid mismatch)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Dry-run short-circuit
         if: ${{ env.RELEASE_DRY_RUN == 'true' }}
         run: echo "Dry run enabled, skipping clippy job"
@@ -108,10 +135,7 @@ jobs:
         run: rm -f ~/.cargo/config.toml
       - name: Install build dependencies
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
-        run: |
-          apt-get update
-          apt-get install -y curl git cmake build-essential clang libclang-dev pkg-config ca-certificates
-          nvcc --version
+        run: bash ./scripts/install-linux-build-deps.sh
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
@@ -131,42 +155,93 @@ jobs:
             git commit -m "init" --allow-empty
             git tag v0.0.0
           fi
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Install npm dependencies
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+      - name: Build web assets
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
+          TAILWINDCSS=./tailwindcss-linux-x64 ./scripts/build-web-assets.sh
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings
 
   test:
     needs: [fmt, biome]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
+    container:
+      image: nvidia/cuda:12.4.1-devel-ubuntu22.04
+    env:
+      LD_LIBRARY_PATH: /usr/local/cuda/compat:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
     name: Test
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Install git for proper clone (CUDA image has none)
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
+      - name: Mark workspace safe for gix (container uid mismatch)
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Dry-run short-circuit
         if: ${{ env.RELEASE_DRY_RUN == 'true' }}
         run: echo "Dry run enabled, skipping unit test job"
+      - name: Clean up corrupted cargo config
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: rm -f ~/.cargo/config.toml
+      - name: Install build dependencies
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: bash ./scripts/install-linux-build-deps.sh
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           toolchain: stable
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Install QMD CLI
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: |
+          npm install -g @tobilu/qmd
+          qmd --version
       - uses: taiki-e/install-action@f176c07a0a40cbfdd08ee9aa8bf1655701d11e69 # v2.67.25
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
           tool: cargo-nextest
-      - name: Build Tailwind CSS
+      - name: Initialize git repo in llama-cpp source to satisfy cmake
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: |
+          cargo fetch --locked
+          LLAMA_SRC=$(find ~/.cargo/registry/src -name "llama-cpp-sys-2-*" -type d 2>/dev/null | head -1)
+          if [ -n "$LLAMA_SRC" ] && [ ! -d "$LLAMA_SRC/.git" ]; then
+            cd "$LLAMA_SRC"
+            git init
+            git config user.email "ci@example.com"
+            git config user.name "CI"
+            git add -A
+            git commit -m "init" --allow-empty
+            git tag v0.0.0
+          fi
+      - name: Install npm dependencies
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+      - name: Build web assets
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
+          TAILWINDCSS=./tailwindcss-linux-x64 ./scripts/build-web-assets.sh
       - if: ${{ env.RELEASE_DRY_RUN != 'true' }}
-        run: cargo nextest run --profile ci
+        run: cargo nextest run --all-features --profile ci
 
   e2e:
     name: E2E Tests
@@ -175,7 +250,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
@@ -188,16 +263,6 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Build Tailwind CSS
-        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
-        run: |
-          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-linux-x64 ./build.sh
-
-      - name: Build moltis binary
-        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
-        run: cargo build --bin moltis
-
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         with:
@@ -209,10 +274,22 @@ jobs:
         working-directory: crates/web/ui
         run: npm ci
 
+      - name: Build web assets
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        run: |
+          ./scripts/download-tailwindcss-cli.sh tailwindcss-linux-x64
+          TAILWINDCSS=./tailwindcss-linux-x64 ./scripts/build-web-assets.sh
+
+      - name: Build moltis binary
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        timeout-minutes: 20
+        run: cargo build --bin moltis
+
       - name: Install Playwright browsers
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        timeout-minutes: 2
         working-directory: crates/web/ui
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run E2E tests
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
@@ -251,43 +328,19 @@ jobs:
       id-token: write # Required for Sigstore keyless signing
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
       - name: Resolve release version
         id: release_version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Verify Cargo workspace version matches release version
-        env:
-          VERSION: ${{ steps.release_version.outputs.version }}
-        run: |
-          CARGO_VERSION=$(awk '
-            $0 == "[workspace.package]" { in_section = 1; next }
-            in_section == 1 && $0 ~ /^\[/ { in_section = 0 }
-            in_section == 1 && $0 ~ /^version[[:space:]]*=/ {
-              if (match($0, /"[^"]+"/)) {
-                print substr($0, RSTART + 1, RLENGTH - 2)
-                exit
-              }
-            }
-          ' Cargo.toml)
-          if [[ -z "$CARGO_VERSION" ]]; then
-            echo "failed to resolve [workspace.package].version from Cargo.toml" >&2
-            exit 1
-          fi
-          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
-            echo "tag version (${VERSION}) does not match Cargo.toml (${CARGO_VERSION})" >&2
-            echo "run ./scripts/prepare-release.sh ${VERSION} before tagging" >&2
-            exit 1
-          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
@@ -302,12 +355,21 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
           ./scripts/download-tailwindcss-cli.sh "$TW"
-          cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+          TAILWINDCSS=./$TW ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         run: |
@@ -317,7 +379,8 @@ jobs:
       - name: Build release binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$BUILD_TARGET"
+          MOLTIS_VERSION: ${{ steps.release_version.outputs.version }}
+        run: ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Stage WASM assets for cargo-deb
         env:
@@ -327,7 +390,8 @@ jobs:
       - name: Build .deb package
         env:
           BUILD_TARGET: ${{ matrix.target }}
-        run: cargo deb -p moltis --no-build --target "$BUILD_TARGET"
+          MOLTIS_VERSION: ${{ steps.release_version.outputs.version }}
+        run: cargo deb -p moltis --no-build --target "$BUILD_TARGET" --deb-version "$MOLTIS_VERSION"
 
       - name: Sign with Sigstore and generate checksums
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
@@ -367,43 +431,19 @@ jobs:
       id-token: write # Required for Sigstore keyless signing
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
       - name: Resolve release version
         id: release_version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Verify Cargo workspace version matches release version
-        env:
-          VERSION: ${{ steps.release_version.outputs.version }}
-        run: |
-          CARGO_VERSION=$(awk '
-            $0 == "[workspace.package]" { in_section = 1; next }
-            in_section == 1 && $0 ~ /^\[/ { in_section = 0 }
-            in_section == 1 && $0 ~ /^version[[:space:]]*=/ {
-              if (match($0, /"[^"]+"/)) {
-                print substr($0, RSTART + 1, RLENGTH - 2)
-                exit
-              }
-            }
-          ' Cargo.toml)
-          if [[ -z "$CARGO_VERSION" ]]; then
-            echo "failed to resolve [workspace.package].version from Cargo.toml" >&2
-            exit 1
-          fi
-          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
-            echo "tag version (${VERSION}) does not match Cargo.toml (${CARGO_VERSION})" >&2
-            echo "run ./scripts/prepare-release.sh ${VERSION} before tagging" >&2
-            exit 1
-          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
@@ -418,12 +458,21 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
           ./scripts/download-tailwindcss-cli.sh "$TW"
-          cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+          TAILWINDCSS=./$TW ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         run: |
@@ -433,12 +482,14 @@ jobs:
       - name: Build release binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$BUILD_TARGET"
+          MOLTIS_VERSION: ${{ steps.release_version.outputs.version }}
+        run: ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Build .rpm package
         env:
           BUILD_TARGET: ${{ matrix.target }}
-        run: cargo generate-rpm -p crates/cli --target "$BUILD_TARGET"
+          MOLTIS_VERSION: ${{ steps.release_version.outputs.version }}
+        run: cargo generate-rpm -p crates/cli --target "$BUILD_TARGET" --set-metadata="version=\"$MOLTIS_VERSION\""
 
       - name: Sign with Sigstore and generate checksums
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
@@ -478,7 +529,7 @@ jobs:
       id-token: write # Required for Sigstore keyless signing
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
@@ -495,32 +546,42 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
           ./scripts/download-tailwindcss-cli.sh "$TW"
-          cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+          TAILWINDCSS=./$TW ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         run: |
           cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
           cargo run -p moltis-wasm-precompile --release
 
-      - name: Build release binary
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$BUILD_TARGET"
-
       - name: Determine package version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          MOLTIS_VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Build .pkg.tar.zst
         env:
@@ -588,7 +649,7 @@ jobs:
       id-token: write # Required for Sigstore keyless signing
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
@@ -602,32 +663,42 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           ARCH=$(uname -m)
           case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac
           ./scripts/download-tailwindcss-cli.sh "$TW"
-          cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+          TAILWINDCSS=./$TW ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         run: |
           cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
           cargo run -p moltis-wasm-precompile --release
 
-      - name: Build release binary
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$BUILD_TARGET"
-
       - name: Determine package version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          MOLTIS_VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Build AppImage
         env:
@@ -707,17 +778,17 @@ jobs:
       id-token: write # Required for Sigstore keyless signing
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
       - name: Resolve release version
         id: release_version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
@@ -773,7 +844,7 @@ jobs:
       id-token: write # Required for Sigstore keyless signing
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
@@ -787,7 +858,16 @@ jobs:
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           OS=$(uname -s)
           ARCH=$(uname -m)
@@ -798,27 +878,28 @@ jobs:
             Darwin-x86_64) TW="tailwindcss-macos-x64";;
           esac
           ./scripts/download-tailwindcss-cli.sh "$TW"
-          cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+          TAILWINDCSS=./$TW ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         run: |
           cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
           cargo run -p moltis-wasm-precompile --release
 
-      - name: Build release binary
-        env:
-          BUILD_TARGET: ${{ matrix.target }}
-        run: cargo build --release --target "$BUILD_TARGET"
-
       - name: Determine package version
         id: version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          MOLTIS_VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Package binary
         env:
@@ -861,7 +942,7 @@ jobs:
       id-token: write # Required for Sigstore keyless signing
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
@@ -873,16 +954,65 @@ jobs:
       - name: Install Swift build dependencies
         run: brew install xcodegen cbindgen
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-macos-arm64
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-macos-arm64 ./build.sh
+          TAILWINDCSS=./tailwindcss-macos-arm64 ./scripts/build-web-assets.sh
 
       - name: Install cosign
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         uses: sigstore/cosign-installer@d7d6bc7722e3daa8354c50bcb52f4837da5e9b6a # v3.8.1
 
+      - name: Import Apple certificate
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/certificate.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
+
+          echo -n "$APPLE_CERTIFICATE_BASE64" | base64 --decode -o "$CERTIFICATE_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERTIFICATE_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          rm -f "$CERTIFICATE_PATH"
+
+      - name: Determine package version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Build Swift bridge artifacts and generate Xcode project
+        env:
+          MOLTIS_VERSION: ${{ steps.version.outputs.version }}
         run: |
           ./scripts/build-swift-bridge.sh
           ./scripts/generate-swift-project.sh
@@ -890,24 +1020,32 @@ jobs:
       - name: Build macOS app
         env:
           DERIVED_DATA_DIR: apps/macos/.derivedData-ci
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          if [[ "$RELEASE_DRY_RUN" == "true" ]]; then
+            EXTRA_FLAGS=(CODE_SIGNING_ALLOWED=NO)
+          else
+            EXTRA_FLAGS=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Developer ID Application" DEVELOPMENT_TEAM="${APPLE_TEAM_ID}" OTHER_CODE_SIGN_FLAGS="--timestamp --options runtime")
+          fi
+
           xcodebuild \
             -project apps/macos/Moltis.xcodeproj \
             -scheme Moltis \
             -configuration Release \
             -destination "platform=macOS" \
             -derivedDataPath "$DERIVED_DATA_DIR" \
+            "${EXTRA_FLAGS[@]}" \
             build
 
-      - name: Determine package version
-        id: version
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          # Re-sign with hardened runtime + timestamp + clean entitlements
+          # to strip com.apple.security.get-task-allow (debug entitlement)
+          if [[ "$RELEASE_DRY_RUN" != "true" ]]; then
+            APP_PATH="${DERIVED_DATA_DIR}/Build/Products/Release/Moltis.app"
+            /usr/bin/codesign --force --deep --timestamp --options runtime \
+              --entitlements apps/macos/Moltis.entitlements \
+              --sign "Developer ID Application" \
+              "$APP_PATH"
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Package macOS app
         env:
@@ -918,6 +1056,41 @@ jobs:
             echo "expected app bundle not found at $APP_PATH" >&2
             exit 1
           fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "moltis-${VERSION}-macos.app.zip"
+
+      - name: Notarize macOS app
+        if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool store-credentials "notarytool-profile" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_ID_PASSWORD"
+
+          SUBMIT_OUT="$(xcrun notarytool submit "moltis-${VERSION}-macos.app.zip" \
+            --keychain-profile "notarytool-profile" \
+            --wait 2>&1)" || true
+          echo "$SUBMIT_OUT"
+
+          SUBMISSION_ID="$(echo "$SUBMIT_OUT" | grep '  id:' | head -1 | awk '{print $2}')"
+
+          if echo "$SUBMIT_OUT" | grep -q 'status: Invalid'; then
+            echo "::error::Notarization failed. Fetching log..."
+            xcrun notarytool log "$SUBMISSION_ID" \
+              --keychain-profile "notarytool-profile" || true
+            exit 1
+          fi
+
+          # Staple the notarization ticket to the app bundle
+          APP_PATH="apps/macos/.derivedData-ci/Build/Products/Release/Moltis.app"
+          xcrun stapler staple "$APP_PATH"
+
+          # Re-package with the stapled ticket
+          rm "moltis-${VERSION}-macos.app.zip"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "moltis-${VERSION}-macos.app.zip"
 
       - name: Sign with Sigstore and generate checksums
@@ -938,6 +1111,14 @@ jobs:
             *.app.zip.sig
             *.app.zip.crt
 
+      - name: Clean up keychain
+        if: always()
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH"
+          fi
+
   build-windows-exe:
     needs: [clippy, test, e2e]
     runs-on: windows-latest
@@ -949,7 +1130,7 @@ jobs:
       BUILD_TARGET: x86_64-pc-windows-msvc
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
@@ -974,11 +1155,20 @@ jobs:
           Add-Content -Path $env:GITHUB_ENV -Value "PERL=$strawberryPerl"
           & $strawberryPerl -v
 
-      - name: Build Tailwind CSS
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        working-directory: crates/web/ui
+        run: npm ci --ignore-scripts
+
+      - name: Build web assets
         shell: bash
         run: |
           ./scripts/download-tailwindcss-cli.sh tailwindcss-windows-x64.exe
-          cd crates/web/ui && TAILWINDCSS=../../../tailwindcss-windows-x64.exe ./build.sh
+          TAILWINDCSS=./tailwindcss-windows-x64.exe ./scripts/build-web-assets.sh
 
       - name: Build WASM components
         shell: bash
@@ -986,20 +1176,22 @@ jobs:
           cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
           cargo run -p moltis-wasm-precompile --release
 
-      - name: Build release binary
-        shell: bash
-        run: cargo build --release --target "$BUILD_TARGET" --features embedded-assets,embedded-wasm
-
       - name: Determine package version
         id: version
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        shell: bash
+        env:
+          MOLTIS_VERSION: ${{ steps.version.outputs.version }}
+        run: MOLTIS_BUILD_FEATURES=full,embedded-assets,embedded-wasm ./scripts/cargo-build-moltis.sh --release --target "$BUILD_TARGET"
 
       - name: Package .exe
         shell: bash
@@ -1050,43 +1242,19 @@ jobs:
       image: ghcr.io/${{ github.repository }}
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
       - name: Resolve release version
         id: release_version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
-            VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            VERSION="0.0.0-dev"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Verify Cargo workspace version matches release version
-        env:
-          VERSION: ${{ steps.release_version.outputs.version }}
-        run: |
-          CARGO_VERSION=$(awk '
-            $0 == "[workspace.package]" { in_section = 1; next }
-            in_section == 1 && $0 ~ /^\[/ { in_section = 0 }
-            in_section == 1 && $0 ~ /^version[[:space:]]*=/ {
-              if (match($0, /"[^"]+"/)) {
-                print substr($0, RSTART + 1, RLENGTH - 2)
-                exit
-              }
-            }
-          ' Cargo.toml)
-          if [[ -z "$CARGO_VERSION" ]]; then
-            echo "failed to resolve [workspace.package].version from Cargo.toml" >&2
-            exit 1
-          fi
-          if [[ "$CARGO_VERSION" != "$VERSION" ]]; then
-            echo "tag version (${VERSION}) does not match Cargo.toml (${CARGO_VERSION})" >&2
-            echo "run ./scripts/prepare-release.sh ${VERSION} before tagging" >&2
-            exit 1
-          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3
@@ -1112,6 +1280,7 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
+          build-args: MOLTIS_VERSION=${{ steps.release_version.outputs.version }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,"name=ghcr.io/${{ github.repository }}",push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.platform }}
@@ -1160,7 +1329,8 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write # Required for Sigstore keyless signing
+      id-token: write        # Required for Sigstore keyless signing
+      attestations: write    # Required for artifact attestations
 
     steps:
       - name: Download digests
@@ -1189,11 +1359,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CURRENT="${GITHUB_REF#refs/tags/v}"
+          CURRENT="${GITHUB_REF_NAME}"
           LATEST=$(gh api "repos/${{ github.repository }}/tags" --paginate --jq '.[].name' \
-            | sed 's/^v//' \
-            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V | tail -1)
+            | grep -E '^[0-9]{8}\.[0-9]{2}$' \
+            | sort | tail -1)
           if [ "$CURRENT" = "$LATEST" ]; then
             echo "is_latest=true" >> "$GITHUB_OUTPUT"
           else
@@ -1207,8 +1376,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ steps.check_latest.outputs.is_latest }}
+            type=match,pattern=\d{8}\.\d{2}
             type=sha
             type=raw,value=latest,enable=${{ steps.check_latest.outputs.is_latest }}
 
@@ -1270,6 +1438,14 @@ jobs:
             --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
             "ghcr.io/${{ github.repository }}@${DIGEST}"
 
+      - name: Attest build provenance for container image
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
   upload-release:
     needs:
       - build-deb
@@ -1285,8 +1461,16 @@ jobs:
     name: Upload release assets
     permissions:
       contents: write
+      id-token: write        # Required for artifact attestations
+      attestations: write    # Required for artifact attestations
 
     steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+
       - name: Download all build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -1307,6 +1491,7 @@ jobs:
             -o -name '*.AppImage' -o -name '*.snap' -o -name '*.tar.gz' -o -name '*.zip' -o -name '*.exe' \
             -o -name '*.sha256' -o -name '*.sha512' -o -name '*.sig' -o -name '*.crt' \
           \) -exec cp {} release-files/ \;
+          cp CHANGELOG.md release-files/
           echo "Files to upload:"
           ls -lh release-files/
 
@@ -1314,6 +1499,21 @@ jobs:
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           files: release-files/*
+          draft: false
+          prerelease: ${{ env.RELEASE_PRE_RELEASE == 'true' }}
+
+      - name: Attest build provenance for release artifacts
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-path: |
+            release-files/*.tar.gz
+            release-files/*.deb
+            release-files/*.rpm
+            release-files/*.pkg.tar.zst
+            release-files/*.AppImage
+            release-files/*.snap
+            release-files/*.zip
+            release-files/*.exe
 
   # Generate SBOM for the entire release
   generate-sbom:
@@ -1325,10 +1525,11 @@ jobs:
     name: Generate Release SBOM
     permissions:
       contents: write
-      id-token: write # Required for Sigstore keyless signing
+      id-token: write        # Required for Sigstore keyless signing
+      attestations: write    # Required for artifact attestations
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
@@ -1363,11 +1564,18 @@ jobs:
             moltis-sbom.spdx.json.sig
             moltis-sbom.spdx.json.crt
 
+      - name: Attest build provenance for SBOMs
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+        with:
+          subject-path: |
+            moltis-sbom.cdx.json
+            moltis-sbom.spdx.json
+
   update-homebrew-tap:
     needs:
       - upload-release
       - merge-docker
-    if: startsWith(github.ref, 'refs/tags/') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    if: startsWith(github.ref, 'refs/tags/') && !(github.event_name == 'workflow_dispatch' && (inputs.dry_run || inputs.pre_release))
     runs-on: ubuntu-latest
     name: Update Homebrew tap
     permissions:
@@ -1394,7 +1602,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
+          VERSION="${TAG}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
           for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu; do
@@ -1409,7 +1617,7 @@ jobs:
 
       - name: Checkout homebrew-tap
         if: steps.token_check.outputs.has_token == 'true'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           repository: moltis-org/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -1427,20 +1635,20 @@ jobs:
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-aarch64-apple-darwin.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-aarch64-apple-darwin.tar.gz"
                 sha256 "${SHA_aarch64_apple_darwin}"
               else
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-x86_64-apple-darwin.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-x86_64-apple-darwin.tar.gz"
                 sha256 "${SHA_x86_64_apple_darwin}"
               end
             end
 
             on_linux do
               if Hardware::CPU.arm?
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-aarch64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-aarch64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_aarch64_unknown_linux_gnu}"
               else
-                url "https://github.com/moltis-org/moltis/releases/download/v#{version}/moltis-#{version}-x86_64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/moltis-org/moltis/releases/download/#{version}/moltis-#{version}-x86_64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_x86_64_unknown_linux_gnu}"
               end
             end
@@ -1471,14 +1679,16 @@ jobs:
           git push
 
   update-deploy-tags:
-    needs: merge-docker
-    if: startsWith(github.ref, 'refs/tags/') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+    needs:
+      - upload-release
+      - merge-docker
+    if: startsWith(github.ref, 'refs/tags/') && !(github.event_name == 'workflow_dispatch' && (inputs.dry_run || inputs.pre_release))
     runs-on: ubuntu-latest
     name: Update deploy template tags
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
           ref: main
@@ -1489,21 +1699,21 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
+          VERSION="${TAG}"
           echo "Updating deploy templates to version ${VERSION}"
 
-          # DigitalOcean App Platform
-          sed -i "s/tag: \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/tag: \"${VERSION}\"/" .do/deploy.template.yaml
+          # DigitalOcean App Platform (pattern matches both semver 0.10.18 and date 20260311.01)
+          sed -i "s/tag: \"[0-9][0-9.]*\"/tag: \"${VERSION}\"/" .do/deploy.template.yaml
 
           # Render
-          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" render.yaml
+          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9.]*|ghcr.io/moltis-org/moltis:${VERSION}|" render.yaml
 
           # Fly.io
-          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*|ghcr.io/moltis-org/moltis:${VERSION}|" fly.toml
+          sed -i "s|ghcr.io/moltis-org/moltis:[0-9][0-9.]*|ghcr.io/moltis-org/moltis:${VERSION}|" fly.toml
 
           # Website releases.json
           jq --arg v "$VERSION" \
-            '.stable.version = $v | .stable.release_url = "https://github.com/moltis-org/moltis/releases/tag/v" + $v' \
+            '.stable.version = $v | .stable.release_url = "https://github.com/moltis-org/moltis/releases/tag/" + $v' \
             website/releases.json > website/releases.json.tmp \
             && mv website/releases.json.tmp website/releases.json
 

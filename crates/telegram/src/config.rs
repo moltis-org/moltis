@@ -5,8 +5,9 @@ use {
         config_view::ChannelConfigView,
         gating::{DmPolicy, GroupPolicy, MentionMode},
     },
-    secrecy::{ExposeSecret, Secret},
-    serde::{Deserialize, Serialize},
+    moltis_common::secret_serde,
+    secrecy::Secret,
+    serde::{Deserialize, Serialize, ser::SerializeStruct},
 };
 
 /// Per-channel model/provider override.
@@ -16,6 +17,8 @@ pub struct ChannelOverride {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 /// Per-user model/provider override.
@@ -25,6 +28,8 @@ pub struct UserOverride {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
 }
 
 /// How streaming responses are delivered.
@@ -43,7 +48,7 @@ pub enum StreamMode {
 #[serde(default)]
 pub struct TelegramAccountConfig {
     /// Bot token from @BotFather.
-    #[serde(serialize_with = "serialize_secret")]
+    #[serde(serialize_with = "secret_serde::serialize_secret")]
     pub token: Secret<String>,
 
     /// DM access policy.
@@ -86,6 +91,10 @@ pub struct TelegramAccountConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
 
+    /// Default agent ID for this bot's sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+
     /// Enable OTP self-approval for non-allowlisted DM users (default: true).
     pub otp_self_approval: bool,
 
@@ -117,11 +126,49 @@ impl std::fmt::Debug for TelegramAccountConfig {
     }
 }
 
-fn serialize_secret<S: serde::Serializer>(
-    secret: &Secret<String>,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(secret.expose_secret())
+/// Wrapper that serializes secret fields as `"[REDACTED]"` for API responses.
+pub struct RedactedConfig<'a>(pub &'a TelegramAccountConfig);
+
+impl Serialize for RedactedConfig<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let c = self.0;
+        let mut count = 13; // always-present fields
+        count += c.model.is_some() as usize;
+        count += c.model_provider.is_some() as usize;
+        count += c.agent_id.is_some() as usize;
+        count += !c.channel_overrides.is_empty() as usize;
+        count += !c.user_overrides.is_empty() as usize;
+        let mut s = serializer.serialize_struct("TelegramAccountConfig", count)?;
+        s.serialize_field("token", secret_serde::REDACTED)?;
+        s.serialize_field("dm_policy", &c.dm_policy)?;
+        s.serialize_field("group_policy", &c.group_policy)?;
+        s.serialize_field("mention_mode", &c.mention_mode)?;
+        s.serialize_field("allowlist", &c.allowlist)?;
+        s.serialize_field("group_allowlist", &c.group_allowlist)?;
+        s.serialize_field("stream_mode", &c.stream_mode)?;
+        s.serialize_field("edit_throttle_ms", &c.edit_throttle_ms)?;
+        s.serialize_field("stream_notify_on_complete", &c.stream_notify_on_complete)?;
+        s.serialize_field("stream_min_initial_chars", &c.stream_min_initial_chars)?;
+        if c.model.is_some() {
+            s.serialize_field("model", &c.model)?;
+        }
+        if c.model_provider.is_some() {
+            s.serialize_field("model_provider", &c.model_provider)?;
+        }
+        if c.agent_id.is_some() {
+            s.serialize_field("agent_id", &c.agent_id)?;
+        }
+        s.serialize_field("otp_self_approval", &c.otp_self_approval)?;
+        s.serialize_field("otp_cooldown_secs", &c.otp_cooldown_secs)?;
+        s.serialize_field("reply_to_message", &c.reply_to_message)?;
+        if !c.channel_overrides.is_empty() {
+            s.serialize_field("channel_overrides", &c.channel_overrides)?;
+        }
+        if !c.user_overrides.is_empty() {
+            s.serialize_field("user_overrides", &c.user_overrides)?;
+        }
+        s.end()
+    }
 }
 
 impl ChannelConfigView for TelegramAccountConfig {
@@ -149,6 +196,10 @@ impl ChannelConfigView for TelegramAccountConfig {
         self.model_provider.as_deref()
     }
 
+    fn agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref()
+    }
+
     fn channel_model(&self, channel_id: &str) -> Option<&str> {
         self.channel_overrides
             .get(channel_id)
@@ -161,6 +212,12 @@ impl ChannelConfigView for TelegramAccountConfig {
             .and_then(|o| o.model_provider.as_deref())
     }
 
+    fn channel_agent_id(&self, channel_id: &str) -> Option<&str> {
+        self.channel_overrides
+            .get(channel_id)
+            .and_then(|o| o.agent_id.as_deref())
+    }
+
     fn user_model(&self, user_id: &str) -> Option<&str> {
         self.user_overrides
             .get(user_id)
@@ -171,6 +228,12 @@ impl ChannelConfigView for TelegramAccountConfig {
         self.user_overrides
             .get(user_id)
             .and_then(|o| o.model_provider.as_deref())
+    }
+
+    fn user_agent_id(&self, user_id: &str) -> Option<&str> {
+        self.user_overrides
+            .get(user_id)
+            .and_then(|o| o.agent_id.as_deref())
     }
 }
 
@@ -189,6 +252,7 @@ impl Default for TelegramAccountConfig {
             stream_min_initial_chars: 30,
             model: None,
             model_provider: None,
+            agent_id: None,
             otp_self_approval: true,
             otp_cooldown_secs: 300,
             reply_to_message: false,
@@ -201,6 +265,8 @@ impl Default for TelegramAccountConfig {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
+    use secrecy::ExposeSecret;
+
     use super::*;
 
     #[test]
@@ -268,27 +334,80 @@ mod tests {
     }
 
     #[test]
+    fn resolve_agent_user_overrides_channel() {
+        let mut cfg = TelegramAccountConfig {
+            agent_id: Some("default-agent".into()),
+            ..Default::default()
+        };
+        cfg.channel_overrides
+            .insert("-100123".into(), ChannelOverride {
+                agent_id: Some("channel-agent".into()),
+                ..Default::default()
+            });
+        cfg.user_overrides.insert("456".into(), UserOverride {
+            agent_id: Some("user-agent".into()),
+            ..Default::default()
+        });
+
+        assert_eq!(cfg.resolve_agent_id("-100123", "456"), Some("user-agent"));
+        assert_eq!(
+            cfg.resolve_agent_id("-100123", "999"),
+            Some("channel-agent")
+        );
+        assert_eq!(
+            cfg.resolve_agent_id("-100999", "999"),
+            Some("default-agent")
+        );
+    }
+
+    #[test]
     fn overrides_round_trip() {
         let json = serde_json::json!({
             "token": "123:ABC",
             "channel_overrides": {
-                "-100123": { "model": "gpt-4" }
+                "-100123": { "model": "gpt-4", "agent_id": "group-agent" }
             },
             "user_overrides": {
-                "456": { "model": "claude-sonnet", "model_provider": "anthropic" }
+                "456": { "model": "claude-sonnet", "model_provider": "anthropic", "agent_id": "user-agent" }
             }
         });
         let cfg: TelegramAccountConfig = serde_json::from_value(json).unwrap();
         assert_eq!(cfg.channel_model("-100123"), Some("gpt-4"));
         assert!(cfg.channel_model_provider("-100123").is_none());
+        assert_eq!(cfg.channel_agent_id("-100123"), Some("group-agent"));
         assert_eq!(cfg.user_model("456"), Some("claude-sonnet"));
         assert_eq!(cfg.user_model_provider("456"), Some("anthropic"));
+        assert_eq!(cfg.user_agent_id("456"), Some("user-agent"));
 
         // Round-trip preserves overrides
         let value = serde_json::to_value(&cfg).unwrap();
         let cfg2: TelegramAccountConfig = serde_json::from_value(value).unwrap();
         assert_eq!(cfg2.channel_model("-100123"), Some("gpt-4"));
         assert_eq!(cfg2.user_model("456"), Some("claude-sonnet"));
+        assert_eq!(cfg2.channel_agent_id("-100123"), Some("group-agent"));
+        assert_eq!(cfg2.user_agent_id("456"), Some("user-agent"));
+    }
+
+    #[test]
+    fn redacted_hides_token() {
+        let cfg = TelegramAccountConfig {
+            token: Secret::new("123:ABC".into()),
+            model: Some("gpt-4o".into()),
+            agent_id: Some("research".into()),
+            ..Default::default()
+        };
+        let redacted = serde_json::to_value(RedactedConfig(&cfg)).unwrap();
+        assert_eq!(redacted["token"], "[REDACTED]");
+        assert_eq!(redacted["model"], "gpt-4o");
+        assert_eq!(redacted["agent_id"], "research");
+        assert_eq!(
+            redacted["stream_mode"],
+            serde_json::to_value(&cfg.stream_mode).unwrap()
+        );
+
+        // Storage path still exposes the token
+        let storage = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(storage["token"], "123:ABC");
     }
 
     #[test]

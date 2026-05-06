@@ -15,8 +15,9 @@ curl \
   --silent \
   --show-error \
   --location \
-  --retry 5 \
-  --retry-delay 2 \
+  --retry 10 \
+  --retry-delay 5 \
+  --retry-max-time 120 \
   --retry-connrefused \
   --retry-all-errors \
   --output "${asset}" \

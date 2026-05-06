@@ -260,6 +260,7 @@ async fn command_events_callback(
     let command_text = event.command.to_string();
     let text = event.text.unwrap_or_default();
     let full_command = format!("{command_text} {text}").trim().to_string();
+    let sender_id = event.user_id.to_string();
 
     let event_sink = {
         let accts = listener_state
@@ -275,8 +276,12 @@ async fn command_events_callback(
             account_id: account_id.to_string(),
             chat_id: event.channel_id.to_string(),
             message_id: None,
+            thread_id: None,
         };
-        match sink.dispatch_command(&full_command, reply_to).await {
+        match sink
+            .dispatch_command(&full_command, reply_to, Some(&sender_id))
+            .await
+        {
             Ok(response_text) => Ok(SlackCommandEventResponse::new(
                 SlackMessageContent::new().with_text(response_text),
             )),
@@ -338,6 +343,7 @@ async fn interaction_events_callback(
             account_id: account_id.to_string(),
             chat_id: channel_id,
             message_id: None,
+            thread_id: None,
         };
         match sink.dispatch_interaction(&action_id, reply_to).await {
             Ok(_response) => {
@@ -551,15 +557,21 @@ pub(crate) async fn handle_inbound(
             account_id: account_id.to_string(),
             chat_id: channel_id.to_string(),
             message_id: thread_ts,
+            thread_id: None,
         };
 
         let meta = ChannelMessageMeta {
             channel_type: ChannelType::Slack,
             sender_name: None,
             username,
+            sender_id: Some(user_id.to_string()),
             message_kind: Some(ChannelMessageKind::Text),
             model: config.resolve_model(channel_id, user_id).map(String::from),
+            agent_id: config
+                .resolve_agent_id(channel_id, user_id)
+                .map(String::from),
             audio_filename: None,
+            documents: None,
         };
 
         #[cfg(feature = "metrics")]

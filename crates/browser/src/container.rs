@@ -120,28 +120,31 @@ fn stop_container_by_id(backend: ContainerBackend, container_id: &str) {
         },
     }
 
-    // Apple Container requires explicit deletion after stop.
-    #[cfg(target_os = "macos")]
-    if backend == ContainerBackend::AppleContainer {
-        match Command::new("container")
-            .args(["rm", container_id])
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                debug!(container_id, "browser container removed");
-            },
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                warn!(
-                    container_id,
-                    error = %stderr.trim(),
-                    "failed to remove browser container"
-                );
-            },
-            Err(e) => {
-                warn!(container_id, error = %e, "failed to run container rm");
-            },
-        }
+    // Containers are started without --rm so that logs and status remain
+    // available for diagnostics after a crash.  Explicitly remove the
+    // container after stopping it.
+    match Command::new(cli).args(["rm", container_id]).output() {
+        Ok(output) if output.status.success() => {
+            debug!(container_id, backend = cli, "browser container removed");
+        },
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(
+                container_id,
+                backend = cli,
+                error = %stderr.trim(),
+                "failed to remove browser container"
+            );
+        },
+        Err(e) => {
+            warn!(
+                container_id,
+                backend = cli,
+                error = %e,
+                "failed to run {} rm",
+                cli
+            );
+        },
     }
 }
 
@@ -174,6 +177,7 @@ impl BrowserContainer {
         viewport_width: u32,
         viewport_height: u32,
         low_memory_threshold_mb: u64,
+        session_timeout_ms: u64,
         profile_dir: Option<&std::path::Path>,
         container_host: &str,
     ) -> Result<Self> {
@@ -185,6 +189,7 @@ impl BrowserContainer {
             viewport_width,
             viewport_height,
             low_memory_threshold_mb,
+            session_timeout_ms,
             profile_dir,
             container_host,
         )
@@ -198,6 +203,7 @@ impl BrowserContainer {
         viewport_width: u32,
         viewport_height: u32,
         low_memory_threshold_mb: u64,
+        session_timeout_ms: u64,
         profile_dir: Option<&std::path::Path>,
         container_host: &str,
     ) -> Result<Self> {
@@ -217,6 +223,7 @@ impl BrowserContainer {
             image,
             host_port,
             backend = backend.cli(),
+            container_host,
             "starting browser container"
         );
 
@@ -230,6 +237,7 @@ impl BrowserContainer {
                 viewport_width,
                 viewport_height,
                 low_memory_threshold_mb,
+                session_timeout_ms,
                 profile_dir,
             )?,
             #[cfg(target_os = "macos")]
@@ -240,6 +248,7 @@ impl BrowserContainer {
                 viewport_width,
                 viewport_height,
                 low_memory_threshold_mb,
+                session_timeout_ms,
                 profile_dir,
             )?,
         };
@@ -254,13 +263,48 @@ impl BrowserContainer {
 
         // Wait for the container to be ready
         if let Err(error) = wait_for_ready(container_host, host_port) {
+            // Fetch container logs before cleanup to help diagnose why Chrome
+            // didn't start (e.g. crash, missing libs, permission errors).
+            let container_logs = fetch_container_logs(backend, &container_id);
+            let container_status = inspect_container_status(backend, &container_id);
+
             warn!(
                 container_id,
                 host_port,
+                container_host,
                 backend = backend.cli(),
                 error = %error,
                 "browser container failed readiness check, cleaning up"
             );
+
+            if let Some(ref status) = container_status {
+                warn!(
+                    container_id,
+                    container_status = status,
+                    "browser container status at time of failure"
+                );
+            }
+
+            if let Some(ref logs) = container_logs {
+                // Already limited to 50 lines by --tail 50 in fetch_container_logs
+                warn!(
+                    container_id,
+                    logs = %logs,
+                    "browser container logs"
+                );
+            } else {
+                warn!(container_id, "no container logs available");
+            }
+
+            if is_running_in_container() {
+                warn!(
+                    container_host,
+                    "moltis appears to be running inside a container — if the browser \
+                     container is a sibling (not nested), set browser.container_host to \
+                     the Docker host IP or \"host.docker.internal\" in moltis.toml"
+                );
+            }
+
             stop_container_by_id(backend, &container_id);
             return Err(error);
         }
@@ -373,6 +417,34 @@ fn build_container_launch_args(
     format!("DEFAULT_LAUNCH_ARGS=[{joined}]")
 }
 
+/// Compute the browserless container `TIMEOUT` (in ms) from pool lifecycle settings.
+///
+/// The result is `max(idle_timeout_secs, max_instance_lifetime_secs)` converted
+/// to milliseconds, then floored against `navigation_timeout_ms` so that a single
+/// long navigation cannot exceed the container's own timeout. The final value is
+/// capped at `max_instance_lifetime_secs * 1000` to prevent disagree­ment with the
+/// Moltis-side hard TTL when `navigation_timeout_ms` is very large.
+pub(crate) fn browserless_session_timeout_ms(
+    idle_timeout_secs: u64,
+    navigation_timeout_ms: u64,
+    max_instance_lifetime_secs: u64,
+) -> u64 {
+    let ceiling_ms = max_instance_lifetime_secs.saturating_mul(1000);
+    idle_timeout_secs
+        .max(max_instance_lifetime_secs)
+        .saturating_mul(1000)
+        .max(navigation_timeout_ms)
+        .min(ceiling_ms)
+}
+
+fn browserless_container_env(session_timeout_ms: u64) -> Vec<String> {
+    vec![
+        format!("TIMEOUT={session_timeout_ms}"),
+        "MAX_CONCURRENT_SESSIONS=1".to_string(),
+        "PREBOOT_CHROME=true".to_string(),
+    ]
+}
+
 /// Start a Docker container for the browser.
 fn start_oci_container(
     backend: ContainerBackend,
@@ -382,6 +454,7 @@ fn start_oci_container(
     viewport_width: u32,
     viewport_height: u32,
     low_memory_threshold_mb: u64,
+    session_timeout_ms: u64,
     profile_dir: Option<&std::path::Path>,
 ) -> Result<String> {
     let cli = backend.cli();
@@ -395,23 +468,24 @@ fn start_oci_container(
         container_profile_dir,
         backend,
     );
+    let browserless_env = browserless_container_env(session_timeout_ms);
 
     let mut run_args = vec![
         "run".to_string(),
         "-d".to_string(),
-        "--rm".to_string(),
         "--name".to_string(),
         container_name.clone(),
         "-p".to_string(),
         format!("{}:3000", host_port),
         "-e".to_string(),
         launch_args,
-        "-e".to_string(),
-        "MAX_CONCURRENT_SESSIONS=1".to_string(),
-        "-e".to_string(),
-        "PREBOOT_CHROME=true".to_string(),
         "--shm-size=2gb".to_string(),
     ];
+
+    for env in browserless_env {
+        run_args.push("-e".to_string());
+        run_args.push(env);
+    }
 
     // Mount the profile directory if persistence is enabled
     if let Some(host_path) = profile_dir {
@@ -424,6 +498,12 @@ fn start_oci_container(
     }
 
     run_args.push(image.to_string());
+
+    info!(
+        backend = cli,
+        args = %run_args.join(" "),
+        "browser container run command"
+    );
 
     let output = Command::new(cli)
         .args(&run_args)
@@ -456,6 +536,7 @@ fn start_apple_container(
     viewport_width: u32,
     viewport_height: u32,
     low_memory_threshold_mb: u64,
+    session_timeout_ms: u64,
     profile_dir: Option<&std::path::Path>,
 ) -> Result<String> {
     let container_name = new_browser_container_name(container_prefix);
@@ -468,6 +549,7 @@ fn start_apple_container(
         container_profile_dir,
         ContainerBackend::AppleContainer,
     );
+    let browserless_env = browserless_container_env(session_timeout_ms);
 
     let mut container_args = vec![
         "run".to_string(),
@@ -478,15 +560,16 @@ fn start_apple_container(
         format!("{}:3000", host_port),
         "-e".to_string(),
         launch_args,
-        "-e".to_string(),
-        "MAX_CONCURRENT_SESSIONS=1".to_string(),
-        "-e".to_string(),
-        "PREBOOT_CHROME=true".to_string(),
         // Chrome requires shared memory for rendering; Docker uses --shm-size=2gb,
         // Apple Container doesn't support --shm-size so mount tmpfs at /dev/shm.
         "--tmpfs".to_string(),
         "/dev/shm".to_string(),
     ];
+
+    for env in browserless_env {
+        container_args.push("-e".to_string());
+        container_args.push(env);
+    }
 
     // Mount the profile directory if persistence is enabled
     if let Some(host_path) = profile_dir {
@@ -581,6 +664,97 @@ fn find_available_port() -> Result<u16> {
 
     drop(listener);
     Ok(port)
+}
+
+/// Fetch the last logs from a container for diagnostic purposes.
+fn fetch_container_logs(backend: ContainerBackend, container_id: &str) -> Option<String> {
+    // Apple Container CLI may not support `logs --tail`
+    #[cfg(target_os = "macos")]
+    if backend == ContainerBackend::AppleContainer {
+        return None;
+    }
+
+    let cli = backend.cli();
+    let output = Command::new(cli)
+        .args(["logs", "--tail", "50", container_id])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Browserless/Chrome may log to either stdout or stderr
+    let combined = format!("{stdout}{stderr}");
+    let trimmed = combined.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// Inspect a container's status (running, exited, etc.) for diagnostics.
+fn inspect_container_status(backend: ContainerBackend, container_id: &str) -> Option<String> {
+    let cli = backend.cli();
+
+    #[cfg(target_os = "macos")]
+    if backend == ContainerBackend::AppleContainer {
+        // Apple Container doesn't support `inspect --format`
+        return None;
+    }
+
+    let output = Command::new(cli)
+        .args([
+            "inspect",
+            "--format",
+            "{{.State.Status}} (ExitCode={{.State.ExitCode}}, OOMKilled={{.State.OOMKilled}})",
+            container_id,
+        ])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let status = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if status.is_empty() {
+            None
+        } else {
+            Some(status)
+        }
+    } else {
+        None
+    }
+}
+
+/// Detect whether we are running inside a container (Docker/Podman/etc.).
+///
+/// Checks for `/.dockerenv` (Docker) and cgroup markers (various runtimes).
+fn is_running_in_container() -> bool {
+    use std::path::Path;
+
+    // Docker creates this file inside its containers
+    if Path::new("/.dockerenv").exists() {
+        return true;
+    }
+
+    // Podman/other runtimes may set container env vars
+    if std::env::var_os("container").is_some() {
+        return true;
+    }
+
+    // Check cgroup for container markers
+    if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup")
+        && (cgroup.contains("docker")
+            || cgroup.contains("kubepods")
+            || cgroup.contains("containerd"))
+    {
+        return true;
+    }
+
+    false
 }
 
 /// Wait for the container to be ready by probing the Chrome DevTools endpoint.
@@ -720,7 +894,7 @@ pub fn is_container_available() -> bool {
     if is_apple_container_available() {
         return true;
     }
-    is_docker_available()
+    ContainerBackend::Podman.is_available() || is_docker_available()
 }
 
 fn parse_docker_container_names(output: &[u8], container_prefix: &str) -> Vec<String> {
@@ -1057,5 +1231,41 @@ mod tests {
     fn test_build_container_launch_args_docker_no_disable_shm() {
         let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
         assert!(!args.contains("--disable-dev-shm-usage"));
+    }
+
+    #[test]
+    fn test_browserless_session_timeout_uses_moltis_lifecycle_floor() {
+        // idle (300s) < max_lifetime (1800s), nav (30s) < ceiling → uses max_lifetime
+        let timeout_ms = browserless_session_timeout_ms(300, 30_000, 1800);
+        assert_eq!(timeout_ms, 1_800_000);
+    }
+
+    #[test]
+    fn test_browserless_session_timeout_caps_at_max_lifetime() {
+        // idle (3600s) > max_lifetime (1800s) → capped at max_lifetime ceiling
+        let timeout_ms = browserless_session_timeout_ms(3_600, 30_000, 1800);
+        assert_eq!(timeout_ms, 1_800_000);
+    }
+
+    #[test]
+    fn test_browserless_session_timeout_caps_large_navigation_timeout() {
+        // nav timeout (3.9M ms = 65 min) exceeds max_lifetime (30 min) → capped
+        let timeout_ms = browserless_session_timeout_ms(60, 3_900_000, 1800);
+        assert_eq!(timeout_ms, 1_800_000);
+    }
+
+    #[test]
+    fn test_browserless_session_timeout_nav_within_ceiling() {
+        // nav timeout (600s = 10 min) within ceiling → uses max_lifetime as base
+        let timeout_ms = browserless_session_timeout_ms(60, 600_000, 1800);
+        assert_eq!(timeout_ms, 1_800_000);
+    }
+
+    #[test]
+    fn test_browserless_container_env_includes_timeout() {
+        let env = browserless_container_env(1_800_000);
+        assert_eq!(env[0], "TIMEOUT=1800000");
+        assert!(env.contains(&"MAX_CONCURRENT_SESSIONS=1".to_string()));
+        assert!(env.contains(&"PREBOOT_CHROME=true".to_string()));
     }
 }

@@ -62,9 +62,10 @@ Uninitialized ──────────────► Unsealed
                               Sealed
 ```
 
-After a server restart, the vault is always in the **Sealed** state until
+After a server restart, the vault is normally in the **Sealed** state until
 the user logs in (which provides the password needed to derive the KEK and
-unwrap the DEK).
+unwrap the DEK). For unattended deployments, Moltis can also auto-unseal at
+startup from an explicitly configured recovery key.
 
 ## Lifecycle Integration
 
@@ -98,8 +99,36 @@ No new recovery key is generated during normal password rotation.
 
 ### Server restart
 
-The vault starts in **Sealed** state. All encrypted data is unreadable
-until the user logs in, which triggers unseal.
+The vault starts in **Sealed** state unless unattended auto-unseal is
+configured. All encrypted data is unreadable until the user logs in or the
+configured auto-unseal recovery key is accepted.
+
+### Unattended auto-unseal
+
+For servers that need to recover fully after a reboot or `/update`, set one
+of these environment variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `MOLTIS_VAULT_AUTO_UNSEAL_KEY_FILE` | Path to a file containing the vault recovery key. Preferred for Docker/Kubernetes secrets. |
+| `MOLTIS_VAULT_AUTO_UNSEAL_KEY` | Vault recovery key value directly in the process environment. |
+
+If both are set, Moltis logs a warning and uses
+`MOLTIS_VAULT_AUTO_UNSEAL_KEY_FILE`.
+
+Auto-unseal runs immediately after the vault is opened from SQLite and before
+Moltis loads persisted environment variables, MCP server configuration, cron
+runtime environment, and stored channel accounts. That means encrypted env vars
+and channel credentials are available during normal startup rather than only
+after a manual browser unlock.
+
+```admonish warning
+Auto-unseal trades manual recovery for unattended availability. If an attacker
+can read both the Moltis database and the configured recovery-key env/file, they
+can decrypt vault-protected secrets. Prefer a Docker/Kubernetes secret file over
+a plain env var, restrict file permissions, and keep the recovery key out of
+`moltis.toml`.
+```
 
 ## Recovery Key
 
@@ -136,30 +165,42 @@ Currently encrypted:
 | Data | Storage | AAD |
 |------|---------|-----|
 | Environment variables (`env_variables` table) | SQLite | `env:{key}` |
+| Managed SSH private keys (`ssh_keys` table) | SQLite | `ssh-key:{name}` |
+| Provider API keys (`provider_keys.json.enc`) | File | `provider_keys` |
 
-The `encrypted` column in `env_variables` tracks whether each row is
-encrypted (1) or plaintext (0). When the vault is unsealed, new env vars
-are written encrypted. When sealed or uninitialized, they are written as
-plaintext.
+The `encrypted` column in `env_variables` and `ssh_keys` tracks whether each
+row is encrypted (1) or plaintext (0). When the vault is unsealed, new env vars
+and managed SSH private keys are written encrypted. Imported passphrase-protected
+SSH keys are decrypted during import and then stored under the vault-managed
+key hierarchy. When sealed or
+uninitialized, they are written as plaintext.
+
+On the first successful vault unseal after enabling the feature, Moltis also
+migrates any previously stored plaintext env vars and managed SSH private keys
+to encrypted storage in-place. Provider API keys (`provider_keys.json`) are
+encrypted to a `.enc` copy alongside the original; the plaintext file is kept
+for backward compatibility until all consumers use the vault-aware read path.
+Voice provider API keys are now stored in `provider_keys.json` (same as LLM
+keys), not in `moltis.toml`.
 
 ```admonish info title="Planned"
-KeyStore (provider API keys in `provider_keys.json`) and TokenStore
-(OAuth tokens in `credentials.json`) are currently sync/file-based and
-cannot easily call async vault methods. Encryption for these stores is
+TokenStore (OAuth tokens in `credentials.json`) is currently sync/file-based
+and cannot easily call async vault methods. Encryption for this store is
 planned after an async refactor.
 ```
 
 ## Vault Guard Middleware
 
-When the vault is in the **Sealed** state, a middleware layer blocks API
-requests (except auth and bootstrap endpoints) with `423 Locked`:
+When the vault is in the **Sealed** state, a middleware layer blocks
+vault-protected API requests with `423 Locked`:
 
 ```json
 {"error": "vault is sealed", "status": "sealed"}
 ```
 
-This prevents the application from serving stale or unreadable data when
-the vault needs to be unlocked.
+This prevents the application from serving unreadable encrypted data while
+still allowing access to session history and bootstrap payloads that are not
+yet stored in the vault.
 
 The guard does **not** block when the vault is **Uninitialized** — there's
 nothing to protect yet, and the application needs to function normally for
@@ -168,6 +209,8 @@ initial setup.
 Allowed through regardless of vault state:
 
 - `/api/auth/*` — authentication endpoints (including vault unlock)
+- `/api/bootstrap` — UI bootstrap payload
+- `/api/sessions*` — session history and media endpoints
 - `/api/gon` — server-injected bootstrap data
 - Non-API routes — static assets, HTML pages, health check
 
@@ -212,6 +255,9 @@ When `vault_status` is `sealed`, the UI shows an info banner:
   **Settings > Encryption** for manual unlock.
 - On the login page (`/login`): a banner that explains the vault is locked
   and will unlock after successful sign-in.
+
+The chat/session UI remains visible while sealed because chat history is not
+yet encrypted by the vault.
 
 ### Onboarding and localhost
 

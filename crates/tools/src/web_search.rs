@@ -55,6 +55,10 @@ enum SearchProvider {
         base_url_override: Option<String>,
         model: String,
     },
+    #[cfg(feature = "firecrawl")]
+    Firecrawl {
+        base_url: String,
+    },
 }
 
 fn env_value_with_overrides(env_overrides: &HashMap<String, String>, key: &str) -> Option<String> {
@@ -167,6 +171,40 @@ impl WebSearchTool {
                     config.duckduckgo_fallback,
                 ))
             },
+            // Firecrawl search: the API key may come from several sources:
+            //   1. tools.web.search.api_key (checked here)
+            //   2. FIRECRAWL_API_KEY env var (checked here)
+            //   3. tools.web.firecrawl.api_key (injected later via with_firecrawl_config)
+            //   4. Runtime env provider (resolved at execute time)
+            // Because (3) and (4) are not available yet, we always construct
+            // the tool and let execute() handle missing keys gracefully.
+            #[cfg(feature = "firecrawl")]
+            ConfigSearchProvider::Firecrawl => {
+                let api_key = config
+                    .api_key
+                    .as_ref()
+                    .map(|s| s.expose_secret().clone())
+                    .or_else(|| env_value_with_overrides(env_overrides, "FIRECRAWL_API_KEY"))
+                    .unwrap_or_default();
+                Some(Self::new(
+                    SearchProvider::Firecrawl {
+                        base_url: crate::firecrawl::DEFAULT_BASE_URL.into(),
+                    },
+                    Secret::new(api_key),
+                    config.max_results,
+                    Duration::from_secs(config.timeout_seconds),
+                    Duration::from_secs(config.cache_ttl_minutes * 60),
+                    config.duckduckgo_fallback,
+                ))
+            },
+            // When the firecrawl feature is disabled but the config says
+            // "firecrawl", treat it the same as missing provider — fall
+            // through to None so the tool isn't registered.
+            #[cfg(not(feature = "firecrawl"))]
+            ConfigSearchProvider::Firecrawl => {
+                warn!("search provider 'firecrawl' selected but the firecrawl feature is disabled");
+                None
+            },
         }
     }
 
@@ -194,6 +232,31 @@ impl WebSearchTool {
     /// Attach a runtime environment provider (credential store).
     pub fn with_env_provider(mut self, provider: Arc<dyn EnvVarProvider>) -> Self {
         self.env_provider = Some(provider);
+        self
+    }
+
+    /// Update the Firecrawl base URL from the shared Firecrawl config.
+    /// Also picks up the API key from `FirecrawlConfig` if not already set.
+    #[cfg(feature = "firecrawl")]
+    #[must_use]
+    pub fn with_firecrawl_config(
+        mut self,
+        config: &moltis_config::schema::FirecrawlConfig,
+    ) -> Self {
+        if let SearchProvider::Firecrawl { ref mut base_url } = self.provider {
+            if !config.base_url.trim().is_empty() {
+                *base_url = config.base_url.clone();
+            }
+            // If the configured key is empty, try the firecrawl config key.
+            if self.configured_api_key.expose_secret().is_empty()
+                && let Some(ref key) = config.api_key
+            {
+                let val = key.expose_secret();
+                if !val.trim().is_empty() {
+                    self.configured_api_key = key.clone();
+                }
+            }
+        }
         self
     }
 
@@ -233,6 +296,8 @@ impl WebSearchTool {
         match &self.provider {
             SearchProvider::Brave => &["BRAVE_API_KEY"],
             SearchProvider::Perplexity { .. } => &["PERPLEXITY_API_KEY", "OPENROUTER_API_KEY"],
+            #[cfg(feature = "firecrawl")]
+            SearchProvider::Firecrawl { .. } => &["FIRECRAWL_API_KEY"],
         }
     }
 
@@ -756,6 +821,25 @@ impl AgentTool for WebSearchTool {
                         resolve_perplexity_base_url(base_url_override.as_deref(), &api_key);
                     self.search_perplexity(query, &api_key, &base_url, model)
                         .await?
+                },
+                #[cfg(feature = "firecrawl")]
+                SearchProvider::Firecrawl { base_url } => {
+                    if api_key.is_empty() {
+                        serde_json::json!({
+                            "error": "Firecrawl API key not configured",
+                            "hint": "Set FIRECRAWL_API_KEY environment variable or tools.web.firecrawl.api_key in config"
+                        })
+                    } else {
+                        crate::firecrawl::firecrawl_search(
+                            crate::shared_http_client(),
+                            base_url,
+                            &api_key,
+                            query,
+                            count,
+                            self.timeout,
+                        )
+                        .await?
+                    }
                 },
             }
         };

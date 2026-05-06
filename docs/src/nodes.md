@@ -117,7 +117,10 @@ Once a node is connected, you can target it from a chat session:
 
 - **UI dropdown**: The chat toolbar shows a node selector next to the model
   picker. Select a node to route all `exec` commands to it. Select "Local" to
-  revert to local execution.
+  revert to local execution. When `tools.exec.host = "ssh"`, Moltis also shows
+  either the legacy configured SSH target from `tools.exec.ssh_target` or any
+  managed SSH targets you created in **Settings → SSH** as first-class
+  execution options.
 - **Agent tools**: The agent can call `nodes_list`, `nodes_describe`, and
   `nodes_select` to programmatically pick a node based on capabilities or
   telemetry.
@@ -137,6 +140,42 @@ Connected nodes report system telemetry every 30 seconds:
 
 This data is visible on the Nodes page and available to the agent via the
 `nodes_describe` tool.
+
+If you configure `tools.exec.host = "ssh"`, the Nodes page also shows SSH
+targets even though they are not WebSocket-paired nodes. This makes the active
+remote execution route visible instead of hiding it in config. The UI renders
+these separately from paired nodes so it is clear that SSH targets do not
+report telemetry or presence.
+
+Managed SSH targets now support:
+
+- named labels, so session routing is readable instead of `deploy@box`
+- a default target, used when a chat session does not pin a specific route
+- connectivity tests from the web UI
+- either **System OpenSSH** auth or a **managed deploy key**
+- optional host-key pinning via a pasted `known_hosts` line
+- one-click scan, refresh, and clear actions for saved host pins in Settings
+- passphrase-protected private-key imports during setup
+
+The Nodes page also includes a **Remote Exec Status** panel that acts like a
+lightweight doctor:
+
+- shows whether Moltis is currently configured for `local`, `node`, or `ssh`
+- reports paired-node inventory and managed SSH inventory
+- flags obvious misconfigurations, such as `tools.exec.host = "ssh"` with no
+  active target or a managed key that cannot be decrypted because the vault is
+  locked
+- warns when the active managed SSH route is not host-pinned
+- lets you pin, refresh, or clear the active managed route directly from the
+  doctor panel
+- lets you test the active SSH route without leaving the page
+
+The CLI now mirrors the basic setup view with `moltis doctor`, including:
+
+- active remote-exec backend (`local`, `node`, or `ssh`)
+- SSH client discovery and version
+- managed SSH key / target / host-pin inventory
+- warnings for legacy `tools.exec.ssh_target` config and unpinned active routes
 
 ## CLI Reference
 

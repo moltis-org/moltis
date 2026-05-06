@@ -30,11 +30,14 @@ fields need updates in `check_semantic_warnings()`.
 
 ## Rust Style and Idioms
 
+- **File size limit: 1,500 lines.** CI enforces this via `scripts/check-file-size.sh`. Split large files into modules by domain. Existing oversize files are allowlisted for incremental decomposition.
+- Do not add implementation code to `mod.rs` or `lib.rs`. Keep those files for module wiring, exports, and crate setup, move real logic into dedicated sibling modules.
 - Use traits for behaviour boundaries. Prefer generics for hot paths, `dyn Trait` for heterogeneous/runtime dispatch.
 - Derive `Default` when all fields have sensible defaults.
 - Use concrete types (`struct`/`enum`) over `serde_json::Value` wherever shape is known.
 - **Match on types, never strings.** Only convert to strings at serialization/display boundaries.
 - Prefer `From`/`Into`/`TryFrom`/`TryInto` over manual conversions. Ask before adding manual conversion paths.
+- **DRY cross-crate types:** When two crates need the same enum/struct, define it once in the lower-level crate and re-export via `pub type Alias = other_crate::Type` from the higher-level one. Never duplicate enums across crates or round-trip through strings (`parse(&id.to_string())`) to convert between mirror types.
 - Prefer streaming over non-streaming API calls.
 - Run independent async work concurrently (`tokio::join!`, `futures::join_all`).
 - Never use `block_on` inside async context.
@@ -62,20 +65,59 @@ cargo build --release        # Release build
 cargo run / cargo run --release
 ```
 
-## Web UI Assets
+## Web UI (TypeScript + Preact + Vite)
 
-Assets in `crates/web/src/assets/` (JS, CSS, HTML). Dev mode serves from disk (edit and reload);
-release mode embeds via `include_dir!` with versioned URLs.
+TypeScript/TSX source in `crates/web/ui/src/`, built with Vite to `crates/web/src/assets/dist/`.
+CSS and static assets in `crates/web/src/assets/`. Release mode embeds via `include_dir!`.
+Generated assets (`dist/`, `css/style.css`, `style.css`, `sw.js`) are gitignored.
+Run `just build-web-assets` to generate them (requires Node.js).
+A `build.rs` check warns (debug) or fails (release/embedded-assets) if they are missing.
+See `docs/src/frontend.md` for the full architecture guide.
 
-- **Always** run `biome check --write` when JS files change.
-- Avoid creating HTML from JS — add hidden elements in `index.html`, toggle visibility. Preact/HTM exceptions allowed.
+### Build Commands
+
+```bash
+cd crates/web/ui
+npm run build          # Vite: TS/TSX → dist/
+npm run build:css      # Tailwind: input.css → ../src/assets/css/style.css
+npm run build:sw       # esbuild: src/sw.ts → ../src/assets/sw.js
+npm run build:all      # All three above
+npm run dev            # Vite watch mode (rebuilds on save)
+npx tsc --noEmit       # Type check (strict, must be 0 errors)
+```
+
+**After changing TS/TSX files**, always:
+1. `biome check --write crates/web/ui/src/`
+2. `cd crates/web/ui && npm run build`
+3. `cd crates/web/ui && npx tsc --noEmit`
+
+### TypeScript Rules
+
+- **File size limit: 1,500 lines** (same rule as Rust). Split large files into modules by domain.
+  - Pages: extract sections/modals into `pages/sections/`, `pages/channels/`, `pages/chat/`, etc.
+  - Utilities: extract sub-modules into sibling directories (`providers/`, `sessions/`, `ws/`).
+  - Keep shared signals, types, and re-exports in the main file; move logic into sub-modules.
+- All UI code is **TypeScript** with **JSX** (Preact). No HTM tagged templates.
+- Add typed Props interfaces for all Preact components.
+- Use `@preact/signals` with generic type parameters: `signal<string[]>([])`.
+- Prefer typed interfaces over `Record<string, unknown>` — define concrete shapes where property access is known.
+- Use `targetValue(e)` / `targetChecked(e)` from `typed-events.ts` for form event handlers.
+- No `any` types — use `unknown` with type guards or specific interfaces.
+- Use shared components from `components/forms/` (TextField, SaveButton, ListItem, Badge, TabBar, etc.).
+
+### CSS Rules
+
 - **Always use Tailwind classes** instead of inline `style="..."`.
 - Reuse CSS classes from `components.css`: `provider-btn`, `provider-btn-secondary`, `provider-btn-danger`.
 - Match button heights/text sizes when elements sit together.
-- **Rebuild Tailwind** after adding new classes:
-  ```bash
-  cd crates/web/ui && npx tailwindcss -i input.css -o ../src/assets/style.css --minify
-  ```
+- **Rebuild Tailwind** after adding new classes: `cd crates/web/ui && npm run build:css`.
+
+### E2E Test Shims
+
+E2E tests dynamically import individual JS modules (`js/state.js`, `js/helpers.js`, etc.).
+With Vite bundling, these don't exist as standalone files. Shim files in `src/assets/js/`
+proxy to `window.__moltis_modules` (populated by `app.tsx`). When adding new modules that
+tests import, add a shim file and expose the module in `app.tsx`.
 
 ### Selection Cards
 
@@ -90,12 +132,13 @@ When adding fields, update: `ProviderConfig` struct, `available()` response, `sa
 ### Server-Injected Data (gon pattern)
 
 For server data needed at page load: add to `GonData` in `server.rs` / `build_gon_data()`.
-JS side: `import * as gon from "./gon.js"` — use `gon.get()`, `gon.onChange()`, `gon.refresh()`.
+TS side: `import * as gon from "./gon"` — use `gon.get()`, `gon.onChange()`, `gon.refresh()`.
+Types in `crates/web/ui/src/types/gon.ts` mirror the Rust `GonData` struct.
 Never inject inline `<script>` tags or build HTML in Rust.
 
 ### Event Bus
 
-Server events via WebSocket: `import { onEvent } from "./events.js"`. Returns unsubscribe function.
+Server events via WebSocket: `import { onEvent } from "./events"`. Returns unsubscribe function.
 Do **not** use `window.addEventListener`/`CustomEvent` for server events.
 
 ## API Namespace Convention
@@ -108,6 +151,18 @@ Never merge features into a single endpoint.
 **Always respond to approved senders** — no silent failures. Send error/fallback messages
 for LLM failures, transcription failures, unhandled message types. Access control via
 allowlist/OTP flow.
+
+## Adding Channels
+
+When adding a new channel or extending one, follow `docs/channel-integration-checklist.md`.
+
+Minimum bar before shipping:
+- Settings reachable from the web UI, with onboarding coverage if the channel is offered there
+- Advanced JSON config escape hatch for settings without dedicated HTML fields yet
+- Prefer declarative channel field definitions that can drive both HTML forms and advanced JSON guidance
+- Storage behavior explained clearly, web UI channel settings live in `data_dir()/moltis.db`, not `moltis.toml`
+- Config template, validation, docs, and tests updated in the same PR
+- No silent access-control failures, OTP and allowlist behavior must be user-visible
 
 ## Authentication Architecture
 
@@ -141,9 +196,14 @@ Rules: use `getByRole()`/`getByText({ exact: true })` selectors, shared helpers
 (`navigateAndWait`, `waitForWsConnected`, `watchPageErrors`), assert no JS errors,
 avoid `waitForTimeout()`.
 
+**Flaky tests must be fixed, never skipped or ignored.** If a test fails intermittently,
+find and fix the root cause (race conditions, `requestAnimationFrame` timing, missing
+waits, element detachment from re-renders). Do not use `test.skip()`, `test.fixme()`,
+or retry-count workarounds to hide flakiness.
+
 ## Code Quality
 
-- Never run `cargo fmt` on stable in this repo. Always use the pinned nightly rustfmt (`just format`, `just format-check`, or `cargo +nightly-2025-11-30 fmt ...`).
+- Never run `cargo fmt` on stable in this repo. Always use the pinned nightly rustfmt (`just format`, `just format-check`, or `cargo fmt` — `rust-toolchain.toml` selects the right nightly automatically).
 
 ```bash
 just format              # Format Rust (pinned nightly)
@@ -151,7 +211,7 @@ just format-check        # CI format check
 just release-preflight   # fmt + clippy gates
 cargo check              # Fast compile check
 taplo fmt                # Format TOML files
-biome check --write      # Lint/format JS
+biome check --write      # Lint/format TS/TSX
 ```
 
 ## Sandbox Architecture
@@ -215,13 +275,40 @@ New crate: add `run_migrations()` to `lib.rs`, call from `server.rs` in dependen
 ## Git Workflow
 
 Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): description`
+- Prefer descriptive commit subjects over terse "change stuff" summaries.
+- For bug fixes, behavioral changes, and non-obvious refactors, include a commit body that explains the concrete problem, the root cause, and why the chosen fix is correct.
+- Write commit messages so `git log` is useful without opening the diff first.
 **No `Co-Authored-By` trailers.** Update `README.md` features list with `feat` commits.
 
 ### Releases
 
-- Never overwrite tags — always create new version. `[workspace.package].version` must match tag.
-- Use `./scripts/prepare-release.sh <version> [date]` for release prep.
+- Date-based versioning: `YYYYMMDD.NN` (e.g., `20260311.01`). Cargo.toml stays at static `0.1.0`; real version injected via `MOLTIS_VERSION` env var at build time.
+- Never overwrite tags — always create new version.
+- Use `./scripts/prepare-release.sh [YYYYMMDD.NN]` for release prep (auto-computes next version if omitted).
 - Deploy template tags updated automatically by CI — don't manually update.
+
+**Release workflow is two phases:**
+
+1. **Prepare & publish** (can be done in a session):
+   ```bash
+   ./scripts/prepare-release.sh          # generates changelog, syncs lockfile
+   git add -A && git commit -m "chore: prepare release YYYYMMDD.NN"
+   git tag YYYYMMDD.NN && git push --follow-tags
+   ```
+   CI then builds artifacts, generates checksums, Sigstore signatures, and creates the GitHub release. This takes time.
+
+2. **GPG-sign** (must happen later, after CI completes):
+   ```bash
+   ./scripts/gpg-sign-release.sh [VERSION]
+   ```
+   This downloads artifacts from the published release, verifies SHA256 checksums, signs each artifact with the maintainer's YubiKey-resident GPG key, and uploads `.asc` files back to the release. **Requires YubiKey tap.**
+
+   Users verify signatures with:
+   ```bash
+   ./scripts/verify-release.sh --version YYYYMMDD.NN
+   ```
+
+**Important:** When asked to create a release, complete phase 1 and remind the maintainer to run `gpg-sign-release.sh` after CI finishes. Do not attempt to run the signing script in the same session — the release artifacts won't exist yet.
 
 ### Lockfile
 
@@ -233,32 +320,34 @@ Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): descripti
 **Always** run `./scripts/local-validate.sh <PR_NUMBER>` when a PR exists.
 
 For incremental local edits before full validation:
-- JS changed: run `biome check --write`.
-- Rust changed: run `cargo +nightly-2025-11-30 fmt --all -- --check`.
-- JS + Rust changed: run both.
+- TS/TSX changed: run `biome check --write` and `cd crates/web/ui && npm run build`.
+- Rust changed: run `cargo fmt --all -- --check`.
+- Both changed: run all three.
 
 Exact commands (must match `local-validate.sh`):
-- Fmt: `cargo +nightly-2025-11-30 fmt --all -- --check`
-- Clippy: `cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`
-- macOS without `nvcc`: clippy without `--all-features`
-- macOS app (Darwin hosts): `./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination "platform=macOS" -derivedDataPath apps/macos/.derivedData-local-validate build`
+- Fmt: `cargo fmt --all -- --check`
+- Clippy: `just lint` (OS-aware: on macOS excludes CUDA features, on Linux uses `--all-features`)
+- Tests: `just test` (OS-aware: on macOS uses nextest without CUDA features, on Linux uses `--all-features`)
+- macOS app (Darwin hosts): `./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination "platform=macOS" -derivedDataPath apps/macos/.derivedData-local-validate CODE_SIGNING_ALLOWED=NO build`
 - iOS app (Darwin hosts): `cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build`
 
 ### PR Descriptions
 
 Required sections: `## Summary`, `## Validation` (checkboxes, split into `### Completed` / `### Remaining`
 with exact commands), `## Manual QA`. Include concrete test steps.
+- Do not prefix GitHub PR titles with `[codex]`.
+- Prefer normal human-readable PR titles, ideally aligned with the conventional-commit summary.
 
 ## Code Quality Checklist
 
 **Run before every commit:**
 - [ ] No secrets or private tokens (CRITICAL)
 - [ ] `taplo fmt` (TOML changes)
-- [ ] `biome check --write` (JS changes)
+- [ ] `biome check --write` (TS/TSX changes)
 - [ ] Rust fmt passes (exact command above)
-- [ ] Rust clippy passes (exact command above)
+- [ ] `just lint` passes (OS-aware clippy)
 - [ ] `just release-preflight` passes
-- [ ] `cargo test` passes
+- [ ] `just test` passes
 - [ ] Conventional commit message
 - [ ] No debug code or temp files
 
@@ -267,22 +356,151 @@ with exact commands), `## Manual QA`. Include concrete test steps.
 Source in `docs/src/` (mdBook). Auto-deployed to docs.moltis.org on push to main.
 Update `docs/src/SUMMARY.md` when adding pages. Preview: `cd docs && mdbook serve`.
 
+**Keep docs in sync with code.** When adding or changing user-facing features
+(config fields, CLI commands, channel behavior, API endpoints, tools), update
+the relevant `docs/src/` pages and the config template (`crates/config/src/template.rs`)
+in the same PR. Documentation drift causes real user confusion — treat outdated
+docs as a bug.
+
 ## Session Completion
 
 **Work is NOT complete until `git push` succeeds.** Mandatory steps:
 1. File issues for remaining work
 2. Run quality gates
 3. Update issue status
-4. **Push**: `git pull --rebase && bd sync && git push && git status`
+4. **Push**: `git pull --rebase && bd dolt commit && git push && git status`
+   If this repo uses a Dolt remote for beads, also run `bd dolt pull` / `bd dolt push`.
 5. Clean up stashes/branches
 6. Hand off context
-
-## Issue Tracking
-
-Uses **bd (beads)**: `bd ready`, `bd create "Title" --type task --priority 2`,
-`bd close <id>`, `bd sync` (run at session end). Full details: `bd prime`.
 
 ## Plans and Session History
 
 Plans in `prompts/`. After significant work, write summary to
 `prompts/session-YYYY-MM-DD-<topic>.md`.
+
+<!-- BEGIN BEADS INTEGRATION -->
+## Issue Tracking with bd (beads)
+
+**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
+
+### Why bd?
+
+- Dependency-aware: Track blockers and relationships between issues
+- Git-friendly: Dolt-powered version control with native sync
+- Agent-optimized: JSON output, ready work detection, discovered-from links
+- Prevents duplicate tracking systems and confusion
+
+### Quick Start
+
+**Check for ready work:**
+
+```bash
+bd ready --json
+```
+
+**Create new issues:**
+
+```bash
+bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
+bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
+```
+
+**Claim and update:**
+
+```bash
+bd update <id> --claim --json
+bd update bd-42 --priority 1 --json
+```
+
+**Complete work:**
+
+```bash
+bd close bd-42 --reason "Completed" --json
+```
+
+### Issue Types
+
+- `bug` - Something broken
+- `feature` - New functionality
+- `task` - Work item (tests, docs, refactoring)
+- `epic` - Large feature with subtasks
+- `chore` - Maintenance (dependencies, tooling)
+
+### Priorities
+
+- `0` - Critical (security, data loss, broken builds)
+- `1` - High (major features, important bugs)
+- `2` - Medium (default, nice-to-have)
+- `3` - Low (polish, optimization)
+- `4` - Backlog (future ideas)
+
+### Workflow for AI Agents
+
+1. **Check ready work**: `bd ready` shows unblocked issues
+2. **Claim your task atomically**: `bd update <id> --claim`
+3. **Work on it**: Implement, test, document
+4. **Discover new work?** Create linked issue:
+   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
+5. **Complete**: `bd close <id> --reason "Done"`
+
+### Auto-Sync
+
+bd automatically syncs via Dolt:
+
+- Each write auto-commits to Dolt history
+- Use `bd dolt push`/`bd dolt pull` for remote sync
+- No manual export/import needed!
+
+### Worktrees
+
+If you create a git worktree with plain `git worktree add`, Beads will not
+automatically share the main checkout's `.beads` state. For an existing
+worktree, run:
+
+```bash
+./scripts/bd-worktree-attach.sh
+```
+
+This writes `.beads/redirect` so the worktree uses the main repository's Beads
+database. If you create worktrees through `bd worktree create`, it should set
+up the redirect for you automatically.
+
+### Important Rules
+
+- ✅ Use bd for ALL task tracking
+- ✅ Always use `--json` flag for programmatic use
+- ✅ Link discovered work with `discovered-from` dependencies
+- ✅ Check `bd ready` before asking "what should I work on?"
+- ❌ Do NOT create markdown TODO lists
+- ❌ Do NOT use external issue trackers
+- ❌ Do NOT duplicate tracking systems
+
+For more details, see README.md and docs/QUICKSTART.md.
+
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   bd sync
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
+
+<!-- END BEADS INTEGRATION -->

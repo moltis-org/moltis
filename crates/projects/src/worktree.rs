@@ -396,6 +396,12 @@ mod tests {
             .await
             .unwrap();
         Command::new("git")
+            .args(["config", "commit.gpgsign", "false"])
+            .current_dir(dir.path())
+            .output()
+            .await
+            .unwrap();
+        Command::new("git")
             .args(["commit", "--allow-empty", "-m", "init"])
             .current_dir(dir.path())
             .output()

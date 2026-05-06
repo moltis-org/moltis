@@ -111,7 +111,7 @@ impl SlackOutbound {
         stream: &mut StreamReceiver,
     ) -> ChannelResult<()> {
         let bot_token = self.get_bot_token(account_id)?;
-        let http = reqwest::Client::new();
+        let http = moltis_common::http_client::build_default_http_client();
         let throttle = self.get_edit_throttle(account_id);
 
         let stream_id = start_native_stream(&http, &bot_token, to, thread_ts).await?;
@@ -485,8 +485,14 @@ impl ChannelOutbound for SlackOutbound {
         match media_url {
             Some(url) if url.starts_with("data:") => {
                 let (data, mime) = decode_data_url(url)?;
-                let ext = extension_for_mime(&mime);
-                let filename = format!("file.{ext}");
+                let filename = payload
+                    .media
+                    .as_ref()
+                    .and_then(|m| m.filename.clone())
+                    .unwrap_or_else(|| {
+                        let ext = extension_for_mime(&mime);
+                        format!("file.{ext}")
+                    });
                 let caption = if payload.text.is_empty() {
                     None
                 } else {

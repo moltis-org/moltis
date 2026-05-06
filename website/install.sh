@@ -77,7 +77,7 @@ Usage:
 
 Options:
     --no-homebrew       Skip Homebrew even if available (macOS)
-    --method=METHOD     Force installation method: homebrew, binary, deb, rpm, arch, snap, source
+    --method=METHOD     Force installation method: homebrew, binary, deb, rpm, arch, appimage, snap, source, proxmox
     --version=VERSION   Install a specific version (default: latest)
     -h, --help          Show this help message
 
@@ -158,13 +158,26 @@ command_exists() {
 }
 
 get_latest_version() {
+    # Extract tag_name, stripping optional leading "v" prefix.
     if command_exists curl; then
-        curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/'
+        curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"tag_name": *"v?([^"]+)".*/\1/'
     elif command_exists wget; then
-        wget -qO- "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/'
+        wget -qO- "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"tag_name": *"v?([^"]+)".*/\1/'
     else
         error "Neither curl nor wget found. Please install one of them."
     fi
+}
+
+# Return the GitHub release tag for a given version.
+# Date-based versions (YYYYMMDD.NN) are bare tags; semver gets a "v" prefix.
+release_tag() {
+    v="$1"
+    case "$v" in
+        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].*)
+            echo "$v" ;;
+        *)
+            echo "v$v" ;;
+    esac
 }
 
 download() {
@@ -281,8 +294,9 @@ install_binary() {
             ;;
     esac
 
+    tag=$(release_tag "$version")
     tarball="${BINARY_NAME}-${version}-${target}.tar.gz"
-    url="https://github.com/${GITHUB_REPO}/releases/download/v${version}/${tarball}"
+    url="https://github.com/${GITHUB_REPO}/releases/download/${tag}/${tarball}"
     checksum_url="${url}.sha256"
 
     info "Downloading ${BINARY_NAME} v${version} for ${target}..."
@@ -328,9 +342,10 @@ install_deb() {
         *) error "Unsupported architecture for .deb: $arch" ;;
     esac
 
-    # Package naming: moltis_VERSION-REV_ARCH.deb
-    deb_file="moltis_${version}-1_${deb_arch}.deb"
-    url="https://github.com/${GITHUB_REPO}/releases/download/v${version}/${deb_file}"
+    # Package naming: moltis_VERSION_ARCH.deb (cargo-deb with --deb-version, no revision)
+    tag=$(release_tag "$version")
+    deb_file="moltis_${version}_${deb_arch}.deb"
+    url="https://github.com/${GITHUB_REPO}/releases/download/${tag}/${deb_file}"
 
     info "Downloading ${deb_file}..."
 
@@ -356,8 +371,9 @@ install_rpm() {
     esac
 
     # Package naming: moltis-VERSION-1.ARCH.rpm
+    tag=$(release_tag "$version")
     rpm_file="moltis-${version}-1.${rpm_arch}.rpm"
-    url="https://github.com/${GITHUB_REPO}/releases/download/v${version}/${rpm_file}"
+    url="https://github.com/${GITHUB_REPO}/releases/download/${tag}/${rpm_file}"
 
     info "Downloading ${rpm_file}..."
 
@@ -382,8 +398,9 @@ install_arch() {
     arch="$1"
     version="$2"
 
+    tag=$(release_tag "$version")
     pkg_file="moltis-${version}-1-${arch}.pkg.tar.zst"
-    url="https://github.com/${GITHUB_REPO}/releases/download/v${version}/${pkg_file}"
+    url="https://github.com/${GITHUB_REPO}/releases/download/${tag}/${pkg_file}"
 
     info "Downloading ${pkg_file}..."
 
@@ -398,6 +415,51 @@ install_arch() {
     success "Moltis installed via Arch package"
 }
 
+install_appimage() {
+    os="$1"
+    arch="$2"
+    version="$3"
+
+    if [ "$os" != "linux" ]; then
+        error "AppImage installation is only supported on Linux"
+    fi
+
+    case "$arch" in
+        x86_64|aarch64)
+            ;;
+        *)
+            error "Unsupported architecture for AppImage: $arch"
+            ;;
+    esac
+
+    tag=$(release_tag "$version")
+    appimage_file="moltis-${version}-${arch}.AppImage"
+    url="https://github.com/${GITHUB_REPO}/releases/download/${tag}/${appimage_file}"
+    checksum_url="${url}.sha256"
+
+    info "Downloading ${appimage_file}..."
+
+    tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT
+
+    download "$url" "$tmpdir/$appimage_file" || error "Failed to download $appimage_file"
+
+    if download "$checksum_url" "$tmpdir/checksum.sha256" 2>/dev/null; then
+        expected_sha=$(cut -d' ' -f1 "$tmpdir/checksum.sha256")
+        verify_checksum "$tmpdir/$appimage_file" "$expected_sha"
+        info "Checksum verified"
+    else
+        warn "Could not download checksum file, skipping verification"
+    fi
+
+    ensure_install_dir
+    mv "$tmpdir/$appimage_file" "$INSTALL_DIR/$BINARY_NAME"
+    chmod +x "$INSTALL_DIR/$BINARY_NAME"
+
+    success "Moltis AppImage installed to $INSTALL_DIR/$BINARY_NAME"
+    add_to_path_instructions
+}
+
 install_snap() {
     info "Installing via Snap..."
 
@@ -408,6 +470,24 @@ install_snap() {
     sudo snap install moltis
 
     success "Moltis installed via Snap"
+}
+
+detect_proxmox() {
+    command_exists pveversion && [ -d /etc/pve ]
+}
+
+install_proxmox() {
+    info "Proxmox VE detected — installing Moltis as an LXC container..."
+
+    if ! detect_proxmox; then
+        error "This does not appear to be a Proxmox VE host."
+    fi
+
+    # Use the community-scripts helper when merged upstream, fall back to fork.
+    PROXMOX_SCRIPT_URL="https://raw.githubusercontent.com/moltis-org/ProxmoxVED/feat/moltis/ct/moltis.sh"
+
+    info "Launching Proxmox VE helper script..."
+    bash -c "$(curl -fsSL "$PROXMOX_SCRIPT_URL")"
 }
 
 install_from_source() {
@@ -434,7 +514,8 @@ install_from_source() {
     trap 'rm -rf "$tmpdir"' EXIT
 
     info "Cloning repository..."
-    git clone --depth 1 --branch "v${version}" "https://github.com/${GITHUB_REPO}.git" "$tmpdir/moltis"
+    tag=$(release_tag "$version")
+    git clone --depth 1 --branch "$tag" "https://github.com/${GITHUB_REPO}.git" "$tmpdir/moltis"
 
     cd "$tmpdir/moltis"
 
@@ -510,8 +591,15 @@ main() {
             arch)
                 install_arch "$ARCH" "$VERSION"
                 ;;
+            appimage)
+                install_appimage "$OS" "$ARCH" "$VERSION"
+                ;;
             snap)
                 install_snap
+                ;;
+            proxmox)
+                install_proxmox
+                return
                 ;;
             source)
                 install_from_source "$VERSION"
@@ -519,6 +607,29 @@ main() {
             *)
                 error "Unknown installation method: $PREFERRED_METHOD"
                 ;;
+        esac
+    elif [ "$OS" = "linux" ] && detect_proxmox; then
+        info "Proxmox VE host detected"
+        printf "  Install as an LXC container (recommended) or directly on this host?\n"
+        printf "  ${BOLD}1)${NC} LXC container (isolated, easy to manage)\n"
+        printf "  ${BOLD}2)${NC} Install directly on this host\n"
+        printf "\n"
+        printf "  Choice [1]: "
+        read -r choice </dev/tty 2>/dev/null || choice="1"
+        choice="${choice:-1}"
+        if [ "$choice" = "1" ]; then
+            install_proxmox
+            return
+        fi
+        # Fall through to normal Linux install
+        DISTRO=$(detect_linux_distro)
+        case "$DISTRO" in
+            ubuntu|debian|linuxmint|pop|elementary|zorin)
+                install_deb "$ARCH" "$VERSION" ;;
+            fedora|rhel|centos|rocky|alma|ol)
+                install_rpm "$ARCH" "$VERSION" ;;
+            *)
+                install_binary "$OS" "$ARCH" "$VERSION" ;;
         esac
     elif [ "$OS" = "macos" ]; then
         # macOS: prefer Homebrew, fall back to binary

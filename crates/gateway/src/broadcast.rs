@@ -2,10 +2,51 @@ use std::{collections::HashMap, sync::Arc};
 
 use {
     moltis_protocol::{EventFrame, StateVersion, scopes},
-    tracing::{debug, warn},
+    tracing::{trace, warn},
 };
 
 use crate::state::GatewayState;
+
+// ── Broadcaster ──────────────────────────────────────────────────────────────
+
+/// Lock-free broadcast state: sequence counter and GraphQL subscription channel.
+///
+/// Phase 1 of broadcaster decoupling — owns only fields that never participate
+/// in the `GatewayInner` RwLock. Client registry remains in `GatewayInner`
+/// to preserve atomic compound operations.
+pub struct Broadcaster {
+    /// Monotonically increasing sequence counter for broadcast events.
+    seq: std::sync::atomic::AtomicU64,
+    /// Broadcast channel for GraphQL subscriptions. Events are `(event_name, payload)`.
+    #[cfg(feature = "graphql")]
+    pub graphql_broadcast: tokio::sync::broadcast::Sender<(String, serde_json::Value)>,
+}
+
+impl Default for Broadcaster {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Broadcaster {
+    /// Create a new Broadcaster with sequence starting at 0.
+    pub fn new() -> Self {
+        Self {
+            seq: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "graphql")]
+            graphql_broadcast: {
+                let (tx, _) = tokio::sync::broadcast::channel(256);
+                tx
+            },
+        }
+    }
+
+    /// Return the next sequence number.
+    #[must_use]
+    pub fn next_seq(&self) -> u64 {
+        self.seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+    }
+}
 
 // ── Scope guards ─────────────────────────────────────────────────────────────
 
@@ -35,7 +76,7 @@ pub struct BroadcastOpts {
     pub channel: Option<String>,
 }
 
-// ── Broadcaster ──────────────────────────────────────────────────────────────
+// ── Broadcast ───────────────────────────────────────────────────────────────
 
 /// Broadcast events to all connected WebSocket clients, respecting scope
 /// guards and dropping/closing slow consumers.
@@ -45,7 +86,7 @@ pub async fn broadcast(
     payload: serde_json::Value,
     opts: BroadcastOpts,
 ) {
-    let seq = state.next_seq();
+    let seq = state.broadcaster.next_seq();
     let stream = opts.stream.clone();
     let done = opts.done.then_some(true);
     let channel = opts.channel.clone();
@@ -71,6 +112,7 @@ pub async fn broadcast(
     #[cfg(feature = "graphql")]
     if let Some(ref payload) = frame.payload {
         let _ = state
+            .broadcaster
             .graphql_broadcast
             .send((event.to_string(), payload.clone()));
     }
@@ -78,14 +120,14 @@ pub async fn broadcast(
     let guards = event_scope_guards();
     let required_scopes = guards.get(event);
 
-    let inner = state.inner.read().await;
-    debug!(
+    let registry = state.client_registry.read().await;
+    trace!(
         event,
         seq,
-        clients = inner.clients.len(),
+        clients = registry.clients.len(),
         "broadcasting event"
     );
-    for client in inner.clients.values() {
+    for client in registry.clients.values() {
         // Check scope guard: if the event requires a scope, verify the client has it.
         if let Some(required) = required_scopes {
             let client_scopes = client.scopes();
@@ -196,5 +238,28 @@ mod tests {
             payload.get("localLlamaCpp").and_then(|v| v.as_u64()),
             Some(4)
         );
+    }
+}
+
+#[cfg(test)]
+mod broadcaster_tests {
+    use super::Broadcaster;
+
+    #[test]
+    fn new_starts_at_zero() {
+        let b = Broadcaster::new();
+        assert_eq!(b.next_seq(), 1);
+    }
+
+    #[test]
+    fn next_seq_is_strictly_monotonic() {
+        let b = Broadcaster::new();
+        let mut prev = 0;
+        for _ in 0..100 {
+            let seq = b.next_seq();
+            assert!(seq > prev, "seq {seq} is not > prev {prev}");
+            prev = seq;
+        }
+        assert_eq!(prev, 100);
     }
 }

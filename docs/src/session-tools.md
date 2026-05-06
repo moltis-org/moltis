@@ -31,6 +31,19 @@ Input:
 }
 ```
 
+### `sessions_search`
+
+Search prior session history for relevant snippets. By default the current
+session is excluded when `_session_key` is available in tool context.
+
+```json
+{
+  "query": "checkpoint rollback",
+  "limit": 5,
+  "exclude_current": true
+}
+```
+
 ### `sessions_send`
 
 Send a message to another session, optionally waiting for reply.
@@ -50,11 +63,11 @@ Configure policy in a preset to control what sessions a sub-agent can access:
 
 ```toml
 [agents.presets.coordinator]
-tools.allow = ["sessions_list", "sessions_history", "sessions_send", "task_list", "spawn_agent"]
+tools.allow = ["sessions_list", "sessions_history", "sessions_search", "sessions_send", "task_list", "spawn_agent"]
 sessions.can_send = true
 
 [agents.presets.observer]
-tools.allow = ["sessions_list", "sessions_history"]
+tools.allow = ["sessions_list", "sessions_history", "sessions_search"]
 sessions.key_prefix = "agent:research:"
 sessions.can_send = false
 ```
@@ -81,6 +94,7 @@ Use session tools when you need:
 Common coordinator flow:
 
 1. `sessions_list` to discover workers
-2. `sessions_history` to inspect progress
-3. `sessions_send` to dispatch next tasks
-4. `task_list` to track cross-session work items
+2. `sessions_search` to find prior related work
+3. `sessions_history` to inspect progress
+4. `sessions_send` to dispatch next tasks
+5. `task_list` to track cross-session work items

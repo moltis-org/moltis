@@ -1,0 +1,98 @@
+<nav class="sticky top-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur-md border-b border-gray-200/50 dark:border-gray-800/50">
+    <div class="max-w-4xl mx-auto px-4 sm:px-6">
+        <div class="flex items-center justify-between h-14 gap-4">
+            <!-- Logo -->
+            <a href="/" class="flex items-center gap-2 shrink-0">
+                <img src="/favicon.svg" alt="Moltis" width="32" height="26">
+                <span class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-orange-500 to-red-500 dark:from-orange-400 dark:to-red-400 bg-clip-text text-transparent font-outfit">Moltis</span>
+            </a>
+
+            <!-- Nav tabs (desktop) -->
+            <div class="hidden sm:flex items-center gap-1" id="nav-tabs">
+                <a href="/#home" data-page="home" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Home</a>
+                <a href="/#install" data-page="install" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Install</a>
+                <a href="/#features" data-page="features" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Features</a>
+                <a href="/#security" data-page="security" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Security</a>
+                <a href="/#compare" data-page="compare" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Compare</a>
+                <a href="/changelog/" data-page="changelog" class="nav-tab px-3 py-1.5 text-sm font-medium rounded-md transition-colors">Changelog</a>
+            </div>
+
+            <!-- Right side: theme toggle + GitHub stars -->
+            <div class="flex items-center gap-1 shrink-0">
+                <!-- Theme cycle button -->
+                <button id="theme-toggle" title="Toggle theme" class="p-1.5 rounded-md text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                    <svg id="theme-icon-light" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+                    <svg id="theme-icon-system" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                    <svg id="theme-icon-dark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+                </button>
+                <!-- Language selector -->
+                <div class="relative" id="lang-switcher">
+                    <button onclick="this.nextElementSibling.classList.toggle('hidden')" class="flex items-center gap-0.5 px-2 py-1 rounded-md text-xs font-semibold text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="Change language">
+                        EN
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="hidden absolute right-0 mt-1 min-w-[8rem] bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50">
+                        <button onclick="setLang('en')" class="w-full text-left px-3 py-1.5 text-xs font-semibold text-orange-600 dark:text-orange-400 hover:bg-gray-100 dark:hover:bg-gray-700">English</button>
+                        <button onclick="setLang('fr')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Fran&#231;ais</button>
+                        <button onclick="setLang('zh')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#20013;&#25991;</button>
+                        <button onclick="setLang('zh-TW')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#27491;&#39636;&#20013;&#25991;</button>
+                        <button onclick="setLang('es')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Espa&#241;ol</button>
+                        <button onclick="setLang('de')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Deutsch</button>
+                        <button onclick="setLang('it')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Italiano</button>
+                        <button onclick="setLang('pt')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">Portugu&#234;s</button>
+                        <button onclick="setLang('ja')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#26085;&#26412;&#35486;</button>
+                        <button onclick="setLang('ko')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#54620;&#44397;&#50612;</button>
+                        <button onclick="setLang('ru')" class="w-full text-left px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">&#1056;&#1091;&#1089;&#1089;&#1082;&#1080;&#1081;</button>
+                    </div>
+                </div>
+                <!-- GitHub stars -->
+                <a href="https://github.com/moltis-org/moltis" target="_blank" rel="noopener" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-gray-200 dark:border-gray-700 text-xs font-medium text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600 hover:text-gray-700 dark:hover:text-gray-300 transition-colors" id="github-stars-link">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                    <span id="github-stars"></span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Mobile nav tabs -->
+        <div class="flex sm:hidden items-center gap-1 pb-2 overflow-x-auto hide-scrollbar -mx-1 px-1" id="nav-tabs-mobile">
+            <a href="/#home" data-page="home" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Home</a>
+            <a href="/#install" data-page="install" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Install</a>
+            <a href="/#features" data-page="features" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Features</a>
+            <a href="/#security" data-page="security" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Security</a>
+            <a href="/#compare" data-page="compare" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Compare</a>
+            <a href="/changelog/" class="nav-tab shrink-0 px-3 py-1.5 text-xs font-medium rounded-md transition-colors">Changelog</a>
+        </div>
+    </div>
+</nav>
+<script>
+(function() {
+    fetch('https://api.github.com/repos/moltis-org/moltis')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.stargazers_count != null) {
+                var count = data.stargazers_count;
+                var formatted;
+                if (count >= 1000) {
+                    formatted = (count / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+                } else {
+                    formatted = String(count);
+                }
+                var el = document.getElementById('github-stars');
+                if (!el) return;
+                el.textContent = '';
+                var star = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                star.setAttribute('width', '12');
+                star.setAttribute('height', '12');
+                star.setAttribute('viewBox', '0 0 24 24');
+                star.setAttribute('fill', 'currentColor');
+                star.setAttribute('class', 'text-amber-400 inline');
+                var polygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+                polygon.setAttribute('points', '12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2');
+                star.appendChild(polygon);
+                el.appendChild(star);
+                el.appendChild(document.createTextNode(' ' + formatted));
+            }
+        })
+        .catch(function() {});
+})();
+</script>

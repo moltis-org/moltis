@@ -23,7 +23,7 @@ moltis-providers      = { workspace = true }
 moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
-moltis-telegram       = { workspace = true }
+moltis-telegram       = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-voice          = { workspace = true }
 serde                 = { workspace = true }
@@ -31,16 +31,27 @@ serde_json            = { workspace = true }
 thiserror             = { workspace = true }
 tokio                 = { workspace = true }
 tokio-stream          = { workspace = true }
+tokio-util            = { workspace = true }
 tracing               = { workspace = true }
 uuid                  = { workspace = true }
 
 [features]
+# Enable the LLM-backed compaction modes (`structured` and `llm_replace`).
+# Default-on so users get full compaction out of the box. Disabling this
+# removes the streaming-summary path and LLM modes become a runtime config
+# error; the `deterministic` and `recency_preserving` modes remain available.
+bundled-skills     = ["moltis-skills/bundled-skills"]
+llm-compaction     = []
 local-llm          = []
 metrics            = ["dep:moltis-metrics", "moltis-metrics/sqlite"]
 push-notifications = ["dep:chrono"]
 web-ui             = ["dep:chrono"]
+telegram           = ["dep:moltis-telegram"]
+
+default = ["llm-compaction"]
 
 [dev-dependencies]
+async-stream    = { workspace = true }
 moltis-channels = { workspace = true }
 sqlx            = { workspace = true }
 tempfile        = { workspace = true }

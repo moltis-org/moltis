@@ -6,6 +6,7 @@ use std::{
 };
 
 use {
+    secrecy::{ExposeSecret, Secret},
     serde::{Deserialize, Serialize},
     tracing::{debug, info},
 };
@@ -19,6 +20,18 @@ pub enum TransportType {
     #[default]
     Stdio,
     Sse,
+    #[serde(rename = "streamable-http", alias = "streamable_http", alias = "http")]
+    StreamableHttp,
+}
+
+impl std::fmt::Display for TransportType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stdio => write!(f, "stdio"),
+            Self::Sse => write!(f, "sse"),
+            Self::StreamableHttp => write!(f, "streamable-http"),
+        }
+    }
 }
 
 /// Manual OAuth override for MCP servers that don't support standard discovery.
@@ -42,14 +55,32 @@ pub struct McpServerConfig {
     pub env: HashMap<String, String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_timeout_secs: Option<u64>,
     #[serde(default)]
     pub transport: TransportType,
-    /// URL for SSE transport. Required when `transport` is `Sse`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url: Option<String>,
+    /// URL for remote transport. Required when `transport` is `Sse` or `StreamableHttp`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret_string",
+        deserialize_with = "deserialize_option_secret_string"
+    )]
+    pub url: Option<Secret<String>>,
+    /// Custom headers for remote HTTP/SSE transport.
+    #[serde(
+        default,
+        skip_serializing_if = "HashMap::is_empty",
+        serialize_with = "serialize_secret_string_map",
+        deserialize_with = "deserialize_secret_string_map"
+    )]
+    pub headers: HashMap<String, Secret<String>>,
     /// Manual OAuth override (skip discovery/dynamic registration).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oauth: Option<McpOAuthConfig>,
+    /// Custom display name for the server (shown in UI instead of technical ID).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -63,9 +94,12 @@ impl Default for McpServerConfig {
             args: Vec::new(),
             env: HashMap::new(),
             enabled: true,
+            request_timeout_secs: None,
             transport: TransportType::default(),
             url: None,
+            headers: HashMap::new(),
             oauth: None,
+            display_name: None,
         }
     }
 }
@@ -175,9 +209,66 @@ impl McpRegistry {
     }
 }
 
+fn serialize_option_secret_string<S: serde::Serializer>(
+    secret: &Option<Secret<String>>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match secret {
+        Some(value) => serializer.serialize_some(value.expose_secret()),
+        None => serializer.serialize_none(),
+    }
+}
+
+fn deserialize_option_secret_string<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<Secret<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    Ok(opt.map(Secret::new))
+}
+
+fn serialize_secret_string_map<S: serde::Serializer>(
+    values: &HashMap<String, Secret<String>>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    let plain: HashMap<&str, &str> = values
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.expose_secret().as_str()))
+        .collect();
+    plain.serialize(serializer)
+}
+
+fn deserialize_secret_string_map<'de, D>(
+    deserializer: D,
+) -> std::result::Result<HashMap<String, Secret<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let plain: HashMap<String, String> = HashMap::deserialize(deserializer)?;
+    Ok(plain
+        .into_iter()
+        .map(|(key, value)| (key, Secret::new(value)))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, secrecy::ExposeSecret};
+
+    #[test]
+    fn test_transport_type_deserialization() {
+        let json = r#"["stdio", "sse", "streamable-http", "streamable_http", "http"]"#;
+        let transports: Vec<TransportType> = serde_json::from_str(json).unwrap();
+        assert_eq!(transports, vec![
+            TransportType::Stdio,
+            TransportType::Sse,
+            TransportType::StreamableHttp,
+            TransportType::StreamableHttp,
+            TransportType::StreamableHttp,
+        ]);
+    }
 
     #[test]
     fn test_registry_add_remove() {
@@ -213,6 +304,7 @@ mod tests {
         reg.servers.insert("fs".into(), McpServerConfig {
             command: "mcp-server-filesystem".into(),
             args: vec!["/tmp".into()],
+            request_timeout_secs: Some(45),
             ..Default::default()
         });
 
@@ -221,6 +313,7 @@ mod tests {
         assert_eq!(parsed.servers.len(), 1);
         assert_eq!(parsed.servers["fs"].command, "mcp-server-filesystem");
         assert_eq!(parsed.servers["fs"].args, vec!["/tmp"]);
+        assert_eq!(parsed.servers["fs"].request_timeout_secs, Some(45));
     }
 
     #[test]
@@ -246,5 +339,34 @@ mod tests {
         let loaded = McpRegistry::load(&path).unwrap();
         assert_eq!(loaded.servers.len(), 1);
         assert_eq!(loaded.servers["test"].env["FOO"], "bar");
+    }
+
+    #[test]
+    fn test_registry_roundtrips_secret_remote_values() {
+        let mut reg = McpRegistry::new();
+        reg.servers.insert("remote".into(), McpServerConfig {
+            transport: TransportType::Sse,
+            url: Some(Secret::new(
+                "https://example.com/mcp?api_key=secret-value".to_string(),
+            )),
+            headers: HashMap::from([(
+                "x-api-key".to_string(),
+                Secret::new("header-secret".to_string()),
+            )]),
+            ..Default::default()
+        });
+
+        let json = serde_json::to_string(&reg).unwrap();
+        let parsed: McpRegistry = serde_json::from_str(&json).unwrap();
+        let server = &parsed.servers["remote"];
+        assert_eq!(
+            server
+                .url
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("https://example.com/mcp?api_key=secret-value")
+        );
+        assert_eq!(server.headers["x-api-key"].expose_secret(), "header-secret");
     }
 }

@@ -16,11 +16,15 @@ use {
     url::Url,
 };
 
-use crate::error::{Context, Error, Result};
+use crate::{
+    error::{Context, Error, Result},
+    remote::sanitize_url_for_display,
+};
 
 use moltis_oauth::{
     OAuthConfig, OAuthFlow, OAuthTokens, RegistrationStore, StoredRegistration, TokenStore,
-    fetch_as_metadata, fetch_resource_metadata, parse_www_authenticate, register_client,
+    fetch_as_metadata, fetch_resource_metadata, normalize_loopback_redirect,
+    parse_www_authenticate, register_client,
 };
 
 // ── Auth state ─────────────────────────────────────────────────────────────
@@ -85,7 +89,8 @@ pub struct McpOAuthOverride {
 /// OAuth 2.1 provider for a single MCP server.
 pub struct McpOAuthProvider {
     server_name: String,
-    server_url: String,
+    server_url: Secret<String>,
+    server_url_display: String,
     http_client: reqwest::Client,
     token_store: TokenStore,
     registration_store: RegistrationStore,
@@ -109,8 +114,9 @@ impl McpOAuthProvider {
     pub fn new(server_name: &str, server_url: &str) -> Self {
         Self {
             server_name: server_name.to_string(),
-            server_url: server_url.to_string(),
-            http_client: reqwest::Client::new(),
+            server_url: Secret::new(server_url.to_string()),
+            server_url_display: sanitize_url_for_display(server_url),
+            http_client: moltis_common::http_client::build_default_http_client(),
             token_store: TokenStore::new(),
             registration_store: RegistrationStore::new(),
             state: RwLock::new(McpAuthState::NotRequired),
@@ -130,8 +136,9 @@ impl McpOAuthProvider {
     ) -> Self {
         Self {
             server_name: server_name.to_string(),
-            server_url: server_url.to_string(),
-            http_client: reqwest::Client::new(),
+            server_url: Secret::new(server_url.to_string()),
+            server_url_display: sanitize_url_for_display(server_url),
+            http_client: moltis_common::http_client::build_default_http_client(),
             token_store,
             registration_store,
             state: RwLock::new(McpAuthState::NotRequired),
@@ -177,9 +184,12 @@ impl McpOAuthProvider {
             (
                 ov.client_id.clone(),
                 ov.token_url.clone(),
-                Some(self.server_url.clone()),
+                Some(self.server_url.expose_secret().to_string()),
             )
-        } else if let Some(reg) = self.registration_store.load(&self.server_url) {
+        } else if let Some(reg) = self
+            .registration_store
+            .load(self.server_url.expose_secret())
+        {
             (reg.client_id, reg.token_endpoint, Some(reg.resource))
         } else {
             return Ok(None); // Can't refresh without knowing where to send the request
@@ -219,6 +229,18 @@ impl McpOAuthProvider {
         redirect_uri: &str,
         www_authenticate: Option<&str>,
     ) -> Result<String> {
+        // RFC 8252 §7.3/§8.3: loopback redirect URIs must use the `http`
+        // scheme. Many authorization servers (e.g. Attio) reject
+        // `https://localhost` with `invalid_redirect_uri`. Moltis serves the
+        // web UI over TLS, so the origin-derived callback arrives as
+        // `https://localhost:<port>/auth/callback`. We rewrite the scheme for
+        // loopback hosts; the TLS listener's peek-based HTTP→HTTPS redirect
+        // (see `moltis_tls::serve_tls_with_http_redirect`) transparently
+        // bounces the browser back onto the real HTTPS callback handler,
+        // preserving path and query string.
+        let redirect_uri = normalize_loopback_redirect(redirect_uri);
+        let redirect_uri = redirect_uri.as_str();
+
         let (client_id, auth_url, token_url, scopes, resource) =
             if let Some(ov) = &self.oauth_override {
                 // Manual override: skip discovery
@@ -227,13 +249,15 @@ impl McpOAuthProvider {
                     ov.auth_url.clone(),
                     ov.token_url.clone(),
                     ov.scopes.clone(),
-                    self.server_url.clone(),
+                    self.server_url.expose_secret().to_string(),
                 )
             } else {
                 // Full discovery flow
                 // Re-register for each interactive flow so redirect URI always
                 // matches the current web origin callback.
-                let _ = self.registration_store.delete(&self.server_url);
+                let _ = self
+                    .registration_store
+                    .delete(self.server_url.expose_secret());
                 let header = if let Some(v) = www_authenticate {
                     Some(v.to_string())
                 } else {
@@ -253,10 +277,15 @@ impl McpOAuthProvider {
             extra_auth_params: Vec::new(),
             device_flow: false,
         };
+        let resource_display = config
+            .resource
+            .as_deref()
+            .map(sanitize_url_for_display)
+            .unwrap_or_default();
 
         info!(
             server = %self.server_name,
-            resource = %config.resource.as_deref().unwrap_or(""),
+            resource = %resource_display,
             "starting MCP OAuth authorization flow"
         );
 
@@ -271,11 +300,7 @@ impl McpOAuthProvider {
         });
         *self.state.write().await = McpAuthState::AwaitingBrowser;
 
-        info!(
-            server = %self.server_name,
-            auth_url = %auth_req.url,
-            "MCP OAuth authorization URL prepared"
-        );
+        info!(server = %self.server_name, "MCP OAuth authorization URL prepared");
 
         Ok(auth_req.url)
     }
@@ -345,14 +370,14 @@ impl McpOAuthProvider {
         www_authenticate: Option<&str>,
         redirect_uri: &str,
     ) -> Result<(String, String, String, Vec<String>, String)> {
-        let server_url = Url::parse(&self.server_url)
-            .with_context(|| format!("invalid MCP server URL: {}", self.server_url))?;
+        let server_url = Url::parse(self.server_url.expose_secret())
+            .with_context(|| format!("invalid MCP server URL: {}", self.server_url_display))?;
         let origin = Self::origin_url(&server_url);
         let has_path = server_url.path() != "/" && !server_url.path().is_empty();
 
         debug!(
             server = %self.server_name,
-            server_url = %server_url,
+            server_url = %self.server_url_display,
             origin = %origin,
             has_path,
             www_authenticate = ?www_authenticate,
@@ -409,26 +434,28 @@ impl McpOAuthProvider {
                 );
                 // Fall back: fetch AS metadata. Try the server URL first, then
                 // the origin if the server has a non-trivial path.
-                let as_meta = match fetch_as_metadata(&self.http_client, &server_url).await {
-                    Ok(meta) => meta,
-                    Err(path_err) if has_path => {
-                        debug!(
-                            server = %self.server_name,
-                            origin = %origin,
-                            "AS metadata unavailable at path-aware URL, trying origin"
-                        );
-                        fetch_as_metadata(&self.http_client, &origin).await.with_context(|| {
+                let as_meta =
+                    match fetch_as_metadata(&self.http_client, &server_url).await {
+                        Ok(meta) => meta,
+                        Err(path_err) if has_path => {
+                            debug!(
+                                server = %self.server_name,
+                                origin = %origin,
+                                "AS metadata unavailable at path-aware URL, trying origin"
+                            );
+                            fetch_as_metadata(&self.http_client, &origin).await.with_context(|| {
                             format!(
-                                "AS metadata unavailable at both {server_url} and {origin}: {path_err}"
+                                "AS metadata unavailable at both {} and {origin}: {path_err}",
+                                self.server_url_display
                             )
                         })?
-                    },
-                    Err(e) => {
-                        return Err(Error::message(format!(
-                            "failed to fetch authorization server metadata: {e}"
-                        )));
-                    },
-                };
+                        },
+                        Err(e) => {
+                            return Err(Error::message(format!(
+                                "failed to fetch authorization server metadata: {e}"
+                            )));
+                        },
+                    };
                 // When resource metadata is unavailable we fall back to origin
                 // as the resource indicator to avoid path-scoped audience mismatches.
                 let resource = Self::origin_resource(&server_url);
@@ -442,12 +469,15 @@ impl McpOAuthProvider {
             auth_endpoint = %as_meta.authorization_endpoint,
             token_endpoint = %as_meta.token_endpoint,
             registration = ?as_meta.registration_endpoint,
-            resource = %resource,
+            resource = %sanitize_url_for_display(&resource),
             "resolved OAuth endpoints"
         );
 
         // Step 3: Dynamic client registration (or use cached)
-        let client_id = if let Some(cached) = self.registration_store.load(&self.server_url) {
+        let client_id = if let Some(cached) = self
+            .registration_store
+            .load(self.server_url.expose_secret())
+        {
             debug!(
                 server = %self.server_name,
                 client_id = %cached.client_id,
@@ -480,7 +510,7 @@ impl McpOAuthProvider {
                     .unwrap_or(0),
             };
             self.registration_store
-                .save(&self.server_url, &stored)
+                .save(self.server_url.expose_secret(), &stored)
                 .context("failed to persist OAuth registration")?;
 
             reg.client_id
@@ -1001,5 +1031,94 @@ mod tests {
     fn store_key_format() {
         let provider = McpOAuthProvider::new("my-server", "https://mcp.example.com");
         assert_eq!(provider.store_key(), "mcp:my-server");
+    }
+
+    // ── start_web_oauth_flow loopback rewrite ──────────────────────────────
+
+    /// Integration test: when the UI passes `https://localhost:…/auth/callback`,
+    /// the full `start_web_oauth_flow` must register and request authorization
+    /// with the `http://localhost:…/auth/callback` form, satisfying RFC 8252.
+    #[tokio::test]
+    async fn start_web_oauth_flow_rewrites_loopback_redirect() {
+        let mut server = mockito::Server::new_async().await;
+        let base = server.url();
+        let https_redirect = "https://localhost:1455/auth/callback";
+        let http_redirect = "http://localhost:1455/auth/callback";
+
+        let resource_meta = server
+            .mock("GET", "/mcp/.well-known/oauth-protected-resource")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "resource": format!("{base}/mcp"),
+                    "authorization_servers": [base.clone()],
+                    "scopes_supported": ["read"],
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let as_meta = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "issuer": base.clone(),
+                    "authorization_endpoint": format!("{base}/authorize"),
+                    "token_endpoint": format!("{base}/token"),
+                    "registration_endpoint": format!("{base}/register"),
+                    "scopes_supported": ["read"],
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        // The registration endpoint must receive the HTTP form, not HTTPS.
+        let register = server
+            .mock("POST", "/register")
+            .match_body(Matcher::PartialJson(serde_json::json!({
+                "redirect_uris": [http_redirect],
+            })))
+            .with_status(201)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "client_id": "client-loopback",
+                    "redirect_uris": [http_redirect],
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let provider = McpOAuthProvider::with_stores(
+            "loopback",
+            &format!("{base}/mcp"),
+            TokenStore::with_path(dir.path().join("tokens.json")),
+            RegistrationStore::with_path(dir.path().join("registrations.json")),
+        );
+
+        let auth_url = provider
+            .start_web_oauth_flow(https_redirect, None)
+            .await
+            .expect("start_web_oauth_flow should succeed");
+
+        // The authorization URL must encode the rewritten HTTP redirect URI.
+        let parsed = url::Url::parse(&auth_url).unwrap();
+        let encoded_redirect = parsed
+            .query_pairs()
+            .find(|(k, _)| k == "redirect_uri")
+            .map(|(_, v)| v.into_owned())
+            .expect("auth URL must have redirect_uri");
+        assert_eq!(encoded_redirect, http_redirect);
+
+        resource_meta.assert_async().await;
+        as_meta.assert_async().await;
+        register.assert_async().await;
     }
 }

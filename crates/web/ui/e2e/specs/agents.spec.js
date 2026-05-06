@@ -3,6 +3,7 @@ const {
 	createSession,
 	expectPageContentMounted,
 	navigateAndWait,
+	sendRpcFromPage,
 	waitForWsConnected,
 	watchPageErrors,
 } = require("../helpers");
@@ -13,22 +14,32 @@ async function waitForWelcomeOrNoProvidersCard(page) {
 		timeout: 10_000,
 	});
 
-	const noProvidersCard = page.locator("#noProvidersCard");
-	const noProvidersVisible = await noProvidersCard.isVisible().catch(() => false);
-	if (noProvidersVisible) {
-		await expect(noProvidersCard.getByRole("heading", { name: "No LLMs Connected", exact: true })).toBeVisible();
-		await expect(noProvidersCard.getByRole("link", { name: "Go to LLMs", exact: true })).toBeVisible();
-		return null;
+	// The two cards can swap during load: if models haven't arrived yet when the
+	// session opens, #noProvidersCard is rendered first and then replaced with
+	// #welcomeCard once models load (see refreshWelcomeCardIfNeeded in
+	// sessions.js). Prefer the welcome card if it eventually appears, and only
+	// treat the no-providers state as final when the welcome card never shows.
+	const welcomeCard = page.locator("#welcomeCard");
+	try {
+		await expect(welcomeCard).toBeVisible({ timeout: 5_000 });
+		return welcomeCard;
+	} catch {
+		// Welcome card never materialized — we're in the no-providers state.
 	}
 
-	const welcomeCard = page.locator("#welcomeCard");
-	await expect(welcomeCard).toBeVisible({ timeout: 10_000 });
-	return welcomeCard;
+	const noProvidersCard = page.locator("#noProvidersCard");
+	await expect(noProvidersCard).toBeVisible();
+	await expect(noProvidersCard.getByRole("heading", { name: "No LLMs Connected", exact: true })).toBeVisible();
+	await expect(noProvidersCard.getByRole("link", { name: "Go to LLMs", exact: true })).toBeVisible();
+	return null;
 }
 
 async function deleteAgentByName(page, agentName) {
 	await navigateAndWait(page, "/settings/agents");
-	const testCard = page.locator(".backend-card").filter({ hasText: agentName });
+	const testCard = page
+		.locator(".backend-card")
+		.filter({ hasText: agentName })
+		.filter({ has: page.getByRole("button", { name: "Delete", exact: true }) });
 	await expect(testCard).toBeVisible({ timeout: 10_000 });
 	await testCard.getByRole("button", { name: "Delete", exact: true }).click();
 	await page.locator(".provider-modal").getByRole("button", { name: "Delete", exact: true }).click();
@@ -42,6 +53,20 @@ test.describe("Agents settings page", () => {
 
 		await expect(page).toHaveURL(/\/settings\/agents$/);
 		await expect(page.getByRole("heading", { name: "Agents", exact: true })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /Chat Agents/ })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /Sub-Agents/ })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /Modes/ })).toBeVisible();
+
+		const chatPanel = page.getByLabel("Chat Agents panel");
+		await expect(chatPanel.getByText("Persistent identities you can select in chat.", { exact: false })).toBeVisible();
+
+		await page.getByRole("tab", { name: /Modes/ }).click();
+		const modesPanel = page.getByLabel("Modes panel");
+		await expect(modesPanel.getByText("Temporary per-session prompt overlays", { exact: false })).toBeVisible();
+		await expect(modesPanel.locator(".backend-card").filter({ hasText: "Concise" })).toBeVisible({
+			timeout: 10_000,
+		});
+		await expect(modesPanel.locator(".backend-card").filter({ hasText: "Review" })).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -53,9 +78,8 @@ test.describe("Agents settings page", () => {
 		const mainCard = page.locator(".backend-card").filter({ hasText: "Default" });
 		await expect(mainCard).toBeVisible();
 
-		// Main agent should have an "Identity Settings" button, not Edit/Delete
-		await expect(mainCard.getByRole("button", { name: "Identity Settings", exact: true })).toBeVisible();
-		await expect(mainCard.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+		// Main agent has Edit but no Delete (cannot delete the main agent)
+		await expect(mainCard.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
 		await expect(mainCard.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
@@ -75,6 +99,48 @@ test.describe("Agents settings page", () => {
 		await expect(page.getByPlaceholder("Creative Writer")).toBeVisible();
 		await expect(page.getByRole("button", { name: "Create", exact: true })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("config-only preset can be promoted into an agent", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/agents");
+		await waitForWsConnected(page);
+		await sendRpcFromPage(page, "agents.delete", { id: "coder" });
+		await navigateAndWait(page, "/settings/agents");
+		await waitForWsConnected(page);
+
+		await page.getByRole("tab", { name: /Sub-Agents/ }).click();
+		await expect(page.getByRole("heading", { name: "Sub-Agent Presets", exact: true })).toBeVisible({
+			timeout: 10_000,
+		});
+		await expect(page.getByText("usable by spawn_agent", { exact: false })).toBeVisible();
+		const presetCard = page
+			.locator(".backend-card")
+			.filter({ hasText: "Coder" })
+			.filter({ hasText: "Built-in" })
+			.first();
+		await expect(presetCard).toBeVisible({ timeout: 10_000 });
+		await presetCard.getByRole("button", { name: "Add to Chat", exact: true }).click();
+		await expect(presetCard).toHaveCount(0, { timeout: 10_000 });
+		await page.getByRole("tab", { name: /Chat Agents/ }).click();
+
+		const agentCard = page
+			.locator(".backend-card")
+			.filter({ hasText: "Coder" })
+			.filter({ has: page.getByRole("button", { name: "Edit", exact: true }) })
+			.first();
+		await expect(agentCard).toBeVisible({ timeout: 10_000 });
+
+		try {
+			await agentCard.getByRole("button", { name: "Edit", exact: true }).click();
+			await expect(page.getByText("Edit Coder", { exact: true })).toBeVisible({ timeout: 10_000 });
+			await expect(page.locator("textarea").first()).toHaveValue(/Implement scoped code changes/);
+			await page.getByRole("button", { name: "Cancel", exact: true }).click();
+		} finally {
+			await deleteAgentByName(page, "Coder");
+		}
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -219,15 +285,50 @@ test.describe("Agents settings page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("Identity Settings button on main agent navigates to identity page", async ({ page }) => {
+	test("Edit button on main agent opens edit form", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/agents");
 
 		const mainCard = page.locator(".backend-card").filter({ hasText: "Default" });
-		await mainCard.getByRole("button", { name: "Identity Settings", exact: true }).click();
+		await mainCard.getByRole("button", { name: "Edit", exact: true }).click();
 
-		await expect(page).toHaveURL(/\/settings\/identity$/);
-		await expectPageContentMounted(page);
+		// The edit form should appear (heading begins with "Edit")
+		await expect(page.getByText(/^Edit\s/, { exact: false })).toBeVisible({ timeout: 10_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("shows workspace prompt truncation warning when AGENTS.md exceeds the cap", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/agents");
+		await waitForWsConnected(page);
+
+		const originalResponse = await sendRpcFromPage(page, "agents.files.get", {
+			agent_id: "main",
+			path: "AGENTS.md",
+		});
+		const originalContent = originalResponse?.ok ? originalResponse.payload?.content || "" : "";
+		const oversizedContent = `${"A".repeat(32_050)}\n`;
+
+		try {
+			const setResponse = await sendRpcFromPage(page, "agents.files.set", {
+				agent_id: "main",
+				path: "AGENTS.md",
+				content: oversizedContent,
+			});
+			expect(setResponse?.ok).toBe(true);
+
+			await navigateAndWait(page, "/settings/agents");
+			const mainCard = page.locator(".backend-card").filter({ hasText: "Default" });
+			await expect(mainCard).toContainText("AGENTS.md", { timeout: 10_000 });
+			await expect(mainCard).toContainText("truncated by", { timeout: 10_000 });
+		} finally {
+			await sendRpcFromPage(page, "agents.files.set", {
+				agent_id: "main",
+				path: "AGENTS.md",
+				content: originalContent,
+			});
+		}
 
 		expect(pageErrors).toEqual([]);
 	});

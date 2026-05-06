@@ -60,11 +60,13 @@ navigation_timeout_ms = 30000  # Page load timeout
 
 # Optional customization
 # chrome_path = "/path/to/chrome"  # Custom Chrome path
+# obscura_path = "/path/to/obscura"  # Custom Obscura path
+# lightpanda_path = "/path/to/lightpanda"  # Custom Lightpanda path
 # user_agent = "Custom UA"         # Custom user agent
 # chrome_args = ["--disable-extensions"]  # Extra args
 
 # Sandbox image (browser sandbox mode follows session sandbox mode)
-sandbox_image = "browserless/chrome"  # Container image for sandboxed sessions
+sandbox_image = "docker.io/browserless/chrome"  # Container image for sandboxed sessions
 # allowed_domains = ["example.com", "*.trusted.org"]  # Restrict navigation
 
 # Container connectivity (for Moltis-in-Docker setups)
@@ -155,11 +157,19 @@ You can ask for a specific browser at runtime (host mode):
 ```
 
 Supported values: `auto`, `chrome`, `chromium`, `edge`, `brave`, `opera`,
-`vivaldi`, `arc`.
+`vivaldi`, `arc`, `obscura`, `lightpanda`.
 
 `auto` (default) picks the first detected installed browser. If none are
 installed, Moltis will attempt a best-effort auto-install, then retry
 detection.
+
+`obscura` launches the Obscura sidecar binary from `obscura_path`, the
+`OBSCURA` environment variable, or `PATH`. It supports DOM-oriented browsing
+through CDP, but not pixel screenshots.
+
+`lightpanda` launches the Lightpanda sidecar binary from `lightpanda_path`, the
+`LIGHTPANDA` environment variable, or `PATH`. It supports DOM-oriented browsing
+through CDP, but not pixel screenshots.
 
 ### Workflow Example
 
@@ -297,7 +307,7 @@ When the session is sandboxed, Chrome runs inside a Docker container with:
 
 ```toml
 [tools.browser]
-sandbox_image = "browserless/chrome"  # Container image for sandboxed sessions
+sandbox_image = "docker.io/browserless/chrome"  # Container image for sandboxed sessions
 ```
 
 Requirements:

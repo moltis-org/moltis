@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     time::Instant,
 };
@@ -83,6 +83,7 @@ use {moltis_channels::ChannelReplyTarget, moltis_sessions::session_events::Sessi
 
 use crate::{
     auth::{CredentialStore, ResolvedAuth},
+    broadcast::Broadcaster,
     nodes::NodeRegistry,
     pairing::{PairingState, PairingStore},
     services::GatewayServices,
@@ -106,7 +107,8 @@ pub struct ConnectedClient {
     /// Bounded channel for sending serialized frames to this client's write loop.
     pub sender: mpsc::Sender<String>,
     pub connected_at: Instant,
-    pub last_activity: Instant,
+    /// Milliseconds since process start. Updated atomically — no write lock needed.
+    pub last_activity_ms: std::sync::atomic::AtomicU64,
     /// The `Accept-Language` header from the WebSocket upgrade request, forwarded
     /// to web tools so fetched pages and search results match the user's locale.
     pub accept_language: Option<String>,
@@ -169,9 +171,23 @@ impl ConnectedClient {
         self.sender.try_send(frame.to_string()).is_ok()
     }
 
-    /// Touch the activity timestamp.
-    pub fn touch(&mut self) {
-        self.last_activity = Instant::now();
+    /// Touch the activity timestamp (lock-free).
+    pub fn touch(&self) {
+        use std::sync::atomic::Ordering;
+        static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let start = *PROCESS_START.get_or_init(Instant::now);
+        self.last_activity_ms
+            .store(start.elapsed().as_millis() as u64, Ordering::Relaxed);
+    }
+
+    /// Get the elapsed duration since last activity.
+    pub fn last_activity_elapsed(&self) -> std::time::Duration {
+        use std::sync::atomic::Ordering;
+        static PROCESS_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let start = *PROCESS_START.get_or_init(Instant::now);
+        let stored_ms = self.last_activity_ms.load(Ordering::Relaxed);
+        let total_elapsed = start.elapsed().as_millis() as u64;
+        std::time::Duration::from_millis(total_elapsed.saturating_sub(stored_ms))
     }
 }
 
@@ -222,12 +238,48 @@ pub struct DiscoveredHookInfo {
     pub avg_latency_ms: u64,
 }
 
+// ── Client registry (separate lock for WS client operations) ────────────────
+
+/// Client connection tracking, split from GatewayInner to avoid lock contention.
+/// broadcast() only needs this read lock — no longer contends with node/config/session writes.
+#[derive(Default)]
+pub struct ClientRegistryInner {
+    pub clients: HashMap<String, ConnectedClient>,
+    pub active_sessions: HashMap<String, String>,
+    pub active_projects: HashMap<String, String>,
+}
+
+impl ClientRegistryInner {
+    pub fn new() -> Self {
+        Self {
+            clients: HashMap::new(),
+            active_sessions: HashMap::new(),
+            active_projects: HashMap::new(),
+        }
+    }
+
+    pub fn register_client(&mut self, client: ConnectedClient) -> usize {
+        let conn_id = client.conn_id.clone();
+        self.clients.insert(conn_id, client);
+        self.clients.len()
+    }
+
+    pub fn remove_client(&mut self, conn_id: &str) -> (Option<ConnectedClient>, usize) {
+        self.active_sessions.remove(conn_id);
+        self.active_projects.remove(conn_id);
+        let removed = self.clients.remove(conn_id);
+        (removed, self.clients.len())
+    }
+}
+
 // ── Mutable runtime state ────────────────────────────────────────────────────
 
 /// All mutable runtime state, protected by the single `RwLock` on `GatewayState`.
+///
+/// **Note:** Client connections, active sessions, and active projects live in
+/// [`ClientRegistryInner`] behind the separate `client_registry` lock on
+/// `GatewayState`.  Do **not** duplicate them here.
 pub struct GatewayInner {
-    /// All connected WebSocket clients, keyed by conn_id.
-    pub clients: HashMap<String, ConnectedClient>,
     /// Connected device nodes.
     pub nodes: NodeRegistry,
     /// Device pairing state.
@@ -236,12 +288,6 @@ pub struct GatewayInner {
     pub pending_invokes: HashMap<String, PendingInvoke>,
     /// Pending server → client RPC requests awaiting client responses (v4).
     pub pending_client_requests: HashMap<String, PendingClientRequest>,
-    /// Late-bound chat service override (for circular init).
-    pub chat_override: Option<Arc<dyn crate::services::ChatService>>,
-    /// Active session key per connection (conn_id → session key).
-    pub active_sessions: HashMap<String, String>,
-    /// Active project id per connection (conn_id → project id).
-    pub active_projects: HashMap<String, String>,
     /// Heartbeat configuration (for gon data and RPC methods).
     pub heartbeat_config: moltis_config::schema::HeartbeatConfig,
     /// Pending channel reply targets: when a channel message triggers a chat
@@ -261,6 +307,8 @@ pub struct GatewayInner {
     /// One-time setup code displayed at startup, required during initial setup.
     /// Cleared after successful setup.
     pub setup_code: Option<secrecy::Secret<String>>,
+    /// When the setup code was created (for 30-minute expiry).
+    pub setup_code_created_at: Option<Instant>,
     /// Auto-update availability state from GitHub releases.
     pub update: crate::update_check::UpdateAvailability,
     /// Last error per run_id (short-lived, for send_sync to retrieve).
@@ -281,6 +329,11 @@ pub struct GatewayInner {
     pub channel_status_log: HashMap<String, Vec<String>>,
     /// Sessions currently in channel command mode (/sh passthrough).
     pub channel_command_mode_sessions: HashSet<String>,
+    /// Sessions with fast/priority mode enabled.
+    pub fast_mode_sessions: HashSet<String>,
+    /// Per-session steering text queue injected mid-run via `/steer`.
+    /// Multiple `/steer` calls accumulate; all are drained on the next poll.
+    pub steer_text: HashMap<String, Vec<String>>,
     /// Which channel types are offered in the web UI (from config).
     pub channels_offered: Vec<String>,
     /// Hostnames that were discovered after passkeys already existed.
@@ -293,14 +346,10 @@ pub struct GatewayInner {
 impl GatewayInner {
     fn new(hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>) -> Self {
         Self {
-            clients: HashMap::new(),
             nodes: NodeRegistry::new(),
             pairing: PairingState::new(),
             pending_invokes: HashMap::new(),
             pending_client_requests: HashMap::new(),
-            chat_override: None,
-            active_sessions: HashMap::new(),
-            active_projects: HashMap::new(),
             heartbeat_config: moltis_config::schema::HeartbeatConfig::default(),
             channel_reply_queue: HashMap::new(),
             tts_session_overrides: HashMap::new(),
@@ -309,6 +358,7 @@ impl GatewayInner {
             discovered_hooks: Vec::new(),
             disabled_hooks: HashSet::new(),
             setup_code: None,
+            setup_code_created_at: None,
             update: crate::update_check::UpdateAvailability::default(),
             run_errors: HashMap::new(),
             #[cfg(feature = "metrics")]
@@ -316,26 +366,21 @@ impl GatewayInner {
             #[cfg(feature = "push-notifications")]
             push_service: None,
             llm_providers: None,
-            cached_location: moltis_config::load_user().and_then(|u| u.location),
+            cached_location: moltis_config::resolve_user_profile().location,
             channel_status_log: HashMap::new(),
             channel_command_mode_sessions: HashSet::new(),
-            channels_offered: vec!["telegram".into()],
+            fast_mode_sessions: HashSet::new(),
+            steer_text: HashMap::new(),
+            channels_offered: vec![
+                "telegram".into(),
+                "whatsapp".into(),
+                "discord".into(),
+                "slack".into(),
+                "matrix".into(),
+            ],
             passkey_host_update_pending: HashSet::new(),
             shiki_cdn_url: None,
         }
-    }
-
-    /// Insert a client, returning the new client count.
-    pub fn register_client(&mut self, client: ConnectedClient) -> usize {
-        let conn_id = client.conn_id.clone();
-        self.clients.insert(conn_id, client);
-        self.clients.len()
-    }
-
-    /// Remove a client by conn_id. Returns the removed client and the new count.
-    pub fn remove_client(&mut self, conn_id: &str) -> (Option<ConnectedClient>, usize) {
-        let removed = self.clients.remove(conn_id);
-        (removed, self.clients.len())
     }
 }
 
@@ -352,6 +397,8 @@ pub struct GatewayState {
     pub version: String,
     /// Hostname for HelloOk.
     pub hostname: String,
+    /// Loaded configuration snapshot for read-mostly request helpers.
+    pub config: moltis_config::schema::MoltisConfig,
     /// Auth configuration.
     pub auth: ResolvedAuth,
     /// Domain services.
@@ -365,9 +412,12 @@ pub struct GatewayState {
     /// SQLite-backed pairing store for device token persistence.
     /// `None` in tests that don't need pairing.
     pub pairing_store: Option<Arc<PairingStore>>,
-    /// Memory manager for long-term memory search (None if no embedding provider).
+    /// Memory runtime for long-term memory search.
     /// `Arc` because it is cloned into background tokio tasks.
-    pub memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
+    pub memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
+    /// Code index for workspace codebase intelligence (discover, filter, status, peek).
+    /// Always initialized in config-only mode; search is deferred to QMD backend.
+    pub code_index: Arc<moltis_code_index::CodeIndex>,
     /// Whether the server is bound to a loopback address (localhost/127.0.0.1/::1).
     pub localhost_only: bool,
     /// Whether the server is known to be behind a reverse proxy.
@@ -381,9 +431,6 @@ pub struct GatewayState {
     /// Runtime GraphQL availability toggle.
     #[cfg(feature = "graphql")]
     pub graphql_enabled: AtomicBool,
-    /// Broadcast channel for GraphQL subscriptions. Events are `(event_name, payload)`.
-    #[cfg(feature = "graphql")]
-    pub graphql_broadcast: tokio::sync::broadcast::Sender<(String, serde_json::Value)>,
     /// Session event bus for cross-UI synchronisation (macOS ↔ web).
     pub session_event_bus: SessionEventBus,
     /// Cloud deploy platform (e.g. "flyio", "digitalocean"), read from
@@ -412,11 +459,40 @@ pub struct GatewayState {
     /// Per-(channel, account) rate limiter for channel webhooks.
     pub channel_webhook_rate_limiter: crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter,
 
-    // ── Atomics (lock-free) ─────────────────────────────────────────────────
-    /// Monotonically increasing sequence counter for broadcast events.
-    pub seq: AtomicU64,
-    /// Sequential counter for TTS test phrase round-robin picking.
+    // ── Generic webhook ingress ───────────────────────────────────────────────
+    /// Webhook store for direct access from HTTP ingress handlers.
+    pub webhook_store: std::sync::OnceLock<Arc<dyn moltis_webhooks::store::WebhookStore>>,
+    /// Per-webhook rate limiter for generic webhook ingress.
+    pub webhook_rate_limiter: moltis_webhooks::rate_limit::WebhookRateLimiter,
+    /// Sender for queueing delivery IDs to the webhook worker.
+    pub webhook_worker_tx: std::sync::OnceLock<mpsc::Sender<i64>>,
+
+    // ── Skill usage telemetry ─────────────────────────────────────────────
+    /// Late-bound skill usage store for per-skill read/write telemetry.
+    pub skill_usage_store: std::sync::OnceLock<moltis_skills::usage::SkillUsageStore>,
+
+    // ── Chat override (set once, read frequently) ─��───────────────────────
+    /// Late-bound chat service override. Uses `std::sync::RwLock` (non-async)
+    /// so `chat()` never awaits the `inner` tokio lock.
+    pub chat_override: std::sync::RwLock<Option<Arc<dyn crate::services::ChatService>>>,
+
+    // ── Atomics (lock-free) ───────────────────────────────��─────────────────
     pub tts_phrase_counter: AtomicUsize,
+    /// Live count of connected nodes.  Shared with `ExecTool` via the
+    /// `GatewayNodeExecProvider` so `parameters_schema()` can check it
+    /// without awaiting the inner lock.
+    pub node_count: Arc<AtomicUsize>,
+    /// Count of configured SSH targets exposed as remote execution options.
+    pub ssh_target_count: Arc<AtomicUsize>,
+
+    // ── Broadcast state (lock-free) ─────────────────────────────────────────
+    /// Lock-free broadcast state (seq counter, GraphQL subscription channel).
+    pub broadcaster: Arc<Broadcaster>,
+
+    // ── Client registry (dedicated lock — hot path) ─────────────────────────
+    /// WS client connections, session/project mappings. Separate lock so
+    /// broadcast reads don't contend with node/config/session writes.
+    pub client_registry: RwLock<ClientRegistryInner>,
 
     // ── Mutable runtime state (single lock) ─────────────────────────────────
     /// All mutable runtime state, behind a single lock.
@@ -428,6 +504,7 @@ impl GatewayState {
         Self::with_options(
             auth,
             services,
+            moltis_config::MoltisConfig::default(),
             None,
             None,
             None,
@@ -436,6 +513,9 @@ impl GatewayState {
             false,
             None,
             None,
+            Arc::new(moltis_code_index::CodeIndex::config_only(
+                moltis_code_index::CodeIndexConfig::default(),
+            )),
             18789,
             false,
             None,
@@ -453,6 +533,7 @@ impl GatewayState {
     pub fn with_options(
         auth: ResolvedAuth,
         services: GatewayServices,
+        config: moltis_config::schema::MoltisConfig,
         sandbox_router: Option<Arc<SandboxRouter>>,
         credential_store: Option<Arc<CredentialStore>>,
         pairing_store: Option<Arc<PairingStore>>,
@@ -460,7 +541,8 @@ impl GatewayState {
         behind_proxy: bool,
         tls_active: bool,
         hook_registry: Option<Arc<moltis_common::hooks::HookRegistry>>,
-        memory_manager: Option<Arc<moltis_memory::manager::MemoryManager>>,
+        memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
+        code_index: Arc<moltis_code_index::CodeIndex>,
         port: u16,
         ws_request_logs: bool,
         deploy_platform: Option<String>,
@@ -475,14 +557,16 @@ impl GatewayState {
             .unwrap_or_else(|| "unknown".into());
 
         Arc::new(Self {
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            version: moltis_config::VERSION.to_string(),
             hostname,
+            config,
             auth,
             services,
             credential_store,
             sandbox_router,
             pairing_store,
             memory_manager,
+            code_index,
             localhost_only,
             behind_proxy,
             tls_active,
@@ -504,15 +588,30 @@ impl GatewayState {
             ),
             channel_webhook_rate_limiter:
                 crate::channel_webhook_rate_limit::ChannelWebhookRateLimiter::new(),
-            seq: AtomicU64::new(0),
+            webhook_store: std::sync::OnceLock::new(),
+            webhook_rate_limiter: moltis_webhooks::rate_limit::WebhookRateLimiter::default(),
+            webhook_worker_tx: std::sync::OnceLock::new(),
+            skill_usage_store: std::sync::OnceLock::new(),
+            chat_override: std::sync::RwLock::new(None),
             tts_phrase_counter: AtomicUsize::new(0),
-            #[cfg(feature = "graphql")]
-            graphql_broadcast: {
-                let (tx, _) = tokio::sync::broadcast::channel(256);
-                tx
-            },
+            node_count: Arc::new(AtomicUsize::new(0)),
+            ssh_target_count: Arc::new(AtomicUsize::new(0)),
+            broadcaster: Arc::new(Broadcaster::new()),
+            client_registry: RwLock::new(ClientRegistryInner::new()),
             inner: RwLock::new(GatewayInner::new(hook_registry)),
         })
+    }
+
+    /// Whether the gateway *may* be serving over a secure channel.
+    ///
+    /// Returns `true` when TLS is active on the gateway listener **or** the
+    /// server is configured behind a reverse proxy.  Note: `behind_proxy`
+    /// alone does not guarantee HTTPS — the proxy-to-client leg may be plain
+    /// HTTP.  For cookie `Secure` attribute decisions, prefer the per-request
+    /// `should_secure_cookie()` helper in `httpd::auth_routes` which inspects
+    /// the `X-Forwarded-Proto` header.
+    pub fn is_secure(&self) -> bool {
+        self.tls_active || self.behind_proxy
     }
 
     /// Process uptime in milliseconds since this gateway state was created.
@@ -521,8 +620,11 @@ impl GatewayState {
     }
 
     /// Set a late-bound chat service (for circular init).
-    pub async fn set_chat(&self, chat: Arc<dyn crate::services::ChatService>) {
-        self.inner.write().await.chat_override = Some(chat);
+    pub fn set_chat(&self, chat: Arc<dyn crate::services::ChatService>) {
+        *self
+            .chat_override
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(chat);
     }
 
     /// Set the push notification service (late-bound initialization).
@@ -546,15 +648,21 @@ impl GatewayState {
     }
 
     /// Get the active chat service (override or default).
-    pub async fn chat(&self) -> Arc<dyn crate::services::ChatService> {
-        if let Some(c) = self.inner.read().await.chat_override.as_ref() {
+    /// Lock-free: reads from a dedicated field to avoid inner lock contention.
+    pub fn chat(&self) -> Arc<dyn crate::services::ChatService> {
+        if let Some(c) = self
+            .chat_override
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
             return Arc::clone(c);
         }
         Arc::clone(&self.services.chat)
     }
 
     pub fn next_seq(&self) -> u64 {
-        self.seq.fetch_add(1, Ordering::Relaxed) + 1
+        self.broadcaster.next_seq()
     }
 
     #[cfg(feature = "graphql")]
@@ -569,7 +677,7 @@ impl GatewayState {
 
     /// Register a new client connection.
     pub async fn register_client(&self, client: ConnectedClient) {
-        let count = self.inner.write().await.register_client(client);
+        let count = self.client_registry.write().await.register_client(client);
 
         #[cfg(feature = "metrics")]
         moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(count as f64);
@@ -577,7 +685,7 @@ impl GatewayState {
 
     /// Remove a client by conn_id. Returns the removed client if found.
     pub async fn remove_client(&self, conn_id: &str) -> Option<ConnectedClient> {
-        let (removed, count) = self.inner.write().await.remove_client(conn_id);
+        let (removed, count) = self.client_registry.write().await.remove_client(conn_id);
 
         #[cfg(feature = "metrics")]
         {
@@ -592,7 +700,7 @@ impl GatewayState {
 
     /// Number of connected clients.
     pub async fn client_count(&self) -> usize {
-        self.inner.read().await.clients.len()
+        self.client_registry.read().await.clients.len()
     }
 
     /// Push a reply target for a session (used when a channel message triggers chat.send).
@@ -701,6 +809,47 @@ impl GatewayState {
             .contains(session_key)
     }
 
+    /// Enable or disable fast/priority mode for a session.
+    pub async fn set_fast_mode(&self, session_key: &str, enabled: bool) {
+        let mut inner = self.inner.write().await;
+        if enabled {
+            inner.fast_mode_sessions.insert(session_key.to_string());
+        } else {
+            inner.fast_mode_sessions.remove(session_key);
+        }
+    }
+
+    /// Check whether fast/priority mode is enabled for a session.
+    pub async fn is_fast_mode(&self, session_key: &str) -> bool {
+        self.inner
+            .read()
+            .await
+            .fast_mode_sessions
+            .contains(session_key)
+    }
+
+    /// Append steering text for an active session run.
+    /// Multiple calls accumulate; all are drained on the next poll.
+    pub async fn set_steer_text(&self, session_key: &str, text: String) {
+        self.inner
+            .write()
+            .await
+            .steer_text
+            .entry(session_key.to_string())
+            .or_default()
+            .push(text);
+    }
+
+    /// Take (drain) all pending steering texts for a session.
+    pub async fn take_steer_text(&self, session_key: &str) -> Option<Vec<String>> {
+        let texts = self.inner.write().await.steer_text.remove(session_key)?;
+        if texts.is_empty() {
+            None
+        } else {
+            Some(texts)
+        }
+    }
+
     /// Mark a hostname as needing passkey refresh.
     pub async fn add_passkey_host_update_pending(&self, host: &str) {
         let normalized = crate::auth_webauthn::normalize_host(host);
@@ -768,35 +917,50 @@ impl GatewayState {
 
         let (tx, rx) = oneshot::channel();
 
+        // Check that the client is connected before doing anything.
+        if !self
+            .client_registry
+            .read()
+            .await
+            .clients
+            .contains_key(conn_id)
+        {
+            return Err(moltis_protocol::ErrorShape::new(
+                moltis_protocol::error_codes::UNAVAILABLE,
+                "client not connected",
+            ));
+        }
+
         // Register the pending request BEFORE sending to avoid a race where
         // the client responds before the entry exists (response would be dropped).
-        {
-            let mut inner = self.inner.write().await;
-            if !inner.clients.contains_key(conn_id) {
-                return Err(moltis_protocol::ErrorShape::new(
-                    moltis_protocol::error_codes::UNAVAILABLE,
-                    "client not connected",
-                ));
-            }
-            inner
+        self.inner.write().await.pending_client_requests.insert(
+            request_id.clone(),
+            PendingClientRequest {
+                method: method.into(),
+                sender: tx,
+                created_at: Instant::now(),
+            },
+        );
+
+        // Send the request frame to the client.
+        let sent = self
+            .client_registry
+            .read()
+            .await
+            .clients
+            .get(conn_id)
+            .map(|c| c.send(&json))
+            .unwrap_or(false);
+        if !sent {
+            self.inner
+                .write()
+                .await
                 .pending_client_requests
-                .insert(request_id.clone(), PendingClientRequest {
-                    method: method.into(),
-                    sender: tx,
-                    created_at: Instant::now(),
-                });
-            let sent = inner
-                .clients
-                .get(conn_id)
-                .map(|c| c.send(&json))
-                .unwrap_or(false);
-            if !sent {
-                inner.pending_client_requests.remove(&request_id);
-                return Err(moltis_protocol::ErrorShape::new(
-                    moltis_protocol::error_codes::UNAVAILABLE,
-                    "client send failed",
-                ));
-            }
+                .remove(&request_id);
+            return Err(moltis_protocol::ErrorShape::new(
+                moltis_protocol::error_codes::UNAVAILABLE,
+                "client send failed",
+            ));
         }
 
         match tokio::time::timeout(timeout, rx).await {
@@ -821,10 +985,11 @@ impl GatewayState {
 
     /// Close a client: remove from registry and unregister from nodes.
     pub async fn close_client(&self, conn_id: &str) -> Option<ConnectedClient> {
-        let mut inner = self.inner.write().await;
-        inner.nodes.unregister_by_conn(conn_id);
-        let (removed, count) = inner.remove_client(conn_id);
-        drop(inner);
+        // Unregister the node first (inner lock).
+        self.inner.write().await.nodes.unregister_by_conn(conn_id);
+
+        // Then remove the client from the client registry (separate lock).
+        let (removed, count) = self.client_registry.write().await.remove_client(conn_id);
 
         #[cfg(feature = "metrics")]
         moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(count as f64);
@@ -837,28 +1002,36 @@ impl GatewayState {
     /// Disconnect all WebSocket clients: send an `auth.credentials_changed`
     /// event so browsers can redirect to login, then drain every connection.
     pub async fn disconnect_all_clients(&self, reason: &str) {
-        let mut inner = self.inner.write().await;
+        // 1) Acquire client_registry write lock: send events + clear clients.
+        {
+            let mut registry = self.client_registry.write().await;
 
-        // Build and serialize the notification frame.
-        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let frame = EventFrame::new(
-            "auth.credentials_changed",
-            serde_json::json!({ "reason": reason }),
-            seq,
-        );
-        if let Ok(json) = serde_json::to_string(&frame) {
-            for client in inner.clients.values() {
-                let _ = client.send(&json);
+            // Build and serialize the notification frame.
+            let seq = self.broadcaster.next_seq();
+            let frame = EventFrame::new(
+                "auth.credentials_changed",
+                serde_json::json!({ "reason": reason }),
+                seq,
+            );
+            if let Ok(json) = serde_json::to_string(&frame) {
+                for client in registry.clients.values() {
+                    let _ = client.send(&json);
+                }
             }
+
+            // Drain all client state.
+            registry.clients.clear();
+            registry.active_sessions.clear();
+            registry.active_projects.clear();
         }
 
-        // Drain all state keyed by connection.
-        inner.nodes.clear();
-        inner.clients.clear();
-        inner.active_sessions.clear();
-        inner.active_projects.clear();
+        // 2) Acquire inner write lock: clear nodes.
+        self.inner.write().await.nodes.clear();
 
-        drop(inner);
+        // Reset the atomic node counter so has_connected_nodes() reflects
+        // reality. The normal WS cleanup path won't decrement because
+        // unregister_by_conn returns None after clear().
+        self.node_count.store(0, Ordering::Relaxed);
 
         #[cfg(feature = "metrics")]
         moltis_metrics::gauge!(moltis_metrics::system::CONNECTED_CLIENTS).set(0.0);
@@ -924,7 +1097,7 @@ mod tests {
             },
             sender: tx,
             connected_at: Instant::now(),
-            last_activity: Instant::now(),
+            last_activity_ms: std::sync::atomic::AtomicU64::new(0),
             accept_language: None,
             remote_ip: None,
             timezone: None,
@@ -933,6 +1106,19 @@ mod tests {
             negotiated_protocol: moltis_protocol::PROTOCOL_VERSION,
         };
         (client, rx)
+    }
+
+    #[tokio::test]
+    async fn default_channels_offered_include_matrix() {
+        let state = test_state();
+        let inner = state.inner.read().await;
+        assert_eq!(inner.channels_offered, vec![
+            "telegram".to_owned(),
+            "whatsapp".to_owned(),
+            "discord".to_owned(),
+            "slack".to_owned(),
+            "matrix".to_owned(),
+        ]);
     }
 
     #[tokio::test]
@@ -946,11 +1132,11 @@ mod tests {
 
         // Set up some active_sessions / active_projects entries.
         {
-            let mut inner = state.inner.write().await;
-            inner
+            let mut registry = state.client_registry.write().await;
+            registry
                 .active_sessions
                 .insert("conn-1".into(), "session-a".into());
-            inner
+            registry
                 .active_projects
                 .insert("conn-2".into(), "project-b".into());
         }
@@ -964,9 +1150,9 @@ mod tests {
 
         // active_sessions and active_projects are cleared.
         {
-            let inner = state.inner.read().await;
-            assert!(inner.active_sessions.is_empty());
-            assert!(inner.active_projects.is_empty());
+            let registry = state.client_registry.read().await;
+            assert!(registry.active_sessions.is_empty());
+            assert!(registry.active_projects.is_empty());
         }
 
         // Both receivers got the event frame before the channel closed.
@@ -992,6 +1178,51 @@ mod tests {
         // Should not panic.
         state.disconnect_all_clients("noop").await;
         assert_eq!(state.client_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn disconnect_all_clients_resets_node_count() {
+        use {
+            crate::nodes::NodeSession,
+            std::{collections::HashMap, time::Instant},
+        };
+
+        let state = test_state();
+
+        // Register a node so the counter goes up.
+        let node = NodeSession {
+            node_id: "node-1".into(),
+            conn_id: "conn-1".into(),
+            display_name: None,
+            platform: "macos".into(),
+            version: "0.1.0".into(),
+            capabilities: vec![],
+            commands: vec![],
+            permissions: HashMap::new(),
+            path_env: None,
+            remote_ip: None,
+            connected_at: Instant::now(),
+            mem_total: None,
+            mem_available: None,
+            cpu_count: None,
+            cpu_usage: None,
+            uptime_secs: None,
+            services: vec![],
+            last_telemetry: None,
+            disk_total: None,
+            disk_available: None,
+            runtimes: vec![],
+            providers: vec![],
+        };
+        state.inner.write().await.nodes.register(node);
+        state.node_count.fetch_add(1, Ordering::Relaxed);
+
+        assert_eq!(state.node_count.load(Ordering::Relaxed), 1);
+
+        state.disconnect_all_clients("test").await;
+
+        // node_count must be reset to 0 so has_connected_nodes() returns false.
+        assert_eq!(state.node_count.load(Ordering::Relaxed), 0);
     }
 
     // ── Subscription tests ──────────────────────────────────────────────

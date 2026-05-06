@@ -16,13 +16,16 @@ use {
     sysinfo::System,
     tokio::sync::{Mutex, RwLock},
     tracing::{debug, info, warn},
+    url::Url,
 };
 
 use crate::{
-    container::BrowserContainer,
+    container::{BrowserContainer, browserless_session_timeout_ms},
     error::Error,
-    types::{BrowserConfig, BrowserPreference},
+    types::{BrowserConfig, BrowserKind, BrowserPreference, BrowserlessApiVersion},
 };
+
+pub(crate) const MAX_BROWSER_INSTANCE_LIFETIME: Duration = Duration::from_secs(30 * 60);
 
 /// Get current system memory usage as a percentage (0-100).
 fn get_memory_usage_percent() -> u8 {
@@ -55,6 +58,38 @@ pub(crate) fn low_memory_chrome_args(total_mb: u64, threshold_mb: u64) -> &'stat
     ]
 }
 
+/// Build websocket connection candidates based on Browserless API version.
+///
+/// - v1 (default): connect only to the base URL.
+/// - v2: when URL path is root (`/`), also try `/chrome` and `/chromium`.
+fn websocket_connect_candidates(
+    base_ws_url: &str,
+    browserless_api_version: BrowserlessApiVersion,
+) -> Vec<String> {
+    let mut candidates = vec![base_ws_url.to_string()];
+    if browserless_api_version != BrowserlessApiVersion::V2 {
+        return candidates;
+    }
+
+    let Ok(parsed) = Url::parse(base_ws_url) else {
+        return candidates;
+    };
+    if parsed.path() != "/" {
+        return candidates;
+    }
+
+    for suffix in ["/chrome", "/chromium"] {
+        let mut with_suffix = parsed.clone();
+        with_suffix.set_path(suffix);
+        let candidate = with_suffix.to_string();
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+
+    candidates
+}
+
 /// A pooled browser instance with one or more pages.
 struct BrowserInstance {
     browser: Browser,
@@ -69,6 +104,11 @@ struct BrowserInstance {
     /// Container for sandboxed instances (None for host browser).
     #[allow(dead_code)]
     container: Option<BrowserContainer>,
+    /// Child process for lightweight sidecar instances. Killed on drop.
+    #[allow(dead_code)]
+    child_process: Option<tokio::process::Child>,
+    /// The browser kind used for this instance.
+    kind: Option<BrowserKind>,
 }
 
 /// Pool of browser instances for reuse.
@@ -256,10 +296,9 @@ impl BrowserPool {
     }
 
     /// Clean up idle browser instances and instances that have exceeded the
-    /// hard TTL (30 minutes). The TTL prevents Chromium memory leaks from
-    /// accumulating in long-lived browser instances.
+    /// hard TTL ([`MAX_BROWSER_INSTANCE_LIFETIME`]). The TTL prevents Chromium
+    /// memory leaks from accumulating in long-lived browser instances.
     pub async fn cleanup_idle(&self) {
-        const MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
         let idle_timeout = Duration::from_secs(self.config.idle_timeout_secs);
         let now = Instant::now();
 
@@ -270,7 +309,8 @@ impl BrowserPool {
             for (sid, instance) in instances.iter() {
                 if let Ok(inst) = instance.try_lock() {
                     let idle = now.duration_since(inst.last_used) > idle_timeout;
-                    let expired = now.duration_since(inst.created_at) > MAX_LIFETIME;
+                    let expired =
+                        now.duration_since(inst.created_at) > MAX_BROWSER_INSTANCE_LIFETIME;
                     if idle || expired {
                         if expired {
                             info!(
@@ -321,6 +361,14 @@ impl BrowserPool {
         self.instances.read().await.len()
     }
 
+    /// Get the browser kind for a session, if known.
+    pub async fn browser_kind(&self, session_id: &str) -> Option<BrowserKind> {
+        let instances = self.instances.read().await;
+        let instance = instances.get(session_id)?;
+        let inst = instance.lock().await;
+        inst.kind
+    }
+
     /// Launch a new browser instance.
     async fn launch_browser(
         &self,
@@ -328,6 +376,10 @@ impl BrowserPool {
         sandbox: bool,
         browser: Option<BrowserPreference>,
     ) -> Result<BrowserInstance, Error> {
+        if let Some(spec) = browser.and_then(sidecar_browser_spec) {
+            return self.launch_sidecar_browser(session_id, spec).await;
+        }
+
         if sandbox {
             self.launch_sandboxed_browser(session_id).await
         } else {
@@ -348,15 +400,29 @@ impl BrowserPool {
         let vw = self.config.viewport_width;
         let vh = self.config.viewport_height;
         let low_mem = self.config.low_memory_threshold_mb;
+        let session_timeout_ms = browserless_session_timeout_ms(
+            self.config.idle_timeout_secs,
+            self.config.navigation_timeout_ms,
+            MAX_BROWSER_INSTANCE_LIFETIME.as_secs(),
+        );
         let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), session_id);
         let container_host = self.config.container_host.clone();
 
+        info!(
+            session_id,
+            image = %image,
+            container_host = %container_host,
+            profile_dir = ?profile_dir,
+            session_timeout_ms,
+            "launching sandboxed browser container"
+        );
+
         let container = tokio::task::spawn_blocking(move || {
-            // Check container runtime availability (Docker or Apple Container)
+            // Check container runtime availability (Docker, Podman, or Apple Container)
             if !container::is_container_available() {
                 return Err(Error::LaunchFailed(
                     "No container runtime available for sandboxed browser. \
-                     Please install Docker or Apple Container."
+                     Please install Docker, Podman, or Apple Container."
                         .to_string(),
                 ));
             }
@@ -370,15 +436,23 @@ impl BrowserPool {
                 "browser container image ready"
             );
 
-            // Create profile directory on host if needed
-            if let Some(ref dir) = profile_dir
-                && let Err(e) = std::fs::create_dir_all(dir)
-            {
-                warn!(
-                    path = %dir.display(),
-                    error = %e,
-                    "failed to create browser profile directory for container"
-                );
+            // Create profile directory on host if needed.
+            // The directory must be world-writable (0o777) because the browserless/chrome
+            // container runs Chrome as uid 999 (`chrome` user), which differs from the
+            // host uid that owns this directory. Without open permissions the bind-mounted
+            // volume is not writable and Chrome crashes on startup.
+            // This is safe: the directory is Moltis-managed (~/.moltis/browser/profile/)
+            // and contains only ephemeral Chrome profile data (cache, cookies, local
+            // storage). It is not a system directory and has no security-sensitive content.
+            if let Some(ref dir) = profile_dir {
+                match std::fs::create_dir_all(dir) {
+                    Err(e) => warn!(
+                        path = %dir.display(),
+                        error = %e,
+                        "failed to create browser profile directory for container"
+                    ),
+                    Ok(()) => set_container_dir_permissions(dir),
+                }
             }
 
             // Start the container (includes readiness polling)
@@ -388,6 +462,7 @@ impl BrowserPool {
                 vw,
                 vh,
                 low_mem,
+                session_timeout_ms,
                 profile_dir.as_deref(),
                 &container_host,
             )
@@ -404,28 +479,59 @@ impl BrowserPool {
             "connecting to sandboxed browser"
         );
 
-        // Connect to the containerized browser with custom timeout
-        let handler_config = HandlerConfig {
-            request_timeout: Duration::from_millis(self.config.navigation_timeout_ms),
-            viewport: Some(chromiumoxide::handler::viewport::Viewport {
-                width: self.config.viewport_width,
-                height: self.config.viewport_height,
-                device_scale_factor: Some(self.config.device_scale_factor),
-                emulating_mobile: false,
-                is_landscape: true,
-                has_touch: false,
-            }),
-            ..Default::default()
-        };
+        let ws_candidates =
+            websocket_connect_candidates(&ws_url, self.config.browserless_api_version);
+        let mut last_error = String::new();
+        let mut connected = None;
+        for candidate in &ws_candidates {
+            let attempt_config = HandlerConfig {
+                request_timeout: Duration::from_millis(self.config.navigation_timeout_ms),
+                viewport: Some(chromiumoxide::handler::viewport::Viewport {
+                    width: self.config.viewport_width,
+                    height: self.config.viewport_height,
+                    device_scale_factor: Some(self.config.device_scale_factor),
+                    emulating_mobile: false,
+                    is_landscape: true,
+                    has_touch: false,
+                }),
+                ..Default::default()
+            };
 
-        let (browser, mut handler) = Browser::connect_with_config(&ws_url, handler_config)
-            .await
-            .map_err(|e| {
-                Error::LaunchFailed(format!(
-                    "failed to connect to containerized browser at {}: {}",
-                    ws_url, e
-                ))
-            })?;
+            match Browser::connect_with_config(candidate, attempt_config).await {
+                Ok(pair) => {
+                    if candidate != &ws_url {
+                        info!(
+                            session_id,
+                            original_ws_url = ws_url,
+                            ws_url = candidate,
+                            browserless_api_version = %self.config.browserless_api_version,
+                            "sandboxed browser connected using fallback websocket path"
+                        );
+                    }
+                    connected = Some(pair);
+                    break;
+                },
+                Err(e) => {
+                    last_error = e.to_string();
+                    debug!(
+                        session_id,
+                        ws_url = candidate,
+                        browserless_api_version = %self.config.browserless_api_version,
+                        error = %last_error,
+                        "sandboxed browser websocket candidate failed, trying next"
+                    );
+                },
+            }
+        }
+
+        let (browser, mut handler) = connected.ok_or_else(|| {
+            Error::LaunchFailed(format!(
+                "failed to connect to containerized browser at {} (candidates: {}): {}",
+                ws_url,
+                ws_candidates.join(", "),
+                last_error
+            ))
+        })?;
 
         // Spawn handler to process browser events
         let session_id_clone = session_id.to_string();
@@ -449,6 +555,8 @@ impl BrowserPool {
             created_at: Instant::now(),
             sandboxed: true,
             container: Some(container),
+            child_process: None,
+            kind: None,
         })
     }
 
@@ -622,8 +730,313 @@ impl BrowserPool {
             created_at: Instant::now(),
             sandboxed: false,
             container: None,
+            child_process: None,
+            kind: Some(selected.kind),
         })
     }
+
+    /// Launch a lightweight headless browser as a sidecar process and connect via CDP.
+    ///
+    /// Uses a retry loop to handle TOCTOU races on port selection: if a
+    /// picked port is stolen between bind-to-0 and browser startup, we try
+    /// again with a fresh port (up to [`SIDECAR_PORT_RETRIES`] times).
+    async fn launch_sidecar_browser(
+        &self,
+        session_id: &str,
+        spec: SidecarBrowserSpec,
+    ) -> Result<BrowserInstance, Error> {
+        let browser_path = spec.detect(&self.config).ok_or_else(|| {
+            Error::LaunchFailed(format!(
+                "{} binary not found. Install it from {} or set \
+                 [tools.browser] {} in config.",
+                spec.display_name, spec.install_url, spec.config_key
+            ))
+        })?;
+
+        let mut last_error = String::new();
+
+        for attempt in 0..SIDECAR_PORT_RETRIES {
+            // Pick a random port for the CDP server.
+            let port = pick_available_port().ok_or_else(|| {
+                Error::LaunchFailed(format!(
+                    "no available TCP port for {} CDP server",
+                    spec.display_name
+                ))
+            })?;
+
+            info!(
+                session_id,
+                port,
+                attempt,
+                browser = %spec.kind,
+                path = %browser_path.display(),
+                "launching browser sidecar"
+            );
+
+            match self
+                .try_launch_sidecar(session_id, spec, &browser_path, port)
+                .await
+            {
+                Ok(instance) => return Ok(instance),
+                Err(e) => {
+                    warn!(
+                        session_id,
+                        port,
+                        attempt,
+                        error = %e,
+                        browser = %spec.kind,
+                        "browser sidecar launch attempt failed, retrying with new port"
+                    );
+                    last_error = e.to_string();
+                },
+            }
+        }
+
+        Err(Error::LaunchFailed(format!(
+            "{} failed to start after {SIDECAR_PORT_RETRIES} attempts: {last_error}",
+            spec.display_name
+        )))
+    }
+
+    /// Single attempt to spawn a sidecar browser on a given port and connect via CDP.
+    async fn try_launch_sidecar(
+        &self,
+        session_id: &str,
+        spec: SidecarBrowserSpec,
+        browser_path: &std::path::Path,
+        port: u16,
+    ) -> Result<BrowserInstance, Error> {
+        let mut command = tokio::process::Command::new(browser_path);
+        command
+            .arg("serve")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        for arg in spec.serve_args(port) {
+            command.arg(arg);
+        }
+        let mut child = command.spawn().map_err(|e| {
+            Error::LaunchFailed(format!(
+                "failed to spawn {} at {}: {e}",
+                spec.display_name,
+                browser_path.display()
+            ))
+        })?;
+
+        // Poll until the CDP endpoint is ready (or the process exits).
+        let ws_url = spec.websocket_url(port);
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+        let deadline = Instant::now() + Duration::from_secs(10);
+
+        loop {
+            // Check that the child hasn't exited.
+            if let Ok(Some(status)) = child.try_wait() {
+                let stderr = drain_child_stderr(&mut child).await;
+                if !stderr.is_empty() {
+                    warn!(
+                        session_id,
+                        port,
+                        stderr,
+                        browser = %spec.kind,
+                        "browser sidecar stderr before exit"
+                    );
+                }
+                return Err(Error::LaunchFailed(format!(
+                    "{} exited immediately with status {status}: {stderr}",
+                    spec.display_name
+                )));
+            }
+
+            // Try a TCP connect to see if the server is listening.
+            if tokio::time::timeout(
+                Duration::from_millis(200),
+                tokio::net::TcpStream::connect(addr),
+            )
+            .await
+            .is_ok_and(|r| r.is_ok())
+            {
+                break;
+            }
+
+            if Instant::now() >= deadline {
+                let stderr = drain_child_stderr(&mut child).await;
+                if !stderr.is_empty() {
+                    warn!(
+                        session_id,
+                        port,
+                        stderr,
+                        browser = %spec.kind,
+                        "browser sidecar stderr at timeout"
+                    );
+                }
+                let _ = child.kill().await;
+                return Err(Error::LaunchFailed(format!(
+                    "{} CDP server did not become ready within 10 seconds: {stderr}",
+                    spec.display_name
+                )));
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Connect via CDP using the existing chromiumoxide client.
+        let handler_config = HandlerConfig {
+            request_timeout: Duration::from_millis(self.config.navigation_timeout_ms),
+            viewport: Some(chromiumoxide::handler::viewport::Viewport {
+                width: self.config.viewport_width,
+                height: self.config.viewport_height,
+                device_scale_factor: Some(self.config.device_scale_factor),
+                emulating_mobile: false,
+                is_landscape: true,
+                has_touch: false,
+            }),
+            ..Default::default()
+        };
+
+        let (browser, mut handler) = Browser::connect_with_config(&ws_url, handler_config)
+            .await
+            .map_err(|e| {
+                Error::LaunchFailed(format!(
+                    "failed to connect to {} CDP at {ws_url}: {e}",
+                    spec.display_name
+                ))
+            })?;
+
+        // Spawn handler to process browser events.
+        let session_id_clone = session_id.to_string();
+        tokio::spawn(async move {
+            while let Some(event) = handler.next().await {
+                debug!(
+                    session_id = session_id_clone,
+                    ?event,
+                    browser = %spec.kind,
+                    "sidecar browser event"
+                );
+            }
+            debug!(
+                session_id = session_id_clone,
+                browser = %spec.kind,
+                "sidecar browser event handler exited"
+            );
+        });
+
+        info!(
+            session_id,
+            port,
+            browser = %spec.kind,
+            "browser sidecar connected via CDP"
+        );
+
+        Ok(BrowserInstance {
+            browser,
+            pages: HashMap::new(),
+            last_used: Instant::now(),
+            created_at: Instant::now(),
+            sandboxed: false,
+            container: None,
+            child_process: Some(child),
+            kind: Some(spec.kind),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SidecarBrowserSpec {
+    kind: BrowserKind,
+    display_name: &'static str,
+    config_key: &'static str,
+    install_url: &'static str,
+}
+
+impl SidecarBrowserSpec {
+    fn detect(self, config: &BrowserConfig) -> Option<PathBuf> {
+        match self.kind {
+            BrowserKind::Obscura => crate::detect::detect_obscura(config.obscura_path.as_deref()),
+            BrowserKind::Lightpanda => {
+                crate::detect::detect_lightpanda(config.lightpanda_path.as_deref())
+            },
+            _ => None,
+        }
+    }
+
+    fn serve_args(self, port: u16) -> Vec<String> {
+        match self.kind {
+            BrowserKind::Obscura => vec!["--port".to_string(), port.to_string()],
+            BrowserKind::Lightpanda => vec![
+                "--host".to_string(),
+                "127.0.0.1".to_string(),
+                "--port".to_string(),
+                port.to_string(),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn websocket_url(self, port: u16) -> String {
+        match self.kind {
+            BrowserKind::Obscura => format!("ws://127.0.0.1:{port}/devtools/browser"),
+            BrowserKind::Lightpanda => format!("ws://127.0.0.1:{port}"),
+            _ => format!("ws://127.0.0.1:{port}"),
+        }
+    }
+}
+
+fn sidecar_browser_spec(preference: BrowserPreference) -> Option<SidecarBrowserSpec> {
+    match preference {
+        BrowserPreference::Obscura => Some(SidecarBrowserSpec {
+            kind: BrowserKind::Obscura,
+            display_name: "Obscura",
+            config_key: "obscura_path",
+            install_url: "https://github.com/h4ckf0r0day/obscura",
+        }),
+        BrowserPreference::Lightpanda => Some(SidecarBrowserSpec {
+            kind: BrowserKind::Lightpanda,
+            display_name: "Lightpanda",
+            config_key: "lightpanda_path",
+            install_url: "https://github.com/lightpanda-io/browser",
+        }),
+        _ => None,
+    }
+}
+
+/// Maximum number of port-selection retries when launching a sidecar browser.
+const SIDECAR_PORT_RETRIES: usize = 3;
+
+/// Find an available TCP port by binding to port 0.
+fn pick_available_port() -> Option<u16> {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .ok()
+        .and_then(|l| l.local_addr().ok())
+        .map(|a| a.port())
+}
+
+/// Read whatever stderr the child has produced so far (non-blocking).
+async fn drain_child_stderr(child: &mut tokio::process::Child) -> String {
+    use tokio::io::AsyncReadExt;
+
+    let Some(stderr) = child.stderr.as_mut() else {
+        return String::new();
+    };
+    let mut output = Vec::with_capacity(4096);
+    let mut chunk = [0; 4096];
+
+    loop {
+        match tokio::time::timeout(Duration::from_millis(10), stderr.read(&mut chunk)).await {
+            Ok(Ok(0)) | Err(_) => break,
+            Ok(Ok(read)) => {
+                output.extend_from_slice(&chunk[..read]);
+                if output.len() >= 64 * 1024 {
+                    break;
+                }
+            },
+            Ok(Err(error)) => {
+                warn!(%error, "failed to drain browser sidecar stderr");
+                break;
+            },
+        }
+    }
+
+    String::from_utf8_lossy(&output).trim().to_string()
 }
 
 impl Drop for BrowserPool {
@@ -641,7 +1054,7 @@ impl Drop for BrowserPool {
 
 /// Generate a random session ID.
 fn generate_session_id() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     let mut rng = rand::rng();
     let id: u64 = rng.random();
     format!("browser-{:016x}", id)
@@ -671,6 +1084,27 @@ fn sandbox_profile_dir(profile_root: Option<PathBuf>, session_id: &str) -> Optio
             .join(sanitize_session_component(session_id))
     })
 }
+
+/// Make a directory world-accessible so container processes (which run as a
+/// different uid, e.g. uid 999 in browserless/chrome) can read and write it.
+///
+/// On Unix this sets mode `0o777`. On non-Unix platforms this is a no-op
+/// because container runtimes there (e.g. Apple Container) handle permission
+/// mapping differently.
+#[cfg(unix)]
+fn set_container_dir_permissions(dir: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(e) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o777)) {
+        warn!(
+            path = %dir.display(),
+            error = %e,
+            "failed to set browser profile directory permissions"
+        );
+    }
+}
+
+#[cfg(not(unix))]
+fn set_container_dir_permissions(_dir: &std::path::Path) {}
 
 #[cfg(test)]
 mod tests {
@@ -703,6 +1137,23 @@ mod tests {
     #[test]
     fn sandbox_profile_dir_none_when_profile_disabled() {
         assert!(sandbox_profile_dir(None, "browser-abc123").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_container_dir_permissions_makes_world_writable() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir()?;
+        let dir = tmp.path().join("browser-profile");
+        std::fs::create_dir_all(&dir)?;
+
+        set_container_dir_permissions(&dir);
+
+        let mode = std::fs::metadata(&dir)?.permissions().mode();
+        assert_eq!(mode & 0o777, 0o777, "directory should be world-writable");
+        Ok(())
     }
 
     fn test_config() -> BrowserConfig {
@@ -765,5 +1216,69 @@ mod tests {
     #[test]
     fn low_memory_args_disabled_when_threshold_zero() {
         assert!(low_memory_chrome_args(512, 0).is_empty());
+    }
+
+    #[test]
+    fn lightpanda_sidecar_uses_host_port_args_and_root_ws_endpoint() {
+        let spec = sidecar_browser_spec(BrowserPreference::Lightpanda)
+            .unwrap_or_else(|| panic!("expected Lightpanda sidecar spec"));
+
+        assert_eq!(spec.serve_args(9222), vec![
+            "--host".to_string(),
+            "127.0.0.1".to_string(),
+            "--port".to_string(),
+            "9222".to_string(),
+        ]);
+        assert_eq!(spec.websocket_url(9222), "ws://127.0.0.1:9222");
+    }
+
+    #[test]
+    fn obscura_sidecar_uses_browser_ws_endpoint() {
+        let spec = sidecar_browser_spec(BrowserPreference::Obscura)
+            .unwrap_or_else(|| panic!("expected Obscura sidecar spec"));
+
+        assert_eq!(spec.serve_args(9222), vec![
+            "--port".to_string(),
+            "9222".to_string()
+        ]);
+        assert_eq!(
+            spec.websocket_url(9222),
+            "ws://127.0.0.1:9222/devtools/browser"
+        );
+    }
+
+    #[test]
+    fn websocket_candidates_v1_uses_base_url_only() {
+        let candidates = websocket_connect_candidates(
+            "ws://browser-host.local:45029/",
+            BrowserlessApiVersion::V1,
+        );
+        assert_eq!(candidates, vec![
+            "ws://browser-host.local:45029/".to_string()
+        ]);
+    }
+
+    #[test]
+    fn websocket_candidates_v2_adds_browser_paths_for_root() {
+        let candidates = websocket_connect_candidates(
+            "ws://browser-host.local:45029/",
+            BrowserlessApiVersion::V2,
+        );
+        assert_eq!(candidates, vec![
+            "ws://browser-host.local:45029/".to_string(),
+            "ws://browser-host.local:45029/chrome".to_string(),
+            "ws://browser-host.local:45029/chromium".to_string()
+        ]);
+    }
+
+    #[test]
+    fn websocket_candidates_v2_keeps_explicit_path() {
+        let candidates = websocket_connect_candidates(
+            "ws://browser-host.local:45029/chrome",
+            BrowserlessApiVersion::V2,
+        );
+        assert_eq!(candidates, vec![
+            "ws://browser-host.local:45029/chrome".to_string()
+        ]);
     }
 }

@@ -1,190 +1,27 @@
 //! Live MCP service implementation backed by `McpManager`.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use {
-    anyhow::Result, async_trait::async_trait, serde_json::Value, tokio::sync::RwLock, tracing::info,
+    async_trait::async_trait,
+    serde_json::Value,
+    tokio::sync::RwLock,
+    tracing::{info, warn},
 };
 
-use {
-    moltis_agents::tool_registry::{AgentTool, ToolRegistry},
-    moltis_mcp::tool_bridge::{McpAgentTool, McpToolBridge},
-};
+use moltis_agents::tool_registry::ToolRegistry;
 
 use crate::services::{McpService, ServiceError, ServiceResult};
 
-// ── McpToolAdapter: bridge McpAgentTool → AgentTool ─────────────────────────
+// Re-export pure parsing functions that now live in moltis-mcp.
+pub(crate) use moltis_mcp::{merge_env_overrides, parse_server_config};
 
-/// Thin adapter that implements `AgentTool` (agents crate) by delegating to
-/// `McpToolBridge` which implements `McpAgentTool` (mcp crate).
-struct McpToolAdapter(McpToolBridge);
-
-#[async_trait]
-impl AgentTool for McpToolAdapter {
-    fn name(&self) -> &str {
-        McpAgentTool::name(&self.0)
-    }
-
-    fn description(&self) -> &str {
-        McpAgentTool::description(&self.0)
-    }
-
-    fn parameters_schema(&self) -> Value {
-        McpAgentTool::parameters_schema(&self.0)
-    }
-
-    async fn execute(&self, params: Value) -> Result<Value> {
-        McpAgentTool::execute(&self.0, params)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-}
-
-// ── Sync helper ─────────────────────────────────────────────────────────────
-
-/// Synchronize MCP tool bridges into the shared `ToolRegistry`.
-///
-/// Removes all existing `mcp__*` tools and re-registers current bridges.
-pub async fn sync_mcp_tools(
-    manager: &moltis_mcp::McpManager,
-    registry: &Arc<RwLock<ToolRegistry>>,
-) {
-    let bridges = manager.tool_bridges().await;
-
-    let mut reg = registry.write().await;
-
-    // Remove all MCP-sourced tools before re-registering current ones.
-    reg.unregister_mcp();
-
-    // Register current bridges with their server name metadata.
-    let count = bridges.len();
-    for bridge in bridges {
-        let server = bridge.server_name().to_string();
-        reg.register_mcp(Box::new(McpToolAdapter(bridge)), server);
-    }
-
-    if count > 0 {
-        info!(tools = count, "MCP tools synced into tool registry");
-    }
-}
+// Re-export sync_mcp_tools from the dedicated bridge crate.
+pub(crate) use moltis_mcp_agent_bridge::sync_mcp_tools;
 
 // ── Config parsing helper ───────────────────────────────────────────────────
 
-/// Extract an `McpServerConfig` from JSON params.
-///
-/// For updates, omitted fields inherit from `existing`.
-fn parse_server_config(
-    params: &Value,
-    existing: Option<&moltis_mcp::McpServerConfig>,
-) -> Result<moltis_mcp::McpServerConfig, ServiceError> {
-    let transport = match params.get("transport").and_then(|v| v.as_str()) {
-        Some("sse") => moltis_mcp::TransportType::Sse,
-        Some(_) => moltis_mcp::TransportType::Stdio,
-        None => existing
-            .map(|cfg| cfg.transport)
-            .unwrap_or(moltis_mcp::TransportType::Stdio),
-    };
-
-    let command = params
-        .get("command")
-        .and_then(|v| v.as_str())
-        .map(String::from)
-        .or_else(|| existing.map(|cfg| cfg.command.clone()))
-        .unwrap_or_default();
-
-    if matches!(transport, moltis_mcp::TransportType::Stdio) && command.trim().is_empty() {
-        return Err(ServiceError::message("missing 'command' parameter"));
-    }
-
-    let args: Vec<String> = if params.get("args").is_some() {
-        params
-            .get("args")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default()
-    } else {
-        existing.map(|cfg| cfg.args.clone()).unwrap_or_default()
-    };
-
-    let env: std::collections::HashMap<String, String> = if params.get("env").is_some() {
-        params
-            .get("env")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-            .unwrap_or_default()
-    } else {
-        existing.map(|cfg| cfg.env.clone()).unwrap_or_default()
-    };
-
-    let enabled = params
-        .get("enabled")
-        .and_then(|v| v.as_bool())
-        .or_else(|| existing.map(|cfg| cfg.enabled))
-        .unwrap_or(true);
-
-    let url = if params.get("url").is_some() {
-        if params.get("url").is_some_and(Value::is_null) {
-            None
-        } else {
-            params.get("url").and_then(|v| v.as_str()).map(String::from)
-        }
-    } else {
-        existing.and_then(|cfg| cfg.url.clone())
-    };
-
-    if matches!(transport, moltis_mcp::TransportType::Sse)
-        && url
-            .as_deref()
-            .is_none_or(|candidate| candidate.trim().is_empty())
-    {
-        return Err(ServiceError::message(
-            "missing 'url' parameter for 'sse' transport",
-        ));
-    }
-
-    let oauth = if let Some(v) = params.get("oauth") {
-        if v.is_null() {
-            None
-        } else {
-            let client_id = v
-                .get("client_id")
-                .and_then(|val| val.as_str())
-                .ok_or_else(|| ServiceError::message("missing 'oauth.client_id' parameter"))?
-                .to_string();
-            let auth_url = v
-                .get("auth_url")
-                .and_then(|val| val.as_str())
-                .ok_or_else(|| ServiceError::message("missing 'oauth.auth_url' parameter"))?
-                .to_string();
-            let token_url = v
-                .get("token_url")
-                .and_then(|val| val.as_str())
-                .ok_or_else(|| ServiceError::message("missing 'oauth.token_url' parameter"))?
-                .to_string();
-            let scopes: Vec<String> = v
-                .get("scopes")
-                .and_then(|s| serde_json::from_value(s.clone()).ok())
-                .unwrap_or_default();
-            Some(moltis_mcp::registry::McpOAuthConfig {
-                client_id,
-                auth_url,
-                token_url,
-                scopes,
-            })
-        }
-    } else {
-        existing.and_then(|cfg| cfg.oauth.clone())
-    };
-
-    Ok(moltis_mcp::McpServerConfig {
-        command,
-        args,
-        env,
-        enabled,
-        transport,
-        url,
-        oauth,
-    })
-}
-
+// Extract an `McpServerConfig` from JSON params.
 // ── LiveMcpService ──────────────────────────────────────────────────────────
 
 /// Live MCP service delegating to `McpManager`.
@@ -193,13 +30,21 @@ pub struct LiveMcpService {
     /// Shared tool registry for syncing MCP tools into the agent loop.
     /// Set after construction via `set_tool_registry`.
     tool_registry: RwLock<Option<Arc<RwLock<ToolRegistry>>>>,
+    config_env_overrides: HashMap<String, String>,
+    credential_store: RwLock<Option<Arc<crate::auth::CredentialStore>>>,
 }
 
 impl LiveMcpService {
-    pub fn new(manager: Arc<moltis_mcp::McpManager>) -> Self {
+    pub fn new(
+        manager: Arc<moltis_mcp::McpManager>,
+        config_env_overrides: HashMap<String, String>,
+        credential_store: Option<Arc<crate::auth::CredentialStore>>,
+    ) -> Self {
         Self {
             manager,
             tool_registry: RwLock::new(None),
+            config_env_overrides,
+            credential_store: RwLock::new(credential_store),
         }
     }
 
@@ -221,6 +66,27 @@ impl LiveMcpService {
     pub fn manager(&self) -> &Arc<moltis_mcp::McpManager> {
         &self.manager
     }
+
+    pub async fn set_credential_store(&self, credential_store: Arc<crate::auth::CredentialStore>) {
+        *self.credential_store.write().await = Some(credential_store);
+    }
+
+    async fn refresh_manager_env_overrides(&self) {
+        let credential_store = self.credential_store.read().await.clone();
+        let env_overrides = if let Some(store) = credential_store {
+            match store.get_all_env_values().await {
+                Ok(db_env_vars) => merge_env_overrides(&self.config_env_overrides, db_env_vars),
+                Err(error) => {
+                    warn!(%error, "failed to refresh MCP env overrides from credential store");
+                    self.config_env_overrides.clone()
+                },
+            }
+        } else {
+            self.config_env_overrides.clone()
+        };
+
+        self.manager.set_env_overrides(env_overrides).await;
+    }
 }
 
 #[async_trait]
@@ -241,7 +107,9 @@ impl McpService for LiveMcpService {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .map(ToOwned::to_owned);
-        let config = parse_server_config(&params, None)?;
+        let config =
+            parse_server_config(&params, None).map_err(|e| ServiceError::message(e.to_string()))?;
+        self.refresh_manager_env_overrides().await;
 
         // If a server with this name already exists, append a numeric suffix.
         let final_name = {
@@ -324,6 +192,7 @@ impl McpService for LiveMcpService {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .map(ToOwned::to_owned);
+        self.refresh_manager_env_overrides().await;
 
         match self.manager.enable_server(name).await {
             Ok(_) => {
@@ -405,6 +274,7 @@ impl McpService for LiveMcpService {
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'name' parameter".to_string())?;
+        self.refresh_manager_env_overrides().await;
 
         self.manager
             .restart_server(name)
@@ -429,7 +299,9 @@ impl McpService for LiveMcpService {
             .get(name)
             .cloned()
             .ok_or_else(|| format!("MCP server '{name}' not found"))?;
-        let config = parse_server_config(&params, Some(&existing))?;
+        let config = parse_server_config(&params, Some(&existing))
+            .map_err(|e| ServiceError::message(e.to_string()))?;
+        self.refresh_manager_env_overrides().await;
 
         self.manager
             .update_server(name, config)
@@ -452,6 +324,7 @@ impl McpService for LiveMcpService {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .ok_or_else(|| "missing 'redirectUri' parameter".to_string())?;
+        self.refresh_manager_env_overrides().await;
 
         let auth_url = self
             .manager
@@ -477,6 +350,7 @@ impl McpService for LiveMcpService {
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .ok_or_else(|| "missing 'redirectUri' parameter".to_string())?;
+        self.refresh_manager_env_overrides().await;
 
         let auth_url = self
             .manager
@@ -500,6 +374,7 @@ impl McpService for LiveMcpService {
             .get("code")
             .and_then(|v| v.as_str())
             .ok_or_else(|| "missing 'code' parameter".to_string())?;
+        self.refresh_manager_env_overrides().await;
 
         let server_name = self
             .manager
@@ -514,200 +389,9 @@ impl McpService for LiveMcpService {
             "name": server_name
         }))
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use {super::*, moltis_mcp::McpRegistry};
-
-    #[test]
-    fn parse_server_config_allows_sse_without_command() {
-        let cfg = parse_server_config(
-            &serde_json::json!({
-                "transport": "sse",
-                "url": "https://mcp.linear.app/mcp",
-                "enabled": true
-            }),
-            None,
-        );
-        assert!(
-            cfg.is_ok(),
-            "expected SSE config to parse without command, got: {cfg:?}"
-        );
-        let Ok(cfg) = cfg else {
-            panic!("SSE config unexpectedly failed to parse");
-        };
-
-        assert!(matches!(cfg.transport, moltis_mcp::TransportType::Sse));
-        assert_eq!(cfg.command, "");
-        assert_eq!(cfg.url.as_deref(), Some("https://mcp.linear.app/mcp"));
-    }
-
-    #[test]
-    fn parse_server_config_requires_command_for_stdio() {
-        let err = parse_server_config(
-            &serde_json::json!({
-                "transport": "stdio",
-                "args": ["-y", "@modelcontextprotocol/server-filesystem"]
-            }),
-            None,
-        )
-        .err();
-
-        assert_eq!(
-            err.as_ref().map(ToString::to_string).as_deref(),
-            Some("missing 'command' parameter")
-        );
-    }
-
-    #[test]
-    fn parse_server_config_requires_url_for_sse() {
-        let err = parse_server_config(
-            &serde_json::json!({
-                "transport": "sse",
-            }),
-            None,
-        )
-        .err();
-
-        assert_eq!(
-            err.as_ref().map(ToString::to_string).as_deref(),
-            Some("missing 'url' parameter for 'sse' transport")
-        );
-    }
-
-    #[test]
-    fn parse_server_config_update_preserves_existing_sse_fields() {
-        let existing = moltis_mcp::McpServerConfig {
-            transport: moltis_mcp::TransportType::Sse,
-            url: Some("https://mcp.linear.app/mcp".to_string()),
-            ..Default::default()
-        };
-
-        let cfg = parse_server_config(
-            &serde_json::json!({
-                "enabled": false
-            }),
-            Some(&existing),
-        );
-        assert!(
-            cfg.is_ok(),
-            "expected parser to preserve SSE defaults from existing config, got: {cfg:?}"
-        );
-        let Ok(cfg) = cfg else {
-            panic!("failed to parse update with inherited SSE config");
-        };
-
-        assert!(matches!(cfg.transport, moltis_mcp::TransportType::Sse));
-        assert_eq!(cfg.url.as_deref(), Some("https://mcp.linear.app/mcp"));
-        assert!(!cfg.enabled);
-    }
-
-    #[test]
-    fn parse_server_config_update_preserves_oauth_when_omitted() {
-        let existing = moltis_mcp::McpServerConfig {
-            transport: moltis_mcp::TransportType::Sse,
-            url: Some("https://mcp.linear.app/mcp".to_string()),
-            oauth: Some(moltis_mcp::McpOAuthConfig {
-                client_id: "linear-client".to_string(),
-                auth_url: "https://linear.app/oauth/authorize".to_string(),
-                token_url: "https://api.linear.app/oauth/token".to_string(),
-                scopes: vec!["read".to_string(), "write".to_string()],
-            }),
-            ..Default::default()
-        };
-
-        let cfg = parse_server_config(
-            &serde_json::json!({
-                "transport": "sse"
-            }),
-            Some(&existing),
-        );
-        assert!(
-            cfg.is_ok(),
-            "expected parser to preserve existing oauth fields, got: {cfg:?}"
-        );
-        let Ok(cfg) = cfg else {
-            panic!("failed to parse update while preserving oauth");
-        };
-
-        assert!(cfg.oauth.is_some(), "expected oauth to be preserved");
-        let Some(oauth) = cfg.oauth else {
-            panic!("oauth missing after parse");
-        };
-        assert_eq!(oauth.client_id, "linear-client");
-        assert_eq!(oauth.auth_url, "https://linear.app/oauth/authorize");
-        assert_eq!(oauth.token_url, "https://api.linear.app/oauth/token");
-        assert_eq!(oauth.scopes, vec!["read".to_string(), "write".to_string()]);
-    }
-
-    #[tokio::test]
-    async fn test_sync_mcp_tools_empty_manager() {
-        let manager = moltis_mcp::McpManager::new(McpRegistry::new());
-        let registry = Arc::new(RwLock::new(ToolRegistry::new()));
-
-        sync_mcp_tools(&manager, &registry).await;
-
-        let reg = registry.read().await;
-        assert!(reg.list_schemas().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_sync_mcp_tools_removes_stale_tools() {
-        let manager = moltis_mcp::McpManager::new(McpRegistry::new());
-        let registry = Arc::new(RwLock::new(ToolRegistry::new()));
-
-        // Manually register a fake MCP tool to simulate a stale entry.
-        {
-            let mut reg = registry.write().await;
-            reg.register_mcp(
-                Box::new(FakeTool("mcp__old__tool".into())),
-                "old".to_string(),
-            );
-        }
-
-        // Sync should remove it since there are no running MCP servers.
-        sync_mcp_tools(&manager, &registry).await;
-
-        let reg = registry.read().await;
-        assert!(reg.get("mcp__old__tool").is_none());
-    }
-
-    #[tokio::test]
-    async fn test_sync_preserves_non_mcp_tools() {
-        let manager = moltis_mcp::McpManager::new(McpRegistry::new());
-        let registry = Arc::new(RwLock::new(ToolRegistry::new()));
-
-        {
-            let mut reg = registry.write().await;
-            reg.register(Box::new(FakeTool("exec".into())));
-        }
-
-        sync_mcp_tools(&manager, &registry).await;
-
-        let reg = registry.read().await;
-        assert!(reg.get("exec").is_some());
-    }
-
-    /// Minimal AgentTool implementation for testing.
-    struct FakeTool(String);
-
-    #[async_trait]
-    impl AgentTool for FakeTool {
-        fn name(&self) -> &str {
-            &self.0
-        }
-
-        fn description(&self) -> &str {
-            "fake"
-        }
-
-        fn parameters_schema(&self) -> Value {
-            serde_json::json!({})
-        }
-
-        async fn execute(&self, _params: Value) -> Result<Value> {
-            Ok(serde_json::json!({}))
-        }
+    async fn update_request_timeout(&self, request_timeout_secs: u64) -> ServiceResult {
+        self.manager.set_request_timeout_secs(request_timeout_secs);
+        Ok(serde_json::json!({ "ok": true }))
     }
 }

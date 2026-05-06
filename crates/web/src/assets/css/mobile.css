@@ -327,12 +327,19 @@ body {
 
   .chat-toolbar {
     flex-wrap: nowrap;
-    column-gap: 6px;
-    row-gap: 6px;
+    column-gap: 4px;
+    row-gap: 4px;
     min-width: 0;
+    height: 36px !important;
     padding-left: calc(6px + var(--safe-left)) !important;
     padding-right: calc(6px + var(--safe-right)) !important;
     border-radius: 0 !important;
+  }
+
+  .chat-toolbar .model-combo-btn {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+    min-height: 0;
   }
 
   .chat-toolbar > * {
@@ -340,9 +347,24 @@ body {
   }
 
   .chat-toolbar #modelCombo {
-    flex: 1 1 auto;
     min-width: 0;
+    order: 0;
+  }
+
+  .chat-toolbar #reasoningCombo {
     order: 1;
+  }
+
+  .chat-toolbar .sandbox-toggle {
+    order: 2;
+  }
+
+  .chat-toolbar #sessionActionsMount {
+    order: 3;
+  }
+
+  .chat-toolbar #sessionHeaderToolbarMount {
+    order: 4;
   }
 
   .chat-toolbar #modelComboBtn {
@@ -351,9 +373,24 @@ body {
     justify-content: space-between;
   }
 
+  .chat-toolbar #promptMemoryToolbar {
+    min-width: 0;
+  }
+
+  .chat-toolbar #promptMemoryStatusBtn,
+  .chat-toolbar #promptMemoryRefreshBtn {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .chat-toolbar #promptMemoryStatusLabel {
+    display: none;
+  }
+
   .chat-input-row {
     padding-left: calc(6px + var(--safe-left)) !important;
     padding-right: calc(6px + var(--safe-right)) !important;
+    padding-bottom: calc(8px + var(--safe-bottom)) !important;
     border-radius: 0 !important;
   }
 
@@ -625,6 +662,34 @@ body {
   }
 }
 
+/* ── Hide secondary chat badges on mobile ── */
+
+@media (max-width: 767px) {
+  .chat-badge-desktop-only {
+    display: none !important;
+  }
+
+  .chat-toolbar #sessionActionsMount button[title="Fork session"],
+  .chat-toolbar #sessionActionsMount button[title="Clear session"] {
+    display: none !important;
+  }
+
+  .chat-toolbar .sandbox-toggle,
+  .chat-toolbar #sessionActionsMount button {
+    font-size: 0.7rem !important;
+    padding: 2px 6px !important;
+    gap: 2px !important;
+    min-height: 0 !important;
+    line-height: 1.2 !important;
+  }
+
+  .chat-toolbar .sandbox-toggle .icon,
+  .chat-toolbar #sessionActionsMount .icon {
+    width: 12px !important;
+    height: 12px !important;
+  }
+}
+
 /* ── Scrollbar on Mobile ── */
 
 @media (max-width: 767px) {
@@ -637,8 +702,19 @@ body {
 
 /* ── PWA Standalone Mode Adjustments ── */
 
+html.pwa-standalone body {
+  padding-top: 0;
+}
+
+html.pwa-standalone header {
+  padding-top: calc(8px + var(--safe-top));
+}
+
 @media (display-mode: standalone) {
-  /* Extra top padding when in standalone PWA mode */
+  body {
+    padding-top: 0;
+  }
+
   header {
     padding-top: calc(8px + var(--safe-top));
   }

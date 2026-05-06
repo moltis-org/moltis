@@ -98,7 +98,7 @@ test.describe("Onboarding Anthropic provider", () => {
 
 		await anthropicRow.getByRole("button", { name: "Configure", exact: true }).click();
 		await anthropicRow.locator("input[type='password']").first().fill(ANTHROPIC_API_KEY);
-		await anthropicRow.getByRole("button", { name: "Save & Validate", exact: true }).click();
+		await anthropicRow.getByRole("button", { name: "Save", exact: true }).click();
 
 		await expect(anthropicRow.getByText("Select preferred models", { exact: true })).toBeVisible({ timeout: 45_000 });
 		await selectModelAndSave(anthropicRow);
@@ -139,7 +139,7 @@ test.describe("Onboarding Anthropic provider", () => {
 		if (await isVisible(configureBtn)) {
 			await configureBtn.click();
 			await anthropicRow.locator("input[type='password']").first().fill(ANTHROPIC_API_KEY);
-			await anthropicRow.getByRole("button", { name: "Save & Validate", exact: true }).click();
+			await anthropicRow.getByRole("button", { name: "Save", exact: true }).click();
 			await expect(anthropicRow.getByText("Select preferred models", { exact: true })).toBeVisible({ timeout: 45_000 });
 			await expect(anthropicRow.locator(".model-card").first()).toBeVisible({ timeout: 45_000 });
 		}

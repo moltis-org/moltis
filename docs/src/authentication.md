@@ -91,7 +91,7 @@ If **any** check fails, the connection is treated as remote.
 
 - Set during initial setup or added later via Settings
 - Hashed with Argon2id before storage
-- Minimum 8 characters
+- Minimum 12 characters
 - Verified against `auth_password` table
 
 ### Passkey (WebAuthn)
@@ -101,6 +101,9 @@ If **any** check fails, the connection is treated as remote.
   Windows Hello), and cross-platform authenticators
 - Stored in `passkeys` table as serialized WebAuthn credential data
 - Multiple passkeys can be registered per instance
+- Passkeys are bound to the hostname you visit. If you add a new public host
+  later, for example a Tailscale name or ngrok URL, you may need to log in
+  with a password once and register a new passkey for that host
 
 ### Session cookie
 
@@ -150,6 +153,7 @@ are configured:
 | `/auth/callback` | OAuth callback |
 | `/manifest.json` | PWA manifest |
 | `/sw.js` | Service worker |
+| `/ws` | Node WebSocket endpoint (device token auth at protocol level) |
 
 ## Request Throttling
 
@@ -169,7 +173,8 @@ Default limits:
 | `POST /api/auth/login` | 5 requests per 60 seconds |
 | Other `/api/auth/*` | 120 requests per 60 seconds |
 | Other `/api/*` | 180 requests per 60 seconds |
-| `/ws/chat` upgrade | 30 requests per 60 seconds |
+| `/share/*` | 90 requests per 60 seconds |
+| `/ws/*` | 30 requests per 60 seconds |
 
 When a limit is exceeded:
 

@@ -6,14 +6,19 @@
 		"useIgnoreFile": true
 	},
 	"files": {
-		"includes": ["crates/web/src/assets/js/**/*.js", "crates/web/ui/**/*.js"]
+		"includes": ["crates/web/ui/src/**/*.ts", "crates/web/ui/src/**/*.tsx", "crates/web/ui/e2e/**/*.js"]
 	},
 	"linter": {
 		"enabled": true,
 		"rules": {
 			"recommended": true,
 			"a11y": {
-				"recommended": true
+				"recommended": true,
+				"noAutofocus": "warn",
+				"noLabelWithoutControl": "warn",
+				"noStaticElementInteractions": "warn",
+				"useButtonType": "warn",
+				"useKeyWithClickEvents": "warn"
 			},
 			"complexity": {
 				"recommended": true,

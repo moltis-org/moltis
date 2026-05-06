@@ -130,6 +130,7 @@ mod tests {
             session_key: "test-session".into(),
             tool_name: "exec".into(),
             arguments: serde_json::json!({"command": "ls"}),
+            channel: None,
         }
     }
 

@@ -54,7 +54,7 @@ general-purpose).
 | **Daily logs** | `memory/YYYY-MM-DD.md` | `memory/YYYY-MM-DD.md` |
 | **Session transcripts** | `memory/sessions/*.md` | Session JSONL files (separate) |
 | **Extra paths** | Via `memory_dirs` config | Via `memorySearch.extraPaths` |
-| **MEMORY.md loading** | Always available in system prompt | Only in private sessions (not group chats) |
+| **MEMORY.md loading** | Available in system prompt, with configurable live reload or frozen-per-session mode | Only in private sessions (not group chats) |
 
 ### Agent Tools
 
@@ -65,6 +65,8 @@ This is where the two systems differ most significantly in approach.
 | **memory_search** | Dedicated tool, hybrid search | Dedicated tool, hybrid search |
 | **memory_get** | Dedicated tool, by chunk ID | Dedicated tool, by path + optional line range |
 | **memory_save** | Dedicated tool with path validation | No dedicated tool |
+| **memory_forget** | LLM-guided forget flow on top of exact deletes | No dedicated tool |
+| **memory_delete** | Dedicated tool for safe forget/delete flows | No dedicated tool |
 | **General file writing** | `exec` tool (shell commands) | Generic `write_file` tool |
 | **Silent memory turn** | Pre-compaction flush via `MemoryWriter` | Pre-compaction flush via `write_file` |
 
@@ -101,11 +103,12 @@ itself has no special memory awareness -- it is a general-purpose file writer.
 The memory indexer's file watcher detects the change and re-indexes
 asynchronously (1.5s debounce).
 
-**Key difference:** Moltis uses a purpose-built `memory_save` tool with
-built-in path validation (only `MEMORY.md` and `memory/*.md` are writable)
-and immediate re-indexing. OpenClaw uses a general-purpose `write_file` tool
-that can write anywhere, relying on the system prompt to guide the agent to
-memory paths and the file watcher to re-index.
+**Key difference:** Moltis uses purpose-built `memory_save`,
+`memory_forget`, and `memory_delete` tools with built-in path validation
+(only `MEMORY.md` and `memory/*.md` are mutable) and immediate re-indexing.
+OpenClaw uses a general-purpose `write_file` tool that can write anywhere,
+relying on the system prompt to guide the agent to memory paths and the file
+watcher to re-index.
 
 ### Session Memory and Compaction
 
@@ -113,7 +116,7 @@ memory paths and the file watcher to re-index.
 |---------|--------|----------|
 | **Session storage** | SQLite database | JSONL files (append-only, tree structure) |
 | **Auto-compaction** | Yes, near context window limit | Yes, near context window limit |
-| **Manual compaction** | Not yet | `/compact` command with optional instructions |
+| **Manual compaction** | `/compact` (uses [configured compaction strategy](compaction.md#the-four-modes)) | `/compact` command with optional instructions |
 | **Pre-compaction memory flush** | Silent turn via `MemoryWriter` trait | Silent turn via `write_file` tool |
 | **Flush visibility** | Completely hidden from user | Hidden via `NO_REPLY` convention |
 | **Session export to memory** | Markdown files in `memory/sessions/` | Optional (`sessionMemory` experimental flag) |
@@ -197,8 +200,9 @@ context. The implementation differs:
 
 ## What Moltis Has That OpenClaw Does Not
 
-- **Dedicated `memory_save` tool** with path validation and immediate
-  re-indexing, reducing reliance on the system prompt for write guidance
+- **Dedicated `memory_save`, `memory_forget`, and `memory_delete` tools** with
+  path validation and immediate re-indexing, reducing reliance on the system
+  prompt for memory mutations
 - **Ollama embedding support** as a provider option
 - **Custom OpenAI-compatible embedding endpoints**
 - **Circuit breaker** with automatic fallback chain for embedding providers
@@ -207,7 +211,6 @@ context. The implementation differs:
 
 ## What OpenClaw Has That Moltis Does Not (Yet)
 
-- **Manual `/compact` command** with user-specified instructions
 - **CLI memory commands** (`status`, `index`, `search`) for debugging
 - **Session pruning** (cache-TTL based trimming of old tool results)
 - **Gemini and Voyage embedding providers**
@@ -223,9 +226,10 @@ context. The implementation differs:
 The two systems are architecturally equivalent -- both use Markdown files,
 hybrid search, and pre-compaction memory flushes. The main differences are:
 
-1. **Tool approach**: Moltis provides a purpose-built `memory_save` tool with
-   security validation; OpenClaw uses a general-purpose `write_file` tool
-   guided by the system prompt.
+1. **Tool approach**: Moltis provides purpose-built `memory_save`,
+   `memory_forget`, and `memory_delete` tools with security validation;
+   OpenClaw uses a general-purpose `write_file` tool guided by the system
+   prompt.
 
 2. **Write safety**: Moltis validates write paths at the tool level (allowlist
    + traversal checks); OpenClaw relies on workspace-level access control.

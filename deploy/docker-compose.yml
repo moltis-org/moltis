@@ -1,0 +1,19 @@
+services:
+  moltis:
+    image: ghcr.io/moltis-org/moltis:latest
+    restart: unless-stopped
+    volumes:
+      - ./data:/home/moltis/.moltis
+      - ./config:/home/moltis/.config/moltis
+      # Mount Docker socket for sandboxed command execution (optional).
+      # Remove this line if you don't need the agent to run shell commands.
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      # Set your initial password (required on first run):
+      - MOLTIS_PASSWORD=${MOLTIS_PASSWORD:-changeme}
+      # Uncomment and set these for headless provider setup:
+      # - MOLTIS_PROVIDER=anthropic
+      # - MOLTIS_API_KEY=sk-ant-...
+    ports:
+      - "13131:13131"   # Gateway (HTTPS) — web UI, API, WebSocket
+      - "13132:13132"   # HTTP — CA certificate download

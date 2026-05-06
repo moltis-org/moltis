@@ -30,9 +30,15 @@ destructive actions without consent.
 When the agent wants to run a command:
 
 1. The command is analyzed against approval policies
-2. If approval is required, the user sees a prompt in the UI
+2. If approval is required, the user sees a prompt in the UI. Channel-backed
+   sessions also receive a notification in the originating channel so the run
+   does not stall silently.
 3. The user can approve, deny, or modify the command
 4. Only approved commands execute
+
+For channel-backed sessions, operators can also use `/approvals` to list the
+pending requests for the current session, then `/approve N` or `/deny N`
+directly from Telegram or WhatsApp.
 
 ### Approval Policies
 
@@ -265,8 +271,9 @@ in Settings > Authentication), unseals automatically on login, and
 re-seals on server restart. A recovery key is provided at initialization
 for emergency access.
 
-When the vault is sealed, a middleware layer blocks API requests with
-`423 Locked` to prevent serving stale data.
+When the vault is sealed, a middleware layer blocks vault-protected API
+requests with `423 Locked`. Session history and bootstrap endpoints remain
+available because those payloads are not yet encrypted at rest.
 
 For full details on the key hierarchy, vault states, API endpoints, and
 cryptographic parameters, see [Encryption at Rest (Vault)](vault.md).
@@ -345,6 +352,7 @@ allowed.
 | Other `/api/auth/*` | 120 requests per 60 seconds |
 | Other `/api/*` | 180 requests per 60 seconds |
 | `/ws/chat` upgrade | 30 requests per 60 seconds |
+| `/ws` upgrade | 30 requests per 60 seconds |
 
 ### When Limits Are Hit
 
@@ -433,8 +441,8 @@ If HTTP works but WebSockets fail, make sure your location block includes
 ```nginx
 location / {
     proxy_pass http://172.17.0.1:13131;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Real-IP $remote_addr;
@@ -466,13 +474,19 @@ If WebSockets fail behind NPM while HTTP works, ensure:
 Use this in NPM's **Advanced** field:
 
 ```nginx
-proxy_set_header Host $host;
-proxy_set_header X-Forwarded-Host $host;
+proxy_set_header Host $http_host;
+proxy_set_header X-Forwarded-Host $http_host;
 proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection "upgrade";
 ```
+
+**Why `$http_host` instead of `$host`?** Nginx's `$host` strips the port,
+while `$http_host` preserves it. Moltis validates that the WebSocket `Origin`
+header matches the `Host` header (including port). On non-standard ports
+(e.g., `:444` instead of `:443`), using `$host` causes a mismatch and
+WebSocket connections are rejected with "cross-origin WebSocket upgrade".
 
 Upstream scheme guidance:
 
@@ -491,12 +505,29 @@ server process. In practice:
 - If a proxy rewrites `Host` and does not preserve browser host context,
   passkey routes can fail with "no passkey config for this hostname".
 
-For stable proxy deployments, set explicit WebAuthn identity to your public
-domain:
+For stable proxy deployments, set your public URL in `moltis.toml`:
+
+```toml
+[server]
+external_url = "https://chat.example.com"
+```
+
+Moltis derives the WebAuthn RP ID (domain) and origin from this URL
+automatically. The `MOLTIS_EXTERNAL_URL` environment variable takes
+precedence over the config field, which is useful for container
+deployments:
 
 ```bash
 MOLTIS_BEHIND_PROXY=true
 MOLTIS_NO_TLS=true
+MOLTIS_EXTERNAL_URL=https://chat.example.com
+```
+
+For fine-grained control (e.g. when the RP ID differs from the URL host),
+the existing env vars still work and take precedence after
+`external_url`:
+
+```bash
 MOLTIS_WEBAUTHN_RP_ID=chat.example.com
 MOLTIS_WEBAUTHN_ORIGIN=https://chat.example.com
 ```
@@ -504,7 +535,7 @@ MOLTIS_WEBAUTHN_ORIGIN=https://chat.example.com
 Migration guidance when changing host/domain:
 
 1. Keep password login enabled during migration.
-2. Deploy with the new `MOLTIS_WEBAUTHN_RP_ID`/`MOLTIS_WEBAUTHN_ORIGIN`.
+2. Deploy with the new `server.external_url` (or env var equivalent).
 3. Ask users to register a new passkey on the new host.
 4. Remove old passkeys after new-host login is confirmed.
 
@@ -564,6 +595,25 @@ Run Moltis on a private network or behind a reverse proxy with:
 
 Subscribe to security advisories and update promptly when vulnerabilities are
 disclosed.
+
+## Release Signing and Verification
+
+All release artifacts are signed with three independent methods:
+
+1. **[GitHub artifact attestations](https://github.com/moltis-org/moltis/attestations)**
+   (automated in CI) — cryptographic provenance records tied to the repository,
+   workflow, and commit SHA; provides SLSA v1.0 Build Level 2 guarantees;
+   verifiable with `gh attestation verify`
+2. **Sigstore keyless signing** (automated in CI) — proves the artifact was
+   built by the `moltis-org/moltis` GitHub Actions pipeline; recorded in
+   Sigstore's Rekor transparency log
+3. **GPG signing** (maintainer's YubiKey hardware key) — proves a specific
+   maintainer authorized the release
+
+Checksums (SHA-256 and SHA-512) are generated for every artifact.
+
+See [Release Verification](release-verification.md) for detailed verification
+instructions, artifact file extensions, and maintainer signing workflow.
 
 ## Reporting Security Issues
 
