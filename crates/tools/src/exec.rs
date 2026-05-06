@@ -636,11 +636,12 @@ impl AgentTool for ExecTool {
                         let sync_ok = if let Some(host_workspace) =
                             crate::sandbox::sync::resolve_sync_workspace(router.config(), &id)
                         {
+                            let sandbox_workspace = backend.workspace_dir_for(&id).await;
                             match crate::sandbox::sync::sync_in(
                                 &*backend,
                                 &id,
                                 &host_workspace,
-                                backend.workspace_dir(),
+                                &sandbox_workspace,
                             )
                             .await
                             {

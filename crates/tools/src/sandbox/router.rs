@@ -134,6 +134,14 @@ impl Sandbox for FailoverSandbox {
         }
     }
 
+    async fn workspace_dir_for(&self, id: &SandboxId) -> String {
+        if self.fallback_enabled().await {
+            self.fallback.workspace_dir_for(id).await
+        } else {
+            self.primary.workspace_dir_for(id).await
+        }
+    }
+
     fn is_isolated(&self) -> bool {
         if self
             .use_fallback
@@ -829,16 +837,18 @@ impl SandboxRouter {
         // Sync workspace changes back to host for isolated backends.
         if backend.is_isolated()
             && let Some(host_workspace) = super::sync::resolve_sync_workspace(&self.config, &id)
-            && let Err(e) =
-                super::sync::sync_out(&*backend, &id, &host_workspace, backend.workspace_dir())
-                    .await
         {
-            warn!(
-                session = session_key,
-                %id,
-                error = %e,
-                "workspace sync-out failed, changes in sandbox may be lost"
-            );
+            let sandbox_workspace = backend.workspace_dir_for(&id).await;
+            if let Err(e) =
+                super::sync::sync_out(&*backend, &id, &host_workspace, &sandbox_workspace).await
+            {
+                warn!(
+                    session = session_key,
+                    %id,
+                    error = %e,
+                    "workspace sync-out failed, changes in sandbox may be lost"
+                );
+            }
         }
 
         backend.cleanup(&id).await?;

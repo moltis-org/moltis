@@ -485,6 +485,15 @@ pub trait Sandbox: Send + Sync {
         SANDBOX_HOME_DIR
     }
 
+    /// Workspace directory for a specific prepared session.
+    ///
+    /// Most backends use a fixed directory and can rely on the default.
+    /// Backends whose API returns a per-session project directory override
+    /// this so workspace sync uses the same path as command execution.
+    async fn workspace_dir_for(&self, _id: &SandboxId) -> String {
+        self.workspace_dir().to_string()
+    }
+
     /// Whether this backend manages an isolated filesystem that requires
     /// workspace sync (copy-in on setup, patch extraction on cleanup).
     ///

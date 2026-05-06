@@ -11,7 +11,10 @@
 //! tarball, uploaded to the sandbox, and extracted there. The reverse for
 //! sync-out.
 
-use std::path::Path;
+use std::{
+    io::{self, Cursor},
+    path::{Component, Path, PathBuf},
+};
 
 use tracing::{debug, warn};
 
@@ -178,7 +181,7 @@ pub async fn sync_out(
 pub fn resolve_sync_workspace(
     config: &super::types::SandboxConfig,
     id: &SandboxId,
-) -> Option<std::path::PathBuf> {
+) -> Option<PathBuf> {
     use super::{
         paths::{detected_container_cli, sandbox_home_persistence_host_dir},
         types::sanitize_path_component,
@@ -225,44 +228,174 @@ async fn create_tar_gz(dir: &Path) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-/// Extract a gzipped tarball into a directory.
-/// Uses the host `tar` command (available on Linux and macOS).
 async fn extract_tar_gz(dir: &Path, tar_bytes: &[u8]) -> Result<()> {
-    use tokio::io::AsyncWriteExt;
+    std::fs::create_dir_all(dir)
+        .map_err(|e| Error::message(format!("sync: failed to create extract dir: {e}")))?;
 
-    let mut child = tokio::process::Command::new("tar")
-        .args(["-xzf", "-", "-C"])
-        .arg(dir)
-        .stdin(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| Error::message(format!("sync: failed to spawn tar: {e}")))?;
+    let decoder = flate2::read::GzDecoder::new(Cursor::new(tar_bytes));
+    let mut archive = tar::Archive::new(decoder);
+    let entries = archive
+        .entries()
+        .map_err(|e| Error::message(format!("sync: failed to read tar entries: {e}")))?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(tar_bytes)
-            .await
-            .map_err(|e| Error::message(format!("sync: failed to write tar data: {e}")))?;
+    for entry in entries {
+        let mut entry =
+            entry.map_err(|e| Error::message(format!("sync: failed to read tar entry: {e}")))?;
+        let path = entry
+            .path()
+            .map_err(|e| Error::message(format!("sync: invalid tar path: {e}")))?;
+        let path = path.into_owned();
+        let Some(relative_path) = validate_tar_path(&path)? else {
+            continue;
+        };
+
+        match entry.header().entry_type() {
+            tar::EntryType::Directory => ensure_directory(dir, &relative_path)?,
+            tar::EntryType::Regular => {
+                ensure_parent_directory(dir, &relative_path)?;
+                let target = dir.join(&relative_path);
+                reject_existing_symlink(&target)?;
+                let mut file = std::fs::File::create(&target).map_err(|e| {
+                    Error::message(format!(
+                        "sync: failed to create extracted file '{}': {e}",
+                        target.display()
+                    ))
+                })?;
+                io::copy(&mut entry, &mut file).map_err(|e| {
+                    Error::message(format!(
+                        "sync: failed to write extracted file '{}': {e}",
+                        target.display()
+                    ))
+                })?;
+            },
+            other => {
+                return Err(Error::message(format!(
+                    "sync: refusing unsupported tar entry type {other:?} for '{}'",
+                    path.display()
+                )));
+            },
+        }
     }
 
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| Error::message(format!("sync: tar extraction failed: {e}")))?;
+    Ok(())
+}
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(Error::message(format!(
-            "sync: tar extraction failed: {stderr}"
-        )));
+fn validate_tar_path(path: &Path) -> Result<Option<PathBuf>> {
+    let mut relative = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => relative.push(part),
+            Component::CurDir => {},
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(Error::message(format!(
+                    "sync: refusing unsafe tar path '{}'",
+                    path.display()
+                )));
+            },
+        }
+    }
+
+    if relative.as_os_str().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(relative))
+    }
+}
+
+fn ensure_directory(root: &Path, relative_path: &Path) -> Result<()> {
+    let mut current = root.to_path_buf();
+    for component in relative_path.components() {
+        let Component::Normal(part) = component else {
+            return Err(Error::message(format!(
+                "sync: refusing unsafe directory path '{}'",
+                relative_path.display()
+            )));
+        };
+        current.push(part);
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(Error::message(format!(
+                    "sync: refusing to extract through symlink '{}'",
+                    current.display()
+                )));
+            },
+            Ok(metadata) if metadata.is_dir() => {},
+            Ok(_) => {
+                return Err(Error::message(format!(
+                    "sync: refusing to replace non-directory '{}'",
+                    current.display()
+                )));
+            },
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current).map_err(|e| {
+                    Error::message(format!(
+                        "sync: failed to create directory '{}': {e}",
+                        current.display()
+                    ))
+                })?;
+            },
+            Err(e) => {
+                return Err(Error::message(format!(
+                    "sync: failed to inspect directory '{}': {e}",
+                    current.display()
+                )));
+            },
+        }
     }
     Ok(())
+}
+
+fn ensure_parent_directory(root: &Path, relative_path: &Path) -> Result<()> {
+    if let Some(parent) = relative_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        ensure_directory(root, parent)?;
+    }
+    Ok(())
+}
+
+fn reject_existing_symlink(path: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(Error::message(format!(
+            "sync: refusing to overwrite symlink '{}'",
+            path.display()
+        ))),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(Error::message(format!(
+            "sync: failed to inspect '{}': {e}",
+            path.display()
+        ))),
+    }
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    fn tar_gz_with_file(path: &str, content: &[u8]) -> Vec<u8> {
+        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(enc);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(content.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive.append_data(&mut header, path, content).unwrap();
+        archive.into_inner().and_then(|enc| enc.finish()).unwrap()
+    }
+
+    fn tar_gz_with_raw_file_path(path: &[u8], content: &[u8]) -> Vec<u8> {
+        let enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut archive = tar::Builder::new(enc);
+        let mut header = tar::Header::new_gnu();
+        header.as_mut_bytes()[..path.len()].copy_from_slice(path);
+        header.set_size(content.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        archive.append(&header, content).unwrap();
+        archive.into_inner().and_then(|enc| enc.finish()).unwrap()
+    }
 
     #[test]
     fn test_is_dir_empty_nonexistent() {
@@ -310,5 +443,29 @@ mod tests {
             std::fs::read_to_string(dst.path().join("subdir/nested.txt")).unwrap(),
             "nested content"
         );
+    }
+
+    #[tokio::test]
+    async fn test_extract_rejects_parent_traversal() {
+        let dst = tempfile::tempdir().unwrap();
+        let tar_bytes = tar_gz_with_raw_file_path(b"../escape.txt", b"nope");
+        let result = extract_tar_gz(dst.path(), &tar_bytes).await;
+        assert!(result.is_err());
+        assert!(!dst.path().join("../escape.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_extract_rejects_existing_symlink_target() {
+        let dst = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let outside_file = outside.path().join("target.txt");
+        std::fs::write(&outside_file, "original").unwrap();
+        std::os::unix::fs::symlink(&outside_file, dst.path().join("link.txt")).unwrap();
+
+        let tar_bytes = tar_gz_with_file("link.txt", b"overwrite");
+        let result = extract_tar_gz(dst.path(), &tar_bytes).await;
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(outside_file).unwrap(), "original");
     }
 }

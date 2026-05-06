@@ -7,8 +7,9 @@ use std::{path::PathBuf, sync::Mutex};
 
 use super::{
     config_io::{
-        apply_env_overrides_with, parse_config, parse_env_value, resubstitute_config,
-        save_user_config_to_path, set_nested, strip_default_values,
+        apply_env_overrides_with, apply_env_overrides_without_aliases, parse_config,
+        parse_env_value, resubstitute_config, save_user_config_to_path, set_nested,
+        strip_default_values,
     },
     *,
 };

@@ -1091,3 +1091,16 @@ fn apply_env_overrides_alias_does_not_overwrite_explicit() {
         "explicit config should take precedence over env alias"
     );
 }
+
+#[test]
+fn apply_env_overrides_without_aliases_keeps_third_party_env_out() {
+    let vars = vec![
+        ("VERCEL_TOKEN".into(), "ver_secret".into()),
+        ("DAYTONA_API_KEY".into(), "dyt_secret".into()),
+        ("MOLTIS_AUTH__DISABLED".into(), "true".into()),
+    ];
+    let config = apply_env_overrides_without_aliases(MoltisConfig::default(), vars.into_iter());
+    assert!(config.auth.disabled);
+    assert!(config.tools.exec.sandbox.vercel_token.is_none());
+    assert!(config.tools.exec.sandbox.daytona_api_key.is_none());
+}

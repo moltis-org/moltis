@@ -358,24 +358,35 @@ impl FirecrackerSandbox {
         let quoted_cwd = cwd.replace('\'', "'\\''");
         let full_cmd = format!("cd '{quoted_cwd}' && {command}");
 
-        let output = tokio::process::Command::new("ssh")
-            .args([
-                "-i",
-                &ssh_key.display().to_string(),
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                "UserKnownHostsFile=/dev/null",
-                "-o",
-                "BatchMode=yes",
-                &format!("{GUEST_USER}@{guest_ip}"),
-                "sh",
-                "-c",
-                &full_cmd,
-            ])
-            .output()
-            .await
-            .map_err(|e| Error::message(format!("firecracker: SSH run failed: {e}")))?;
+        let output = tokio::time::timeout(
+            opts.timeout,
+            tokio::process::Command::new("ssh")
+                .args([
+                    "-i",
+                    &ssh_key.display().to_string(),
+                    "-o",
+                    "StrictHostKeyChecking=no",
+                    "-o",
+                    "UserKnownHostsFile=/dev/null",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    "ConnectTimeout=5",
+                    &format!("{GUEST_USER}@{guest_ip}"),
+                    "sh",
+                    "-c",
+                    &full_cmd,
+                ])
+                .output(),
+        )
+        .await
+        .map_err(|_| {
+            Error::message(format!(
+                "firecracker: SSH command timed out after {}s",
+                opts.timeout.as_secs()
+            ))
+        })?
+        .map_err(|e| Error::message(format!("firecracker: SSH run failed: {e}")))?;
 
         let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
