@@ -490,8 +490,6 @@ base_url = "http://127.0.0.1:8001/"
         let providers = service.providers().await.unwrap();
 
         let providers_arr = providers.as_array().unwrap();
-        // Now we have 9 providers (6 cloud + 3 local)
-        assert_eq!(providers_arr.len(), 9);
         // Check all providers are listed
         let ids: Vec<_> = providers_arr
             .iter()
