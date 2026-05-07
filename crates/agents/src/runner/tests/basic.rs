@@ -571,16 +571,36 @@ async fn test_hook_modified_tool_args_are_revalidated_before_execute() {
     assert_eq!(result.tool_calls_made, 1);
 
     let evts = events.lock().unwrap();
-    assert!(evts.iter().any(|event| {
-        matches!(
-            event,
-            RunnerEvent::ToolCallRejected {
-                name,
-                error,
-                ..
-            } if name == "exec" && error.contains("Missing required field(s): `command`")
+    let start_index = evts
+        .iter()
+        .position(
+            |event| matches!(event, RunnerEvent::ToolCallStart { name, .. } if name == "exec"),
         )
-    }));
+        .expect("hook-modified call should emit ToolCallStart before hook dispatch");
+    let end_index = evts
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                RunnerEvent::ToolCallEnd {
+                    name,
+                    success: false,
+                    error: Some(error),
+                    ..
+                } if name == "exec" && error.contains("Missing required field(s): `command`")
+            )
+        })
+        .expect("hook-modified validation failure should close the started tool span");
+    assert!(
+        start_index < end_index,
+        "ToolCallEnd should follow ToolCallStart"
+    );
+    assert!(
+        !evts
+            .iter()
+            .any(|event| matches!(event, RunnerEvent::ToolCallRejected { .. })),
+        "post-start validation failures should not emit ToolCallRejected"
+    );
 }
 
 /// Test that non-native providers can still execute tools via text parsing.

@@ -580,7 +580,7 @@ pub async fn run_agent_loop_with_context(
                                             false,
                                             serde_json::json!({ "error": err_str.clone() }),
                                             Some(err_str),
-                                            true,
+                                            false,
                                         );
                                     }
                                 }
