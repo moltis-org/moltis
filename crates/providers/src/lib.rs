@@ -24,6 +24,8 @@ pub mod ollama;
 pub mod openai;
 #[cfg(feature = "provider-openai-codex")]
 pub mod openai_codex;
+#[cfg(feature = "provider-openai-codex")]
+pub mod openai_codex_image;
 pub mod openai_compat;
 pub mod opencode_zen;
 pub mod registry;

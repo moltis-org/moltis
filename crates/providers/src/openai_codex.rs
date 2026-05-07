@@ -75,7 +75,7 @@ impl OpenAiCodexProvider {
         }
     }
 
-    async fn get_valid_tokens(&self) -> anyhow::Result<moltis_oauth::OAuthTokens> {
+    pub(crate) async fn get_valid_tokens(&self) -> anyhow::Result<moltis_oauth::OAuthTokens> {
         let tokens = self
             .token_store
             .load("openai-codex")
@@ -166,7 +166,7 @@ impl OpenAiCodexProvider {
         Self::extract_account_id_from_claims(&claims)
     }
 
-    fn resolve_account_id(tokens: &moltis_oauth::OAuthTokens) -> anyhow::Result<String> {
+    pub(crate) fn resolve_account_id(tokens: &moltis_oauth::OAuthTokens) -> anyhow::Result<String> {
         if let Some(account_id) = tokens
             .account_id
             .as_ref()

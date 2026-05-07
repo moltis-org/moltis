@@ -941,6 +941,9 @@ pub(super) async fn complete_startup(
                 .with_sandbox_router(Arc::clone(&sandbox_router)),
         ));
         tool_registry.register(Box::new(
+            moltis_tools::image_generation::GenerateImageTool::new(),
+        ));
+        tool_registry.register(Box::new(
             moltis_tools::send_document::SendDocumentTool::new()
                 .with_sandbox_router(Arc::clone(&sandbox_router))
                 .with_session_store(Arc::clone(&session_store)),

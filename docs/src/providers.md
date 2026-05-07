@@ -162,6 +162,12 @@ automatic callback capture fails, the CLI prompts you to paste the callback URL
 Tokens are saved to the config volume and picked up by the gateway automatically.
 ```
 
+Once OpenAI Codex OAuth is connected, agents can use the built-in
+`generate_image` tool to create `gpt-image-2` images without an `OPENAI_API_KEY`.
+Generated images are delivered through the same channel media path as
+screenshots and `send_image`, so supported chat channels receive the image as a
+native attachment.
+
 ### GitHub Copilot
 
 GitHub Copilot uses OAuth authentication.
