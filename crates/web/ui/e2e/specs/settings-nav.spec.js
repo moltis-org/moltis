@@ -184,6 +184,7 @@ test.describe("Settings navigation", () => {
 		{ id: "environment", heading: "Environment" },
 		{ id: "crons", heading: "Cron Jobs" },
 		{ id: "voice", heading: "Voice" },
+		{ id: "phone", heading: "Phone" },
 		{ id: "security", heading: "Security" },
 		{ id: "ssh", heading: "SSH" },
 		{ id: "remote-access", heading: "Remote Access" },
@@ -1276,6 +1277,7 @@ test.describe("Settings navigation", () => {
 		const expected = [...expectedPrefix];
 		if (navItems.includes("OpenClaw Import")) expected.push("OpenClaw Import");
 		if (navItems.includes("Voice")) expected.push("Voice");
+		if (navItems.includes("Phone")) expected.push("Phone");
 		expected.push(...expectedSystem);
 		if (navItems.includes("GraphQL")) expected.push("GraphQL");
 		expected.push("Configuration");

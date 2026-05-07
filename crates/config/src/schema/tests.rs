@@ -499,7 +499,6 @@ fn channels_config_defaults_offered() {
         "matrix".to_string(),
         "nostr".to_string(),
         "signal".to_string(),
-        "telephony".to_string(),
     ]);
 }
 
@@ -515,7 +514,6 @@ fn channels_config_empty_toml_defaults_offered() {
         "matrix".to_string(),
         "nostr".to_string(),
         "signal".to_string(),
-        "telephony".to_string(),
     ]);
 }
 

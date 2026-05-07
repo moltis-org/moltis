@@ -13,21 +13,18 @@ pub const TELEPHONY_SAMPLE_RATE: u32 = 8000;
 /// Uses the ITU-T G.711 algorithm with a bias of 0x84 (132).
 #[must_use]
 pub fn pcm_to_mulaw(sample: i16) -> u8 {
-    const BIAS: i16 = 0x84;
-    const CLIP: i16 = 32635;
+    const BIAS: i32 = 0x84;
+    const CLIP: i32 = 32635;
 
     // Table of mu-law segment positions.
-    const SEG_END: [i16; 8] = [0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF];
+    const SEG_END: [i32; 8] = [0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF, 0x1FFF, 0x3FFF, 0x7FFF];
 
-    let sign = if sample >= 0 {
-        0xFF_u8
-    } else {
+    let mut pcm_val = i32::from(sample);
+    let mask = if pcm_val < 0 {
+        pcm_val = -pcm_val;
         0x7F_u8
-    };
-    let mut pcm_val = if sample < 0 {
-        -sample
     } else {
-        sample
+        0xFF_u8
     };
 
     if pcm_val > CLIP {
@@ -46,19 +43,8 @@ pub fn pcm_to_mulaw(sample: i16) -> u8 {
         }
     }
 
-    let seg_u8 = seg as u8;
-    if seg >= 8 {
-        return sign ^ 0x7F;
-    }
-
-    let mantissa = if seg >= 1 {
-        (pcm_val >> (seg + 3)) & 0x0F
-    } else {
-        (pcm_val >> 4) & 0x0F
-    };
-
-    let byte = sign ^ ((seg_u8 << 4) | mantissa as u8);
-    byte ^ 0xFF
+    let mantissa = (pcm_val >> (seg + 3)) & 0x0F;
+    ((seg as u8) << 4 | mantissa as u8) ^ mask
 }
 
 /// Convert a buffer of 16-bit PCM samples (little-endian) to mu-law bytes.
@@ -106,14 +92,15 @@ mod tests {
 
     #[test]
     fn silence_encodes_consistently() {
-        // PCM 0 (silence) should produce a consistent mu-law value.
-        // The exact value depends on the bias; just verify it's stable.
-        let a = pcm_to_mulaw(0);
-        let b = pcm_to_mulaw(0);
-        assert_eq!(a, b);
-        // Low-amplitude values should encode without panicking.
-        let _pos = pcm_to_mulaw(1);
-        let _neg = pcm_to_mulaw(-1);
+        assert_eq!(pcm_to_mulaw(0), 0xFF);
+        assert_eq!(pcm_to_mulaw(1), 0xFF);
+        assert_eq!(pcm_to_mulaw(-1), 0x7F);
+    }
+
+    #[test]
+    fn clips_extreme_samples_without_overflow() {
+        assert_eq!(pcm_to_mulaw(i16::MAX), 0x80);
+        assert_eq!(pcm_to_mulaw(i16::MIN), 0x00);
     }
 
     #[test]

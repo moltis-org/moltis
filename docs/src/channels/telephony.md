@@ -7,6 +7,8 @@ Moltis can make and receive phone calls, enabling voice-based AI conversations o
 | Provider | Status | Features |
 |----------|--------|----------|
 | **Twilio** | Supported | Outbound calls, inbound calls, TTS, speech recognition, DTMF |
+| **Telnyx** | Supported | Outbound calls, inbound calls |
+| **Plivo** | Supported | Outbound calls, inbound calls |
 
 ## Quick Start
 
@@ -16,17 +18,25 @@ Moltis can make and receive phone calls, enabling voice-based AI conversations o
 2. Get your **Account SID** and **Auth Token** from the dashboard
 3. Buy or provision a phone number with Voice capability
 
-### 2. Configure in moltis.toml
+### 2. Configure Phone Settings
+
+Open the web UI and go to **Settings > Phone**. Choose a provider, save its credentials, set the
+caller phone number, and configure a public HTTPS webhook URL.
+
+For TOML-managed settings, keep phone configuration under `[phone]`. Credentials are best stored
+through **Settings > Phone** so they live in the credential store instead of plain TOML:
 
 ```toml
-[channels.telephony.default]
+[phone]
+enabled = true
 provider = "twilio"
-account_sid = "$TWILIO_ACCOUNT_SID"
-auth_token = "$TWILIO_AUTH_TOKEN"
-from_number = "+15551234567"        # Your Twilio phone number (E.164)
-```
+inbound_policy = "allowlist"
+allowlist = ["+15559876543"]
 
-Or configure via the web UI: **Settings > Channels > Connect Phone Calls**.
+[phone.twilio]
+from_number = "+15551234567"        # Your Twilio phone number (E.164)
+webhook_url = "https://your-domain.com"
+```
 
 ### 3. Start the Gateway
 
@@ -34,39 +44,34 @@ Or configure via the web UI: **Settings > Channels > Connect Phone Calls**.
 moltis gateway
 ```
 
-The telephony channel starts automatically with the gateway.
+The phone integration starts automatically with the gateway when `[phone]` is enabled and the active
+provider has complete credentials.
 
 ## Configuration Reference
 
 ```toml
-[channels.telephony.<account-name>]
-provider = "twilio"                    # Provider backend (currently only "twilio")
-account_sid = "AC..."                  # Twilio Account SID
-auth_token = "..."                     # Twilio Auth Token
-from_number = "+15551234567"           # Outbound caller ID (E.164)
-to_number = "+15559876543"             # Default destination (optional)
-
-# Webhook settings
-webhook_url = "https://your-domain.com"  # Public URL for Twilio callbacks
-webhook_port = 3334                      # Webhook listener port
-
-# Call settings
-max_duration_secs = 3600               # Max call duration (default: 1 hour)
-notify_hangup_delay_secs = 3           # Delay before hangup in notify mode
-
-# Access control
+[phone]
+enabled = true                         # Enable phone calls globally
+provider = "twilio"                    # twilio | telnyx | plivo
 inbound_policy = "disabled"            # disabled | allowlist | open
 allowlist = ["+15559876543"]           # Allowed inbound callers (E.164)
+max_duration_secs = 3600               # Max call duration (default: 1 hour)
 
-# Voice settings
-voice_id = "Polly.Joanna"             # TTS voice ID
-tts_provider = "elevenlabs"           # Override TTS provider
+[phone.twilio]
+from_number = "+15551234567"            # Outbound caller ID (E.164)
+webhook_url = "https://your-domain.com" # Public URL for provider callbacks
 
-# Agent routing
-model = "claude-sonnet-4-20250514"                     # LLM model for conversations
-model_provider = "anthropic"           # Model provider
-agent_id = "main"                      # Agent ID for call handling
+[phone.telnyx]
+from_number = "+15551234567"
+webhook_url = "https://your-domain.com"
+
+[phone.plivo]
+from_number = "+15551234567"
+webhook_url = "https://your-domain.com"
 ```
+
+The gateway still runs telephony through its internal channel plugin, but phone setup is deliberately
+separate from normal channel accounts in the UI.
 
 ## Call Modes
 
@@ -99,7 +104,7 @@ Available actions:
 
 ```bash
 moltis voice-call call --to +15559876543 --message "Hello"
-moltis voice-call status <call-id>
+moltis voice-call status [call-id]
 moltis voice-call end <call-id>
 moltis voice-call setup
 ```
@@ -128,7 +133,7 @@ Configure these in your Twilio phone number settings, or they are set automatica
 
 - **Webhook verification**: Twilio webhooks are verified using HMAC-SHA1 signature validation
 - **Inbound access control**: Phone numbers can be restricted via allowlist
-- **Credential storage**: Account SID and Auth Token are stored as secrets (never logged or exposed in API responses)
+- **Credential storage**: Provider credentials are stored in the credential store when configured from Settings > Phone
 - **Max duration**: Calls are automatically terminated after the configured max duration
 
 ## Audio Pipeline

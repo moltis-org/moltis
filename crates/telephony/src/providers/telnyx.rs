@@ -528,8 +528,10 @@ mod tests {
         let provider = TelnyxProvider::new(Secret::new("key".into()), "conn".into())
             .with_public_key("aabbccdd00112233445566778899aabb00112233445566778899aabbccddeeff");
         let result = provider.verify_webhook("https://example.com", &HeaderMap::new(), b"body");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("missing"));
+        match result {
+            Ok(()) => panic!("missing headers should fail verification"),
+            Err(error) => assert!(error.to_string().contains("missing")),
+        }
     }
 
     #[test]

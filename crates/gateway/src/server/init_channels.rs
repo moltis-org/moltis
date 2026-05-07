@@ -192,6 +192,15 @@ pub(crate) async fn init_channels(
     let mut pending_starts: Vec<(String, String, serde_json::Value)> = Vec::new();
     let mut queued: HashSet<(String, String)> = HashSet::new();
 
+    #[cfg(feature = "telephony")]
+    if let Some((account_id, account_config)) = crate::methods::phone::phone_channel_account(config)
+    {
+        let key = ("telephony".to_string(), account_id.clone());
+        if registry.get("telephony").is_some() && queued.insert(key) {
+            pending_starts.push(("telephony".to_string(), account_id, account_config));
+        }
+    }
+
     for (channel_type, accounts) in config.channels.all_channel_configs() {
         if registry.get(channel_type).is_none() {
             if !accounts.is_empty() {

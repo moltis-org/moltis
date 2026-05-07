@@ -80,7 +80,6 @@ export function ChannelTypeSelector({ onSelect, offered }: ChannelTypeSelectorPr
 			["matrix", "icon-matrix", "Matrix"],
 			["nostr", "icon-nostr", "Nostr"],
 			["signal", "icon-signal", "Signal"],
-			["telephony", "icon-phone", "Phone Calls"],
 		] as [string, string, string][]
 	).filter(([type]) => offered.has(type));
 
@@ -111,7 +110,6 @@ export function channelDisplayLabel(type: string): string {
 	if (type === "matrix") return "Matrix";
 	if (type === "nostr") return "Nostr";
 	if (type === "signal") return "Signal";
-	if (type === "telephony") return "Phone Calls";
 	return "Telegram";
 }
 
@@ -781,116 +779,6 @@ export function SignalForm({ onConnected, error, setError }: ChannelFormProps): 
 			{error && <div className="text-xs text-[var(--error)]">{error}</div>}
 			<button type="submit" className="provider-btn self-start" disabled={saving}>
 				{saving ? "Connecting\u2026" : "Connect Signal"}
-			</button>
-		</form>
-	);
-}
-
-// ── Telephony (Phone Calls) form ──────────────────────────────
-
-export function TelephonyForm({ onConnected, error, setError }: ChannelFormProps): VNode {
-	const [accountSid, setAccountSid] = useState("");
-	const [authToken, setAuthToken] = useState("");
-	const [fromNumber, setFromNumber] = useState("");
-	const [advancedConfig, setAdvancedConfig] = useState("");
-	const [saving, setSaving] = useState(false);
-
-	function onSubmit(e: Event): void {
-		e.preventDefault();
-		if (!accountSid.trim()) {
-			setError("Twilio Account SID is required.");
-			return;
-		}
-		if (!authToken.trim()) {
-			setError("Twilio Auth Token is required.");
-			return;
-		}
-		if (!fromNumber.trim()) {
-			setError("Phone number is required in E.164 format (e.g. +15551234567).");
-			return;
-		}
-		if (!fromNumber.trim().startsWith("+")) {
-			setError("Phone number must be in E.164 format (start with +).");
-			return;
-		}
-		const advPatch = parseChannelConfigPatch(advancedConfig);
-		if (!advPatch.ok) {
-			setError(advPatch.error);
-			return;
-		}
-		setError(null);
-		setSaving(true);
-		const config: Record<string, unknown> = {
-			provider: "twilio",
-			account_sid: accountSid.trim(),
-			auth_token: authToken.trim(),
-			from_number: fromNumber.trim(),
-			...advPatch.value,
-		};
-		addChannel("telephony", "default", config as Parameters<typeof addChannel>[2]).then((res: unknown) => {
-			setSaving(false);
-			const r = res as
-				| {
-						ok?: boolean;
-						error?: { message?: string; detail?: string };
-				  }
-				| undefined;
-			if (r?.ok) {
-				onConnected(fromNumber.trim(), "telephony");
-			} else {
-				setError(r?.error?.message || r?.error?.detail || "Failed to connect.");
-			}
-		});
-	}
-
-	return (
-		<form className="flex flex-col gap-3" onSubmit={onSubmit}>
-			<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1.5">
-				<span className="font-medium text-[var(--text-strong)]">Twilio Phone Calls</span>
-				<span>
-					Make and receive phone calls via{" "}
-					<a
-						href="https://www.twilio.com/console"
-						target="_blank"
-						rel="noopener"
-						className="text-[var(--accent)] underline"
-					>
-						Twilio
-					</a>
-					. You need an Account SID, Auth Token, and a phone number with Voice capability.
-				</span>
-			</div>
-			<label className="text-xs text-[var(--muted)]">Account SID</label>
-			<input
-				type="text"
-				className="channel-input"
-				value={accountSid}
-				onInput={(e) => setAccountSid(targetValue(e))}
-				placeholder="AC..."
-				name="twilio_account_sid"
-			/>
-			<label className="text-xs text-[var(--muted)]">Auth Token</label>
-			<input
-				type="password"
-				className="channel-input"
-				value={authToken}
-				onInput={(e) => setAuthToken(targetValue(e))}
-				placeholder="Auth token"
-				name="twilio_auth_token"
-			/>
-			<label className="text-xs text-[var(--muted)]">Phone Number (E.164)</label>
-			<input
-				type="text"
-				className="channel-input"
-				value={fromNumber}
-				onInput={(e) => setFromNumber(targetValue(e))}
-				placeholder="+15551234567"
-				name="twilio_from_number"
-			/>
-			<AdvancedConfigPatchField value={advancedConfig} onInput={setAdvancedConfig} />
-			{error && <div className="text-xs text-[var(--error)]">{error}</div>}
-			<button type="submit" className="provider-btn self-start" disabled={saving}>
-				{saving ? "Connecting\u2026" : "Connect Phone Calls"}
 			</button>
 		</form>
 	);

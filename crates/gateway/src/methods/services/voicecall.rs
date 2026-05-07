@@ -125,17 +125,27 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         ErrorShape::new("not_configured", "no call manager for account")
                     })?;
 
-                    let webhook_base = ctx
-                        .state
-                        .config
-                        .server
-                        .effective_external_url()
-                        .unwrap_or_default();
+                    let webhook_base = plugin
+                        .account_config_json(&account_id)
+                        .and_then(|config| {
+                            config["webhook_url"]
+                                .as_str()
+                                .map(str::trim)
+                                .filter(|value| !value.is_empty())
+                                .map(ToOwned::to_owned)
+                        })
+                        .or_else(|| ctx.state.config.server.effective_external_url())
+                        .ok_or_else(|| {
+                            ErrorShape::new(
+                                "not_configured",
+                                "phone webhook_url or server.external_url is required to initiate calls",
+                            )
+                        })?;
 
                     let status_url =
-                        format!("{webhook_base}/api/channels/telephony/{account_id}/status");
+                        format!("{}/api/channels/telephony/{account_id}/status", webhook_base.trim_end_matches('/'));
                     let answer_url =
-                        format!("{webhook_base}/api/channels/telephony/{account_id}/answer");
+                        format!("{}/api/channels/telephony/{account_id}/answer", webhook_base.trim_end_matches('/'));
 
                     let manager = mgr.read().await;
                     let call_id = manager
@@ -277,16 +287,27 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     let provider = ctx.params["provider"]
                         .as_str()
                         .ok_or_else(|| ErrorShape::new("invalid_params", "missing provider"))?;
-                    let account_sid = ctx.params["account_sid"].as_str().unwrap_or("");
-                    let auth_token = ctx.params["auth_token"].as_str().unwrap_or("");
+                    let primary_credential =
+                        ctx.params["account_sid"].as_str().unwrap_or("").trim();
+                    let secondary_credential =
+                        ctx.params["auth_token"].as_str().unwrap_or("").trim();
+                    if !matches!(provider, "twilio" | "telnyx" | "plivo") {
+                        return Err(ErrorShape::new("invalid_params", "unknown phone provider"));
+                    }
+                    if primary_credential.is_empty() || secondary_credential.is_empty() {
+                        return Err(ErrorShape::new(
+                            "invalid_params",
+                            "both phone provider credential fields are required",
+                        ));
+                    }
 
                     let store = crate::provider_setup::KeyStore::new();
                     let store_key = phone::phone_key_store_name(provider);
                     store
                         .save_config(
                             &store_key,
-                            Some(account_sid.to_string()),
-                            Some(auth_token.to_string()),
+                            Some(primary_credential.to_string()),
+                            Some(secondary_credential.to_string()),
                             None,
                         )
                         .map_err(|e| ErrorShape::new("storage_error", e.to_string()))?;
@@ -294,8 +315,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     moltis_config::update_config(|cfg| {
                         cfg.phone.enabled = true;
                         cfg.phone.provider = provider.to_string();
-                        cfg.phone.twilio.account_sid = None;
-                        cfg.phone.twilio.auth_token = None;
+                        phone::clear_inline_phone_credentials(cfg, provider);
                         phone::apply_phone_provider_settings(cfg, provider, &ctx.params);
                     })
                     .map_err(|e| ErrorShape::new("config_error", e.to_string()))?;
@@ -354,6 +374,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .map_err(|e| ErrorShape::new("storage_error", e.to_string()))?;
 
                     moltis_config::update_config(|cfg| {
+                        phone::clear_inline_phone_credentials(cfg, provider);
                         if cfg.phone.provider == provider {
                             cfg.phone.enabled = false;
                             cfg.phone.provider = String::new();

@@ -2,7 +2,7 @@
 //!
 //! Returns a configurable canned transcript without network calls.
 
-use {async_trait::async_trait, bytes::Bytes};
+use async_trait::async_trait;
 
 use super::{SttProvider, TranscribeRequest, Transcript};
 
@@ -47,7 +47,7 @@ impl SttProvider for MockStt {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::tts::AudioFormat};
+    use {super::*, crate::tts::AudioFormat, bytes::Bytes};
 
     #[tokio::test]
     async fn mock_stt_returns_canned_text() {

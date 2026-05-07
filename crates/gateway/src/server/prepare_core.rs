@@ -39,6 +39,7 @@ use {
 };
 mod log_persistence;
 mod post_state;
+mod tool_registration;
 /// Prepare the core gateway: load config, run migrations, wire services,
 /// spawn background tasks, and return the core state without any HTTP layer.
 /// This is the transport-agnostic initialisation. Non-HTTP consumers (TUI,
@@ -118,6 +119,8 @@ pub async fn prepare_gateway_core(
     // store the TOML entries are cleared and subsequent runs are a no-op.
     #[cfg(feature = "voice")]
     crate::voice::migrate_voice_keys_to_key_store(&config);
+    #[cfg(feature = "telephony")]
+    crate::methods::phone::merge_phone_keys(&mut config);
 
     // Merge any previously saved API keys into the provider config so they
     // survive gateway restarts without requiring env vars.

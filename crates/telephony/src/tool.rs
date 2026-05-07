@@ -18,6 +18,7 @@ use crate::{manager::CallManager, types::CallMode};
 struct ToolAccount {
     manager: Arc<RwLock<CallManager>>,
     from_number: String,
+    webhook_base_url: Option<String>,
 }
 
 /// Agent tool that allows the LLM to make and manage phone calls.
@@ -45,17 +46,19 @@ impl VoiceCallTool {
         account_id: String,
         manager: Arc<RwLock<CallManager>>,
         from_number: String,
+        webhook_base_url: Option<String>,
     ) {
         self.accounts.write().await.push((account_id, ToolAccount {
             manager,
             from_number,
+            webhook_base_url,
         }));
     }
 
     async fn resolve_account(
         &self,
         account_id: Option<&str>,
-    ) -> anyhow::Result<(String, Arc<RwLock<CallManager>>, String)> {
+    ) -> anyhow::Result<(String, Arc<RwLock<CallManager>>, String, String)> {
         let accounts = self.accounts.read().await;
         if accounts.is_empty() {
             anyhow::bail!("no telephony accounts configured");
@@ -73,6 +76,9 @@ impl VoiceCallTool {
             id.clone(),
             Arc::clone(&acct.manager),
             acct.from_number.clone(),
+            acct.webhook_base_url
+                .clone()
+                .unwrap_or_else(|| self.webhook_base_url.clone()),
         ))
     }
 }
@@ -144,19 +150,25 @@ impl AgentTool for VoiceCallTool {
                     _ => CallMode::Conversation,
                 };
 
-                let (acct, mgr, from_number) = self.resolve_account(account_id).await?;
+                let (acct, mgr, from_number, webhook_base_url) =
+                    self.resolve_account(account_id).await?;
                 if from_number.is_empty() {
                     anyhow::bail!("no from_number configured for account {acct}");
+                }
+                if webhook_base_url.trim().is_empty() {
+                    anyhow::bail!(
+                        "no webhook_url or server.external_url configured for account {acct}"
+                    );
                 }
                 let manager = mgr.read().await;
 
                 let status_url = format!(
                     "{}/api/channels/telephony/{acct}/status",
-                    self.webhook_base_url
+                    webhook_base_url.trim_end_matches('/')
                 );
                 let answer_url = format!(
                     "{}/api/channels/telephony/{acct}/answer",
-                    self.webhook_base_url
+                    webhook_base_url.trim_end_matches('/')
                 );
 
                 let call_id = manager
@@ -185,7 +197,8 @@ impl AgentTool for VoiceCallTool {
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("'call_id' is required"))?;
 
-                let (_acct, mgr, _from) = self.resolve_account(account_id).await?;
+                let (_acct, mgr, _from, _webhook_base_url) =
+                    self.resolve_account(account_id).await?;
                 mgr.read().await.hangup(call_id).await?;
 
                 Ok(json!({ "status": "ended", "call_id": call_id }))
@@ -195,7 +208,8 @@ impl AgentTool for VoiceCallTool {
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("'call_id' is required"))?;
 
-                let (_acct, mgr, _from) = self.resolve_account(account_id).await?;
+                let (_acct, mgr, _from, _webhook_base_url) =
+                    self.resolve_account(account_id).await?;
                 let record = mgr
                     .read()
                     .await
@@ -220,7 +234,8 @@ impl AgentTool for VoiceCallTool {
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("'digits' is required"))?;
 
-                let (_acct, mgr, _from) = self.resolve_account(account_id).await?;
+                let (_acct, mgr, _from, _webhook_base_url) =
+                    self.resolve_account(account_id).await?;
                 let manager = mgr.read().await;
                 let record = manager
                     .get_call(call_id)
@@ -255,8 +270,13 @@ mod tests {
             Box::new(MockProvider::new()),
             60,
         )));
-        tool.add_manager("test-acct".into(), mgr, "+15551111111".into())
-            .await;
+        tool.add_manager(
+            "test-acct".into(),
+            mgr,
+            "+15551111111".into(),
+            Some("https://example.com".into()),
+        )
+        .await;
         tool
     }
 

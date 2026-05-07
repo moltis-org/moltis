@@ -3,7 +3,7 @@ mod dispatch;
 mod gateway;
 mod node;
 mod pairing;
-mod phone;
+pub(crate) mod phone;
 mod services;
 mod subscribe;
 mod voice;

@@ -13,7 +13,7 @@ import {
 	togglePhoneProvider,
 } from "../../phone-utils";
 import { connected } from "../../signals";
-import { targetValue } from "../../typed-events";
+import { targetChecked, targetValue } from "../../typed-events";
 import { Modal } from "../../ui";
 import type { RpcResponse } from "./_shared";
 import { rerender } from "./_shared";
@@ -186,12 +186,7 @@ function PhoneProviderCard({ provider, saving, onToggle, onConfigure, onRemoveKe
 				<div className="flex items-center gap-2">
 					{configured && (
 						<label className="flex items-center gap-1.5 cursor-pointer">
-							<input
-								type="checkbox"
-								checked={enabled}
-								disabled={saving}
-								onChange={(e) => onToggle((e.target as HTMLInputElement).checked)}
-							/>
+							<input type="checkbox" checked={enabled} disabled={saving} onChange={(e) => onToggle(targetChecked(e))} />
 							<span className="text-xs text-[var(--muted)]">{enabled ? "Enabled" : "Disabled"}</span>
 						</label>
 					)}
@@ -233,8 +228,9 @@ interface PhoneConfigModalProps {
 
 function PhoneConfigModal({ onSaved }: PhoneConfigModalProps): VNode {
 	const provider = selectedProvider.value;
-	const [accountSid, setAccountSid] = useState("");
-	const [authToken, setAuthToken] = useState("");
+	const credentialFields = phoneCredentialFields(provider);
+	const [primaryCredential, setPrimaryCredential] = useState("");
+	const [secondaryCredential, setSecondaryCredential] = useState("");
 	const [fromNumber, setFromNumber] = useState("");
 	const [webhookUrl, setWebhookUrl] = useState("");
 	const [saving, setSaving] = useState(false);
@@ -242,8 +238,8 @@ function PhoneConfigModal({ onSaved }: PhoneConfigModalProps): VNode {
 
 	useEffect(() => {
 		if (provider) {
-			setAccountSid("");
-			setAuthToken("");
+			setPrimaryCredential("");
+			setSecondaryCredential("");
 			setFromNumber(provider.settings?.from_number || "");
 			setWebhookUrl(provider.settings?.webhook_url || "");
 			setError(null);
@@ -255,7 +251,7 @@ function PhoneConfigModal({ onSaved }: PhoneConfigModalProps): VNode {
 		if (!provider) return;
 
 		// If credentials are provided, save them. Otherwise just save settings.
-		const hasCredentials = accountSid.trim() && authToken.trim();
+		const hasCredentials = primaryCredential.trim() && secondaryCredential.trim();
 
 		if (fromNumber.trim() && !fromNumber.trim().startsWith("+")) {
 			setError("Phone number must be in E.164 format (start with +).");
@@ -271,7 +267,7 @@ function PhoneConfigModal({ onSaved }: PhoneConfigModalProps): VNode {
 		};
 
 		const promise = hasCredentials
-			? savePhoneKey(provider.id, accountSid.trim(), authToken.trim(), opts)
+			? savePhoneKey(provider.id, primaryCredential.trim(), secondaryCredential.trim(), opts)
 			: savePhoneSettings(provider.id, opts);
 
 		promise
@@ -315,22 +311,22 @@ function PhoneConfigModal({ onSaved }: PhoneConfigModalProps): VNode {
 					</div>
 				)}
 
-				<label className="text-xs text-[var(--muted)]">Account SID</label>
+				<label className="text-xs text-[var(--muted)]">{credentialFields.primaryLabel}</label>
 				<input
 					type="text"
 					className="channel-input"
-					placeholder={provider?.keyPlaceholder || "AC..."}
-					value={accountSid}
-					onInput={(e) => setAccountSid(targetValue(e))}
+					placeholder={credentialFields.primaryPlaceholder}
+					value={primaryCredential}
+					onInput={(e) => setPrimaryCredential(targetValue(e))}
 				/>
 
-				<label className="text-xs text-[var(--muted)]">Auth Token</label>
+				<label className="text-xs text-[var(--muted)]">{credentialFields.secondaryLabel}</label>
 				<input
 					type="password"
 					className="channel-input"
-					placeholder="Auth token"
-					value={authToken}
-					onInput={(e) => setAuthToken(targetValue(e))}
+					placeholder={credentialFields.secondaryPlaceholder}
+					value={secondaryCredential}
+					onInput={(e) => setSecondaryCredential(targetValue(e))}
 				/>
 
 				<label className="text-xs text-[var(--muted)]">Phone Number (E.164)</label>
@@ -374,4 +370,37 @@ function PhoneConfigModal({ onSaved }: PhoneConfigModalProps): VNode {
 			</form>
 		</Modal>
 	);
+}
+
+interface PhoneCredentialFields {
+	primaryLabel: string;
+	primaryPlaceholder: string;
+	secondaryLabel: string;
+	secondaryPlaceholder: string;
+}
+
+function phoneCredentialFields(provider: PhoneProviderData | null): PhoneCredentialFields {
+	switch (provider?.id) {
+		case "telnyx":
+			return {
+				primaryLabel: "API Key",
+				primaryPlaceholder: provider.keyPlaceholder || "KEY_...",
+				secondaryLabel: "Connection ID",
+				secondaryPlaceholder: "Call Control connection ID",
+			};
+		case "plivo":
+			return {
+				primaryLabel: "Auth ID",
+				primaryPlaceholder: provider.keyPlaceholder || "MA...",
+				secondaryLabel: "Auth Token",
+				secondaryPlaceholder: "Auth token",
+			};
+		default:
+			return {
+				primaryLabel: "Account SID",
+				primaryPlaceholder: provider?.keyPlaceholder || "AC...",
+				secondaryLabel: "Auth Token",
+				secondaryPlaceholder: "Auth token",
+			};
+	}
 }

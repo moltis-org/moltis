@@ -6,7 +6,10 @@
 use std::sync::Arc;
 
 use {
-    axum::{Router, routing::get},
+    axum::{
+        Router,
+        routing::{get, post},
+    },
     tower_http::set_header::SetResponseHeaderLayer,
 };
 
@@ -18,7 +21,7 @@ use crate::auth_routes::{AuthState, auth_router};
 
 use super::{
     AppState, GatewayBase,
-    handlers::{health_handler, ws_upgrade_handler},
+    handlers::{health_handler, rpc_handler, ws_upgrade_handler},
     middleware::{apply_middleware_stack, build_cors_layer},
 };
 
@@ -37,6 +40,7 @@ pub(super) fn build_gateway_base_internal(
 ) -> GatewayBase {
     let mut router = Router::new()
         .route("/health", get(health_handler))
+        .route("/api/rpc", post(rpc_handler))
         .route("/ws/chat", get(ws_upgrade_handler))
         .route("/ws", get(ws_upgrade_handler));
 
@@ -133,6 +137,7 @@ pub(super) fn build_gateway_base_internal(
 ) -> GatewayBase {
     let mut router = Router::new()
         .route("/health", get(health_handler))
+        .route("/api/rpc", post(rpc_handler))
         .route("/ws/chat", get(ws_upgrade_handler))
         .route("/ws", get(ws_upgrade_handler));
 

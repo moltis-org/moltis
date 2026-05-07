@@ -10,15 +10,25 @@ const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../hel
  * so that voice feature flags reflect the given values for the whole test.
  */
 async function mockVoiceFlags(page, { sttEnabled = true, ttsEnabled = true } = {}) {
-	await page.addInitScript(
-		({ sttEnabled, ttsEnabled }) => {
-			var m = window.__MOLTIS__ || {};
-			m.stt_enabled = sttEnabled;
-			m.tts_enabled = ttsEnabled;
-			window.__MOLTIS__ = m;
-		},
-		{ sttEnabled, ttsEnabled },
-	);
+	await page.route("**/{chats,settings,onboarding}{,/**}", async (route) => {
+		var response = await route.fetch();
+		var contentType = response.headers()["content-type"] || "";
+		if (!contentType.includes("text/html")) return route.fulfill({ response });
+		var html = await response.text();
+		html = html.replace(/window\.__MOLTIS__=({.*?});<\/script>/s, (_match, rawGon) => {
+			var gon = JSON.parse(rawGon);
+			gon.stt_enabled = sttEnabled;
+			gon.tts_enabled = ttsEnabled;
+			return `window.__MOLTIS__=${JSON.stringify(gon)};</script>`;
+		});
+		var headers = response.headers();
+		delete headers["content-length"];
+		return route.fulfill({
+			response,
+			body: html,
+			headers: { ...headers, "content-type": contentType },
+		});
+	});
 
 	await page.route("**/api/gon*", async (route) => {
 		var response = await route.fetch();

@@ -18,6 +18,7 @@ export interface PhoneProviderData {
 	settings?: {
 		from_number?: string;
 		webhook_url?: string;
+		connection_id?: string;
 	};
 }
 

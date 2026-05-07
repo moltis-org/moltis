@@ -183,7 +183,15 @@ pub struct McpOAuthOverrideEntry {
 /// Kept in `moltis-config` (not `moltis-channels`) so the config crate stays
 /// independent of the channels crate while still validating channel names.
 pub const KNOWN_CHANNEL_TYPES: &[&str] = &[
-    "telegram", "whatsapp", "msteams", "discord", "slack", "matrix", "nostr", "signal",
+    "telegram",
+    "whatsapp",
+    "msteams",
+    "discord",
+    "slack",
+    "matrix",
+    "nostr",
+    "signal",
+    "telephony",
 ];
 
 /// Per-chat-type tool policy for a channel account.
@@ -323,7 +331,6 @@ fn default_channels_offered() -> Vec<String> {
         "matrix".into(),
         "nostr".into(),
         "signal".into(),
-        "telephony".into(),
     ]
 }
 

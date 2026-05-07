@@ -1,13 +1,136 @@
 //! Phone provider detection and configuration helpers.
 
-use {moltis_config::schema::MoltisConfig, secrecy::ExposeSecret};
+use {
+    moltis_config::schema::MoltisConfig,
+    secrecy::{ExposeSecret, Secret},
+};
+
+const PHONE_ACCOUNT_ID: &str = "default";
+
+/// Overlay phone provider credentials from the credential store onto config.
+///
+/// Phone credentials follow the same storage model as voice credentials: the
+/// TOML file stores non-secret settings, and `KeyStore` stores secrets.
+pub(crate) fn merge_phone_keys(cfg: &mut MoltisConfig) {
+    let store = crate::provider_setup::KeyStore::new();
+
+    if let Some(stored) = store.load_config(&phone_key_store_name("twilio")) {
+        if let Some(account_sid) = stored.api_key {
+            cfg.phone.twilio.account_sid = Some(Secret::new(account_sid));
+        }
+        if let Some(auth_token) = stored.base_url {
+            cfg.phone.twilio.auth_token = Some(Secret::new(auth_token));
+        }
+    }
+
+    if let Some(stored) = store.load_config(&phone_key_store_name("telnyx")) {
+        if let Some(api_key) = stored.api_key {
+            cfg.phone.telnyx.api_key = Some(Secret::new(api_key));
+        }
+        if let Some(connection_id) = stored.base_url {
+            cfg.phone.telnyx.connection_id = Some(connection_id);
+        }
+    }
+
+    if let Some(stored) = store.load_config(&phone_key_store_name("plivo")) {
+        if let Some(auth_id) = stored.api_key {
+            cfg.phone.plivo.auth_id = Some(auth_id);
+        }
+        if let Some(auth_token) = stored.base_url {
+            cfg.phone.plivo.auth_token = Some(Secret::new(auth_token));
+        }
+    }
+}
+
+/// Build the internal telephony channel account from `[phone]`.
+///
+/// The telephony plugin is still a channel plugin internally because that is
+/// how inbound/outbound agent routing works, but user-facing configuration
+/// lives in the dedicated Phone settings section.
+pub(crate) fn phone_channel_account(config: &MoltisConfig) -> Option<(String, serde_json::Value)> {
+    if !config.phone.enabled {
+        return None;
+    }
+
+    let provider = if config.phone.provider.trim().is_empty() {
+        "twilio"
+    } else {
+        config.phone.provider.trim()
+    };
+
+    let mut account = serde_json::Map::from_iter([
+        ("provider".to_string(), serde_json::json!(provider)),
+        (
+            "inbound_policy".to_string(),
+            serde_json::json!(config.phone.inbound_policy),
+        ),
+        (
+            "allowlist".to_string(),
+            serde_json::json!(config.phone.allowlist),
+        ),
+        (
+            "max_duration_secs".to_string(),
+            serde_json::json!(config.phone.max_duration_secs),
+        ),
+    ]);
+
+    match provider {
+        "twilio" => {
+            let account_sid = config.phone.twilio.account_sid.as_ref()?.expose_secret();
+            let auth_token = config.phone.twilio.auth_token.as_ref()?.expose_secret();
+            account.insert("account_sid".to_string(), serde_json::json!(account_sid));
+            account.insert("auth_token".to_string(), serde_json::json!(auth_token));
+            account.insert(
+                "from_number".to_string(),
+                serde_json::json!(config.phone.twilio.from_number.clone().unwrap_or_default()),
+            );
+            if let Some(url) = config.phone.twilio.webhook_url.as_ref() {
+                account.insert("webhook_url".to_string(), serde_json::json!(url));
+            }
+        },
+        "telnyx" => {
+            let api_key = config.phone.telnyx.api_key.as_ref()?.expose_secret();
+            let connection_id = config.phone.telnyx.connection_id.as_ref()?;
+            account.insert("auth_token".to_string(), serde_json::json!(api_key));
+            account.insert("account_sid".to_string(), serde_json::json!(connection_id));
+            account.insert(
+                "from_number".to_string(),
+                serde_json::json!(config.phone.telnyx.from_number.clone().unwrap_or_default()),
+            );
+            if let Some(url) = config.phone.telnyx.webhook_url.as_ref() {
+                account.insert("webhook_url".to_string(), serde_json::json!(url));
+            }
+        },
+        "plivo" => {
+            let auth_id = config.phone.plivo.auth_id.as_ref()?;
+            let auth_token = config.phone.plivo.auth_token.as_ref()?.expose_secret();
+            account.insert("account_sid".to_string(), serde_json::json!(auth_id));
+            account.insert("auth_token".to_string(), serde_json::json!(auth_token));
+            account.insert(
+                "from_number".to_string(),
+                serde_json::json!(config.phone.plivo.from_number.clone().unwrap_or_default()),
+            );
+            if let Some(url) = config.phone.plivo.webhook_url.as_ref() {
+                account.insert("webhook_url".to_string(), serde_json::json!(url));
+            }
+        },
+        _ => return None,
+    }
+
+    Some((
+        PHONE_ACCOUNT_ID.to_string(),
+        serde_json::Value::Object(account),
+    ))
+}
 
 /// Detect all available phone providers with their status.
 pub(super) fn detect_phone_providers(config: &MoltisConfig) -> serde_json::Value {
+    let mut effective_config = config.clone();
+    merge_phone_keys(&mut effective_config);
     let mut providers = Vec::new();
 
     // Twilio
-    let twilio_configured = config
+    let twilio_configured = effective_config
         .phone
         .twilio
         .account_sid
@@ -15,8 +138,9 @@ pub(super) fn detect_phone_providers(config: &MoltisConfig) -> serde_json::Value
         .map(|s| !s.expose_secret().is_empty())
         .unwrap_or(false);
 
-    let twilio_enabled = config.phone.enabled
-        && (config.phone.provider.is_empty() || config.phone.provider == "twilio");
+    let twilio_enabled = effective_config.phone.enabled
+        && (effective_config.phone.provider.is_empty()
+            || effective_config.phone.provider == "twilio");
 
     providers.push(serde_json::json!({
         "id": "twilio",
@@ -32,13 +156,13 @@ pub(super) fn detect_phone_providers(config: &MoltisConfig) -> serde_json::Value
         "keyUrlLabel": "Twilio Console",
         "hint": "Requires Account SID, Auth Token, and a phone number",
         "settings": {
-            "from_number": config.phone.twilio.from_number.clone().unwrap_or_default(),
-            "webhook_url": config.phone.twilio.webhook_url.clone().unwrap_or_default(),
+            "from_number": effective_config.phone.twilio.from_number.clone().unwrap_or_default(),
+            "webhook_url": effective_config.phone.twilio.webhook_url.clone().unwrap_or_default(),
         },
     }));
 
     // Telnyx
-    let telnyx_configured = config
+    let telnyx_configured = effective_config
         .phone
         .telnyx
         .api_key
@@ -46,7 +170,8 @@ pub(super) fn detect_phone_providers(config: &MoltisConfig) -> serde_json::Value
         .map(|s| !s.expose_secret().is_empty())
         .unwrap_or(false);
 
-    let telnyx_enabled = config.phone.enabled && config.phone.provider == "telnyx";
+    let telnyx_enabled =
+        effective_config.phone.enabled && effective_config.phone.provider == "telnyx";
 
     providers.push(serde_json::json!({
         "id": "telnyx",
@@ -62,14 +187,14 @@ pub(super) fn detect_phone_providers(config: &MoltisConfig) -> serde_json::Value
         "keyUrlLabel": "Telnyx Portal",
         "hint": "Requires API Key, Connection ID, and a phone number",
         "settings": {
-            "from_number": config.phone.telnyx.from_number.clone().unwrap_or_default(),
-            "webhook_url": config.phone.telnyx.webhook_url.clone().unwrap_or_default(),
-            "connection_id": config.phone.telnyx.connection_id.clone().unwrap_or_default(),
+            "from_number": effective_config.phone.telnyx.from_number.clone().unwrap_or_default(),
+            "webhook_url": effective_config.phone.telnyx.webhook_url.clone().unwrap_or_default(),
+            "connection_id": effective_config.phone.telnyx.connection_id.clone().unwrap_or_default(),
         },
     }));
 
     // Plivo
-    let plivo_configured = config
+    let plivo_configured = effective_config
         .phone
         .plivo
         .auth_id
@@ -77,7 +202,8 @@ pub(super) fn detect_phone_providers(config: &MoltisConfig) -> serde_json::Value
         .map(|s| !s.is_empty())
         .unwrap_or(false);
 
-    let plivo_enabled = config.phone.enabled && config.phone.provider == "plivo";
+    let plivo_enabled =
+        effective_config.phone.enabled && effective_config.phone.provider == "plivo";
 
     providers.push(serde_json::json!({
         "id": "plivo",
@@ -93,8 +219,8 @@ pub(super) fn detect_phone_providers(config: &MoltisConfig) -> serde_json::Value
         "keyUrlLabel": "Plivo Console",
         "hint": "Requires Auth ID, Auth Token, and a phone number",
         "settings": {
-            "from_number": config.phone.plivo.from_number.clone().unwrap_or_default(),
-            "webhook_url": config.phone.plivo.webhook_url.clone().unwrap_or_default(),
+            "from_number": effective_config.phone.plivo.from_number.clone().unwrap_or_default(),
+            "webhook_url": effective_config.phone.plivo.webhook_url.clone().unwrap_or_default(),
         },
     }));
 
@@ -139,6 +265,25 @@ pub(super) fn apply_phone_provider_settings(
     }
 }
 
+/// Remove inline credentials for a provider after they are moved into KeyStore.
+pub(super) fn clear_inline_phone_credentials(cfg: &mut MoltisConfig, provider: &str) {
+    match provider {
+        "twilio" => {
+            cfg.phone.twilio.account_sid = None;
+            cfg.phone.twilio.auth_token = None;
+        },
+        "telnyx" => {
+            cfg.phone.telnyx.api_key = None;
+            cfg.phone.telnyx.connection_id = None;
+        },
+        "plivo" => {
+            cfg.phone.plivo.auth_id = None;
+            cfg.phone.plivo.auth_token = None;
+        },
+        _ => {},
+    }
+}
+
 /// Toggle a phone provider on/off.
 pub(super) fn toggle_phone_provider(provider: &str, enabled: bool) -> anyhow::Result<()> {
     moltis_config::update_config(|cfg| {
@@ -160,7 +305,14 @@ pub(super) fn phone_key_store_name(provider: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        crate::methods::phone::{
+            apply_phone_provider_settings, clear_inline_phone_credentials, detect_phone_providers,
+            phone_channel_account, phone_key_store_name,
+        },
+        moltis_config::schema::MoltisConfig,
+        secrecy::{ExposeSecret, Secret},
+    };
 
     #[test]
     fn detect_phone_providers_returns_all() {
@@ -180,7 +332,7 @@ mod tests {
         let mut config = MoltisConfig::default();
         config.phone.enabled = true;
         config.phone.provider = "twilio".to_string();
-        config.phone.twilio.account_sid = Some(secrecy::Secret::new("AC_test_sid".to_string()));
+        config.phone.twilio.account_sid = Some(Secret::new("AC_test_sid".to_string()));
         let result = detect_phone_providers(&config);
         let providers = result["providers"]
             .as_array()
@@ -195,7 +347,7 @@ mod tests {
         let mut config = MoltisConfig::default();
         config.phone.enabled = true;
         config.phone.provider = "telnyx".to_string();
-        config.phone.telnyx.api_key = Some(secrecy::Secret::new("KEY_test".to_string()));
+        config.phone.telnyx.api_key = Some(Secret::new("KEY_test".to_string()));
         let result = detect_phone_providers(&config);
         let providers = result["providers"]
             .as_array()
@@ -242,5 +394,53 @@ mod tests {
     fn phone_key_store_name_formats_correctly() {
         assert_eq!(phone_key_store_name("twilio"), "phone_twilio");
         assert_eq!(phone_key_store_name("telnyx"), "phone_telnyx");
+    }
+
+    #[test]
+    fn phone_channel_account_maps_twilio_phone_config_to_internal_channel() {
+        let mut config = MoltisConfig::default();
+        config.phone.enabled = true;
+        config.phone.provider = "twilio".to_string();
+        config.phone.inbound_policy = "allowlist".to_string();
+        config.phone.allowlist = vec!["+15557654321".to_string()];
+        config.phone.twilio.account_sid = Some(Secret::new("AC_test_sid".to_string()));
+        config.phone.twilio.auth_token = Some(Secret::new("test_token".to_string()));
+        config.phone.twilio.from_number = Some("+15551234567".to_string());
+        config.phone.twilio.webhook_url = Some("https://phone.example.com".to_string());
+
+        let (account_id, account) = phone_channel_account(&config)
+            .unwrap_or_else(|| panic!("phone account should be available"));
+
+        assert_eq!(account_id, "default");
+        assert_eq!(account["provider"], "twilio");
+        assert_eq!(account["account_sid"], "AC_test_sid");
+        assert_eq!(account["auth_token"], "test_token");
+        assert_eq!(account["from_number"], "+15551234567");
+        assert_eq!(account["webhook_url"], "https://phone.example.com");
+        assert_eq!(account["inbound_policy"], "allowlist");
+        assert_eq!(account["allowlist"][0], "+15557654321");
+    }
+
+    #[test]
+    fn clear_inline_phone_credentials_removes_selected_provider_only() {
+        let mut config = MoltisConfig::default();
+        config.phone.twilio.account_sid = Some(Secret::new("AC_test_sid".to_string()));
+        config.phone.twilio.auth_token = Some(Secret::new("test_token".to_string()));
+        config.phone.telnyx.api_key = Some(Secret::new("KEY_test".to_string()));
+        config.phone.telnyx.connection_id = Some("conn_test".to_string());
+
+        clear_inline_phone_credentials(&mut config, "telnyx");
+
+        assert!(config.phone.telnyx.api_key.is_none());
+        assert!(config.phone.telnyx.connection_id.is_none());
+        assert_eq!(
+            config
+                .phone
+                .twilio
+                .account_sid
+                .as_ref()
+                .map(|secret| secret.expose_secret().as_str()),
+            Some("AC_test_sid")
+        );
     }
 }

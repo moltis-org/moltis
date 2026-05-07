@@ -238,7 +238,7 @@ impl TelephonyProvider for TwilioProvider {
             .ok_or_else(|| anyhow::anyhow!("missing X-Twilio-Signature header"))?;
 
         // Parse body as form-urlencoded, sort params, append to URL.
-        let body_str = std::str::from_utf8(body).unwrap_or("");
+        let body_str = std::str::from_utf8(body)?;
         let mut params: Vec<(String, String)> = url::form_urlencoded::parse(body_str.as_bytes())
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
@@ -254,14 +254,11 @@ impl TelephonyProvider for TwilioProvider {
             .map_err(|e| anyhow::anyhow!("HMAC init failed: {e}"))?;
         mac.update(data.as_bytes());
 
-        let expected = base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            mac.finalize().into_bytes(),
-        );
-
-        if expected != signature {
-            anyhow::bail!("signature mismatch");
-        }
+        let provided_signature =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, signature)
+                .map_err(|e| anyhow::anyhow!("invalid X-Twilio-Signature header: {e}"))?;
+        mac.verify_slice(&provided_signature)
+            .map_err(|_| anyhow::anyhow!("signature mismatch"))?;
         Ok(())
     }
 

@@ -5,7 +5,7 @@
 
 use {async_trait::async_trait, bytes::Bytes};
 
-use super::{AudioFormat, AudioOutput, SynthesizeRequest, TtsProvider, Voice};
+use super::{AudioOutput, SynthesizeRequest, TtsProvider, Voice};
 
 /// Mock TTS provider that returns silence.
 pub struct MockTts {
@@ -69,7 +69,7 @@ impl TtsProvider for MockTts {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, crate::AudioFormat};
 
     #[tokio::test]
     async fn mock_tts_returns_silence() {
@@ -83,6 +83,7 @@ mod tests {
                 speed: None,
                 stability: None,
                 similarity_boost: None,
+                instructions: None,
             })
             .await
             .unwrap_or_else(|e| panic!("{e}"));
