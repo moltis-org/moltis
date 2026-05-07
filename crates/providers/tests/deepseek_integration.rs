@@ -5,19 +5,29 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::HashSet;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use {
     futures::StreamExt,
-    moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent, ToolCall},
+    moltis_agents::model::{ChatMessage, LlmProvider, ReasoningEffort, StreamEvent, ToolCall},
     moltis_providers::openai::OpenAiProvider,
     secrecy::{ExposeSecret, Secret},
 };
 
 const BASE_URL: &str = "https://api.deepseek.com";
 const TEST_MODEL: &str = "deepseek-chat";
+const REASONING_MODEL: &str = "deepseek-reasoner";
+const V4_REASONING_MODEL: &str = "deepseek-v4-flash";
 
-const KNOWN_MODELS: &[&str] = &["deepseek-chat", "deepseek-reasoner"];
+const KNOWN_MODELS: &[&str] = &[
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "deepseek-chat",
+    "deepseek-reasoner",
+];
 
 fn api_key() -> Secret<String> {
     Secret::new(
@@ -33,6 +43,12 @@ fn make_provider(model: &str) -> OpenAiProvider {
         BASE_URL.to_string(),
         "deepseek".to_string(),
     )
+}
+
+fn make_provider_with_reasoning(model: &str, effort: ReasoningEffort) -> Arc<dyn LlmProvider> {
+    Arc::new(make_provider(model))
+        .with_reasoning_effort(effort)
+        .expect("DeepSeek OpenAI-compatible provider should support reasoning_effort")
 }
 
 fn weather_tool() -> serde_json::Value {
@@ -220,6 +236,126 @@ async fn stream_emits_delta_and_done() {
         }
     }
     assert!(saw_delta && saw_done);
+}
+
+#[tokio::test]
+#[ignore]
+async fn reasoner_streams_reasoning_separately() {
+    let p = make_provider(REASONING_MODEL);
+    let mut stream = p.stream(vec![ChatMessage::user(
+        "Which is greater, 9.11 or 9.8? Give the final answer in one sentence.",
+    )]);
+    let mut reasoning = String::new();
+    let mut visible = String::new();
+    let mut saw_done = false;
+
+    while let Some(event) = stream.next().await {
+        match event {
+            StreamEvent::ReasoningDelta(delta) => reasoning.push_str(&delta),
+            StreamEvent::Delta(delta) => visible.push_str(&delta),
+            StreamEvent::Done(_) => {
+                saw_done = true;
+                break;
+            },
+            StreamEvent::Error(err) => panic!("stream error: {err}"),
+            _ => {},
+        }
+    }
+
+    assert!(saw_done, "reasoning stream must emit Done");
+    assert!(
+        !reasoning.trim().is_empty(),
+        "deepseek-reasoner must emit reasoning_content separately; visible={visible:?}"
+    );
+    assert!(
+        !visible.trim().is_empty(),
+        "deepseek-reasoner must still emit final visible content; reasoning={reasoning:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn v4_thinking_tool_call_replays_reasoning_content() {
+    let p = make_provider_with_reasoning(V4_REASONING_MODEL, ReasoningEffort::High);
+    let tools = vec![weather_tool()];
+    let user = ChatMessage::user("Use get_weather for Lisbon, then answer with the condition.");
+    let mut stream = p.stream_with_tools(vec![user.clone()], tools.clone());
+    let mut reasoning = String::new();
+    let mut visible = String::new();
+    let mut tool_id: Option<String> = None;
+    let mut tool_name: Option<String> = None;
+    let mut tool_args_by_index: HashMap<usize, String> = HashMap::new();
+    let mut saw_done = false;
+
+    while let Some(event) = stream.next().await {
+        match event {
+            StreamEvent::ReasoningDelta(delta) => reasoning.push_str(&delta),
+            StreamEvent::Delta(delta) => visible.push_str(&delta),
+            StreamEvent::ToolCallStart {
+                id, name, index, ..
+            } => {
+                tool_id = Some(id);
+                tool_name = Some(name);
+                tool_args_by_index.entry(index).or_default();
+            },
+            StreamEvent::ToolCallArgumentsDelta { index, delta } => {
+                tool_args_by_index
+                    .entry(index)
+                    .or_default()
+                    .push_str(&delta);
+            },
+            StreamEvent::Done(_) => {
+                saw_done = true;
+                break;
+            },
+            StreamEvent::Error(err) => panic!("stream error: {err}"),
+            _ => {},
+        }
+    }
+
+    assert!(saw_done, "first thinking tool-call stream must emit Done");
+    assert!(
+        !reasoning.trim().is_empty(),
+        "DeepSeek V4 thinking tool call must emit reasoning_content; visible={visible:?}"
+    );
+
+    let tool_id = tool_id.expect("DeepSeek V4 thinking should start a tool call");
+    let tool_name = tool_name.expect("DeepSeek V4 thinking should provide a tool name");
+    assert_eq!(tool_name, "get_weather");
+    let arguments = tool_args_by_index
+        .remove(&0)
+        .filter(|args| !args.trim().is_empty())
+        .map(|args| serde_json::from_str::<serde_json::Value>(&args).expect("tool args JSON"))
+        .unwrap_or_else(|| serde_json::json!({"location": "Lisbon"}));
+
+    let response = p
+        .complete(
+            &[
+                user,
+                ChatMessage::Assistant {
+                    content: (!visible.trim().is_empty()).then_some(visible),
+                    tool_calls: vec![ToolCall {
+                        id: tool_id.clone(),
+                        name: tool_name,
+                        arguments,
+                        metadata: None,
+                    }],
+                    reasoning: Some(reasoning),
+                },
+                ChatMessage::tool(&tool_id, r#"{"condition":"sunny","temperature":22}"#),
+            ],
+            &tools,
+        )
+        .await
+        .expect("DeepSeek V4 should accept replayed reasoning_content after tool result");
+
+    assert!(
+        response
+            .text
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty()),
+        "second turn should produce visible text after replayed reasoning_content"
+    );
 }
 
 // ── Model catalog ────────────────────────────────────────────────────────────

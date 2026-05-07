@@ -132,6 +132,8 @@ pub(crate) const DEEPINFRA_MODELS: &[(&str, &str)] = &[
 
 /// Known DeepSeek models.
 pub(crate) const DEEPSEEK_MODELS: &[(&str, &str)] = &[
+    ("deepseek-v4-flash", "DeepSeek V4 Flash"),
+    ("deepseek-v4-pro", "DeepSeek V4 Pro"),
     ("deepseek-chat", "DeepSeek Chat"),
     ("deepseek-reasoner", "DeepSeek Reasoner"),
 ];

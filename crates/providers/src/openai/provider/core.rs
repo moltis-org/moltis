@@ -138,12 +138,30 @@ impl OpenAiProvider {
         self
     }
 
+    fn is_deepseek_provider(&self) -> bool {
+        self.provider_name.eq_ignore_ascii_case("deepseek")
+            || self
+                .base_url
+                .to_ascii_lowercase()
+                .contains("api.deepseek.com")
+    }
+
     /// Return the reasoning effort string if configured.
     ///
     /// OpenAI accepts `"low"`, `"medium"`, `"high"`. Levels outside that range
     /// are clamped to the nearest supported value.
     pub(crate) fn reasoning_effort_str(&self) -> Option<&'static str> {
         use moltis_agents::model::ReasoningEffort;
+        if self.is_deepseek_provider() {
+            return self.reasoning_effort.map(|e| match e {
+                ReasoningEffort::Minimal
+                | ReasoningEffort::Low
+                | ReasoningEffort::Medium
+                | ReasoningEffort::High => "high",
+                ReasoningEffort::ExtraHigh => "max",
+            });
+        }
+
         self.reasoning_effort.map(|e| match e {
             ReasoningEffort::Minimal => {
                 tracing::debug!(
@@ -172,6 +190,9 @@ impl OpenAiProvider {
     pub(crate) fn apply_reasoning_effort_chat(&self, body: &mut serde_json::Value) {
         if let Some(effort) = self.reasoning_effort_str() {
             body["reasoning_effort"] = serde_json::json!(effort);
+            if self.is_deepseek_provider() {
+                body["thinking"] = serde_json::json!({ "type": "enabled" });
+            }
         }
     }
 

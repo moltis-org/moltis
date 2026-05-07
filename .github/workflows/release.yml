@@ -937,6 +937,7 @@ jobs:
     needs: [clippy, test, e2e]
     runs-on: macos-latest
     name: Build macOS app
+    timeout-minutes: 180
     permissions:
       contents: read
       id-token: write # Required for Sigstore keyless signing
@@ -950,6 +951,13 @@ jobs:
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:
           toolchain: stable
+          targets: x86_64-apple-darwin, aarch64-apple-darwin, wasm32-wasip2
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: macos-release-app-v1
+          cache-all-crates: true
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
 
       - name: Install Swift build dependencies
         run: brew install xcodegen cbindgen
@@ -1011,6 +1019,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build Swift bridge artifacts and generate Xcode project
+        timeout-minutes: 120
         env:
           MOLTIS_VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -1212,11 +1221,11 @@ jobs:
         with:
           name: moltis-${{ env.BUILD_TARGET }}.exe
           path: |
-            *.exe
-            *.exe.sha256
-            *.exe.sha512
-            *.exe.sig
-            *.exe.crt
+            moltis-${{ steps.version.outputs.version }}-${{ env.BUILD_TARGET }}.exe
+            moltis-${{ steps.version.outputs.version }}-${{ env.BUILD_TARGET }}.exe.sha256
+            moltis-${{ steps.version.outputs.version }}-${{ env.BUILD_TARGET }}.exe.sha512
+            moltis-${{ steps.version.outputs.version }}-${{ env.BUILD_TARGET }}.exe.sig
+            moltis-${{ steps.version.outputs.version }}-${{ env.BUILD_TARGET }}.exe.crt
 
   build-docker:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
@@ -1487,9 +1496,11 @@ jobs:
         run: |
           mkdir -p release-files
           find artifacts -type f \( \
-            -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' \
-            -o -name '*.AppImage' -o -name '*.snap' -o -name '*.tar.gz' -o -name '*.zip' -o -name '*.exe' \
-            -o -name '*.sha256' -o -name '*.sha512' -o -name '*.sig' -o -name '*.crt' \
+            -name 'moltis*.deb' -o -name 'moltis*.rpm' -o -name 'moltis*.pkg.tar.zst' \
+            -o -name 'moltis*.AppImage' -o -name 'moltis*.snap' -o -name 'moltis*.tar.gz' \
+            -o -name 'moltis*.zip' -o -name 'moltis*.exe' \
+            -o -name 'moltis*.sha256' -o -name 'moltis*.sha512' \
+            -o -name 'moltis*.sig' -o -name 'moltis*.crt' \
           \) -exec cp {} release-files/ \;
           cp CHANGELOG.md release-files/
           echo "Files to upload:"
@@ -1717,8 +1728,12 @@ jobs:
             website/releases.json > website/releases.json.tmp \
             && mv website/releases.json.tmp website/releases.json
 
+          MOLTIS_CHANGELOG_PUBLISHED_ONLY=1 \
+            MOLTIS_CHANGELOG_INCLUDE_TAG="${VERSION}" \
+            node website/scripts/build-changelog.mjs
+
           # Check if any files changed
-          if git diff --quiet .do/deploy.template.yaml render.yaml fly.toml website/releases.json; then
+          if git diff --quiet .do/deploy.template.yaml render.yaml fly.toml website/releases.json website/changelog/index.html; then
             echo "No deploy template changes needed"
             exit 0
           fi
@@ -1741,6 +1756,9 @@ jobs:
           RELEASES_BLOB=$(gh api "repos/${REPO}/git/blobs" \
             -f content="$(base64 -w0 website/releases.json)" \
             -f encoding=base64 --jq '.sha')
+          CHANGELOG_BLOB=$(gh api "repos/${REPO}/git/blobs" \
+            -f content="$(base64 -w0 website/changelog/index.html)" \
+            -f encoding=base64 --jq '.sha')
 
           # Create a new tree with the updated files (JSON input for proper array structure)
           TREE_SHA=$(jq -n \
@@ -1749,13 +1767,15 @@ jobs:
             --arg render_sha "$RENDER_BLOB" \
             --arg fly_sha "$FLY_BLOB" \
             --arg releases_sha "$RELEASES_BLOB" \
+            --arg changelog_sha "$CHANGELOG_BLOB" \
             '{
               base_tree: $base,
               tree: [
                 {path: ".do/deploy.template.yaml", mode: "100644", type: "blob", sha: $do_sha},
                 {path: "render.yaml", mode: "100644", type: "blob", sha: $render_sha},
                 {path: "fly.toml", mode: "100644", type: "blob", sha: $fly_sha},
-                {path: "website/releases.json", mode: "100644", type: "blob", sha: $releases_sha}
+                {path: "website/releases.json", mode: "100644", type: "blob", sha: $releases_sha},
+                {path: "website/changelog/index.html", mode: "100644", type: "blob", sha: $changelog_sha}
               ]
             }' | gh api "repos/${REPO}/git/trees" --input - --jq '.sha')
 

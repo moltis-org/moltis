@@ -93,9 +93,11 @@ for target in "${TARGETS[@]}"; do
   esac
 done
 
+BUILD_ARGS=(build -p moltis-swift-bridge --profile "${SWIFT_BRIDGE_PROFILE}")
 for target in "${TARGETS[@]}"; do
-  cargo build -p moltis-swift-bridge --profile "${SWIFT_BRIDGE_PROFILE}" --target "${target}"
+  BUILD_ARGS+=(--target "${target}")
 done
+cargo "${BUILD_ARGS[@]}"
 
 mkdir -p "${UNIVERSAL_DIR}" "${OUTPUT_DIR}"
 

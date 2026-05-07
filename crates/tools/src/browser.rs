@@ -74,6 +74,22 @@ impl BrowserTool {
         Some(Self::new(browser_config))
     }
 
+    /// Create from the full tools config so browser sandbox containers can
+    /// share exec sandbox host path resolution.
+    pub fn from_tools_config(config: &moltis_config::schema::ToolsConfig) -> Option<Self> {
+        if !config.browser.enabled {
+            return None;
+        }
+        let mut browser_config = moltis_browser::BrowserConfig::from(&config.browser);
+        browser_config.host_data_dir = config
+            .exec
+            .sandbox
+            .host_data_dir
+            .as_ref()
+            .map(std::path::PathBuf::from);
+        Some(Self::new(browser_config))
+    }
+
     fn cache_key(session_key: Option<&str>) -> Cow<'static, str> {
         match session_key {
             Some(k) => Cow::Owned(k.to_string()),
@@ -342,6 +358,20 @@ mod tests {
             ..Default::default()
         };
         assert!(BrowserTool::from_config(&config).is_none());
+    }
+
+    #[test]
+    fn from_tools_config_carries_exec_sandbox_host_data_dir() {
+        let mut config = moltis_config::schema::ToolsConfig::default();
+        config.browser.enabled = true;
+        config.exec.sandbox.host_data_dir = Some("/host/moltis-data".to_string());
+
+        let tool = BrowserTool::from_tools_config(&config).unwrap();
+
+        assert_eq!(
+            tool.config.host_data_dir.as_deref(),
+            Some(std::path::Path::new("/host/moltis-data"))
+        );
     }
 
     #[test]

@@ -240,8 +240,10 @@ rm -f "$release_section_tmp"
 cargo fetch
 cargo fetch --locked
 
-# Rebuild changelog HTML for the website
-node website/scripts/build-changelog.mjs
+# Rebuild the public website changelog from published GitHub releases only.
+# The release section above is still committed so the release artifact can include
+# complete notes, but moltis.org must not show tags whose artifact build failed.
+MOLTIS_CHANGELOG_PUBLISHED_ONLY=1 node website/scripts/build-changelog.mjs
 
 echo "Release prep complete:"
 echo "  version: $new_version"

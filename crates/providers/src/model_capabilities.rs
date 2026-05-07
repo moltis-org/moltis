@@ -262,8 +262,11 @@ pub fn supports_reasoning_for_model(model_id: &str) -> bool {
     if id.starts_with("gpt-5") {
         return true;
     }
-    // DeepSeek R1 / reasoning models
-    if id.contains("deepseek-r1") || id.contains("deepseek-reasoner") {
+    // DeepSeek reasoning models and V4 thinking mode.
+    if id.contains("deepseek-r1")
+        || id.contains("deepseek-reasoner")
+        || id.starts_with("deepseek-v4")
+    {
         return true;
     }
     // xAI Grok 3+ reasoning models (Grok 3, Grok 3 Mini, Grok 4 series)
@@ -554,6 +557,9 @@ mod tests {
         assert!(supports_reasoning_for_model("gemini-3-flash-preview"));
         assert!(supports_reasoning_for_model("gemini-3.1-pro-preview"));
         assert!(supports_reasoning_for_model("deepseek-r1"));
+        assert!(supports_reasoning_for_model("deepseek-reasoner"));
+        assert!(supports_reasoning_for_model("deepseek-v4-flash"));
+        assert!(supports_reasoning_for_model("deepseek-v4-pro"));
         assert!(supports_reasoning_for_model("gpt-5.4"));
         assert!(supports_reasoning_for_model("gpt-5.4-mini"));
         assert!(supports_reasoning_for_model("gpt-5"));

@@ -725,6 +725,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn deepseek_v4_reasoning_effort_enables_thinking_and_maps_xhigh_to_max() {
+        let mut p = provider("deepseek-v4-pro", "deepseek", "https://api.deepseek.com");
+        p.reasoning_effort = Some(moltis_agents::model::ReasoningEffort::ExtraHigh);
+        let mut body = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "messages": [{"role": "user", "content": "hello"}],
+        });
+
+        p.apply_reasoning_effort_chat(&mut body);
+
+        assert_eq!(body["reasoning_effort"], "max");
+        assert_eq!(body["thinking"], serde_json::json!({ "type": "enabled" }));
+    }
+
+    #[test]
+    fn deepseek_v4_reasoning_effort_maps_lower_levels_to_high() {
+        for effort in [
+            moltis_agents::model::ReasoningEffort::Minimal,
+            moltis_agents::model::ReasoningEffort::Low,
+            moltis_agents::model::ReasoningEffort::Medium,
+            moltis_agents::model::ReasoningEffort::High,
+        ] {
+            let mut p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com");
+            p.reasoning_effort = Some(effort);
+            assert_eq!(p.reasoning_effort_str(), Some("high"));
+        }
+    }
+
     // ── Wire-format tests: verify serialized request body (issue #810) ──
 
     /// Kimi router with strict_tools=false must NOT emit `"strict": true` in

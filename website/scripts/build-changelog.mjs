@@ -8,6 +8,39 @@ const projectRoot = path.resolve(rootDir, "..");
 const sourcePath = path.join(projectRoot, "CHANGELOG.md");
 const outputDir = path.join(rootDir, "changelog");
 const outputPath = path.join(outputDir, "index.html");
+const releaseTagPattern = /^[0-9]{8}\.[0-9]{1,2}$/;
+
+function parseArgs(argv) {
+	const includeTags = new Set();
+	let publishedOnly = process.env.MOLTIS_CHANGELOG_PUBLISHED_ONLY === "1";
+
+	const envInclude = process.env.MOLTIS_CHANGELOG_INCLUDE_TAGS ?? process.env.MOLTIS_CHANGELOG_INCLUDE_TAG ?? "";
+	for (const tag of envInclude.split(",").map((value) => value.trim())) {
+		if (tag) includeTags.add(tag);
+	}
+
+	for (let index = 0; index < argv.length; index += 1) {
+		const arg = argv[index];
+		if (arg === "--published-only") {
+			publishedOnly = true;
+			continue;
+		}
+		if (arg === "--include-tag") {
+			const tag = argv[index + 1];
+			if (!tag) throw new Error("--include-tag requires a version");
+			includeTags.add(tag);
+			index += 1;
+			continue;
+		}
+		if (arg.startsWith("--include-tag=")) {
+			includeTags.add(arg.slice("--include-tag=".length));
+			continue;
+		}
+		throw new Error(`unknown argument: ${arg}`);
+	}
+
+	return { includeTags, publishedOnly };
+}
 
 function escapeHtml(value) {
 	return value
@@ -57,6 +90,143 @@ function splitSections(markdown) {
 	}
 
 	return { preamble, sections };
+}
+
+function releaseHeading(version, lines) {
+	const dateMatch = lines.match(new RegExp(`^## \\[${version.replace(".", "\\.")}\\] - ([0-9]{4}-[0-9]{2}-[0-9]{2})`, "m"));
+	return dateMatch ? `## [${version}] - ${dateMatch[1]}` : `## [${version}]`;
+}
+
+function orderedCategories(categories) {
+	const preferred = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"];
+	return [
+		...preferred.filter((category) => categories.has(category)),
+		...[...categories.keys()].filter((category) => !preferred.includes(category)).sort(),
+	];
+}
+
+function mergeReleaseLines(sections) {
+	const categories = new Map();
+	const uncategorized = [];
+	let currentCategory = null;
+
+	for (const section of sections) {
+		for (const line of section.lines) {
+			const category = line.match(/^###\s+(.+)$/);
+			if (category) {
+				currentCategory = category[1].trim();
+				if (!categories.has(currentCategory)) categories.set(currentCategory, []);
+				continue;
+			}
+
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+
+			if (!currentCategory) {
+				uncategorized.push(line);
+				continue;
+			}
+
+			categories.get(currentCategory).push(line);
+		}
+	}
+
+	const output = [];
+	const seen = new Set();
+
+	for (const category of orderedCategories(categories)) {
+		const body = categories.get(category).filter((line) => {
+			const key = `${category}\0${line.trim()}`;
+			if (seen.has(key)) return false;
+			seen.add(key);
+			return true;
+		});
+		if (body.length === 0) continue;
+		output.push(`### ${category}`, ...body, "");
+	}
+
+	if (uncategorized.length > 0) {
+		output.push(...uncategorized, "");
+	}
+
+	while (output.at(-1) === "") output.pop();
+	return output.length > 0 ? output : ["", "No notable changes."];
+}
+
+function publishedReleaseMarkdown(markdown, publishedVersions) {
+	const { preamble, sections } = splitSections(markdown);
+	const unreleased = sections.find((section) => section.version === "Unreleased");
+	const releases = sections.filter((section) => section.version !== "Unreleased");
+	const outputSections = [];
+
+	for (let index = 0; index < releases.length; ) {
+		const section = releases[index];
+		if (!publishedVersions.has(section.version)) {
+			index += 1;
+			continue;
+		}
+
+		const group = [section];
+		let nextIndex = index + 1;
+		while (nextIndex < releases.length && !publishedVersions.has(releases[nextIndex].version)) {
+			group.push(releases[nextIndex]);
+			nextIndex += 1;
+		}
+
+		outputSections.push({
+			heading: releaseHeading(section.version, markdown),
+			lines: mergeReleaseLines(group),
+			version: section.version,
+		});
+		index = nextIndex;
+	}
+
+	const output = [...preamble];
+	if (unreleased) output.push(unreleased.heading, ...unreleased.lines);
+	for (const section of outputSections) {
+		output.push(section.heading, ...section.lines);
+	}
+	return output.join("\n");
+}
+
+function releaseTagName(value) {
+	if (!value || typeof value !== "object" || !("tag_name" in value)) return null;
+	const tagName = value.tag_name;
+	return typeof tagName === "string" && releaseTagPattern.test(tagName) ? tagName : null;
+}
+
+async function fetchPublishedReleaseVersions() {
+	const repo = process.env.MOLTIS_CHANGELOG_REPO ?? "moltis-org/moltis";
+	const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
+	const headers = {
+		Accept: "application/vnd.github+json",
+		"User-Agent": "moltis-changelog-builder",
+		"X-GitHub-Api-Version": "2022-11-28",
+	};
+	if (token) headers.Authorization = `Bearer ${token}`;
+
+	const versions = new Set();
+	for (let page = 1; ; page += 1) {
+		const response = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100&page=${page}`, { headers });
+		if (!response.ok) {
+			throw new Error(`failed to fetch GitHub releases for ${repo}: ${response.status} ${response.statusText}`);
+		}
+
+		const releases = await response.json();
+		if (!Array.isArray(releases)) {
+			throw new Error(`GitHub releases response for ${repo} was not an array`);
+		}
+
+		for (const release of releases) {
+			if (!release || typeof release !== "object" || release.draft === true) continue;
+			const tagName = releaseTagName(release);
+			if (tagName) versions.add(tagName);
+		}
+
+		if (releases.length < 100) break;
+	}
+
+	return versions;
 }
 
 function releaseItems(lines) {
@@ -323,7 +493,16 @@ function buildHtml(contentHtml) {
 }
 
 async function main() {
-	const markdown = await readFile(sourcePath, "utf8");
+	const options = parseArgs(process.argv.slice(2));
+	let markdown = await readFile(sourcePath, "utf8");
+	if (options.publishedOnly) {
+		const publishedVersions = await fetchPublishedReleaseVersions();
+		for (const tag of options.includeTags) {
+			if (releaseTagPattern.test(tag)) publishedVersions.add(tag);
+		}
+		markdown = publishedReleaseMarkdown(markdown, publishedVersions);
+		process.stdout.write(`Filtered changelog to ${publishedVersions.size} published release tags\n`);
+	}
 	const contentHtml = renderMarkdown(normalizeReleaseDeltas(markdown));
 	const html = buildHtml(contentHtml);
 	await mkdir(outputDir, { recursive: true });

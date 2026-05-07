@@ -97,6 +97,34 @@ pub struct DeviceTokenVerification {
     pub scopes: Vec<String>,
 }
 
+/// Result of a TOFU key pinning check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyPinningResult {
+    /// Presented key matches the stored (pinned) key.
+    Match,
+    /// A different key is already pinned for this device.
+    Mismatch { expected: String },
+    /// No key is pinned yet (new device or no stored key).
+    NoPinnedKey,
+    /// The device has been revoked — reject regardless of key.
+    Revoked,
+}
+
+/// Result of pinning a public key to an existing active device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PinPublicKeyResult {
+    /// The device had no key and this call pinned it.
+    Pinned,
+    /// The same key was already pinned.
+    AlreadyPinned,
+    /// A different key is already pinned for this device.
+    Mismatch { expected: String },
+    /// The device has been revoked.
+    Revoked,
+    /// No device exists for the supplied ID.
+    DeviceNotFound,
+}
+
 // ── Pairing store ───────────────────────────────────────────────────────────
 
 /// SQLite-backed pairing store. Persists pair requests, paired devices, and
@@ -535,6 +563,154 @@ impl PairingStore {
         })
     }
 
+    /// Look up an active paired device by its Ed25519 public key (base64).
+    ///
+    /// Returns `None` if no device is associated with this key, or if the
+    /// device has been revoked.
+    pub async fn find_device_by_public_key(
+        &self,
+        public_key: &str,
+    ) -> Result<Option<PairedDevice>> {
+        let row: Option<(String, Option<String>, String, Option<String>, String)> = sqlx::query_as(
+            "SELECT device_id, display_name, platform, public_key, created_at
+                 FROM paired_devices
+                 WHERE public_key = ? AND status = 'active'",
+        )
+        .bind(public_key)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(
+            |(device_id, display_name, platform, public_key, created_at)| PairedDevice {
+                device_id,
+                display_name,
+                platform,
+                public_key,
+                created_at,
+            },
+        ))
+    }
+
+    /// Check whether a public key has been revoked (not just absent).
+    pub async fn is_public_key_revoked(&self, public_key: &str) -> Result<bool> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT status FROM paired_devices WHERE public_key = ? AND status = 'revoked'",
+        )
+        .bind(public_key)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
+    }
+
+    /// Pin a public key to an existing device (used during token→key migration).
+    /// Only sets the key if the device has no key pinned yet, and reports
+    /// conflicts explicitly so callers do not mistake a zero-row update for a
+    /// successful migration.
+    pub async fn pin_public_key(
+        &self,
+        device_id: &str,
+        public_key: &str,
+    ) -> Result<PinPublicKeyResult> {
+        let row: Option<(Option<String>, String)> =
+            sqlx::query_as("SELECT public_key, status FROM paired_devices WHERE device_id = ?")
+                .bind(device_id)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        match row {
+            None => Ok(PinPublicKeyResult::DeviceNotFound),
+            Some((_, status)) if status == "revoked" => Ok(PinPublicKeyResult::Revoked),
+            Some((Some(stored_key), status)) if status == "active" => {
+                if stored_key == public_key {
+                    Ok(PinPublicKeyResult::AlreadyPinned)
+                } else {
+                    Ok(PinPublicKeyResult::Mismatch {
+                        expected: stored_key,
+                    })
+                }
+            },
+            Some((None, status)) if status == "active" => {
+                let result = sqlx::query(
+                    "UPDATE paired_devices SET public_key = ?
+                     WHERE device_id = ? AND status = 'active' AND public_key IS NULL",
+                )
+                .bind(public_key)
+                .bind(device_id)
+                .execute(&self.pool)
+                .await?;
+
+                if result.rows_affected() > 0 {
+                    Ok(PinPublicKeyResult::Pinned)
+                } else {
+                    let refreshed: Option<(Option<String>, String)> = sqlx::query_as(
+                        "SELECT public_key, status FROM paired_devices WHERE device_id = ?",
+                    )
+                    .bind(device_id)
+                    .fetch_optional(&self.pool)
+                    .await?;
+                    match refreshed {
+                        Some((Some(stored_key), status))
+                            if status == "active" && stored_key == public_key =>
+                        {
+                            Ok(PinPublicKeyResult::AlreadyPinned)
+                        },
+                        Some((Some(stored_key), status)) if status == "active" => {
+                            Ok(PinPublicKeyResult::Mismatch {
+                                expected: stored_key,
+                            })
+                        },
+                        Some((_, status)) if status == "revoked" => Ok(PinPublicKeyResult::Revoked),
+                        None => Ok(PinPublicKeyResult::DeviceNotFound),
+                        Some(..) => Ok(PinPublicKeyResult::DeviceNotFound),
+                    }
+                }
+            },
+            Some(..) => Ok(PinPublicKeyResult::DeviceNotFound),
+        }
+    }
+
+    /// TOFU key pinning check: verify that a device's presented public key
+    /// matches its stored key. Returns `Ok(true)` if the keys match or no key
+    /// is pinned yet, `Ok(false)` if a different key is already pinned, and
+    /// the expected fingerprint for the security warning.
+    pub async fn check_key_pinning(
+        &self,
+        device_id: &str,
+        presented_key: &str,
+    ) -> Result<KeyPinningResult> {
+        let row: Option<(Option<String>, String)> =
+            sqlx::query_as("SELECT public_key, status FROM paired_devices WHERE device_id = ?")
+                .bind(device_id)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        match row {
+            Some((Some(stored_key), status)) if status == "active" => {
+                if stored_key == presented_key {
+                    Ok(KeyPinningResult::Match)
+                } else {
+                    Ok(KeyPinningResult::Mismatch {
+                        expected: stored_key,
+                    })
+                }
+            },
+            Some((None, status)) if status == "active" => Ok(KeyPinningResult::NoPinnedKey),
+            Some((_, status)) if status == "revoked" => Ok(KeyPinningResult::Revoked),
+            Some(..) => Ok(KeyPinningResult::NoPinnedKey),
+            None => Ok(KeyPinningResult::NoPinnedKey), // unknown device
+        }
+    }
+
+    /// Get the current status of a pair request by ID.
+    pub async fn get_pair_status(&self, pair_id: &str) -> Result<Option<PairStatus>> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT status FROM pair_requests WHERE id = ?")
+                .bind(pair_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|(s,)| PairStatus::from_str(&s)))
+    }
+
     /// Evict expired pending requests.
     pub async fn evict_expired(&self) -> Result<u64> {
         let result = sqlx::query(
@@ -759,6 +935,73 @@ fn format_datetime(dt: OffsetDateTime) -> String {
         .unwrap_or_default()
 }
 
+/// Verify an Ed25519 challenge-response: check that `signature` is a valid
+/// signature over `nonce` by the holder of `public_key_b64`.
+///
+/// All three values are base64-encoded. Returns `Ok(true)` on valid signature,
+/// `Ok(false)` on invalid, `Err` on malformed inputs.
+pub fn verify_ed25519_challenge(
+    public_key_b64: &str,
+    nonce: &[u8],
+    signature_b64: &str,
+) -> std::result::Result<bool, String> {
+    use {base64::Engine, ed25519_dalek::Verifier};
+
+    let pk_bytes = base64::engine::general_purpose::STANDARD
+        .decode(public_key_b64)
+        .map_err(|e| format!("invalid public key base64: {e}"))?;
+
+    let pk_array: [u8; 32] = pk_bytes
+        .try_into()
+        .map_err(|_| "public key must be exactly 32 bytes".to_string())?;
+
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pk_array)
+        .map_err(|e| format!("invalid Ed25519 public key: {e}"))?;
+
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(signature_b64)
+        .map_err(|e| format!("invalid signature base64: {e}"))?;
+
+    let sig_array: [u8; 64] = sig_bytes
+        .try_into()
+        .map_err(|_| "signature must be exactly 64 bytes".to_string())?;
+
+    let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
+
+    Ok(verifying_key.verify(nonce, &signature).is_ok())
+}
+
+/// Generate a 32-byte cryptographic challenge nonce, returned as base64.
+pub fn generate_challenge_nonce() -> (Vec<u8>, String) {
+    use {base64::Engine, rand::Rng};
+
+    let mut nonce = [0u8; 32];
+    rand::rng().fill_bytes(&mut nonce);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(nonce);
+    (nonce.to_vec(), b64)
+}
+
+/// Compute a fingerprint from a base64-encoded Ed25519 public key:
+/// `SHA256:<base64 of SHA-256 hash>`.
+pub fn public_key_fingerprint(public_key_b64: &str) -> std::result::Result<String, String> {
+    use base64::Engine;
+
+    let pk_bytes = base64::engine::general_purpose::STANDARD
+        .decode(public_key_b64)
+        .map_err(|e| format!("invalid public key base64: {e}"))?;
+    let pk_array: [u8; 32] = pk_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| "public key must be exactly 32 bytes".to_string())?;
+    ed25519_dalek::VerifyingKey::from_bytes(&pk_array)
+        .map_err(|e| format!("invalid Ed25519 public key: {e}"))?;
+    let hash = Sha256::digest(&pk_bytes);
+    Ok(format!(
+        "SHA256:{}",
+        base64::engine::general_purpose::STANDARD.encode(hash)
+    ))
+}
+
 fn is_expired(expires_at: &str) -> bool {
     let Ok(expires) =
         OffsetDateTime::parse(expires_at, &time::format_description::well_known::Rfc3339)
@@ -938,5 +1181,245 @@ mod tests {
 
         let result = store.rotate_token("nonexistent").await;
         assert!(matches!(result, Err(Error::DeviceNotFound)));
+    }
+
+    // ── Ed25519 identity tests ──────────────────────────────────────────
+
+    fn make_test_keypair() -> (String, ed25519_dalek::SigningKey) {
+        use {base64::Engine, rand::Rng};
+
+        let mut seed = [0u8; 32];
+        rand::rng().fill_bytes(&mut seed);
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let pk_b64 = base64::engine::general_purpose::STANDARD
+            .encode(signing_key.verifying_key().as_bytes());
+        (pk_b64, signing_key)
+    }
+
+    #[tokio::test]
+    async fn find_device_by_public_key_lifecycle() {
+        let pool = test_pool().await;
+        let store = PairingStore::new(pool);
+        let (pk_b64, _) = make_test_keypair();
+
+        // Not found before pairing.
+        assert!(
+            store
+                .find_device_by_public_key(&pk_b64)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // Pair with public key.
+        let req = store
+            .request_pair("dev-pk-1", Some("Key Node"), "linux", Some(&pk_b64))
+            .await
+            .unwrap();
+        store.approve(&req.id).await.unwrap();
+
+        // Now found.
+        let device = store
+            .find_device_by_public_key(&pk_b64)
+            .await
+            .unwrap()
+            .expect("device should be found");
+        assert_eq!(device.device_id, "dev-pk-1");
+        assert_eq!(device.public_key.as_deref(), Some(pk_b64.as_str()));
+
+        // Revoke and verify it's no longer found.
+        store.revoke_token("dev-pk-1").await.unwrap();
+        assert!(
+            store
+                .find_device_by_public_key(&pk_b64)
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // But it IS marked as revoked.
+        assert!(store.is_public_key_revoked(&pk_b64).await.unwrap());
+    }
+
+    #[test]
+    fn ed25519_challenge_response_valid() {
+        use {base64::Engine, ed25519_dalek::Signer};
+
+        let (pk_b64, signing_key) = make_test_keypair();
+        let (nonce, _nonce_b64) = generate_challenge_nonce();
+
+        let signature = signing_key.sign(&nonce);
+        let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+
+        assert!(verify_ed25519_challenge(&pk_b64, &nonce, &sig_b64).unwrap());
+    }
+
+    #[test]
+    fn ed25519_challenge_response_wrong_key() {
+        use {base64::Engine, ed25519_dalek::Signer};
+
+        let (_pk_b64, signing_key) = make_test_keypair();
+        let (other_pk_b64, _) = make_test_keypair();
+        let (nonce, _) = generate_challenge_nonce();
+
+        let signature = signing_key.sign(&nonce);
+        let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+
+        // Verify with the wrong public key should fail.
+        assert!(!verify_ed25519_challenge(&other_pk_b64, &nonce, &sig_b64).unwrap());
+    }
+
+    #[test]
+    fn ed25519_challenge_response_wrong_nonce() {
+        use {base64::Engine, ed25519_dalek::Signer};
+
+        let (pk_b64, signing_key) = make_test_keypair();
+        let (nonce, _) = generate_challenge_nonce();
+        let (wrong_nonce, _) = generate_challenge_nonce();
+
+        let signature = signing_key.sign(&nonce);
+        let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+
+        // Verify with wrong nonce should fail.
+        assert!(!verify_ed25519_challenge(&pk_b64, &wrong_nonce, &sig_b64).unwrap());
+    }
+
+    #[tokio::test]
+    async fn key_pinning_enforcement() {
+        let pool = test_pool().await;
+        let store = PairingStore::new(pool);
+        let (pk_b64, _) = make_test_keypair();
+        let (other_pk_b64, _) = make_test_keypair();
+
+        // No pinned key for unknown device.
+        assert_eq!(
+            store.check_key_pinning("dev-pin-1", &pk_b64).await.unwrap(),
+            KeyPinningResult::NoPinnedKey
+        );
+
+        // Pair with first key.
+        let req = store
+            .request_pair("dev-pin-1", Some("Pinned Node"), "linux", Some(&pk_b64))
+            .await
+            .unwrap();
+        store.approve(&req.id).await.unwrap();
+
+        // Same key should match.
+        assert_eq!(
+            store.check_key_pinning("dev-pin-1", &pk_b64).await.unwrap(),
+            KeyPinningResult::Match
+        );
+
+        // Different key should be rejected.
+        match store
+            .check_key_pinning("dev-pin-1", &other_pk_b64)
+            .await
+            .unwrap()
+        {
+            KeyPinningResult::Mismatch { expected } => {
+                assert_eq!(expected, pk_b64);
+            },
+            other => panic!("expected Mismatch, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pin_public_key_reports_actual_outcome() {
+        let pool = test_pool().await;
+        let store = PairingStore::new(pool);
+        let (pk_b64, _) = make_test_keypair();
+        let (other_pk_b64, _) = make_test_keypair();
+
+        assert_eq!(
+            store
+                .pin_public_key("missing-device", &pk_b64)
+                .await
+                .unwrap(),
+            PinPublicKeyResult::DeviceNotFound
+        );
+
+        let token = store
+            .create_device_token(Some("Migrating Node"), "linux")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store
+                .pin_public_key(&token.device_id, &pk_b64)
+                .await
+                .unwrap(),
+            PinPublicKeyResult::Pinned
+        );
+        assert_eq!(
+            store
+                .pin_public_key(&token.device_id, &pk_b64)
+                .await
+                .unwrap(),
+            PinPublicKeyResult::AlreadyPinned
+        );
+
+        match store
+            .pin_public_key(&token.device_id, &other_pk_b64)
+            .await
+            .unwrap()
+        {
+            PinPublicKeyResult::Mismatch { expected } => assert_eq!(expected, pk_b64),
+            other => panic!("expected Mismatch, got {other:?}"),
+        }
+
+        store.revoke_token(&token.device_id).await.unwrap();
+        assert_eq!(
+            store
+                .pin_public_key(&token.device_id, &pk_b64)
+                .await
+                .unwrap(),
+            PinPublicKeyResult::Revoked
+        );
+    }
+
+    #[tokio::test]
+    async fn key_pinning_reports_revoked_device() {
+        let pool = test_pool().await;
+        let store = PairingStore::new(pool);
+        let (pk_b64, _) = make_test_keypair();
+
+        let req = store
+            .request_pair(
+                "dev-revoked-pin",
+                Some("Pinned Node"),
+                "linux",
+                Some(&pk_b64),
+            )
+            .await
+            .unwrap();
+        store.approve(&req.id).await.unwrap();
+        store.revoke_token("dev-revoked-pin").await.unwrap();
+
+        assert_eq!(
+            store
+                .check_key_pinning("dev-revoked-pin", &pk_b64)
+                .await
+                .unwrap(),
+            KeyPinningResult::Revoked
+        );
+    }
+
+    #[test]
+    fn public_key_fingerprint_format() {
+        let (pk_b64, _) = make_test_keypair();
+        let fp = public_key_fingerprint(&pk_b64).unwrap();
+        assert!(fp.starts_with("SHA256:"));
+        assert_eq!(fp.len(), 7 + 44); // SHA256: prefix + 44 base64 chars
+    }
+
+    #[test]
+    fn public_key_fingerprint_rejects_malformed_keys() {
+        use base64::Engine;
+
+        assert!(public_key_fingerprint("not base64").is_err());
+        assert!(public_key_fingerprint("").is_err());
+
+        let too_short = base64::engine::general_purpose::STANDARD.encode([1u8; 31]);
+        assert!(public_key_fingerprint(&too_short).is_err());
     }
 }

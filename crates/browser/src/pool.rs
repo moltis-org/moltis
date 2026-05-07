@@ -406,6 +406,7 @@ impl BrowserPool {
             MAX_BROWSER_INSTANCE_LIFETIME.as_secs(),
         );
         let profile_dir = sandbox_profile_dir(self.config.resolved_profile_dir(), session_id);
+        let host_data_dir = self.config.host_data_dir.clone();
         let container_host = self.config.container_host.clone();
 
         info!(
@@ -464,6 +465,7 @@ impl BrowserPool {
                 low_mem,
                 session_timeout_ms,
                 profile_dir.as_deref(),
+                host_data_dir.as_deref(),
                 &container_host,
             )
             .map_err(|e| Error::LaunchFailed(format!("failed to start browser container: {e}")))

@@ -29,7 +29,6 @@ Signs release artifacts with a local GPG key (e.g. YubiKey-resident).
 Options:
   -k, --key KEY_ID    GPG key ID or fingerprint to sign with
   -n, --dry-run       Download and sign but do not upload .asc files
-  -y, --yes           Skip confirmation prompt
   -h, --help          Show this help
 
 Environment:
@@ -47,14 +46,12 @@ EOF
 KEY_ID="${GPG_KEY_ID:-}"
 REPO="${MOLTIS_REPO:-moltis-org/moltis}"
 DRY_RUN=false
-SKIP_CONFIRM=false
 VERSION=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -k|--key)    KEY_ID="$2"; shift 2 ;;
     -n|--dry-run) DRY_RUN=true; shift ;;
-    -y|--yes)    SKIP_CONFIRM=true; shift ;;
     -h|--help)   usage; exit 0 ;;
     -*)          echo "Unknown option: $1" >&2; usage; exit 1 ;;
     *)           VERSION="$1"; shift ;;
@@ -123,25 +120,25 @@ echo "Downloading release artifacts for $VERSION..."
 gh release download "$VERSION" \
   --repo "$REPO" \
   --dir "$WORK_DIR" \
-  --pattern '*.deb' \
-  --pattern '*.rpm' \
-  --pattern '*.pkg.tar.zst' \
-  --pattern '*.AppImage' \
-  --pattern '*.snap' \
-  --pattern '*.tar.gz' \
-  --pattern '*.zip' \
-  --pattern '*.exe' \
-  --pattern '*.cdx.json' \
-  --pattern '*.spdx.json'
+  --pattern 'moltis*.deb' \
+  --pattern 'moltis*.rpm' \
+  --pattern 'moltis*.pkg.tar.zst' \
+  --pattern 'moltis*.AppImage' \
+  --pattern 'moltis*.snap' \
+  --pattern 'moltis*.tar.gz' \
+  --pattern 'moltis*.zip' \
+  --pattern 'moltis*.exe' \
+  --pattern 'moltis*.cdx.json' \
+  --pattern 'moltis*.spdx.json'
 
 ARTIFACTS=()
 while IFS= read -r -d '' f; do
   ARTIFACTS+=("$f")
 done < <(find "$WORK_DIR" -maxdepth 1 -type f \
-  \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' \
-     -o -name '*.AppImage' -o -name '*.snap' -o -name '*.tar.gz' \
-     -o -name '*.zip' -o -name '*.exe' \
-     -o -name '*.cdx.json' -o -name '*.spdx.json' \) \
+  \( -name 'moltis*.deb' -o -name 'moltis*.rpm' -o -name 'moltis*.pkg.tar.zst' \
+     -o -name 'moltis*.AppImage' -o -name 'moltis*.snap' -o -name 'moltis*.tar.gz' \
+     -o -name 'moltis*.zip' -o -name 'moltis*.exe' \
+     -o -name 'moltis*.cdx.json' -o -name 'moltis*.spdx.json' \) \
   -print0 | sort -z)
 
 if [[ ${#ARTIFACTS[@]} -eq 0 ]]; then
@@ -155,22 +152,14 @@ for f in "${ARTIFACTS[@]}"; do
   echo "  $(basename "$f")"
 done
 
-# --- Confirm ---
-if [[ "$SKIP_CONFIRM" != true ]]; then
-  echo ""
-  if [[ "$DRY_RUN" == true ]]; then
-    read -r -p "Sign these artifacts (dry-run, no upload)? [y/N] " confirm
-  else
-    read -r -p "Sign and upload .asc files to release $VERSION? [y/N] " confirm
-  fi
-  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    echo "Aborted."
-    exit 0
-  fi
-fi
-
 # --- Sign ---
 echo ""
+if [[ "$DRY_RUN" == true ]]; then
+  echo "Dry run: signing locally only; no .asc files will be uploaded."
+else
+  echo "Signing and uploading .asc files to release $VERSION."
+fi
+
 ASC_FILES=()
 for file in "${ARTIFACTS[@]}"; do
   name="$(basename "$file")"

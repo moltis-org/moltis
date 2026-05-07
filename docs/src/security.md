@@ -334,6 +334,30 @@ dedicated [Authentication](authentication.md) page.
 | **2** | No credentials + direct local connection | Full access (dev convenience) |
 | **3** | No credentials + remote/proxied connection | Onboarding only (setup code required) |
 
+### Node Identity (Ed25519 TOFU)
+
+Remote nodes authenticate using Ed25519 challenge-response, following the same
+Trust On First Use (TOFU) model as SSH:
+
+1. **First connection**: The operator opens the pairing window from the Nodes UI
+   or with `moltis node pairing enable`. The node generates an Ed25519 keypair
+   and presents its public key to the gateway. The operator verifies the
+   fingerprint and approves the pairing (via the web UI or `moltis node approve`).
+2. **Subsequent connections**: The gateway sends a random 32-byte nonce. The node
+   signs it with its private key. The gateway verifies the signature against the
+   stored public key. No shared secret crosses the wire.
+3. **Key pinning**: Once approved, the public key is pinned to the device ID. If
+   the same device reconnects with a different key, the connection is rejected
+   and a `node.security.key-mismatch` alert is broadcast to operators.
+4. **Revocation**: Revoked keys are kept in the database so they cannot be
+   re-paired without explicit operator action.
+
+The private key (`~/.moltis/node_key`) is stored with mode 0600 and never
+leaves the node. The gateway stores only public keys.
+
+Pairing is disabled by default. Keep it disabled except while onboarding a new
+node, then close the window with `moltis node pairing disable`.
+
 ## HTTP Endpoint Throttling
 
 Moltis includes built-in per-IP endpoint throttling to reduce brute force
