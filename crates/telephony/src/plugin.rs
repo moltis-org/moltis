@@ -228,10 +228,18 @@ impl ChannelPlugin for TelephonyPlugin {
     async fn stop_account(&mut self, account_id: &str) -> moltis_channels::Result<()> {
         self.routing_outbound.remove_manager(account_id);
         if let Some(state) = self.accounts.remove(account_id) {
-            let mgr = state.manager.read().await;
-            for call in mgr.active_calls() {
-                if let Err(e) = mgr.hangup(&call.call_id).await {
-                    warn!(call_id = %call.call_id, "failed to hangup on stop: {e}");
+            let call_ids = state
+                .manager
+                .read()
+                .await
+                .active_calls()
+                .into_iter()
+                .map(|call| call.call_id)
+                .collect::<Vec<_>>();
+            for call_id in call_ids {
+                let mgr = state.manager.read().await;
+                if let Err(e) = mgr.hangup(&call_id).await {
+                    warn!(call_id = %call_id, "failed to hangup on stop: {e}");
                 }
             }
             info!(account_id = %account_id, "telephony account stopped");

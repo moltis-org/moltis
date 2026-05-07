@@ -334,6 +334,7 @@ impl TelephonyProvider for TwilioProvider {
         let mut twiml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?><Response>"#);
 
         if let Some(url) = gather_url {
+            let url = xml_escape(url);
             twiml.push_str(&format!(
                 r#"<Gather input="speech" action="{url}" speechTimeout="auto">"#
             ));
@@ -358,6 +359,7 @@ impl TelephonyProvider for TwilioProvider {
 
     fn build_gather_response(&self, prompt: Option<&str>, action_url: &str) -> Bytes {
         let mut twiml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?><Response>"#);
+        let action_url = xml_escape(action_url);
         twiml.push_str(&format!(
             r#"<Gather input="speech" action="{action_url}" speechTimeout="auto">"#
         ));
@@ -382,7 +384,7 @@ impl TelephonyProvider for TwilioProvider {
     }
 }
 
-/// Minimal XML escaping for TwiML text content.
+/// Minimal XML escaping for TwiML text and attribute values.
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -444,6 +446,22 @@ mod tests {
         assert!(twiml.contains("<Gather"));
         assert!(twiml.contains("Hello caller"));
         assert!(twiml.contains("https://example.com/gather"));
+    }
+
+    #[test]
+    fn build_gather_responses_escape_action_url_attributes() {
+        let provider = TwilioProvider::new("AC_TEST".into(), Secret::new("TOKEN".into()));
+        let url = "https://example.com/gather?foo=1&bar=\"two\"";
+
+        let answer = provider.build_answer_response(Some("Hello"), Some(url));
+        let answer_twiml = std::str::from_utf8(&answer).unwrap_or("");
+        assert!(answer_twiml.contains("foo=1&amp;bar=&quot;two&quot;"));
+        assert!(!answer_twiml.contains("foo=1&bar=\"two\""));
+
+        let gather = provider.build_gather_response(None, url);
+        let gather_twiml = std::str::from_utf8(&gather).unwrap_or("");
+        assert!(gather_twiml.contains("foo=1&amp;bar=&quot;two&quot;"));
+        assert!(!gather_twiml.contains("foo=1&bar=\"two\""));
     }
 
     #[test]
