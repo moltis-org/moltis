@@ -298,8 +298,23 @@ pub async fn handle_connection(
                 }
             },
             Ok(None) => {
-                // Unknown key — check if pairing is enabled before accepting.
-                if !state
+                // Unknown key. If a device_token is also present, skip the
+                // pairing flow entirely — fall through to token auth, which
+                // will pin the key during verification (upgrade-auth path).
+                let has_device_token = params
+                    .auth
+                    .as_ref()
+                    .and_then(|a| a.device_token.as_ref())
+                    .is_some_and(|t| !t.is_empty());
+
+                if has_device_token {
+                    debug!(
+                        conn_id = %conn_id,
+                        fingerprint = %fingerprint,
+                        "ws: unknown key with device token — deferring to token auth for key pinning"
+                    );
+                // Fall through to device_token auth block below.
+                } else if !state
                     .node_pairing_enabled
                     .load(std::sync::atomic::Ordering::Relaxed)
                 {
@@ -319,144 +334,147 @@ pub async fn handle_connection(
                     let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
                     graceful_writer_shutdown(client_tx, write_handle).await;
                     return;
-                }
+                } else {
+                    // Create pair request and hold connection for approval.
+                    let display_name = params.client.display_name.as_deref();
+                    let platform = &params.client.platform;
+                    let device_id = &params.client.id;
 
-                // Create pair request and hold connection for approval.
-                let display_name = params.client.display_name.as_deref();
-                let platform = &params.client.platform;
-                let device_id = &params.client.id;
-
-                match store
-                    .request_pair(device_id, display_name, platform, Some(pk_b64))
-                    .await
-                {
-                    Ok(pair_req) => {
-                        info!(
-                            conn_id = %conn_id,
-                            pair_id = %pair_req.id,
-                            fingerprint = %fingerprint,
-                            "ws: Ed25519 pairing request created, waiting for approval"
-                        );
-
-                        // Notify operators about the pending pair request.
-                        broadcast(
-                            &state,
-                            "node.pair.requested",
-                            serde_json::json!({
-                                "id": pair_req.id,
-                                "deviceId": device_id,
-                                "displayName": display_name,
-                                "platform": platform,
-                                "fingerprint": fingerprint,
-                            }),
-                            BroadcastOpts::default(),
-                        )
-                        .await;
-
-                        // Tell the node it's pending.
-                        let pending_event = serde_json::json!({
-                            "type": "event",
-                            "event": "node.pair.pending",
-                            "payload": {
-                                "pairId": pair_req.id,
-                                "fingerprint": fingerprint,
-                            }
-                        });
-                        #[allow(clippy::unwrap_used)]
-                        let _ = client_tx.try_send(serde_json::to_string(&pending_event).unwrap());
-
-                        // Hold connection until approved/rejected/expired (5 min).
-                        match wait_for_pair_approval(
-                            store,
-                            &pair_req.id,
-                            std::time::Duration::from_secs(300),
-                        )
+                    match store
+                        .request_pair(device_id, display_name, platform, Some(pk_b64))
                         .await
-                        {
-                            PairOutcome::Approved => {
-                                // Now run the challenge-response.
-                                let (nonce_bytes, nonce_b64) = generate_challenge_nonce();
-                                let challenge_event = serde_json::json!({
-                                    "type": "event",
-                                    "event": "node.auth.challenge",
-                                    "payload": { "nonce": nonce_b64 }
-                                });
-                                #[allow(clippy::unwrap_used)]
-                                let _ = client_tx
-                                    .try_send(serde_json::to_string(&challenge_event).unwrap());
+                    {
+                        Ok(pair_req) => {
+                            info!(
+                                conn_id = %conn_id,
+                                pair_id = %pair_req.id,
+                                fingerprint = %fingerprint,
+                                "ws: Ed25519 pairing request created, waiting for approval"
+                            );
 
-                                match receive_challenge_response(
-                                    &mut ws_rx,
-                                    std::time::Duration::from_secs(10),
-                                )
-                                .await
-                                {
-                                    Ok(sig_b64) => {
-                                        match verify_ed25519_challenge(
-                                            pk_b64,
-                                            &nonce_bytes,
-                                            &sig_b64,
-                                        ) {
-                                            Ok(true) => {
-                                                authenticated = true;
-                                                device_token_device_id =
-                                                    Some(device_id.to_string());
-                                                api_key_scopes = Some(vec![
-                                                    "operator.read".into(),
-                                                    "operator.write".into(),
-                                                    "operator.approvals".into(),
-                                                ]);
-                                                info!(
-                                                    conn_id = %conn_id,
-                                                    device_id = %device_id,
-                                                    fingerprint = %fingerprint,
-                                                    "ws: authenticated via Ed25519 after pairing approval"
-                                                );
-                                            },
-                                            _ => {
-                                                warn!(conn_id = %conn_id, "ws: Ed25519 post-approval verification failed");
-                                            },
-                                        }
-                                    },
-                                    Err(e) => {
-                                        warn!(conn_id = %conn_id, error = %e, "ws: post-approval challenge-response failed");
-                                    },
+                            // Notify operators about the pending pair request.
+                            broadcast(
+                                &state,
+                                "node.pair.requested",
+                                serde_json::json!({
+                                    "id": pair_req.id,
+                                    "deviceId": device_id,
+                                    "displayName": display_name,
+                                    "platform": platform,
+                                    "fingerprint": fingerprint,
+                                }),
+                                BroadcastOpts::default(),
+                            )
+                            .await;
+
+                            // Tell the node it's pending.
+                            let pending_event = serde_json::json!({
+                                "type": "event",
+                                "event": "node.pair.pending",
+                                "payload": {
+                                    "pairId": pair_req.id,
+                                    "fingerprint": fingerprint,
                                 }
-                            },
-                            PairOutcome::Rejected => {
-                                warn!(conn_id = %conn_id, "ws: pairing request rejected by operator");
-                                let err = ResponseFrame::err(
-                                    &request_id,
-                                    ErrorShape::new(
-                                        error_codes::FORBIDDEN,
-                                        "pairing request rejected",
-                                    ),
-                                );
-                                #[allow(clippy::unwrap_used)]
-                                let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
-                                graceful_writer_shutdown(client_tx, write_handle).await;
-                                return;
-                            },
-                            PairOutcome::Expired => {
-                                warn!(conn_id = %conn_id, "ws: pairing request expired");
-                                let err = ResponseFrame::err(
-                                    &request_id,
-                                    ErrorShape::new(
-                                        error_codes::TIMEOUT,
-                                        "pairing request expired",
-                                    ),
-                                );
-                                #[allow(clippy::unwrap_used)]
-                                let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
-                                graceful_writer_shutdown(client_tx, write_handle).await;
-                                return;
-                            },
-                        }
-                    },
-                    Err(e) => {
-                        warn!(conn_id = %conn_id, error = %e, "ws: failed to create pair request");
-                    },
-                }
+                            });
+                            #[allow(clippy::unwrap_used)]
+                            let _ =
+                                client_tx.try_send(serde_json::to_string(&pending_event).unwrap());
+
+                            // Hold connection until approved/rejected/expired (5 min).
+                            match wait_for_pair_approval(
+                                store,
+                                &pair_req.id,
+                                std::time::Duration::from_secs(300),
+                            )
+                            .await
+                            {
+                                PairOutcome::Approved => {
+                                    // Now run the challenge-response.
+                                    let (nonce_bytes, nonce_b64) = generate_challenge_nonce();
+                                    let challenge_event = serde_json::json!({
+                                        "type": "event",
+                                        "event": "node.auth.challenge",
+                                        "payload": { "nonce": nonce_b64 }
+                                    });
+                                    #[allow(clippy::unwrap_used)]
+                                    let _ = client_tx
+                                        .try_send(serde_json::to_string(&challenge_event).unwrap());
+
+                                    match receive_challenge_response(
+                                        &mut ws_rx,
+                                        std::time::Duration::from_secs(10),
+                                    )
+                                    .await
+                                    {
+                                        Ok(sig_b64) => {
+                                            match verify_ed25519_challenge(
+                                                pk_b64,
+                                                &nonce_bytes,
+                                                &sig_b64,
+                                            ) {
+                                                Ok(true) => {
+                                                    authenticated = true;
+                                                    device_token_device_id =
+                                                        Some(device_id.to_string());
+                                                    api_key_scopes = Some(vec![
+                                                        "operator.read".into(),
+                                                        "operator.write".into(),
+                                                        "operator.approvals".into(),
+                                                    ]);
+                                                    info!(
+                                                        conn_id = %conn_id,
+                                                        device_id = %device_id,
+                                                        fingerprint = %fingerprint,
+                                                        "ws: authenticated via Ed25519 after pairing approval"
+                                                    );
+                                                },
+                                                _ => {
+                                                    warn!(conn_id = %conn_id, "ws: Ed25519 post-approval verification failed");
+                                                },
+                                            }
+                                        },
+                                        Err(e) => {
+                                            warn!(conn_id = %conn_id, error = %e, "ws: post-approval challenge-response failed");
+                                        },
+                                    }
+                                },
+                                PairOutcome::Rejected => {
+                                    warn!(conn_id = %conn_id, "ws: pairing request rejected by operator");
+                                    let err = ResponseFrame::err(
+                                        &request_id,
+                                        ErrorShape::new(
+                                            error_codes::FORBIDDEN,
+                                            "pairing request rejected",
+                                        ),
+                                    );
+                                    #[allow(clippy::unwrap_used)]
+                                    let _ =
+                                        client_tx.try_send(serde_json::to_string(&err).unwrap());
+                                    graceful_writer_shutdown(client_tx, write_handle).await;
+                                    return;
+                                },
+                                PairOutcome::Expired => {
+                                    warn!(conn_id = %conn_id, "ws: pairing request expired");
+                                    let err = ResponseFrame::err(
+                                        &request_id,
+                                        ErrorShape::new(
+                                            error_codes::TIMEOUT,
+                                            "pairing request expired",
+                                        ),
+                                    );
+                                    #[allow(clippy::unwrap_used)]
+                                    let _ =
+                                        client_tx.try_send(serde_json::to_string(&err).unwrap());
+                                    graceful_writer_shutdown(client_tx, write_handle).await;
+                                    return;
+                                },
+                            }
+                        },
+                        Err(e) => {
+                            warn!(conn_id = %conn_id, error = %e, "ws: failed to create pair request");
+                        },
+                    }
+                } // close else (pairing flow)
             },
             Err(e) => {
                 warn!(conn_id = %conn_id, error = %e, "ws: public key lookup failed");

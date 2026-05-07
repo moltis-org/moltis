@@ -160,14 +160,10 @@ fn generate_and_save(dir: &Path) -> Result<NodeIdentity> {
     let verifying_key = signing_key.verifying_key();
 
     // Write private key (raw 32-byte seed).
+    // On Unix, create the file with mode 0600 atomically to avoid a window
+    // where the key is world-readable between write and chmod.
     let priv_path = private_key_path(dir);
-    fs::write(&priv_path, signing_key.to_bytes()).map_err(|e| {
-        Error::Config(format!(
-            "failed to write node private key to {}: {e}",
-            priv_path.display()
-        ))
-    })?;
-    set_owner_only_permissions(&priv_path)?;
+    write_private_file(&priv_path, &signing_key.to_bytes())?;
 
     // Write public key (raw 32-byte public key).
     let pub_path = public_key_path(dir);
@@ -181,23 +177,42 @@ fn generate_and_save(dir: &Path) -> Result<NodeIdentity> {
     Ok(NodeIdentity::from_signing_key(signing_key))
 }
 
-/// Set file permissions to owner-only read/write (0600 on Unix, no-op on other platforms).
+/// Write a file with owner-only permissions atomically.
+///
+/// On Unix, the file is opened with mode 0600 at creation time so the key
+/// is never world-readable, even briefly. On other platforms, falls back to
+/// a normal write (inheriting parent directory ACLs).
 #[cfg(unix)]
-fn set_owner_only_permissions(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| {
+fn write_private_file(path: &Path, data: &[u8]) -> Result<()> {
+    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| {
+            Error::Config(format!(
+                "failed to create node private key at {}: {e}",
+                path.display()
+            ))
+        })?;
+    file.write_all(data).map_err(|e| {
         Error::Config(format!(
-            "failed to set permissions on {}: {e}",
+            "failed to write node private key to {}: {e}",
             path.display()
         ))
     })
 }
 
 #[cfg(not(unix))]
-fn set_owner_only_permissions(_path: &Path) -> Result<()> {
-    // On Windows, file ACLs are inherited from the parent directory.
-    // The user's home directory is typically already owner-only.
-    Ok(())
+fn write_private_file(path: &Path, data: &[u8]) -> Result<()> {
+    fs::write(path, data).map_err(|e| {
+        Error::Config(format!(
+            "failed to write node private key to {}: {e}",
+            path.display()
+        ))
+    })
 }
 
 /// Verify the private key file has mode 0600 (owner-only read/write).
