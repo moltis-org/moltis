@@ -74,8 +74,10 @@ impl SttProvider for WhisperLocalStt {
     }
 
     fn is_configured(&self) -> bool {
-        // Require explicit configuration: non-default endpoint or a model specified.
-        self.model.is_some() || self.endpoint != DEFAULT_ENDPOINT
+        // Always report as configured — the actual server reachability check
+        // happens at transcription time. The `enabled` field in the config
+        // gates whether this provider is offered to users.
+        true
     }
 
     async fn transcribe(&self, request: TranscribeRequest) -> Result<Transcript> {
@@ -111,19 +113,7 @@ mod tests {
         let provider = WhisperLocalStt::new();
         assert_eq!(provider.id(), "whisper-local");
         assert_eq!(provider.name(), "Whisper (Local)");
-        assert!(!provider.is_configured());
-    }
-
-    #[test]
-    fn test_is_configured_with_model() {
-        let provider = WhisperLocalStt::with_options(None, Some("large-v3".into()), None);
-        assert!(provider.is_configured());
-    }
-
-    #[test]
-    fn test_is_configured_with_custom_endpoint() {
-        let provider =
-            WhisperLocalStt::with_options(Some("http://localhost:9000".into()), None, None);
+        // Always configured — runtime health check gates actual use
         assert!(provider.is_configured());
     }
 

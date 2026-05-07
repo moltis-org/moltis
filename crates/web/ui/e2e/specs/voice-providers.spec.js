@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors, sendRpcFromPage, expectRpcOk } = require("../helpers");
+const { navigateAndWait, waitForWsConnected, watchPageErrors, expectRpcOk } = require("../helpers");
 
 async function openVoicePage(page) {
 	await navigateAndWait(page, "/settings/voice");
@@ -107,11 +107,8 @@ test.describe("Local provider setup instructions", () => {
 		const card = providerCard(page, "Whisper (Local)");
 		await expect(card).toBeVisible();
 
-		const configureBtn = card.getByRole("button", { name: /configure/i });
-		if (await configureBtn.isVisible().catch(() => false)) {
-			await configureBtn.click();
-			await expect(page.getByText("faster-whisper-server")).toBeVisible({ timeout: 5_000 });
-		}
+		await card.getByRole("button", { name: /configure/i }).click();
+		await expect(page.getByText("faster-whisper-server")).toBeVisible({ timeout: 5_000 });
 	});
 
 	test("voxtral-local shows setup instructions", async ({ page }) => {
@@ -121,11 +118,8 @@ test.describe("Local provider setup instructions", () => {
 		const card = providerCard(page, "Voxtral (Local)");
 		await expect(card).toBeVisible();
 
-		const configureBtn = card.getByRole("button", { name: /configure/i });
-		if (await configureBtn.isVisible().catch(() => false)) {
-			await configureBtn.click();
-			await expect(page.getByText("vllm serve")).toBeVisible({ timeout: 5_000 });
-		}
+		await card.getByRole("button", { name: /configure/i }).click();
+		await expect(page.getByText("vllm serve")).toBeVisible({ timeout: 5_000 });
 	});
 });
 
