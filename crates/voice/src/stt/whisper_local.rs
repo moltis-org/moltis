@@ -6,7 +6,7 @@
 //! Example with faster-whisper-server:
 //! ```bash
 //! pip install faster-whisper-server
-//! faster-whisper-server --model Systran/faster-whisper-large-v3
+//! faster-whisper-server --model Systran/faster-whisper-large-v3 --port 8080
 //! ```
 
 use {
