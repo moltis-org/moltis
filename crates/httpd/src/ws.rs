@@ -21,7 +21,10 @@ use moltis_gateway::{
     broadcast::{BroadcastOpts, broadcast},
     methods::{MethodContext, MethodRegistry},
     nodes::NodeSession,
-    pairing::{generate_challenge_nonce, public_key_fingerprint, verify_ed25519_challenge},
+    pairing::{
+        PinPublicKeyResult, generate_challenge_nonce, public_key_fingerprint,
+        verify_ed25519_challenge,
+    },
     state::{ConnectedClient, GatewayState},
 };
 
@@ -161,7 +164,24 @@ pub async fn handle_connection(
         && let Some(ref pk_b64) = params.auth.as_ref().and_then(|a| a.public_key.clone())
         && let Some(ref store) = state.pairing_store
     {
-        let fingerprint = public_key_fingerprint(pk_b64).unwrap_or_else(|_| "unknown".into());
+        let fingerprint = match public_key_fingerprint(pk_b64) {
+            Ok(fingerprint) => fingerprint,
+            Err(error) => {
+                warn!(
+                    conn_id = %conn_id,
+                    error = %error,
+                    "ws: rejecting malformed Ed25519 public key"
+                );
+                let err = ResponseFrame::err(
+                    &request_id,
+                    ErrorShape::new(error_codes::INVALID_REQUEST, "invalid Ed25519 public key"),
+                );
+                #[allow(clippy::unwrap_used)]
+                let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+                graceful_writer_shutdown(client_tx, write_handle).await;
+                return;
+            },
+        };
 
         // Check if this key has been revoked.
         if store.is_public_key_revoked(pk_b64).await.unwrap_or(false) {
@@ -546,25 +566,91 @@ pub async fn handle_connection(
         }
         match store.verify_device_token(dt).await {
             Ok(Some(verification)) => {
-                authenticated = true;
-                api_key_scopes = Some(verification.scopes.clone());
-                device_token_device_id = Some(verification.device_id.clone());
-
                 // If the node also presented a public key, pin it for future
                 // key-based auth (migration from token to Ed25519).
                 if let Some(ref pk) = params.auth.as_ref().and_then(|a| a.public_key.clone()) {
-                    if let Err(e) = store.pin_public_key(&verification.device_id, pk).await {
-                        debug!(conn_id = %conn_id, error = %e, "ws: failed to pin public key during token auth");
-                    } else {
-                        let fp = public_key_fingerprint(pk).unwrap_or_else(|_| "unknown".into());
-                        info!(
-                            conn_id = %conn_id,
-                            device_id = %verification.device_id,
-                            fingerprint = %fp,
-                            "ws: pinned Ed25519 public key during token auth (migration)"
-                        );
+                    let fp = public_key_fingerprint(pk).unwrap_or_else(|_| "unknown".into());
+                    match store.pin_public_key(&verification.device_id, pk).await {
+                        Ok(PinPublicKeyResult::Pinned) => {
+                            info!(
+                                conn_id = %conn_id,
+                                device_id = %verification.device_id,
+                                fingerprint = %fp,
+                                "ws: pinned Ed25519 public key during token auth (migration)"
+                            );
+                        },
+                        Ok(PinPublicKeyResult::AlreadyPinned) => {
+                            debug!(
+                                conn_id = %conn_id,
+                                device_id = %verification.device_id,
+                                fingerprint = %fp,
+                                "ws: Ed25519 public key already pinned during token auth"
+                            );
+                        },
+                        Ok(PinPublicKeyResult::Mismatch { expected }) => {
+                            let expected_fp = public_key_fingerprint(&expected)
+                                .unwrap_or_else(|_| "unknown".into());
+                            warn!(
+                                conn_id = %conn_id,
+                                device_id = %verification.device_id,
+                                expected_fingerprint = %expected_fp,
+                                presented_fingerprint = %fp,
+                                "ws: refusing token auth with mismatched Ed25519 public key"
+                            );
+                            let err = ResponseFrame::err(
+                                &request_id,
+                                ErrorShape::new(
+                                    error_codes::FORBIDDEN,
+                                    format!(
+                                        "key mismatch: expected {expected_fp}, got {fp} — \
+                                         re-key this node from the gateway UI if intentional"
+                                    ),
+                                ),
+                            );
+                            #[allow(clippy::unwrap_used)]
+                            let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+                            graceful_writer_shutdown(client_tx, write_handle).await;
+                            return;
+                        },
+                        Ok(PinPublicKeyResult::Revoked | PinPublicKeyResult::DeviceNotFound) => {
+                            warn!(
+                                conn_id = %conn_id,
+                                device_id = %verification.device_id,
+                                fingerprint = %fp,
+                                "ws: refusing token auth because device is not active for key pinning"
+                            );
+                            let err = ResponseFrame::err(
+                                &request_id,
+                                ErrorShape::new(
+                                    error_codes::FORBIDDEN,
+                                    "device is not active for key pinning",
+                                ),
+                            );
+                            #[allow(clippy::unwrap_used)]
+                            let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+                            graceful_writer_shutdown(client_tx, write_handle).await;
+                            return;
+                        },
+                        Err(e) => {
+                            warn!(conn_id = %conn_id, error = %e, "ws: failed to pin public key during token auth");
+                            let err = ResponseFrame::err(
+                                &request_id,
+                                ErrorShape::new(
+                                    error_codes::INTERNAL,
+                                    "failed to pin public key during token auth",
+                                ),
+                            );
+                            #[allow(clippy::unwrap_used)]
+                            let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+                            graceful_writer_shutdown(client_tx, write_handle).await;
+                            return;
+                        },
                     }
                 }
+
+                authenticated = true;
+                api_key_scopes = Some(verification.scopes.clone());
+                device_token_device_id = Some(verification.device_id.clone());
 
                 info!(
                     conn_id = %conn_id,

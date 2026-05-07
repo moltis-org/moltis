@@ -83,6 +83,12 @@ pub enum NodeAction {
     /// Print the path to the node log file.
     Logs,
 
+    /// Manage the gateway's node-pairing window.
+    Pairing {
+        #[command(subcommand)]
+        action: NodePairingAction,
+    },
+
     /// Print this node's Ed25519 public key fingerprint.
     Fingerprint,
 
@@ -119,6 +125,39 @@ pub enum NodeAction {
     Reject {
         /// Pair request ID to reject.
         id: String,
+        /// Gateway HTTP URL.
+        #[arg(long, default_value = "http://localhost:9090")]
+        host: String,
+        /// API key or password for authentication.
+        #[arg(long, env = "MOLTIS_API_KEY")]
+        api_key: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum NodePairingAction {
+    /// Enable new node pairing requests on the gateway.
+    Enable {
+        /// Gateway HTTP URL.
+        #[arg(long, default_value = "http://localhost:9090")]
+        host: String,
+        /// API key or password for authentication.
+        #[arg(long, env = "MOLTIS_API_KEY")]
+        api_key: Option<String>,
+    },
+
+    /// Disable new node pairing requests on the gateway.
+    Disable {
+        /// Gateway HTTP URL.
+        #[arg(long, default_value = "http://localhost:9090")]
+        host: String,
+        /// API key or password for authentication.
+        #[arg(long, env = "MOLTIS_API_KEY")]
+        api_key: Option<String>,
+    },
+
+    /// Show whether new node pairing requests are accepted.
+    Status {
         /// Gateway HTTP URL.
         #[arg(long, default_value = "http://localhost:9090")]
         host: String,
@@ -292,6 +331,18 @@ pub async fn handle_node(action: NodeAction) -> Result<()> {
                 moltis_node_host::service::log_path(&data_dir).display()
             );
             Ok(())
+        },
+
+        NodeAction::Pairing { action } => match action {
+            NodePairingAction::Enable { host, api_key } => {
+                cmd_pairing_enable(&host, api_key.as_deref()).await
+            },
+            NodePairingAction::Disable { host, api_key } => {
+                cmd_pairing_disable(&host, api_key.as_deref()).await
+            },
+            NodePairingAction::Status { host, api_key } => {
+                cmd_pairing_status(&host, api_key.as_deref()).await
+            },
         },
 
         NodeAction::UpgradeAuth => {
@@ -494,8 +545,8 @@ async fn cmd_pending(host: &str, api_key: Option<&str>) -> Result<()> {
     let result = gateway_rpc(host, api_key, "node.pair.list", serde_json::json!({})).await?;
 
     let requests = result
-        .get("requests")
-        .and_then(|v| v.as_array())
+        .as_array()
+        .or_else(|| result.get("requests").and_then(|v| v.as_array()))
         .cloned()
         .unwrap_or_default();
 
@@ -521,6 +572,39 @@ async fn cmd_pending(host: &str, api_key: Option<&str>) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn cmd_pairing_enable(host: &str, api_key: Option<&str>) -> Result<()> {
+    let result = gateway_rpc(host, api_key, "node.pairing.enable", serde_json::json!({})).await?;
+    print_pairing_status(&result);
+    Ok(())
+}
+
+async fn cmd_pairing_disable(host: &str, api_key: Option<&str>) -> Result<()> {
+    let result = gateway_rpc(host, api_key, "node.pairing.disable", serde_json::json!({})).await?;
+    print_pairing_status(&result);
+    Ok(())
+}
+
+async fn cmd_pairing_status(host: &str, api_key: Option<&str>) -> Result<()> {
+    let result = gateway_rpc(host, api_key, "node.pairing.status", serde_json::json!({})).await?;
+    print_pairing_status(&result);
+    Ok(())
+}
+
+fn print_pairing_status(result: &serde_json::Value) {
+    let enabled = result
+        .get("enabled")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    println!(
+        "Node pairing is {}.",
+        if enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
 }
 
 /// Approve a pending pairing request.

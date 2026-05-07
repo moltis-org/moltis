@@ -20,10 +20,11 @@ Pi, or leverage a GPU machine — all from a single chat session.
 ```
 
 1. The gateway runs on your primary machine (or a server).
-2. On the remote machine, run `moltis node add` to register it with the gateway.
-3. The gateway authenticates the node using **Ed25519 challenge-response** (TOFU
+2. On the gateway, briefly enable node pairing.
+3. On the remote machine, run `moltis node add` to register it with the gateway.
+4. The gateway authenticates the node using **Ed25519 challenge-response** (TOFU
    model).
-4. Once connected, the agent can execute commands on the node, query its
+5. Once connected, the agent can execute commands on the node, query its
    telemetry, and discover its LLM providers.
 
 Nodes are **stateless from the gateway's perspective** — they connect and
@@ -36,13 +37,21 @@ The node generates an Ed25519 keypair on first run and
 presents its public key to the gateway. The operator approves the key
 fingerprint (TOFU model, same as SSH).
 
-1. On the remote machine:
+New pairing requests are disabled by default to prevent unauthenticated
+connection spam. Open the pairing window only while adding a node.
+
+1. On the gateway, enable pairing:
+   ```bash
+   moltis node pairing enable
+   ```
+
+2. On the remote machine:
    ```bash
    moltis node add --host ws://your-gateway:9090/ws --name "Build Server"
    ```
    The node prints its fingerprint and waits for approval.
 
-2. Approve the pairing:
+3. Approve the pairing:
    - **Web UI**: Open Settings → Nodes → Pending tab, verify the fingerprint,
      click **Approve**.
    - **CLI** (headless gateways):
@@ -51,8 +60,13 @@ fingerprint (TOFU model, same as SSH).
      moltis node approve <request-id>    # approve by ID
      ```
 
-3. The gateway sends a challenge nonce, the node signs it, and authentication
+4. The gateway sends a challenge nonce, the node signs it, and authentication
    completes. The public key is pinned to this device (TOFU).
+
+5. Disable new pairing requests:
+   ```bash
+   moltis node pairing disable
+   ```
 
 ## Adding a Node
 
@@ -206,6 +220,9 @@ The CLI now mirrors the basic setup view with `moltis doctor`, including:
 | `moltis node add ... --foreground` | Run in the terminal instead of installing a service |
 | `moltis node fingerprint` | Print this node's Ed25519 fingerprint |
 | `moltis node list` | List all connected nodes |
+| `moltis node pairing status` | Show whether new node pairing requests are accepted |
+| `moltis node pairing enable` | Enable new node pairing requests |
+| `moltis node pairing disable` | Disable new node pairing requests |
 | `moltis node pending` | List pending pairing requests |
 | `moltis node approve <id>` | Approve a pending pairing request |
 | `moltis node reject <id>` | Reject a pending pairing request |

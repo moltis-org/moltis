@@ -2,13 +2,10 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Instant,
 };
-
-#[cfg(feature = "graphql")]
-use std::sync::atomic::AtomicBool;
 
 #[cfg(feature = "metrics")]
 use moltis_metrics::MetricsHandle;

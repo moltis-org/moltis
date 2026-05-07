@@ -49,6 +49,10 @@ interface PairedDevice {
 	createdAt?: string;
 }
 
+interface PairingStatus {
+	enabled: boolean;
+}
+
 interface DoctorSnapshot {
 	exec_host?: string;
 	active_route?: {
@@ -87,11 +91,12 @@ interface ToastItem {
 	type: string;
 }
 
-
 // ── Signals ─────────────────────────────────────────────────
 const nodes = signal<NodeInfo[]>([]);
 const pendingPairs = signal<PendingPair[]>([]);
 const pairedDevices = signal<PairedDevice[]>([]);
+const pairingEnabled = signal(false);
+const pairingStatusLoading = signal(false);
 const loading = signal(false);
 const activeTab = signal<"connected" | "paired" | "pending">("connected");
 const toasts = signal<ToastItem[]>([]);
@@ -140,7 +145,6 @@ function showToast(message: string, type: string): void {
 	}, 4000);
 }
 
-
 async function refreshNodes(): Promise<void> {
 	loading.value = true;
 	try {
@@ -167,6 +171,18 @@ async function refreshPairedDevices(): Promise<void> {
 		if (res?.ok) pairedDevices.value = res.payload || [];
 	} catch {
 		/* ignore */
+	}
+}
+
+async function refreshPairingStatus(): Promise<void> {
+	pairingStatusLoading.value = true;
+	try {
+		const res = await sendRpc<PairingStatus>("node.pairing.status", {});
+		if (res?.ok) pairingEnabled.value = Boolean(res.payload?.enabled);
+	} catch {
+		/* ignore */
+	} finally {
+		pairingStatusLoading.value = false;
 	}
 }
 
@@ -262,7 +278,31 @@ async function clearActiveRouteHostPin(): Promise<void> {
 }
 
 async function refreshAll(): Promise<void> {
-	await Promise.all([refreshNodes(), refreshPendingPairs(), refreshPairedDevices(), refreshDoctor()]);
+	await Promise.all([
+		refreshNodes(),
+		refreshPendingPairs(),
+		refreshPairedDevices(),
+		refreshPairingStatus(),
+		refreshDoctor(),
+	]);
+}
+
+async function setPairingEnabled(enabled: boolean): Promise<void> {
+	pairingStatusLoading.value = true;
+	const method = enabled ? "node.pairing.enable" : "node.pairing.disable";
+	try {
+		const res = await sendRpc<PairingStatus>(method, {});
+		if (res?.ok) {
+			pairingEnabled.value = Boolean(res.payload?.enabled);
+			showToast(pairingEnabled.value ? "Node pairing enabled" : "Node pairing disabled", "success");
+		} else {
+			showToast(res?.error?.message || "Failed to update node pairing", "error");
+		}
+	} catch (err) {
+		showToast(err instanceof Error ? err.message : "Failed to update node pairing", "error");
+	} finally {
+		pairingStatusLoading.value = false;
+	}
 }
 
 async function approvePair(id: string): Promise<void> {
@@ -305,6 +345,7 @@ function TabBar(): VNode {
 		<div className="flex gap-1 mb-4">
 			{tabs.map((tab) => (
 				<button
+					type="button"
 					key={tab.id}
 					className={`px-3 py-1.5 text-sm rounded-md transition-colors ${activeTab.value === tab.id ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-alt)] text-[var(--text-muted)] hover:bg-[var(--hover)]"}`}
 					onClick={() => {
@@ -384,18 +425,64 @@ function DoctorBadge({ level }: { level: string }): VNode {
 function ConnectNodeForm(): VNode {
 	const wsUrl = gatewayWsUrl();
 	const addCmd = `moltis node add --host ${wsUrl}`;
+	const enableCmd = `moltis node pairing enable --host ${location.origin}`;
+	const isPairingEnabled = pairingEnabled.value;
 	return (
 		<div className="rounded-lg border border-[var(--border)] bg-[var(--surface-alt)] p-4">
-			<h3 className="text-sm font-medium text-[var(--text-strong)] mb-3">Connect a Remote Node</h3>
+			<div className="flex items-start justify-between gap-3 mb-3">
+				<div>
+					<h3 className="text-sm font-medium text-[var(--text-strong)] mb-1">Connect a Remote Node</h3>
+					<div className="text-xs text-[var(--text-muted)]">
+						Pairing is{" "}
+						<span className={isPairingEnabled ? "text-green-500" : "text-yellow-500"}>
+							{isPairingEnabled ? "enabled" : "disabled"}
+						</span>
+						.
+					</div>
+				</div>
+				<button
+					type="button"
+					className={
+						isPairingEnabled ? "provider-btn provider-btn-secondary provider-btn-sm" : "provider-btn provider-btn-sm"
+					}
+					onClick={() => setPairingEnabled(!isPairingEnabled)}
+					disabled={pairingStatusLoading.value}
+				>
+					{pairingStatusLoading.value ? "Updating..." : isPairingEnabled ? "Disable Pairing" : "Enable Pairing"}
+				</button>
+			</div>
 			<p className="text-xs text-[var(--text-muted)] mb-3">
-				Run this command on the remote machine. The node generates an Ed25519 keypair
-				and waits for you to approve its fingerprint in the Pending tab.
+				{isPairingEnabled
+					? "Run this command on the remote machine. The node generates an Ed25519 keypair and waits for you to approve its fingerprint in the Pending tab."
+					: "Enable pairing before running the node command, then disable it again after approval."}
 			</p>
+			{isPairingEnabled ? null : (
+				<div className="flex items-center gap-2 mb-3">
+					<code className="flex-1 text-xs bg-[var(--bg)] px-2 py-1.5 rounded border border-[var(--border)] break-all select-all">
+						{enableCmd}
+					</code>
+					<button
+						type="button"
+						className="provider-btn provider-btn-secondary provider-btn-sm shrink-0"
+						onClick={() =>
+							copyToClipboard(enableCmd, "", "").then((ok) =>
+								showToast(
+									ok ? "Copied to clipboard" : "Could not copy — please copy manually.",
+									ok ? "success" : "error",
+								),
+							)
+						}
+					>
+						Copy
+					</button>
+				</div>
+			)}
 			<div className="flex items-center gap-2 mb-3">
 				<code className="flex-1 text-xs bg-[var(--bg)] px-2 py-1.5 rounded border border-[var(--border)] break-all select-all">
 					{addCmd}
 				</code>
 				<button
+					type="button"
 					className="provider-btn provider-btn-secondary provider-btn-sm shrink-0"
 					onClick={() =>
 						copyToClipboard(addCmd, "", "").then((ok) =>
@@ -410,9 +497,10 @@ function ConnectNodeForm(): VNode {
 				</button>
 			</div>
 			<p className="text-xs text-[var(--text-muted)]">
-				Replace the host with your public IP or domain if the remote machine cannot reach this address directly.
-				Check the{" "}
+				Replace the host with your public IP or domain if the remote machine cannot reach this address directly. Check
+				the{" "}
 				<button
+					type="button"
 					className="underline hover:text-[var(--text-strong)]"
 					onClick={() => {
 						activeTab.value = "pending";
@@ -461,6 +549,7 @@ function RemoteExecStatusCard(): VNode {
 				</div>
 				<div className="flex gap-2 flex-wrap">
 					<button
+						type="button"
 						className="provider-btn provider-btn-secondary provider-btn-sm"
 						onClick={refreshDoctor}
 						disabled={doctorLoading.value}
@@ -469,6 +558,7 @@ function RemoteExecStatusCard(): VNode {
 					</button>
 					{execHost === "ssh" && activeRoute ? (
 						<button
+							type="button"
 							className="provider-btn provider-btn-secondary provider-btn-sm"
 							onClick={testActiveSshRoute}
 							disabled={doctorTestLoading.value}
@@ -478,6 +568,7 @@ function RemoteExecStatusCard(): VNode {
 					) : null}
 					{execHost === "ssh" && activeRoute && canManageActivePin ? (
 						<button
+							type="button"
 							className="provider-btn provider-btn-secondary provider-btn-sm"
 							onClick={repairActiveRouteHostPin}
 							disabled={doctorPinLoading.value}
@@ -491,6 +582,7 @@ function RemoteExecStatusCard(): VNode {
 					) : null}
 					{execHost === "ssh" && activeRoute?.host_pinned && canManageActivePin ? (
 						<button
+							type="button"
 							className="provider-btn provider-btn-secondary provider-btn-sm"
 							onClick={clearActiveRouteHostPin}
 							disabled={doctorPinLoading.value}
@@ -499,6 +591,7 @@ function RemoteExecStatusCard(): VNode {
 						</button>
 					) : null}
 					<button
+						type="button"
 						className="provider-btn provider-btn-secondary provider-btn-sm"
 						onClick={() => navigate(settingsPath("ssh"))}
 					>
@@ -681,7 +774,11 @@ function PairedDevicesList(): VNode {
 							<div className="text-xs font-mono text-[var(--text-muted)] mt-1 break-all">{d.fingerprint}</div>
 						) : null}
 					</div>
-					<button className="provider-btn-danger text-xs px-2 py-1" onClick={() => revokeDevice(d.deviceId)}>
+					<button
+						type="button"
+						className="provider-btn-danger text-xs px-2 py-1"
+						onClick={() => revokeDevice(d.deviceId)}
+					>
 						Revoke
 					</button>
 				</div>
@@ -708,10 +805,10 @@ function PendingPairsList(): VNode {
 						) : null}
 					</div>
 					<div className="flex gap-1.5">
-						<button className="provider-btn text-xs px-2 py-1" onClick={() => approvePair(r.id)}>
+						<button type="button" className="provider-btn text-xs px-2 py-1" onClick={() => approvePair(r.id)}>
 							Approve
 						</button>
-						<button className="provider-btn-secondary text-xs px-2 py-1" onClick={() => rejectPair(r.id)}>
+						<button type="button" className="provider-btn-secondary text-xs px-2 py-1" onClick={() => rejectPair(r.id)}>
 							Reject
 						</button>
 					</div>
@@ -790,6 +887,7 @@ function NodesPage(): VNode {
 					<div className="flex items-center gap-3 mb-1">
 						<h2 className="text-lg font-medium text-[var(--text-strong)]">Nodes</h2>
 						<button
+							type="button"
 							className="provider-btn provider-btn-secondary provider-btn-sm"
 							onClick={refreshAll}
 							disabled={loading.value}
