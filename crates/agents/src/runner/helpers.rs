@@ -250,9 +250,12 @@ pub(crate) fn log_tool_argument_diagnostic(
             parse_error = diagnostic.parse_error.as_deref().unwrap_or(""),
             "tool call arguments repaired before dispatch"
         ),
-        ToolCallArgumentSource::EmptyString
-        | ToolCallArgumentSource::NullOrMissing
-        | ToolCallArgumentSource::MalformedString => warn!(
+        ToolCallArgumentSource::NullOrMissing => tracing::debug!(
+            tool = %tool_name,
+            summary = %diagnostic.short_summary(),
+            "tool call arguments were absent before dispatch"
+        ),
+        ToolCallArgumentSource::EmptyString | ToolCallArgumentSource::MalformedString => warn!(
             tool = %tool_name,
             raw_len = diagnostic.raw_len,
             raw_preview = diagnostic.raw_preview.as_deref().unwrap_or(""),
