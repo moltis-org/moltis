@@ -385,6 +385,9 @@ pub struct ConnectAuth {
     /// Device token issued via pairing flow (used by nodes to authenticate).
     #[serde(rename = "deviceToken", skip_serializing_if = "Option::is_none")]
     pub device_token: Option<String>,
+    /// Ed25519 public key (base64-encoded, 32 bytes) for challenge-response auth.
+    #[serde(rename = "publicKey", skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
 }
 
 /// Sent by the gateway after successful handshake.

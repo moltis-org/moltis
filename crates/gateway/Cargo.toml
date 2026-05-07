@@ -12,6 +12,7 @@ bytes                   = { workspace = true }
 chrono                  = { features = ["serde"], optional = true, workspace = true }
 chrono-tz               = { workspace = true }
 dashmap                 = { workspace = true }
+ed25519-dalek           = { workspace = true }
 flate2                  = { workspace = true }
 futures                 = { workspace = true }
 gix                     = { workspace = true }
@@ -26,16 +27,19 @@ moltis-caldav           = { optional = true, workspace = true }
 moltis-canvas           = { workspace = true }
 moltis-channels         = { workspace = true }
 moltis-chat             = { workspace = true }
+moltis-claude-import    = { optional = true, workspace = true }
+moltis-code-index       = { workspace = true }
+moltis-codex-import     = { optional = true, workspace = true }
 moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
 moltis-cron             = { workspace = true }
 moltis-discord          = { optional = true, workspace = true }
+moltis-hermes-import    = { optional = true, workspace = true }
 moltis-home-assistant   = { optional = true, workspace = true }
 moltis-matrix           = { optional = true, workspace = true }
 moltis-mcp              = { workspace = true }
 moltis-mcp-agent-bridge = { workspace = true }
 moltis-media            = { workspace = true }
-moltis-code-index       = { workspace = true }
 moltis-memory           = { workspace = true }
 moltis-metrics          = { optional = true, workspace = true }
 moltis-msteams          = { optional = true, workspace = true }
@@ -43,9 +47,6 @@ moltis-network-filter   = { features = ["proxy", "service"], optional = true, wo
 moltis-nostr            = { optional = true, workspace = true }
 moltis-oauth            = { workspace = true }
 moltis-onboarding       = { workspace = true }
-moltis-claude-import    = { optional = true, workspace = true }
-moltis-codex-import     = { optional = true, workspace = true }
-moltis-hermes-import    = { optional = true, workspace = true }
 moltis-openclaw-import  = { optional = true, workspace = true }
 moltis-plugins          = { workspace = true }
 moltis-projects         = { workspace = true }
@@ -98,23 +99,29 @@ which                   = { optional = true, workspace = true }
 
 [features]
 agent = []
-bundled-skills = ["moltis-chat/bundled-skills", "moltis-skills/bundled-skills", "moltis-tools/bundled-skills"]
+bundled-skills = [
+  "moltis-chat/bundled-skills",
+  "moltis-skills/bundled-skills",
+  "moltis-tools/bundled-skills",
+]
 caldav = ["dep:moltis-caldav"]
-home-assistant = ["dep:moltis-home-assistant"]
+claude-import = ["dep:moltis-claude-import"]
+code-index-builtin = ["moltis-code-index/builtin"]
+codex-import = ["dep:moltis-codex-import"]
 default = [
   "agent",
   "bundled-skills",
   "caldav",
   "claude-import",
-  "codex-import",
-  "home-assistant",
   "code-index-builtin",
+  "codex-import",
   "discord",
   "file-watcher",
   "firecrawl",
   "fs-tools",
   "graphql",
   "hermes-import",
+  "home-assistant",
   "local-llm",
   "local-llm-metal",
   "matrix",
@@ -138,16 +145,18 @@ default = [
   "web-ui",
   "whatsapp",
 ]
-code-index-builtin = ["moltis-code-index/builtin"]
+discord = ["dep:moltis-discord"]
 file-watcher = [
+  "moltis-code-index/file-watcher",
   "moltis-memory/file-watcher",
   "moltis-openclaw-import?/file-watcher",
   "moltis-skills/file-watcher",
-  "moltis-code-index/file-watcher",
 ]
 firecrawl = ["moltis-tools/firecrawl"]
 fs-tools = ["moltis-tools/fs-tools"]
 graphql = []
+hermes-import = ["dep:moltis-hermes-import"]
+home-assistant = ["dep:moltis-home-assistant"]
 llm-compaction = ["moltis-chat/llm-compaction"]
 local-embeddings = ["moltis-memory/local-embeddings"]
 local-llm = [
@@ -170,10 +179,8 @@ metrics = [
   "moltis-nostr?/metrics",
   "moltis-signal?/metrics",
 ]
+msteams = ["dep:moltis-msteams"]
 nostr = ["dep:moltis-nostr"]
-claude-import = ["dep:moltis-claude-import"]
-codex-import = ["dep:moltis-codex-import"]
-hermes-import = ["dep:moltis-hermes-import"]
 openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]
@@ -181,15 +188,18 @@ qmd = ["dep:moltis-qmd", "moltis-code-index/qmd"]
 signal = ["dep:moltis-signal"]
 slack = ["dep:moltis-slack", "moltis-slack/metrics"]
 tailscale = ["dep:moltis-tailscale"]
+telegram = ["dep:moltis-telegram", "moltis-chat/telegram"]
 tls = []
 trusted-network = ["dep:moltis-network-filter"]
-vault = ["dep:moltis-vault", "moltis-auth/vault", "moltis-provider-setup/vault", "moltis-secret-store/vault"]
+vault = [
+  "dep:moltis-vault",
+  "moltis-auth/vault",
+  "moltis-provider-setup/vault",
+  "moltis-secret-store/vault",
+]
 voice = ["dep:moltis-voice"]
 wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:include_dir", "dep:portable-pty", "dep:which", "moltis-chat/web-ui"]
-telegram = ["dep:moltis-telegram", "moltis-chat/telegram"]
-discord = ["dep:moltis-discord"]
-msteams = ["dep:moltis-msteams"]
 whatsapp = ["dep:moltis-whatsapp", "dep:qrcode", "moltis-whatsapp/metrics"]
 
 [dev-dependencies]

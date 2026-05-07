@@ -37,12 +37,15 @@ interface PendingPair {
 	deviceId: string;
 	displayName?: string;
 	platform?: string;
+	fingerprint?: string;
 }
 
 interface PairedDevice {
 	deviceId: string;
 	displayName?: string;
 	platform?: string;
+	publicKey?: string;
+	fingerprint?: string;
 	createdAt?: string;
 }
 
@@ -412,8 +415,18 @@ function ConnectNodeForm(): VNode {
 	return (
 		<div className="rounded-lg border border-[var(--border)] bg-[var(--surface-alt)] p-4">
 			<h3 className="text-sm font-medium text-[var(--text-strong)] mb-3">Connect a Remote Node</h3>
+			<div className="rounded bg-[var(--bg)] border border-[var(--border)] px-3 py-2 mb-3">
+				<p className="text-xs text-[var(--text-strong)] font-medium mb-1">Key-based auth (recommended)</p>
+				<p className="text-xs text-[var(--text-muted)] mb-1">
+					Run <code>moltis node add --host {gatewayWsUrl()}</code> on the remote machine.
+					The node will generate an Ed25519 keypair and wait for approval here.
+				</p>
+				<p className="text-xs text-[var(--text-muted)]">
+					No token needed — approve the fingerprint in the Pending tab.
+				</p>
+			</div>
 			<p className="text-xs text-[var(--text-muted)] mb-3">
-				Generate a token and run the command on the remote machine you want to connect.
+				Or generate a token for legacy auth:
 			</p>
 			<div className="mb-3">
 				<label className="block text-xs text-[var(--text-muted)] mb-1">This gateway's public endpoint</label>
@@ -733,11 +746,27 @@ function PairedDevicesList(): VNode {
 					className="flex items-center gap-3 p-3 rounded-lg bg-[var(--surface-alt)] border border-[var(--border)]"
 				>
 					<div className="flex-1 min-w-0">
-						<div className="text-sm font-medium text-[var(--text-strong)] truncate">{d.displayName || d.deviceId}</div>
+						<div className="flex items-center gap-2 flex-wrap">
+							<div className="text-sm font-medium text-[var(--text-strong)] truncate">
+								{d.displayName || d.deviceId}
+							</div>
+							{d.publicKey ? (
+								<span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-500/15 text-green-500">
+									key-verified
+								</span>
+							) : (
+								<span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-500">
+									token
+								</span>
+							)}
+						</div>
 						<div className="text-xs text-[var(--text-muted)]">
 							{d.platform || "unknown"}
 							{d.createdAt ? <> &middot; paired {d.createdAt}</> : null}
 						</div>
+						{d.fingerprint ? (
+							<div className="text-xs font-mono text-[var(--text-muted)] mt-1 break-all">{d.fingerprint}</div>
+						) : null}
 					</div>
 					<button className="provider-btn-danger text-xs px-2 py-1" onClick={() => revokeDevice(d.deviceId)}>
 						Revoke
@@ -761,6 +790,9 @@ function PendingPairsList(): VNode {
 					<div className="flex-1 min-w-0">
 						<div className="text-sm font-medium text-[var(--text-strong)] truncate">{r.displayName || r.deviceId}</div>
 						<div className="text-xs text-[var(--text-muted)]">{r.platform || "unknown"}</div>
+						{r.fingerprint ? (
+							<div className="text-xs font-mono text-[var(--text-muted)] mt-1 break-all">{r.fingerprint}</div>
+						) : null}
 					</div>
 					<div className="flex gap-1.5">
 						<button className="provider-btn text-xs px-2 py-1" onClick={() => approvePair(r.id)}>

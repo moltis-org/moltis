@@ -7,11 +7,13 @@
 //! by executing them locally.
 
 pub mod error;
+pub mod identity;
 pub mod runner;
 pub mod service;
 
 pub use {
     error::Error,
+    identity::NodeIdentity,
     runner::{NodeConfig, NodeHost},
     service::ServiceConfig,
 };

@@ -21,7 +21,8 @@ Pi, or leverage a GPU machine — all from a single chat session.
 
 1. The gateway runs on your primary machine (or a server).
 2. On the remote machine, run `moltis node add` to register it with the gateway.
-3. The gateway authenticates the node using a **device token** from the pairing flow.
+3. The gateway authenticates the node using **Ed25519 challenge-response** (TOFU
+   model) or a legacy device token.
 4. Once connected, the agent can execute commands on the node, query its
    telemetry, and discover its LLM providers.
 
@@ -31,21 +32,49 @@ a node is available when its process is running and connected.
 
 ## Pairing a Node
 
-Before a node can connect, it must be paired with the gateway.
+### Key-based pairing (recommended)
+
+No token needed. The node generates an Ed25519 keypair on first run and
+presents its public key to the gateway. The operator approves the key
+fingerprint (TOFU model, same as SSH).
+
+1. On the remote machine:
+   ```bash
+   moltis node add --host ws://your-gateway:9090/ws --name "Build Server"
+   ```
+   The node prints its fingerprint and waits for approval.
+
+2. Approve the pairing:
+   - **Web UI**: Open Settings → Nodes → Pending tab, verify the fingerprint,
+     click **Approve**.
+   - **CLI** (headless gateways):
+     ```bash
+     moltis node pending                 # list pending requests
+     moltis node approve <request-id>    # approve by ID
+     ```
+
+3. The gateway sends a challenge nonce, the node signs it, and authentication
+   completes. The public key is pinned to this device (TOFU).
+
+### Legacy token-based pairing
+
+Token auth is still supported but deprecated. It will be removed after two
+release cycles.
 
 1. Open the **Nodes** page in the web UI (Settings → Nodes).
 2. Click **Generate Token** to create a device token.
 3. Copy the connection command shown in the UI.
-4. Run it on the remote machine.
-
-The pairing flow produces a device token that authenticates the node on every
-connection. Tokens can be revoked from the Nodes page at any time.
+4. Run it on the remote machine with the `--token` flag.
 
 ## Adding a Node
 
 On the remote machine, register it as a node:
 
 ```bash
+# Key-based auth (recommended):
+moltis node add --host ws://your-gateway:9090/ws --name "Build Server"
+
+# Legacy token auth (deprecated):
 moltis node add --host ws://your-gateway:9090/ws --token <device-token> --name "Build Server"
 ```
 
@@ -62,15 +91,15 @@ Options:
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--host` | Gateway WebSocket URL | (required) |
-| `--token` | Device token from pairing | (required) |
+| `--token` | Device token (deprecated) | none |
 | `--name` | Display name shown in the UI | none |
 | `--node-id` | Custom node identifier | random UUID |
 | `--working-dir` | Working directory for commands | `$HOME` |
 | `--timeout` | Max command timeout in seconds | `300` |
 | `--foreground` | Run in the terminal instead of installing a service | off |
 
-You can also set `MOLTIS_GATEWAY_URL` and `MOLTIS_DEVICE_TOKEN` as
-environment variables instead of passing `--host` and `--token`.
+You can also set `MOLTIS_GATEWAY_URL` as an environment variable instead of
+passing `--host`.
 
 ### Foreground mode
 
@@ -78,10 +107,22 @@ For debugging or one-off use, pass `--foreground` to run the node in the
 current terminal session instead of installing a service:
 
 ```bash
-moltis node add --host ws://your-gateway:9090/ws --token <device-token> --foreground
+moltis node add --host ws://your-gateway:9090/ws --foreground
 ```
 
 Press `Ctrl+C` to disconnect.
+
+## Migrating from Token Auth
+
+If you have existing nodes using device tokens, upgrade them to key-based auth:
+
+```bash
+moltis node upgrade-auth
+```
+
+This generates a keypair (if not already present), connects with both the token
+and public key, and removes the token from `node.json` after the gateway pins
+the key. No operator approval needed — the token authenticates the migration.
 
 ## Removing a Node
 
@@ -102,6 +143,15 @@ moltis node status
 
 Shows the gateway URL, display name, and whether the background service is
 running.
+
+## Node Fingerprint
+
+```bash
+moltis node fingerprint
+```
+
+Prints the Ed25519 public key fingerprint (`SHA256:<base64>`) for this node.
+Use this to verify the key shown in the gateway UI during pairing.
 
 ## Logs
 
@@ -181,20 +231,51 @@ The CLI now mirrors the basic setup view with `moltis doctor`, including:
 
 | Command | Description |
 |---------|-------------|
-| `moltis node generate-token` | Generate a device token and print the `add` command |
-| `moltis node list` | List all connected nodes |
-| `moltis node add --host <url> --token <tok>` | Join this machine to a gateway as a node |
+| `moltis node add --host <url>` | Join using key-based auth (recommended) |
+| `moltis node add --host <url> --token <tok>` | Join using legacy token auth |
 | `moltis node add ... --foreground` | Run in the terminal instead of installing a service |
+| `moltis node upgrade-auth` | Migrate from token to key-based auth |
+| `moltis node fingerprint` | Print this node's Ed25519 fingerprint |
+| `moltis node generate-token` | Generate a device token (legacy) |
+| `moltis node list` | List all connected nodes |
+| `moltis node pending` | List pending pairing requests |
+| `moltis node approve <id>` | Approve a pending pairing request |
+| `moltis node reject <id>` | Reject a pending pairing request |
 | `moltis node remove` | Disconnect this machine and remove the service |
 | `moltis node status` | Show connection info and service status |
 | `moltis node logs` | Print log file path |
 
 ## Security
 
-- **Device tokens** are SHA-256 hashed before storage. The raw token is shown
-  once during pairing and never stored on the gateway.
+### Node Identity (TOFU)
+
+Nodes authenticate using **Ed25519 challenge-response**, following the same
+Trust On First Use model as SSH:
+
+- **First connection**: The node presents its public key. The operator verifies
+  the fingerprint and approves the pairing.
+- **Subsequent connections**: The gateway sends a random 32-byte nonce. The node
+  signs it with its private key. The gateway verifies the signature against the
+  pinned public key.
+- **Key pinning**: Once a public key is approved for a device, the gateway
+  rejects any future connection from that device with a different key. This
+  prevents impersonation.
+- **Re-keying**: If a node legitimately needs a new key (e.g., after a disk
+  wipe), revoke the old device from the Nodes page, then re-pair.
+
+The private key (`~/.moltis/node_key`) is stored with mode 0600. The gateway
+only stores the public key. No shared secret crosses the wire.
+
+### Legacy Token Auth
+
+Device tokens (prefixed `mdt_`) are SHA-256 hashed before storage. The raw
+token is shown once during pairing and never stored on the gateway. Token auth
+is deprecated and will be removed in a future release.
+
+### General
+
 - **Environment filtering**: When the gateway forwards commands to a node, only
   safe environment variables are forwarded (`TERM`, `LANG`, `LC_*`). Secrets
   like API keys, `DYLD_*`, and `LD_PRELOAD` are always blocked.
-- **Token revocation**: Revoke a device token from the Nodes page at any time.
-  The node will be disconnected on its next reconnect attempt.
+- **Token/key revocation**: Revoke from the Nodes page at any time. The node
+  will be disconnected on its next reconnect attempt.

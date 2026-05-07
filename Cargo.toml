@@ -214,6 +214,7 @@ async-openai    = { features = ["chat-completion"], version = "0.32" }
 base64          = "0.22"
 bytemuck        = { features = ["derive"], version = "1" }
 bytes           = "1"
+ed25519-dalek   = "2.2"
 encoding_rs     = "0.8"
 fd-lock         = "4"
 genai           = "0.5"

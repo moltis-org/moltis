@@ -7458,6 +7458,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "dashmap 6.1.0",
+ "ed25519-dalek",
  "flate2",
  "futures",
  "gix",
@@ -7844,15 +7845,20 @@ dependencies = [
 name = "moltis-node-host"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "ed25519-dalek",
  "futures",
  "moltis-config",
  "moltis-metrics",
  "moltis-protocol",
+ "rand 0.10.1",
  "reqwest 0.13.2",
  "rustls 0.23.39",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sysinfo",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite 0.26.2",

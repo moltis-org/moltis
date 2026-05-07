@@ -95,11 +95,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     let list: Vec<_> = pending
                         .iter()
                         .map(|r| {
+                            let fp = r
+                                .public_key
+                                .as_deref()
+                                .and_then(|pk| crate::pairing::public_key_fingerprint(pk).ok());
                             serde_json::json!({
                                 "id": r.id,
                                 "deviceId": r.device_id,
                                 "displayName": r.display_name,
                                 "platform": r.platform,
+                                "fingerprint": fp,
                             })
                         })
                         .collect();
@@ -111,11 +116,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .list_pending()
                         .iter()
                         .map(|r| {
+                            let fp = r
+                                .public_key
+                                .as_deref()
+                                .and_then(|pk| crate::pairing::public_key_fingerprint(pk).ok());
                             serde_json::json!({
                                 "id": r.id,
                                 "deviceId": r.device_id,
                                 "displayName": r.display_name,
                                 "platform": r.platform,
+                                "fingerprint": fp,
                             })
                         })
                         .collect();
@@ -234,10 +244,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     let list: Vec<_> = devices
                         .iter()
                         .map(|d| {
+                            let fp = d
+                                .public_key
+                                .as_deref()
+                                .and_then(|pk| crate::pairing::public_key_fingerprint(pk).ok());
                             serde_json::json!({
                                 "deviceId": d.device_id,
                                 "displayName": d.display_name,
                                 "platform": d.platform,
+                                "publicKey": d.public_key,
+                                "fingerprint": fp,
                                 "createdAt": d.created_at,
                             })
                         })
