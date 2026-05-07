@@ -54,7 +54,7 @@ pub use {
         SessionExportMode, Timezone, ToolMode, ToolPolicyConfig, ToolRegistryMode, UserProfile,
         UserProfileWriteMode, VoiceConfig, VoiceElevenLabsConfig, VoiceOpenAiConfig,
         VoiceSttConfig, VoiceSttProvider, VoiceTtsConfig, VoiceTtsProvider, VoiceWhisperConfig,
-        WireApi, parse_byte_size,
+        VoiceWhisperLocalConfig, WireApi, parse_byte_size,
     },
     validate::{Diagnostic, Severity, ValidationResult},
 };

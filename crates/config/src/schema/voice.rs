@@ -246,6 +246,8 @@ pub struct VoiceSttConfig {
     pub elevenlabs: VoiceElevenLabsSttConfig,
     /// Voxtral local (vLLM server) settings.
     pub voxtral_local: VoiceVoxtralLocalConfig,
+    /// Whisper local (OpenAI-compatible server) settings.
+    pub whisper_local: VoiceWhisperLocalConfig,
     /// whisper-cli (whisper.cpp) settings.
     pub whisper_cli: VoiceWhisperCliConfig,
     /// sherpa-onnx offline settings.
@@ -265,6 +267,7 @@ impl Default for VoiceSttConfig {
             mistral: VoiceMistralSttConfig::default(),
             elevenlabs: VoiceElevenLabsSttConfig::default(),
             voxtral_local: VoiceVoxtralLocalConfig::default(),
+            whisper_local: VoiceWhisperLocalConfig::default(),
             whisper_cli: VoiceWhisperCliConfig::default(),
             sherpa_onnx: VoiceSherpaOnnxConfig::default(),
         }
@@ -366,6 +369,8 @@ pub enum VoiceSttProvider {
     ElevenLabs,
     #[serde(rename = "voxtral-local")]
     VoxtralLocal,
+    #[serde(rename = "whisper-local")]
+    WhisperLocal,
     #[serde(rename = "whisper-cli")]
     WhisperCli,
     #[serde(rename = "sherpa-onnx")]
@@ -383,6 +388,7 @@ impl VoiceSttProvider {
             Self::Mistral => "mistral",
             Self::ElevenLabs => "elevenlabs-stt",
             Self::VoxtralLocal => "voxtral-local",
+            Self::WhisperLocal => "whisper-local",
             Self::WhisperCli => "whisper-cli",
             Self::SherpaOnnx => "sherpa-onnx",
         }
@@ -398,6 +404,7 @@ impl VoiceSttProvider {
             "mistral" => Some(Self::Mistral),
             "elevenlabs" | "elevenlabs-stt" => Some(Self::ElevenLabs),
             "voxtral-local" => Some(Self::VoxtralLocal),
+            "whisper-local" => Some(Self::WhisperLocal),
             "whisper-cli" => Some(Self::WhisperCli),
             "sherpa-onnx" => Some(Self::SherpaOnnx),
             _ => None,
@@ -414,6 +421,7 @@ impl VoiceSttProvider {
             Self::Google => "Google Cloud",
             Self::Mistral => "Mistral AI",
             Self::VoxtralLocal => "Voxtral (Local)",
+            Self::WhisperLocal => "Whisper (Local)",
             Self::WhisperCli => "whisper.cpp",
             Self::SherpaOnnx => "sherpa-onnx",
             Self::ElevenLabs => "ElevenLabs Scribe",
@@ -430,6 +438,7 @@ impl VoiceSttProvider {
             Self::Google,
             Self::Mistral,
             Self::VoxtralLocal,
+            Self::WhisperLocal,
             Self::WhisperCli,
             Self::SherpaOnnx,
             Self::ElevenLabs,
@@ -665,6 +674,32 @@ impl Default for VoiceVoxtralLocalConfig {
         Self {
             enabled: true,
             endpoint: "http://localhost:8000".into(),
+            model: None,
+            language: None,
+        }
+    }
+}
+
+/// Whisper local (OpenAI-compatible server) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceWhisperLocalConfig {
+    /// Whether this provider is enabled.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Server endpoint (default: http://localhost:8080).
+    pub endpoint: String,
+    /// Model to use (optional, server default if not set).
+    pub model: Option<String>,
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+impl Default for VoiceWhisperLocalConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoint: "http://localhost:8080".into(),
             model: None,
             language: None,
         }

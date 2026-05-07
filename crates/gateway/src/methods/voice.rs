@@ -153,6 +153,7 @@ pub(super) enum VoiceProviderId {
     Mistral,
     ElevenlabsStt,
     VoxtralLocal,
+    WhisperLocal,
     WhisperCli,
     SherpaOnnx,
 }
@@ -272,6 +273,13 @@ impl VoiceProviderId {
                 key_url_label: None,
                 hint: None,
             },
+            Self::WhisperLocal => VoiceProviderMeta {
+                description: "Local Whisper via OpenAI-compatible server (faster-whisper-server, whisper.cpp server, LocalAI)",
+                key_placeholder: None,
+                key_url: None,
+                key_url_label: None,
+                hint: None,
+            },
         }
     }
 
@@ -295,6 +303,7 @@ impl VoiceProviderId {
             "mistral" => Some(Self::Mistral),
             "elevenlabs" | "elevenlabs-stt" => Some(Self::ElevenlabsStt),
             "voxtral-local" => Some(Self::VoxtralLocal),
+            "whisper-local" => Some(Self::WhisperLocal),
             "whisper-cli" => Some(Self::WhisperCli),
             "sherpa-onnx" => Some(Self::SherpaOnnx),
             _ => None,
@@ -519,8 +528,10 @@ pub(super) async fn detect_voice_providers(
         ),
     ];
 
-    // Check voxtral local server
+    // Check local servers
     let voxtral_server_running = check_vllm_server(&config.voice.stt.voxtral_local.endpoint).await;
+    let whisper_local_server_running =
+        check_vllm_server(&config.voice.stt.whisper_local.endpoint).await;
 
     // Build STT providers list
     let stt_providers = vec![
@@ -641,6 +652,22 @@ pub(super) async fn detect_voice_providers(
             None,
             None,
             if !voxtral_server_running {
+                Some("server not running")
+            } else {
+                None
+            },
+        ),
+        build_provider_info(
+            VoiceProviderId::WhisperLocal,
+            "Whisper (Local)",
+            "stt",
+            "local",
+            whisper_local_server_running,
+            config.voice.stt.whisper_local.enabled && config.voice.stt.enabled,
+            false,
+            None,
+            None,
+            if !whisper_local_server_running {
                 Some("server not running")
             } else {
                 None
@@ -1092,6 +1119,17 @@ pub(super) fn apply_voice_provider_settings(
                 .and_then(|v| u32::try_from(v).ok())
             {
                 cfg.voice.tts.piper.speaker_id = Some(speaker_id);
+            }
+        },
+        "whisper-local" => {
+            if let Some(endpoint) = get_string("endpoint") {
+                cfg.voice.stt.whisper_local.endpoint = endpoint;
+            }
+            if let Some(model) = get_string("model") {
+                cfg.voice.stt.whisper_local.model = Some(model);
+            }
+            if let Some(language) = get_string("language") {
+                cfg.voice.stt.whisper_local.language = Some(language);
             }
         },
         _ => {},

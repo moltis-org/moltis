@@ -322,6 +322,24 @@ endpoint = "http://localhost:8000"</code>
   <strong>Languages:</strong> English, French, German, Spanish, Portuguese, Italian, Dutch, Polish, Swedish, Norwegian, Danish, Finnish, Arabic
 </div>
 
+<div id="voice-whisper-local-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  Run any OpenAI-compatible Whisper server locally. Popular choices:<br /><br />
+  <strong>faster-whisper-server</strong> (recommended):<br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">pip install faster-whisper-server
+faster-whisper-server --model Systran/faster-whisper-large-v3</code>
+  <br />
+  <strong>whisper.cpp server:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">whisper-server --model ggml-large-v3.bin --port 8080</code>
+  <br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "whisper-local"
+
+[voice.stt.whisper_local]
+endpoint = "http://localhost:8080"</code>
+</div>
+
 <div id="voice-voxtral-requirements-ok" class="text-xs p-2 rounded-md mb-3 border border-[var(--accent)]" style="display:none;background:color-mix(in srgb, var(--accent) 10%, transparent);">
   <div class="font-medium text-[var(--accent)]">✓ System requirements met</div>
   <div class="text-[var(--muted)] mt-1">

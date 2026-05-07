@@ -714,6 +714,7 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         "elevenlabs",
         "elevenlabs-stt",
         "voxtral-local",
+        "whisper-local",
         "whisper-cli",
         "sherpa-onnx",
     ];

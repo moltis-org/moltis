@@ -540,7 +540,7 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [voice.tts]
 # enabled = true
-# providers = ["openai", "elevenlabs"]  # UI allowlist (empty = show all)
+# providers = []                        # UI allowlist (empty = show all)
 
 # Voice personas — named voice identities injected into TTS calls.
 # Personas are managed via the web UI (Settings > Voice > Voice Personas)
@@ -557,7 +557,12 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [voice.stt]
 # enabled = true
-# providers = ["whisper", "mistral", "elevenlabs"]  # UI allowlist (empty = show all)
+# providers = []                        # UI allowlist (empty = show all)
+
+# [voice.stt.whisper_local]
+# endpoint = "http://localhost:8080"    # OpenAI-compatible transcription server
+# model = "whisper-large-v3"            # Model name (server-specific)
+# language = "en"                       # Optional ISO 639-1 hint
 
 # ══════════════════════════════════════════════════════════════════════════════
 # NGROK

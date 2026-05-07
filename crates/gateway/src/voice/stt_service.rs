@@ -10,7 +10,8 @@ use {
 
 use moltis_voice::{
     AudioFormat, DeepgramStt, ElevenLabsStt, GoogleStt, GroqStt, MistralStt, SherpaOnnxStt,
-    SttProvider, SttProviderId, TranscribeRequest, VoxtralLocalStt, WhisperCliStt, WhisperStt,
+    SttProvider, SttProviderId, TranscribeRequest, VoxtralLocalStt, WhisperCliStt, WhisperLocalStt,
+    WhisperStt,
 };
 
 use crate::services::{ServiceResult, SttService};
@@ -170,6 +171,18 @@ impl LiveSttService {
                     None
                 }
             },
+            SttProviderId::WhisperLocal => {
+                let provider = WhisperLocalStt::with_options(
+                    Some(cfg.voice.stt.whisper_local.endpoint.clone()),
+                    cfg.voice.stt.whisper_local.model.clone(),
+                    cfg.voice.stt.whisper_local.language.clone(),
+                );
+                if provider.is_configured() {
+                    Some(Box::new(provider) as Box<dyn SttProvider + Send + Sync>)
+                } else {
+                    None
+                }
+            },
             SttProviderId::WhisperCli => {
                 let provider = WhisperCliStt::with_options(
                     cfg.voice.stt.whisper_cli.binary_path.clone(),
@@ -228,6 +241,7 @@ impl LiveSttService {
                 cfg.voice.stt.mistral.api_key.is_some(),
             ),
             (SttProviderId::VoxtralLocal, true), // Always available
+            (SttProviderId::WhisperLocal, true), // Always available
             (
                 SttProviderId::WhisperCli,
                 cfg.voice.stt.whisper_cli.model_path.is_some(),

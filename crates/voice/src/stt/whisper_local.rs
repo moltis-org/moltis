@@ -1,13 +1,12 @@
-//! Local Voxtral STT provider via vLLM server.
+//! Local Whisper STT provider via an OpenAI-compatible server.
 //!
-//! Connects to a locally running vLLM server serving the Voxtral model.
-//! The server exposes an OpenAI-compatible transcription endpoint.
+//! Works with any server that implements the `/v1/audio/transcriptions`
+//! endpoint: faster-whisper-server, whisper.cpp server, LocalAI, etc.
 //!
-//! Setup:
+//! Example with faster-whisper-server:
 //! ```bash
-//! pip install "vllm[audio]"
-//! vllm serve mistralai/Voxtral-Mini-3B-2507 \
-//!   --tokenizer_mode mistral --config_format mistral --load_format mistral
+//! pip install faster-whisper-server
+//! faster-whisper-server --model Systran/faster-whisper-large-v3
 //! ```
 
 use {
@@ -18,26 +17,26 @@ use {
 
 use super::{SttProvider, TranscribeRequest, Transcript, openai_compat};
 
-/// Default vLLM server endpoint.
-const DEFAULT_ENDPOINT: &str = "http://localhost:8000";
+/// Default local server endpoint.
+const DEFAULT_ENDPOINT: &str = "http://localhost:8080";
 
-/// Local Voxtral STT provider via vLLM.
+/// Local Whisper STT provider via an OpenAI-compatible server.
 #[derive(Clone, Debug)]
-pub struct VoxtralLocalStt {
+pub struct WhisperLocalStt {
     client: Client,
     endpoint: String,
     model: Option<String>,
     language: Option<String>,
 }
 
-impl Default for VoxtralLocalStt {
+impl Default for WhisperLocalStt {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl VoxtralLocalStt {
-    /// Create a new local Voxtral STT provider with default settings.
+impl WhisperLocalStt {
+    /// Create a new local Whisper STT provider with default settings.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -65,26 +64,24 @@ impl VoxtralLocalStt {
 }
 
 #[async_trait]
-impl SttProvider for VoxtralLocalStt {
+impl SttProvider for WhisperLocalStt {
     fn id(&self) -> &'static str {
-        "voxtral-local"
+        "whisper-local"
     }
 
     fn name(&self) -> &'static str {
-        "Voxtral (Local)"
+        "Whisper (Local)"
     }
 
     fn is_configured(&self) -> bool {
-        // We can't do async check in is_configured, so we require explicit configuration.
-        // The user must either set a non-default endpoint or specify a model.
-        // The actual server check happens at transcription time.
+        // Require explicit configuration: non-default endpoint or a model specified.
         self.model.is_some() || self.endpoint != DEFAULT_ENDPOINT
     }
 
     async fn transcribe(&self, request: TranscribeRequest) -> Result<Transcript> {
         if !openai_compat::check_server_health(&self.client, &self.endpoint).await {
             return Err(anyhow!(
-                "vLLM server not reachable at {}. Start it with: vllm serve mistralai/Voxtral-Mini-3B-2507 --tokenizer_mode mistral --config_format mistral --load_format mistral",
+                "Whisper server not reachable at {}. Start an OpenAI-compatible Whisper server (e.g. faster-whisper-server, whisper.cpp server, or LocalAI).",
                 self.endpoint
             ));
         }
@@ -98,7 +95,7 @@ impl SttProvider for VoxtralLocalStt {
             request.format,
             self.model.as_deref(),
             language.as_deref(),
-            "vLLM",
+            "whisper-local",
         )
         .await
     }
@@ -111,54 +108,47 @@ mod tests {
 
     #[test]
     fn test_provider_metadata() {
-        let provider = VoxtralLocalStt::new();
-        assert_eq!(provider.id(), "voxtral-local");
-        assert_eq!(provider.name(), "Voxtral (Local)");
-        // Not configured by default (requires explicit model or non-default endpoint)
+        let provider = WhisperLocalStt::new();
+        assert_eq!(provider.id(), "whisper-local");
+        assert_eq!(provider.name(), "Whisper (Local)");
         assert!(!provider.is_configured());
     }
 
     #[test]
     fn test_is_configured_with_model() {
-        let provider = VoxtralLocalStt::with_options(None, Some("my-model".into()), None);
+        let provider = WhisperLocalStt::with_options(None, Some("large-v3".into()), None);
         assert!(provider.is_configured());
     }
 
     #[test]
     fn test_is_configured_with_custom_endpoint() {
         let provider =
-            VoxtralLocalStt::with_options(Some("http://localhost:9000".into()), None, None);
+            WhisperLocalStt::with_options(Some("http://localhost:9000".into()), None, None);
         assert!(provider.is_configured());
     }
 
     #[test]
     fn test_with_options() {
-        let provider = VoxtralLocalStt::with_options(
+        let provider = WhisperLocalStt::with_options(
             Some("http://localhost:9000".into()),
-            Some("mistralai/Voxtral-Mini-3B-2507".into()),
+            Some("large-v3".into()),
             Some("en".into()),
         );
         assert_eq!(provider.endpoint, "http://localhost:9000");
-        assert_eq!(
-            provider.model,
-            Some("mistralai/Voxtral-Mini-3B-2507".into())
-        );
+        assert_eq!(provider.model, Some("large-v3".into()));
         assert_eq!(provider.language, Some("en".into()));
     }
 
     #[test]
     fn test_default_endpoint() {
-        let provider = VoxtralLocalStt::new();
-        assert_eq!(provider.endpoint, "http://localhost:8000");
+        let provider = WhisperLocalStt::new();
+        assert_eq!(provider.endpoint, "http://localhost:8080");
     }
 
     #[tokio::test]
     async fn test_transcribe_server_not_running() {
-        let provider = VoxtralLocalStt::with_options(
-            Some("http://localhost:59999".into()), // Unlikely to be in use
-            None,
-            None,
-        );
+        let provider =
+            WhisperLocalStt::with_options(Some("http://localhost:59998".into()), None, None);
         let request = TranscribeRequest {
             audio: Bytes::from_static(b"fake audio"),
             format: AudioFormat::Mp3,

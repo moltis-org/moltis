@@ -273,6 +273,9 @@ pub struct SttConfig {
     /// Voxtral local (vLLM) settings.
     pub voxtral_local: VoxtralLocalConfig,
 
+    /// Whisper local (OpenAI-compatible server) settings.
+    pub whisper_local: WhisperLocalConfig,
+
     /// whisper-cli (whisper.cpp) settings.
     pub whisper_cli: WhisperCliConfig,
 
@@ -294,6 +297,7 @@ impl Default for SttConfig {
             google: GoogleSttConfig::default(),
             mistral: MistralSttConfig::default(),
             voxtral_local: VoxtralLocalConfig::default(),
+            whisper_local: WhisperLocalConfig::default(),
             whisper_cli: WhisperCliConfig::default(),
             sherpa_onnx: SherpaOnnxConfig::default(),
             elevenlabs: ElevenLabsSttConfig::default(),
@@ -457,6 +461,30 @@ impl Default for VoxtralLocalConfig {
     fn default() -> Self {
         Self {
             endpoint: "http://localhost:8000".into(),
+            model: None,
+            language: None,
+        }
+    }
+}
+
+/// Whisper local (OpenAI-compatible server) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WhisperLocalConfig {
+    /// Server endpoint (default: http://localhost:8080).
+    pub endpoint: String,
+
+    /// Model to use (optional, server default if not set).
+    pub model: Option<String>,
+
+    /// Language hint (ISO 639-1 code).
+    pub language: Option<String>,
+}
+
+impl Default for WhisperLocalConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: "http://localhost:8080".into(),
             model: None,
             language: None,
         }

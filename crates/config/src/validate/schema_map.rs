@@ -748,6 +748,15 @@ pub(super) fn build_schema_map() -> KnownKeys {
                             ])),
                         ),
                         (
+                            "whisper_local",
+                            Struct(HashMap::from([
+                                ("enabled", Leaf),
+                                ("endpoint", Leaf),
+                                ("model", Leaf),
+                                ("language", Leaf),
+                            ])),
+                        ),
+                        (
                             "whisper_cli",
                             Struct(HashMap::from([
                                 ("enabled", Leaf),

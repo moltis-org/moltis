@@ -13,11 +13,11 @@ pub use {
         GoogleSttConfig, GoogleTtsConfig, GroqSttConfig, MistralSttConfig, OpenAiTtsConfig,
         PiperTtsConfig, SherpaOnnxConfig, SttConfig, SttProviderId, TtsAutoMode, TtsConfig,
         TtsProviderId, VoiceConfig, VoicePersona, VoicePersonaPrompt, VoicePersonaProviderBinding,
-        VoxtralLocalConfig, WhisperCliConfig, WhisperConfig,
+        VoxtralLocalConfig, WhisperCliConfig, WhisperConfig, WhisperLocalConfig,
     },
     stt::{
         DeepgramStt, ElevenLabsStt, GoogleStt, GroqStt, MistralStt, SherpaOnnxStt, SttProvider,
-        TranscribeRequest, Transcript, VoxtralLocalStt, WhisperCliStt, WhisperStt,
+        TranscribeRequest, Transcript, VoxtralLocalStt, WhisperCliStt, WhisperLocalStt, WhisperStt,
     },
     tts::{
         AudioFormat, AudioOutput, CoquiTts, ElevenLabsTts, GoogleTts, OpenAiTts, PiperTts,

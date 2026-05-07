@@ -382,6 +382,7 @@ function LocalProviderInstructions({ providerId, voxtralReqs }: LocalProviderIns
 
 		const templateId: Record<string, string> = {
 			"whisper-cli": "voice-whisper-cli-instructions",
+			"whisper-local": "voice-whisper-local-instructions",
 			"sherpa-onnx": "voice-sherpa-onnx-instructions",
 			piper: "voice-piper-instructions",
 			coqui: "voice-coqui-instructions",
