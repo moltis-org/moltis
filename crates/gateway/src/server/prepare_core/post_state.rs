@@ -940,9 +940,11 @@ pub(super) async fn complete_startup(
             moltis_tools::send_image::SendImageTool::new()
                 .with_sandbox_router(Arc::clone(&sandbox_router)),
         ));
-        tool_registry.register(Box::new(
-            moltis_tools::image_generation::GenerateImageTool::new(),
-        ));
+        if moltis_providers::openai_codex::has_stored_tokens() {
+            tool_registry.register(Box::new(
+                moltis_tools::image_generation::GenerateImageTool::new(),
+            ));
+        }
         tool_registry.register(Box::new(
             moltis_tools::send_document::SendDocumentTool::new()
                 .with_sandbox_router(Arc::clone(&sandbox_router))

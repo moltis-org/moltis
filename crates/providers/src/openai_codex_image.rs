@@ -7,7 +7,7 @@ use {
 
 use crate::openai_codex::OpenAiCodexProvider;
 
-const CODEX_IMAGE_RESPONSES_MODEL: &str = "gpt-5.5";
+const CODEX_IMAGE_RESPONSES_MODEL: &str = "gpt-5.4";
 const DEFAULT_IMAGE_MODEL: &str = "gpt-image-2";
 const DEFAULT_SIZE: &str = "1024x1024";
 const DEFAULT_QUALITY: &str = "medium";
@@ -149,11 +149,17 @@ fn build_codex_image_request_body(request: &ImageGenerationRequest) -> Value {
 }
 
 async fn read_limited_response_body(response: reqwest::Response) -> anyhow::Result<String> {
-    let bytes = response.bytes().await?;
-    if bytes.len() > MAX_IMAGE_SSE_BYTES {
-        anyhow::bail!("openai-codex image generation response exceeded size limit");
+    use futures::TryStreamExt as _;
+
+    let mut buf = Vec::with_capacity(64 * 1024);
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.try_next().await? {
+        if buf.len() + chunk.len() > MAX_IMAGE_SSE_BYTES {
+            anyhow::bail!("openai-codex image generation response exceeded size limit");
+        }
+        buf.extend_from_slice(&chunk);
     }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 #[derive(Debug, Default)]
@@ -181,10 +187,10 @@ fn parse_image_events(body: &str) -> anyhow::Result<Vec<ParsedImageEvent>> {
                 continue;
             },
         };
-        events.push(parse_image_event_value(&value));
-        if events.len() > MAX_IMAGE_SSE_EVENTS {
+        if events.len() >= MAX_IMAGE_SSE_EVENTS {
             anyhow::bail!("openai-codex image generation response exceeded event limit");
         }
+        events.push(parse_image_event_value(&value));
     }
     Ok(events)
 }
@@ -360,5 +366,13 @@ mod tests {
         let err = extract_codex_image_generation_result(body, "gpt-image-2", "png")
             .expect_err("failure should error");
         assert!(err.to_string().contains("blocked"));
+    }
+
+    #[test]
+    fn enforces_event_limit_before_pushing_extra_event() {
+        let event = "data: {\"type\":\"response.created\"}\n";
+        let body = event.repeat(MAX_IMAGE_SSE_EVENTS + 1);
+        let err = parse_image_events(&body).expect_err("too many events should fail");
+        assert!(err.to_string().contains("exceeded event limit"));
     }
 }
