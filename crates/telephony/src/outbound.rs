@@ -142,6 +142,14 @@ impl RoutingOutbound {
             map.remove(account_id);
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn gather_url(&self, account_id: &str) -> Option<String> {
+        self.accounts.read().ok().and_then(|map| {
+            map.get(account_id)
+                .map(|account| account.gather_url.clone())
+        })
+    }
 }
 
 #[async_trait]

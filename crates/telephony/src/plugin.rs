@@ -212,7 +212,18 @@ impl ChannelPlugin for TelephonyPlugin {
             cfg.max_duration_secs,
         )));
 
-        let gather_url = format!("/api/channels/telephony/{account_id}/gather");
+        let gather_url = cfg
+            .webhook_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(|base_url| {
+                format!(
+                    "{}/api/channels/telephony/{account_id}/gather",
+                    base_url.trim_end_matches('/')
+                )
+            })
+            .unwrap_or_else(|| format!("/api/channels/telephony/{account_id}/gather"));
         self.routing_outbound
             .set_manager(account_id, Arc::clone(&manager), gather_url);
 
@@ -305,6 +316,16 @@ mod tests {
         })
     }
 
+    fn twilio_config_with_webhook(from_number: &str, webhook_url: &str) -> serde_json::Value {
+        serde_json::json!({
+            "provider": "twilio",
+            "account_sid": "AC_test",
+            "auth_token": "test_token",
+            "from_number": from_number,
+            "webhook_url": webhook_url,
+        })
+    }
+
     #[tokio::test]
     async fn start_account_stops_existing_account_before_replacing_manager() {
         let account_id = "default";
@@ -352,6 +373,25 @@ mod tests {
         assert_eq!(
             plugin.caller_number(account_id).as_deref(),
             Some("+15550000002")
+        );
+    }
+
+    #[tokio::test]
+    async fn start_account_uses_absolute_gather_url_from_webhook_base() {
+        let account_id = "default";
+        let mut plugin = TelephonyPlugin::new();
+
+        plugin
+            .start_account(
+                account_id,
+                twilio_config_with_webhook("+15550000002", "https://calls.example.com/base/"),
+            )
+            .await
+            .unwrap_or_else(|error| panic!("account should start: {error}"));
+
+        assert_eq!(
+            plugin.routing_outbound.gather_url(account_id).as_deref(),
+            Some("https://calls.example.com/base/api/channels/telephony/default/gather")
         );
     }
 }
