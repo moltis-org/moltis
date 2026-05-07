@@ -502,10 +502,10 @@ export function AddVoiceProviderModal({
 		const hadBaseUrl =
 			typeof providerMeta?.settings?.baseUrl === "string" && providerMeta.settings.baseUrl.trim().length > 0;
 		const hasBaseUrl = supportsBaseUrl && (trimmedBaseUrl.length > 0 || hadBaseUrl);
+		const hadModel = typeof providerMeta?.settings?.model === "string" && providerMeta.settings.model.trim().length > 0;
+		const hasModelSetting = supportsModelSettings && (modelValue.trim().length > 0 || hadModel);
 		const hasSettings =
-			(supportsTtsVoiceSettings && (voiceValue.trim() || languageCodeValue.trim())) ||
-			(supportsModelSettings && modelValue.trim()) ||
-			hasBaseUrl;
+			(supportsTtsVoiceSettings && (voiceValue.trim() || languageCodeValue.trim())) || hasModelSetting || hasBaseUrl;
 		if (!(hasApiKey || hasSettings)) {
 			setError("Provide an API key, base URL, or at least one provider setting.");
 			return;
@@ -516,7 +516,7 @@ export function AddVoiceProviderModal({
 		const voiceOpts = {
 			baseUrl: hasBaseUrl ? trimmedBaseUrl : undefined,
 			voice: supportsTtsVoiceSettings ? voiceValue.trim() || undefined : undefined,
-			model: supportsModelSettings ? modelValue.trim() || undefined : undefined,
+			model: hasModelSetting ? modelValue.trim() : undefined,
 			languageCode: supportsTtsVoiceSettings ? languageCodeValue.trim() || undefined : undefined,
 		};
 		const req = hasApiKey

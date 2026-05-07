@@ -31,7 +31,7 @@ async function mockVoiceProviders(page) {
 					keyPlaceholder: "sk-...",
 					keyUrl: "https://platform.openai.com/api-keys",
 					keyUrlLabel: "platform.openai.com/api-keys",
-					hint: "GPT-Realtime-2, GPT-Realtime-Translate, and GPT-Realtime-Whisper are Realtime API models. Moltis currently records a clip and uses OpenAI's transcription endpoint for this provider.",
+					hint: "gpt-realtime-2, gpt-realtime-translate, and gpt-realtime-whisper are Realtime API models. Moltis currently records a clip and uses OpenAI's transcription endpoint for this provider.",
 					capabilities: {
 						baseUrl: true,
 						customModel: true,

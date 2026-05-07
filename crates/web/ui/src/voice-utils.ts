@@ -56,7 +56,7 @@ export function saveVoiceKey(providerId: string, apiKey: string, opts?: SaveVoic
 		payload.voice = opts.voice;
 		payload.voiceId = opts.voice;
 	}
-	if (opts?.model) payload.model = opts.model;
+	if (typeof opts?.model === "string") payload.model = opts.model;
 	if (opts?.languageCode) payload.languageCode = opts.languageCode;
 	if (typeof opts?.baseUrl === "string") payload.baseUrl = opts.baseUrl;
 	return sendRpc("voice.config.save_key", payload);
@@ -87,7 +87,7 @@ export function saveVoiceSettings(providerId: string, opts?: SaveVoiceSettingsOp
 		payload.voice = opts.voice;
 		payload.voiceId = opts.voice;
 	}
-	if (opts?.model) payload.model = opts.model;
+	if (typeof opts?.model === "string") payload.model = opts.model;
 	if (opts?.languageCode) payload.languageCode = opts.languageCode;
 	if (typeof opts?.baseUrl === "string") payload.baseUrl = opts.baseUrl;
 	return sendRpc("voice.config.save_settings", payload);

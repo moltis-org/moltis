@@ -212,7 +212,7 @@ impl VoiceProviderId {
                 key_url: Some("https://platform.openai.com/api-keys"),
                 key_url_label: Some("platform.openai.com/api-keys"),
                 hint: Some(
-                    "GPT-Realtime-2, GPT-Realtime-Translate, and GPT-Realtime-Whisper are Realtime API models. Moltis currently records a clip and uses OpenAI's transcription endpoint for this provider.",
+                    "gpt-realtime-2, gpt-realtime-translate, and gpt-realtime-whisper are Realtime API models. Moltis currently records a clip and uses OpenAI's transcription endpoint for this provider.",
                 ),
             },
             Self::Groq => VoiceProviderMeta {
@@ -1060,8 +1060,8 @@ pub(super) fn apply_voice_provider_settings(
                     cfg.voice.stt.enabled = true;
                 }
             }
-            if let Some(model) = get_string("model") {
-                cfg.voice.stt.whisper.model = Some(model);
+            if let Some(model) = get_nullable_string("model") {
+                cfg.voice.stt.whisper.model = model;
             }
         },
         "elevenlabs" => {
@@ -1370,6 +1370,7 @@ mod tests {
         let mut config = moltis_config::MoltisConfig::default();
         config.voice.tts.openai.base_url = Some("http://127.0.0.1:8003/v1".to_string());
         config.voice.stt.whisper.base_url = Some("http://127.0.0.1:8001/v1".to_string());
+        config.voice.stt.whisper.model = Some("gpt-4o-mini-transcribe".to_string());
 
         apply_voice_provider_settings(
             &mut config,
@@ -1383,11 +1384,13 @@ mod tests {
             "whisper",
             &serde_json::json!({
                 "baseUrl": "",
+                "model": "",
             }),
         );
 
         assert_eq!(config.voice.tts.openai.base_url, None);
         assert_eq!(config.voice.stt.whisper.base_url, None);
+        assert_eq!(config.voice.stt.whisper.model, None);
     }
 
     #[tokio::test]
