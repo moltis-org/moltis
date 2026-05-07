@@ -336,20 +336,22 @@ pub async fn handle_node(action: NodeAction) -> Result<()> {
                 Ok(Ok(())) => true,
                 // Timeout — the node connected and was running, handshake succeeded.
                 Err(_) => true,
-                Ok(Err(e)) => {
-                    let msg = e.to_string();
-                    // Handshake/auth errors mean pinning did NOT happen.
-                    if msg.contains("handshake failed")
-                        || msg.contains("authentication failed")
-                        || msg.contains("connection refused")
-                    {
-                        eprintln!("Error: upgrade-auth failed — {e}");
-                        eprintln!("Device token was NOT removed. Fix the issue and retry.");
-                        return Err(e.into());
+                Ok(Err(ref e)) => {
+                    // Match on the error variant, not the string message.
+                    // Protocol and WebSocket errors during handshake mean
+                    // pinning did NOT happen. Post-handshake errors (I/O,
+                    // command) indicate the connection was established.
+                    match e {
+                        moltis_node_host::Error::Protocol(_)
+                        | moltis_node_host::Error::WebSocket(_)
+                        | moltis_node_host::Error::Url(_) => {
+                            eprintln!("Error: upgrade-auth failed — {e}");
+                            eprintln!("Device token was NOT removed. Fix the issue and retry.");
+                            return Err(anyhow::anyhow!("{e}"));
+                        },
+                        // I/O, Config, Command, etc. are post-handshake.
+                        _ => true,
                     }
-                    // Other errors (e.g. "connection closed during message loop")
-                    // are post-handshake — pinning already happened.
-                    true
                 },
             };
 

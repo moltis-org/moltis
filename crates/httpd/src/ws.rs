@@ -180,48 +180,68 @@ pub async fn handle_connection(
             return;
         }
 
-        // TOFU key pinning: reject if this device_id already has a different key pinned.
-        if let Ok(moltis_gateway::pairing::KeyPinningResult::Mismatch { expected }) =
-            store.check_key_pinning(&params.client.id, pk_b64).await
-        {
-            let expected_fp =
-                public_key_fingerprint(&expected).unwrap_or_else(|_| "unknown".into());
-            warn!(
-                conn_id = %conn_id,
-                device_id = %params.client.id,
-                expected_fingerprint = %expected_fp,
-                presented_fingerprint = %fingerprint,
-                "ws: TOFU key pinning violation — node presented a different key"
-            );
-            let err = ResponseFrame::err(
-                &request_id,
-                ErrorShape::new(
-                    error_codes::FORBIDDEN,
-                    format!(
-                        "key mismatch: expected {expected_fp}, got {fingerprint} — \
-                         re-key this node from the gateway UI if intentional"
+        // TOFU key pinning: reject if this device_id has been revoked or has a different key.
+        match store.check_key_pinning(&params.client.id, pk_b64).await {
+            Ok(moltis_gateway::pairing::KeyPinningResult::Revoked) => {
+                warn!(
+                    conn_id = %conn_id,
+                    device_id = %params.client.id,
+                    fingerprint = %fingerprint,
+                    "ws: device has been revoked — rejecting re-pair attempt"
+                );
+                let err = ResponseFrame::err(
+                    &request_id,
+                    ErrorShape::new(
+                        error_codes::FORBIDDEN,
+                        "device has been revoked — contact the gateway operator",
                     ),
-                ),
-            );
-            #[allow(clippy::unwrap_used)]
-            let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+                );
+                #[allow(clippy::unwrap_used)]
+                let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+                graceful_writer_shutdown(client_tx, write_handle).await;
+                return;
+            },
+            Ok(moltis_gateway::pairing::KeyPinningResult::Mismatch { expected }) => {
+                let expected_fp =
+                    public_key_fingerprint(&expected).unwrap_or_else(|_| "unknown".into());
+                warn!(
+                    conn_id = %conn_id,
+                    device_id = %params.client.id,
+                    expected_fingerprint = %expected_fp,
+                    presented_fingerprint = %fingerprint,
+                    "ws: TOFU key pinning violation — node presented a different key"
+                );
+                let err = ResponseFrame::err(
+                    &request_id,
+                    ErrorShape::new(
+                        error_codes::FORBIDDEN,
+                        format!(
+                            "key mismatch: expected {expected_fp}, got {fingerprint} — \
+                         re-key this node from the gateway UI if intentional"
+                        ),
+                    ),
+                );
+                #[allow(clippy::unwrap_used)]
+                let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
 
-            // Broadcast security alert to operators.
-            broadcast(
-                &state,
-                "node.security.key-mismatch",
-                serde_json::json!({
-                    "deviceId": params.client.id,
-                    "displayName": params.client.display_name,
-                    "expectedFingerprint": expected_fp,
-                    "presentedFingerprint": fingerprint,
-                }),
-                BroadcastOpts::default(),
-            )
-            .await;
+                // Broadcast security alert to operators.
+                broadcast(
+                    &state,
+                    "node.security.key-mismatch",
+                    serde_json::json!({
+                        "deviceId": params.client.id,
+                        "displayName": params.client.display_name,
+                        "expectedFingerprint": expected_fp,
+                        "presentedFingerprint": fingerprint,
+                    }),
+                    BroadcastOpts::default(),
+                )
+                .await;
 
-            graceful_writer_shutdown(client_tx, write_handle).await;
-            return;
+                graceful_writer_shutdown(client_tx, write_handle).await;
+                return;
+            },
+            _ => {}, // Match or NoPinnedKey — proceed
         }
 
         match store.find_device_by_public_key(pk_b64).await {
@@ -428,13 +448,42 @@ pub async fn handle_connection(
                                                         "ws: authenticated via Ed25519 after pairing approval"
                                                     );
                                                 },
-                                                _ => {
+                                                Ok(false) | Err(_) => {
                                                     warn!(conn_id = %conn_id, "ws: Ed25519 post-approval verification failed");
+                                                    let err = ResponseFrame::err(
+                                                        &request_id,
+                                                        ErrorShape::new(
+                                                            error_codes::FORBIDDEN,
+                                                            "challenge-response verification failed after approval",
+                                                        ),
+                                                    );
+                                                    #[allow(clippy::unwrap_used)]
+                                                    let _ = client_tx.try_send(
+                                                        serde_json::to_string(&err).unwrap(),
+                                                    );
+                                                    graceful_writer_shutdown(
+                                                        client_tx,
+                                                        write_handle,
+                                                    )
+                                                    .await;
+                                                    return;
                                                 },
                                             }
                                         },
                                         Err(e) => {
                                             warn!(conn_id = %conn_id, error = %e, "ws: post-approval challenge-response failed");
+                                            let err = ResponseFrame::err(
+                                                &request_id,
+                                                ErrorShape::new(
+                                                    error_codes::FORBIDDEN,
+                                                    "challenge-response failed after approval",
+                                                ),
+                                            );
+                                            #[allow(clippy::unwrap_used)]
+                                            let _ = client_tx
+                                                .try_send(serde_json::to_string(&err).unwrap());
+                                            graceful_writer_shutdown(client_tx, write_handle).await;
+                                            return;
                                         },
                                     }
                                 },
@@ -1038,31 +1087,41 @@ enum PairOutcome {
     Expired,
 }
 
-/// Read the next WS text frame from the node, expecting a
-/// `node.auth.challenge-response` request containing a `signature` field.
+/// Read WS frames from the node until we get a `node.auth.challenge-response`
+/// request containing a `signature` field. Ping/pong control frames are
+/// silently skipped so they don't abort the handshake.
 async fn receive_challenge_response(
     ws_rx: &mut (impl StreamExt<Item = Result<Message, axum::Error>> + Unpin),
     timeout: std::time::Duration,
 ) -> Result<String, String> {
-    match tokio::time::timeout(timeout, ws_rx.next()).await {
-        Ok(Some(Ok(Message::Text(text)))) => {
-            let frame: serde_json::Value =
-                serde_json::from_str(&text).map_err(|e| format!("invalid JSON: {e}"))?;
-            let method = frame.get("method").and_then(|v| v.as_str()).unwrap_or("");
-            if method != "node.auth.challenge-response" {
-                return Err(format!("expected challenge-response, got method: {method}"));
-            }
-            frame
-                .get("params")
-                .and_then(|p| p.get("signature"))
-                .and_then(|v| v.as_str())
-                .map(String::from)
-                .ok_or_else(|| "challenge-response missing signature".into())
-        },
-        Ok(Some(Ok(_))) => Err("unexpected non-text message".into()),
-        Ok(Some(Err(e))) => Err(format!("websocket error: {e}")),
-        Ok(None) => Err("connection closed".into()),
-        Err(_) => Err("challenge-response timeout".into()),
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("challenge-response timeout".into());
+        }
+        match tokio::time::timeout(remaining, ws_rx.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => {
+                let frame: serde_json::Value =
+                    serde_json::from_str(&text).map_err(|e| format!("invalid JSON: {e}"))?;
+                let method = frame.get("method").and_then(|v| v.as_str()).unwrap_or("");
+                if method != "node.auth.challenge-response" {
+                    return Err(format!("expected challenge-response, got method: {method}"));
+                }
+                return frame
+                    .get("params")
+                    .and_then(|p| p.get("signature"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .ok_or_else(|| "challenge-response missing signature".into());
+            },
+            // Skip control frames (ping/pong/binary) — keep waiting for text.
+            Ok(Some(Ok(Message::Ping(_) | Message::Pong(_)))) => continue,
+            Ok(Some(Ok(_))) => return Err("unexpected binary message".into()),
+            Ok(Some(Err(e))) => return Err(format!("websocket error: {e}")),
+            Ok(None) => return Err("connection closed".into()),
+            Err(_) => return Err("challenge-response timeout".into()),
+        }
     }
 }
 

@@ -106,6 +106,8 @@ pub enum KeyPinningResult {
     Mismatch { expected: String },
     /// No key is pinned yet (new device or no stored key).
     NoPinnedKey,
+    /// The device has been revoked — reject regardless of key.
+    Revoked,
 }
 
 // ── Pairing store ───────────────────────────────────────────────────────────
@@ -625,9 +627,10 @@ impl PairingStore {
                     })
                 }
             },
-            Some((None, _)) => Ok(KeyPinningResult::NoPinnedKey),
-            Some((..)) => Ok(KeyPinningResult::NoPinnedKey), // revoked or no key
-            None => Ok(KeyPinningResult::NoPinnedKey),       // unknown device
+            Some((None, status)) if status == "active" => Ok(KeyPinningResult::NoPinnedKey),
+            Some((_, status)) if status == "revoked" => Ok(KeyPinningResult::Revoked),
+            Some(..) => Ok(KeyPinningResult::NoPinnedKey),
+            None => Ok(KeyPinningResult::NoPinnedKey), // unknown device
         }
     }
 
