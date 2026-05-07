@@ -4,11 +4,12 @@ name              = "moltis-tools"
 version.workspace = true
 
 [features]
-bundled-skills = ["moltis-skills/bundled-skills"]
-default        = ["firecrawl", "fs-tools", "metrics", "vercel-sandbox", "wasm"]
-embedded-wasm  = []
-firecrawl      = []
-vercel-sandbox = []
+bundled-skills        = ["moltis-skills/bundled-skills"]
+default               = ["firecrawl", "fs-tools", "metrics", "provider-openai-codex", "vercel-sandbox", "wasm"]
+embedded-wasm         = []
+firecrawl             = []
+provider-openai-codex = ["moltis-providers/provider-openai-codex"]
+vercel-sandbox        = []
 # Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep).
 # See moltis-org/moltis#657. Default-on; build with
 # --no-default-features to omit them from minimal builds.

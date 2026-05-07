@@ -132,6 +132,7 @@ default = [
   "nostr",
   "openclaw-import",
   "prometheus",
+  "provider-openai-codex",
   "push-notifications",
   "qmd",
   "signal",
@@ -185,6 +186,10 @@ msteams = ["dep:moltis-msteams"]
 nostr = ["dep:moltis-nostr"]
 openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]
+provider-openai-codex = [
+  "moltis-providers/provider-openai-codex",
+  "moltis-tools/provider-openai-codex",
+]
 push-notifications = ["dep:chrono", "dep:p256", "dep:web-push", "moltis-chat/push-notifications"]
 qmd = ["dep:moltis-qmd", "moltis-code-index/qmd"]
 signal = ["dep:moltis-signal"]

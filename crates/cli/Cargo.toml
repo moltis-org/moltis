@@ -124,8 +124,8 @@ full = [
   "caldav",
   "claude-import",
   "code-index-builtin",
-  "codex-import",
   "code-splitter",
+  "codex-import",
   "discord",
   "file-watcher",
   "firecrawl",
@@ -161,6 +161,7 @@ full = [
   "nostr",
   "openclaw-import",
   "prometheus",
+  "provider-openai-codex",
   "push-notifications",
   "qmd",
   "signal",
@@ -207,38 +208,39 @@ lang-toml          = ["moltis-memory/lang-toml"]
 lang-typescript    = ["moltis-memory/lang-typescript"]
 # jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
-claude-import      = ["dep:moltis-claude-import", "moltis-gateway/claude-import"]
-codex-import       = ["dep:moltis-codex-import", "moltis-gateway/codex-import"]
-hermes-import      = ["dep:moltis-hermes-import", "moltis-gateway/hermes-import"]
-lightweight        = ["jemalloc", "tls", "web-ui"]
-local-embeddings   = ["moltis-gateway/local-embeddings"]
-local-llm          = ["moltis-gateway/local-llm"]
-local-llm-cuda     = ["local-llm", "moltis-gateway/local-llm-cuda"]
-local-llm-metal    = ["local-llm", "moltis-gateway/local-llm-metal"]
-local-llm-vulkan   = ["local-llm", "moltis-gateway/local-llm-vulkan"]
-matrix             = ["moltis-httpd/matrix"]
-mdns               = ["moltis-gateway/mdns"]
-metrics            = ["moltis-httpd/metrics", "moltis-web?/metrics"]
-msteams            = ["moltis-httpd/msteams"]
-ngrok              = ["moltis-httpd/ngrok", "moltis-web?/ngrok"]
-nostr              = ["moltis-httpd/nostr"]
-openclaw-import    = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-import"]
-prometheus         = ["moltis-httpd/prometheus"]
-push-notifications = ["moltis-httpd/push-notifications", "moltis-web?/push-notifications"]
-qmd                = ["moltis-gateway/qmd"]
-signal             = ["moltis-httpd/signal"]
-slack              = ["moltis-httpd/slack"]
-tailscale          = ["moltis-httpd/tailscale", "moltis-web?/tailscale"]
-telegram           = ["moltis-gateway/telegram"]
-telephony          = ["moltis-httpd/telephony"]
-tls                = ["moltis-httpd/tls"]
-trusted-network    = ["moltis-httpd/trusted-network"]
-vault              = ["moltis-httpd/vault", "moltis-web?/vault"]
-voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
-vercel-sandbox     = ["moltis-tools/vercel-sandbox"]
-wasm               = ["moltis-tools/wasm"]
-web-ui             = ["dep:moltis-web", "moltis-httpd/web-ui"]
-whatsapp           = ["moltis-gateway/whatsapp"]
+claude-import         = ["dep:moltis-claude-import", "moltis-gateway/claude-import"]
+codex-import          = ["dep:moltis-codex-import", "moltis-gateway/codex-import"]
+hermes-import         = ["dep:moltis-hermes-import", "moltis-gateway/hermes-import"]
+lightweight           = ["jemalloc", "tls", "web-ui"]
+local-embeddings      = ["moltis-gateway/local-embeddings"]
+local-llm             = ["moltis-gateway/local-llm"]
+local-llm-cuda        = ["local-llm", "moltis-gateway/local-llm-cuda"]
+local-llm-metal       = ["local-llm", "moltis-gateway/local-llm-metal"]
+local-llm-vulkan      = ["local-llm", "moltis-gateway/local-llm-vulkan"]
+matrix                = ["moltis-httpd/matrix"]
+mdns                  = ["moltis-gateway/mdns"]
+metrics               = ["moltis-httpd/metrics", "moltis-web?/metrics"]
+msteams               = ["moltis-httpd/msteams"]
+ngrok                 = ["moltis-httpd/ngrok", "moltis-web?/ngrok"]
+nostr                 = ["moltis-httpd/nostr"]
+openclaw-import       = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-import"]
+prometheus            = ["moltis-httpd/prometheus"]
+provider-openai-codex = ["moltis-gateway/provider-openai-codex"]
+push-notifications    = ["moltis-httpd/push-notifications", "moltis-web?/push-notifications"]
+qmd                   = ["moltis-gateway/qmd"]
+signal                = ["moltis-httpd/signal"]
+slack                 = ["moltis-httpd/slack"]
+tailscale             = ["moltis-httpd/tailscale", "moltis-web?/tailscale"]
+telegram              = ["moltis-gateway/telegram"]
+telephony             = ["moltis-httpd/telephony"]
+tls                   = ["moltis-httpd/tls"]
+trusted-network       = ["moltis-httpd/trusted-network"]
+vault                 = ["moltis-httpd/vault", "moltis-web?/vault"]
+vercel-sandbox        = ["moltis-tools/vercel-sandbox"]
+voice                 = ["moltis-gateway/voice", "moltis-web?/voice"]
+wasm                  = ["moltis-tools/wasm"]
+web-ui                = ["dep:moltis-web", "moltis-httpd/web-ui"]
+whatsapp              = ["moltis-gateway/whatsapp"]
 
 [lints]
 workspace = true
