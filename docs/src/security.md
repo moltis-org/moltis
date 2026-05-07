@@ -352,8 +352,7 @@ Trust On First Use (TOFU) model as SSH:
    re-paired without explicit operator action.
 
 The private key (`~/.moltis/node_key`) is stored with mode 0600 and never
-leaves the node. The gateway stores only public keys. Legacy device token auth
-is still supported but deprecated.
+leaves the node. The gateway stores only public keys.
 
 ## HTTP Endpoint Throttling
 

@@ -87,11 +87,6 @@ interface ToastItem {
 	type: string;
 }
 
-interface GeneratedToken {
-	token: string;
-	deviceId: string;
-	command: string;
-}
 
 // ── Signals ─────────────────────────────────────────────────
 const nodes = signal<NodeInfo[]>([]);
@@ -101,9 +96,6 @@ const loading = signal(false);
 const activeTab = signal<"connected" | "paired" | "pending">("connected");
 const toasts = signal<ToastItem[]>([]);
 let toastId = 0;
-const generatedToken = signal<GeneratedToken | null>(null);
-const generatingToken = signal(false);
-const deviceName = signal("");
 const doctor = signal<DoctorSnapshot | null>(null);
 const doctorLoading = signal(false);
 const doctorError = signal("");
@@ -148,27 +140,6 @@ function showToast(message: string, type: string): void {
 	}, 4000);
 }
 
-async function generateToken(): Promise<void> {
-	generatingToken.value = true;
-	const name = deviceName.value.trim() || null;
-	const res = await sendRpc<{ deviceToken: string; deviceId: string }>("device.token.create", {
-		displayName: name,
-		platform: "remote",
-	});
-	if (res?.ok && res.payload) {
-		const wsUrl = gatewayWsUrl();
-		generatedToken.value = {
-			token: res.payload.deviceToken,
-			deviceId: res.payload.deviceId,
-			command: `moltis node add --host ${wsUrl} --token ${res.payload.deviceToken}`,
-		};
-		showToast("Token generated", "success");
-		await refreshPairedDevices();
-	} else {
-		showToast(res?.error?.message || "Failed to generate token", "error");
-	}
-	generatingToken.value = false;
-}
 
 async function refreshNodes(): Promise<void> {
 	loading.value = true;
@@ -412,102 +383,44 @@ function DoctorBadge({ level }: { level: string }): VNode {
 
 function ConnectNodeForm(): VNode {
 	const wsUrl = gatewayWsUrl();
+	const addCmd = `moltis node add --host ${wsUrl}`;
 	return (
 		<div className="rounded-lg border border-[var(--border)] bg-[var(--surface-alt)] p-4">
 			<h3 className="text-sm font-medium text-[var(--text-strong)] mb-3">Connect a Remote Node</h3>
-			<div className="rounded bg-[var(--bg)] border border-[var(--border)] px-3 py-2 mb-3">
-				<p className="text-xs text-[var(--text-strong)] font-medium mb-1">Key-based auth (recommended)</p>
-				<p className="text-xs text-[var(--text-muted)] mb-1">
-					Run <code>moltis node add --host {gatewayWsUrl()}</code> on the remote machine.
-					The node will generate an Ed25519 keypair and wait for approval here.
-				</p>
-				<p className="text-xs text-[var(--text-muted)]">
-					No token needed — approve the fingerprint in the Pending tab.
-				</p>
-			</div>
 			<p className="text-xs text-[var(--text-muted)] mb-3">
-				Or generate a token for legacy auth:
+				Run this command on the remote machine. The node generates an Ed25519 keypair
+				and waits for you to approve its fingerprint in the Pending tab.
 			</p>
-			<div className="mb-3">
-				<label className="block text-xs text-[var(--text-muted)] mb-1">This gateway's public endpoint</label>
-				<div className="flex items-center gap-2">
-					<code className="flex-1 text-xs bg-[var(--bg)] px-2 py-1.5 rounded border border-[var(--border)] break-all">
-						{wsUrl}
-					</code>
-					<button
-						className="provider-btn provider-btn-secondary provider-btn-sm shrink-0"
-						onClick={() =>
-							copyToClipboard(wsUrl, "", "").then((ok) =>
-								showToast(
-									ok ? "Copied to clipboard" : "Could not copy — please copy manually.",
-									ok ? "success" : "error",
-								),
-							)
-						}
-					>
-						Copy
-					</button>
-				</div>
-				<p className="text-xs text-[var(--text-muted)] mt-1">
-					The remote node will connect back to this address. Replace with your public IP or domain if needed.
-				</p>
+			<div className="flex items-center gap-2 mb-3">
+				<code className="flex-1 text-xs bg-[var(--bg)] px-2 py-1.5 rounded border border-[var(--border)] break-all select-all">
+					{addCmd}
+				</code>
+				<button
+					className="provider-btn provider-btn-secondary provider-btn-sm shrink-0"
+					onClick={() =>
+						copyToClipboard(addCmd, "", "").then((ok) =>
+							showToast(
+								ok ? "Copied to clipboard" : "Could not copy — please copy manually.",
+								ok ? "success" : "error",
+							),
+						)
+					}
+				>
+					Copy
+				</button>
 			</div>
-			<div className="mb-3">
-				<label className="block text-xs text-[var(--text-muted)] mb-1">Remote node name (optional)</label>
-				<input
-					type="text"
-					className="w-full text-sm bg-[var(--bg)] px-2 py-1.5 rounded border border-[var(--border)] text-[var(--text-strong)] placeholder-[var(--text-muted)]"
-					placeholder="e.g. my-server"
-					value={deviceName.value}
-					onInput={(e) => {
-						deviceName.value = (e.target as HTMLInputElement).value;
-					}}
-				/>
-			</div>
-			<button
-				className="provider-btn text-sm px-3 py-1.5 w-full"
-				onClick={generateToken}
-				disabled={generatingToken.value}
-			>
-				{generatingToken.value ? "Generating..." : "Generate Connection Token"}
-			</button>
-			{generatedToken.value ? (
-				<div className="mt-3 p-3 rounded bg-[var(--bg)] border border-[var(--border)]">
-					<div className="flex items-center justify-between mb-2">
-						<span className="text-xs font-medium text-green-500">Token generated</span>
-						<button
-							className="provider-btn provider-btn-secondary provider-btn-sm"
-							onClick={() =>
-								copyToClipboard(generatedToken.value?.command ?? "", "", "").then((ok) =>
-									showToast(
-										ok ? "Copied to clipboard" : "Could not copy — please copy manually.",
-										ok ? "success" : "error",
-									),
-								)
-							}
-						>
-							Copy command
-						</button>
-					</div>
-					<code className="block text-xs break-all bg-[var(--surface-alt)] px-2 py-1.5 rounded border border-[var(--border)] select-all">
-						{generatedToken.value.command}
-					</code>
-					<p className="text-xs text-[var(--text-muted)] mt-2">
-						Run this command on the remote machine to connect. The token is shown only once -- copy it now.
-					</p>
-				</div>
-			) : null}
-			<p className="text-xs text-[var(--text-muted)] mt-3">
-				Manage tokens in the{" "}
+			<p className="text-xs text-[var(--text-muted)]">
+				Replace the host with your public IP or domain if the remote machine cannot reach this address directly.
+				Check the{" "}
 				<button
 					className="underline hover:text-[var(--text-strong)]"
 					onClick={() => {
-						activeTab.value = "paired";
+						activeTab.value = "pending";
 					}}
 				>
-					Paired Devices
+					Pending
 				</button>{" "}
-				tab.
+				tab to approve incoming pairing requests.
 			</p>
 		</div>
 	);
