@@ -151,6 +151,23 @@ fn browser_profile_mount_path_uses_configured_host_data_dir() {
 }
 
 #[test]
+fn browser_profile_mount_path_ignores_relative_host_data_dir() {
+    let guest_profile = moltis_config::data_dir()
+        .join("browser")
+        .join("profile")
+        .join("sandbox")
+        .join("browser-relative");
+
+    let mount_dir = profile_mount_dir_for_backend(
+        ContainerBackend::Docker,
+        &guest_profile,
+        Some(Path::new("relative-host-data")),
+    );
+
+    assert_eq!(mount_dir, guest_profile);
+}
+
+#[test]
 #[serial(browser_container_mount_overrides)]
 fn browser_profile_mount_path_auto_detects_host_data_dir() {
     clear_container_mount_test_state();

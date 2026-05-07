@@ -87,7 +87,11 @@ fn configured_host_data_dir(host_data_dir: Option<&Path>) -> Option<PathBuf> {
     if path.is_absolute() {
         return Some(path.to_path_buf());
     }
-    Some(moltis_config::data_dir().join(path))
+    warn!(
+        path = %path.display(),
+        "tools.exec.sandbox.host_data_dir is a relative path; it must be an absolute host-visible path, ignoring and falling back to auto-detection"
+    );
+    None
 }
 
 fn read_trimmed_file(path: &str) -> Option<String> {
