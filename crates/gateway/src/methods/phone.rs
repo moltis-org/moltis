@@ -5,7 +5,11 @@ use {
     secrecy::{ExposeSecret, Secret},
 };
 
+#[cfg(feature = "telephony")]
+use moltis_channels::ChannelPlugin as _;
+
 const PHONE_ACCOUNT_ID: &str = "default";
+const PHONE_CHANNEL_TYPE: &str = "telephony";
 
 /// Overlay phone provider credentials from the credential store onto config.
 ///
@@ -303,6 +307,54 @@ pub(super) fn phone_key_store_name(provider: &str) -> String {
     format!("phone_{provider}")
 }
 
+/// Reconcile the in-memory telephony account with the persisted `[phone]`
+/// config after an RPC mutation.
+///
+/// `GatewayState::config` is a startup snapshot, so this deliberately reloads
+/// the config file and overlays `KeyStore` credentials before restarting the
+/// internal telephony account.
+#[cfg(feature = "telephony")]
+pub(super) async fn reload_running_phone_account(
+    state: &crate::state::GatewayState,
+) -> anyhow::Result<()> {
+    let mut config = moltis_config::discover_and_load();
+    merge_phone_keys(&mut config);
+
+    match phone_channel_account(&config) {
+        Some((account_id, account_config)) => {
+            if let Some(registry) = state.services.channel_registry.as_ref() {
+                registry
+                    .start_account(PHONE_CHANNEL_TYPE, &account_id, account_config)
+                    .await?;
+            } else if let Some(plugin) = state.services.telephony_plugin.as_ref() {
+                plugin
+                    .write()
+                    .await
+                    .start_account(&account_id, account_config)
+                    .await?;
+            }
+        },
+        None => {
+            if let Some(registry) = state.services.channel_registry.as_ref() {
+                if registry.resolve_channel_type(PHONE_ACCOUNT_ID).as_deref()
+                    == Some(PHONE_CHANNEL_TYPE)
+                {
+                    registry
+                        .stop_account(PHONE_CHANNEL_TYPE, PHONE_ACCOUNT_ID)
+                        .await?;
+                }
+            } else if let Some(plugin) = state.services.telephony_plugin.as_ref() {
+                let has_account = plugin.read().await.has_account(PHONE_ACCOUNT_ID);
+                if has_account {
+                    plugin.write().await.stop_account(PHONE_ACCOUNT_ID).await?;
+                }
+            }
+        },
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -313,6 +365,36 @@ mod tests {
         moltis_config::schema::MoltisConfig,
         secrecy::{ExposeSecret, Secret},
     };
+
+    struct PhoneConfigTestGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        _config_dir: tempfile::TempDir,
+        _data_dir: tempfile::TempDir,
+    }
+
+    impl PhoneConfigTestGuard {
+        fn new() -> Self {
+            let lock = crate::config_override_test_lock();
+            let config_dir = tempfile::tempdir()
+                .unwrap_or_else(|error| panic!("config tempdir should be created: {error}"));
+            let data_dir = tempfile::tempdir()
+                .unwrap_or_else(|error| panic!("data tempdir should be created: {error}"));
+            moltis_config::set_config_dir(config_dir.path().to_path_buf());
+            moltis_config::set_data_dir(data_dir.path().to_path_buf());
+            Self {
+                _lock: lock,
+                _config_dir: config_dir,
+                _data_dir: data_dir,
+            }
+        }
+    }
+
+    impl Drop for PhoneConfigTestGuard {
+        fn drop(&mut self) {
+            moltis_config::clear_config_dir();
+            moltis_config::clear_data_dir();
+        }
+    }
 
     #[test]
     fn detect_phone_providers_returns_all() {
@@ -441,6 +523,100 @@ mod tests {
                 .as_ref()
                 .map(|secret| secret.expose_secret().as_str()),
             Some("AC_test_sid")
+        );
+    }
+
+    #[cfg(feature = "telephony")]
+    #[tokio::test]
+    async fn reload_running_phone_account_restarts_account_from_key_store() {
+        use {
+            crate::{
+                auth::{AuthMode, ResolvedAuth},
+                methods::phone::reload_running_phone_account,
+                services::GatewayServices,
+                state::GatewayState,
+            },
+            moltis_channels::ChannelRegistry,
+            std::sync::Arc,
+            tokio::sync::RwLock,
+        };
+
+        let _guard = PhoneConfigTestGuard::new();
+        let telephony_plugin = Arc::new(RwLock::new(moltis_telephony::TelephonyPlugin::new()));
+        let mut registry = ChannelRegistry::new();
+        registry
+            .register(
+                Arc::clone(&telephony_plugin) as Arc<RwLock<dyn moltis_channels::ChannelPlugin>>
+            )
+            .await;
+        let registry = Arc::new(registry);
+        let services = GatewayServices::noop()
+            .with_channel_registry(Arc::clone(&registry))
+            .with_telephony_plugin(Arc::clone(&telephony_plugin));
+        let state = GatewayState::new(
+            ResolvedAuth {
+                mode: AuthMode::Token,
+                token: None,
+                password: None,
+            },
+            services,
+        );
+
+        crate::provider_setup::KeyStore::new()
+            .save_config(
+                &phone_key_store_name("twilio"),
+                Some("AC_old".to_string()),
+                Some("old_token".to_string()),
+                None,
+            )
+            .unwrap_or_else(|error| panic!("phone credentials should be stored: {error}"));
+        moltis_config::update_config(|cfg| {
+            cfg.phone.enabled = true;
+            cfg.phone.provider = "twilio".to_string();
+            cfg.phone.twilio.from_number = Some("+15550000001".to_string());
+            cfg.phone.twilio.account_sid = None;
+            cfg.phone.twilio.auth_token = None;
+        })
+        .unwrap_or_else(|error| panic!("phone config should be stored: {error}"));
+
+        reload_running_phone_account(&state)
+            .await
+            .unwrap_or_else(|error| panic!("phone account should reload: {error}"));
+        let first_manager = telephony_plugin
+            .read()
+            .await
+            .call_manager("default")
+            .unwrap_or_else(|| panic!("phone account should be running"));
+        assert_eq!(
+            registry.resolve_channel_type("default").as_deref(),
+            Some("telephony")
+        );
+
+        crate::provider_setup::KeyStore::new()
+            .save_config(
+                &phone_key_store_name("twilio"),
+                Some("AC_new".to_string()),
+                Some("new_token".to_string()),
+                None,
+            )
+            .unwrap_or_else(|error| panic!("phone credentials should be updated: {error}"));
+        moltis_config::update_config(|cfg| {
+            cfg.phone.twilio.from_number = Some("+15550000002".to_string());
+        })
+        .unwrap_or_else(|error| panic!("phone config should be updated: {error}"));
+
+        reload_running_phone_account(&state)
+            .await
+            .unwrap_or_else(|error| panic!("phone account should reload again: {error}"));
+        let plugin = telephony_plugin.read().await;
+        let second_manager = plugin
+            .call_manager("default")
+            .unwrap_or_else(|| panic!("phone account should still be running"));
+
+        assert!(!Arc::ptr_eq(&first_manager, &second_manager));
+        assert_eq!(
+            plugin.caller_number("default").as_deref(),
+            Some("+15550000002")
         );
     }
 }

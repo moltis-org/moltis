@@ -266,6 +266,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                     phone::toggle_phone_provider(provider, enabled)
                         .map_err(|e| ErrorShape::new("config_error", e.to_string()))?;
+                    phone::reload_running_phone_account(&ctx.state)
+                        .await
+                        .map_err(|e| ErrorShape::new("config_error", e.to_string()))?;
 
                     broadcast(
                         &ctx.state,
@@ -319,6 +322,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         phone::apply_phone_provider_settings(cfg, provider, &ctx.params);
                     })
                     .map_err(|e| ErrorShape::new("config_error", e.to_string()))?;
+                    phone::reload_running_phone_account(&ctx.state)
+                        .await
+                        .map_err(|e| ErrorShape::new("config_error", e.to_string()))?;
 
                     broadcast(
                         &ctx.state,
@@ -345,6 +351,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         phone::apply_phone_provider_settings(cfg, provider, &ctx.params);
                     })
                     .map_err(|e| ErrorShape::new("config_error", e.to_string()))?;
+                    phone::reload_running_phone_account(&ctx.state)
+                        .await
+                        .map_err(|e| ErrorShape::new("config_error", e.to_string()))?;
 
                     broadcast(
                         &ctx.state,
@@ -381,6 +390,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         }
                     })
                     .map_err(|e| ErrorShape::new("config_error", e.to_string()))?;
+                    phone::reload_running_phone_account(&ctx.state)
+                        .await
+                        .map_err(|e| ErrorShape::new("config_error", e.to_string()))?;
 
                     broadcast(
                         &ctx.state,
