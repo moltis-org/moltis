@@ -5,11 +5,9 @@ use std::{
 
 use {
     async_trait::async_trait,
-    secrecy::Secret,
+    secrecy::{ExposeSecret, Secret},
     tracing::{debug, info, warn},
 };
-
-use secrecy::ExposeSecret;
 
 use {
     moltis_providers::{PendingDiscoveries, ProviderRegistry},
