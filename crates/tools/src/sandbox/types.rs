@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use {
     async_trait::async_trait,
+    secrecy::Secret,
     serde::{Deserialize, Serialize},
 };
 
@@ -58,6 +59,44 @@ impl std::fmt::Display for SandboxMode {
             Self::Off => f.write_str("off"),
             Self::NonMain => f.write_str("non-main"),
             Self::All => f.write_str("all"),
+        }
+    }
+}
+
+/// Known sandbox backend identifiers.
+///
+/// Used in the API/gon layer for type-safe backend references. The config
+/// schema uses a plain `String` for flexibility (TOML compatibility), but
+/// this enum ensures wire-format consistency.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SandboxBackendId {
+    Docker,
+    Podman,
+    AppleContainer,
+    Cgroup,
+    RestrictedHost,
+    Wasm,
+    Vercel,
+    Daytona,
+    Firecracker,
+    None,
+}
+
+impl SandboxBackendId {
+    /// Parse from backend_name() output.
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "docker" => Self::Docker,
+            "podman" => Self::Podman,
+            "apple-container" => Self::AppleContainer,
+            "cgroup" => Self::Cgroup,
+            "restricted-host" => Self::RestrictedHost,
+            "wasm" => Self::Wasm,
+            "vercel" => Self::Vercel,
+            "daytona" => Self::Daytona,
+            "firecracker" => Self::Firecracker,
+            _ => Self::None,
         }
     }
 }
@@ -149,7 +188,7 @@ pub struct ResourceLimits {
 pub use moltis_network_filter::NetworkPolicy;
 
 /// Configuration for sandbox behavior.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct SandboxConfig {
     pub mode: SandboxMode,
@@ -188,6 +227,46 @@ pub struct SandboxConfig {
     pub wasm_epoch_interval_ms: Option<u64>,
     /// Per-tool WASM limits (fuel/memory). Falls back to built-in defaults when absent.
     pub wasm_tool_limits: Option<WasmToolLimits>,
+
+    // ── Vercel sandbox configuration ────────────────────────────────────
+    /// Vercel API token (`VERCEL_TOKEN` or `VERCEL_OIDC_TOKEN`).
+    pub vercel_token: Option<Secret<String>>,
+    /// Vercel project ID.
+    pub vercel_project_id: Option<String>,
+    /// Vercel team ID.
+    pub vercel_team_id: Option<String>,
+    /// Vercel sandbox runtime (e.g. "node24", "node22", "python3.13").
+    pub vercel_runtime: Option<String>,
+    /// Vercel sandbox timeout in milliseconds.
+    pub vercel_timeout_ms: Option<u64>,
+    /// Vercel sandbox vCPU count.
+    pub vercel_vcpus: Option<u32>,
+    /// Vercel snapshot ID for fast cold starts.
+    pub vercel_snapshot_id: Option<String>,
+
+    // ── Daytona sandbox configuration ───────────────────────────────────
+    /// Daytona API key (`DAYTONA_API_KEY`).
+    pub daytona_api_key: Option<Secret<String>>,
+    /// Daytona API URL (default: `https://app.daytona.io/api`).
+    pub daytona_api_url: Option<String>,
+    /// Daytona target region/environment.
+    pub daytona_target: Option<String>,
+    /// Custom image for Daytona sandbox creation.
+    pub daytona_image: Option<String>,
+
+    // ── Firecracker sandbox configuration (Linux only) ──────────────────
+    /// Path to the `firecracker` binary.
+    pub firecracker_bin: Option<PathBuf>,
+    /// Path to the uncompressed Linux kernel (`vmlinux`).
+    pub firecracker_kernel: Option<PathBuf>,
+    /// Path to the base ext4 rootfs image.
+    pub firecracker_rootfs: Option<PathBuf>,
+    /// Path to the SSH private key for VM access.
+    pub firecracker_ssh_key: Option<PathBuf>,
+    /// Number of vCPUs per Firecracker VM.
+    pub firecracker_vcpus: Option<u32>,
+    /// Memory in MiB per Firecracker VM.
+    pub firecracker_memory_mb: Option<u32>,
 }
 
 impl Default for SandboxConfig {
@@ -212,6 +291,23 @@ impl Default for SandboxConfig {
             wasm_fuel_limit: None,
             wasm_epoch_interval_ms: None,
             wasm_tool_limits: None,
+            vercel_token: None,
+            vercel_project_id: None,
+            vercel_team_id: None,
+            vercel_runtime: None,
+            vercel_timeout_ms: None,
+            vercel_vcpus: None,
+            vercel_snapshot_id: None,
+            daytona_api_key: None,
+            daytona_api_url: None,
+            daytona_target: None,
+            daytona_image: None,
+            firecracker_bin: None,
+            firecracker_kernel: None,
+            firecracker_rootfs: None,
+            firecracker_ssh_key: None,
+            firecracker_vcpus: None,
+            firecracker_memory_mb: None,
         }
     }
 }
@@ -272,6 +368,23 @@ impl From<&moltis_config::schema::SandboxConfig> for SandboxConfig {
             wasm_fuel_limit: cfg.wasm_fuel_limit,
             wasm_epoch_interval_ms: cfg.wasm_epoch_interval_ms,
             wasm_tool_limits: cfg.wasm_tool_limits.as_ref().map(WasmToolLimits::from),
+            vercel_token: cfg.vercel_token.clone(),
+            vercel_project_id: cfg.vercel_project_id.clone(),
+            vercel_team_id: cfg.vercel_team_id.clone(),
+            vercel_runtime: cfg.vercel_runtime.clone(),
+            vercel_timeout_ms: cfg.vercel_timeout_ms,
+            vercel_vcpus: cfg.vercel_vcpus,
+            vercel_snapshot_id: cfg.vercel_snapshot_id.clone(),
+            daytona_api_key: cfg.daytona_api_key.clone(),
+            daytona_api_url: cfg.daytona_api_url.clone(),
+            daytona_target: cfg.daytona_target.clone(),
+            daytona_image: cfg.daytona_image.clone(),
+            firecracker_bin: cfg.firecracker_bin.as_deref().map(PathBuf::from),
+            firecracker_kernel: cfg.firecracker_kernel.as_deref().map(PathBuf::from),
+            firecracker_rootfs: cfg.firecracker_rootfs.as_deref().map(PathBuf::from),
+            firecracker_ssh_key: cfg.firecracker_ssh_key.as_deref().map(PathBuf::from),
+            firecracker_vcpus: cfg.firecracker_vcpus,
+            firecracker_memory_mb: cfg.firecracker_memory_mb,
         }
     }
 }
@@ -364,6 +477,67 @@ pub trait Sandbox: Send + Sync {
         false
     }
 
+    /// The default workspace/home directory inside this backend.
+    ///
+    /// Used by workspace sync to determine where to extract files.
+    /// Defaults to `/home/sandbox`. Remote backends override this
+    /// (e.g. Vercel returns `/vercel/sandbox`).
+    fn workspace_dir(&self) -> &str {
+        SANDBOX_HOME_DIR
+    }
+
+    /// Workspace directory for a specific prepared session.
+    ///
+    /// Most backends use a fixed directory and can rely on the default.
+    /// Backends whose API returns a per-session project directory override
+    /// this so workspace sync uses the same path as command execution.
+    async fn workspace_dir_for(&self, _id: &SandboxId) -> String {
+        self.workspace_dir().to_string()
+    }
+
+    /// Whether this backend manages an isolated filesystem that requires
+    /// workspace sync (copy-in on setup, patch extraction on cleanup).
+    ///
+    /// Defaults to `false`. Local bind-mount backends (Docker, Podman, Apple
+    /// Container) mount the host workspace directly. Remote/VM backends
+    /// (Vercel, Daytona, Firecracker) return `true` — the workspace must be
+    /// synced in via git bundles and changes extracted back via patches.
+    fn is_isolated(&self) -> bool {
+        false
+    }
+
+    /// Install packages inside the sandbox.
+    ///
+    /// Default implementation uses `apt-get` (Ubuntu/Debian). Backends with
+    /// different package managers (e.g. Vercel/Amazon Linux uses `dnf`)
+    /// override this method.
+    ///
+    /// Called once per session after `ensure_ready()` for isolated backends
+    /// that don't have packages pre-baked into the image.
+    async fn provision_packages(&self, id: &SandboxId, packages: &[String]) -> Result<()> {
+        if packages.is_empty() {
+            return Ok(());
+        }
+        let pkg_list = packages.join(" ");
+        let cmd = format!(
+            "apt-get update -qq && apt-get install -y -qq --no-install-recommends {pkg_list}"
+        );
+        let opts = ExecOpts {
+            timeout: std::time::Duration::from_secs(600),
+            ..Default::default()
+        };
+        let result = self.exec(id, &cmd, &opts).await?;
+        if result.exit_code != 0 {
+            tracing::warn!(
+                %id,
+                exit_code = result.exit_code,
+                stderr = result.stderr.trim(),
+                "package provisioning failed (non-fatal)"
+            );
+        }
+        Ok(())
+    }
+
     /// Pre-build a container image with packages baked in.
     /// Returns `None` for backends that don't support image building.
     async fn build_image(
@@ -424,5 +598,57 @@ pub(crate) fn sanitize_path_component(input: &str) -> String {
         "default".to_string()
     } else {
         out
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use secrecy::{ExposeSecret, Secret};
+
+    use crate::sandbox::SandboxConfig;
+
+    #[test]
+    fn sandbox_config_debug_redacts_remote_backend_credentials() {
+        let config = SandboxConfig {
+            vercel_token: Some(Secret::new("vercel-secret-value".into())),
+            daytona_api_key: Some(Secret::new("daytona-secret-value".into())),
+            ..SandboxConfig::default()
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(!debug.contains("vercel-secret-value"));
+        assert!(!debug.contains("daytona-secret-value"));
+        assert!(debug.contains("vercel_token"));
+        assert!(debug.contains("daytona_api_key"));
+    }
+
+    #[test]
+    fn sandbox_config_deserializes_remote_backend_credentials_as_secrets() {
+        let config: SandboxConfig = serde_json::from_str(
+            r#"{
+                "vercel_token": "vercel-secret-value",
+                "daytona_api_key": "daytona-secret-value"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config
+                .vercel_token
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("vercel-secret-value")
+        );
+        assert_eq!(
+            config
+                .daytona_api_key
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("daytona-secret-value")
+        );
     }
 }

@@ -9,7 +9,9 @@ use crate::services::{OnboardingService, ServiceError, ServiceResult};
 /// Gateway-side onboarding service backed by `moltis_onboarding::service::LiveOnboardingService`.
 pub struct GatewayOnboardingService {
     inner: moltis_onboarding::service::LiveOnboardingService,
+    #[cfg_attr(not(feature = "openclaw-import"), allow(dead_code))]
     session_metadata: Arc<moltis_sessions::metadata::SqliteSessionMetadata>,
+    #[cfg_attr(not(feature = "openclaw-import"), allow(dead_code))]
     agent_persona_store: Arc<crate::agent_persona::AgentPersonaStore>,
     gateway_state: Arc<tokio::sync::OnceCell<Arc<crate::state::GatewayState>>>,
 }

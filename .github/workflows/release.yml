@@ -282,12 +282,14 @@ jobs:
 
       - name: Build moltis binary
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        timeout-minutes: 20
         run: cargo build --bin moltis
 
       - name: Install Playwright browsers
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
+        timeout-minutes: 2
         working-directory: crates/web/ui
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run E2E tests
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}

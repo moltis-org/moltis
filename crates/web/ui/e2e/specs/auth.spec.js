@@ -224,7 +224,7 @@ test.describe("Authentication", () => {
 		} else {
 			await expect(
 				page.getByRole("heading", {
-					name: /^(Secure your instance|Set up your identity|Import from OpenClaw|Add LLMs|Add providers|Voice \(optional\)|Remote Access|Connect a Channel|Setup Summary)$/,
+					name: /^(Secure your instance|Set up your identity|Import from OpenClaw|Import Your Data|Add LLMs|Add providers|Voice \(optional\)|Remote Access|Connect a Channel|Setup Summary)$/,
 				}),
 			).toBeVisible();
 		}

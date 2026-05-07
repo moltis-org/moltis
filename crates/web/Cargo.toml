@@ -22,6 +22,7 @@ moltis-media    = { workspace = true }
 moltis-skills   = { workspace = true }
 moltis-tools    = { workspace = true }
 portable-pty    = { workspace = true }
+secrecy         = { workspace = true }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
 sysinfo         = { workspace = true }

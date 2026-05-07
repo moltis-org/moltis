@@ -61,6 +61,7 @@ export let sandboxToggleBtn: HTMLButtonElement | null = null;
 export let sandboxLabel: HTMLElement | null = null;
 export let sessionSandboxEnabled = true;
 export let sessionSandboxImage: string | null = null;
+export let sessionSandboxBackend: string | null = null;
 export let sandboxImageBtn: HTMLButtonElement | null = null;
 export let sandboxImageDropdown: HTMLElement | null = null;
 export let sandboxImageLabel: HTMLElement | null = null;
@@ -245,6 +246,9 @@ export function setSessionSandboxEnabled(v: boolean): void {
 }
 export function setSessionSandboxImage(v: string | null): void {
 	sessionSandboxImage = v;
+}
+export function setSessionSandboxBackend(v: string | null): void {
+	sessionSandboxBackend = v;
 }
 export function setSandboxImageBtn(v: HTMLButtonElement | null): void {
 	sandboxImageBtn = v;

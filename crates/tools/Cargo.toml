@@ -5,9 +5,10 @@ version.workspace = true
 
 [features]
 bundled-skills = ["moltis-skills/bundled-skills"]
-default        = ["firecrawl", "fs-tools", "metrics", "wasm"]
-embedded-wasm = []
-firecrawl     = []
+default        = ["firecrawl", "fs-tools", "metrics", "vercel-sandbox", "wasm"]
+embedded-wasm  = []
+firecrawl      = []
+vercel-sandbox = []
 # Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep).
 # See moltis-org/moltis#657. Default-on; build with
 # --no-default-features to omit them from minimal builds.
@@ -20,13 +21,14 @@ fs-tools = [
   "dep:pdf-extract",
 ]
 metrics = ["dep:moltis-metrics"]
-wasm = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
+wasm = ["dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
 
 [dependencies]
 anyhow                = { workspace = true }
 async-trait           = { workspace = true }
 base64                = { workspace = true }
 bytes                 = { workspace = true }
+flate2                = { workspace = true }
 futures               = { workspace = true }
 globset               = { optional = true, workspace = true }
 grep-matcher          = { optional = true, workspace = true }
@@ -55,7 +57,7 @@ secrecy               = { workspace = true }
 serde                 = { workspace = true }
 serde_json            = { workspace = true }
 sha2                  = { workspace = true }
-shell-words           = { optional = true, workspace = true }
+shell-words           = { workspace = true }
 sqlx                  = { workspace = true }
 tar                   = { workspace = true }
 tempfile              = { workspace = true }
@@ -67,6 +69,7 @@ url                   = { workspace = true }
 uuid                  = { workspace = true }
 wasmtime              = { optional = true, workspace = true }
 wasmtime-wasi         = { optional = true, workspace = true }
+which                 = { workspace = true }
 
 [dev-dependencies]
 mockito      = { workspace = true }

@@ -545,6 +545,7 @@ impl LlmProvider for DirectCommandNoToolProvider {
                     if let ChatMessage::Assistant {
                         content,
                         tool_calls,
+                        ..
                     } = m
                     {
                         if tool_calls.is_empty() {

@@ -127,7 +127,7 @@ fn retry_after_duration_extracts_wait() {
 
 #[test]
 fn retry_after_duration_ignores_other_errors() {
-    let err = RequestError::Io(std::io::Error::other("boom"));
+    let err = RequestError::Io(std::io::Error::other("boom").into());
     assert_eq!(retry_after_duration(&err), None);
 }
 
@@ -175,7 +175,7 @@ fn is_message_not_modified_error_detects_variant() {
 
 #[test]
 fn is_message_not_modified_error_ignores_other_errors() {
-    let err = RequestError::Io(std::io::Error::other("boom"));
+    let err = RequestError::Io(std::io::Error::other("boom").into());
     assert!(!is_message_not_modified_error(&err));
 }
 
@@ -279,6 +279,112 @@ async fn send_html_fallback_sends_plain_text_without_raw_tags() {
         assert_eq!(requests[1].parse_mode, None);
         assert_eq!(requests[1].text, "Hello & world\n<ok>");
     }
+
+    let _ = shutdown_tx.send(());
+    server.await.expect("server join");
+}
+
+/// Regression test for <https://github.com/moltis-org/moltis/issues/947>.
+///
+/// teloxide-core 0.10.1 panicked in `PartSerializer::serialize_newtype_struct`
+/// when serializing `ThreadId` (a newtype wrapping `MessageId`) in a multipart
+/// request.  This happened whenever `send_document`, `send_voice`, or any media
+/// method was called with `message_thread_id` set (i.e. forum/topic chats).
+///
+/// teloxide-core 0.13.0 (shipped with teloxide 0.17) fixes this by delegating
+/// to `value.serialize(self)`.  This test verifies the fix by sending a
+/// document to a topic chat target (`chat_id:thread_id` format), ensuring the
+/// multipart request completes without panicking.
+#[tokio::test]
+async fn send_document_to_topic_chat_does_not_panic() {
+    use {
+        axum::{Router, body::Bytes, http::Uri, routing::post},
+        moltis_channels::plugin::ChannelOutbound,
+        moltis_common::types::{MediaAttachment, ReplyPayload},
+    };
+
+    // Mock Telegram API that returns a message result for every method.
+    // This is sufficient for outbound media tests that only need a
+    // non-error response.
+    async fn api_handler(_uri: Uri, _body: Bytes) -> Json<serde_json::Value> {
+        Json(serde_json::json!({
+            "ok": true,
+            "result": {
+                "message_id": 1,
+                "date": 0,
+                "chat": { "id": -1001234, "type": "supergroup" },
+                "text": ""
+            }
+        }))
+    }
+
+    let app = Router::new().route("/{*path}", post(api_handler));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .expect("serve");
+    });
+
+    let api_url = reqwest::Url::parse(&format!("http://{addr}/")).expect("parse url");
+    let bot = teloxide::Bot::new("test-token").set_api_url(api_url);
+
+    let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
+    let outbound = Arc::new(TelegramOutbound {
+        accounts: Arc::clone(&accounts),
+    });
+    let account_id = "topic-test";
+
+    {
+        let mut map = accounts.write().expect("lock");
+        map.insert(account_id.to_string(), AccountState {
+            bot: bot.clone(),
+            bot_username: Some("test_bot".into()),
+            account_id: account_id.to_string(),
+            config: TelegramAccountConfig {
+                token: Secret::new("test-token".into()),
+                ..Default::default()
+            },
+            outbound: Arc::clone(&outbound),
+            cancel: CancellationToken::new(),
+            message_log: None,
+            event_sink: None,
+            otp: Mutex::new(OtpState::new(300)),
+        });
+    }
+
+    // Encode a small file as base64 data URI.
+    let data = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"OGG test data");
+    let data_uri = format!("data:audio/ogg;base64,{data}");
+
+    // Target is "chat_id:thread_id" — a forum topic chat.
+    // With teloxide 0.13 (teloxide-core 0.10.1) this would panic in the
+    // multipart serializer when ThreadId was serialized.
+    let to = "-1001234:42";
+
+    let payload = ReplyPayload {
+        text: "voice test".into(),
+        media: Some(MediaAttachment {
+            url: data_uri,
+            mime_type: "audio/ogg".into(),
+            filename: Some("voice.ogg".into()),
+        }),
+        reply_to_id: None,
+        silent: false,
+    };
+
+    // This must not panic.
+    outbound
+        .send_media(account_id, to, &payload, None)
+        .await
+        .expect("send_media to topic chat should succeed");
 
     let _ = shutdown_tx.send(());
     server.await.expect("server join");

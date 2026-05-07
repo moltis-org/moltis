@@ -38,6 +38,8 @@ pub struct PatchParams {
     pub mcp_disabled: Option<Option<bool>>,
     #[serde(default, deserialize_with = "double_option", alias = "sandbox_enabled")]
     pub sandbox_enabled: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "double_option", alias = "sandbox_backend")]
+    pub sandbox_backend: Option<Option<String>>,
 }
 
 /// Deserialize a field as `Some(inner)` when present (even if null),

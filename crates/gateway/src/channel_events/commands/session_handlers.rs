@@ -247,7 +247,7 @@ pub(in crate::channel_events) async fn handle_clear(
     state: &Arc<GatewayState>,
     session_key: &str,
 ) -> ChannelResult<String> {
-    let chat = state.chat().await;
+    let chat = state.chat();
     let params = serde_json::json!({ "_session_key": session_key });
     chat.clear(params)
         .await
@@ -259,7 +259,7 @@ pub(in crate::channel_events) async fn handle_compact(
     state: &Arc<GatewayState>,
     session_key: &str,
 ) -> ChannelResult<String> {
-    let chat = state.chat().await;
+    let chat = state.chat();
     let params = serde_json::json!({ "_session_key": session_key });
     chat.compact(params)
         .await
@@ -271,7 +271,7 @@ pub(in crate::channel_events) async fn handle_context(
     state: &Arc<GatewayState>,
     session_key: &str,
 ) -> ChannelResult<String> {
-    let chat = state.chat().await;
+    let chat = state.chat();
     let params = serde_json::json!({ "_session_key": session_key });
     let res = chat
         .context(params)

@@ -16,7 +16,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                 // Inject replying state so the frontend can restore the
                 // thinking indicator after a full page reload.
-                let active_keys = ctx.state.chat().await.active_session_keys().await;
+                let active_keys = ctx.state.chat().active_session_keys().await;
                 if let Some(arr) = result.as_array_mut() {
                     for entry in arr {
                         let key_str = entry.get("key").and_then(|v| v.as_str()).map(String::from);

@@ -402,8 +402,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .map_err(|e| ErrorShape::new(error_codes::INVALID_REQUEST, e.to_string()))?;
 
                 {
-                    let inner = ctx.state.inner.read().await;
-                    let node_client = inner.clients.get(&conn_id).ok_or_else(|| {
+                    let registry = ctx.state.client_registry.read().await;
+                    let node_client = registry.clients.get(&conn_id).ok_or_else(|| {
                         ErrorShape::new(error_codes::UNAVAILABLE, "node connection lost")
                     })?;
                     if !node_client.send(&event_json) {

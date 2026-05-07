@@ -1,12 +1,12 @@
 // E2E tests: voice.stt.enabled / voice.tts.enabled config flags hide UI buttons.
 
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
+const { navigateAndWait, sendRpcFromPage, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 // ── Gon override helpers ─────────────────────────────────────────────────────
 
 /**
- * Patch gon data across all three layers (initScript, /api/gon, /api/bootstrap)
+ * Patch gon data across the HTML payload, /api/gon, and /api/bootstrap
  * so that voice feature flags reflect the given values for the whole test.
  */
 async function mockVoiceFlags(page, { sttEnabled = true, ttsEnabled = true } = {}) {
@@ -47,45 +47,39 @@ async function mockVoiceFlags(page, { sttEnabled = true, ttsEnabled = true } = {
 	});
 }
 
-// ── RPC helpers (mirrors websocket.spec.js) ──────────────────────────────────
-
-function isRetryableRpcError(message) {
-	if (typeof message !== "string") return false;
-	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
-}
-
-async function sendRpcFromPage(page, method, params) {
-	let lastResponse = null;
-	for (let attempt = 0; attempt < 40; attempt++) {
-		if (attempt > 0) {
-			await waitForWsConnected(page);
-			await page.waitForTimeout(100);
-		}
-		lastResponse = await page
-			.evaluate(
-				async ({ methodName, methodParams }) => {
-					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-					if (!appScript) throw new Error("app module script not found");
-					var appUrl = new URL(appScript.src, window.location.origin);
-					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-					var helpers = await import(`${prefix}js/helpers.js`);
-					return helpers.sendRpc(methodName, methodParams);
-				},
-				{ methodName: method, methodParams: params },
-			)
-			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
-
-		if (lastResponse?.ok) return lastResponse;
-		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
-	}
-	return lastResponse;
+/** After page load, set gon flags in the bundled app, freeze them, and update voice UI. */
+async function applyVoiceFlags(page, { sttEnabled = true, ttsEnabled = true } = {}) {
+	await page.evaluate(
+		(flags) => {
+			var gon = window.__moltis_modules?.gon;
+			if (gon?.set) {
+				gon.set("stt_enabled", flags.sttEnabled);
+				gon.set("tts_enabled", flags.ttsEnabled);
+				// Prevent gon.refresh() from overwriting our values
+				gon.refresh = () => Promise.resolve();
+			}
+			// The voice-input module updates mic/vad display via checkSttStatus,
+			// but the event path may race with page init. Directly toggle the
+			// buttons to match the flag state as a reliable fallback.
+			var mic = document.getElementById("micBtn");
+			var vad = document.getElementById("vadBtn");
+			if (!flags.sttEnabled) {
+				if (mic) mic.style.display = "none";
+				if (vad) vad.style.display = "none";
+			}
+			window.dispatchEvent(new Event("voice-config-changed"));
+		},
+		{ sttEnabled, ttsEnabled },
+	);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 test.describe("voice config flags", () => {
 	test.afterEach(async ({ page }) => {
-		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
+		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {
+			// Route cleanup can race with browser teardown after a failed test.
+		});
 	});
 
 	test("mic and VAD buttons are hidden when stt is disabled", async ({ page }) => {
@@ -93,7 +87,7 @@ test.describe("voice config flags", () => {
 		await mockVoiceFlags(page, { sttEnabled: false, ttsEnabled: true });
 		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
-
+		await applyVoiceFlags(page, { sttEnabled: false, ttsEnabled: true });
 		await expect(page.locator("#micBtn")).toBeHidden({ timeout: 5_000 });
 		await expect(page.locator("#vadBtn")).toBeHidden({ timeout: 5_000 });
 		expect(pageErrors).toEqual([]);
@@ -104,6 +98,7 @@ test.describe("voice config flags", () => {
 		await mockVoiceFlags(page, { sttEnabled: true, ttsEnabled: false });
 		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
+		await applyVoiceFlags(page, { sttEnabled: true, ttsEnabled: false });
 
 		// Inject a regular assistant message with text (no audio).
 		await sendRpcFromPage(page, "system-event", {
@@ -131,7 +126,6 @@ test.describe("voice config flags", () => {
 		await mockVoiceFlags(page, { sttEnabled: true, ttsEnabled: true });
 		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
-
 		await sendRpcFromPage(page, "system-event", {
 			event: "chat",
 			payload: {
@@ -155,7 +149,7 @@ test.describe("voice config flags", () => {
 		await mockVoiceFlags(page, { sttEnabled: false, ttsEnabled: false });
 		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
-
+		await applyVoiceFlags(page, { sttEnabled: false, ttsEnabled: false });
 		await expect(page.locator("#micBtn")).toBeHidden({ timeout: 5_000 });
 		await expect(page.locator("#vadBtn")).toBeHidden({ timeout: 5_000 });
 

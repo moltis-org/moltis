@@ -116,6 +116,7 @@ impl OpenAiProvider {
             || self.base_url.contains("moonshot.ai")
             || self.base_url.contains("moonshot.cn")
             || self.model.starts_with("kimi-")
+            || self.model.to_ascii_lowercase().starts_with("deepseek-v4")
     }
 
     /// Some providers (e.g. MiniMax) reject `role: "system"` in the messages
@@ -303,6 +304,10 @@ impl OpenAiProvider {
         let mut out = Vec::with_capacity(messages.len());
 
         for message in messages {
+            let assistant_reasoning = match message {
+                ChatMessage::Assistant { reasoning, .. } => reasoning.as_deref(),
+                _ => None,
+            };
             let mut value = message.to_openai_value();
 
             // Strip the `name` field for providers that reject it entirely.
@@ -354,11 +359,16 @@ impl OpenAiProvider {
                     .is_some_and(|calls| !calls.is_empty());
 
                 if is_assistant && has_tool_calls {
-                    let reasoning_content = value
-                        .get("content")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
+                    let reasoning_content = assistant_reasoning
+                        .filter(|reasoning| !reasoning.trim().is_empty())
+                        .map(str::to_string)
+                        .or_else(|| {
+                            value
+                                .get("content")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .unwrap_or_default();
 
                     if value.get("content").is_none() {
                         value["content"] = serde_json::Value::String(String::new());
@@ -706,6 +716,15 @@ mod tests {
         assert!(p.requires_reasoning_content_on_tool_messages());
     }
 
+    #[test]
+    fn deepseek_v4_auto_detects_reasoning_content() {
+        let p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com");
+        assert!(
+            p.requires_reasoning_content_on_tool_messages(),
+            "DeepSeek V4 thinking-mode tool calls require reasoning_content replay (issue #959)"
+        );
+    }
+
     // ── Wire-format tests: verify serialized request body (issue #810) ──
 
     /// Kimi router with strict_tools=false must NOT emit `"strict": true` in
@@ -780,6 +799,51 @@ mod tests {
             assistant_msg.get("reasoning_content").is_some(),
             "assistant tool-call message must have reasoning_content, got: {assistant_msg}"
         );
+    }
+
+    #[test]
+    fn deepseek_v4_replays_persisted_tool_reasoning_content() {
+        let p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com");
+        let persisted = vec![
+            serde_json::json!({"role": "user", "content": "What is the weather?"}),
+            serde_json::json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_959",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "arguments": "{\"location\":\"Berlin\"}"
+                    }
+                }]
+            }),
+            serde_json::json!({
+                "role": "tool_result",
+                "tool_call_id": "call_959",
+                "tool_name": "get_weather",
+                "success": true,
+                "result": {"temperature": 20},
+                "reasoning": "Need live weather before answering."
+            }),
+            serde_json::json!({"role": "assistant", "content": "It is 20 C."}),
+            serde_json::json!({"role": "user", "content": "What about tomorrow?"}),
+        ];
+        let messages = moltis_agents::model::values_to_chat_messages(&persisted);
+
+        let serialized = p.serialize_messages_for_request(&messages);
+
+        let Some(assistant_tool_message) = serialized.iter().find(|message| {
+            message.get("role").and_then(serde_json::Value::as_str) == Some("assistant")
+                && message.get("tool_calls").is_some()
+        }) else {
+            panic!("assistant tool-call message should be serialized");
+        };
+        assert_eq!(
+            assistant_tool_message["reasoning_content"],
+            "Need live weather before answering."
+        );
+        assert_eq!(assistant_tool_message["content"], "");
     }
 
     /// Mistral provider must strip the `name` field from user messages.

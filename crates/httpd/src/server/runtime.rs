@@ -447,8 +447,12 @@ pub(super) async fn finalize_prepared_gateway(
                     // Update gauges that are derived from server state, not events.
                     moltis_metrics::gauge!(moltis_metrics::system::UPTIME_SECONDS)
                         .set(server_start.elapsed().as_secs_f64());
-                    let session_count =
-                        metrics_state.inner.read().await.active_sessions.len() as f64;
+                    let session_count = metrics_state
+                        .client_registry
+                        .read()
+                        .await
+                        .active_sessions
+                        .len() as f64;
                     moltis_metrics::gauge!(moltis_metrics::session::ACTIVE).set(session_count);
 
                     let prometheus_text = handle.render();

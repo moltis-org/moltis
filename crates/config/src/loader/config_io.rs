@@ -29,6 +29,13 @@ fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> std::io::Result<()> {
 /// Uses a two-pass approach so that `[env]` section values are available
 /// for `${VAR}` substitution in other sections of the same config file.
 pub fn load_config(path: &Path) -> crate::Result<MoltisConfig> {
+    load_config_with_aliases(path, true)
+}
+
+fn load_config_with_aliases(
+    path: &Path,
+    apply_third_party_aliases: bool,
+) -> crate::Result<MoltisConfig> {
     let raw = std::fs::read_to_string(path).map_err(|source| {
         crate::Error::external(format!("failed to read {}", path.display()), source)
     })?;
@@ -46,7 +53,11 @@ pub fn load_config(path: &Path) -> crate::Result<MoltisConfig> {
         parse_config(&second_pass, path)?
     };
 
-    Ok(apply_env_overrides(config))
+    Ok(apply_env_overrides_with_options(
+        config,
+        std::env::vars(),
+        apply_third_party_aliases,
+    ))
 }
 
 /// Load and parse the config file with env substitution and includes.
@@ -165,9 +176,13 @@ pub fn discover_and_load() -> MoltisConfig {
 ///
 /// Identical to [`discover_and_load`]. Retained for backward compatibility.
 pub fn discover_and_load_readonly() -> MoltisConfig {
+    discover_and_load_readonly_with_aliases(true)
+}
+
+fn discover_and_load_readonly_with_aliases(apply_third_party_aliases: bool) -> MoltisConfig {
     let mut cfg = if let Some(path) = find_config_file() {
         debug!(path = %path.display(), "loading config (read-only)");
-        match load_layered_config(&path) {
+        match load_layered_config(&path, apply_third_party_aliases) {
             Ok(mut cfg) => {
                 if cfg.server.port == 0 {
                     cfg.server.port = generate_random_port();
@@ -176,11 +191,19 @@ pub fn discover_and_load_readonly() -> MoltisConfig {
             },
             Err(e) => {
                 warn!(path = %path.display(), error = %e, "failed to load config, using defaults");
-                apply_env_overrides(MoltisConfig::default())
+                apply_env_overrides_with_options(
+                    MoltisConfig::default(),
+                    std::env::vars(),
+                    apply_third_party_aliases,
+                )
             },
         }
     } else {
-        apply_env_overrides(MoltisConfig::default())
+        apply_env_overrides_with_options(
+            MoltisConfig::default(),
+            std::env::vars(),
+            apply_third_party_aliases,
+        )
     };
 
     // Merge markdown agent definitions (TOML presets take precedence).
@@ -198,22 +221,28 @@ pub fn discover_and_load_readonly() -> MoltisConfig {
 /// that user overrides are additive (only keys present in the user file
 /// override the corresponding defaults).  For YAML/JSON user files, falls
 /// back to a struct-level load (since `defaults.toml` is always TOML).
-fn load_layered_config(user_path: &Path) -> crate::Result<MoltisConfig> {
+fn load_layered_config(
+    user_path: &Path,
+    apply_third_party_aliases: bool,
+) -> crate::Result<MoltisConfig> {
     let is_toml = user_path
         .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("toml"));
 
     if is_toml {
-        load_layered_config_toml(user_path)
+        load_layered_config_toml(user_path, apply_third_party_aliases)
     } else {
         // YAML/JSON: simple struct-level load (no TOML-level merge).
-        load_config(user_path)
+        load_config_with_aliases(user_path, apply_third_party_aliases)
     }
 }
 
 /// TOML-specific layered loading with deep document merge.
-fn load_layered_config_toml(user_path: &Path) -> crate::Result<MoltisConfig> {
+fn load_layered_config_toml(
+    user_path: &Path,
+    apply_third_party_aliases: bool,
+) -> crate::Result<MoltisConfig> {
     let user_raw = std::fs::read_to_string(user_path).map_err(|source| {
         crate::Error::external(format!("failed to read {}", user_path.display()), source)
     })?;
@@ -242,7 +271,11 @@ fn load_layered_config_toml(user_path: &Path) -> crate::Result<MoltisConfig> {
         )?
     };
 
-    Ok(apply_env_overrides(config))
+    Ok(apply_env_overrides_with_options(
+        config,
+        std::env::vars(),
+        apply_third_party_aliases,
+    ))
 }
 
 /// Find the first config file in standard locations.
@@ -314,7 +347,7 @@ pub fn update_config(f: impl FnOnce(&mut MoltisConfig)) -> crate::Result<PathBuf
     let mut guard = CONFIG_SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let target_path = find_or_default_config_path();
     guard.target_path = Some(target_path.clone());
-    let mut config = discover_and_load_readonly();
+    let mut config = discover_and_load_readonly_with_aliases(false);
     f(&mut config);
     save_user_config_to_path(&target_path, &config)
 }
@@ -730,14 +763,31 @@ pub(super) fn write_default_config(path: &Path, config: &MoltisConfig) -> crate:
 /// `MOLTIS_WEBAUTHN_RP_ID`, and `MOLTIS_WEBAUTHN_ORIGIN` are excluded
 /// (they are handled separately).
 pub fn apply_env_overrides(config: MoltisConfig) -> MoltisConfig {
-    apply_env_overrides_with(config, std::env::vars())
+    apply_env_overrides_with_options(config, std::env::vars(), true)
 }
 
 /// Apply env overrides from an arbitrary iterator of (key, value) pairs.
 /// Exposed for testing without mutating the process environment.
+#[cfg(test)]
 pub(super) fn apply_env_overrides_with(
     config: MoltisConfig,
     vars: impl Iterator<Item = (String, String)>,
+) -> MoltisConfig {
+    apply_env_overrides_with_options(config, vars, true)
+}
+
+#[cfg(test)]
+pub(super) fn apply_env_overrides_without_aliases(
+    config: MoltisConfig,
+    vars: impl Iterator<Item = (String, String)>,
+) -> MoltisConfig {
+    apply_env_overrides_with_options(config, vars, false)
+}
+
+fn apply_env_overrides_with_options(
+    config: MoltisConfig,
+    vars: impl Iterator<Item = (String, String)>,
+    apply_third_party_aliases: bool,
 ) -> MoltisConfig {
     use serde_json::Value;
 
@@ -762,7 +812,78 @@ pub(super) fn apply_env_overrides_with(
         },
     };
 
+    // Third-party env var aliases: standard env vars that map to config paths.
+    // These are only applied if the config field is empty/unset, so explicit
+    // config always takes precedence.
+    const ENV_ALIASES: &[(&str, &[&str])] = &[
+        ("VERCEL_TOKEN", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "vercel_token",
+        ]),
+        ("VERCEL_OIDC_TOKEN", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "vercel_token",
+        ]),
+        ("VERCEL_PROJECT_ID", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "vercel_project_id",
+        ]),
+        ("VERCEL_TEAM_ID", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "vercel_team_id",
+        ]),
+        ("DAYTONA_API_KEY", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "daytona_api_key",
+        ]),
+        ("DAYTONA_API_URL", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "daytona_api_url",
+        ]),
+        ("DAYTONA_TARGET", &[
+            "tools",
+            "exec",
+            "sandbox",
+            "daytona_target",
+        ]),
+    ];
+
     for (key, val) in vars {
+        // Check third-party aliases first (before the MOLTIS_ prefix check).
+        let mut matched_alias = false;
+        if apply_third_party_aliases {
+            for &(alias_key, path) in ENV_ALIASES {
+                if key == alias_key {
+                    let path_parts: Vec<String> = path.iter().map(|s| s.to_string()).collect();
+                    // Only apply if the field is currently null/empty.
+                    let current = get_nested(&root, &path_parts);
+                    if current.is_none()
+                        || current == Some(&Value::Null)
+                        || current.and_then(|v| v.as_str()).unwrap_or("x").is_empty()
+                    {
+                        set_nested(&mut root, &path_parts, parse_env_value(&val));
+                    }
+                    matched_alias = true;
+                    break;
+                }
+            }
+        }
+        if matched_alias {
+            continue;
+        }
+
         if !key.starts_with("MOLTIS_") {
             continue;
         }
@@ -869,6 +990,15 @@ pub(super) fn parse_env_value(val: &str) -> serde_json::Value {
 }
 
 /// Set a value at a nested JSON path, creating intermediate objects as needed.
+/// Read a nested value from a JSON tree by path.
+fn get_nested<'a>(root: &'a serde_json::Value, path: &[String]) -> Option<&'a serde_json::Value> {
+    let mut current = root;
+    for key in path {
+        current = current.get(key.as_str())?;
+    }
+    Some(current)
+}
+
 pub(super) fn set_nested(root: &mut serde_json::Value, path: &[String], val: serde_json::Value) {
     if path.is_empty() {
         return;

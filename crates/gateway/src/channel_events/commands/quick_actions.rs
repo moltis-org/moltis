@@ -502,7 +502,7 @@ pub(in crate::channel_events) async fn handle_steer(
     }
 
     // Check if there's an active run for this session.
-    let chat = state.chat().await;
+    let chat = state.chat();
     let peek_res = chat
         .peek(serde_json::json!({ "sessionKey": session_key }))
         .await
@@ -554,7 +554,7 @@ pub(in crate::channel_events) async fn handle_queue(
 
     // Use the chat service's send method — when a run is active, it will
     // automatically queue the message according to MessageQueueMode.
-    let chat = state.chat().await;
+    let chat = state.chat();
     let params = serde_json::json!({
         "text": args,
         "_session_key": session_key,

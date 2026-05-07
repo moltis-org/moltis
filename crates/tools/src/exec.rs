@@ -457,7 +457,8 @@ impl AgentTool for ExecTool {
         // fail with ENOENT on the host, so we must fall back to the host
         // data directory.
         let has_container_backend = if let Some(ref router) = self.sandbox_router {
-            router.backend().provides_fs_isolation()
+            let sk = session_key.unwrap_or("main");
+            router.resolve_backend(sk).await.provides_fs_isolation()
         } else {
             self.sandbox.provides_fs_isolation()
         };
@@ -497,15 +498,9 @@ impl AgentTool for ExecTool {
                 Some(ref dir) if !dir.is_absolute() => {
                     Some(PathBuf::from("/home/sandbox").join(dir))
                 },
-                // Absolute paths are only allowed inside the sandbox home.
-                Some(ref dir) if dir.starts_with("/home/sandbox") => explicit_working_dir,
-                Some(ref dir) => {
-                    debug!(
-                        path = %dir.display(),
-                        "explicit working_dir is outside /home/sandbox while sandboxed, using default"
-                    );
-                    None
-                },
+                // Absolute paths are passed through (the backend's exec()
+                // will map them to its own workspace if needed).
+                Some(_) => explicit_working_dir,
                 None => None,
             }
         };
@@ -513,6 +508,8 @@ impl AgentTool for ExecTool {
         let using_default_working_dir = validated_explicit.is_none();
         let mut working_dir = validated_explicit.or_else(|| {
             if !runs_on_host {
+                // Use the generic sandbox home as default. Each backend's exec()
+                // method uses its own workspace_dir() if working_dir doesn't exist.
                 Some(PathBuf::from("/home/sandbox"))
             } else {
                 Some(host_default_dir())
@@ -602,8 +599,10 @@ impl AgentTool for ExecTool {
             let sk = session_key.unwrap_or("main");
             if is_sandboxed {
                 let id = router.sandbox_id_for(sk);
-                let image = router.resolve_image(sk, None).await;
-                let backend = router.backend();
+                let backend = router.resolve_backend(sk).await;
+                let image = router
+                    .resolve_image_for_backend_nowait(sk, None, backend.backend_name())
+                    .await;
                 info!(session = sk, sandbox_id = %id, backend = backend.backend_name(), image, "sandbox ensure_ready");
                 let announce_prepare = router.mark_preparing_once(sk).await;
                 if announce_prepare {
@@ -617,6 +616,9 @@ impl AgentTool for ExecTool {
                 if let Err(error) = backend.ensure_ready(&id, Some(&image)).await {
                     if announce_prepare {
                         router.clear_prepared_session(sk).await;
+                        if backend.is_isolated() {
+                            router.mark_sync_failed(sk, error.to_string()).await;
+                        }
                         router.emit_event(crate::sandbox::SandboxEvent::PrepareFailed {
                             session_key: sk.to_string(),
                             backend: backend.backend_name().to_string(),
@@ -633,6 +635,82 @@ impl AgentTool for ExecTool {
                         backend: backend.backend_name().to_string(),
                         image: image.clone(),
                     });
+
+                    // Sync workspace and provision packages for isolated backends on first run.
+                    if backend.is_isolated() {
+                        let sync_ok = if let Some(host_workspace) =
+                            crate::sandbox::sync::resolve_sync_workspace(router.config(), &id)
+                        {
+                            let sandbox_workspace = backend.workspace_dir_for(&id).await;
+                            match crate::sandbox::sync::sync_in(
+                                &*backend,
+                                &id,
+                                &host_workspace,
+                                &sandbox_workspace,
+                            )
+                            .await
+                            {
+                                Ok(()) => true,
+                                Err(e) => {
+                                    let error = e.to_string();
+                                    warn!(
+                                        session = sk,
+                                        sandbox_id = %id,
+                                        error = %error,
+                                        "workspace sync-in failed"
+                                    );
+                                    router.clear_prepared_session(sk).await;
+                                    router.mark_sync_failed(sk, error.clone()).await;
+                                    return Err(Error::message(format!(
+                                        "workspace sync-in failed: {error}"
+                                    ))
+                                    .into());
+                                },
+                            }
+                        } else {
+                            true
+                        };
+
+                        // Provision packages only if sync succeeded (no point
+                        // provisioning if we couldn't even connect to the sandbox)
+                        // and no pre-built image was used.
+                        if sync_ok {
+                            let has_prebuilt = image
+                                != crate::sandbox::types::DEFAULT_SANDBOX_IMAGE
+                                && !image.is_empty();
+                            let packages = &router.config().packages;
+                            if !has_prebuilt
+                                && !packages.is_empty()
+                                && let Err(e) = backend.provision_packages(&id, packages).await
+                            {
+                                warn!(
+                                    session = sk,
+                                    sandbox_id = %id,
+                                    error = %e,
+                                    "package provisioning failed (non-fatal)"
+                                );
+                            }
+                        }
+
+                        // Always mark synced to unblock concurrent waiters.
+                        // The sandbox is ready for exec regardless of sync outcome.
+                        router.mark_synced(sk).await;
+                    }
+                } else if backend.is_isolated() && !router.is_synced(sk).await {
+                    // Another caller is performing sync_in; wait for it.
+                    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+                    while !router.is_synced(sk).await {
+                        if tokio::time::Instant::now() >= deadline {
+                            warn!(session = sk, "timed out waiting for workspace sync-in");
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
+                }
+                if let Some(error) = router.sync_failure(sk).await {
+                    return Err(
+                        Error::message(format!("sandbox preparation failed: {error}")).into(),
+                    );
                 }
                 debug!(session = sk, sandbox_id = %id, command, "sandbox running command");
                 let mut sandbox_result = backend.exec(&id, command, &opts).await?;

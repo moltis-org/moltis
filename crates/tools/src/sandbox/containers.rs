@@ -983,7 +983,7 @@ pub(crate) fn is_docker_daemon_available() -> bool {
 }
 
 /// Check whether a CLI tool is available on PATH.
-pub(crate) fn is_cli_available(name: &str) -> bool {
+pub fn is_cli_available(name: &str) -> bool {
     std::process::Command::new(name)
         .arg("--version")
         .stdout(std::process::Stdio::null())

@@ -1,14 +1,16 @@
 use std::{
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
+#[cfg(feature = "agent")]
+use std::path::Component;
+
 use tracing::warn;
 
-use {
-    moltis_agents::prompt::WorkspaceFilePromptStatus,
-    moltis_protocol::{ErrorShape, error_codes},
-};
+#[cfg(feature = "agent")]
+use moltis_agents::prompt::WorkspaceFilePromptStatus;
+use moltis_protocol::{ErrorShape, error_codes};
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
@@ -26,8 +28,8 @@ async fn active_session_key_for_ctx(ctx: &MethodContext) -> Option<String> {
     {
         return Some(session_key.to_string());
     }
-    let inner = ctx.state.inner.read().await;
-    inner.active_sessions.get(&ctx.client_conn_id).cloned()
+    let registry = ctx.state.client_registry.read().await;
+    registry.active_sessions.get(&ctx.client_conn_id).cloned()
 }
 
 async fn default_agent_id_for_ctx(ctx: &MethodContext) -> String {
@@ -80,6 +82,7 @@ async fn resolve_session_agent_id_for_ctx(ctx: &MethodContext) -> String {
     default_id
 }
 
+#[cfg(feature = "agent")]
 fn parse_agent_id_param(params: &serde_json::Value) -> Option<String> {
     params
         .get("agent_id")
@@ -90,6 +93,7 @@ fn parse_agent_id_param(params: &serde_json::Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+#[cfg(feature = "agent")]
 async fn resolve_requested_agent_id(
     ctx: &MethodContext,
     params: &serde_json::Value,
@@ -238,6 +242,7 @@ fn save_user_profile_fields(params: &serde_json::Value) -> Result<(), ErrorShape
     Ok(())
 }
 
+#[cfg(feature = "agent")]
 fn normalize_relative_agent_path(path: &str) -> Result<PathBuf, ErrorShape> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -268,6 +273,7 @@ fn normalize_relative_agent_path(path: &str) -> Result<PathBuf, ErrorShape> {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg(feature = "agent")]
 struct WorkspacePromptFileStatusResponse {
     path: String,
     source: &'static str,
@@ -276,6 +282,7 @@ struct WorkspacePromptFileStatusResponse {
     prompt_status: WorkspaceFilePromptStatus,
 }
 
+#[cfg(feature = "agent")]
 fn workspace_file_limit_chars(ctx: &MethodContext) -> usize {
     ctx.state.config.chat.workspace_file_max_chars
 }
@@ -389,6 +396,7 @@ fn parse_prompt_memory_mode(value: &str) -> Result<moltis_config::PromptMemoryMo
     }
 }
 
+#[cfg(feature = "agent")]
 fn should_fallback_agent_file_to_root(agent_id: &str, relative_path: &Path) -> bool {
     if agent_id == "main" {
         return true;
@@ -397,6 +405,7 @@ fn should_fallback_agent_file_to_root(agent_id: &str, relative_path: &Path) -> b
     matches!(relative_path.to_str(), Some("AGENTS.md") | Some("TOOLS.md"))
 }
 
+#[cfg(feature = "agent")]
 fn resolve_agent_file_target(
     agent_id: &str,
     relative_path: &Path,
@@ -416,6 +425,7 @@ fn resolve_agent_file_target(
     None
 }
 
+#[cfg(feature = "agent")]
 fn workspace_prompt_file_status(
     agent_id: &str,
     file_name: &str,
@@ -442,6 +452,7 @@ fn workspace_prompt_file_status(
     })
 }
 
+#[cfg(feature = "agent")]
 fn workspace_prompt_files_status(agent_id: &str, limit_chars: usize) -> Vec<serde_json::Value> {
     ["AGENTS.md", "TOOLS.md"]
         .iter()
@@ -452,6 +463,7 @@ fn workspace_prompt_files_status(agent_id: &str, limit_chars: usize) -> Vec<serd
         .collect()
 }
 
+#[cfg(feature = "agent")]
 fn read_agent_file(agent_id: &str, relative_path: &Path) -> Result<String, ErrorShape> {
     let (target, _) = resolve_agent_file_target(agent_id, relative_path)
         .ok_or_else(|| ErrorShape::new(error_codes::INVALID_REQUEST, "file not found"))?;
@@ -460,6 +472,7 @@ fn read_agent_file(agent_id: &str, relative_path: &Path) -> Result<String, Error
         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
 }
 
+#[cfg(feature = "agent")]
 fn list_agent_workspace_files_recursively(
     root: &Path,
     base: &Path,

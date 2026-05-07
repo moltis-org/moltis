@@ -398,6 +398,7 @@ fn last_user_message_gets_cache_control() {
         ChatMessage::Assistant {
             content: Some("reply".into()),
             tool_calls: vec![],
+            reasoning: None,
         },
         ChatMessage::User {
             content: UserContent::Text("second".into()),

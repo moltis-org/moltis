@@ -1,5 +1,7 @@
 //! Web-UI API handlers (bootstrap, skills, images, containers, media, logs).
 
+#[cfg(target_os = "linux")]
+use std::path::Path as FsPath;
 use std::{collections::HashMap, path::PathBuf};
 
 use {
@@ -11,6 +13,7 @@ use {
     },
     moltis_httpd::AppState,
     moltis_tools::image_cache::ImageBuilder,
+    secrecy::{ExposeSecret, Secret},
     tracing::warn,
 };
 
@@ -53,10 +56,37 @@ fn api_error_response(status: StatusCode, code: &str, error: impl Into<String>) 
     (status, Json(api_error(code, error))).into_response()
 }
 
+fn configured_secret(secret: &Option<Secret<String>>) -> bool {
+    secret
+        .as_ref()
+        .is_some_and(|secret| !secret.expose_secret().is_empty())
+}
+
 #[derive(serde::Deserialize)]
 pub struct SandboxSharedHomeUpdateRequest {
     enabled: bool,
     path: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RemoteBackendUpdateRequest {
+    /// Which backend: "vercel" or "daytona".
+    backend: String,
+    config: RemoteBackendConfigUpdate,
+}
+
+#[derive(Default, serde::Deserialize)]
+struct RemoteBackendConfigUpdate {
+    backend: Option<String>,
+    token: Option<Secret<String>>,
+    api_key: Option<Secret<String>>,
+    project_id: Option<Option<String>>,
+    team_id: Option<Option<String>>,
+    runtime: Option<String>,
+    timeout_ms: Option<u64>,
+    vcpus: Option<u64>,
+    api_url: Option<String>,
+    target: Option<Option<String>>,
 }
 
 fn shared_home_config_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
@@ -485,7 +515,7 @@ async fn api_bootstrap_with_query(
     );
 
     let sandbox = if let Some(ref router) = gw.sandbox_router {
-        let default_image = router.default_image().await;
+        let default_image = router.resolve_default_image_nowait().await;
         serde_json::json!({
             "backend": router.backend_name(),
             "os": std::env::consts::OS,
@@ -694,7 +724,10 @@ pub async fn api_skills_search_handler(
 // ── Images ───────────────────────────────────────────────────────────────────
 
 pub async fn api_cached_images_handler() -> impl IntoResponse {
-    let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+    let config = moltis_config::discover_and_load();
+    let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+        &config.tools.exec.sandbox.backend,
+    );
     let (cached, sandbox) = tokio::join!(
         builder.list_cached(),
         moltis_tools::sandbox::list_sandbox_images(),
@@ -741,7 +774,10 @@ pub async fn api_delete_cached_image_handler(Path(tag): Path<String>) -> impl In
     let result = if tag.contains("-sandbox:") {
         moltis_tools::sandbox::remove_sandbox_image(&tag).await
     } else {
-        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let cfg = moltis_config::discover_and_load();
+        let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+            &cfg.tools.exec.sandbox.backend,
+        );
         let full_tag = if tag.starts_with("moltis-cache/") {
             tag
         } else {
@@ -760,7 +796,10 @@ pub async fn api_delete_cached_image_handler(Path(tag): Path<String>) -> impl In
 }
 
 pub async fn api_prune_cached_images_handler() -> impl IntoResponse {
-    let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+    let config = moltis_config::discover_and_load();
+    let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+        &config.tools.exec.sandbox.backend,
+    );
     let (tool_result, sandbox_result) = tokio::join!(
         builder.prune_all(),
         moltis_tools::sandbox::clean_sandbox_images(),
@@ -816,7 +855,11 @@ pub async fn api_check_packages_handler(Json(body): Json<serde_json::Value>) -> 
         .collect();
     let script = checks.join("\n");
 
-    let cli = moltis_tools::sandbox::container_cli();
+    let config = moltis_config::discover_and_load();
+    let cli = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+        &config.tools.exec.sandbox.backend,
+    )
+    .cli_name();
     let output = tokio::process::Command::new(cli)
         .args(["run", "--rm", "--entrypoint", "sh", &base, "-c", &script])
         .stdout(std::process::Stdio::piped())
@@ -844,7 +887,7 @@ pub async fn api_check_packages_handler(Json(body): Json<serde_json::Value>) -> 
 
 pub async fn api_get_default_image_handler(State(state): State<AppState>) -> impl IntoResponse {
     let image = if let Some(ref router) = state.gateway.sandbox_router {
-        router.default_image().await
+        router.resolve_default_image_nowait().await
     } else {
         moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string()
     };
@@ -860,7 +903,7 @@ pub async fn api_set_default_image_handler(
     if let Some(ref router) = state.gateway.sandbox_router {
         let value = image.filter(|s| !s.is_empty()).map(String::from);
         router.set_global_image(value.clone()).await;
-        let effective = router.default_image().await;
+        let effective = router.resolve_default_image_nowait().await;
         Json(serde_json::json!({ "image": effective })).into_response()
     } else {
         api_error_response(
@@ -914,6 +957,187 @@ pub async fn api_set_shared_home_handler(
         Err(e) => api_error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             SANDBOX_SHARED_HOME_SAVE_FAILED,
+            e.to_string(),
+        ),
+    }
+}
+
+// ── Available sandbox backends ────────────────────────────────────────────────
+
+/// Returns which sandbox backends are available/configured on this instance.
+/// Used by the UI to populate backend selectors.
+pub async fn api_available_backends_handler() -> impl IntoResponse {
+    let config = moltis_config::discover_and_load();
+    let sb = &config.tools.exec.sandbox;
+
+    let mut backends: Vec<serde_json::Value> = Vec::new();
+
+    // Local container backends.
+    if moltis_tools::sandbox::is_cli_available("docker") {
+        backends.push(serde_json::json!({
+            "id": "docker",
+            "label": "Docker",
+            "kind": "local",
+            "available": true,
+        }));
+    }
+    if moltis_tools::sandbox::is_cli_available("podman") {
+        backends.push(serde_json::json!({
+            "id": "podman",
+            "label": "Podman",
+            "kind": "local",
+            "available": true,
+        }));
+    }
+    #[cfg(target_os = "macos")]
+    if moltis_tools::sandbox::is_cli_available("container") {
+        backends.push(serde_json::json!({
+            "id": "apple-container",
+            "label": "Apple Container (VM)",
+            "kind": "local",
+            "available": true,
+        }));
+    }
+    #[cfg(target_os = "linux")]
+    if moltis_tools::sandbox::firecracker_bin_available(
+        sb.firecracker_bin.as_deref().map(FsPath::new),
+    ) {
+        backends.push(serde_json::json!({
+            "id": "firecracker",
+            "label": "Firecracker (microVM)",
+            "kind": "local",
+            "available": true,
+        }));
+    }
+
+    // Remote backends.
+    let has_vercel = configured_secret(&sb.vercel_token);
+    if has_vercel {
+        backends.push(serde_json::json!({
+            "id": "vercel",
+            "label": "Vercel Sandbox (Firecracker)",
+            "kind": "remote",
+            "available": true,
+        }));
+    }
+
+    let has_daytona = configured_secret(&sb.daytona_api_key);
+    if has_daytona {
+        backends.push(serde_json::json!({
+            "id": "daytona",
+            "label": "Daytona (Cloud)",
+            "kind": "remote",
+            "available": true,
+        }));
+    }
+
+    // Always include restricted-host as fallback.
+    backends.push(serde_json::json!({
+        "id": "restricted-host",
+        "label": "Restricted Host (no isolation)",
+        "kind": "local",
+        "available": true,
+    }));
+
+    Json(serde_json::json!({
+        "backends": backends,
+        "default": sb.backend,
+    }))
+}
+
+// ── Remote sandbox backend configuration ──────────────────────────────────────
+
+fn remote_backends_payload(config: &moltis_config::MoltisConfig) -> serde_json::Value {
+    let sb = &config.tools.exec.sandbox;
+    let vercel_configured = configured_secret(&sb.vercel_token);
+    let vercel_from_env =
+        std::env::var("VERCEL_TOKEN").is_ok() || std::env::var("VERCEL_OIDC_TOKEN").is_ok();
+    let daytona_configured = configured_secret(&sb.daytona_api_key);
+    let daytona_from_env = std::env::var("DAYTONA_API_KEY").is_ok();
+    serde_json::json!({
+        "backend": sb.backend,
+        "vercel": {
+            "configured": vercel_configured,
+            "from_env": vercel_from_env,
+            "project_id": sb.vercel_project_id,
+            "team_id": sb.vercel_team_id,
+            "runtime": sb.vercel_runtime.as_deref().unwrap_or("node24"),
+            "timeout_ms": sb.vercel_timeout_ms.unwrap_or(300_000),
+            "vcpus": sb.vercel_vcpus.unwrap_or(2),
+        },
+        "daytona": {
+            "configured": daytona_configured,
+            "from_env": daytona_from_env,
+            "api_url": sb.daytona_api_url.as_deref().unwrap_or("https://app.daytona.io/api"),
+            "target": sb.daytona_target,
+        },
+    })
+}
+
+pub async fn api_get_remote_backends_handler() -> impl IntoResponse {
+    let config = moltis_config::discover_and_load();
+    Json(remote_backends_payload(&config))
+}
+
+pub async fn api_set_remote_backend_handler(
+    Json(body): Json<RemoteBackendUpdateRequest>,
+) -> impl IntoResponse {
+    let update_result = moltis_config::update_config(|cfg| {
+        let sb = &mut cfg.tools.exec.sandbox;
+        // Allow changing the default backend (auto/docker/podman/apple-container/vercel/daytona).
+        if let Some(v) = body.config.backend.as_deref() {
+            sb.backend = v.to_string();
+        }
+        match body.backend.as_str() {
+            "vercel" => {
+                if let Some(v) = body.config.token.clone() {
+                    sb.vercel_token = Some(v);
+                }
+                if let Some(v) = body.config.project_id.clone() {
+                    sb.vercel_project_id = v;
+                }
+                if let Some(v) = body.config.team_id.clone() {
+                    sb.vercel_team_id = v;
+                }
+                if let Some(v) = body.config.runtime.as_deref() {
+                    sb.vercel_runtime = Some(v.to_string());
+                }
+                if let Some(v) = body.config.timeout_ms {
+                    sb.vercel_timeout_ms = Some(v);
+                }
+                if let Some(v) = body.config.vcpus {
+                    sb.vercel_vcpus = Some(v as u32);
+                }
+            },
+            "daytona" => {
+                if let Some(v) = body.config.api_key.clone() {
+                    sb.daytona_api_key = Some(v);
+                }
+                if let Some(v) = body.config.api_url.as_deref() {
+                    sb.daytona_api_url = Some(v.to_string());
+                }
+                if let Some(v) = body.config.target.clone() {
+                    sb.daytona_target = v;
+                }
+            },
+            _ => {},
+        }
+    });
+
+    match update_result {
+        Ok(saved_path) => {
+            let config = moltis_config::discover_and_load();
+            Json(serde_json::json!({
+                "ok": true,
+                "restart_required": true,
+                "config_path": saved_path.display().to_string(),
+                "config": remote_backends_payload(&config),
+            }))
+            .into_response()
+        },
+        Err(e) => api_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "remote_backend_save_failed",
             e.to_string(),
         ),
     }
@@ -995,16 +1219,43 @@ WORKDIR /home/sandbox\n"
         );
     }
 
-    let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+    let config = moltis_config::discover_and_load();
+    let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+        &config.tools.exec.sandbox.backend,
+    );
+    tracing::debug!(
+        name,
+        cli = builder.cli_name(),
+        "starting image build via API"
+    );
     let result = builder.ensure_image(name, &dockerfile_path, &tmp_dir).await;
     let _ = std::fs::remove_dir_all(&tmp_dir);
     match result {
-        Ok(tag) => Json(serde_json::json!({ "tag": tag })).into_response(),
-        Err(e) => api_error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            SANDBOX_IMAGE_BUILD_FAILED,
-            e.to_string(),
-        ),
+        Ok(tag) => {
+            tracing::info!(name, tag, "image build succeeded via API");
+            Json(serde_json::json!({ "tag": tag })).into_response()
+        },
+        Err(e) => {
+            let detail = e.to_string();
+            tracing::warn!(name, error = %detail, "image build failed via API");
+            let message = if detail.contains("Cannot connect")
+                || detail.contains("connect to the Docker daemon")
+                || detail.contains("No such file or directory")
+                || detail.contains("failed to run docker")
+                || detail.contains("failed to run podman")
+            {
+                format!(
+                    "Docker/Podman daemon is not available. Image building requires a running container runtime. Detail: {detail}"
+                )
+            } else {
+                detail
+            };
+            api_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                SANDBOX_IMAGE_BUILD_FAILED,
+                message,
+            )
+        },
     }
 }
 

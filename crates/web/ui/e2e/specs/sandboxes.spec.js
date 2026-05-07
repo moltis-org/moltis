@@ -1,6 +1,13 @@
 const { expect, test } = require("../base-test");
 const { navigateAndWait, watchPageErrors } = require("../helpers");
 
+async function openSandboxContainersTab(page) {
+	await navigateAndWait(page, "/settings/sandboxes");
+	const tab = page.getByRole("tab", { name: "Containers & Images", exact: true });
+	await tab.click();
+	await expect(tab).toHaveAttribute("aria-selected", "true");
+}
+
 test.describe("Sandboxes page – Image tag truncation", () => {
 	test("long image hash tags are truncated in the cached images list", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
@@ -23,7 +30,7 @@ test.describe("Sandboxes page – Image tag truncation", () => {
 			return route.continue();
 		});
 
-		await navigateAndWait(page, "/settings/sandboxes");
+		await openSandboxContainersTab(page);
 
 		// The displayed text should be truncated (first 6 + … + last 6 of hash)
 		const truncated = `moltis-sandbox:${longHash.slice(0, 6)}\u2026${longHash.slice(-6)}`;
@@ -146,7 +153,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 	});
 
 	test.afterEach(async ({ page }) => {
-		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
+		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
 	});
 
 	test("running containers section renders with heading and refresh button", async ({ page }) => {
@@ -165,7 +172,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 			return route.continue();
 		});
 
-		await navigateAndWait(page, "/settings/sandboxes");
+		await openSandboxContainersTab(page);
 
 		await expect(page.getByRole("heading", { name: "Sandboxes", exact: true })).toBeVisible();
 		await expect(page.getByText("Running Containers")).toBeVisible();
@@ -191,7 +198,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 			return route.continue();
 		});
 
-		await navigateAndWait(page, "/settings/sandboxes");
+		await openSandboxContainersTab(page);
 		await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeVisible();
 		const mountCount = fetchCount;
 
@@ -211,11 +218,16 @@ test.describe("Sandboxes page – Running Containers", () => {
 		await page.route("**/api/sandbox/containers", (route, request) => {
 			if (request.method() === "GET") {
 				containersFetched = true;
+				return route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ containers: [] }),
+				});
 			}
 			return route.continue();
 		});
 
-		await navigateAndWait(page, "/settings/sandboxes");
+		await openSandboxContainersTab(page);
 		await expect.poll(() => containersFetched, { timeout: 10_000 }).toBe(true);
 
 		expect(pageErrors).toEqual([]);
@@ -236,7 +248,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 			return route.continue();
 		});
 
-		await navigateAndWait(page, "/settings/sandboxes");
+		await openSandboxContainersTab(page);
 		await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeVisible();
 		await expect(page.getByText("No containers found.")).toBeVisible({ timeout: 10_000 });
 
@@ -257,7 +269,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 			});
 		});
 
-		await navigateAndWait(page, "/settings/sandboxes");
+		await openSandboxContainersTab(page);
 		await expect.poll(() => diskUsageFetched, { timeout: 10_000 }).toBe(true);
 
 		expect(pageErrors).toEqual([]);
@@ -285,7 +297,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 			return route.continue();
 		});
 
-		await navigateAndWait(page, "/settings/sandboxes");
+		await openSandboxContainersTab(page);
 		const refreshBtn = page.getByRole("button", { name: "Refresh", exact: true });
 		await expect(refreshBtn).toBeVisible();
 
@@ -327,7 +339,7 @@ test.describe("Sandboxes page – Running Containers", () => {
 			return route.continue();
 		});
 
-		await navigateAndWait(page, "/settings/sandboxes");
+		await openSandboxContainersTab(page);
 
 		// Call the clean all API via page.evaluate; the route mock intercepts it.
 		const result = await page.evaluate(async () => {
@@ -348,7 +360,7 @@ test.describe("Sandboxes page – Container error handling", () => {
 	});
 
 	test.afterEach(async ({ page }) => {
-		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
+		await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => undefined);
 	});
 
 	test("delete failure shows error message that clears on refresh", async ({ page }) => {
@@ -393,7 +405,7 @@ test.describe("Sandboxes page – Container error handling", () => {
 			return route.continue();
 		});
 
-		await navigateAndWait(page, "/settings/sandboxes");
+		await openSandboxContainersTab(page);
 		await expect.poll(() => containerListFetches, { timeout: 10_000 }).toBeGreaterThan(0);
 
 		// Wait for the container row to render before clicking delete
@@ -457,7 +469,7 @@ test.describe("Sandboxes page – Container error handling", () => {
 			return route.continue();
 		});
 
-		await navigateAndWait(page, "/settings/sandboxes");
+		await openSandboxContainersTab(page);
 		await expect.poll(() => callCount, { timeout: 10_000 }).toBeGreaterThan(0);
 
 		// Click delete to trigger error (delete no longer auto-refreshes on failure)

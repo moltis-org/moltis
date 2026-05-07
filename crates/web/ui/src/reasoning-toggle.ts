@@ -10,7 +10,7 @@ import { effect } from "@preact/signals";
 import { t } from "./i18n";
 import { modelStore } from "./stores/model-store";
 
-const EFFORT_VALUES: string[] = ["", "low", "medium", "high"];
+const EFFORT_VALUES: string[] = ["", "minimal", "low", "medium", "high", "xhigh"];
 
 let reasoningCombo: HTMLElement | null = null;
 let reasoningComboBtn: HTMLElement | null = null;
@@ -22,9 +22,11 @@ let disposeVisibility: (() => void) | null = null;
 function effortLabel(effort: string): string {
 	const map: Record<string, string> = {
 		"": t("chat:reasoningOff"),
+		minimal: t("chat:reasoningMinimal"),
 		low: t("chat:reasoningLow"),
 		medium: t("chat:reasoningMedium"),
 		high: t("chat:reasoningHigh"),
+		xhigh: t("chat:reasoningExtraHigh"),
 	};
 	return map[effort] ?? t("chat:reasoningOff");
 }

@@ -1055,14 +1055,24 @@ pub(crate) async fn detect_host_sudo_access() -> (Option<bool>, Option<String>) 
     #[cfg(unix)]
     {
         use std::process::Stdio;
-        let output = tokio::process::Command::new("sudo")
-            .arg("-n")
-            .arg("true")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .await;
+        let output = match tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            tokio::process::Command::new("sudo")
+                .arg("-n")
+                .arg("true")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output(),
+        )
+        .await
+        {
+            Ok(output) => output,
+            Err(_) => {
+                tracing::info!("runtime sudo detection timed out");
+                return (None, Some("timeout".to_string()));
+            },
+        };
 
         match output {
             Ok(out) if out.status.success() => (Some(true), Some("passwordless".to_string())),

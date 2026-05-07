@@ -75,7 +75,7 @@ impl ChatRuntime for GatewayChatRuntime {
 
     async fn active_session_key(&self, conn_id: &str) -> Option<String> {
         self.state
-            .inner
+            .client_registry
             .read()
             .await
             .active_sessions
@@ -85,7 +85,7 @@ impl ChatRuntime for GatewayChatRuntime {
 
     async fn active_project_id(&self, conn_id: &str) -> Option<String> {
         self.state
-            .inner
+            .client_registry
             .read()
             .await
             .active_projects
@@ -163,7 +163,7 @@ impl ChatRuntime for GatewayChatRuntime {
     }
 
     async fn chat_service(&self) -> Arc<dyn moltis_service_traits::ChatService> {
-        self.state.chat().await
+        self.state.chat()
     }
 
     async fn last_run_error(&self, run_id: &str) -> Option<String> {

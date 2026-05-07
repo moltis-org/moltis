@@ -28,12 +28,13 @@ Only keep Moltis TLS enabled when your proxy talks HTTPS to Moltis (or uses
 TCP TLS passthrough). In that case, set `MOLTIS_ALLOW_TLS_BEHIND_PROXY=true`.
 ```
 
-```admonish warning
-**Sandbox limitation**: Most cloud providers do not support Docker-in-Docker.
-The sandboxed command execution feature (where the LLM runs shell commands
-inside isolated containers) will not work on these platforms. The agent will
-still function for chat, tool calls that don't require shell execution, and
-MCP server connections.
+```admonish tip
+**Sandbox on cloud deploys**: Most cloud providers do not support
+Docker-in-Docker. To enable sandboxed command execution, configure a
+[remote sandbox backend](sandbox-remote.md) — set `VERCEL_TOKEN` for Vercel
+Firecracker microVMs, or `DAYTONA_API_KEY` for Daytona cloud sandboxes
+(including self-hosted). Moltis auto-detects these when no local Docker is
+available.
 ```
 
 ### `MOLTIS_DEPLOY_PLATFORM`

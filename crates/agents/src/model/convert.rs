@@ -168,6 +168,10 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
             },
             "assistant" => {
                 let content = val["content"].as_str().map(|s| s.to_string());
+                let reasoning = val["reasoning"].as_str().and_then(|s| {
+                    let trimmed = s.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                });
                 let tool_calls: Vec<ToolCall> = val["tool_calls"]
                     .as_array()
                     .map(|tcs| {
@@ -194,6 +198,7 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                 messages.push(ChatMessage::Assistant {
                     content,
                     tool_calls,
+                    reasoning,
                 });
             },
             "tool" => {
@@ -216,6 +221,16 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                 if !pending_tool_call_ids.remove(&tool_call_id) {
                     tracing::debug!(tool_call_id, "skipping orphan tool_result message");
                     continue;
+                }
+                if let Some(reasoning) = val["reasoning"].as_str().and_then(|s| {
+                    let trimmed = s.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                }) {
+                    attach_reasoning_to_assistant_tool_call(
+                        &mut messages,
+                        &tool_call_id,
+                        reasoning,
+                    );
                 }
                 let content = if let Some(err) = val["error"].as_str() {
                     format!("Error: {err}")
@@ -242,4 +257,35 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
         }
     }
     messages
+}
+
+fn attach_reasoning_to_assistant_tool_call(
+    messages: &mut [ChatMessage],
+    tool_call_id: &str,
+    tool_reasoning: String,
+) {
+    for message in messages.iter_mut().rev() {
+        let ChatMessage::Assistant {
+            tool_calls,
+            reasoning,
+            ..
+        } = message
+        else {
+            continue;
+        };
+
+        if tool_calls
+            .iter()
+            .any(|tool_call| tool_call.id == tool_call_id)
+        {
+            if reasoning.is_none() {
+                *reasoning = Some(tool_reasoning);
+            }
+            return;
+        }
+    }
+    tracing::debug!(
+        tool_call_id,
+        "no assistant message found for reasoning attachment"
+    );
 }

@@ -19,6 +19,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260507.04] - 2026-05-07
+### Fixed
+- [e2e] Align sandbox settings tests with tabs
+
+## [20260507.03] - 2026-05-07
+### Fixed
+- [sandbox] Clean up linux firecracker checks
+
+## [20260507.02] - 2026-05-07
+### Fixed
+- [sandbox] Compile firecracker backend with all features
+
+## [20260507.01] - 2026-05-07
+### Added
+- [sandbox] Remote & multi-backend sandbox support (Vercel, Daytona, Firecracker) (#942)
+
+
+### Changed
+- [e2e] Consolidate sendRpcFromPage into shared helpers
+
+
+### Removed
+- Remove unused sendRpcFromPage import from sessions.spec.js
+- [ci] Drop e2e runtime state before cache save
+- [e2e] Remove retry-hidden flakes
+- [ci] Remove temporary websocket diagnostics
+
+
+### Fixed
+- [e2e] Revert tee log capture (breaks exec on CI), reduce RPC timeout to 5s
+- [e2e] Reduce sendRpc retries from 40 to 10 — 40×5s=200s per test was hanging CI
+- [gateway] Derive Default for ClientRegistryInner to satisfy clippy
+- [gateway] Complete ClientRegistry migration — remove duplicate fields from GatewayInner
+- [e2e] Add warmup RPC to waitForWsConnected to verify end-to-end WS
+- [ws] Spawn RPC dispatch to prevent read-loop head-of-line blocking
+- [gateway] Make chat() lock-free — move chat_override to std::sync::RwLock
+- [ws] Increase sendRpc timeout from 5s to 30s for heavy RPCs
+- [ci] Unblock chat send rpc
+- [ci] Bound chat send prompt setup
+- [ci] Avoid prompt waits on sandbox image builds
+- [ci] Keep sandbox prebuilds off request paths
+- [ci] Fail faster on e2e stalls
+- [ci] Cache e2e build prerequisites
+- [ci] Keep release e2e cache-free
+- [ci] Cap e2e startup stalls
+- [ci] Shard e2e across isolated gateways
+- [ci] Isolate e2e workers per gateway
+- [ci] Start one e2e gateway per project process
+- [e2e] Refresh share notice and split settings specs
+- [e2e] Avoid domcontentloaded navigation flake
+- [ci] Stream e2e shard progress
+- [ci] Keep e2e progress lines atomic
+- [e2e] Make autoscroll fixture deterministic
+- [e2e] Harden autoscroll setup against late renders
+- [e2e] Use real voice settings save path
+- [auth] Respect X-Forwarded-Proto for cookie Secure attribute (#970)
+- [sandbox] Serialize container startup (#971)
+- [providers] Replay DeepSeek reasoning content (#961)
+- [matrix] Add debug logging for OIDC registration and deduplicate redirect normalization (#957)
+## [20260504.01] - 2026-05-04
+
+## [20260502.01] - 2026-05-02
+### Added
+- [portable] Add data import/export for config, databases, and sessions (#951)
+- [i18n] Add zh-TW Traditional Chinese locale support (#339)
+
+
+### Fixed
+- [discord] Register slash command arguments and add all thinking levels (#950)
+- [web-ui] Prevent horizontal overflow in chat messages container (#952)
+- [portable] Allow unwrap in test modules to satisfy workspace clippy lint
+- [msteams] Collapse nested if to satisfy clippy collapsible_if lint
+- [discord] Use is_none_or and allow expect in tests for clippy
+- [e2e] Add smartScrollToBottom to chat-ui shim, fix command palette focus test
+- [e2e] Reduce appended element height below isChatAtBottom threshold in autoscroll test
+- [e2e] Add "Import Your Data" heading to auth spec onboarding matcher
+- [i18n] Add missing zh-TW reasoning keys and fix biome formatting
+- [telegram] Upgrade teloxide 0.13→0.17 to fix multipart ThreadId panic (#954)
+- [terminal] Prevent spurious "window does not exist" error on tab creation (#955)
+- [e2e] Update reasoning toggle tests for 6 effort levels (added Minimal and Extra High)
+- [e2e] Use poll-based scroll assertion in sequential messages autoscroll test
+
 ## [20260501.01] - 2026-05-01
 ### Added
 - [providers] Add Zen (opencode.ai) multi-protocol provider (#944)

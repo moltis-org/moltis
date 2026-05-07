@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use tracing::{info, warn};
+use tracing::info;
 
 /// Initialize the code index.
 ///
@@ -67,7 +67,7 @@ pub(crate) async fn init_code_index(
         info!("code-index: QMD binary not found, trying builtin backend");
 
         #[cfg(not(feature = "code-index-builtin"))]
-        warn!(
+        tracing::warn!(
             "code-index: QMD binary not found, falling back to config-only mode \
              (search unavailable until QMD is installed)"
         );
@@ -91,7 +91,7 @@ pub(crate) async fn init_code_index(
                 ));
             },
             Err(e) => {
-                warn!(
+                tracing::warn!(
                     path = %db_path.display(),
                     error = %e,
                     "code-index: failed to initialize builtin backend, falling back to config-only"

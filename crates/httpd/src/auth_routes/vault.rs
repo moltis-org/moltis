@@ -88,50 +88,7 @@ pub(super) async fn vault_recovery_handler(
 /// Migrate plaintext secrets to encrypted storage after vault unseal.
 #[cfg(feature = "vault")]
 pub(super) async fn run_vault_env_migration(state: &AuthState) {
-    if let Some(vault) = state.credential_store.vault() {
-        let pool = state.credential_store.db_pool();
-        match moltis_vault::migration::migrate_env_vars(vault, pool).await {
-            Ok(n) if n > 0 => {
-                tracing::info!(count = n, "migrated env vars to encrypted");
-            },
-            Ok(_) => {},
-            Err(e) => {
-                tracing::warn!(error = %e, "env var migration failed");
-            },
-        }
-        match moltis_vault::migration::migrate_ssh_keys(vault, pool).await {
-            Ok(n) if n > 0 => {
-                tracing::info!(count = n, "migrated ssh keys to encrypted");
-            },
-            Ok(_) => {},
-            Err(e) => {
-                tracing::warn!(error = %e, "ssh key migration failed");
-            },
-        }
-
-        // Migrate provider_keys.json (LLM + voice API keys) to encrypted storage.
-        // This uses `encrypt_json_file` which creates a `.enc` alongside the
-        // original instead of renaming it, so sync callers (KeyStore) can still
-        // read the plaintext until KeyStore gains a vault-aware read path.
-        if let Some(config_dir) = moltis_config::config_dir() {
-            let provider_keys_path = config_dir.join("provider_keys.json");
-            match moltis_vault::migration::encrypt_json_file(
-                vault,
-                &provider_keys_path,
-                "provider_keys",
-            )
-            .await
-            {
-                Ok(true) => {
-                    tracing::info!("encrypted provider_keys.json to vault storage");
-                },
-                Ok(false) => {},
-                Err(e) => {
-                    tracing::warn!(error = %e, "provider_keys.json encryption failed");
-                },
-            }
-        }
-    }
+    moltis_gateway::vault_lifecycle::run_vault_env_migration(&state.credential_store).await;
 }
 
 /// Start stored channel accounts after vault unseal.
@@ -144,67 +101,14 @@ pub(super) async fn run_vault_env_migration(state: &AuthState) {
 #[cfg(feature = "vault")]
 #[tracing::instrument(skip(state))]
 pub(super) async fn start_stored_channels_on_vault_unseal(state: &AuthState) {
-    let Some(registry) = state.gateway_state.services.channel_registry.as_ref() else {
-        tracing::debug!("no channel registry available, skipping channel startup on vault unseal");
-        return;
-    };
-    let Some(store) = state.gateway_state.services.channel_store.as_ref() else {
-        tracing::debug!("no channel store available, skipping channel startup on vault unseal");
-        return;
-    };
-
-    let stored = match store.list().await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to list stored channels on vault unseal");
-            return;
-        },
-    };
-
-    if stored.is_empty() {
-        return;
-    }
-
-    for ch in stored {
-        // Skip channel types with no registered plugin.
-        if registry.get(&ch.channel_type).is_none() {
-            tracing::debug!(
-                account_id = ch.account_id,
-                channel_type = ch.channel_type,
-                "unsupported channel type on vault unseal, skipping stored account"
-            );
-            continue;
-        }
-
-        // Skip accounts that are already running.
-        if registry.resolve_channel_type(&ch.account_id).is_some() {
-            continue;
-        }
-
-        tracing::info!(
-            account_id = ch.account_id,
-            channel_type = ch.channel_type,
-            "starting stored channel on vault unseal"
-        );
-
-        if let Err(e) = registry
-            .start_account(&ch.channel_type, &ch.account_id, ch.config)
-            .await
-        {
-            tracing::warn!(
-                account_id = ch.account_id,
-                channel_type = ch.channel_type,
-                error = %e,
-                "failed to start stored channel on vault unseal"
-            );
-        }
-    }
+    moltis_gateway::vault_lifecycle::start_stored_channels_on_vault_unseal(&state.gateway_state)
+        .await;
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
-    use super::*;
+    use {super::*, crate::auth_routes::should_secure_cookie};
 
     fn headers_with_host(host: &str) -> axum::http::HeaderMap {
         let mut h = axum::http::HeaderMap::new();
@@ -380,7 +284,80 @@ mod tests {
         );
         assert!(
             cookie.contains("; Secure"),
-            "cookie should include Secure in proxy mode (proxy implies TLS), got: {cookie}"
+            "cookie should include Secure when explicitly passed as secure, got: {cookie}"
+        );
+    }
+
+    // ── should_secure_cookie tests ────────────────────────────────────────
+
+    #[test]
+    fn should_secure_cookie_tls_active() {
+        let h = headers_with_host("example.com");
+        assert!(should_secure_cookie(true, false, &h));
+    }
+
+    #[test]
+    fn should_secure_cookie_tls_active_ignores_proxy_header() {
+        let mut h = headers_with_host("example.com");
+        h.insert("x-forwarded-proto", "http".parse().unwrap());
+        assert!(
+            should_secure_cookie(true, false, &h),
+            "TLS active should always produce Secure, regardless of proxy headers"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_with_https_forwarded_proto() {
+        let mut h = headers_with_host("example.com");
+        h.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert!(should_secure_cookie(false, true, &h));
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_with_http_forwarded_proto() {
+        let mut h = headers_with_host("192.168.1.100:8080");
+        h.insert("x-forwarded-proto", "http".parse().unwrap());
+        assert!(
+            !should_secure_cookie(false, true, &h),
+            "plain HTTP behind proxy must not set Secure"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_without_forwarded_proto() {
+        let h = headers_with_host("192.168.1.100:8080");
+        assert!(
+            !should_secure_cookie(false, true, &h),
+            "proxy without X-Forwarded-Proto must not set Secure"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_no_tls_no_proxy() {
+        let h = headers_with_host("192.168.1.100:8080");
+        assert!(
+            !should_secure_cookie(false, false, &h),
+            "plain HTTP direct connection must not set Secure"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_with_comma_separated_forwarded_proto() {
+        let mut h = headers_with_host("example.com");
+        h.insert("x-forwarded-proto", "https, http".parse().unwrap());
+        assert!(
+            should_secure_cookie(false, true, &h),
+            "first value in comma-separated X-Forwarded-Proto should be used"
+        );
+    }
+
+    #[test]
+    fn should_secure_cookie_proxy_with_padded_forwarded_proto() {
+        let mut h = headers_with_host("example.com");
+        h.insert("x-forwarded-proto", " https ".parse().unwrap());
+        assert!(
+            should_secure_cookie(false, true, &h),
+            "whitespace-padded X-Forwarded-Proto should be trimmed"
         );
     }
 }

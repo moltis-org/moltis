@@ -85,6 +85,38 @@ impl LiveSessionService {
         self
     }
 
+    pub async fn restore_sandbox_router_overrides(&self) {
+        let Some(router) = self.sandbox_router.as_ref() else {
+            return;
+        };
+
+        Self::restore_sandbox_router_overrides_from_metadata(&self.metadata, router).await;
+    }
+
+    pub async fn restore_sandbox_router_overrides_from_metadata(
+        metadata: &SqliteSessionMetadata,
+        router: &SandboxRouter,
+    ) {
+        for entry in metadata.list().await {
+            if let Some(enabled) = entry.sandbox_enabled {
+                router.set_override(&entry.key, enabled).await;
+            }
+            if let Some(ref image) = entry.sandbox_image {
+                router.set_image_override(&entry.key, image.clone()).await;
+            }
+            if let Some(ref backend) = entry.sandbox_backend
+                && let Err(e) = router.set_backend_override(&entry.key, backend).await
+            {
+                tracing::debug!(
+                    session = entry.key,
+                    backend = backend.as_str(),
+                    error = %e,
+                    "skipping persisted sandbox backend override (backend not available)"
+                );
+            }
+        }
+    }
+
     pub fn with_agent_persona_store(mut self, store: Arc<AgentPersonaStore>) -> Self {
         self.agent_persona_store = Some(store);
         self
@@ -559,6 +591,21 @@ impl SessionService for LiveSessionService {
                 }
             }
         }
+        if let Some(sandbox_backend_opt) = p.sandbox_backend {
+            let sandbox_backend = sandbox_backend_opt.filter(|s| !s.is_empty());
+            self.metadata
+                .set_sandbox_backend(key, sandbox_backend.clone())
+                .await;
+            if let Some(ref router) = self.sandbox_router {
+                if let Some(ref name) = sandbox_backend {
+                    if let Err(e) = router.set_backend_override(key, name).await {
+                        warn!(session = key, error = %e, "failed to set sandbox backend override");
+                    }
+                } else {
+                    router.remove_backend_override(key).await;
+                }
+            }
+        }
 
         let entry = self
             .metadata
@@ -573,6 +620,7 @@ impl SessionService for LiveSessionService {
             "archived": entry.archived,
             "sandbox_enabled": entry.sandbox_enabled,
             "sandbox_image": entry.sandbox_image,
+            "sandbox_backend": entry.sandbox_backend,
             "worktree_branch": entry.worktree_branch,
             "mcpDisabled": entry.mcp_disabled,
             "agent_id": entry.agent_id,

@@ -55,6 +55,7 @@ export default {
 		languageEnglish: "English",
 		languageFrench: "Français",
 		languageChinese: "简体中文",
+		languageChineseTW: "繁體中文",
 		applyLanguage: "应用语言",
 		languageUpdated: "语言已更新。",
 		failedToSave: "保存失败",

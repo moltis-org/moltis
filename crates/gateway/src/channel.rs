@@ -815,6 +815,12 @@ impl ChannelService for LiveChannelService {
             return Err("redirect_uri is required".into());
         }
 
+        tracing::debug!(
+            account_id = %account_id,
+            redirect_uri = %redirect_uri,
+            "channels.oauth_start called"
+        );
+
         // Merge caller-provided config (ownership_mode, policies, etc.) with
         // the required OIDC fields.
         let mut config = params

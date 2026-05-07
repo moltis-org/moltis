@@ -2,8 +2,11 @@
 
 use {
     async_trait::async_trait,
-    std::{collections::HashSet, sync::OnceLock},
-    tokio::sync::Mutex,
+    std::{
+        collections::{HashMap, HashSet},
+        sync::{Arc, OnceLock},
+    },
+    tokio::sync::{Mutex, Semaphore},
     tracing::{debug, info, warn},
 };
 
@@ -57,6 +60,9 @@ pub struct DockerSandbox {
     /// Container names that have already been provisioned in this process.
     /// Prevents repeated `apt-get install` runs on the same container.
     pub(crate) provisioned: Mutex<HashSet<String>>,
+    /// Per-container startup gates. Parallel exec calls for the same session
+    /// must not race through inspect-then-run with the same OCI container name.
+    startup_gates: Mutex<HashMap<String, Arc<Semaphore>>>,
 }
 
 impl DockerSandbox {
@@ -67,6 +73,7 @@ impl DockerSandbox {
             cli: "docker",
             backend_label: "docker",
             provisioned: Mutex::new(HashSet::new()),
+            startup_gates: Mutex::new(HashMap::new()),
         }
     }
 
@@ -77,6 +84,7 @@ impl DockerSandbox {
             cli: "podman",
             backend_label: "podman",
             provisioned: Mutex::new(HashSet::new()),
+            startup_gates: Mutex::new(HashMap::new()),
         }
     }
 
@@ -100,6 +108,42 @@ impl DockerSandbox {
 
     pub(crate) fn image_repo(&self) -> &str {
         self.container_prefix()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn startup_gate_for(&self, name: &str) -> Arc<Semaphore> {
+        self.startup_gate_for_inner(name).await
+    }
+
+    async fn startup_gate_for_inner(&self, name: &str) -> Arc<Semaphore> {
+        let mut gates = self.startup_gates.lock().await;
+        Arc::clone(
+            gates
+                .entry(name.to_string())
+                .or_insert_with(|| Arc::new(Semaphore::new(1))),
+        )
+    }
+
+    async fn remove_startup_gate_if_unshared(&self, name: &str, gate: &Arc<Semaphore>) {
+        let mut gates = self.startup_gates.lock().await;
+        let Some(stored) = gates.get(name) else {
+            return;
+        };
+        if Arc::ptr_eq(stored, gate) && Arc::strong_count(gate) == 2 {
+            gates.remove(name);
+        }
+    }
+
+    async fn is_container_running(&self, name: &str) -> bool {
+        let check = tokio::process::Command::new(self.cli)
+            .args(["inspect", "--format", "{{.State.Running}}", name])
+            .output()
+            .await;
+
+        let Ok(output) = check else {
+            return false;
+        };
+        String::from_utf8_lossy(&output.stdout).trim() == "true"
     }
 
     fn mounted_host_path(&self, id: &SandboxId, guest_path: &str) -> Option<std::path::PathBuf> {
@@ -404,33 +448,17 @@ impl DockerSandbox {
         info!(tag, "successfully exported BuildKit image to podman store");
         Ok(())
     }
-}
 
-#[async_trait]
-impl Sandbox for DockerSandbox {
-    fn backend_name(&self) -> &'static str {
-        self.backend_label
-    }
-
-    fn provides_fs_isolation(&self) -> bool {
-        true
-    }
-
-    async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+    async fn ensure_ready_locked(
+        &self,
+        id: &SandboxId,
+        image_override: Option<&str>,
+    ) -> Result<()> {
         let name = self.container_name(id);
 
-        // Check if container already running.
-        let check = tokio::process::Command::new(self.cli)
-            .args(["inspect", "--format", "{{.State.Running}}", &name])
-            .output()
-            .await;
-
-        if let Ok(output) = check {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if stdout.trim() == "true" {
-                debug!(container = %name, "sandbox container already running");
-                return Ok(());
-            }
+        if self.is_container_running(&name).await {
+            debug!(container = %name, "sandbox container already running");
+            return Ok(());
         }
 
         // Resolve image first so we know whether it's prebuilt (affects hardening).
@@ -460,7 +488,7 @@ impl Sandbox for DockerSandbox {
         args.extend(self.home_persistence_args(id)?);
         args.extend(Self::moltis_ctl_mount_args());
 
-        args.push(image.clone());
+        args.push(image);
         args.extend(["sleep".to_string(), "infinity".to_string()]);
 
         let output = tokio::process::Command::new(self.cli)
@@ -470,11 +498,47 @@ impl Sandbox for DockerSandbox {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::message(format!(
-                "{} run failed: {}",
-                self.cli,
-                stderr.trim()
-            )));
+            if is_container_name_conflict(&stderr) {
+                if self.is_container_running(&name).await {
+                    debug!(
+                        container = %name,
+                        "{} run reported a name conflict, existing container is running",
+                        self.cli
+                    );
+                    return Ok(());
+                }
+
+                warn!(
+                    container = %name,
+                    "{} run reported a name conflict for a non-running container, recreating",
+                    self.cli
+                );
+                self.provisioned.lock().await.remove(&name);
+                let _ = tokio::process::Command::new(self.cli)
+                    .args(["rm", "-f", &name])
+                    .output()
+                    .await;
+
+                let retry_output = tokio::process::Command::new(self.cli)
+                    .args(&args)
+                    .output()
+                    .await?;
+                if !retry_output.status.success() {
+                    let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+                    return Err(Error::message(format!(
+                        "{} run failed after removing stale container '{}': {}",
+                        self.cli,
+                        name,
+                        retry_stderr.trim()
+                    )));
+                }
+            } else {
+                return Err(Error::message(format!(
+                    "{} run failed: {}",
+                    self.cli,
+                    stderr.trim()
+                )));
+            }
         }
 
         // Skip provisioning if the image is a pre-built instance sandbox image
@@ -503,6 +567,31 @@ impl Sandbox for DockerSandbox {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Sandbox for DockerSandbox {
+    fn backend_name(&self) -> &'static str {
+        self.backend_label
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        let name = self.container_name(id);
+        let gate = self.startup_gate_for_inner(&name).await;
+        let _permit = gate
+            .acquire()
+            .await
+            .map_err(|_| Error::message("sandbox startup gate closed"))?;
+        let result = self.ensure_ready_locked(id, image_override).await;
+        if result.is_err() {
+            self.remove_startup_gate_if_unshared(&name, &gate).await;
+        }
+        result
     }
 
     async fn build_image(
@@ -705,12 +794,21 @@ impl Sandbox for DockerSandbox {
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
         let name = self.container_name(id);
         self.provisioned.lock().await.remove(&name);
+        self.startup_gates.lock().await.remove(&name);
         let _ = tokio::process::Command::new(self.cli)
             .args(["rm", "-f", &name])
             .output()
             .await;
         Ok(())
     }
+}
+
+pub(crate) fn is_container_name_conflict(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("already in use")
+        && (lower.contains("container name")
+            || lower.contains("the name \"")
+            || lower.contains("the name '"))
 }
 
 /// No-op sandbox that passes through to direct execution.

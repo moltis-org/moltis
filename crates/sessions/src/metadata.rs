@@ -34,6 +34,8 @@ pub struct SessionEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_image: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_backend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_binding: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_session_key: Option<String>,
@@ -132,6 +134,7 @@ impl SessionMetadata {
                 worktree_branch: None,
                 sandbox_enabled: None,
                 sandbox_image: None,
+                sandbox_backend: None,
                 channel_binding: None,
                 parent_session_key: None,
                 fork_point: None,
@@ -202,6 +205,15 @@ impl SessionMetadata {
     pub fn set_sandbox_enabled(&mut self, key: &str, enabled: Option<bool>) {
         if let Some(entry) = self.entries.get_mut(key) {
             entry.sandbox_enabled = enabled;
+            entry.updated_at = now_ms();
+            entry.version += 1;
+        }
+    }
+
+    /// Set the sandbox_backend override for a session.
+    pub fn set_sandbox_backend(&mut self, key: &str, backend: Option<String>) {
+        if let Some(entry) = self.entries.get_mut(key) {
+            entry.sandbox_backend = backend;
             entry.updated_at = now_ms();
             entry.version += 1;
         }
@@ -317,6 +329,7 @@ struct SessionRow {
     worktree_branch: Option<String>,
     sandbox_enabled: Option<i32>,
     sandbox_image: Option<String>,
+    sandbox_backend: Option<String>,
     channel_binding: Option<String>,
     parent_session_key: Option<String>,
     fork_point: Option<i32>,
@@ -344,6 +357,7 @@ impl From<SessionRow> for SessionEntry {
             worktree_branch: r.worktree_branch,
             sandbox_enabled: r.sandbox_enabled.map(|v| v != 0),
             sandbox_image: r.sandbox_image,
+            sandbox_backend: r.sandbox_backend,
             channel_binding: r.channel_binding,
             parent_session_key: r.parent_session_key,
             fork_point: r.fork_point.map(|v| v as u32),
@@ -409,6 +423,7 @@ impl SqliteSessionMetadata {
                 worktree_branch TEXT,
                 sandbox_enabled     INTEGER,
                 sandbox_image       TEXT,
+                sandbox_backend     TEXT,
                 channel_binding     TEXT,
                 parent_session_key  TEXT,
                 fork_point          INTEGER,
@@ -640,6 +655,22 @@ impl SqliteSessionMetadata {
             "UPDATE sessions SET sandbox_enabled = ?, updated_at = ?, version = version + 1 WHERE key = ?",
         )
         .bind(val)
+        .bind(now)
+        .bind(key)
+            .execute(&self.pool)
+            .await
+            .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
+    }
+
+    pub async fn set_sandbox_backend(&self, key: &str, backend: Option<String>) {
+        let now = now_ms() as i64;
+        sqlx::query(
+            "UPDATE sessions SET sandbox_backend = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(&backend)
         .bind(now)
         .bind(key)
             .execute(&self.pool)

@@ -80,6 +80,7 @@ moltis-oauth           = { workspace = true }
 moltis-onboarding      = { workspace = true }
 moltis-openclaw-import = { optional = true, workspace = true }
 moltis-plugins         = { workspace = true }
+moltis-portable        = { workspace = true }
 moltis-projects        = { workspace = true }
 moltis-sessions        = { workspace = true }
 moltis-skills          = { workspace = true }
@@ -170,6 +171,7 @@ full = [
   "tls",
   "trusted-network",
   "vault",
+  "vercel-sandbox",
   "voice",
   "wasm",
   "web-ui",
@@ -233,6 +235,7 @@ tls                = ["moltis-httpd/tls"]
 trusted-network    = ["moltis-httpd/trusted-network"]
 vault              = ["moltis-httpd/vault", "moltis-web?/vault"]
 voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
+vercel-sandbox     = ["moltis-tools/vercel-sandbox"]
 wasm               = ["moltis-tools/wasm"]
 web-ui             = ["dep:moltis-web", "moltis-httpd/web-ui"]
 whatsapp           = ["moltis-gateway/whatsapp"]

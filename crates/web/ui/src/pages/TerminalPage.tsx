@@ -134,6 +134,8 @@ let FitAddonCtorRef: FitAddonCtorType | null = null;
 let oscHandlerDisposables: { dispose: () => void }[] = [];
 
 let terminalAvailable = false;
+let selectedContainer: string | null = null; // null = host, "container-name" = exec into container
+let targetSelectorEl: HTMLSelectElement | null = null;
 let lastSentCols = 0;
 let lastSentRows = 0;
 let tmuxInstallCommand = "";
@@ -441,7 +443,7 @@ async function createTerminalWindow(): Promise<void> {
 	if (!(tmuxPersistenceEnabled && terminalAvailable) || creatingWindow) return;
 	creatingWindow = true;
 	setWindowControlsEnabled();
-	setStatus("Creating tmux window...", "ok");
+	setStatus("Creating new tab...", "ok");
 	try {
 		const r = await fetch("/api/terminal/windows", {
 			method: "POST",
@@ -454,24 +456,26 @@ async function createTerminalWindow(): Promise<void> {
 		} catch {
 			p = {};
 		}
-		if (!r.ok) throw new Error(localizedApiErrorMessage(p as never, "Failed to create tmux window"));
+		if (!r.ok) throw new Error(localizedApiErrorMessage(p as never, "Failed to create new tab"));
 		const cid = p?.window?.id || p?.windowId || null;
 		if (Array.isArray(p?.windows)) {
 			tmuxPersistenceEnabled = true;
 			applyWindowsState(p, cid);
 		} else await refreshTerminalWindows({ preferredWindowId: cid, silent: true });
-		if (cid && activeWindowId !== cid) {
-			if (!requestWindowSwitch(cid)) {
-				if (xterm) xterm.reset();
-				connectTerminalSocket();
-			}
-		} else {
-			if (xterm) xterm.reset();
-			connectTerminalSocket();
+		// Always reconnect for new tab creation rather than using requestWindowSwitch.
+		// The existing PTY is attached to the previous window; a fresh connection picks
+		// up the correct window. requestWindowSwitch would fail if the new window exited
+		// before the switch message arrives (race condition), showing a spurious error.
+		if (cid && cid !== activeWindowId) {
+			activeWindowId = cid;
+			pendingWindowId = null;
+			renderWindowTabs();
 		}
-		setStatus("Created tmux window.", "ok");
+		setStatus("New tab created.", "ok");
+		if (xterm) xterm.reset();
+		connectTerminalSocket();
 	} catch (e) {
-		setStatus((e as Error)?.message || "Failed to create tmux window", "error");
+		setStatus((e as Error)?.message || "Failed to create tab", "error");
 	} finally {
 		creatingWindow = false;
 		setWindowControlsEnabled();
@@ -774,8 +778,11 @@ function connectTerminalSocket(): void {
 	lastSentRows = 0;
 	const proto = location.protocol === "https:" ? "wss:" : "ws:";
 	let wsUrl = `${proto}//${location.host}/api/terminal/ws`;
+	const params: string[] = [];
 	const tw = pendingWindowId || activeWindowId;
-	if (tmuxPersistenceEnabled && tw) wsUrl += `?window=${encodeURIComponent(tw)}`;
+	if (tmuxPersistenceEnabled && tw) params.push(`window=${encodeURIComponent(tw)}`);
+	if (selectedContainer) params.push(`container=${encodeURIComponent(selectedContainer)}`);
+	if (params.length > 0) wsUrl += `?${params.join("&")}`;
 	socket = new WebSocket(wsUrl);
 	setStatus("Connecting terminal websocket...");
 	socket.onopen = () => setStatus("Terminal websocket connected.", "ok");
@@ -837,6 +844,30 @@ function bindEvents(): void {
 		});
 }
 
+// ── Target selector (host vs container) ──────────────────────
+
+function populateTargetSelector(): void {
+	if (!targetSelectorEl) return;
+	// Keep existing "Host" option, add running containers.
+	fetch("/api/sandbox/containers")
+		.then((r) => r.json())
+		.then((data) => {
+			const containers: { name: string; state: string; backend: string }[] = data.containers || [];
+			const running = containers.filter((c) => c.state === "running");
+			// Remove old container options (keep first "Host" option).
+			while (targetSelectorEl!.options.length > 1) {
+				targetSelectorEl!.remove(1);
+			}
+			for (const c of running) {
+				const opt = document.createElement("option");
+				opt.value = c.name;
+				opt.textContent = `\u{1F4E6} ${c.name}`;
+				targetSelectorEl!.appendChild(opt);
+			}
+		})
+		.catch(() => {});
+}
+
 // Static HTML template for terminal page layout. No user input is interpolated.
 function buildTerminalHtml(): string {
 	return [
@@ -853,8 +884,11 @@ function buildTerminalHtml(): string {
 		'<button id="terminalRestart" class="logs-btn" type="button">Restart</button>',
 		"</div></div>",
 		'<div class="terminal-tabs-bar">',
+		'<select id="terminalTarget" class="logs-btn" style="font-size:0.75rem;padding:2px 8px;margin-right:8px;" title="Terminal target">',
+		'<option value="">Host</option>',
+		"</select>",
 		'<div id="terminalTabs" class="terminal-tabs" aria-label="tmux windows"></div>',
-		'<button id="terminalNewTab" class="logs-btn terminal-new-tab" type="button" title="Create tmux window">+ Tab</button>',
+		'<button id="terminalNewTab" class="logs-btn terminal-new-tab" type="button" title="Create new tab">+ Tab</button>',
 		"</div>",
 		'<div class="terminal-output-wrap">',
 		'<div id="terminalOutput" class="terminal-output" aria-label="Host terminal output"></div>',
@@ -895,6 +929,16 @@ export async function initTerminal(container: HTMLElement): Promise<void> {
 	restartBtn = container.querySelector("#terminalRestart");
 	installTmuxBtn = container.querySelector("#terminalInstallTmux");
 	copyInstallBtn = container.querySelector("#terminalCopyInstall");
+	targetSelectorEl = container.querySelector("#terminalTarget");
+
+	// Populate container selector and bind change event.
+	if (targetSelectorEl) {
+		targetSelectorEl.addEventListener("change", () => {
+			selectedContainer = targetSelectorEl!.value || null;
+			connectTerminalSocket();
+		});
+		populateTargetSelector();
+	}
 
 	setStatus("Initializing terminal...");
 	setControlsEnabled(false);

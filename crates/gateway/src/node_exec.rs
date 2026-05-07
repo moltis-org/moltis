@@ -215,8 +215,8 @@ pub async fn exec_on_node(
     let event_json = serde_json::to_string(&invoke_event)?;
 
     {
-        let inner = state.inner.read().await;
-        let node_client = inner
+        let registry = state.client_registry.read().await;
+        let node_client = registry
             .clients
             .get(&conn_id)
             .ok_or_else(|| anyhow::anyhow!("node connection lost"))?;
@@ -451,8 +451,8 @@ pub async fn query_node_providers(
     let event_json = serde_json::to_string(&invoke_event)?;
 
     {
-        let inner = state.inner.read().await;
-        let node_client = inner
+        let registry = state.client_registry.read().await;
+        let node_client = registry
             .clients
             .get(&conn_id)
             .ok_or_else(|| anyhow::anyhow!("node connection lost"))?;

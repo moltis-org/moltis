@@ -141,14 +141,16 @@ Piper is a fast, local neural text-to-speech system that runs entirely offline.
    pip install piper-tts
 
    # Or download pre-built binaries from:
-   # https://github.com/rhasspy/piper/releases
+   # https://github.com/OHF-Voice/piper1-gpl/releases
    ```
 
-2. Download a voice model from [Piper Voices](https://github.com/rhasspy/piper#voices):
+2. Download a voice model from [Piper Voices](https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/VOICES.md):
    ```bash
    mkdir -p ~/.moltis/models
    curl -L -o ~/.moltis/models/en_US-lessac-medium.onnx \
-     https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+     https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx
+   curl -L -o ~/.moltis/models/en_US-lessac-medium.onnx.json \
+     https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
    ```
 
 3. Configure in `moltis.toml`:
@@ -158,20 +160,25 @@ Piper is a fast, local neural text-to-speech system that runs entirely offline.
 
    [voice.tts.piper]
    model_path = "~/.moltis/models/en_US-lessac-medium.onnx"
+   config_path = "~/.moltis/models/en_US-lessac-medium.onnx.json"
    ```
 
 #### Coqui TTS
 
-Coqui TTS is a high-quality neural TTS with voice cloning capabilities.
+Coqui TTS is a high-quality neural TTS with voice cloning capabilities. Use the
+maintained [Coqui TTS fork](https://github.com/idiap/coqui-ai-TTS), published as
+the [`coqui-tts` PyPI package](https://pypi.org/project/coqui-tts/).
 
 1. Install and start the server:
    ```bash
-   # Via pip
-   pip install TTS
+   # Via uv
+   uv pip install torch torchaudio torchcodec --torch-backend=auto
+   uv pip install 'coqui-tts[server]'
    tts-server --model_name tts_models/en/ljspeech/tacotron2-DDC
 
    # Or via Docker
-   docker run -p 5002:5002 ghcr.io/coqui-ai/tts
+   docker run --rm -p 5002:5002 --entrypoint /bin/bash ghcr.io/idiap/coqui-tts-cpu \
+     -lc 'python3 TTS/server/server.py --model_name tts_models/en/ljspeech/tacotron2-DDC'
    ```
 
 2. Configure in `moltis.toml`:
@@ -183,7 +190,7 @@ Coqui TTS is a high-quality neural TTS with voice cloning capabilities.
    endpoint = "http://localhost:5002"
    ```
 
-Browse available models at [Coqui TTS Models](https://github.com/coqui-ai/TTS#available-models).
+Browse available models in the maintained fork's [standard model list](https://github.com/idiap/coqui-ai-TTS/blob/dev/TTS/.models.json).
 
 ### RPC Methods
 

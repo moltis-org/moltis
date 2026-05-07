@@ -188,8 +188,10 @@ pub async fn sandbox_file_system_for_session(
     session_key: &str,
 ) -> Result<Arc<dyn SandboxFileSystem>> {
     let id = router.sandbox_id_for(session_key);
-    let image = router.resolve_image(session_key, None).await;
-    let backend = Arc::clone(router.backend());
+    let backend = router.resolve_backend(session_key).await;
+    let image = router
+        .resolve_image_for_backend_nowait(session_key, None, backend.backend_name())
+        .await;
     backend.ensure_ready(&id, Some(&image)).await?;
     Ok(Arc::new(CommandSandboxFileSystem::new(backend, id)))
 }

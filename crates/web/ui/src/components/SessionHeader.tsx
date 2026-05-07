@@ -10,6 +10,7 @@ import * as gon from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
 import {
 	clearActiveSession,
+	clearSessionHistoryCache,
 	fetchSessions,
 	isArchivableSession,
 	removeSessionFromClientState,
@@ -346,15 +347,15 @@ export function SessionHeader({
 			}
 
 			const url = buildShareUrl(res.payload);
+			clearSessionHistoryCache(currentKey);
+			switchSession(currentKey);
+			fetchSessions();
+
 			await copyShareUrl(url, visibility);
 
 			if (visibility === "private") {
 				showToast("Private link includes a key, share it only with trusted people", "success");
 			}
-
-			// Reload the active session so the snapshot cutoff notice appears.
-			switchSession(currentKey);
-			fetchSessions();
 		},
 		[currentKey],
 	);

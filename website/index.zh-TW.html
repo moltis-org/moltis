@@ -1,0 +1,1476 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <script>
+        (function(){
+            var t = localStorage.getItem('theme') || 'system';
+            if (t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+            }
+        })();
+    </script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="light dark">
+    <title>Moltis — 安全且持續運作的 Rust 個人代理伺服器</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <meta name="description" content="安全且持續運作的 Rust 個人代理伺服器。單一二進位檔案、沙盒執行、多供應商 LLM、語音、記憶、Telegram、WhatsApp、Discord、Slack、Matrix、Nostr、Teams 與 MCP 工具。安全優先設計，執行於您的硬體。">
+    <meta property="og:title" content="Moltis — 安全且持續運作的 Rust 個人代理伺服器">
+    <meta property="og:description" content="安全且持續運作的 Rust 個人代理伺服器。單一二進位檔案、沙盒執行、多供應商 LLM、語音、記憶、Telegram、WhatsApp、Discord、Slack、Matrix、Nostr、Teams 與 MCP 工具。安全優先設計，執行於您的硬體。">
+    <meta property="og:site_name" content="Moltis">
+    <meta property="og:locale" content="zh_TW">
+    <meta property="og:image" content="https://moltis.org/og-social.png?v=9">
+    <meta property="og:image:secure_url" content="https://moltis.org/og-social.png?v=9">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Moltis — 安全且持續運作的 Rust 個人代理伺服器">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://moltis.org">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="https://moltis.org/og-social.png?v=9">
+    <meta name="twitter:image:alt" content="Moltis — 安全且持續運作的 Rust 個人代理伺服器">
+    <meta name="twitter:title" content="Moltis — 安全且持續運作的 Rust 個人代理伺服器">
+    <meta name="twitter:description" content="安全且持續運作的 Rust 個人代理伺服器。單一二進位檔案、沙盒執行、多供應商 LLM、語音、記憶、Telegram、WhatsApp、Discord、Slack、Matrix、Nostr、Teams 與 MCP 工具。安全優先設計，執行於您的硬體。">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=JetBrains+Mono:wght@400&family=Outfit:wght@700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Space Grotesk', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                },
+            },
+        }
+        function applyTheme(mode) {
+            if (mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        }
+        const savedTheme = localStorage.getItem('theme') || 'system';
+        applyTheme(savedTheme);
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+            if ((localStorage.getItem('theme') || 'system') === 'system') applyTheme('system');
+        });
+    </script>
+    <style>
+        .compare-table {
+            table-layout: fixed;
+            min-width: 46rem;
+        }
+
+        .compare-table th,
+        .compare-table td {
+            white-space: normal;
+            overflow-wrap: anywhere;
+            vertical-align: top;
+        }
+
+        .compare-table th:first-child,
+        .compare-table td:first-child {
+            width: 8.5rem;
+            overflow-wrap: normal;
+        }
+
+        .compare-table th:nth-child(2),
+        .compare-table td:nth-child(2),
+        .compare-table th:nth-child(3),
+        .compare-table td:nth-child(3) {
+            width: 13.5rem;
+            max-width: 13.5rem;
+        }
+
+        .compare-table th:nth-child(4),
+        .compare-table td:nth-child(4) {
+            position: sticky;
+            right: 0;
+            z-index: 20;
+            width: 14rem;
+            min-width: 14rem;
+            background-color: rgb(255 247 237);
+            box-shadow: -1px 0 0 rgb(254 215 170);
+        }
+
+        .dark .compare-table th:nth-child(4),
+        .dark .compare-table td:nth-child(4) {
+            background-color: rgb(67 20 7);
+            box-shadow: -1px 0 0 rgb(124 45 18);
+        }
+    </style>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-white dark:bg-gray-950 text-gray-900 dark:text-white min-h-screen relative transition-colors duration-300 overflow-x-hidden w-full">
+    <!-- Toast notification -->
+    <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm font-medium rounded-lg shadow-lg opacity-0 pointer-events-none transition-opacity duration-300 z-50">
+        Fly 指令已複製
+    </div>
+
+    <!-- Background gradient blobs -->
+    <div class="absolute inset-0 overflow-hidden pointer-events-none">
+        <div class="absolute top-1/4 left-1/4 w-64 h-64 sm:w-96 sm:h-96 bg-orange-300/20 dark:bg-orange-600/15 rounded-full blur-3xl animate-pulse-slow"></div>
+        <div class="absolute bottom-1/4 right-1/4 w-64 h-64 sm:w-96 sm:h-96 bg-red-300/20 dark:bg-red-600/15 rounded-full blur-3xl animate-pulse-slow animation-delay-2s"></div>
+    </div>
+
+    <!--NAV-->
+
+    <!-- Lightbox overlay -->
+    <div id="lightbox" class="hidden fixed inset-0 z-50 bg-black/90 flex items-center justify-center" onclick="if(event.target===this)closeLightbox()">
+        <button onclick="closeLightbox()" class="absolute top-4 right-4 text-white/70 hover:text-white transition-colors" aria-label="關閉">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+        <button id="lb-prev" onclick="prevImage()" class="absolute left-4 text-white/70 hover:text-white transition-colors" aria-label="上一張">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <img id="lb-img" src="" alt="螢幕截圖" class="max-w-[90vw] max-h-[85vh] object-contain rounded-lg">
+        <button id="lb-next" onclick="nextImage()" class="absolute right-4 text-white/70 hover:text-white transition-colors" aria-label="下一張">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PAGE: Home -->
+    <!-- ============================================================ -->
+    <div id="page-home" class="page-content">
+        <div class="relative z-10 text-center px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
+            <!-- Announcement banner -->
+            <a href="#features" onclick="navigateTo('features')" class="group inline-flex items-center gap-2 px-4 py-2 mb-6 rounded-full bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 hover:border-orange-400 dark:hover:border-orange-500 transition-all hover:shadow-md">
+                <span class="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-500 text-white text-[10px] font-bold uppercase tracking-wide">新</span>
+                <span class="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-200">完整 OpenClaw 匯入 — 按一下即可切換</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-orange-500 dark:text-orange-400 group-hover:translate-x-0.5 transition-transform"><polyline points="9 18 15 12 9 6"/></svg>
+            </a>
+
+            <h1 class="text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-2 text-gray-800 dark:text-gray-100">安全且持續運作的個人代理伺服器</h1>
+            <p class="text-sm sm:text-base text-gray-400 dark:text-gray-500 mb-4">單一二進位檔案；沙盒隔離、以 Rust 建置，完全由您掌控。</p>
+
+            <!-- Positioning -->
+            <p class="text-sm sm:text-base text-gray-600 dark:text-gray-400 max-w-xl mx-auto mb-6 leading-relaxed">
+                不是聊天機器人外殼，也不是綁定單一供應商的雲端服務。
+                這是真正執行於您硬體上的代理伺服器，能跨工作階段保留記憶，
+                並透過您使用的每個頻道與您連繫。
+            </p>
+
+            <!-- CTA buttons -->
+            <div class="flex items-center justify-center gap-3 mb-6">
+                <a href="#install" onclick="navigateTo('install')" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-gradient-to-r from-orange-500 to-red-500 text-white hover:from-orange-600 hover:to-red-600 transition-all text-sm font-medium shadow-md hover:shadow-lg">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
+                    開始使用
+                </a>
+                <a href="https://docs.moltis.org" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-900 text-gray-700 dark:text-gray-300 hover:border-orange-400 dark:hover:border-orange-500 hover:text-orange-600 dark:hover:text-orange-400 transition-colors text-sm font-medium">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    文件
+                </a>
+            </div>
+
+            <!-- Screenshot gallery -->
+            <div class="max-w-3xl mx-auto mb-8 relative">
+                <div class="absolute left-0 top-0 bottom-0 w-6 sm:w-10 bg-gradient-to-r from-white dark:from-gray-950 to-transparent z-10 pointer-events-none"></div>
+                <div class="absolute right-0 top-0 bottom-0 w-6 sm:w-10 bg-gradient-to-l from-white dark:from-gray-950 to-transparent z-10 pointer-events-none"></div>
+                <div class="flex overflow-x-auto gap-3 hide-scrollbar px-6 sm:px-10">
+                    <img src="screenshots/thumbs/1.png" alt="上手流程 — 以通行金鑰或密碼保護您的伺服器" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(0)">
+                    <img src="screenshots/thumbs/2.png" alt="上手流程 — 身分、LLM 與頻道設定摘要" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(1)">
+                    <img src="screenshots/thumbs/3.png" alt="語音設定 — 語音轉文字與文字轉語音供應商" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(2)">
+                    <img src="screenshots/thumbs/4.png" alt="使用語音、地圖與工具互動聊天" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(3)">
+                    <img src="screenshots/thumbs/5.png" alt="在 Docker 容器中執行沙盒化 Shell" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(4)">
+                    <img src="screenshots/thumbs/6.png" alt="含語音與事件的 Telegram 機器人頻道" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(5)">
+                    <img src="screenshots/thumbs/7.png" alt="顯示 Telegram 頻道訊息的 Web 介面" class="h-24 sm:h-32 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-orange-400 dark:hover:border-orange-500 hover:shadow-md transition-all shrink-0" onclick="openLightbox(6)">
+                </div>
+            </div>
+
+            <!-- How it works -->
+            <div class="max-w-3xl mx-auto mb-8 text-left">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1 text-center">60 秒內啟動完成</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6 text-center">三個步驟，無需相依套件。</p>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <!-- Step 1: 安裝 -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">1</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">安裝</h3>
+                        </div>
+                        <div class="rounded-md bg-gray-900 dark:bg-gray-800 p-3 font-mono text-[11px] text-gray-300 leading-relaxed overflow-x-auto">
+                            <span class="text-gray-500">$</span> curl -fsSL moltis.org/install.sh | sh
+                        </div>
+                    </div>
+
+                    <!-- Step 2: 設定 -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">2</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">設定</h3>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">開啟 <span class="font-mono text-orange-500 dark:text-orange-400">localhost:13131</span>，貼上供應商金鑰並選擇模型。GitHub Copilot 等 OAuth 供應商可零設定使用。</p>
+                    </div>
+
+                    <!-- Step 3: 隨處對話 -->
+                    <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-3">
+                            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500 text-white text-xs font-bold">3</span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">隨處對話</h3>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5">
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/globe.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Web 介面</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/telegram.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Telegram</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/whatsapp.svg" alt="" width="12" height="12" class="dark:invert opacity-60">WhatsApp</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/discord.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Discord</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/slack.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Slack</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/matrix.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Matrix</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/nostr.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Nostr</span>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-[11px] text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700"><img src="images/icons/teams.svg" alt="" width="12" height="12" class="dark:invert opacity-60">Teams</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3 value proposition cards -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto mb-8 text-left">
+                <a href="#security" onclick="navigateTo('security')" class="group p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 hover:border-orange-400 dark:hover:border-orange-500 transition-all hover:shadow-md">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-orange-500 dark:text-orange-400">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                        </span>
+                        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">安全設計</h3>
+                    </div>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">您的金鑰與私密資料不會離開裝置。預設採用沙盒隔離，除非明確允許，否則 AI 無法碰觸檔案系統。</p>
+                </a>
+                <a href="#install" onclick="navigateTo('install')" class="group p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 hover:border-orange-400 dark:hover:border-orange-500 transition-all hover:shadow-md">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-orange-500 dark:text-orange-400">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+                        </span>
+                        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">您的硬體</h3>
+                    </div>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">可執行於 <img src="images/apple.svg" alt="" width="11" height="11" class="inline -mt-0.5 dark:invert opacity-60">&nbsp;Mac Mini、Raspberry Pi 或任何自行擁有的伺服器。始終在線、始終在地，如同數位生活中的家事小精靈。</p>
+                    <div class="flex items-center gap-3 mt-2">
+                        <span class="flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500"><img src="images/apple.svg" alt="" width="12" height="12" class="dark:invert opacity-50">macOS</span>
+                        <span class="flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500"><img src="images/linux.svg" alt="" width="12" height="12" class="dark:invert opacity-50">Linux</span>
+                        <span class="flex items-center gap-1 text-[10px] text-gray-400 dark:text-gray-500"><img src="images/windows.svg" alt="" width="12" height="12" class="dark:invert opacity-50">Windows</span>
+                    </div>
+                </a>
+                <a href="#features" onclick="navigateTo('features')" class="group p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 hover:border-orange-400 dark:hover:border-orange-500 transition-all hover:shadow-md">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="text-orange-500 dark:text-orange-400">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                        </span>
+                        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">功能齊全</h3>
+                    </div>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">Telegram、WhatsApp、Discord、Slack、Matrix、Nostr、Teams、語音、記憶、排程與工具全都內建。沒有可能成為供應鏈攻擊入口的外掛市集。</p>
+                </a>
+            </div>
+
+            <!-- 您的代理實際能做什麼 -->
+            <div class="max-w-3xl mx-auto mb-8 text-center">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">您的代理實際能做什麼</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6">不是展示功能，這些今天就能使用。</p>
+
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-left">
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">排程工作</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">以自然語言建立週期性 cron 工作</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">安全執行程式碼</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Docker 或 Apple Container 中的沙盒 Shell</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">瀏覽網頁</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">擷取與摘要網頁，並具備 SSRF 防護</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">管理您的行事曆</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">透過 CalDAV 整合事件與提醒</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">在各處收發訊息</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">Telegram、WhatsApp、Discord、Slack、Matrix、Nostr、Teams</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">記住上下文</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">具備向量與全文搜尋的持久記憶</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">能說也能聽</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">支援雲端與本機供應商的語音輸入輸出</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <span class="text-orange-500 dark:text-orange-400 block mb-1.5">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                        </span>
+                        <p class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-0.5">自我擴充</p>
+                        <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">可在執行時建立自己的 Skills、Hook 與 MCP 工具</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Community quotes (horizontal scroll) -->
+            <div class="max-w-3xl mx-auto mb-8 overflow-x-auto hide-scrollbar">
+                <div class="flex gap-4 px-1 pb-2 snap-x snap-mandatory" style="min-width: min-content">
+                    <div class="w-72 sm:w-80 flex-shrink-0 snap-start p-5 rounded-xl bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 text-left">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" class="text-orange-300 dark:text-orange-700 mb-2"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983z"/></svg>
+                        <blockquote class="text-sm text-gray-700 dark:text-gray-200 leading-relaxed mb-2">
+                            Moltis 只用一個指令就能啟動。我發現 OpenClaw 裡缺少或關閉的幾個 AI 防護，在這裡開箱即用。Moltis 效能好得多，也穩定得多。
+                        </blockquote>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+                            <img src="images/icons/discord.svg" alt="" width="14" height="14" class="opacity-60">
+                            <span class="font-medium">Noita</span> 在 Discord 上
+                            <a href="https://discord.com/channels/1469505370169933837/1469505371398996115/1488503462487654500" class="text-orange-500 dark:text-orange-400 hover:underline ml-1">#1</a>
+                            <a href="https://discord.com/channels/1469505370169933837/1469505371398996115/1488498690376204379" class="text-orange-500 dark:text-orange-400 hover:underline">#2</a>
+                        </p>
+                    </div>
+                    <div class="w-72 sm:w-80 flex-shrink-0 snap-start p-5 rounded-xl bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800 text-left">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" class="text-orange-300 dark:text-orange-700 mb-2"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983z"/></svg>
+                        <blockquote class="text-sm text-gray-700 dark:text-gray-200 leading-relaxed mb-2">
+                            我覺得這個專案非常實用。事實上，我對 Moltis 的貢獻也是在 Moltis 裡完成的。
+                        </blockquote>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+                            <img src="images/icons/github.svg" alt="" width="14" height="14" class="opacity-60">
+                            <span class="font-medium">Cstewart-HC</span> 在 GitHub 上
+                            <a href="https://github.com/moltis-org/moltis/discussions/680" class="text-orange-500 dark:text-orange-400 hover:underline ml-1">討論</a>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 與您的技術棧整合 -->
+            <div class="max-w-3xl mx-auto mb-10 text-center">
+                <h2 class="text-lg sm:text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">與您的技術棧整合</h2>
+                <p class="text-xs sm:text-sm text-gray-400 dark:text-gray-500 mb-6">20+ 供應商、本機模型與各大主要頻道，全都內建。</p>
+
+                <div class="space-y-6">
+                    <!-- 雲端供應商 -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">雲端供應商</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/anthropic.svg" alt="" class="pill-icon">Anthropic</span>
+                            <span class="pill"><img src="images/icons/openai.svg" alt="" class="pill-icon">OpenAI</span>
+                            <span class="pill"><img src="images/icons/gemini.svg" alt="" class="pill-icon">Google Gemini</span>
+                            <span class="pill"><img src="images/icons/mistral.svg" alt="" class="pill-icon">Mistral</span>
+                            <span class="pill"><img src="images/icons/deepseek.svg" alt="" class="pill-icon">DeepSeek</span>
+                            <span class="pill"><img src="images/icons/fireworks.svg" alt="" class="pill-icon">Fireworks</span>
+                            <span class="pill"><img src="images/icons/cerebras.svg" alt="" class="pill-icon">Cerebras</span>
+                            <span class="pill"><img src="images/icons/minimax.png" alt="" class="pill-icon pill-icon-color">MiniMax</span>
+                            <span class="pill"><img src="images/icons/moonshot.svg" alt="" class="pill-icon">Moonshot</span>
+                            <span class="pill"><img src="images/icons/zai.svg" alt="" class="pill-icon">Z.AI</span>
+                            <span class="pill"><img src="images/icons/globe.svg" alt="" class="pill-icon">Venice</span>
+                        </div>
+                    </div>
+
+                    <!-- Local & BYOM -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">本機與自帶模型</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/ollama.svg" alt="" class="pill-icon">Ollama</span>
+                            <span class="pill"><img src="images/icons/lmstudio.webp" alt="" class="pill-icon pill-icon-color">LM Studio</span>
+                            <span class="pill">Local GGUF <span class="pill-badge bg-orange-100 dark:bg-orange-900/40 text-orange-600 dark:text-orange-300">CPU/GPU</span></span>
+                            <span class="pill"><img src="images/apple.svg" alt="" class="pill-icon">MLX <span class="pill-badge bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">Apple Silicon</span></span>
+                            <span class="pill"><img src="images/icons/huggingface.svg" alt="" class="pill-icon">Hugging Face</span>
+                            <span class="pill"><img src="images/icons/openrouter.svg" alt="" class="pill-icon">OpenRouter</span>
+                            <span class="pill"><img src="images/icons/openai-compat.svg" alt="" class="pill-icon">任何 OpenAI 相容服務</span>
+                        </div>
+                    </div>
+
+                    <!-- OAuth / Zero-Config -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">OAuth &mdash; 零設定</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/github.svg" alt="" class="pill-icon">GitHub Copilot</span>
+                            <span class="pill"><img src="images/icons/openai.svg" alt="" class="pill-icon">OpenAI Codex</span>
+                            <span class="pill"><img src="images/icons/moonshot.svg" alt="" class="pill-icon">Kimi Code</span>
+                        </div>
+                    </div>
+
+                    <!-- 頻道 -->
+                    <div data-reveal>
+                        <p class="text-[10px] sm:text-xs uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-3 font-medium">頻道</p>
+                        <div class="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                            <span class="pill"><img src="images/icons/globe.svg" alt="" class="pill-icon">Web 介面</span>
+                            <span class="pill"><img src="images/icons/telegram.svg" alt="" class="pill-icon">Telegram</span>
+                            <span class="pill"><img src="images/icons/whatsapp.svg" alt="" class="pill-icon">WhatsApp</span>
+                            <span class="pill"><img src="images/icons/discord.svg" alt="" class="pill-icon">Discord</span>
+                            <span class="pill"><img src="images/icons/slack.svg" alt="" class="pill-icon">Slack</span>
+                            <span class="pill"><img src="images/icons/matrix.svg" alt="" class="pill-icon">Matrix</span>
+                            <span class="pill"><img src="images/icons/nostr.svg" alt="" class="pill-icon">Nostr</span>
+                            <span class="pill"><img src="images/icons/teams.svg" alt="" class="pill-icon">Microsoft Teams</span>
+                            <span class="pill"><img src="images/apple.svg" alt="" class="pill-icon">iOS <span class="pill-badge bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">即將推出</span></span>
+                            <span class="pill"><img src="images/icons/graphql.svg" alt="" class="pill-icon">GraphQL API</span>
+                            <span class="pill"><img src="images/icons/code.svg" alt="" class="pill-icon">JSON-RPC</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PAGE: 安裝 -->
+    <!-- ============================================================ -->
+    <div id="page-install" class="page-content hidden">
+        <div class="relative z-10 px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">開始使用</h1>
+            <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-8 text-center">安裝 Moltis，幾分鐘內啟用 AI 助理</p>
+
+            <!-- 安裝分頁 -->
+            <div class="text-left mb-8">
+                <div class="bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden shadow-lg">
+                    <div class="flex items-center gap-2 px-4 py-2.5 bg-gray-200 dark:bg-gray-800 border-b border-gray-300 dark:border-gray-700">
+                        <span class="w-3 h-3 rounded-full bg-red-400"></span>
+                        <span class="w-3 h-3 rounded-full bg-yellow-400"></span>
+                        <span class="w-3 h-3 rounded-full bg-green-400"></span>
+                        <span class="ml-2 text-xs font-mono text-gray-400 dark:text-gray-500">~ 快速開始</span>
+                    </div>
+                    <div class="flex gap-1 px-4 pt-3 pb-2 border-b border-gray-200 dark:border-gray-800 overflow-x-auto hide-scrollbar" id="install-tabs">
+                        <button data-tab="curl" class="shrink-0 px-3 py-1 text-xs font-medium rounded-md transition-colors">安裝</button>
+                        <button data-tab="brew" class="shrink-0 px-3 py-1 text-xs font-medium rounded-md transition-colors">Homebrew</button>
+                        <button data-tab="docker" class="shrink-0 px-3 py-1 text-xs font-medium rounded-md transition-colors">Docker</button>
+                        <button data-tab="source" class="shrink-0 px-3 py-1 text-xs font-medium rounded-md transition-colors">原始碼</button>
+                        <button data-tab="others" class="shrink-0 px-3 py-1 text-xs font-medium rounded-md transition-colors">其他</button>
+                    </div>
+                    <div class="p-4 font-mono text-xs sm:text-sm leading-relaxed overflow-x-auto">
+                        <div id="tab-curl" class="install-content">
+                            <p class="text-gray-500 dark:text-gray-500">$ <span class="text-gray-700 dark:text-gray-300">curl -fsSL https://www.moltis.org/install.sh | sh</span></p>
+                        </div>
+                        <div id="tab-brew" class="install-content hidden">
+                            <p class="text-gray-500 dark:text-gray-500">$ <span class="text-gray-700 dark:text-gray-300">brew install moltis-org/tap/moltis</span></p>
+                        </div>
+                        <div id="tab-docker" class="install-content hidden">
+                            <p class="text-gray-500 dark:text-gray-500 mb-1"># 多架構：amd64/arm64</p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-1">$ <span class="text-gray-700 dark:text-gray-300">docker run -d \</span></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-1">    <span class="text-gray-700 dark:text-gray-300">--name moltis -p 13131:13131 -p 1455:1455 \</span></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-1">    <span class="text-gray-700 dark:text-gray-300">-v moltis-config:/home/moltis/.config/moltis \</span></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-1">    <span class="text-gray-700 dark:text-gray-300">-v moltis-data:/home/moltis/.moltis \</span></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-1">    <span class="text-gray-700 dark:text-gray-300">-v /var/run/docker.sock:/var/run/docker.sock \</span></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-3">    <span class="text-gray-700 dark:text-gray-300">ghcr.io/moltis-org/moltis:latest</span></p>
+                            <p class="text-gray-500 dark:text-gray-500"># 開啟 <span class="text-gray-700 dark:text-gray-300">http://localhost:13131</span> 並完成設定</p>
+                        </div>
+                        <div id="tab-source" class="install-content hidden">
+                            <p class="text-gray-500 dark:text-gray-500 mb-1"># 從原始碼建置</p>
+                            <p class="text-gray-500 dark:text-gray-500">$ <span class="text-gray-700 dark:text-gray-300">cargo install moltis --git https://github.com/moltis-org/moltis</span></p>
+                        </div>
+                        <div id="tab-others" class="install-content hidden">
+                            <p class="text-gray-500 dark:text-gray-500 mb-3"># 從 <a href="https://github.com/moltis-org/moltis/releases" class="text-orange-500 hover:text-orange-600 dark:text-orange-400 dark:hover:text-orange-300 underline">GitHub Releases</a></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-2"># Debian/Ubuntu (.deb)</p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-3">$ <span class="text-gray-700 dark:text-gray-300">sudo dpkg -i moltis_*_amd64.deb</span></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-2"># Fedora/RHEL (.rpm)</p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-3">$ <span class="text-gray-700 dark:text-gray-300">sudo dnf install moltis-*.x86_64.rpm</span></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-2"># Arch Linux (.pkg.tar.zst)</p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-3">$ <span class="text-gray-700 dark:text-gray-300">sudo pacman -U moltis-*-x86_64.pkg.tar.zst</span></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-2"># Snap</p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-3">$ <span class="text-gray-700 dark:text-gray-300">sudo snap install moltis</span></p>
+                            <p class="text-gray-500 dark:text-gray-500 mb-2"># AppImage</p>
+                            <p class="text-gray-500 dark:text-gray-500">$ <span class="text-gray-700 dark:text-gray-300">./moltis-*-x86_64.AppImage</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Supported platforms -->
+            <div class="mb-8 text-left">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+                    <h2 class="text-lg sm:text-xl font-semibold text-gray-800 dark:text-gray-100">支援平台</h2>
+                    <span class="inline-flex items-center rounded-full bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 px-2.5 py-1 text-[11px] font-medium text-gray-500 dark:text-gray-400">預先建置版本</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                    <a href="https://github.com/moltis-org/moltis/releases" target="_blank" rel="noopener" class="group relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 bg-gradient-to-br from-gray-50 to-white dark:from-gray-900 dark:to-gray-950 p-4 sm:p-5 transition-all hover:-translate-y-0.5 hover:border-orange-300 dark:hover:border-orange-700 hover:shadow-lg">
+                        <div class="absolute -top-16 -right-16 w-36 h-36 rounded-full bg-orange-200/40 dark:bg-orange-700/20 blur-2xl pointer-events-none"></div>
+                        <div class="relative">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-white/70 dark:bg-gray-900/70 border border-gray-200 dark:border-gray-800">
+                                    <img src="images/apple.svg" alt="" width="17" height="17" class="dark:invert">
+                                </span>
+                                <h3 class="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white tracking-tight">macOS</h3>
+                            </div>
+                            <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">Apple Silicon 與 Intel</p>
+                        </div>
+                    </a>
+                    <a href="https://github.com/moltis-org/moltis/releases" target="_blank" rel="noopener" class="group relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 bg-gradient-to-br from-gray-50 to-white dark:from-gray-900 dark:to-gray-950 p-4 sm:p-5 transition-all hover:-translate-y-0.5 hover:border-orange-300 dark:hover:border-orange-700 hover:shadow-lg">
+                        <div class="absolute -top-16 -right-16 w-36 h-36 rounded-full bg-red-200/40 dark:bg-red-700/20 blur-2xl pointer-events-none"></div>
+                        <div class="relative">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-white/70 dark:bg-gray-900/70 border border-gray-200 dark:border-gray-800">
+                                    <img src="images/linux.svg" alt="" width="17" height="17" class="dark:invert">
+                                </span>
+                                <h3 class="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white tracking-tight">Linux</h3>
+                            </div>
+                            <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">x86_64 & ARM64</p>
+                        </div>
+                    </a>
+                    <a href="https://github.com/moltis-org/moltis/releases" target="_blank" rel="noopener" class="group relative overflow-hidden rounded-2xl border border-gray-200 dark:border-gray-800 bg-gradient-to-br from-gray-50 to-white dark:from-gray-900 dark:to-gray-950 p-4 sm:p-5 transition-all hover:-translate-y-0.5 hover:border-orange-300 dark:hover:border-orange-700 hover:shadow-lg sm:col-span-2 lg:col-span-1">
+                        <div class="absolute -top-16 -right-16 w-36 h-36 rounded-full bg-orange-200/40 dark:bg-orange-700/20 blur-2xl pointer-events-none"></div>
+                        <div class="relative">
+                            <div class="flex items-center gap-2 mb-2">
+                                <span class="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-white/70 dark:bg-gray-900/70 border border-gray-200 dark:border-gray-800">
+                                    <img src="images/windows.svg" alt="" width="17" height="17" class="dark:invert">
+                                </span>
+                                <h3 class="text-lg sm:text-xl font-semibold text-gray-900 dark:text-white tracking-tight">Windows</h3>
+                            </div>
+                            <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400">x86_64</p>
+                        </div>
+                    </a>
+                </div>
+                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">使用單一指令安裝，或前往 <a href="https://github.com/moltis-org/moltis/releases" target="_blank" rel="noopener" class="text-orange-500 hover:text-orange-600 dark:text-orange-400 dark:hover:text-orange-300 underline">GitHub Releases</a>。</p>
+            </div>
+
+            <!-- Cloud deploy section -->
+            <div id="cloud-deploy" class="mb-8 text-left">
+                <div class="p-4 sm:p-5 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <div class="inline-flex items-center gap-2">
+                            <span class="text-orange-500 dark:text-orange-400">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/><path d="m8 17 4 4 4-4"/><path d="M12 12v9"/></svg>
+                            </span>
+                            <h2 class="text-sm sm:text-base font-semibold text-gray-700 dark:text-gray-200">在雲端試用</h2>
+                        </div>
+                        <span class="inline-flex items-center rounded-full bg-orange-100 dark:bg-orange-900/40 border border-orange-200 dark:border-orange-800 px-2 py-0.5 text-[10px] sm:text-[11px] font-semibold text-orange-700 dark:text-orange-300">一分鐘內即可就緒</span>
+                    </div>
+                    <p class="text-xs sm:text-sm text-gray-500 dark:text-gray-400 mb-4">雲端很適合快速體驗 Moltis。若要完整體驗，請在 Mac、虛擬機或任何專用主機上執行。</p>
+                    <div class="flex flex-wrap items-center gap-2 mb-4">
+                        <a href="https://cloud.digitalocean.com/apps/new?repo=https://github.com/moltis-org/moltis/tree/main" target="_blank" rel="noopener" class="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border border-sky-200 dark:border-sky-900/70 bg-sky-50 dark:bg-sky-950/30 text-sky-700 dark:text-sky-300 hover:border-sky-400 dark:hover:border-sky-600 transition-colors text-[11px] sm:text-xs font-medium" aria-label="將 Moltis 部署到 DigitalOcean">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                                <circle cx="12" cy="12" r="10" fill="#0080FF"/>
+                                <rect x="10" y="5" width="4" height="14" fill="white"/>
+                                <rect x="5" y="10" width="14" height="4" fill="white"/>
+                            </svg>
+                            部署到 DigitalOcean
+                        </a>
+                    </div>
+                    <div id="fly-command" class="mb-1 flex w-full flex-col gap-2 px-3 py-2 rounded-md bg-orange-50 dark:bg-orange-950/40 border border-orange-200 dark:border-orange-800 cursor-pointer hover:bg-orange-100 dark:hover:bg-orange-950/60 transition-colors" title="點選即可複製">
+                        <div class="flex items-center gap-3">
+                            <span class="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-orange-700 dark:text-orange-300">Fly.io</span>
+                            <code id="fly-code" class="min-w-0 flex-1 font-mono text-[11px] sm:text-xs text-orange-800 dark:text-orange-200 break-all"></code>
+                        </div>
+                        <code id="fly-logs-hint" class="font-mono text-[11px] sm:text-xs text-orange-600/70 dark:text-orange-300/50"></code>
+                    </div>
+                    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">需要設定細節？請參閱 <a href="https://docs.moltis.org/cloud-deploy.html" class="text-orange-500 dark:text-orange-400 hover:text-orange-600 dark:hover:text-orange-300 underline">雲端部署文件</a>。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PAGE: Features -->
+    <!-- ============================================================ -->
+    <div id="page-features" class="page-content hidden">
+        <div class="relative z-10 px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">功能</h1>
+            <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-8 text-center">您需要的一切，盡在單一二進位檔案中。</p>
+
+            <!-- Feature highlights (12 cards) -->
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 mb-10 text-left">
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">單一二進位檔案</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">單一自包含二進位檔案。沒有執行期相依項目，下載後即可執行。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">本機 LLM</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">在本機執行自有模型。內含自動下載與設定流程。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">身分驗證</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">預設啟用 HTTPS。支援密碼、權杖與通行金鑰存取。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 20h8"/><path d="M12 18v2"/><path d="M7 9h10"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">沙盒式瀏覽</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">在隔離的 Docker 容器中執行瀏覽器工作階段，提供更安全的自動化。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">SSRF 防護</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">封鎖 LLM 擷取時存取 loopback、私有與 link-local IP。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">串流優先</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">第一個 token 立即出現。即使執行很久，回應依然流暢。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Skills、Hook 與 MCP</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">提供外掛、Hook，以及支援 O&#65;uth 2.1 的 MCP 工具伺服器。支援 stdio 或 HTTP/SSE，並可自動重新啟動。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">完整檔案系統或沙盒</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">可使用完整檔案系統，或採用每個工作階段獨立的 Docker、Podman、Apple Container 或 WASM 隔離。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">長期記憶</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">結合向量與全文搜尋的混合式記憶，讓代理記住上下文。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">受 Pi 啟發的自我延展</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">受 Pi 啟發的自我延展能力，可在執行時建立自己的 Skills。支援工作階段分支與熱重載。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">多頻道</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">支援 Web 介面、Telegram、WhatsApp、Discord、Slack、Matrix、Nostr、Teams 或 API。單一代理，涵蓋所有前端。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">語音</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">透過多種雲端與本機 TTS/STT 供應商與助理對話。</p>
+                </div>
+            </div>
+
+            <!-- 主要新功能 -->
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 mb-10 text-left">
+                <div class="p-3 sm:p-4 rounded-lg bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">OpenClaw 匯入</p>
+                        <span class="px-1.5 py-0.5 rounded-full bg-orange-500 text-white text-[9px] font-bold uppercase">新</span>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">完整唯讀匯入 OpenClaw 工作區，包括對話、Skills 與設定。按一下即可切換。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">多代理人格</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">建立具備不同個性與能力的多種代理人格。提供完整的 CRUD 管理介面。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">加密保險庫</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">為 API 金鑰與機密資訊提供靜態加密保險庫。憑證會加密儲存在磁碟上，不只是在記憶體中保護。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">iOS 配套應用程式</p>
+                        <span class="px-1.5 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-[9px] font-bold uppercase">即將推出</span>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">原生 iOS 應用程式支援透過 APNS relay 推播通知。即將登上 App Store。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">GraphQL API</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">完整的 GraphQL API 會公開所有 RPC 方法，方便建置自有整合與前端。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">國際化</p>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">完整 i18n 支援。現已內建 11 種語言。</p>
+                </div>
+                <div class="p-3 sm:p-4 rounded-lg bg-orange-50 dark:bg-orange-950/20 border border-orange-200 dark:border-orange-800">
+                    <div class="flex items-center gap-2 mb-1.5 sm:mb-2">
+                        <span class="text-orange-500 dark:text-orange-400 shrink-0">
+                            <svg width="16" height="16" class="sm:w-5 sm:h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21a9 9 0 0 0 8.7-6.7M12 21a9 9 0 0 1-8.7-6.7M12 21c2.5 0 4.5-4 4.5-9S14.5 3 12 3m0 18c-2.5 0-4.5-4-4.5-9S9.5 3 12 3m0 0a9 9 0 0 1 7.8 4.6M12 3a9 9 0 0 0-7.8 4.6m15.6 0A12 12 0 0 1 12 10.5 12 12 0 0 1 4.2 7.6m15.6 0A9 9 0 0 1 21 12c0 .8-.1 1.5-.3 2.3m0 0A18 18 0 0 1 12 16.5a18 18 0 0 1-8.7-2.2m0 0A9 9 0 0 1 3 12c0-1.3.3-2.5.7-3.6"/></svg>
+                        </span>
+                        <p class="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-200">Webhook</p>
+                        <span class="px-1.5 py-0.5 rounded-full bg-orange-500 text-white text-[9px] font-bold uppercase">新</span>
+                    </div>
+                    <p class="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 leading-relaxed">在 GitHub PR、Stripe 付款或任何 webhook 上執行 AI 代理。自動審查程式碼、分類 issue、處理付款。</p>
+                </div>
+            </div>
+
+            <!-- Extended features checklist -->
+            <div class="mb-8 text-left">
+                <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">還有更多…</h2>
+                <div class="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
+                    <!-- Security -->
+                    <div>
+                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">安全</h3>
+                        <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 通行金鑰（Web&#65;uthn）</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 範圍化 API 金鑰</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 靜態加密保險庫</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 釋放時將機密資料歸零</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 人工介入核准</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 來源驗證（CSWSH）</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 不使用 unsafe 程式碼</li>
+                        </ul>
+                    </div>
+                    <!-- LLM 供應商 -->
+                    <div>
+                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">LLM 供應商</h3>
+                        <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Anthropic, OpenAI, Gemini</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> DeepSeek, Mistral, Groq, xAI</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> OpenRouter、Ollama、本機 LLM</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 自訂 OpenAI 相容端點</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 供應商回退鏈</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 各供應商獨立指標</li>
+                        </ul>
+                    </div>
+                    <!-- 記憶 -->
+                    <div>
+                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">記憶</h3>
+                        <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 混合搜尋（向量 + FTS）</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 本機嵌入模型（GGUF）</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> OpenAI 批次 API（可省 50%）</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 嵌入快取</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 檔案監看 / 即時同步</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 工作階段匯出</li>
+                        </ul>
+                    </div>
+                    <!-- 擴充性 -->
+                    <div>
+                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">擴充性</h3>
+                        <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> MCP 伺服器支援</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> GraphQL API</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> CalDAV 行事曆整合</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Hook 系統（生命週期）</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Cron 工作排程</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> <a href="https://docs.moltis.org/webhooks.html" class="hover:text-orange-500 transition-colors">Webhook 觸發器</a></li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> i18n（11 種語言）</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> <a href="https://docs.moltis.org/openclaw-import.html" class="hover:text-orange-500 transition-colors">OpenClaw 匯入</a></li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> TOML 設定</li>
+                        </ul>
+                    </div>
+                    <!-- 頻道 -->
+                    <div>
+                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">頻道</h3>
+                        <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Web 介面</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Telegram 機器人</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> WhatsApp</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Discord</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Slack</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Matrix</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Nostr</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Microsoft Teams</li>
+                            <li class="flex items-center gap-2"><span class="text-gray-400 dark:text-gray-500">&#9675;</span> <span class="text-gray-400 dark:text-gray-500">iOS 配套應用程式（即將推出）</span></li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> JSON-RPC + GraphQL API</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 推播通知</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 多裝置同步</li>
+                        </ul>
+                    </div>
+                    <!-- 可觀測性 -->
+                    <div>
+                        <h3 class="text-sm font-semibold text-orange-500 dark:text-orange-400 mb-2 uppercase tracking-wide">可觀測性</h3>
+                        <ul class="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> Prometheus 指標</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> OpenTelemetry 追蹤</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 結構化日誌</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 各供應商圖表</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> SQLite 持久儲存</li>
+                            <li class="flex items-center gap-2"><span class="text-orange-500">&#10003;</span> 即時 WebSocket</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PAGE: Security -->
+    <!-- ============================================================ -->
+    <div id="page-security" class="page-content hidden">
+        <div class="relative z-10 px-4 sm:px-6 w-full max-w-3xl mx-auto pt-12 pb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">安全優先設計</h1>
+            <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-10 text-center">您可以信賴的機器 AI 助手</p>
+
+            <!-- Why Rust -->
+            <div class="mb-10 text-left">
+                <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
+                    <span class="text-orange-500 dark:text-orange-400">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    </span>
+                    為什麼您應該信任它？
+                </h2>
+                <div class="space-y-3">
+                    <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+                        Moltis 是一個檔案。您下載它，執行它，完成。沒有外掛商店，沒有套件管理員，沒有可能被破壞的執行環境。整個應用程式是一個您可以驗證的單一二進位檔案。
+                    </p>
+                    <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+                        您的 AI 預設在沙盒中執行。除非您明確允許，否則它無法讀取您的檔案、執行指令或瀏覽網頁。每個工具操作都可以要求您的核准 — 或者您可以預先核准您信任的特定操作。
+                    </p>
+                    <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+                        您的密碼和 API 金鑰會以保護容器包裹，因此永遠不會被意外記錄，並且在不再需要時記憶體會被歸零。它所使用的程式語言（Rust）在編譯器層級消除了整類安全漏洞。
+                    </p>
+                    <div class="mt-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <p class="text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">這裡您找不到的</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">沒有可能被攻破的外掛市場。沒有 JavaScript 執行環境。沒有 1,200 個您無法審查的套件的相依樹。一個您可以從頭到尾稽核的二進位檔案。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Threat defense table -->
+            <div class="mb-10 text-left">
+                <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 flex items-center gap-2">
+                    <span class="text-orange-500 dark:text-orange-400">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 .5-.87l8-4.5a1 1 0 0 1 1 0l8 4.5A1 1 0 0 1 20 6z"/><path d="m9 12 2 2 4-4"/></svg>
+                    </span>
+                    我們如何保護您
+                </h2>
+                <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
+                    <table class="w-full text-xs sm:text-sm text-left">
+                        <thead>
+                            <tr class="bg-gray-50 dark:bg-gray-900/50">
+                                <th class="px-4 py-3 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800">如果…</th>
+                                <th class="px-4 py-3 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800">Moltis 如何處理</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-gray-600 dark:text-gray-400">
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">有人發現您的伺服器</td>
+                                <td class="px-4 py-3">首次啟動即需要密碼或通行金鑰，自動 HTTPS，速率限制</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">AI 嘗試執行危險程式碼</td>
+                                <td class="px-4 py-3">一切在沙盒中執行（Docker 或 Apple Container）。每個操作都需要您先核准</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">相依套件被攻破</td>
+                                <td class="px-4 py-3">沒有可被攻破的 npm/pip 套件。一個二進位檔案，可稽核的相依套件。Telegram 等整合是內建的、經過測試的程式碼</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">AI 存取您的內部網路</td>
+                                <td class="px-4 py-3">內部和私有網路位址被自動阻擋</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">有人試圖竊取您的金鑰</td>
+                                <td class="px-4 py-3">API 金鑰和密碼在日誌中被隱藏，使用後在記憶體中被歸零</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">工作階段被劫持</td>
+                                <td class="px-4 py-3">來源檢查防止跨站攻擊，預設啟用 HTTPS</td>
+                            </tr>
+                            <tr>
+                                <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">未經授權的存取</td>
+                                <td class="px-4 py-3">通行金鑰、範圍化 API 金鑰、逐工具權限策略</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 沙盒區塊 -->
+            <div class="mb-10 text-left">
+                <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 flex items-center gap-2">
+                    <span class="text-orange-500 dark:text-orange-400">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                    </span>
+                    沙盒執行
+                </h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-2">
+                            <img src="images/docker.svg" alt="Docker" width="20" height="20">
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Docker & Podman</h3>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">每個對話都有自己的隔離容器。Shell 指令和網頁瀏覽會在沙盒內進行，而不是在您的主機系統上。</p>
+                    </div>
+                    <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-2">
+                            <img src="images/apple.svg" alt="Apple" width="20" height="20" class="dark:invert opacity-60">
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Apple Containers</h3>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">在 Mac 上，使用 Apple 的內建虛擬化實現輕量隔離 — 無需 Docker。</p>
+                    </div>
+                    <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-orange-500 dark:text-orange-400">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                            </span>
+                            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-200">WASM 沙盒</h3>
+                        </div>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">基於 Wasmtime 的沙盒，具有通用故障轉移。無需容器的輕量隔離。</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auditable codebase section -->
+            <div class="mb-8 text-left">
+                <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 flex items-center gap-2">
+                    <span class="text-orange-500 dark:text-orange-400">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                    </span>
+                    完全開源
+                </h2>
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">小型</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">隔離的 unsafe 範圍*</p>
+                    </div>
+                    <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">0</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">npm 相依套件</p>
+                    </div>
+                    <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">59</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">Rust 工作區 crate</p>
+                    </div>
+                    <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">~270K</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">Rust 程式碼行數</p>
+                    </div>
+                    <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">470+</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">含測試的 Rust 檔案</p>
+                    </div>
+                    <div class="p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-800 text-center">
+                        <p class="text-2xl font-bold text-orange-500 dark:text-orange-400 mb-1">MIT</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">授權條款</p>
+                    </div>
+                </div>
+                <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">* unsafe 程式碼僅限 Swift FFI、本機模型封裝與預編譯 WASM/執行階段邊界。核心代理與閘道路徑維持在安全 Rust 中。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- PAGE: Compare -->
+    <!-- ============================================================ -->
+    <div id="page-compare" class="page-content hidden">
+        <div class="relative z-10 px-4 sm:px-6 lg:px-8 w-full max-w-6xl mx-auto pt-12 pb-8">
+            <h1 class="text-3xl sm:text-4xl font-bold tracking-tight mb-2 text-center text-gray-900 dark:text-white font-outfit">Moltis 比較</h1>
+            <p class="text-sm sm:text-base text-gray-500 dark:text-gray-400 mb-10 text-center">您可以自架的開源 AI 助手</p>
+
+            <!-- Feature comparison -->
+            <div class="mb-10 text-left">
+                <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 flex items-center gap-2">
+                    <span class="text-orange-500 dark:text-orange-400">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                    </span>
+                    一覽
+                </h2>
+                <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
+                    <table class="compare-table w-full text-[11px] sm:text-xs text-left">
+                        <thead>
+                            <tr class="bg-gray-50 dark:bg-gray-900/50">
+                                <th class="px-3 py-2.5 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800 sticky left-0 bg-gray-50 dark:bg-gray-900/80 z-10"></th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800"><a href="https://github.com/openclaw/openclaw" target="_blank" rel="noopener" class="hover:text-orange-500 transition-colors">OpenClaw</a></th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800"><a href="https://github.com/NousResearch/hermes-agent" target="_blank" rel="noopener" class="hover:text-orange-500 transition-colors">Hermes Agent</a></th>
+                                <th class="px-3 py-2.5 font-semibold text-orange-600 dark:text-orange-400 border-b border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">Moltis</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-gray-600 dark:text-gray-400">
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">語言</td>
+                                <td class="px-3 py-2">TypeScript + 原生應用程式</td>
+                                <td class="px-3 py-2">Python + TypeScript 介面</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Rust</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">執行環境</td>
+                                <td class="px-3 py-2">Node.js + npm/pnpm/bun</td>
+                                <td class="px-3 py-2">Python + uv/pip</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">單一二進位檔案</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">主要形態</td>
+                                <td class="px-3 py-2">閘道 + 應用程式 + 節點</td>
+                                <td class="px-3 py-2">CLI + 閘道 + 研究工具</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">持續運作的代理伺服器</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">沙盒</td>
+                                <td class="px-3 py-2">應用程式層級權限</td>
+                                <td class="px-3 py-2">本機、Docker、SSH 與雲端後端</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Docker/Podman + Apple + WASM</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">驗證</td>
+                                <td class="px-3 py-2">配對 + 閘道控制</td>
+                                <td class="px-3 py-2">CLI + 閘道設定</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">密碼 + 通行金鑰 + API 金鑰</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">語音</td>
+                                <td class="px-3 py-2">語音喚醒 + 對話模式</td>
+                                <td class="px-3 py-2">語音備忘錄轉錄</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">內建（15+ 供應商）</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">MCP</td>
+                                <td class="px-3 py-2">外掛／整合支援</td>
+                                <td class="px-3 py-2">MCP 整合</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">是（stdio + HTTP/SSE）</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">記憶 / RAG</td>
+                                <td class="px-3 py-2">外掛 + 上下文引擎</td>
+                                <td class="px-3 py-2">記憶 + 工作階段搜尋 + 使用者模型</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">SQLite + FTS + 向量</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Hook</td>
+                                <td class="px-3 py-2">外掛／執行階段 Hook</td>
+                                <td class="px-3 py-2">Hook／外掛</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">15 種事件類型</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">頻道</td>
+                                <td class="px-3 py-2">廣泛的頻道與裝置清單</td>
+                                <td class="px-3 py-2">Telegram、Discord、Slack、WhatsApp、Signal、CLI</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Web、Telegram、WhatsApp、Discord、Slack、Matrix、Nostr、Teams</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">API</td>
+                                <td class="px-3 py-2">閘道 API</td>
+                                <td class="px-3 py-2">CLI／閘道 API</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">JSON-RPC + GraphQL</td>
+                            </tr>
+                            <tr>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">OpenClaw 匯入</td>
+                                <td class="px-3 py-2 text-gray-400 dark:text-gray-600">&#x2014;</td>
+                                <td class="px-3 py-2">遷移指令</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">完整（唯讀且安全）</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 安全比較 -->
+            <div class="mb-10 text-left">
+                <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 flex items-center gap-2">
+                    <span class="text-orange-500 dark:text-orange-400">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    </span>
+                    安全比較
+                </h2>
+                <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
+                    <table class="compare-table w-full text-[11px] sm:text-xs text-left">
+                        <thead>
+                            <tr class="bg-gray-50 dark:bg-gray-900/50">
+                                <th class="px-3 py-2.5 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800 sticky left-0 bg-gray-50 dark:bg-gray-900/80 z-10"></th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">OpenClaw</th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">Hermes Agent</th>
+                                <th class="px-3 py-2.5 font-semibold text-orange-600 dark:text-orange-400 border-b border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">Moltis</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-gray-600 dark:text-gray-400">
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">程式碼沙盒</td>
+                                <td class="px-3 py-2">應用程式層級權限與工具控制</td>
+                                <td class="px-3 py-2">本機、容器、SSH 與雲端後端</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">Docker/Podman + Apple + WASM</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">金鑰處理</td>
+                                <td class="px-3 py-2">組態、環境變數與外掛路徑</td>
+                                <td class="px-3 py-2">組態與供應商憑證</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">加密保險庫，已遮蔽，已歸零</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">SSRF 防護</td>
+                                <td class="px-3 py-2">視工具／外掛而定</td>
+                                <td class="px-3 py-2">視工具／後端而定</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">封鎖 loopback / private / CGNAT</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">WebSocket 來源</td>
+                                <td class="px-3 py-2">視閘道而定</td>
+                                <td class="px-3 py-2">視閘道而定</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">跨域拒絕</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">Hook 控制</td>
+                                <td class="px-3 py-2">外掛／執行階段 Hook</td>
+                                <td class="px-3 py-2">Hook／外掛</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">檢查 / 修改 / 阻擋</td>
+                            </tr>
+                            <tr>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">速率限制</td>
+                                <td class="px-3 py-2">視閘道而定</td>
+                                <td class="px-3 py-2">視閘道而定</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">每 IP 節流 + 登入限制</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Codebase comparison -->
+            <div class="mb-10 text-left">
+                <h2 class="text-lg font-semibold text-gray-700 dark:text-gray-200 mb-4 flex items-center gap-2">
+                    <span class="text-orange-500 dark:text-orange-400">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                    </span>
+                    程式碼庫快照
+                </h2>
+                <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
+                    <table class="compare-table w-full text-[11px] sm:text-xs text-left">
+                        <thead>
+                            <tr class="bg-gray-50 dark:bg-gray-900/50">
+                                <th class="px-3 py-2.5 font-semibold text-gray-700 dark:text-gray-200 border-b border-gray-200 dark:border-gray-800 sticky left-0 bg-gray-50 dark:bg-gray-900/80 z-10"></th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">OpenClaw</th>
+                                <th class="px-3 py-2.5 font-medium text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-800">Hermes Agent</th>
+                                <th class="px-3 py-2.5 font-semibold text-orange-600 dark:text-orange-400 border-b border-orange-200 dark:border-orange-800 bg-orange-50/50 dark:bg-orange-950/20">Moltis</th>
+                            </tr>
+                        </thead>
+                        <tbody class="text-gray-600 dark:text-gray-400">
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">本機原始碼規模*</td>
+                                <td class="px-3 py-2">~110 萬行應用程式碼</td>
+                                <td class="px-3 py-2">~15.2 萬行應用程式碼</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">~27 萬行 Rust 程式碼</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50 bg-gray-50/50 dark:bg-gray-900/20">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-gray-50/50 dark:bg-gray-900/20 z-10">套件形態</td>
+                                <td class="px-3 py-2">npm 套件、擴充功能、應用程式</td>
+                                <td class="px-3 py-2">Python 套件、外掛、工具、UI 套件</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">59 個 Rust 工作區 crate</td>
+                            </tr>
+                            <tr class="border-b border-gray-100 dark:border-gray-800/50">
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">主要安裝方式</td>
+                                <td class="px-3 py-2">npm install -g openclaw</td>
+                                <td class="px-3 py-2">安裝腳本，接著執行 hermes</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">安裝腳本、Homebrew、Docker、Cargo</td>
+                            </tr>
+                            <tr>
+                                <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300 sticky left-0 bg-white dark:bg-gray-950 z-10">測試覆蓋訊號</td>
+                                <td class="px-3 py-2">大型 TS/應用程式測試樹</td>
+                                <td class="px-3 py-2">Python 與 TUI 測試</td>
+                                <td class="px-3 py-2 bg-orange-50/30 dark:bg-orange-950/10 font-medium text-gray-700 dark:text-gray-200">470+ 個含測試的 Rust 檔案</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="mt-3 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">*以 tokei 從本機 checkout 量測，排除相依套件目錄與產生的建置輸出。LoC 是規模與可稽核性的指標，並非排名。</p>
+            </div>
+
+            <p class="text-[10px] text-gray-400 dark:text-gray-500 text-center">依據本機 checkout 快照與公開專案資訊。專案演進快速 — 請至各儲存庫查閱最新狀態。 <a href="https://docs.moltis.org/comparison.html" class="text-orange-500 dark:text-orange-400 hover:underline">文件中的完整比較</a>。</p>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- 社群回饋 -->
+    <!-- ============================================================ -->
+    <div class="relative z-10 max-w-3xl mx-auto px-4 py-12">
+        <h2 class="text-center text-lg font-semibold text-gray-700 dark:text-gray-300 mb-6">使用者怎麼說</h2>
+        <blockquote class="bg-white/60 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-xl px-6 py-5 shadow-sm">
+            <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed italic">「Moltis 正是這類工具應有的樣子：快速、輕量、容易安裝、容易除錯，具備適當的日誌、乾淨的 Web 介面，還能圍繞它建置自訂擴充。這是這個領域第一個真正讓人覺得實用、可用的工具，而不是又一個脆弱的實驗。」</p>
+            <footer class="mt-3 text-xs text-gray-400 dark:text-gray-500">
+                &mdash; <a href="https://github.com/moltis-org/moltis/discussions/929" class="text-orange-500 dark:text-orange-400 hover:underline">bashrusakh</a>, 透過 GitHub Discussions
+            </footer>
+        </blockquote>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Footer (always visible) -->
+    <!-- ============================================================ -->
+    <footer class="relative z-10 text-center px-4 pb-8 pt-4">
+        <p class="max-w-2xl mx-auto mb-4 text-xs sm:text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+            本機 AI 助手仍處於早期階段。請將 Moltis 視為 alpha 版本：謹慎執行，審查工具權限，避免授予不必要的廣泛系統存取權限。請負責任地使用。
+        </p>
+        <p class="inline-flex items-center gap-3 text-xs text-gray-400 dark:text-gray-600">
+            <span class="inline-flex items-center gap-1.5">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                MIT 授權條款
+            </span>
+            <a href="https://github.com/moltis-org/moltis" class="inline-flex items-center gap-1.5 hover:text-orange-500 dark:hover:text-orange-400 transition-colors">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                GitHub
+            </a>
+            <a href="https://discord.gg/XnmrepsXp5" class="inline-flex items-center gap-1.5 hover:text-orange-500 dark:hover:text-orange-400 transition-colors">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.369a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.444.864-.608 1.249a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.249.077.077 0 0 0-.079-.037 19.736 19.736 0 0 0-4.885 1.515.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.995a.076.076 0 0 0-.041-.106 13.106 13.106 0 0 1-1.872-.892.078.078 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.927 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.009c.12.1.246.198.373.292a.078.078 0 0 1-.006.128 12.298 12.298 0 0 1-1.873.892.077.077 0 0 0-.04.107c.36.699.772 1.364 1.225 1.994a.076.076 0 0 0 .084.028 19.837 19.837 0 0 0 6.002-3.03.077.077 0 0 0 .031-.055c.5-5.177-.838-9.674-3.548-13.66a.061.061 0 0 0-.031-.03zM8.02 15.331c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.418 2.157-2.418 1.211 0 2.176 1.094 2.157 2.418 0 1.334-.955 2.419-2.157 2.419zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.418 2.157-2.418 1.212 0 2.176 1.094 2.157 2.418 0 1.334-.945 2.419-2.157 2.419z"/></svg>
+                Discord
+            </a>
+        </p>
+        <p class="text-xs text-gray-400 dark:text-gray-600 mt-2">
+            用愛打造 &#10084;&#65039;，作者：<a href="https://pen.so" class="underline hover:text-orange-500 dark:hover:text-orange-400 transition-colors">Fabien Penso</a>
+        </p>
+    </footer>
+
+    <script>
+        // ============================================================
+        // 語言 switcher
+        // ============================================================
+        function setLang(lang) {
+            document.cookie = 'lang=' + lang + ';path=/;max-age=31536000;SameSite=Lax';
+            if (location.pathname === '/') {
+                location.reload();
+            } else {
+                location.href = '/';
+            }
+        }
+        document.addEventListener('click', function(e) {
+            var sw = document.getElementById('lang-switcher');
+            if (sw && !sw.contains(e.target)) {
+                sw.querySelector('div').classList.add('hidden');
+            }
+        });
+
+        // ============================================================
+        // Page routing
+        // ============================================================
+        const pages = ['home', 'install', 'features', 'security', 'compare'];
+        let currentPage = 'home';
+
+        function navigateTo(page) {
+            if (!pages.includes(page)) page = 'home';
+            currentPage = page;
+
+            // Show/hide page content
+            document.querySelectorAll('.page-content').forEach(function(el) {
+                el.classList.toggle('hidden', el.id !== 'page-' + page);
+            });
+
+            // Update nav tab styling
+            document.querySelectorAll('.nav-tab').forEach(function(tab) {
+                var isActive = tab.dataset.page === page;
+                if (isActive) {
+                    tab.className = 'nav-tab shrink-0 px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors bg-orange-500 text-white';
+                } else {
+                    tab.className = 'nav-tab shrink-0 px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-colors text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800';
+                }
+            });
+
+            // Update hash without triggering hashchange
+            if (location.hash !== '#' + page) {
+                history.pushState(null, '', '#' + page);
+            }
+
+            // Scroll to top
+            window.scrollTo(0, 0);
+        }
+
+        // Handle hash changes (back/forward)
+        window.addEventListener('hashchange', function() {
+            var page = location.hash.replace('#', '') || 'home';
+            navigateTo(page);
+        });
+
+        // Handle popstate for browser back/forward
+        window.addEventListener('popstate', function() {
+            var page = location.hash.replace('#', '') || 'home';
+            navigateTo(page);
+        });
+
+        // Initial navigation
+        navigateTo(location.hash.replace('#', '') || 'home');
+
+        // Intercept nav tab clicks to prevent default hash jump
+        document.querySelectorAll('.nav-tab').forEach(function(tab) {
+            tab.addEventListener('click', function(e) {
+                var href = tab.getAttribute('href') || '';
+                if (!tab.dataset.page || !href.startsWith('#') && !href.startsWith('/#')) return;
+                e.preventDefault();
+                navigateTo(tab.dataset.page);
+            });
+        });
+
+        // GitHub stars are fetched by the shared nav partial script.
+
+        // ============================================================
+        // Installation tabs
+        // ============================================================
+        var tabsEl = document.getElementById('install-tabs');
+        var installTabs = ['curl', 'brew', 'docker', 'source', 'others'];
+        var activeTab = 'curl';
+
+        function updateInstallTabs() {
+            if (!tabsEl) return;
+            tabsEl.querySelectorAll('button').forEach(function(btn) {
+                var isActive = btn.dataset.tab === activeTab;
+                btn.className = 'shrink-0 px-3 py-1 text-xs font-medium rounded-md transition-colors ' + (isActive
+                    ? 'bg-orange-500 text-white'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-700');
+            });
+            installTabs.forEach(function(tab) {
+                var content = document.getElementById('tab-' + tab);
+                if (content) content.classList.toggle('hidden', tab !== activeTab);
+            });
+        }
+        updateInstallTabs();
+
+        if (tabsEl) {
+            tabsEl.addEventListener('click', function(e) {
+                var btn = e.target.closest('button[data-tab]');
+                if (!btn) return;
+                activeTab = btn.dataset.tab;
+                updateInstallTabs();
+            });
+        }
+
+        // ============================================================
+        // Theme toggle (cycle: light → system → dark)
+        // ============================================================
+        var themeToggle = document.getElementById('theme-toggle');
+        var themeCycle = ['light', 'system', 'dark'];
+        function updateThemeIcon(mode) {
+            document.getElementById('theme-icon-light').classList.toggle('hidden', mode !== 'light');
+            document.getElementById('theme-icon-system').classList.toggle('hidden', mode !== 'system');
+            document.getElementById('theme-icon-dark').classList.toggle('hidden', mode !== 'dark');
+            var titles = { light: '佈景主題：亮色', system: '佈景主題：跟隨系統', dark: '佈景主題：深色' };
+            if (themeToggle) themeToggle.title = titles[mode] || '切換佈景主題';
+        }
+        updateThemeIcon(savedTheme);
+        if (themeToggle) {
+            themeToggle.addEventListener('click', function() {
+                var current = localStorage.getItem('theme') || 'system';
+                var idx = themeCycle.indexOf(current);
+                var next = themeCycle[(idx + 1) % themeCycle.length];
+                localStorage.setItem('theme', next);
+                applyTheme(next);
+                updateThemeIcon(next);
+            });
+        }
+
+        // ============================================================
+        // Lightbox
+        // ============================================================
+        var lbTotal = 7;
+        var lbIndex = 0;
+        var lbEl = document.getElementById('lightbox');
+        var lbImg = document.getElementById('lb-img');
+        var lbPrev = document.getElementById('lb-prev');
+        var lbNext = document.getElementById('lb-next');
+        function openLightbox(i) {
+            lbIndex = i;
+            lbImg.src = 'screenshots/' + (i + 1) + '.png';
+            lbPrev.classList.toggle('invisible', i === 0);
+            lbNext.classList.toggle('invisible', i === lbTotal - 1);
+            lbEl.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+        function closeLightbox() {
+            lbEl.classList.add('hidden');
+            document.body.style.overflow = '';
+        }
+        function prevImage() { if (lbIndex > 0) openLightbox(lbIndex - 1); }
+        function nextImage() { if (lbIndex < lbTotal - 1) openLightbox(lbIndex + 1); }
+        document.addEventListener('keydown', function(e) {
+            if (lbEl.classList.contains('hidden')) return;
+            if (e.key === 'Escape') closeLightbox();
+            else if (e.key === 'ArrowLeft') prevImage();
+            else if (e.key === 'ArrowRight') nextImage();
+        });
+
+        // ============================================================
+        // Fly.io command with random app name
+        // ============================================================
+        var flyCmd = document.getElementById('fly-command');
+        var toast = document.getElementById('toast');
+        var flyName = 'moltis-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 8);
+        var flyText = 'curl -o fly.toml https://raw.githubusercontent.com/moltis-org/moltis/main/fly.toml && flyctl launch --name ' + flyName;
+        var flyCodeEl = document.getElementById('fly-code');
+        var flyLogsEl = document.getElementById('fly-logs-hint');
+        if (flyCodeEl) flyCodeEl.textContent = flyText;
+        if (flyLogsEl) flyLogsEl.textContent = '# To get your setup code: flyctl logs -a ' + flyName + ' | grep "setup code"';
+        if (flyCmd) {
+            flyCmd.addEventListener('click', function() {
+                navigator.clipboard.writeText(flyText).then(function() {
+                    toast.classList.remove('opacity-0', 'pointer-events-none');
+                    toast.classList.add('opacity-100');
+                    setTimeout(function() {
+                        toast.classList.remove('opacity-100');
+                        toast.classList.add('opacity-0', 'pointer-events-none');
+                    }, 2000);
+                });
+            });
+        }
+        // Scroll-reveal for pill groups
+        var revealObserver = new IntersectionObserver(function(entries) {
+            var idx = 0;
+            entries.forEach(function(entry) {
+                if (!entry.isIntersecting) return;
+                setTimeout(function() { entry.target.classList.add('revealed'); }, idx * 100);
+                idx++;
+                revealObserver.unobserve(entry.target);
+            });
+        }, { threshold: 0.15 });
+        document.querySelectorAll('[data-reveal]').forEach(function(el) {
+            revealObserver.observe(el);
+        });
+    </script>
+</body>
+</html>

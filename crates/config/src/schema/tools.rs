@@ -711,6 +711,72 @@ pub struct SandboxConfig {
     /// Acts as layer 6 in the policy resolution chain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools_policy: Option<ToolPolicyConfig>,
+
+    // ── Remote sandbox backends ─────────────────────────────────────────
+    /// Vercel API token for the Vercel Sandbox backend.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub vercel_token: Option<Secret<String>>,
+    /// Vercel project ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_project_id: Option<String>,
+    /// Vercel team ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_team_id: Option<String>,
+    /// Vercel sandbox runtime (e.g. "node24", "python3.13").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_runtime: Option<String>,
+    /// Vercel sandbox timeout in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_timeout_ms: Option<u64>,
+    /// Vercel sandbox vCPU count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_vcpus: Option<u32>,
+
+    /// Daytona API key.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub daytona_api_key: Option<Secret<String>>,
+    /// Daytona API URL (default: https://app.daytona.io/api).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daytona_api_url: Option<String>,
+    /// Daytona target region/environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daytona_target: Option<String>,
+    /// Custom image for Daytona sandbox creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daytona_image: Option<String>,
+
+    /// Vercel snapshot ID for fast cold starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_snapshot_id: Option<String>,
+
+    /// Path to the `firecracker` binary (Linux only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_bin: Option<String>,
+    /// Path to the uncompressed Linux kernel (`vmlinux`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_kernel: Option<String>,
+    /// Path to the base ext4 rootfs image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_rootfs: Option<String>,
+    /// Path to the SSH private key for VM access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_ssh_key: Option<String>,
+    /// Number of vCPUs per Firecracker VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_vcpus: Option<u32>,
+    /// Memory in MiB per Firecracker VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_memory_mb: Option<u32>,
 }
 
 /// Default packages installed in sandbox containers.
@@ -911,6 +977,23 @@ impl Default for SandboxConfig {
             wasm_epoch_interval_ms: None,
             wasm_tool_limits: None,
             tools_policy: None,
+            vercel_token: None,
+            vercel_project_id: None,
+            vercel_team_id: None,
+            vercel_runtime: None,
+            vercel_timeout_ms: None,
+            vercel_vcpus: None,
+            daytona_api_key: None,
+            daytona_api_url: None,
+            daytona_target: None,
+            daytona_image: None,
+            vercel_snapshot_id: None,
+            firecracker_bin: None,
+            firecracker_kernel: None,
+            firecracker_rootfs: None,
+            firecracker_ssh_key: None,
+            firecracker_vcpus: None,
+            firecracker_memory_mb: None,
         }
     }
 }

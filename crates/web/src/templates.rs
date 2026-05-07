@@ -101,14 +101,15 @@ pub(crate) struct GonData {
 
 #[derive(serde::Serialize)]
 struct SandboxGonInfo {
-    backend: String,
+    backend: moltis_tools::sandbox::SandboxBackendId,
     os: &'static str,
     default_image: String,
     image_building: bool,
+    available_backends: Vec<moltis_tools::sandbox::SandboxBackendId>,
 }
 
 /// Memory snapshot included in gon data and tick broadcasts.
-#[derive(serde::Serialize)]
+#[derive(Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MemSnapshot {
     process: u64,
@@ -319,18 +320,22 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         })
         .unwrap_or(0);
 
-    let mut skills = 0usize;
-    if let Ok(path) = moltis_skills::manifest::ManifestStore::default_path() {
+    let skills = tokio::task::spawn_blocking(|| {
+        let path = moltis_skills::manifest::ManifestStore::default_path().ok()?;
         let store = moltis_skills::manifest::ManifestStore::new(path);
-        if let Ok(m) = store.load() {
-            skills = m
-                .repos
+        let m = store.load().ok()?;
+        Some(
+            m.repos
                 .iter()
                 .flat_map(|r| &r.skills)
                 .filter(|s| s.enabled)
-                .count();
-        }
-    }
+                .count(),
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or(0);
 
     let mcp = mcp
         .ok()
@@ -358,8 +363,6 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         })
         .unwrap_or(0);
 
-    let hooks = gw.inner.read().await.discovered_hooks.len();
-
     NavCounts {
         projects,
         providers,
@@ -367,7 +370,7 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
         skills,
         mcp,
         crons,
-        hooks,
+        hooks: 0, // placeholder — set from a single inner.read() in build_gon_data
     }
 }
 
@@ -375,6 +378,8 @@ pub(crate) async fn build_nav_counts(gw: &GatewayState) -> NavCounts {
 
 pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
     const GON_SESSIONS_RECENT_LIMIT: usize = 30;
+
+    let gon_start = std::time::Instant::now();
 
     let port = gw.port;
     let identity = gw
@@ -385,13 +390,44 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: identity"
+    );
 
-    let counts = build_nav_counts(gw).await;
+    let mut counts = build_nav_counts(gw).await;
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: nav_counts"
+    );
+
+    // Read all fields from gw.inner in a SINGLE lock acquisition to avoid
+    // deadlocks with concurrent write-lock requests (tokio's fair RwLock
+    // blocks new reads when a write is queued).
+    let (hooks_count, heartbeat_config, cached_channels_offered, update) = {
+        let inner = gw.inner.read().await;
+        (
+            inner.discovered_hooks.len(),
+            inner.heartbeat_config.clone(),
+            inner.channels_offered.clone(),
+            inner.update.clone(),
+        )
+    };
+    counts.hooks = hooks_count;
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: inner_read"
+    );
+
     let (crons, cron_status, webhooks_val, webhook_profiles_val) = tokio::join!(
         gw.services.cron.list(),
         gw.services.cron.status(),
         gw.services.webhooks.list(),
         gw.services.webhooks.profiles(),
+    );
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: crons+webhooks"
     );
     let webhooks: Vec<serde_json::Value> = webhooks_val
         .ok()
@@ -409,14 +445,10 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let (heartbeat_config, cached_channels_offered) = {
-        let inner = gw.inner.read().await;
-        (
-            inner.heartbeat_config.clone(),
-            inner.channels_offered.clone(),
-        )
-    };
-    let channels_offered = resolve_channels_offered(cached_channels_offered);
+    let channels_offered =
+        tokio::task::spawn_blocking(move || resolve_channels_offered(cached_channels_offered))
+            .await
+            .unwrap_or_default();
     let channel_descriptors: Vec<moltis_channels::ChannelDescriptor> = channels_offered
         .iter()
         .filter_map(|s| s.parse::<moltis_channels::ChannelType>().ok())
@@ -431,24 +463,42 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         .ok()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: heartbeat_runs"
+    );
 
     let sandbox = if let Some(ref router) = gw.sandbox_router {
+        use moltis_tools::sandbox::SandboxBackendId;
         SandboxGonInfo {
-            backend: router.backend_name().to_owned(),
+            backend: SandboxBackendId::from_name(router.backend_name()),
             os: std::env::consts::OS,
-            default_image: router.default_image().await,
+            // Use resolve_default_image_nowait() to avoid blocking on a
+            // sandbox image build — default_image() waits up to 10 minutes
+            // for build_complete, which hangs every page request during the
+            // initial image build on CI.
+            default_image: router.resolve_default_image_nowait().await,
             image_building: router
                 .building_flag
                 .load(std::sync::atomic::Ordering::Relaxed),
+            available_backends: router
+                .available_backends()
+                .into_iter()
+                .map(SandboxBackendId::from_name)
+                .collect(),
         }
     } else {
+        use moltis_tools::sandbox::SandboxBackendId;
         SandboxGonInfo {
-            backend: "none".to_owned(),
+            backend: SandboxBackendId::None,
             os: std::env::consts::OS,
             default_image: moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_owned(),
             image_building: false,
+            available_backends: vec![SandboxBackendId::None],
         }
     };
+
+    tracing::warn!(elapsed_ms = gon_start.elapsed().as_millis(), "gon: sandbox");
 
     // Fetch agent personas for the gon data.
     let agents: Vec<serde_json::Value> = if let Some(ref store) = gw.services.agent_persona_store {
@@ -466,7 +516,20 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         Vec::new()
     };
 
+    tracing::warn!(elapsed_ms = gon_start.elapsed().as_millis(), "gon: agents");
+
     let sessions_recent = build_recent_sessions_snapshot(gw, GON_SESSIONS_RECENT_LIMIT).await;
+    tracing::debug!(
+        elapsed_ms = gon_start.elapsed().as_millis(),
+        "gon: sessions_recent"
+    );
+
+    let total_ms = gon_start.elapsed().as_millis();
+    if total_ms > 1000 {
+        tracing::warn!(elapsed_ms = total_ms, "gon: build_gon_data slow");
+    } else {
+        tracing::warn!(elapsed_ms = total_ms, "gon: build_gon_data complete");
+    }
 
     GonData {
         identity,
@@ -482,8 +545,13 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         tts_enabled: cfg!(feature = "voice") && gw.config.voice.tts.enabled,
         graphql_enabled: cfg!(feature = "graphql"),
         terminal_enabled: gw.config.server.is_terminal_enabled(),
-        git_branch: detect_git_branch(),
-        mem: collect_mem_snapshot(),
+        git_branch: tokio::task::spawn_blocking(detect_git_branch)
+            .await
+            .ok()
+            .flatten(),
+        mem: tokio::task::spawn_blocking(collect_mem_snapshot)
+            .await
+            .unwrap_or_default(),
         deploy_platform: gw.deploy_platform.clone(),
         channels_offered,
         channel_descriptors,
@@ -491,7 +559,7 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
             .join("moltis.db")
             .display()
             .to_string(),
-        update: gw.inner.read().await.update.clone(),
+        update,
         sandbox,
         routes: SPA_ROUTES.clone(),
         started_at: *PROCESS_STARTED_AT_MS,
@@ -803,9 +871,23 @@ pub(crate) async fn render_spa_template(
     let asset_prefix = build_asset_prefix();
     let nonce = build_nonce();
 
+    let gon =
+        match tokio::time::timeout(std::time::Duration::from_secs(10), build_gon_data(gateway))
+            .await
+        {
+            Ok(gon) => gon,
+            Err(_) => {
+                tracing::error!("build_gon_data timed out after 10s — possible deadlock");
+                return render_error_page(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ErrorPageKind::InternalServerError,
+                    None,
+                );
+            },
+        };
+
     let body = match template {
         SpaTemplate::Index => {
-            let gon = build_gon_data(gateway).await;
             let share_meta = build_share_meta(&gon.identity);
             let gon_json = script_safe_json(&gon);
             let template = IndexHtmlTemplate {
@@ -833,7 +915,6 @@ pub(crate) async fn render_spa_template(
             }
         },
         SpaTemplate::Login => {
-            let gon = build_gon_data(gateway).await;
             let gon_json = script_safe_json(&gon);
             let page_title = identity_name(&gon.identity).to_owned();
             let template = LoginHtmlTemplate {
@@ -856,7 +937,6 @@ pub(crate) async fn render_spa_template(
             }
         },
         SpaTemplate::Onboarding => {
-            let gon = build_gon_data(gateway).await;
             let gon_json = script_safe_json(&gon);
             let page_title = format!("{} onboarding", identity_name(&gon.identity));
             let template = OnboardingHtmlTemplate {
@@ -929,13 +1009,12 @@ fn is_onboarding_path(path: &str) -> bool {
     path == "/onboarding" || path == "/onboarding/"
 }
 
-pub(crate) async fn onboarding_completed(gw: &GatewayState) -> bool {
-    gw.services
-        .onboarding
-        .wizard_status()
+pub(crate) async fn onboarding_completed(_gw: &GatewayState) -> bool {
+    // Check the onboarded sentinel file directly instead of going through
+    // wizard_status() which acquires a std::sync::Mutex and does filesystem
+    // I/O — both block the async runtime on low-CPU runners.
+    tokio::task::spawn_blocking(|| moltis_config::data_dir().join(".onboarded").exists())
         .await
-        .ok()
-        .and_then(|v| v.get("onboarded").and_then(|v| v.as_bool()))
         .unwrap_or(false)
 }
 

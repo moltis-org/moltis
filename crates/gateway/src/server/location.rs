@@ -31,9 +31,8 @@ impl moltis_tools::location::LocationRequester for GatewayLocationRequester {
         let event_json = serde_json::to_string(&event)?;
 
         {
-            let inner = self.state.inner.read().await;
-            let clients = &inner.clients;
-            let client = clients.get(conn_id).ok_or_else(|| {
+            let registry = self.state.client_registry.read().await;
+            let client = registry.clients.get(conn_id).ok_or_else(|| {
                 moltis_tools::Error::message(format!("no client connection for conn_id {conn_id}"))
             })?;
             if !client.send(&event_json) {

@@ -363,22 +363,29 @@ pub async fn handle_connection(
     let browser_timezone = params.timezone.clone();
 
     // Auto-persist browser timezone to USER.md on first connect (one-time).
+    // Runs in spawn_blocking because discover_and_load / resolve_user_profile
+    // do synchronous file I/O that must not block the async WS task.
     if let Some(ref tz_str) = browser_timezone
         && let Ok(tz) = tz_str.parse::<chrono_tz::Tz>()
     {
-        let write_mode = moltis_config::discover_and_load()
-            .memory
-            .user_profile_write_mode;
-        let existing_user = moltis_config::resolve_user_profile();
-        if existing_user.timezone.as_ref().is_none() && write_mode.allows_auto_write() {
-            let mut user = existing_user;
-            user.timezone = Some(moltis_config::Timezone::from(tz));
-            if let Err(e) = moltis_config::save_user_with_mode(&user, write_mode) {
-                warn!(conn_id = %conn_id, error = %e, "ws: failed to auto-persist timezone");
-            } else {
-                info!(conn_id = %conn_id, timezone = %tz_str, "ws: auto-persisted browser timezone to USER.md");
+        let tz_conn_id = conn_id.clone();
+        let tz_val = tz;
+        let tz_display = tz_str.clone();
+        tokio::task::spawn_blocking(move || {
+            let write_mode = moltis_config::discover_and_load()
+                .memory
+                .user_profile_write_mode;
+            let existing_user = moltis_config::resolve_user_profile();
+            if existing_user.timezone.as_ref().is_none() && write_mode.allows_auto_write() {
+                let mut user = existing_user;
+                user.timezone = Some(moltis_config::Timezone::from(tz_val));
+                if let Err(e) = moltis_config::save_user_with_mode(&user, write_mode) {
+                    warn!(conn_id = %tz_conn_id, error = %e, "ws: failed to auto-persist timezone");
+                } else {
+                    info!(conn_id = %tz_conn_id, timezone = %tz_display, "ws: auto-persisted browser timezone to USER.md");
+                }
             }
-        }
+        });
     }
 
     // v3 clients default to wildcard subscriptions (all events).
@@ -394,7 +401,7 @@ pub async fn handle_connection(
         connect_params: resolved_params,
         sender: client_tx.clone(),
         connected_at: now,
-        last_activity: now,
+        last_activity_ms: std::sync::atomic::AtomicU64::new(0),
         accept_language,
         remote_ip,
         timezone: browser_timezone,
@@ -534,8 +541,8 @@ pub async fn handle_connection(
             },
         };
 
-        // Touch activity timestamp.
-        if let Some(client) = state.inner.write().await.clients.get_mut(&conn_id) {
+        // Touch activity timestamp (lock-free atomic, no write lock needed).
+        if let Some(client) = state.client_registry.read().await.clients.get(&conn_id) {
             client.touch();
         }
 
@@ -560,18 +567,39 @@ pub async fn handle_connection(
                     state: Arc::clone(&state),
                     channel: req.channel,
                 };
-                let response = methods.dispatch(ctx).await;
-                if state.ws_request_logs {
-                    info!(
-                        conn_id = %conn_id,
-                        request_id = %req.id,
-                        method = %req.method,
-                        ok = response.ok,
-                        "ws: sent response frame"
-                    );
-                }
-                #[allow(clippy::unwrap_used)] // serializing known-valid struct
-                let _ = client_tx.try_send(serde_json::to_string(&response).unwrap());
+                // Spawn RPC dispatch so the read loop is never blocked by slow
+                // lock acquisition or I/O inside a handler. The response is sent
+                // back via the client_tx channel (same path as before).
+                let rpc_tx = client_tx.clone();
+                let rpc_conn_id = conn_id.clone();
+                let rpc_method = req.method.clone();
+                let rpc_request_id = req.id.clone();
+                let rpc_methods = Arc::clone(&methods);
+                let rpc_state = Arc::clone(&state);
+                tokio::spawn(async move {
+                    let response = rpc_methods.dispatch(ctx).await;
+                    if rpc_state.ws_request_logs {
+                        info!(
+                            conn_id = %rpc_conn_id,
+                            request_id = %rpc_request_id,
+                            method = %rpc_method,
+                            ok = response.ok,
+                            "ws: sent response frame"
+                        );
+                    }
+                    #[allow(clippy::unwrap_used)] // serializing known-valid struct
+                    let response_json = serde_json::to_string(&response).unwrap();
+                    let response_len = response_json.len();
+                    if rpc_tx.send(response_json).await.is_err() {
+                        warn!(
+                            conn_id = %rpc_conn_id,
+                            request_id = %rpc_request_id,
+                            method = %rpc_method,
+                            response_len,
+                            "ws: failed to queue response frame; client writer is closed"
+                        );
+                    }
+                });
             },
             GatewayFrame::Response(res) => {
                 // v4 bidirectional RPC: client responding to a server-initiated request.

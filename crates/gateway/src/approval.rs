@@ -262,6 +262,7 @@ mod tests {
             worktree_branch: None,
             sandbox_enabled: None,
             sandbox_image: None,
+            sandbox_backend: None,
             channel_binding: Some(
                 serde_json::json!({
                     "channel_type": "telegram",
@@ -302,6 +303,7 @@ mod tests {
             worktree_branch: None,
             sandbox_enabled: None,
             sandbox_image: None,
+            sandbox_backend: None,
             channel_binding: Some("{not-json".into()),
             parent_session_key: None,
             fork_point: None,
