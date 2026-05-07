@@ -55,6 +55,17 @@ impl TelephonyPlugin {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_test_account(
+        &mut self,
+        account_id: String,
+        config: TelephonyAccountConfig,
+        manager: Arc<RwLock<CallManager>>,
+    ) {
+        self.accounts
+            .insert(account_id, AccountState { config, manager });
+    }
+
     /// Access the call manager for a given account.
     pub fn call_manager(&self, account_id: &str) -> Option<Arc<RwLock<CallManager>>> {
         self.accounts
