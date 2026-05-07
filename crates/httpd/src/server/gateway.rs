@@ -636,7 +636,7 @@ pub async fn prepare_gateway(
             "/api/channels/telephony/{account_id}/answer",
             axum::routing::post(
                 move |axum::extract::Path(account_id): axum::extract::Path<String>,
-                      _headers: axum::http::HeaderMap,
+                      headers: axum::http::HeaderMap,
                       body: axum::body::Bytes| {
                     let plugin = Arc::clone(&telephony_answer_plugin);
                     async move {
@@ -656,7 +656,7 @@ pub async fn prepare_gateway(
                             let webhook_url = match telephony_webhook_url(
                                 &account_id,
                                 "answer",
-                                &_headers,
+                                &headers,
                                 plugin_guard.account_config_json(&account_id),
                                 &telephony_config_for_answer,
                             ) {
@@ -665,7 +665,7 @@ pub async fn prepare_gateway(
                                     return (StatusCode::BAD_REQUEST, "missing public webhook URL").into_response();
                                 },
                             };
-                            if let Err(e) = provider.verify_webhook(&webhook_url, &_headers, &body) {
+                            if let Err(e) = provider.verify_webhook(&webhook_url, &headers, &body) {
                                 tracing::warn!(account_id = %account_id, "telephony answer webhook verification failed: {e}");
                                 return (StatusCode::UNAUTHORIZED, "signature verification failed").into_response();
                             }
@@ -697,7 +697,19 @@ pub async fn prepare_gateway(
                         };
 
                         let provider = manager.provider().read().await;
-                        let gather_url = format!("/api/channels/telephony/{account_id}/gather");
+                        let gather_url = match telephony_webhook_url(
+                            &account_id,
+                            "gather",
+                            &headers,
+                            plugin_guard.account_config_json(&account_id),
+                            &telephony_config_for_answer,
+                        ) {
+                            Some(url) => url,
+                            None => {
+                                return (StatusCode::BAD_REQUEST, "missing public webhook URL")
+                                    .into_response();
+                            },
+                        };
 
                         if let Some(call) = existing_call {
                             // Outbound call we initiated — use its mode and message.
@@ -861,9 +873,7 @@ pub async fn prepare_gateway(
 
                                 // Continue gathering for the next input.
                                 let provider = manager.provider().read().await;
-                                let gather_url =
-                                    format!("/api/channels/telephony/{account_id}/gather");
-                                let twiml = provider.build_gather_response(None, &gather_url);
+                                let twiml = provider.build_gather_response(None, &webhook_url);
                                 (
                                     StatusCode::OK,
                                     [(axum::http::header::CONTENT_TYPE, "text/xml")],
@@ -1262,4 +1272,56 @@ pub async fn prepare_gateway(
         app,
     })
     .await
+}
+
+#[cfg(all(test, feature = "telephony"))]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue};
+
+    use crate::server::gateway::telephony_webhook_url;
+
+    #[test]
+    fn telephony_webhook_url_builds_absolute_url_from_forwarded_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-host",
+            HeaderValue::from_static("calls.example.com"),
+        );
+        headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
+
+        let url = telephony_webhook_url(
+            "default",
+            "gather",
+            &headers,
+            None,
+            &moltis_config::schema::MoltisConfig::default(),
+        )
+        .unwrap_or_default();
+
+        assert_eq!(
+            url,
+            "https://calls.example.com/api/channels/telephony/default/gather"
+        );
+    }
+
+    #[test]
+    fn telephony_webhook_url_prefers_account_webhook_base() {
+        let account_config = serde_json::json!({
+            "webhook_url": "https://phone.example.com/base/",
+        });
+
+        let url = telephony_webhook_url(
+            "default",
+            "answer",
+            &HeaderMap::new(),
+            Some(account_config),
+            &moltis_config::schema::MoltisConfig::default(),
+        )
+        .unwrap_or_default();
+
+        assert_eq!(
+            url,
+            "https://phone.example.com/base/api/channels/telephony/default/answer"
+        );
+    }
 }
