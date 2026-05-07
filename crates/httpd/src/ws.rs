@@ -1211,8 +1211,10 @@ async fn receive_challenge_response(
         }
         match tokio::time::timeout(remaining, ws_rx.next()).await {
             Ok(Some(Ok(Message::Text(text)))) => {
-                let frame: serde_json::Value =
-                    serde_json::from_str(&text).map_err(|e| format!("invalid JSON: {e}"))?;
+                let frame: serde_json::Value = match serde_json::from_str(&text) {
+                    Ok(frame) => frame,
+                    Err(_) => continue,
+                };
                 let method = frame.get("method").and_then(|v| v.as_str()).unwrap_or("");
                 if method != "node.auth.challenge-response" {
                     continue;
@@ -1338,6 +1340,7 @@ mod tests {
     #[tokio::test]
     async fn receive_challenge_response_skips_unrelated_text_frames() {
         let frames = vec![
+            Ok(Message::Text("node-status-ping".into())),
             Ok(Message::Text(
                 serde_json::json!({
                     "type": "event",
