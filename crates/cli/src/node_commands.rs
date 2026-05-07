@@ -326,25 +326,40 @@ pub async fn handle_node(action: NodeAction) -> Result<()> {
                 working_dir: None,
             };
 
-            // Just connect and immediately disconnect — the pinning happens
-            // during the connect handshake on the gateway side.
+            // Connect with both token and key. The gateway pins the key
+            // during the handshake. We only clear the token if the handshake
+            // succeeds — otherwise the node would be locked out.
             let node = moltis_node_host::NodeHost::new(node_config);
-            match tokio::time::timeout(Duration::from_secs(15), node.run()).await {
-                Ok(Ok(())) | Err(_) => {},
+            let handshake_ok = match tokio::time::timeout(Duration::from_secs(15), node.run()).await
+            {
+                // Clean shutdown (e.g. server closed after idle) — handshake succeeded.
+                Ok(Ok(())) => true,
+                // Timeout — the node connected and was running, handshake succeeded.
+                Err(_) => true,
                 Ok(Err(e)) => {
-                    // Connection errors are expected when we disconnect quickly.
-                    // The key should have been pinned during the handshake.
-                    tracing::debug!(error = %e, "upgrade-auth connection ended");
+                    let msg = e.to_string();
+                    // Handshake/auth errors mean pinning did NOT happen.
+                    if msg.contains("handshake failed")
+                        || msg.contains("authentication failed")
+                        || msg.contains("connection refused")
+                    {
+                        eprintln!("Error: upgrade-auth failed — {e}");
+                        eprintln!("Device token was NOT removed. Fix the issue and retry.");
+                        return Err(e.into());
+                    }
+                    // Other errors (e.g. "connection closed during message loop")
+                    // are post-handshake — pinning already happened.
+                    true
                 },
+            };
+
+            if handshake_ok {
+                let mut updated_config = config;
+                updated_config.device_token = String::new();
+                updated_config.save(&data_dir)?;
+                println!("Key pinned. Device token removed from node.json.");
+                println!("Future connections will use Ed25519 challenge-response auth.");
             }
-
-            // Remove the device token from node.json.
-            let mut updated_config = config;
-            updated_config.device_token = String::new();
-            updated_config.save(&data_dir)?;
-
-            println!("Key pinned. Device token removed from node.json.");
-            println!("Future connections will use Ed25519 challenge-response auth.");
             Ok(())
         },
 

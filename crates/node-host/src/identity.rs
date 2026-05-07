@@ -1,14 +1,12 @@
 //! Ed25519 node identity: keypair generation, persistence, and fingerprinting.
 //!
 //! Each node generates a unique Ed25519 keypair on first run. The private key
-//! is stored at `~/.moltis/node_key` (mode 0600), the public key at
+//! is stored at `~/.moltis/node_key` (mode 0600 on Unix), the public key at
 //! `~/.moltis/node_key.pub`. The gateway pins the public key on first approval
 //! (TOFU model) and verifies subsequent connections via challenge-response.
 
 use std::{
-    fmt,
-    fs::{self, Permissions},
-    os::unix::fs::PermissionsExt,
+    fmt, fs,
     path::{Path, PathBuf},
 };
 
@@ -81,7 +79,6 @@ pub fn fingerprint(verifying_key: &VerifyingKey) -> String {
 
 const PRIVATE_KEY_FILENAME: &str = "node_key";
 const PUBLIC_KEY_FILENAME: &str = "node_key.pub";
-const REQUIRED_MODE: u32 = 0o600;
 
 /// Resolve the path to the private key file inside `dir`.
 fn private_key_path(dir: &Path) -> PathBuf {
@@ -95,7 +92,7 @@ fn public_key_path(dir: &Path) -> PathBuf {
 
 /// Load an existing identity from `dir`, or generate and persist a new one.
 ///
-/// `dir` is typically `~/.moltis/` (from `moltis_config::config_dir()`).
+/// `dir` is typically `~/.moltis/` (from `moltis_config::data_dir()`).
 ///
 /// On Unix the private key file is created with mode 0600. If the file exists
 /// with wrong permissions, this function returns an error rather than silently
@@ -114,7 +111,8 @@ pub fn load_or_create(dir: &Path) -> Result<NodeIdentity> {
 pub fn load(dir: &Path) -> Result<NodeIdentity> {
     let priv_path = private_key_path(dir);
 
-    // Check permissions before reading.
+    // Check permissions before reading (Unix only).
+    #[cfg(unix)]
     check_permissions(&priv_path)?;
 
     let seed_bytes = fs::read(&priv_path).map_err(|e| {
@@ -169,12 +167,7 @@ fn generate_and_save(dir: &Path) -> Result<NodeIdentity> {
             priv_path.display()
         ))
     })?;
-    fs::set_permissions(&priv_path, Permissions::from_mode(REQUIRED_MODE)).map_err(|e| {
-        Error::Config(format!(
-            "failed to set permissions on {}: {e}",
-            priv_path.display()
-        ))
-    })?;
+    set_owner_only_permissions(&priv_path)?;
 
     // Write public key (raw 32-byte public key).
     let pub_path = public_key_path(dir);
@@ -188,8 +181,30 @@ fn generate_and_save(dir: &Path) -> Result<NodeIdentity> {
     Ok(NodeIdentity::from_signing_key(signing_key))
 }
 
+/// Set file permissions to owner-only read/write (0600 on Unix, no-op on other platforms).
+#[cfg(unix)]
+fn set_owner_only_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| {
+        Error::Config(format!(
+            "failed to set permissions on {}: {e}",
+            path.display()
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+fn set_owner_only_permissions(_path: &Path) -> Result<()> {
+    // On Windows, file ACLs are inherited from the parent directory.
+    // The user's home directory is typically already owner-only.
+    Ok(())
+}
+
 /// Verify the private key file has mode 0600 (owner-only read/write).
+#[cfg(unix)]
 fn check_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
     let metadata = fs::metadata(path).map_err(|e| {
         Error::Config(format!(
             "failed to read metadata for {}: {e}",
@@ -198,9 +213,9 @@ fn check_permissions(path: &Path) -> Result<()> {
     })?;
 
     let mode = metadata.permissions().mode() & 0o777;
-    if mode != REQUIRED_MODE {
+    if mode != 0o600 {
         return Err(Error::Config(format!(
-            "node private key {} has permissions {mode:04o}, expected {REQUIRED_MODE:04o} — \
+            "node private key {} has permissions {mode:04o}, expected 0600 — \
              fix with: chmod 600 {}",
             path.display(),
             path.display()
@@ -263,14 +278,17 @@ mod tests {
             .expect("signature should be valid");
     }
 
+    #[cfg(unix)]
     #[test]
     fn wrong_permissions_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+
         let dir = tempfile::tempdir().unwrap();
         let _identity = load_or_create(dir.path()).unwrap();
 
         // Widen permissions.
         let priv_path = dir.path().join("node_key");
-        fs::set_permissions(&priv_path, Permissions::from_mode(0o644)).unwrap();
+        fs::set_permissions(&priv_path, fs::Permissions::from_mode(0o644)).unwrap();
 
         let err = load(dir.path()).unwrap_err();
         let msg = err.to_string();
@@ -285,7 +303,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let priv_path = dir.path().join("node_key");
         fs::write(&priv_path, b"too-short").unwrap();
-        fs::set_permissions(&priv_path, Permissions::from_mode(0o600)).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&priv_path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
 
         let err = load(dir.path()).unwrap_err();
         assert!(
