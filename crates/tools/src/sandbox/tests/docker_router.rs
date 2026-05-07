@@ -51,9 +51,7 @@ async fn test_apple_container_home_read_uses_mounted_host_path() {
         scope: SandboxScope::Session,
         key: "apple-home-read".into(),
     };
-    let guest_file = guest_visible_sandbox_home_persistence_host_dir(&config, &id)
-        .unwrap()
-        .join("history.txt");
+    let guest_file = PathBuf::from(SANDBOX_HOME_DIR).join("history.txt");
     let host_file = sandbox_home_persistence_host_dir(&config, Some("container"), &id)
         .unwrap()
         .join("history.txt");
@@ -85,9 +83,7 @@ async fn test_apple_container_home_write_uses_mounted_host_path() {
         scope: SandboxScope::Session,
         key: "apple-home-write".into(),
     };
-    let guest_file = guest_visible_sandbox_home_persistence_host_dir(&config, &id)
-        .unwrap()
-        .join("history.txt");
+    let guest_file = PathBuf::from(SANDBOX_HOME_DIR).join("history.txt");
     let host_file = sandbox_home_persistence_host_dir(&config, Some("container"), &id)
         .unwrap()
         .join("history.txt");
@@ -123,9 +119,7 @@ async fn test_apple_container_home_list_remaps_mounted_host_paths() {
         scope: SandboxScope::Session,
         key: "apple-home-list".into(),
     };
-    let guest_root = guest_visible_sandbox_home_persistence_host_dir(&config, &id)
-        .unwrap()
-        .join("notes");
+    let guest_root = PathBuf::from(SANDBOX_HOME_DIR).join("notes");
     let host_root = sandbox_home_persistence_host_dir(&config, Some("container"), &id)
         .unwrap()
         .join("notes");
