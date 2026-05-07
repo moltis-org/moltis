@@ -1441,9 +1441,22 @@ mod tests {
         assert_eq!(sent[0].to, "-100123:7");
         assert_eq!(sent[0].reply_to.as_deref(), Some("42"));
         assert_eq!(sent[0].payload.text, "Generated image: fox");
-        let media = sent[0].payload.media.as_ref().expect("media payload");
-        assert_eq!(media.mime_type, "image/png");
-        assert_eq!(media.url, "data:image/png;base64,cG5n");
+        assert_eq!(
+            sent[0]
+                .payload
+                .media
+                .as_ref()
+                .map(|media| media.mime_type.as_str()),
+            Some("image/png")
+        );
+        assert_eq!(
+            sent[0]
+                .payload
+                .media
+                .as_ref()
+                .map(|media| media.url.as_str()),
+            Some("data:image/png;base64,cG5n")
+        );
     }
 
     #[tokio::test]
@@ -1474,8 +1487,21 @@ mod tests {
         assert_eq!(sent[0].to, "!room:example.org");
         assert_eq!(sent[0].reply_to.as_deref(), Some("$event"));
         assert_eq!(sent[0].payload.text, "Generated image: logo");
-        let media = sent[0].payload.media.as_ref().expect("media payload");
-        assert_eq!(media.mime_type, "image/webp");
-        assert_eq!(media.url, "data:image/webp;base64,d2VicA==");
+        assert_eq!(
+            sent[0]
+                .payload
+                .media
+                .as_ref()
+                .map(|media| media.mime_type.as_str()),
+            Some("image/webp")
+        );
+        assert_eq!(
+            sent[0]
+                .payload
+                .media
+                .as_ref()
+                .map(|media| media.url.as_str()),
+            Some("data:image/webp;base64,d2VicA==")
+        );
     }
 }
