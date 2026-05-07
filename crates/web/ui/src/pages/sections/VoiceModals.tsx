@@ -48,7 +48,12 @@ export interface VoiceProviderData {
 	keyUrl?: string;
 	keyUrlLabel?: string;
 	hint?: string;
-	capabilities?: { baseUrl?: boolean };
+	capabilities?: {
+		baseUrl?: boolean;
+		customModel?: boolean;
+		modelChoices?: string[];
+		realtimeModelChoices?: string[];
+	};
 	settings?: { baseUrl?: string; voiceId?: string; voice?: string; model?: string; languageCode?: string };
 }
 
@@ -475,6 +480,9 @@ export function AddVoiceProviderModal({
 	const isElevenLabsProvider = selectedProvider === "elevenlabs" || selectedProvider === "elevenlabs-stt";
 	const supportsTtsVoiceSettings = providerMeta?.type === "tts";
 	const supportsBaseUrl = providerMeta?.capabilities?.baseUrl === true;
+	const supportsModelSettings = supportsTtsVoiceSettings || providerMeta?.capabilities?.customModel === true;
+	const modelChoices = providerMeta?.capabilities?.modelChoices || [];
+	const realtimeModelChoices = providerMeta?.capabilities?.realtimeModelChoices || [];
 
 	function onClose(): void {
 		voiceShowAddModal.value = false;
@@ -495,7 +503,9 @@ export function AddVoiceProviderModal({
 			typeof providerMeta?.settings?.baseUrl === "string" && providerMeta.settings.baseUrl.trim().length > 0;
 		const hasBaseUrl = supportsBaseUrl && (trimmedBaseUrl.length > 0 || hadBaseUrl);
 		const hasSettings =
-			(supportsTtsVoiceSettings && (voiceValue.trim() || modelValue.trim() || languageCodeValue.trim())) || hasBaseUrl;
+			(supportsTtsVoiceSettings && (voiceValue.trim() || languageCodeValue.trim())) ||
+			(supportsModelSettings && modelValue.trim()) ||
+			hasBaseUrl;
 		if (!(hasApiKey || hasSettings)) {
 			setError("Provide an API key, base URL, or at least one provider setting.");
 			return;
@@ -506,7 +516,7 @@ export function AddVoiceProviderModal({
 		const voiceOpts = {
 			baseUrl: hasBaseUrl ? trimmedBaseUrl : undefined,
 			voice: supportsTtsVoiceSettings ? voiceValue.trim() || undefined : undefined,
-			model: supportsTtsVoiceSettings ? modelValue.trim() || undefined : undefined,
+			model: supportsModelSettings ? modelValue.trim() || undefined : undefined,
 			languageCode: supportsTtsVoiceSettings ? languageCodeValue.trim() || undefined : undefined,
 		};
 		const req = hasApiKey
@@ -667,7 +677,11 @@ export function AddVoiceProviderModal({
 										))}
 									</datalist>
 								) : null}
+							</div>
+						) : null}
 
+						{supportsModelSettings ? (
+							<div className="flex flex-col gap-2">
 								<label className="text-xs text-[var(--muted)]">Model</label>
 								{isElevenLabsProvider && elevenlabsCatalog.models.length > 0 ? (
 									<select className="provider-key-input w-full" onChange={(e: Event) => setModelValue(targetValue(e))}>
@@ -684,7 +698,13 @@ export function AddVoiceProviderModal({
 									className="provider-key-input w-full"
 									value={modelValue}
 									onInput={(e: Event) => setModelValue(targetValue(e))}
-									list={isElevenLabsProvider ? "elevenlabs-model-options" : undefined}
+									list={
+										isElevenLabsProvider
+											? "elevenlabs-model-options"
+											: modelChoices.length > 0
+												? "voice-model-options"
+												: undefined
+									}
 									placeholder="model (optional)"
 								/>
 								{isElevenLabsProvider ? (
@@ -696,19 +716,32 @@ export function AddVoiceProviderModal({
 										))}
 									</datalist>
 								) : null}
-
-								{selectedProvider === "google" || selectedProvider === "google-tts" ? (
-									<div className="flex flex-col gap-2">
-										<label className="text-xs text-[var(--muted)]">Language Code</label>
-										<input
-											type="text"
-											className="provider-key-input w-full"
-											value={languageCodeValue}
-											onInput={(e: Event) => setLanguageCodeValue(targetValue(e))}
-											placeholder="en-US (optional)"
-										/>
+								{!isElevenLabsProvider && modelChoices.length > 0 ? (
+									<datalist id="voice-model-options">
+										{modelChoices.map((model) => (
+											<option key={model} value={model} />
+										))}
+									</datalist>
+								) : null}
+								{realtimeModelChoices.length > 0 ? (
+									<div className="rounded border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs text-[var(--muted)]">
+										OpenAI Realtime models: {realtimeModelChoices.join(", ")}. These use the Realtime API, not this
+										record-and-transcribe provider.
 									</div>
 								) : null}
+							</div>
+						) : null}
+
+						{supportsTtsVoiceSettings && (selectedProvider === "google" || selectedProvider === "google-tts") ? (
+							<div className="flex flex-col gap-2">
+								<label className="text-xs text-[var(--muted)]">Language Code</label>
+								<input
+									type="text"
+									className="provider-key-input w-full"
+									value={languageCodeValue}
+									onInput={(e: Event) => setLanguageCodeValue(targetValue(e))}
+									placeholder="en-US (optional)"
+								/>
 							</div>
 						) : null}
 

@@ -421,7 +421,7 @@ providers = []          # Optional UI allowlist, empty = show all STT providers
 # No api_key needed if OpenAI is configured as an LLM provider or OPENAI_API_KEY is set.
 # api_key = "sk-..."
 # base_url = "http://10.1.2.30:8001"  # Override for OpenAI-compatible servers (e.g. faster-whisper-server)
-model = "whisper-1"
+model = "whisper-1"  # or "gpt-4o-transcribe", "gpt-4o-mini-transcribe"
 language = "en"     # Optional ISO 639-1 hint
 
 [voice.stt.groq]
@@ -463,6 +463,12 @@ language = "en"
 model_dir = "~/.moltis/models/sherpa-onnx-whisper-tiny.en"  # required
 language = "en"
 ```
+
+OpenAI's `gpt-realtime-2`, `gpt-realtime-translate`, and `gpt-realtime-whisper`
+models are Realtime API models. The current Moltis OpenAI STT provider records a
+clip and sends it to `/audio/transcriptions`, so those Realtime model IDs are
+shown in voice settings as Realtime-only references rather than selectable clip
+transcription defaults.
 
 ### Local Provider Setup
 

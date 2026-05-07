@@ -460,7 +460,7 @@ pub struct VoiceWhisperConfig {
     pub api_key: Option<Secret<String>>,
     /// Override the Whisper endpoint for compatible local servers.
     pub base_url: Option<String>,
-    /// Model to use (whisper-1).
+    /// Model to use (whisper-1, gpt-4o-transcribe, gpt-4o-mini-transcribe).
     pub model: Option<String>,
     /// Language hint (ISO 639-1 code).
     pub language: Option<String>,

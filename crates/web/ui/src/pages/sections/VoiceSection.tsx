@@ -722,7 +722,9 @@ function VoiceProviderRow({
 				</div>
 				<span className="text-xs text-[var(--muted)]">{meta.description}</span>
 				{provider.settingsSummary ? (
-					<span className="text-xs text-[var(--muted)]">Voice: {provider.settingsSummary}</span>
+					<span className="text-xs text-[var(--muted)]">
+						{type === "tts" ? "Voice" : "Settings"}: {provider.settingsSummary}
+					</span>
 				) : null}
 				{provider.binaryPath ? (
 					<span className="text-xs text-[var(--muted)]">Found at: {provider.binaryPath}</span>
