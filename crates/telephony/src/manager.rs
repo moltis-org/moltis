@@ -23,9 +23,9 @@ use crate::{
 /// and enforces max-duration timeouts.
 pub struct CallManager {
     /// Active calls keyed by internal `CallId`.
-    active_calls: DashMap<CallId, CallRecord>,
+    active_calls: Arc<DashMap<CallId, CallRecord>>,
     /// Provider call ID → internal `CallId`.
-    provider_index: DashMap<String, CallId>,
+    provider_index: Arc<DashMap<String, CallId>>,
     /// Max-duration timeout handles.
     timeout_handles: DashMap<CallId, tokio::task::JoinHandle<()>>,
     /// The telephony provider backend.
@@ -37,8 +37,8 @@ pub struct CallManager {
 impl CallManager {
     pub fn new(provider: Box<dyn TelephonyProvider>, max_duration_secs: u64) -> Self {
         Self {
-            active_calls: DashMap::new(),
-            provider_index: DashMap::new(),
+            active_calls: Arc::new(DashMap::new()),
+            provider_index: Arc::new(DashMap::new()),
             timeout_handles: DashMap::new(),
             provider: Arc::new(RwLock::new(provider)),
             max_duration_secs,
@@ -274,34 +274,31 @@ impl CallManager {
     fn start_timeout(&self, call_id: &str) {
         let call_id_owned = call_id.to_string();
         let call_id_key = call_id_owned.clone();
-        let calls = self.active_calls.clone();
+        let calls = Arc::clone(&self.active_calls);
         let provider = Arc::clone(&self.provider);
-        let provider_index = self.provider_index.clone();
+        let provider_index = Arc::clone(&self.provider_index);
         let max_secs = self.max_duration_secs;
 
         let handle = tokio::spawn(async move {
             let call_id = call_id_owned;
             tokio::time::sleep(std::time::Duration::from_secs(max_secs)).await;
-            if let Some(mut rec) = calls.get_mut(&call_id)
+            let provider_call_id = if let Some(mut rec) = calls.get_mut(&call_id)
                 && !rec.state.is_terminal()
             {
                 warn!(call_id = %call_id, "max duration exceeded, hanging up");
                 rec.state = CallState::Timeout;
                 rec.ended_at = Some(OffsetDateTime::now_utc());
                 rec.end_reason = Some(CallEndReason::Timeout);
+                rec.provider_call_id.clone()
+            } else {
+                None
+            };
 
-                if let Some(pid) = &rec.provider_call_id {
-                    let pid = pid.clone();
-                    drop(rec);
-                    let _ = provider.read().await.hangup_call(&pid).await;
-                }
+            if let Some(pid) = provider_call_id {
+                provider_index.remove(&pid);
+                let _ = provider.read().await.hangup_call(&pid).await;
             }
-            // Clean up the index entry.
-            if let Some(rec) = calls.get(&call_id)
-                && let Some(pid) = &rec.provider_call_id
-            {
-                provider_index.remove(pid);
-            }
+            calls.remove(&call_id);
         });
 
         self.timeout_handles.insert(call_id_key, handle);
@@ -454,6 +451,23 @@ mod tests {
         mgr.hangup(&call_id).await.unwrap_or_else(|e| panic!("{e}"));
         // Both active_calls and provider_index should be cleaned up
         assert!(mgr.get_call(&call_id).is_none());
+    }
+
+    #[tokio::test]
+    async fn timeout_cleans_up_live_call_maps() {
+        let mgr = CallManager::new(Box::new(MockProvider::new()), 0);
+        let call_id = mgr.register_inbound("PROV-TIMEOUT", "+1", "+2", "acct");
+
+        for _ in 0..20 {
+            if mgr.get_call(&call_id).is_none() && mgr.resolve_call_id("PROV-TIMEOUT").is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        assert!(mgr.get_call(&call_id).is_none());
+        assert!(mgr.resolve_call_id("PROV-TIMEOUT").is_none());
+        assert!(mgr.active_calls().is_empty());
     }
 
     #[tokio::test]
