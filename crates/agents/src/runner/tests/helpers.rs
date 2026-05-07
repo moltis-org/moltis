@@ -57,6 +57,30 @@ impl HookHandler for RecordingHook {
     }
 }
 
+pub(super) struct RewriteToolArgsHook {
+    pub replacement: serde_json::Value,
+}
+
+#[async_trait]
+impl HookHandler for RewriteToolArgsHook {
+    fn name(&self) -> &str {
+        "rewrite-tool-args-hook"
+    }
+
+    fn events(&self) -> &[HookEvent] {
+        static EVENTS: [HookEvent; 1] = [HookEvent::BeforeToolCall];
+        &EVENTS
+    }
+
+    async fn handle(
+        &self,
+        _event: HookEvent,
+        _payload: &HookPayload,
+    ) -> moltis_common::error::Result<HookAction> {
+        Ok(HookAction::ModifyPayload(self.replacement.clone()))
+    }
+}
+
 // ── Mock providers ──────────────────────────────────────────────────────
 
 /// A mock provider that returns text on the first call.
@@ -132,6 +156,7 @@ impl LlmProvider for ToolCallingProvider {
                     id: "call_1".into(),
                     name: "echo_tool".into(),
                     arguments: serde_json::json!({"text": "hi"}),
+                    argument_diagnostic: None,
                     metadata: None,
                 }],
                 usage: Usage {
@@ -523,6 +548,7 @@ impl LlmProvider for PreemptiveOverflowProvider {
                     id: "overflow_call".into(),
                     name: "overflow_tool".into(),
                     arguments: serde_json::json!({}),
+                    argument_diagnostic: None,
                     metadata: None,
                 }],
                 usage: Usage::default(),
@@ -578,6 +604,7 @@ impl LlmProvider for VisionEnabledProvider {
                     id: "call_screenshot".into(),
                     name: "screenshot_tool".into(),
                     arguments: serde_json::json!({}),
+                    argument_diagnostic: None,
                     metadata: None,
                 }],
                 usage: Usage {

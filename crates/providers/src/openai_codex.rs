@@ -13,6 +13,7 @@ use {
 
 use moltis_agents::model::{
     ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
+    decode_tool_call_arguments_from_str,
 };
 
 use crate::openai_compat::to_responses_api_tools;
@@ -761,11 +762,12 @@ impl LlmProvider for OpenAiCodexProvider {
         // Build tool calls from collected parts
         for i in 0..fn_call_ids.len() {
             let args_str = &fn_call_args[i];
-            let arguments = serde_json::from_str(args_str).unwrap_or(serde_json::json!({}));
+            let decoded = decode_tool_call_arguments_from_str(args_str);
             tool_calls.push(ToolCall {
                 id: fn_call_ids[i].clone(),
                 name: fn_call_names[i].clone(),
-                arguments,
+                arguments: decoded.arguments,
+                argument_diagnostic: decoded.diagnostic,
                 metadata: None,
             });
         }
@@ -1140,6 +1142,7 @@ mod tests {
                 id: "call_1".to_string(),
                 name: "get_time".to_string(),
                 arguments: serde_json::json!({}),
+                argument_diagnostic: None,
                 metadata: None,
             }]),
             ChatMessage::tool("call_1", "12:00"),
@@ -1270,6 +1273,7 @@ mod tests {
                 id: "call_screenshot".to_string(),
                 name: "browser_screenshot".to_string(),
                 arguments: serde_json::json!({}),
+                argument_diagnostic: None,
                 metadata: None,
             }]),
             ChatMessage::tool("call_screenshot", &tool_output),

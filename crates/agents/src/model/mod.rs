@@ -6,7 +6,8 @@ pub use moltis_config::schema::ReasoningEffort;
 mod types;
 pub use types::{
     CompletionResponse, MAX_CAPTURED_PROVIDER_RAW_EVENTS, ModelMetadata, TOOL_CALL_METADATA_KEYS,
-    ToolCall, Usage, push_capped_provider_raw_event,
+    ToolCall, ToolCallArgumentDiagnostic, ToolCallArgumentSource, Usage,
+    push_capped_provider_raw_event,
 };
 
 mod chat;
@@ -39,12 +40,92 @@ fn document_absolute_path_from_media_ref(media_ref: &str) -> String {
 /// when it is already structured and only parse when the payload is a string.
 #[must_use]
 pub fn decode_tool_call_arguments(arguments: Option<&serde_json::Value>) -> serde_json::Value {
+    decode_tool_call_arguments_with_diagnostic(arguments).arguments
+}
+
+#[derive(Debug, Clone)]
+pub struct DecodedToolCallArguments {
+    pub arguments: serde_json::Value,
+    pub diagnostic: Option<ToolCallArgumentDiagnostic>,
+}
+
+/// Decode tool-call arguments while preserving raw-provider diagnostics.
+///
+/// Invalid strings still decode to `{}` so the existing runner validation can
+/// reject the call against the tool schema, but callers can now distinguish
+/// empty, malformed, repaired, and genuinely object-shaped arguments.
+#[must_use]
+pub fn decode_tool_call_arguments_with_diagnostic(
+    arguments: Option<&serde_json::Value>,
+) -> DecodedToolCallArguments {
     match arguments {
-        Some(serde_json::Value::String(raw)) => serde_json::from_str(raw)
-            .unwrap_or_else(|_| serde_json::Value::Object(Default::default())),
-        Some(serde_json::Value::Null) | None => serde_json::Value::Object(Default::default()),
-        Some(value) => value.clone(),
+        Some(serde_json::Value::String(raw)) => decode_tool_call_arguments_from_str(raw),
+        Some(serde_json::Value::Null) | None => DecodedToolCallArguments {
+            arguments: serde_json::Value::Object(Default::default()),
+            diagnostic: Some(ToolCallArgumentDiagnostic {
+                source: ToolCallArgumentSource::NullOrMissing,
+                raw_len: None,
+                raw_preview: None,
+                parse_error: None,
+            }),
+        },
+        Some(value) => DecodedToolCallArguments {
+            arguments: value.clone(),
+            diagnostic: None,
+        },
     }
+}
+
+/// Decode an OpenAI-style function-call argument string.
+#[must_use]
+pub fn decode_tool_call_arguments_from_str(raw: &str) -> DecodedToolCallArguments {
+    if raw.trim().is_empty() {
+        return DecodedToolCallArguments {
+            arguments: serde_json::Value::Object(Default::default()),
+            diagnostic: Some(ToolCallArgumentDiagnostic {
+                source: ToolCallArgumentSource::EmptyString,
+                raw_len: Some(raw.len()),
+                raw_preview: Some(raw_argument_preview(raw)),
+                parse_error: None,
+            }),
+        };
+    }
+
+    match serde_json::from_str(raw) {
+        Ok(arguments) => DecodedToolCallArguments {
+            arguments,
+            diagnostic: None,
+        },
+        Err(error) => match crate::json_repair::repair_json(raw) {
+            Some(arguments) => DecodedToolCallArguments {
+                arguments,
+                diagnostic: Some(ToolCallArgumentDiagnostic {
+                    source: ToolCallArgumentSource::RepairedString,
+                    raw_len: Some(raw.len()),
+                    raw_preview: Some(raw_argument_preview(raw)),
+                    parse_error: Some(error.to_string()),
+                }),
+            },
+            None => DecodedToolCallArguments {
+                arguments: serde_json::Value::Object(Default::default()),
+                diagnostic: Some(ToolCallArgumentDiagnostic {
+                    source: ToolCallArgumentSource::MalformedString,
+                    raw_len: Some(raw.len()),
+                    raw_preview: Some(raw_argument_preview(raw)),
+                    parse_error: Some(error.to_string()),
+                }),
+            },
+        },
+    }
+}
+
+fn raw_argument_preview(raw: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 160;
+    let mut preview: String = raw.chars().take(MAX_PREVIEW_CHARS).collect();
+    if raw.chars().count() > MAX_PREVIEW_CHARS {
+        preview.push_str("...");
+    }
+    preview
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -100,6 +181,40 @@ mod tests {
         let decoded = decode_tool_call_arguments(Some(&arguments));
 
         assert_eq!(decoded, arguments);
+    }
+
+    #[test]
+    fn decode_tool_call_arguments_repairs_malformed_json_string() {
+        let decoded = decode_tool_call_arguments_from_str(r#"{"command":"git status""#);
+
+        assert_eq!(
+            decoded.arguments,
+            serde_json::json!({"command": "git status"})
+        );
+        let diagnostic = decoded.diagnostic.unwrap();
+        assert_eq!(diagnostic.source, ToolCallArgumentSource::RepairedString);
+        assert!(diagnostic.parse_error.is_some());
+    }
+
+    #[test]
+    fn decode_tool_call_arguments_preserves_empty_string_diagnostic() {
+        let decoded = decode_tool_call_arguments_from_str("");
+
+        assert_eq!(decoded.arguments, serde_json::json!({}));
+        let diagnostic = decoded.diagnostic.unwrap();
+        assert_eq!(diagnostic.source, ToolCallArgumentSource::EmptyString);
+        assert_eq!(diagnostic.raw_len, Some(0));
+    }
+
+    #[test]
+    fn decode_tool_call_arguments_preserves_unrecoverable_string_diagnostic() {
+        let decoded = decode_tool_call_arguments_from_str("not json at all");
+
+        assert_eq!(decoded.arguments, serde_json::json!({}));
+        let diagnostic = decoded.diagnostic.unwrap();
+        assert_eq!(diagnostic.source, ToolCallArgumentSource::MalformedString);
+        assert!(diagnostic.parse_error.is_some());
+        assert_eq!(diagnostic.raw_preview.as_deref(), Some("not json at all"));
     }
 
     #[test]
@@ -177,6 +292,7 @@ mod tests {
             id: "call_1".into(),
             name: "exec".into(),
             arguments: serde_json::json!({"cmd": "ls"}),
+            argument_diagnostic: None,
             metadata: None,
         }]);
         let val = msg.to_openai_value();
@@ -413,6 +529,7 @@ mod tests {
                     id: "call_1".to_string(),
                     name: "exec".to_string(),
                     arguments: serde_json::json!({}),
+                    argument_diagnostic: None,
                     metadata: None,
                 }],
                 reasoning: None,
@@ -436,6 +553,7 @@ mod tests {
                     "multiline": false,
                     "type": null
                 }),
+                argument_diagnostic: None,
                 metadata: None,
             }],
             reasoning: None,
@@ -831,6 +949,7 @@ mod tests {
             id: "call_1".into(),
             name: "exec".into(),
             arguments: serde_json::json!({"cmd": "ls"}),
+            argument_diagnostic: None,
             metadata: Some(meta),
         }]);
         let tcs = msg.to_openai_value()["tool_calls"]
@@ -844,6 +963,7 @@ mod tests {
             id: "call_2".into(),
             name: "exec".into(),
             arguments: serde_json::json!({}),
+            argument_diagnostic: None,
             metadata: None,
         }]);
         let tcs2 = msg2.to_openai_value()["tool_calls"]
@@ -903,6 +1023,7 @@ mod tests {
                 id: "call_1".into(),
                 name: "exec".into(),
                 arguments: serde_json::json!({}),
+                argument_diagnostic: None,
                 metadata: Some(meta),
             }],
             reasoning: None,

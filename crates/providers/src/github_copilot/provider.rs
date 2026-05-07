@@ -26,6 +26,7 @@ use {
     },
     moltis_agents::model::{
         ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage,
+        decode_tool_call_arguments_from_str,
     },
 };
 
@@ -806,12 +807,12 @@ fn stream_events_to_completion(events: Vec<StreamEvent>) -> CompletionResponse {
             },
             StreamEvent::ToolCallComplete { index } => {
                 if let Some(entry) = pending_tools.get(index) {
-                    let arguments: serde_json::Value =
-                        serde_json::from_str(&entry.2).unwrap_or_default();
+                    let decoded = decode_tool_call_arguments_from_str(&entry.2);
                     tool_calls.push(ToolCall {
                         id: entry.0.clone(),
                         name: entry.1.clone(),
-                        arguments,
+                        arguments: decoded.arguments,
+                        argument_diagnostic: decoded.diagnostic,
                         metadata: None,
                     });
                 }

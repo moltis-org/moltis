@@ -25,7 +25,8 @@ use super::{
     RunnerEvent, UsageAccumulator, apply_loop_detector_intervention,
     channel_binding_from_tool_context, dispatch_after_llm_call_hook, empty_tool_name_retry_prompt,
     explicit_shell_command_from_user_content, find_empty_tool_name_call, finish_agent_run,
-    has_named_tool_call, is_substantive_answer_text, record_answer_text, resolve_tool_lookup,
+    has_named_tool_call, is_substantive_answer_text, log_tool_argument_diagnostic,
+    record_answer_text, resolve_tool_lookup,
     retry::{
         RATE_LIMIT_MAX_RETRIES, is_context_window_error, next_retry_delay_ms,
         resolve_agent_max_iterations,
@@ -342,6 +343,7 @@ pub async fn run_agent_loop_with_context(
                 id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
+                argument_diagnostic: None,
                 metadata: None,
             }];
         }
@@ -495,6 +497,7 @@ pub async fn run_agent_loop_with_context(
                         args_obj.insert(k.clone(), v.clone());
                     }
                 }
+                log_tool_argument_diagnostic(&tc_name, tc.argument_diagnostic.as_ref());
 
                 // Pre-dispatch validation against the tool's schema.
                 let validation_error: Option<String> = if let Some(ref t) = tool {
@@ -504,10 +507,15 @@ pub async fn run_agent_loop_with_context(
                         Err(e) => {
                             warn!(
                                 tool = %tc_name,
-                                summary = %e.short_summary(),
+                                summary = %e.short_summary_with_argument_diagnostic(
+                                    tc.argument_diagnostic.as_ref(),
+                                ),
                                 "tool call rejected by pre-dispatch schema validation"
                             );
-                            Some(e.to_llm_error_message(&tc_name))
+                            Some(e.to_llm_error_message_with_argument_diagnostic(
+                                &tc_name,
+                                tc.argument_diagnostic.as_ref(),
+                            ))
                         },
                     }
                 } else {
@@ -559,6 +567,23 @@ pub async fn run_agent_loop_with_context(
                             },
                             Ok(HookAction::ModifyPayload(v)) => {
                                 args = v;
+                                if let Some(ref tool) = tool {
+                                    let schema = tool.parameters_schema();
+                                    if let Err(e) = validate_tool_args(&schema, &args) {
+                                        let err_str = e.to_llm_error_message(&tc_name);
+                                        warn!(
+                                            tool = %tc_name,
+                                            summary = %e.short_summary(),
+                                            "tool call rejected after BeforeToolCall hook modified arguments"
+                                        );
+                                        return (
+                                            false,
+                                            serde_json::json!({ "error": err_str.clone() }),
+                                            Some(err_str),
+                                            true,
+                                        );
+                                    }
+                                }
                             },
                             Ok(HookAction::Continue) => {},
                             Err(e) => {

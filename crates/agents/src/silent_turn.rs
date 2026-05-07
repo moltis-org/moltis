@@ -414,6 +414,7 @@ mod tests {
                             "path": "MEMORY.md",
                             "content": "# Memories\n\nUser prefers Rust over Python."
                         }),
+                        argument_diagnostic: None,
                         metadata: None,
                     }],
                     usage: Usage {

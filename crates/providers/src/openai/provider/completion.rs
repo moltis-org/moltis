@@ -14,7 +14,9 @@ use crate::{
     raw_model_id,
 };
 
-use moltis_agents::model::{ChatMessage, CompletionResponse, Usage};
+use moltis_agents::model::{
+    ChatMessage, CompletionResponse, Usage, decode_tool_call_arguments_from_str,
+};
 
 use super::OpenAiProvider;
 
@@ -549,15 +551,15 @@ impl OpenAiProvider {
             .zip(fn_call_names)
             .zip(fn_call_args)
             .filter_map(|((id, name), args)| {
-                let arguments: serde_json::Value = serde_json::from_str(&args)
-                    .unwrap_or(serde_json::Value::Object(Default::default()));
+                let decoded = decode_tool_call_arguments_from_str(&args);
                 if name.is_empty() {
                     return None;
                 }
                 Some(moltis_agents::model::ToolCall {
                     id,
                     name,
-                    arguments,
+                    arguments: decoded.arguments,
+                    argument_diagnostic: decoded.diagnostic,
                     metadata: None,
                 })
             })

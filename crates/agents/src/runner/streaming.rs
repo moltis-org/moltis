@@ -17,7 +17,7 @@ use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
 use crate::{
     model::{
         ChatMessage, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
-        push_capped_provider_raw_event,
+        decode_tool_call_arguments_from_str, push_capped_provider_raw_event,
     },
     response_sanitizer::recover_tool_calls_from_content,
     tool_arg_validator::validate_tool_args,
@@ -33,7 +33,8 @@ use super::{
     RunnerEvent, UsageAccumulator, apply_loop_detector_intervention,
     channel_binding_from_tool_context, dispatch_after_llm_call_hook, empty_tool_name_retry_prompt,
     explicit_shell_command_from_user_content, find_empty_tool_name_call, finish_agent_run,
-    has_named_tool_call, is_substantive_answer_text, resolve_tool_lookup,
+    has_named_tool_call, is_substantive_answer_text, log_tool_argument_diagnostic,
+    resolve_tool_lookup,
     retry::{
         RATE_LIMIT_MAX_RETRIES, is_context_window_error, next_retry_delay_ms,
         resolve_agent_max_iterations,
@@ -266,6 +267,7 @@ pub async fn run_agent_loop_streaming(
                         id,
                         name,
                         arguments: serde_json::json!({}),
+                        argument_diagnostic: None,
                         metadata,
                     });
                     stream_idx_to_vec_pos.insert(index, vec_pos);
@@ -393,10 +395,10 @@ pub async fn run_agent_loop_streaming(
             );
             if let Some(&vec_pos) = stream_idx_to_vec_pos.get(stream_idx)
                 && vec_pos < tool_calls.len()
-                && !args_str.is_empty()
-                && let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str)
             {
-                tool_calls[vec_pos].arguments = args;
+                let decoded = decode_tool_call_arguments_from_str(args_str);
+                tool_calls[vec_pos].arguments = decoded.arguments;
+                tool_calls[vec_pos].argument_diagnostic = decoded.diagnostic;
             }
         }
 
@@ -469,6 +471,7 @@ pub async fn run_agent_loop_streaming(
                 id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
+                argument_diagnostic: None,
                 metadata: None,
             }];
         }
@@ -622,6 +625,7 @@ pub async fn run_agent_loop_streaming(
                         args_obj.insert(k.clone(), v.clone());
                     }
                 }
+                log_tool_argument_diagnostic(&tc_name, tc.argument_diagnostic.as_ref());
 
                 // Pre-dispatch validation against the tool's schema.
                 let validation_error: Option<String> = if let Some(ref t) = tool {
@@ -631,10 +635,15 @@ pub async fn run_agent_loop_streaming(
                         Err(e) => {
                             warn!(
                                 tool = %tc_name,
-                                summary = %e.short_summary(),
+                                summary = %e.short_summary_with_argument_diagnostic(
+                                    tc.argument_diagnostic.as_ref(),
+                                ),
                                 "tool call rejected by pre-dispatch schema validation"
                             );
-                            Some(e.to_llm_error_message(&tc_name))
+                            Some(e.to_llm_error_message_with_argument_diagnostic(
+                                &tc_name,
+                                tc.argument_diagnostic.as_ref(),
+                            ))
                         },
                     }
                 } else {
@@ -683,6 +692,23 @@ pub async fn run_agent_loop_streaming(
                             }
                             Ok(HookAction::ModifyPayload(v)) => {
                                 args = v;
+                                if let Some(ref tool) = tool {
+                                    let schema = tool.parameters_schema();
+                                    if let Err(e) = validate_tool_args(&schema, &args) {
+                                        let err_str = e.to_llm_error_message(&tc_name);
+                                        warn!(
+                                            tool = %tc_name,
+                                            summary = %e.short_summary(),
+                                            "tool call rejected after BeforeToolCall hook modified arguments"
+                                        );
+                                        return (
+                                            false,
+                                            serde_json::json!({ "error": err_str.clone() }),
+                                            Some(err_str),
+                                            true,
+                                        );
+                                    }
+                                }
                             }
                             Ok(HookAction::Continue) => {}
                             Err(e) => {

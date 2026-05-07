@@ -216,6 +216,7 @@ pub async fn run_agent_loop_streaming(
                         id,
                         name,
                         arguments: serde_json::json!({}),
+                        argument_diagnostic: None,
                         metadata: None,
                     });
                     stream_idx_to_vec_pos.insert(index, vec_pos);
@@ -413,6 +414,7 @@ pub async fn run_agent_loop_streaming(
                 id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
+                argument_diagnostic: None,
                 metadata: None,
             }];
         }

@@ -10,6 +10,7 @@ use {
     },
     anyhow::Result,
     async_trait::async_trait,
+    moltis_common::hooks::HookRegistry,
     std::pin::Pin,
     tokio_stream::Stream,
 };
@@ -250,6 +251,7 @@ impl LlmProvider for NonStreamingUsageProvider {
                     id: "call_usage_1".into(),
                     name: "echo_tool".into(),
                     arguments: serde_json::json!({"text": "hi"}),
+                    argument_diagnostic: None,
                     metadata: None,
                 }],
                 usage: Usage {
@@ -359,6 +361,7 @@ impl LlmProvider for ExecSimulatingProvider {
                     id: "call_exec_1".into(),
                     name: "exec".into(),
                     arguments: serde_json::json!({"command": "echo hello"}),
+                    argument_diagnostic: None,
                     metadata: None,
                 }],
                 usage: Usage {
@@ -455,6 +458,129 @@ async fn test_exec_tool_end_to_end() {
         assert!(success, "exec tool should succeed");
         assert_eq!(name, "exec");
     }
+}
+
+struct HookModifiedExecProvider {
+    call_count: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl LlmProvider for HookModifiedExecProvider {
+    fn name(&self) -> &str {
+        "hook-modified-exec"
+    }
+
+    fn id(&self) -> &str {
+        "hook-modified-exec-model"
+    }
+
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
+    async fn complete(
+        &self,
+        messages: &[ChatMessage],
+        _tools: &[serde_json::Value],
+    ) -> Result<CompletionResponse> {
+        let count = self
+            .call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if count == 0 {
+            Ok(CompletionResponse {
+                text: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_exec_hook_1".into(),
+                    name: "exec".into(),
+                    arguments: serde_json::json!({"command": "echo should-not-run"}),
+                    argument_diagnostic: None,
+                    metadata: None,
+                }],
+                usage: Usage::default(),
+            })
+        } else {
+            let tool_content = messages
+                .iter()
+                .find_map(|m| {
+                    if let ChatMessage::Tool { content, .. } = m {
+                        Some(content.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
+            assert!(
+                tool_content.contains("Missing required field(s): `command`"),
+                "tool result should contain validation error, got: {tool_content}"
+            );
+            assert!(
+                !tool_content.contains("should-not-run"),
+                "invalid hook args must be rejected before exec runs"
+            );
+            Ok(CompletionResponse {
+                text: Some("Hook rewrite was rejected.".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+    }
+
+    fn stream(
+        &self,
+        _messages: Vec<ChatMessage>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(tokio_stream::empty())
+    }
+}
+
+#[tokio::test]
+async fn test_hook_modified_tool_args_are_revalidated_before_execute() {
+    let provider = Arc::new(HookModifiedExecProvider {
+        call_count: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut tools = ToolRegistry::new();
+    tools.register(Box::new(TestExecTool));
+
+    let mut hooks = HookRegistry::new();
+    hooks.register(Arc::new(RewriteToolArgsHook {
+        replacement: serde_json::json!({"timeout": 1}),
+    }));
+
+    let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events_clone = Arc::clone(&events);
+    let on_event: OnEvent = Box::new(move |event| {
+        events_clone.lock().unwrap().push(event);
+    });
+
+    let result = run_agent_loop_with_context(
+        provider,
+        &tools,
+        "You are a test bot.",
+        &UserContent::text("Run through hook"),
+        Some(&on_event),
+        None,
+        None,
+        Some(Arc::new(hooks)),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.text, "Hook rewrite was rejected.");
+    assert_eq!(result.tool_calls_made, 1);
+
+    let evts = events.lock().unwrap();
+    assert!(evts.iter().any(|event| {
+        matches!(
+            event,
+            RunnerEvent::ToolCallRejected {
+                name,
+                error,
+                ..
+            } if name == "exec" && error.contains("Missing required field(s): `command`")
+        )
+    }));
 }
 
 /// Test that non-native providers can still execute tools via text parsing.

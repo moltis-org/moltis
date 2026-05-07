@@ -7,7 +7,10 @@ use tracing::{info, warn};
 use moltis_common::hooks::{ChannelBinding, HookAction, HookPayload, HookRegistry};
 
 use crate::{
-    model::{ChatMessage, ToolCall, Usage, UserContent},
+    model::{
+        ChatMessage, ToolCall, ToolCallArgumentDiagnostic, ToolCallArgumentSource, Usage,
+        UserContent,
+    },
     response_sanitizer::clean_response,
     tool_loop_detector::{
         LoopDetectorAction, ToolLoopDetector, format_intervention_message,
@@ -229,6 +232,35 @@ fn build_after_llm_call_payload(
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
         iteration,
+    }
+}
+
+pub(crate) fn log_tool_argument_diagnostic(
+    tool_name: &str,
+    diagnostic: Option<&ToolCallArgumentDiagnostic>,
+) {
+    let Some(diagnostic) = diagnostic else {
+        return;
+    };
+    match diagnostic.source {
+        ToolCallArgumentSource::RepairedString => tracing::debug!(
+            tool = %tool_name,
+            raw_len = diagnostic.raw_len,
+            raw_preview = diagnostic.raw_preview.as_deref().unwrap_or(""),
+            parse_error = diagnostic.parse_error.as_deref().unwrap_or(""),
+            "tool call arguments repaired before dispatch"
+        ),
+        ToolCallArgumentSource::EmptyString
+        | ToolCallArgumentSource::NullOrMissing
+        | ToolCallArgumentSource::MalformedString => warn!(
+            tool = %tool_name,
+            raw_len = diagnostic.raw_len,
+            raw_preview = diagnostic.raw_preview.as_deref().unwrap_or(""),
+            parse_error = diagnostic.parse_error.as_deref().unwrap_or(""),
+            summary = %diagnostic.short_summary(),
+            "tool call arguments decoded with diagnostics"
+        ),
+        ToolCallArgumentSource::NativeJson | ToolCallArgumentSource::ParsedString => {},
     }
 }
 

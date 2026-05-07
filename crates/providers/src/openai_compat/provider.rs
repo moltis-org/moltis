@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use {
     moltis_agents::model::{
         ChatMessage, CompletionResponse, StreamEvent, ToolCall, Usage, UserContent,
-        decode_tool_call_arguments, extract_tool_call_metadata,
+        decode_tool_call_arguments_with_diagnostic, extract_tool_call_metadata,
     },
     serde::Serialize,
     tracing::trace,
@@ -273,12 +273,14 @@ pub fn parse_tool_calls(message: &serde_json::Value) -> Vec<ToolCall> {
                 .filter_map(|tc| {
                     let id = tc["id"].as_str()?.to_string();
                     let name = tc["function"]["name"].as_str()?.to_string();
-                    let arguments = decode_tool_call_arguments(tc["function"].get("arguments"));
+                    let decoded =
+                        decode_tool_call_arguments_with_diagnostic(tc["function"].get("arguments"));
                     let metadata = extract_tool_call_metadata(tc);
                     Some(ToolCall {
                         id,
                         name,
-                        arguments,
+                        arguments: decoded.arguments,
+                        argument_diagnostic: decoded.diagnostic,
                         metadata,
                     })
                 })
@@ -965,11 +967,12 @@ pub fn parse_responses_completion(resp: &serde_json::Value) -> CompletionRespons
                 "function_call" => {
                     let id = item["call_id"].as_str().unwrap_or("").to_string();
                     let name = item["name"].as_str().unwrap_or("").to_string();
-                    let arguments = decode_tool_call_arguments(item.get("arguments"));
+                    let decoded = decode_tool_call_arguments_with_diagnostic(item.get("arguments"));
                     tool_calls.push(ToolCall {
                         id,
                         name,
-                        arguments,
+                        arguments: decoded.arguments,
+                        argument_diagnostic: decoded.diagnostic,
                         metadata: None,
                     });
                 },

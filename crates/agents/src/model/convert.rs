@@ -2,7 +2,7 @@ use crate::multimodal::parse_data_uri;
 
 use super::{
     chat::{ChatMessage, ContentPart, UserContent},
-    decode_tool_call_arguments,
+    decode_tool_call_arguments_with_diagnostic,
     types::{TOOL_CALL_METADATA_KEYS, ToolCall},
 };
 
@@ -179,13 +179,15 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                             .filter_map(|tc| {
                                 let id = tc["id"].as_str()?.to_string();
                                 let name = tc["function"]["name"].as_str()?.to_string();
-                                let arguments =
-                                    decode_tool_call_arguments(tc["function"].get("arguments"));
+                                let decoded = decode_tool_call_arguments_with_diagnostic(
+                                    tc["function"].get("arguments"),
+                                );
                                 let metadata = extract_tool_call_metadata(tc);
                                 Some(ToolCall {
                                     id,
                                     name,
-                                    arguments,
+                                    arguments: decoded.arguments,
+                                    argument_diagnostic: decoded.diagnostic,
                                     metadata,
                                 })
                             })

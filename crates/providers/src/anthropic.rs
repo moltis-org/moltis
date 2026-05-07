@@ -448,6 +448,7 @@ fn parse_tool_calls(content: &[serde_json::Value]) -> Vec<ToolCall> {
                     id: block["id"].as_str().unwrap_or("").to_string(),
                     name: block["name"].as_str().unwrap_or("").to_string(),
                     arguments: block["input"].clone(),
+                    argument_diagnostic: None,
                     metadata: None,
                 })
             } else {
