@@ -953,12 +953,6 @@ jobs:
           toolchain: stable
           targets: x86_64-apple-darwin, aarch64-apple-darwin, wasm32-wasip2
 
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          shared-key: macos-release-app-v1
-          cache-all-crates: true
-          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-
       - name: Install Swift build dependencies
         run: brew install xcodegen cbindgen
 
