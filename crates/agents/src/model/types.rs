@@ -21,8 +21,6 @@ pub struct ToolCall {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolCallArgumentSource {
-    NativeJson,
-    ParsedString,
     RepairedString,
     EmptyString,
     NullOrMissing,
@@ -41,8 +39,6 @@ impl ToolCallArgumentDiagnostic {
     #[must_use]
     pub fn short_summary(&self) -> String {
         let source = match self.source {
-            ToolCallArgumentSource::NativeJson => "native-json",
-            ToolCallArgumentSource::ParsedString => "parsed-string",
             ToolCallArgumentSource::RepairedString => "repaired-string",
             ToolCallArgumentSource::EmptyString => "empty-string",
             ToolCallArgumentSource::NullOrMissing => "null-or-missing",
@@ -61,7 +57,9 @@ impl ToolCallArgumentDiagnostic {
     #[must_use]
     pub fn llm_detail(&self) -> String {
         let mut detail = format!("Argument decode status: {}.", self.short_summary());
-        if let Some(preview) = &self.raw_preview {
+        if let Some(preview) = &self.raw_preview
+            && !preview.is_empty()
+        {
             detail.push_str(&format!(" Raw argument preview: {preview}"));
         }
         detail

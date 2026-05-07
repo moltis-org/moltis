@@ -260,7 +260,6 @@ pub(crate) fn log_tool_argument_diagnostic(
             summary = %diagnostic.short_summary(),
             "tool call arguments decoded with diagnostics"
         ),
-        ToolCallArgumentSource::NativeJson | ToolCallArgumentSource::ParsedString => {},
     }
 }
 

@@ -319,10 +319,9 @@ mod tests {
             err.short_summary_with_argument_diagnostic(Some(&diagnostic)),
             "missing=command arg_decode=empty-string raw_len=0"
         );
-        assert!(
-            err.to_llm_error_message_with_argument_diagnostic("exec", Some(&diagnostic))
-                .contains("Argument decode status: arg_decode=empty-string raw_len=0.")
-        );
+        let message = err.to_llm_error_message_with_argument_diagnostic("exec", Some(&diagnostic));
+        assert!(message.contains("Argument decode status: arg_decode=empty-string raw_len=0."));
+        assert!(!message.contains("Raw argument preview:"));
     }
 
     #[test]
