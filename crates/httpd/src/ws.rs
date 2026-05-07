@@ -313,8 +313,14 @@ pub async fn handle_connection(
                                     "challenge-response verification failed",
                                 ),
                             );
-                            #[allow(clippy::unwrap_used)]
-                            let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+                            match serde_json::to_string(&err) {
+                                Ok(serialized) => {
+                                    let _ = client_tx.try_send(serialized);
+                                },
+                                Err(e) => {
+                                    warn!(conn_id = %conn_id, error = %e, "ws: failed to serialize challenge-response error");
+                                },
+                            }
                             graceful_writer_shutdown(client_tx, write_handle).await;
                             return;
                         },
@@ -541,6 +547,23 @@ pub async fn handle_connection(
                         },
                         Err(e) => {
                             warn!(conn_id = %conn_id, error = %e, "ws: failed to create pair request");
+                            let err = ResponseFrame::err(
+                                &request_id,
+                                ErrorShape::new(
+                                    error_codes::INTERNAL,
+                                    "failed to create pairing request",
+                                ),
+                            );
+                            match serde_json::to_string(&err) {
+                                Ok(serialized) => {
+                                    let _ = client_tx.try_send(serialized);
+                                },
+                                Err(e) => {
+                                    warn!(conn_id = %conn_id, error = %e, "ws: failed to serialize pair request error");
+                                },
+                            }
+                            graceful_writer_shutdown(client_tx, write_handle).await;
+                            return;
                         },
                     }
                 } // close else (pairing flow)
@@ -1174,8 +1197,8 @@ enum PairOutcome {
 }
 
 /// Read WS frames from the node until we get a `node.auth.challenge-response`
-/// request containing a `signature` field. Ping/pong control frames are
-/// silently skipped so they don't abort the handshake.
+/// request containing a `signature` field. Control frames and unrelated text
+/// frames are skipped so they don't abort the handshake.
 async fn receive_challenge_response(
     ws_rx: &mut (impl StreamExt<Item = Result<Message, axum::Error>> + Unpin),
     timeout: std::time::Duration,
@@ -1192,7 +1215,7 @@ async fn receive_challenge_response(
                     serde_json::from_str(&text).map_err(|e| format!("invalid JSON: {e}"))?;
                 let method = frame.get("method").and_then(|v| v.as_str()).unwrap_or("");
                 if method != "node.auth.challenge-response" {
-                    return Err(format!("expected challenge-response, got method: {method}"));
+                    continue;
                 }
                 return frame
                     .get("params")
@@ -1304,4 +1327,55 @@ async fn wait_for_connect(
     Err(crate::Error::Protocol(
         "connection closed before handshake".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[tokio::test]
+    async fn receive_challenge_response_skips_unrelated_text_frames() {
+        let frames = vec![
+            Ok(Message::Text(
+                serde_json::json!({
+                    "type": "event",
+                    "event": "node.telemetry",
+                    "payload": {}
+                })
+                .to_string()
+                .into(),
+            )),
+            Ok(Message::Text(
+                serde_json::json!({
+                    "type": "req",
+                    "id": "not-auth",
+                    "method": "node.invoke.result",
+                    "params": {}
+                })
+                .to_string()
+                .into(),
+            )),
+            Ok(Message::Text(
+                serde_json::json!({
+                    "type": "req",
+                    "id": "auth-response",
+                    "method": "node.auth.challenge-response",
+                    "params": {
+                        "signature": "signed-nonce",
+                    }
+                })
+                .to_string()
+                .into(),
+            )),
+        ];
+        let mut stream = futures::stream::iter(frames);
+
+        let signature = receive_challenge_response(&mut stream, std::time::Duration::from_secs(1))
+            .await
+            .unwrap();
+
+        assert_eq!(signature, "signed-nonce");
+    }
 }
