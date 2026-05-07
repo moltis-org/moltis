@@ -148,6 +148,7 @@ impl TelephonyProvider for PlivoProvider {
         provider_call_id: &str,
         text: &str,
         _voice: Option<&str>,
+        _gather_url: Option<&str>,
     ) -> anyhow::Result<()> {
         // Plivo uses XML transfer for TTS. We update the call with a Speak XML URL.
         let url = format!("{}/Call/{provider_call_id}/", self.base_url);

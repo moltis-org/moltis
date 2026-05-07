@@ -64,6 +64,7 @@ pub trait TelephonyProvider: Send + Sync {
         provider_call_id: &str,
         text: &str,
         voice: Option<&str>,
+        gather_url: Option<&str>,
     ) -> anyhow::Result<()>;
 
     /// Send DTMF digits to the remote party.

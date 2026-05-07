@@ -151,22 +151,13 @@ impl TelephonyProvider for TwilioProvider {
         provider_call_id: &str,
         text: &str,
         voice: Option<&str>,
+        gather_url: Option<&str>,
     ) -> anyhow::Result<()> {
         // Update the live call with new TwiML via the Calls API.
         let url = format!("{}/Calls/{provider_call_id}.json", self.base_url);
         let (user, pass) = self.basic_auth();
 
-        let voice_attr = voice.unwrap_or("Polly.Joanna");
-        // After speaking, gather with speechTimeout keeps the call alive.
-        // Without a continuation verb, Twilio hangs up after the Say.
-        // The Gather has no action URL — when speech is detected, Twilio
-        // posts to the original webhook URL (the answer_url), which redirects
-        // to the gather handler. When Gather times out with no input, it
-        // falls through to the next verb (Wait) to keep the call open.
-        let twiml = format!(
-            r#"<Response><Say voice="{voice_attr}">{}</Say><Gather input="speech" speechTimeout="auto" timeout="30"/><Pause length="120"/></Response>"#,
-            xml_escape(text)
-        );
+        let twiml = build_say_gather_twiml(text, voice, gather_url);
 
         let resp = self
             .client
@@ -374,6 +365,7 @@ impl TelephonyProvider for TwilioProvider {
     }
 
     fn build_play_response(&self, audio_url: &str) -> Bytes {
+        let audio_url = xml_escape(audio_url);
         Bytes::from(format!(
             r#"<?xml version="1.0" encoding="UTF-8"?><Response><Play>{audio_url}</Play></Response>"#
         ))
@@ -382,6 +374,18 @@ impl TelephonyProvider for TwilioProvider {
     fn build_hangup_response(&self) -> Bytes {
         Bytes::from(r#"<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>"#)
     }
+}
+
+fn build_say_gather_twiml(text: &str, voice: Option<&str>, gather_url: Option<&str>) -> String {
+    let voice_attr = xml_escape(voice.unwrap_or("Polly.Joanna"));
+    let text = xml_escape(text);
+    let gather_action = gather_url
+        .map(|url| format!(r#" action="{}""#, xml_escape(url)))
+        .unwrap_or_default();
+
+    format!(
+        r#"<Response><Say voice="{voice_attr}">{text}</Say><Gather input="speech"{gather_action} speechTimeout="auto" timeout="30"/><Pause length="120"/></Response>"#
+    )
 }
 
 /// Minimal XML escaping for TwiML text and attribute values.
@@ -462,6 +466,33 @@ mod tests {
         let gather_twiml = std::str::from_utf8(&gather).unwrap_or("");
         assert!(gather_twiml.contains("foo=1&amp;bar=&quot;two&quot;"));
         assert!(!gather_twiml.contains("foo=1&bar=\"two\""));
+    }
+
+    #[test]
+    fn build_say_gather_twiml_includes_escaped_action_and_voice() {
+        let twiml = build_say_gather_twiml(
+            "hello & goodbye",
+            Some("voice\"attr"),
+            Some("https://example.com/gather?foo=1&bar=\"two\""),
+        );
+
+        assert!(twiml.contains(r#"voice="voice&quot;attr""#));
+        assert!(twiml.contains("hello &amp; goodbye"));
+        assert!(
+            twiml.contains(r#"action="https://example.com/gather?foo=1&amp;bar=&quot;two&quot;""#)
+        );
+        assert!(!twiml.contains("foo=1&bar=\"two\""));
+    }
+
+    #[test]
+    fn build_play_response_escapes_audio_url_text() {
+        let provider = TwilioProvider::new("AC_TEST".into(), Secret::new("TOKEN".into()));
+        let resp =
+            provider.build_play_response("https://cdn.example.com/tts.mp3?codec=mulaw&rate=8000");
+        let twiml = std::str::from_utf8(&resp).unwrap_or("");
+
+        assert!(twiml.contains("codec=mulaw&amp;rate=8000"));
+        assert!(!twiml.contains("codec=mulaw&rate=8000"));
     }
 
     #[test]

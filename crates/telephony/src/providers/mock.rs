@@ -64,6 +64,7 @@ impl TelephonyProvider for MockProvider {
         _provider_call_id: &str,
         _text: &str,
         _voice: Option<&str>,
+        _gather_url: Option<&str>,
     ) -> anyhow::Result<()> {
         Ok(())
     }

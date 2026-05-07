@@ -151,6 +151,7 @@ impl TelephonyProvider for TelnyxProvider {
         provider_call_id: &str,
         text: &str,
         voice: Option<&str>,
+        _gather_url: Option<&str>,
     ) -> anyhow::Result<()> {
         let url = format!("{}/calls/{provider_call_id}/actions/speak", self.base_url);
 

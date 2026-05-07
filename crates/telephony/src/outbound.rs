@@ -59,7 +59,7 @@ impl ChannelOutbound for TelephonyOutbound {
             .provider()
             .read()
             .await
-            .play_tts(&provider_call_id, text, None)
+            .play_tts(&provider_call_id, text, None, None)
             .await
         {
             tracing::warn!(call_id = %to, error = %e, "TTS playback failed");
@@ -183,12 +183,11 @@ impl ChannelOutbound for RoutingOutbound {
             .provider()
             .read()
             .await
-            .play_tts(&provider_call_id, text, None)
+            .play_tts(&provider_call_id, text, None, Some(&gather_url))
             .await
         {
             tracing::warn!(call_id = %to, error = %e, "TTS playback failed");
         }
-        let _ = gather_url; // Available for future Redirect-based continuation
         manager.record_bot_speech(to, text);
         Ok(())
     }
