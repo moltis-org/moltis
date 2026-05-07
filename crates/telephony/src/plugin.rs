@@ -192,6 +192,10 @@ impl ChannelPlugin for TelephonyPlugin {
             },
         };
 
+        if self.accounts.contains_key(account_id) {
+            self.stop_account(account_id).await?;
+        }
+
         let manager = Arc::new(RwLock::new(CallManager::new(
             provider,
             cfg.max_duration_secs,
@@ -266,5 +270,69 @@ impl ChannelPlugin for TelephonyPlugin {
 
     fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {
         Arc::new(TelephonyStreamOutbound)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {super::*, crate::providers::mock::MockProvider};
+
+    fn twilio_config(from_number: &str) -> serde_json::Value {
+        serde_json::json!({
+            "provider": "twilio",
+            "account_sid": "AC_test",
+            "auth_token": "test_token",
+            "from_number": from_number,
+        })
+    }
+
+    #[tokio::test]
+    async fn start_account_stops_existing_account_before_replacing_manager() {
+        let account_id = "default";
+        let mut plugin = TelephonyPlugin::new();
+        let old_manager = Arc::new(RwLock::new(CallManager::new(
+            Box::new(MockProvider::new()),
+            60,
+        )));
+        let old_call_id = old_manager
+            .read()
+            .await
+            .register_inbound("PROV-OLD", "+1", "+2", account_id);
+        plugin.routing_outbound.set_manager(
+            account_id,
+            Arc::clone(&old_manager),
+            "/api/channels/telephony/default/gather".to_string(),
+        );
+        plugin
+            .accounts
+            .insert(account_id.to_string(), AccountState {
+                config: TelephonyAccountConfig {
+                    from_number: "+1".to_string(),
+                    ..TelephonyAccountConfig::default()
+                },
+                manager: Arc::clone(&old_manager),
+            });
+
+        plugin
+            .start_account(account_id, twilio_config("+15550000002"))
+            .await
+            .unwrap_or_else(|error| panic!("account should restart: {error}"));
+
+        let new_manager = plugin
+            .call_manager(account_id)
+            .unwrap_or_else(|| panic!("replacement manager should be registered"));
+        assert!(!Arc::ptr_eq(&old_manager, &new_manager));
+        assert!(old_manager.read().await.get_call(&old_call_id).is_none());
+        assert!(
+            old_manager
+                .read()
+                .await
+                .resolve_call_id("PROV-OLD")
+                .is_none()
+        );
+        assert_eq!(
+            plugin.caller_number(account_id).as_deref(),
+            Some("+15550000002")
+        );
     }
 }
