@@ -210,6 +210,12 @@ impl TelephonyProvider for TelnyxProvider {
             .send()
             .await?;
 
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Telnyx API error {status}: {text}");
+        }
+
         let json: serde_json::Value = resp.json().await?;
         Ok(ProviderCallStatus {
             provider_call_id: provider_call_id.to_string(),
@@ -393,6 +399,40 @@ fn map_hangup_cause(cause: &str) -> CallEndReason {
 mod tests {
     use super::*;
 
+    async fn serve_telnyx_response(status: &str, body: &str) -> String {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|error| panic!("test server should bind: {error}"));
+        let addr = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("test server address should be available: {error}"));
+        let status = status.to_string();
+        let body = body.to_string();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .unwrap_or_else(|error| panic!("test server should accept request: {error}"));
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).await;
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .unwrap_or_else(|error| panic!("test server should write response: {error}"));
+        });
+
+        format!("http://{addr}/v2")
+    }
+
     #[test]
     fn telnyx_debug_redacts_key() {
         let provider = TelnyxProvider::new(Secret::new("KEY_LIVE_xxx".into()), "conn_123".into());
@@ -540,5 +580,23 @@ mod tests {
         // No public key configured — verification skipped
         let result = provider.verify_webhook("https://example.com", &HeaderMap::new(), b"body");
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn get_call_status_rejects_non_success_response() {
+        let base_url =
+            serve_telnyx_response("404 Not Found", r#"{"errors":[{"detail":"not found"}]}"#).await;
+        let provider =
+            TelnyxProvider::new(Secret::new("key".into()), "conn".into()).with_base_url(base_url);
+
+        let error = provider
+            .get_call_status("call-123")
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("non-success response should fail"));
+
+        let message = error.to_string();
+        assert!(message.contains("Telnyx API error 404"));
+        assert!(message.contains("not found"));
     }
 }

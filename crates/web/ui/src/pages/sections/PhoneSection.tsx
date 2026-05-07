@@ -246,8 +246,8 @@ function PhoneConfigModal({ onSaved }: PhoneConfigModalProps): VNode {
 		}
 	}, [provider?.id, showConfigModal.value]);
 
-	function onSubmit(e: Event): void {
-		e.preventDefault();
+	function onSubmit(event: Event): void {
+		event.preventDefault();
 		if (!provider) return;
 
 		// If credentials are provided, save them. Otherwise just save settings.
@@ -311,26 +311,35 @@ function PhoneConfigModal({ onSaved }: PhoneConfigModalProps): VNode {
 					</div>
 				)}
 
-				<label className="text-xs text-[var(--muted)]">{credentialFields.primaryLabel}</label>
+				<label className="text-xs text-[var(--muted)]" htmlFor="phone-primary-credential">
+					{credentialFields.primaryLabel}
+				</label>
 				<input
-					type="text"
+					id="phone-primary-credential"
+					type={credentialFields.primaryIsSecret ? "password" : "text"}
 					className="channel-input"
 					placeholder={credentialFields.primaryPlaceholder}
 					value={primaryCredential}
 					onInput={(e) => setPrimaryCredential(targetValue(e))}
 				/>
 
-				<label className="text-xs text-[var(--muted)]">{credentialFields.secondaryLabel}</label>
+				<label className="text-xs text-[var(--muted)]" htmlFor="phone-secondary-credential">
+					{credentialFields.secondaryLabel}
+				</label>
 				<input
-					type="password"
+					id="phone-secondary-credential"
+					type={credentialFields.secondaryIsSecret ? "password" : "text"}
 					className="channel-input"
 					placeholder={credentialFields.secondaryPlaceholder}
 					value={secondaryCredential}
 					onInput={(e) => setSecondaryCredential(targetValue(e))}
 				/>
 
-				<label className="text-xs text-[var(--muted)]">Phone Number (E.164)</label>
+				<label className="text-xs text-[var(--muted)]" htmlFor="phone-from-number">
+					Phone Number (E.164)
+				</label>
 				<input
+					id="phone-from-number"
 					type="text"
 					className="channel-input"
 					placeholder="+15551234567"
@@ -338,8 +347,11 @@ function PhoneConfigModal({ onSaved }: PhoneConfigModalProps): VNode {
 					onInput={(e) => setFromNumber(targetValue(e))}
 				/>
 
-				<label className="text-xs text-[var(--muted)]">Webhook URL (optional)</label>
+				<label className="text-xs text-[var(--muted)]" htmlFor="phone-webhook-url">
+					Webhook URL (optional)
+				</label>
 				<input
+					id="phone-webhook-url"
 					type="text"
 					className="channel-input"
 					placeholder="https://your-domain.com"
@@ -375,8 +387,10 @@ function PhoneConfigModal({ onSaved }: PhoneConfigModalProps): VNode {
 interface PhoneCredentialFields {
 	primaryLabel: string;
 	primaryPlaceholder: string;
+	primaryIsSecret: boolean;
 	secondaryLabel: string;
 	secondaryPlaceholder: string;
+	secondaryIsSecret: boolean;
 }
 
 function phoneCredentialFields(provider: PhoneProviderData | null): PhoneCredentialFields {
@@ -385,22 +399,28 @@ function phoneCredentialFields(provider: PhoneProviderData | null): PhoneCredent
 			return {
 				primaryLabel: "API Key",
 				primaryPlaceholder: provider.keyPlaceholder || "KEY_...",
+				primaryIsSecret: true,
 				secondaryLabel: "Connection ID",
 				secondaryPlaceholder: "Call Control connection ID",
+				secondaryIsSecret: false,
 			};
 		case "plivo":
 			return {
 				primaryLabel: "Auth ID",
 				primaryPlaceholder: provider.keyPlaceholder || "MA...",
+				primaryIsSecret: false,
 				secondaryLabel: "Auth Token",
 				secondaryPlaceholder: "Auth token",
+				secondaryIsSecret: true,
 			};
 		default:
 			return {
 				primaryLabel: "Account SID",
 				primaryPlaceholder: provider?.keyPlaceholder || "AC...",
+				primaryIsSecret: false,
 				secondaryLabel: "Auth Token",
 				secondaryPlaceholder: "Auth token",
+				secondaryIsSecret: true,
 			};
 	}
 }

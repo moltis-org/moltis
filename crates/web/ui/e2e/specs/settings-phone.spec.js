@@ -118,6 +118,8 @@ test.describe("Settings > Phone", () => {
 		await expect(modal).toBeVisible();
 		await expect(modal.getByText("API Key", { exact: true })).toBeVisible();
 		await expect(modal.getByText("Connection ID", { exact: true })).toBeVisible();
+		await expect(modal.locator('input[placeholder="KEY_..."]')).toHaveAttribute("type", "password");
+		await expect(modal.locator('input[placeholder="Call Control connection ID"]')).toHaveAttribute("type", "text");
 
 		await modal.locator('input[placeholder="KEY_..."]').fill("KEY_test");
 		await modal.locator('input[placeholder="Call Control connection ID"]').fill("conn_test");
