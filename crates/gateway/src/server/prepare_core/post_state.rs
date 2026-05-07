@@ -950,7 +950,7 @@ pub(super) async fn complete_startup(
         {
             tool_registry.register(Box::new(t));
         }
-        if let Some(t) = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser) {
+        if let Some(t) = moltis_tools::browser::BrowserTool::from_tools_config(&config.tools) {
             let t = if sandbox_router.backend_name() != "none" {
                 t.with_sandbox_router(Arc::clone(&sandbox_router))
             } else {

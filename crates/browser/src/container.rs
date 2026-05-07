@@ -3,7 +3,12 @@
 //! Supports Docker, Podman, and Apple Container backends, auto-detecting the
 //! best available option (Apple Container on macOS → Podman → Docker).
 
-use std::{fmt::Display, process::Command};
+use std::{
+    collections::HashSet,
+    fmt::Display,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use {
     crate::error::Error,
@@ -65,6 +70,276 @@ fn new_browser_container_name(container_prefix: &str) -> String {
         uuid::Uuid::new_v4().as_simple()
     )
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ContainerMount {
+    source: PathBuf,
+    destination: PathBuf,
+}
+
+#[cfg(test)]
+static TEST_CONTAINER_MOUNT_OVERRIDES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, Vec<ContainerMount>>>,
+> = std::sync::OnceLock::new();
+
+fn configured_host_data_dir(host_data_dir: Option<&Path>) -> Option<PathBuf> {
+    let path = host_data_dir.filter(|path| !path.as_os_str().is_empty())?;
+    if path.is_absolute() {
+        return Some(path.to_path_buf());
+    }
+    Some(moltis_config::data_dir().join(path))
+}
+
+fn read_trimmed_file(path: &str) -> Option<String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|contents| contents.trim().to_string())
+        .filter(|contents| !contents.is_empty())
+}
+
+fn normalize_cgroup_container_ref(segment: &str) -> Option<String> {
+    let mut value = segment.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(stripped) = value.strip_suffix(".scope") {
+        value = stripped;
+    }
+    for prefix in ["docker-", "libpod-", "cri-containerd-"] {
+        if let Some(stripped) = value.strip_prefix(prefix) {
+            value = stripped;
+            break;
+        }
+    }
+    if value.len() < 12 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn current_container_references() -> Vec<String> {
+    let mut refs = Vec::new();
+    let mut seen = HashSet::new();
+    for candidate in [
+        std::env::var("HOSTNAME").ok(),
+        read_trimmed_file("/etc/hostname"),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if seen.insert(candidate.clone()) {
+            refs.push(candidate);
+        }
+    }
+    if let Ok(cgroup) = std::fs::read_to_string("/proc/self/cgroup") {
+        for candidate in cgroup
+            .lines()
+            .flat_map(|line| line.split(['/', ':']))
+            .filter_map(normalize_cgroup_container_ref)
+        {
+            if seen.insert(candidate.clone()) {
+                refs.push(candidate);
+            }
+        }
+    }
+    refs
+}
+
+fn parse_container_mounts_from_inspect(stdout: &str) -> Vec<ContainerMount> {
+    let Ok(json): std::result::Result<serde_json::Value, _> = serde_json::from_str(stdout) else {
+        return Vec::new();
+    };
+    let root = json
+        .as_array()
+        .and_then(|entries| entries.first())
+        .unwrap_or(&json);
+    root.get("Mounts")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let source = entry.get("Source")?.as_str()?.trim();
+            let destination = entry.get("Destination")?.as_str()?.trim();
+            if source.is_empty() || destination.is_empty() {
+                return None;
+            }
+            Some(ContainerMount {
+                source: PathBuf::from(source),
+                destination: PathBuf::from(destination),
+            })
+        })
+        .collect()
+}
+
+fn resolve_host_path_from_mounts(guest_path: &Path, mounts: &[ContainerMount]) -> Option<PathBuf> {
+    mounts
+        .iter()
+        .filter_map(|mount| {
+            let relative = guest_path.strip_prefix(&mount.destination).ok()?;
+            Some((
+                mount.destination.components().count(),
+                if relative.as_os_str().is_empty() {
+                    mount.source.clone()
+                } else {
+                    mount.source.join(relative)
+                },
+            ))
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .map(|(_, resolved)| resolved)
+}
+
+#[cfg(test)]
+fn test_container_mount_override_key(cli: &str, reference: &str) -> String {
+    format!("{cli}:{reference}")
+}
+
+fn inspect_current_container_mounts(cli: &str, reference: &str) -> Vec<ContainerMount> {
+    #[cfg(test)]
+    {
+        let overrides = TEST_CONTAINER_MOUNT_OVERRIDES
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        let guard = overrides.lock().unwrap_or_else(|error| error.into_inner());
+        guard
+            .get(&test_container_mount_override_key(cli, reference))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    #[cfg(not(test))]
+    {
+        let output = match Command::new(cli).args(["inspect", reference]).output() {
+            Ok(output) if output.status.success() => output,
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    cli,
+                    reference,
+                    stderr = %stderr.trim(),
+                    "container inspect failed while auto-detecting browser profile host path"
+                );
+                return Vec::new();
+            },
+            Err(error) => {
+                debug!(
+                    cli,
+                    reference,
+                    %error,
+                    "could not inspect current container while auto-detecting browser profile host path"
+                );
+                return Vec::new();
+            },
+        };
+        parse_container_mounts_from_inspect(&String::from_utf8_lossy(&output.stdout))
+    }
+}
+
+fn detect_host_data_dir_with_references(
+    cli: &str,
+    guest_data_dir: &Path,
+    references: &[String],
+) -> Option<PathBuf> {
+    references.iter().find_map(|reference| {
+        let mounts = inspect_current_container_mounts(cli, reference);
+        if mounts.is_empty() {
+            return None;
+        }
+        let resolved = resolve_host_path_from_mounts(guest_data_dir, &mounts)?;
+        debug!(
+            cli,
+            reference,
+            guest_path = %guest_data_dir.display(),
+            host_path = %resolved.display(),
+            "auto-detected browser profile host data dir from current container mounts"
+        );
+        Some(resolved)
+    })
+}
+
+fn host_visible_data_dir_with_references(
+    cli: &str,
+    configured_data_dir: Option<&Path>,
+    guest_data_dir: &Path,
+    references: &[String],
+) -> PathBuf {
+    if let Some(configured) = configured_host_data_dir(configured_data_dir) {
+        return configured;
+    }
+    detect_host_data_dir_with_references(cli, guest_data_dir, references)
+        .unwrap_or_else(|| guest_data_dir.to_path_buf())
+}
+
+fn host_visible_path_with_references(
+    cli: &str,
+    configured_data_dir: Option<&Path>,
+    path: &Path,
+    references: &[String],
+) -> PathBuf {
+    let guest_data_dir = moltis_config::data_dir();
+    let Ok(relative_path) = path.strip_prefix(&guest_data_dir) else {
+        return path.to_path_buf();
+    };
+    let host_data_dir = host_visible_data_dir_with_references(
+        cli,
+        configured_data_dir,
+        &guest_data_dir,
+        references,
+    );
+    if relative_path.as_os_str().is_empty() {
+        host_data_dir
+    } else {
+        host_data_dir.join(relative_path)
+    }
+}
+
+fn host_visible_path(cli: &str, configured_data_dir: Option<&Path>, path: &Path) -> PathBuf {
+    host_visible_path_with_references(
+        cli,
+        configured_data_dir,
+        path,
+        &current_container_references(),
+    )
+}
+
+fn profile_mount_dir_for_backend(
+    backend: ContainerBackend,
+    profile_dir: &Path,
+    host_data_dir: Option<&Path>,
+) -> PathBuf {
+    match backend {
+        ContainerBackend::Docker | ContainerBackend::Podman => {
+            host_visible_path(backend.cli(), host_data_dir, profile_dir)
+        },
+        #[cfg(target_os = "macos")]
+        ContainerBackend::AppleContainer => profile_dir.to_path_buf(),
+    }
+}
+
+fn ensure_translated_profile_dir(dir: &Path) {
+    match std::fs::create_dir_all(dir) {
+        Ok(()) => set_container_dir_permissions(dir),
+        Err(error) => warn!(
+            path = %dir.display(),
+            %error,
+            "could not pre-create translated browser profile path; runtime may create it"
+        ),
+    }
+}
+
+#[cfg(unix)]
+fn set_container_dir_permissions(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(error) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o777)) {
+        warn!(
+            path = %dir.display(),
+            %error,
+            "failed to set translated browser profile directory permissions"
+        );
+    }
+}
+
+#[cfg(not(unix))]
+fn set_container_dir_permissions(_dir: &Path) {}
 
 /// Container backend type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +453,8 @@ impl BrowserContainer {
         viewport_height: u32,
         low_memory_threshold_mb: u64,
         session_timeout_ms: u64,
-        profile_dir: Option<&std::path::Path>,
+        profile_dir: Option<&Path>,
+        host_data_dir: Option<&Path>,
         container_host: &str,
     ) -> Result<Self> {
         let backend = detect_backend()?;
@@ -191,6 +467,7 @@ impl BrowserContainer {
             low_memory_threshold_mb,
             session_timeout_ms,
             profile_dir,
+            host_data_dir,
             container_host,
         )
     }
@@ -204,7 +481,8 @@ impl BrowserContainer {
         viewport_height: u32,
         low_memory_threshold_mb: u64,
         session_timeout_ms: u64,
-        profile_dir: Option<&std::path::Path>,
+        profile_dir: Option<&Path>,
+        host_data_dir: Option<&Path>,
         container_host: &str,
     ) -> Result<Self> {
         use std::time::Instant;
@@ -228,6 +506,15 @@ impl BrowserContainer {
         );
 
         let t0 = Instant::now();
+        let profile_mount_dir =
+            profile_dir.map(|dir| profile_mount_dir_for_backend(backend, dir, host_data_dir));
+
+        if let Some(ref mount_dir) = profile_mount_dir
+            && profile_dir != Some(mount_dir.as_path())
+        {
+            ensure_translated_profile_dir(mount_dir);
+        }
+
         let container_id = match backend {
             ContainerBackend::Docker | ContainerBackend::Podman => start_oci_container(
                 backend,
@@ -238,7 +525,7 @@ impl BrowserContainer {
                 viewport_height,
                 low_memory_threshold_mb,
                 session_timeout_ms,
-                profile_dir,
+                profile_mount_dir.as_deref(),
             )?,
             #[cfg(target_os = "macos")]
             ContainerBackend::AppleContainer => start_apple_container(
@@ -249,7 +536,7 @@ impl BrowserContainer {
                 viewport_height,
                 low_memory_threshold_mb,
                 session_timeout_ms,
-                profile_dir,
+                profile_mount_dir.as_deref(),
             )?,
         };
 
@@ -455,7 +742,7 @@ fn start_oci_container(
     viewport_height: u32,
     low_memory_threshold_mb: u64,
     session_timeout_ms: u64,
-    profile_dir: Option<&std::path::Path>,
+    profile_dir: Option<&Path>,
 ) -> Result<String> {
     let cli = backend.cli();
     let container_name = new_browser_container_name(container_prefix);
@@ -537,7 +824,7 @@ fn start_apple_container(
     viewport_height: u32,
     low_memory_threshold_mb: u64,
     session_timeout_ms: u64,
-    profile_dir: Option<&std::path::Path>,
+    profile_dir: Option<&Path>,
 ) -> Result<String> {
     let container_name = new_browser_container_name(container_prefix);
 
@@ -1121,6 +1408,22 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
 mod tests {
     use super::*;
 
+    fn clear_container_mount_test_state() {
+        TEST_CONTAINER_MOUNT_OVERRIDES
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear();
+    }
+
+    fn set_test_container_mount_override(cli: &str, reference: &str, mounts: Vec<ContainerMount>) {
+        TEST_CONTAINER_MOUNT_OVERRIDES
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .insert(test_container_mount_override_key(cli, reference), mounts);
+    }
+
     #[test]
     fn test_find_available_port() {
         let port = find_available_port().unwrap();
@@ -1216,6 +1519,85 @@ mod tests {
     fn test_build_container_launch_args_without_profile_dir() {
         let args = build_container_launch_args(1920, 1080, 0, None, ContainerBackend::Docker);
         assert!(!args.contains("--user-data-dir"));
+    }
+
+    #[test]
+    fn test_parse_container_mounts_from_inspect() {
+        let mounts = parse_container_mounts_from_inspect(
+            r#"[
+                {
+                    "Mounts": [
+                        {
+                            "Source": "/var/lib/docker/volumes/moltis-data/_data",
+                            "Destination": "/home/moltis/.moltis"
+                        }
+                    ]
+                }
+            ]"#,
+        );
+
+        assert_eq!(mounts, vec![ContainerMount {
+            source: PathBuf::from("/var/lib/docker/volumes/moltis-data/_data"),
+            destination: PathBuf::from("/home/moltis/.moltis"),
+        }]);
+    }
+
+    #[test]
+    fn browser_profile_mount_path_uses_configured_host_data_dir() {
+        let guest_profile = moltis_config::data_dir()
+            .join("browser")
+            .join("profile")
+            .join("sandbox")
+            .join("browser-abc");
+
+        let mount_dir = profile_mount_dir_for_backend(
+            ContainerBackend::Docker,
+            &guest_profile,
+            Some(Path::new("/host/moltis-data")),
+        );
+
+        assert_eq!(
+            mount_dir,
+            PathBuf::from("/host/moltis-data/browser/profile/sandbox/browser-abc")
+        );
+    }
+
+    #[test]
+    fn browser_profile_mount_path_auto_detects_host_data_dir() {
+        clear_container_mount_test_state();
+        let guest_data_dir = moltis_config::data_dir();
+        set_test_container_mount_override("docker", "parent-container", vec![ContainerMount {
+            source: PathBuf::from("/var/lib/docker/volumes/moltis-data/_data"),
+            destination: guest_data_dir.clone(),
+        }]);
+        let guest_profile = guest_data_dir
+            .join("browser")
+            .join("profile")
+            .join("sandbox")
+            .join("browser-issue-977");
+
+        let mount_dir =
+            host_visible_path_with_references("docker", None, &guest_profile, &[String::from(
+                "parent-container",
+            )]);
+
+        assert_eq!(
+            mount_dir,
+            PathBuf::from(
+                "/var/lib/docker/volumes/moltis-data/_data/browser/profile/sandbox/browser-issue-977"
+            )
+        );
+    }
+
+    #[test]
+    fn browser_profile_mount_path_keeps_custom_paths_outside_data_dir() {
+        let mount_dir = profile_mount_dir_for_backend(
+            ContainerBackend::Docker,
+            Path::new("/custom/browser/profile"),
+            Some(Path::new("/host/moltis-data")),
+        );
+
+        assert_eq!(mount_dir, PathBuf::from("/custom/browser/profile"));
     }
 
     #[cfg(target_os = "macos")]

@@ -1,6 +1,6 @@
 //! Browser action types and request/response structures.
 
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -473,6 +473,10 @@ pub struct BrowserConfig {
     /// Default: "127.0.0.1". Set to e.g. "host.docker.internal" when
     /// Moltis runs inside Docker alongside a sibling browser container.
     pub container_host: String,
+    /// Optional host-visible path for Moltis `data_dir()` when launching
+    /// browser sandbox containers from inside another container.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_data_dir: Option<PathBuf>,
     /// Browserless API compatibility mode (`v1` or `v2`).
     pub browserless_api_version: BrowserlessApiVersion,
 }
@@ -526,6 +530,7 @@ impl Default for BrowserConfig {
             persist_profile: true,
             profile_dir: None,
             container_host: "127.0.0.1".to_string(),
+            host_data_dir: None,
             browserless_api_version: BrowserlessApiVersion::V1,
         }
     }
@@ -537,9 +542,9 @@ impl BrowserConfig {
     /// Returns `Some(path)` when either `profile_dir` is set or `persist_profile` is true.
     /// Returns `None` when profiles should be ephemeral.
     #[must_use]
-    pub fn resolved_profile_dir(&self) -> Option<std::path::PathBuf> {
+    pub fn resolved_profile_dir(&self) -> Option<PathBuf> {
         if let Some(ref dir) = self.profile_dir {
-            Some(std::path::PathBuf::from(dir))
+            Some(PathBuf::from(dir))
         } else if self.persist_profile {
             Some(moltis_config::data_dir().join("browser").join("profile"))
         } else {
@@ -572,6 +577,7 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
             persist_profile: cfg.persist_profile,
             profile_dir: cfg.profile_dir.clone(),
             container_host: cfg.container_host.clone(),
+            host_data_dir: None,
             browserless_api_version: match cfg.browserless_api_version {
                 moltis_config::schema::BrowserlessApiVersion::V1 => BrowserlessApiVersion::V1,
                 moltis_config::schema::BrowserlessApiVersion::V2 => BrowserlessApiVersion::V2,
@@ -701,7 +707,7 @@ mod tests {
             ..BrowserConfig::default()
         };
         let dir = config.resolved_profile_dir();
-        assert_eq!(dir, Some(std::path::PathBuf::from("/custom/path")));
+        assert_eq!(dir, Some(PathBuf::from("/custom/path")));
     }
 
     #[test]

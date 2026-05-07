@@ -9,9 +9,14 @@ pub struct RealBrowserService {
 }
 
 impl RealBrowserService {
-    pub fn new(config: &moltis_config::schema::BrowserConfig, container_prefix: String) -> Self {
+    pub fn new(
+        config: &moltis_config::schema::BrowserConfig,
+        container_prefix: String,
+        host_data_dir: Option<std::path::PathBuf>,
+    ) -> Self {
         let mut browser_config = moltis_browser::BrowserConfig::from(config);
         browser_config.container_prefix = container_prefix;
+        browser_config.host_data_dir = host_data_dir;
         Self {
             config: browser_config,
             manager: tokio::sync::OnceCell::new(),
@@ -25,7 +30,17 @@ impl RealBrowserService {
         if !config.tools.browser.enabled {
             return None;
         }
-        Some(Self::new(&config.tools.browser, container_prefix))
+        Some(Self::new(
+            &config.tools.browser,
+            container_prefix,
+            config
+                .tools
+                .exec
+                .sandbox
+                .host_data_dir
+                .as_ref()
+                .map(std::path::PathBuf::from),
+        ))
     }
 
     async fn manager(&self) -> Arc<moltis_browser::BrowserManager> {
