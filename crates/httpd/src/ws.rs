@@ -237,6 +237,9 @@ pub async fn handle_connection(
                 let _ = client_tx.try_send(serde_json::to_string(&challenge_event).unwrap());
 
                 // Wait for challenge-response from node.
+                // SECURITY: If the challenge fails for a known key, reject hard.
+                // Do NOT fall through to token auth — a failed signature for a
+                // known key means impersonation, not a migration scenario.
                 match receive_challenge_response(&mut ws_rx, std::time::Duration::from_secs(10))
                     .await
                 {
@@ -256,20 +259,69 @@ pub async fn handle_connection(
                                 "ws: authenticated via Ed25519 challenge-response"
                             );
                         },
-                        Ok(false) => {
-                            warn!(conn_id = %conn_id, fingerprint = %fingerprint, "ws: Ed25519 signature verification failed");
-                        },
-                        Err(e) => {
-                            warn!(conn_id = %conn_id, error = %e, "ws: Ed25519 verification error");
+                        Ok(false) | Err(_) => {
+                            warn!(
+                                conn_id = %conn_id,
+                                fingerprint = %fingerprint,
+                                device_id = %device.device_id,
+                                "ws: Ed25519 challenge failed for known key — possible impersonation"
+                            );
+                            let err = ResponseFrame::err(
+                                &request_id,
+                                ErrorShape::new(
+                                    error_codes::FORBIDDEN,
+                                    "challenge-response verification failed",
+                                ),
+                            );
+                            #[allow(clippy::unwrap_used)]
+                            let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+                            graceful_writer_shutdown(client_tx, write_handle).await;
+                            return;
                         },
                     },
                     Err(e) => {
-                        warn!(conn_id = %conn_id, error = %e, "ws: challenge-response failed");
+                        warn!(
+                            conn_id = %conn_id,
+                            error = %e,
+                            fingerprint = %fingerprint,
+                            "ws: challenge-response failed for known key"
+                        );
+                        let err = ResponseFrame::err(
+                            &request_id,
+                            ErrorShape::new(error_codes::FORBIDDEN, "challenge-response failed"),
+                        );
+                        #[allow(clippy::unwrap_used)]
+                        let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+                        graceful_writer_shutdown(client_tx, write_handle).await;
+                        return;
                     },
                 }
             },
             Ok(None) => {
-                // Unknown key — create pair request and hold connection for approval.
+                // Unknown key — check if pairing is enabled before accepting.
+                if !state
+                    .node_pairing_enabled
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    info!(
+                        conn_id = %conn_id,
+                        fingerprint = %fingerprint,
+                        "ws: node pairing is disabled — rejecting unknown key"
+                    );
+                    let err = ResponseFrame::err(
+                        &request_id,
+                        ErrorShape::new(
+                            error_codes::FORBIDDEN,
+                            "node pairing is disabled — enable it from the gateway UI or CLI",
+                        ),
+                    );
+                    #[allow(clippy::unwrap_used)]
+                    let _ = client_tx.try_send(serde_json::to_string(&err).unwrap());
+                    graceful_writer_shutdown(client_tx, write_handle).await;
+                    return;
+                }
+
+                // Create pair request and hold connection for approval.
                 let display_name = params.client.display_name.as_deref();
                 let platform = &params.client.platform;
                 let device_id = &params.client.id;

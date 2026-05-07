@@ -231,6 +231,48 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         Box::new(|_ctx| Box::pin(async move { Ok(serde_json::json!({ "verified": true })) })),
     );
 
+    // node.pairing.enable — open the gate for new node pairing requests.
+    reg.register(
+        "node.pairing.enable",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .node_pairing_enabled
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                tracing::info!("node pairing enabled");
+                Ok(serde_json::json!({ "enabled": true }))
+            })
+        }),
+    );
+
+    // node.pairing.disable — close the gate.
+    reg.register(
+        "node.pairing.disable",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .node_pairing_enabled
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                tracing::info!("node pairing disabled");
+                Ok(serde_json::json!({ "enabled": false }))
+            })
+        }),
+    );
+
+    // node.pairing.status — check if pairing is enabled.
+    reg.register(
+        "node.pairing.status",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                let enabled = ctx
+                    .state
+                    .node_pairing_enabled
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                Ok(serde_json::json!({ "enabled": enabled }))
+            })
+        }),
+    );
+
     // device.pair.list
     reg.register(
         "device.pair.list",
