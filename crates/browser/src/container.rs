@@ -315,13 +315,22 @@ fn profile_mount_dir_for_backend(
     }
 }
 
-fn ensure_translated_profile_dir(dir: &Path) {
+fn profile_precreate_dir<'a>(
+    profile_dir: Option<&'a Path>,
+    profile_mount_dir: Option<&Path>,
+) -> Option<&'a Path> {
+    let guest_dir = profile_dir?;
+    let mount_dir = profile_mount_dir?;
+    (guest_dir != mount_dir).then_some(guest_dir)
+}
+
+fn ensure_profile_dir(dir: &Path) {
     match std::fs::create_dir_all(dir) {
         Ok(()) => set_container_dir_permissions(dir),
         Err(error) => warn!(
             path = %dir.display(),
             %error,
-            "could not pre-create translated browser profile path; runtime may create it"
+            "could not pre-create browser profile path; runtime may create it"
         ),
     }
 }
@@ -333,7 +342,7 @@ fn set_container_dir_permissions(dir: &Path) {
         warn!(
             path = %dir.display(),
             %error,
-            "failed to set translated browser profile directory permissions"
+            "failed to set browser profile directory permissions"
         );
     }
 }
@@ -509,10 +518,8 @@ impl BrowserContainer {
         let profile_mount_dir =
             profile_dir.map(|dir| profile_mount_dir_for_backend(backend, dir, host_data_dir));
 
-        if let Some(ref mount_dir) = profile_mount_dir
-            && profile_dir != Some(mount_dir.as_path())
-        {
-            ensure_translated_profile_dir(mount_dir);
+        if let Some(guest_dir) = profile_precreate_dir(profile_dir, profile_mount_dir.as_deref()) {
+            ensure_profile_dir(guest_dir);
         }
 
         let container_id = match backend {
@@ -1406,7 +1413,7 @@ pub fn ensure_image_with_backend(backend: ContainerBackend, image: &str) -> Resu
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, serial_test::serial};
 
     fn clear_container_mount_test_state() {
         TEST_CONTAINER_MOUNT_OVERRIDES
@@ -1563,6 +1570,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(browser_container_mount_overrides)]
     fn browser_profile_mount_path_auto_detects_host_data_dir() {
         clear_container_mount_test_state();
         let guest_data_dir = moltis_config::data_dir();
@@ -1598,6 +1606,27 @@ mod tests {
         );
 
         assert_eq!(mount_dir, PathBuf::from("/custom/browser/profile"));
+    }
+
+    #[test]
+    fn browser_profile_precreate_uses_guest_path_when_mount_is_translated() {
+        let guest_dir = Path::new("/home/moltis/.moltis/browser/profile/sandbox/browser-abc");
+        let mount_dir = Path::new("/host/moltis-data/browser/profile/sandbox/browser-abc");
+
+        assert_eq!(
+            profile_precreate_dir(Some(guest_dir), Some(mount_dir)),
+            Some(guest_dir)
+        );
+    }
+
+    #[test]
+    fn browser_profile_precreate_skips_untranslated_mount() {
+        let guest_dir = Path::new("/custom/browser/profile");
+
+        assert_eq!(
+            profile_precreate_dir(Some(guest_dir), Some(guest_dir)),
+            None
+        );
     }
 
     #[cfg(target_os = "macos")]
