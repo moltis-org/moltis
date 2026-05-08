@@ -169,10 +169,19 @@ a { color: inherit; }
   display: none;
   border: 1px solid var(--border);
   border-radius: 0;
-  padding: 7px 11px;
+  width: 36px;
+  height: 34px;
+  padding: 0;
   color: var(--text);
   background: var(--bg);
-  font: inherit;
+  cursor: pointer;
+}
+
+.nav-toggle span {
+  display: block;
+  width: 16px;
+  height: 1.5px;
+  background: currentColor;
 }
 
 .sidebar {
@@ -406,9 +415,9 @@ a { color: inherit; }
 .copy-code:hover { color: var(--text); }
 
 .content-card table {
-  display: block;
-  overflow: auto;
-  width: 100%;
+  display: table;
+  max-width: 100%;
+  width: auto;
   margin: 1.4rem 0;
   border: 1px solid var(--border);
   border-collapse: collapse;
@@ -536,7 +545,13 @@ a { color: inherit; }
 @media (max-width: 820px) {
   .topbar { padding: 0 18px; }
   .topnav { display: none; }
-  .nav-toggle { display: inline-flex; }
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 4px;
+  }
 
   .sidebar {
     z-index: 60;
