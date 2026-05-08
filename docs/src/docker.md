@@ -133,7 +133,7 @@ Only run Moltis containers from trusted sources (official images from
 
 ## Docker Compose
 
-See [`examples/docker-compose.yml`](../examples/docker-compose.yml) for a
+See [`examples/docker-compose.yml`](https://github.com/moltis-org/moltis/blob/main/examples/docker-compose.yml) for a
 complete example:
 
 ```yaml
@@ -175,7 +175,7 @@ startup. Treat the secret file as sensitive as the vault recovery key itself.
 ### Coolify (Hetzner/VPS)
 
 For Coolify service stacks, use
-[`examples/docker-compose.coolify.yml`](../examples/docker-compose.coolify.yml).
+[`examples/docker-compose.coolify.yml`](https://github.com/moltis-org/moltis/blob/main/examples/docker-compose.coolify.yml).
 It is preconfigured for reverse-proxy deployments (`--no-tls`) and includes
 the Docker socket mount for sandboxed command execution.
 

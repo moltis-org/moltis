@@ -21,7 +21,7 @@ and Hermes Agent.
 | Main shape | Broad gateway, channel, node, app, and plugin ecosystem | CLI/gateway agent with a learning loop and research tooling | **Persistent personal agent server with modular crates** |
 | Local checkout size\* | ~1.1M app LoC | ~152K app LoC | **~270K Rust LoC** |
 | Crates/modules | npm packages, extensions, apps | Python packages, plugins, tools, TUI | **59 Rust workspace crates** |
-| Sandbox/backends | App-level permissions, browser/node tools | Local, Docker, SSH, Daytona, Singularity, Modal | **Docker/Podman + Apple Container + WASM** |
+| Sandbox/backends | App-level permissions, browser/node tools | Local, Docker, SSH, Daytona, Singularity, Modal | **Docker/Podman + Apple Container + WASM + Vercel + Daytona + remote sandboxes** |
 | Auth/access | Pairing and gateway controls | CLI and messaging gateway setup | **Password + Passkey + API keys + Vault** |
 | Voice I/O | Voice wake and talk modes | Voice memo transcription | **Built-in STT + TTS providers** |
 | MCP | Plugin/integration support | MCP integration | **stdio + HTTP/SSE** |
@@ -63,7 +63,7 @@ Key differences:
 - **Single Rust binary** instead of a Node.js or Python application runtime
 - **Built-in web UI** with streaming chat, settings, sessions, projects, and
   admin surfaces
-- **Docker/Podman, Apple Container, and WASM sandboxing**
+- **Docker/Podman, Apple Container, WASM, Vercel, Daytona, and remote sandboxing**
 - **Password, WebAuthn passkeys, scoped API keys, and vault-backed secret
   storage**
 - **Cross-session recall** without dumping raw history into every prompt
@@ -82,7 +82,7 @@ safe Rust.
 
 | Aspect | OpenClaw | Hermes Agent | **Moltis** |
 |--------|----------|--------------|------------|
-| Code sandbox | App-level permissions and tool controls | Local/Docker/SSH/cloud terminal backends | Docker/Podman + Apple Container + WASM |
+| Code sandbox | App-level permissions and tool controls | Local/Docker/SSH/cloud terminal backends | Docker/Podman + Apple Container + WASM + Vercel + Daytona + remote sandboxes |
 | Secret handling | Environment/config/plugin paths | Config and provider credentials | `secrecy::Secret`, encrypted vault, redaction |
 | Auth/access | Pairing and gateway controls | CLI plus messaging gateway setup | Password + Passkey + scoped API keys |
 | SSRF protection | Tool/plugin dependent | Tool/backend dependent | DNS-resolved, blocks loopback/private/link-local/CGNAT |

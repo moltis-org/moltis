@@ -79,7 +79,7 @@ Notes:
 Coolify deployments can run Moltis with sandboxed exec tools, as long as the
 service mounts the host Docker socket.
 
-- Use [`examples/docker-compose.coolify.yml`](../examples/docker-compose.coolify.yml)
+- Use [`examples/docker-compose.coolify.yml`](https://github.com/moltis-org/moltis/blob/main/examples/docker-compose.coolify.yml)
   as a starting point.
 - Run Moltis with `--no-tls` (Coolify terminates HTTPS at the proxy).
 - Set `MOLTIS_BEHIND_PROXY=true` so client IP/auth behavior is correct behind

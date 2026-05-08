@@ -1,0 +1,15 @@
+---
+import Docs from "../layouts/Docs.astro"
+import { getPageBySlug } from "../lib/docs"
+import * as IndexDoc from "../index.md"
+
+const page = await getPageBySlug("index")
+if (!page) {
+  throw new Error("Missing index page")
+}
+const { Content } = IndexDoc
+---
+
+<Docs page={page}>
+  <Content />
+</Docs>

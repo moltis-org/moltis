@@ -1,0 +1,11 @@
+# Existing docs contain long tables, command output, and generated references.
+# Keep the first pass focused on structural correctness rather than prose style.
+disabled-rules = [
+    "MD013", # line length
+    "MD033", # inline HTML
+    "MD041", # first line heading, mdBook pages are organized by SUMMARY.md
+    "MD051", # fragment validation has false positives for generated config-reference anchors
+    "MD052", # bracketed scopes in changelog entries look like undefined reference links
+    "MDBOOK004", # repeated headings are common in long reference/channel pages
+    "MDBOOK010", # code-like shell variables are misread as inline math in prose
+]

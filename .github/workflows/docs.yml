@@ -39,26 +39,33 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install mdBook
+      - name: Install docs validation tools
         run: |
-          mkdir -p $HOME/.local/bin
-          curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.52/mdbook-v0.4.52-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C $HOME/.local/bin
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          cargo install mdbook-lint --version 0.14.3 --locked
+          cargo install lychee --version 0.24.2 --locked
 
-      - name: Install mdbook-admonish
-        run: |
-          curl -sSL https://github.com/tommilligan/mdbook-admonish/releases/download/v1.20.0/mdbook-admonish-v1.20.0-x86_64-unknown-linux-gnu.tar.gz | tar -xz -C $HOME/.local/bin
+      - name: Install documentation dependencies
+        working-directory: docs
+        run: npm ci
+
+      - name: Lint documentation markdown
+        working-directory: docs
+        run: mdbook-lint lint --enable MD001,MD003,MD009,MD010,MD011,MD014 src
 
       - name: Build documentation
         working-directory: docs
-        run: mdbook build
+        run: npm run build
+
+      - name: Check generated documentation links
+        working-directory: docs
+        run: lychee --offline --root-dir "$PWD/dist" --no-progress dist
 
       - name: Add CNAME for custom domain
-        run: echo "docs.moltis.org" > docs/book/CNAME
+        run: echo "docs.moltis.org" > docs/dist/CNAME
 
       - name: Deploy to gh-pages branch
         uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e # v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs/book
+          publish_dir: ./docs/dist
           cname: docs.moltis.org

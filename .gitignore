@@ -13,6 +13,9 @@ CLAUDE.local.md
 features/
 .moltis/
 docs/book/
+docs/.astro/
+docs/dist/
+docs/node_modules/
 apps/macos/Generated/
 apps/macos/Moltis.xcodeproj/
 apps/macos/.derivedData*/

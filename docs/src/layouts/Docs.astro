@@ -1,0 +1,177 @@
+---
+import Base from "./Base.astro"
+import { getDocsIndex, getPrevNext, type DocPage } from "../lib/docs"
+
+interface Props {
+  page: DocPage
+}
+
+const { page } = Astro.props
+const sections = await getDocsIndex()
+const { previous, next } = await getPrevNext(page.slug)
+const currentPath = Astro.url.pathname.replace(/^\//, "") || "index.html"
+const searchPages = sections.flatMap((section) => section.pages)
+---
+
+<Base title={`${page.title} - Moltis Docs`}>
+  <div class="site-shell">
+    <header class="topbar">
+      <a class="brand" href="/index.html" aria-label="Moltis documentation home">
+        <img class="brand-mark" src="/moltis-icon.svg" alt="" width="30" height="30" aria-hidden="true" />
+        <span>Moltis</span>
+      </a>
+      <button class="nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false">Menu</button>
+      <nav class="topnav" aria-label="Primary">
+        <a href="/quickstart.html">Quickstart</a>
+        <a href="/providers.html">Providers</a>
+        <a href="/security.html">Security</a>
+        <a href="https://github.com/moltis-org/moltis">GitHub</a>
+      </nav>
+      <div class="theme-toggle" role="group" aria-label="Theme">
+        <button type="button" data-theme-option="auto" aria-label="Use system theme">A</button>
+        <button type="button" data-theme-option="light" aria-label="Use light theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v3M12 19v3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M2 12h3M19 12h3M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12" /></svg>
+        </button>
+        <button type="button" data-theme-option="dark" aria-label="Use dark theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A7.5 7.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z" /></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="mobile-scrim"></div>
+
+    <aside class="sidebar" aria-label="Documentation navigation">
+      <div class="sidebar-search">
+        <label class="search-label" for="docs-search">Search docs</label>
+        <input id="docs-search" type="search" placeholder="Search pages..." autocomplete="off" />
+        <div id="search-results" class="search-results" hidden></div>
+      </div>
+      {
+        sections.map((section) => (
+          <section class="sidebar-section">
+            <h2>{section.title}</h2>
+            <ol>
+              {section.pages.map((item) => (
+                <li class={`depth-${item.depth}`}>
+                  <a class:list={{ active: currentPath === item.url }} href={item.url}>{item.title}</a>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ))
+      }
+    </aside>
+
+    <main class="page-grid">
+      <article class="content-card">
+        <div class="eyebrow">{page.section}</div>
+        <slot />
+        <nav class="pager" aria-label="Page navigation">
+          {previous && <a class="pager-link" href={previous.url}><span>Previous</span>{previous.title}</a>}
+          {next && <a class="pager-link next" href={next.url}><span>Next</span>{next.title}</a>}
+        </nav>
+      </article>
+      <aside class="toc-panel" aria-label="On this page">
+        <div class="toc-title">On this page</div>
+        <nav id="page-toc"></nav>
+      </aside>
+    </main>
+  </div>
+
+  <script define:vars={{ searchPages }}>
+    const navToggle = document.querySelector('.nav-toggle')
+    const scrim = document.querySelector('.mobile-scrim')
+    const sidebar = document.querySelector('.sidebar')
+    const activeSidebarLink = sidebar?.querySelector('a.active')
+    const themeButtons = Array.from(document.querySelectorAll('[data-theme-option]'))
+    const themeMedia = window.matchMedia('(prefers-color-scheme: dark)')
+
+    function applyTheme(choice) {
+      const resolved = choice === 'auto' ? (themeMedia.matches ? 'dark' : 'light') : choice
+      document.documentElement.dataset.theme = resolved
+      document.documentElement.dataset.themeChoice = choice
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', resolved === 'dark' ? '#111214' : '#f7f7f5')
+      themeButtons.forEach((button) => {
+        const active = button.dataset.themeOption === choice
+        button.classList.toggle('active', active)
+        button.setAttribute('aria-pressed', String(active))
+      })
+    }
+
+    const storedTheme = localStorage.getItem('moltis-docs-theme') || 'auto'
+    applyTheme(storedTheme)
+    themeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const choice = button.dataset.themeOption || 'auto'
+        localStorage.setItem('moltis-docs-theme', choice)
+        applyTheme(choice)
+      })
+    })
+    themeMedia.addEventListener('change', () => {
+      if ((localStorage.getItem('moltis-docs-theme') || 'auto') === 'auto') {
+        applyTheme('auto')
+      }
+    })
+
+    function closeNav() {
+      document.body.classList.remove('nav-open')
+      navToggle?.setAttribute('aria-expanded', 'false')
+    }
+
+    navToggle?.addEventListener('click', () => {
+      const open = document.body.classList.toggle('nav-open')
+      navToggle.setAttribute('aria-expanded', String(open))
+    })
+    scrim?.addEventListener('click', closeNav)
+    sidebar?.querySelectorAll('a').forEach((link) => link.addEventListener('click', closeNav))
+    if (sidebar && activeSidebarLink) {
+      const linkTop = activeSidebarLink.offsetTop
+      const targetTop = linkTop - sidebar.clientHeight / 2 + activeSidebarLink.clientHeight / 2
+      sidebar.scrollTop = Math.max(0, targetTop)
+    }
+
+    const toc = document.getElementById('page-toc')
+    const tocPanel = document.querySelector('.toc-panel')
+    const headings = Array.from(document.querySelectorAll('.content-card h2, .content-card h3'))
+    if (toc && headings.length > 1) {
+      headings.forEach((heading) => {
+        const link = document.createElement('a')
+        link.href = `#${heading.id}`
+        link.textContent = heading.textContent || ''
+        link.className = heading.tagName === 'H3' ? 'toc-h3' : 'toc-h2'
+        toc.appendChild(link)
+      })
+    } else {
+      tocPanel?.classList.add('empty')
+    }
+
+    document.querySelectorAll('pre[data-code]').forEach((pre) => {
+      const button = document.createElement('button')
+      button.className = 'copy-code'
+      button.type = 'button'
+      button.textContent = 'Copy'
+      pre.appendChild(button)
+      button.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(pre.dataset.code || '')
+        button.textContent = 'Copied'
+        window.setTimeout(() => { button.textContent = 'Copy' }, 1200)
+      })
+    })
+
+    const search = document.getElementById('docs-search')
+    const results = document.getElementById('search-results')
+    search?.addEventListener('input', () => {
+      const query = search.value.trim().toLowerCase()
+      if (!query || !results) {
+        results.hidden = true
+        return
+      }
+      const matches = searchPages
+        .filter((page) => `${page.title} ${page.section}`.toLowerCase().includes(query))
+        .slice(0, 8)
+
+      results.innerHTML = matches.map((page) => `<a href="${page.url}"><span>${page.section}</span>${page.title}</a>`).join('')
+      results.hidden = matches.length === 0
+    })
+  </script>
+</Base>

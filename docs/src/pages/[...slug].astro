@@ -1,0 +1,32 @@
+---
+import Docs from "../layouts/Docs.astro"
+import { getAllPages, getPageBySlug } from "../lib/docs"
+
+const modules = import.meta.glob("../**/*.md")
+
+export async function getStaticPaths() {
+  const pages = await getAllPages()
+  return pages
+    .filter((page) => page.slug !== "index")
+    .map((page) => ({
+      params: { slug: page.slug },
+      props: { sourcePath: page.sourcePath, slug: page.slug },
+    }))
+}
+
+const { sourcePath, slug } = Astro.props
+const importer = modules[`../${sourcePath}`]
+if (!importer) {
+  throw new Error(`Missing markdown module for ${sourcePath}`)
+}
+const markdown = await importer() as { Content: unknown }
+const Content = markdown.Content
+const page = await getPageBySlug(slug)
+if (!page) {
+  throw new Error(`Missing page metadata for ${slug}`)
+}
+---
+
+<Docs page={page}>
+  <Content />
+</Docs>
