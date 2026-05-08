@@ -7,7 +7,7 @@
 //      auto-detects speech via energy-based VAD, auto-sends on silence,
 //      auto-re-listens after TTS playback finishes.
 
-import { chatAddMsg, smartScrollToBottom } from "./chat-ui";
+import { chatAddMsg, scrollChatToBottom, smartScrollToBottom } from "./chat-ui";
 import * as gon from "./gon";
 import { renderAudioPlayer, renderMarkdown, sendRpc, warmAudioPlayback } from "./helpers";
 import { t } from "./i18n";
@@ -65,6 +65,26 @@ let vadMutedForTts = false;
 let vadSensitivity = parseInt(localStorage.getItem("moltis_vad_sensitivity") || "50", 10);
 let vadSpeechThreshold = sensitivityToThreshold(vadSensitivity);
 
+interface VoiceProviderStatus {
+	id?: string;
+	name?: string;
+	available?: boolean;
+	enabled?: boolean;
+}
+
+interface VoiceProvidersStatus {
+	stt?: VoiceProviderStatus[];
+}
+
+interface SttStatus {
+	provider?: string;
+}
+
+interface SttProviderInfo {
+	id: string;
+	label: string;
+}
+
 /** Map sensitivity percentage (0-100) to RMS threshold.
  *  0% = least sensitive (threshold 0.08), 100% = most sensitive (threshold 0.005). */
 function sensitivityToThreshold(pct: number): number {
@@ -98,11 +118,13 @@ async function checkSttStatus(): Promise<void> {
 		updateVadButton();
 		return;
 	}
-	const res = await sendRpc<{ configured?: boolean }>("stt.status", {});
-	if (res?.ok && res.payload) {
-		sttConfigured = res.payload.configured === true;
+	const providersRes = await sendRpc<VoiceProvidersStatus>("voice.providers.all", {});
+	if (providersRes?.ok && providersRes.payload) {
+		const sttProviders = Array.isArray(providersRes.payload.stt) ? providersRes.payload.stt : [];
+		sttConfigured = sttProviders.some((provider) => provider.enabled === true && provider.available === true);
 	} else {
-		sttConfigured = false;
+		const res = await sendRpc<{ configured?: boolean }>("stt.status", {});
+		sttConfigured = res?.ok && res.payload?.configured === true;
 	}
 	if (!sttConfigured && vadActive) stopVad();
 	updateMicButton();
@@ -348,13 +370,43 @@ function cleanupTranscribingState(): void {
 	}
 }
 
+async function resolveSttProviderInfo(): Promise<SttProviderInfo | null> {
+	const [statusRes, providersRes] = await Promise.all([
+		sendRpc<SttStatus>("stt.status", {}),
+		sendRpc<VoiceProvidersStatus>("voice.providers.all", {}),
+	]);
+	const providerId = statusRes?.ok && statusRes.payload?.provider ? String(statusRes.payload.provider) : "";
+	if (!providerId) return null;
+	const sttProviders = providersRes?.ok && providersRes.payload?.stt ? providersRes.payload.stt : [];
+	const provider = sttProviders.find((entry) => entry.id === providerId);
+	const providerName = provider?.name ? String(provider.name) : providerId;
+	return {
+		id: providerId,
+		label: providerName === providerId ? providerId : `${providerName} (${providerId})`,
+	};
+}
+
+function appendSttProviderFooter(messageEl: HTMLElement, providerInfo: SttProviderInfo | null): void {
+	if (!providerInfo) return;
+	const footer = document.createElement("div");
+	footer.className = "msg-model-footer";
+	footer.textContent = `STT: ${providerInfo.label}`;
+	messageEl.appendChild(footer);
+	scrollChatToBottom(true);
+}
+
 // ── Send transcribed message ─────────────────────────────────
 
-function sendTranscribedMessage(text: string, audioFilename: string | null): void {
+function sendTranscribedMessage(
+	text: string,
+	audioFilename: string | null,
+	providerInfo: SttProviderInfo | null,
+): void {
 	warmAudioPlayback();
 
+	let userEl: HTMLElement | null = null;
 	if (audioFilename) {
-		const userEl = chatAddMsg("user", "", true);
+		userEl = chatAddMsg("user", "", true);
 		if (userEl) {
 			const audioSrc = `/api/sessions/${encodeURIComponent(S.activeSessionKey)}/media/${encodeURIComponent(audioFilename)}`;
 			renderAudioPlayer(userEl, audioSrc);
@@ -368,14 +420,22 @@ function sendTranscribedMessage(text: string, audioFilename: string | null): voi
 			}
 		}
 	} else {
-		chatAddMsg("user", renderMarkdown(text), true);
+		userEl = chatAddMsg("user", renderMarkdown(text), true);
 	}
+	if (userEl) appendSttProviderFooter(userEl, providerInfo);
 
-	const chatParams: { text: string; _input_medium: string; _audio_filename?: string; model?: string } = {
+	const chatParams: {
+		text: string;
+		_input_medium: string;
+		_audio_filename?: string;
+		_stt_provider?: string;
+		model?: string;
+	} = {
 		text,
 		_input_medium: "voice",
 	};
 	if (audioFilename) chatParams._audio_filename = audioFilename;
+	if (providerInfo?.id) chatParams._stt_provider = providerInfo.id;
 	const selectedModel = S.selectedModelId;
 	if (selectedModel) chatParams.model = selectedModel;
 
@@ -416,6 +476,7 @@ async function transcribeAudio(): Promise<void> {
 	try {
 		const blob = new Blob(audioChunks, { type: "audio/webm" });
 		audioChunks = [];
+		const providerInfo = await resolveSttProviderInfo();
 
 		// Skip tiny blobs that are just WebM headers with no real audio
 		if (blob.size < 2000) {
@@ -436,7 +497,9 @@ async function transcribeAudio(): Promise<void> {
 		const fetchTimeout = setTimeout(() => abortCtrl.abort(), 15000);
 		let res: TranscriptionUploadResponse;
 		try {
-			const resp = await fetch(`/api/sessions/${encodeURIComponent(S.activeSessionKey)}/upload?transcribe=true`, {
+			const query = new URLSearchParams({ transcribe: "true" });
+			if (providerInfo?.id) query.set("provider", providerInfo.id);
+			const resp = await fetch(`/api/sessions/${encodeURIComponent(S.activeSessionKey)}/upload?${query.toString()}`, {
 				method: "POST",
 				headers: { "Content-Type": blob.type || "audio/webm" },
 				body: blob,
@@ -455,7 +518,7 @@ async function transcribeAudio(): Promise<void> {
 			const audioFilename = typeof res.filename === "string" ? res.filename.trim() : "";
 			if (text) {
 				cleanupTranscribingState();
-				sendTranscribedMessage(text, audioFilename || null);
+				sendTranscribedMessage(text, audioFilename || null, providerInfo);
 			} else {
 				showTemporaryMessage(t("chat:voiceNoSpeech"), false, 2000);
 			}

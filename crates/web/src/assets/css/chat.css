@@ -713,8 +713,8 @@
 }
 
 .chat-composer:focus-within {
-  border-color: var(--border-strong);
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--accent-subtle);
+  border-color: var(--border);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.08);
 }
 
 .chat-composer-input-line {
