@@ -380,6 +380,48 @@ test.describe("Chat input and slash commands", () => {
 		await expect(sendBtn).toBeVisible();
 	});
 
+	test("chat composer is centered with footer controls", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		const composer = page.locator("#chatComposer");
+		const queuedMessages = page.locator("#queuedMessages");
+		await expect(composer).toBeVisible();
+		await expect(queuedMessages).toBeHidden();
+		await expect(page.locator("#modelCombo")).toBeVisible();
+		await expect(page.locator("#attachBtn")).toBeVisible();
+		await expect(page.locator("#micBtn")).toBeVisible();
+
+		const layout = await page.evaluate(() => {
+			var composerEl = document.getElementById("chatComposer");
+			var tokenBarEl = document.getElementById("tokenBar");
+			var rowEl = document.querySelector(".chat-input-row");
+			var footerEl = document.querySelector(".chat-composer-footer");
+			if (!(composerEl && tokenBarEl && rowEl && footerEl)) throw new Error("composer elements missing");
+			var composerRect = composerEl.getBoundingClientRect();
+			var rowRect = rowEl.getBoundingClientRect();
+			var styles = window.getComputedStyle(composerEl);
+			var rowStyles = window.getComputedStyle(rowEl);
+			return {
+				composerWidth: composerRect.width,
+				rowWidth: rowRect.width,
+				leftGap: composerRect.left - rowRect.left,
+				rightGap: rowRect.right - composerRect.right,
+				borderRadius: Number.parseFloat(styles.borderTopLeftRadius),
+				footerDirection: window.getComputedStyle(footerEl).display,
+				rowBackground: rowStyles.backgroundColor,
+				pageBackground: window.getComputedStyle(document.body).backgroundColor,
+				tokenParentClass: tokenBarEl.parentElement?.className || "",
+			};
+		});
+
+		expect(layout.composerWidth).toBeLessThan(layout.rowWidth);
+		expect(Math.abs(layout.leftGap - layout.rightGap)).toBeLessThanOrEqual(2);
+		expect(layout.borderRadius).toBeGreaterThanOrEqual(18);
+		expect(layout.footerDirection).toBe("flex");
+		expect(layout.rowBackground).toBe(layout.pageBackground);
+		expect(layout.tokenParentClass).toContain("chat-composer-footer");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("/sh toggles command mode UI", async ({ page }) => {
 		const chatInput = page.locator("#chatInput");
 		const prompt = page.locator("#chatCommandPrompt");

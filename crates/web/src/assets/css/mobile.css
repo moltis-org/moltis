@@ -394,8 +394,36 @@ body {
     border-radius: 0 !important;
   }
 
-  #queuedMessages,
-  .media-preview-strip {
+  .chat-composer {
+    border-radius: 18px;
+    padding: 10px 10px 8px;
+  }
+
+  .chat-composer-footer {
+    align-items: flex-end;
+    gap: 8px;
+  }
+
+  .chat-composer-tools {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .chat-composer-tools::-webkit-scrollbar {
+    display: none;
+  }
+
+  .chat-composer-footer .model-combo-btn {
+    max-width: 160px;
+  }
+
+  .chat-composer-icon-btn,
+  .chat-composer-send-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  #queuedMessages {
     display: none !important;
   }
 

@@ -21,6 +21,8 @@ let boundDragEnter: ((e: DragEvent) => void) | null = null;
 let boundDragLeave: ((e: DragEvent) => void) | null = null;
 let boundDrop: ((e: DragEvent) => void) | null = null;
 let boundPaste: ((e: ClipboardEvent) => void) | null = null;
+let boundAttachClick: (() => void) | null = null;
+let boundAttachChange: ((e: Event) => void) | null = null;
 let dragEnterCount = 0;
 
 const ACCEPTED_TYPES: string[] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -182,6 +184,19 @@ export function initMediaDrop(msgBox: HTMLElement, inputArea: HTMLElement): void
 		boundPaste = onPaste;
 		(S.chatInput as HTMLElement).addEventListener("paste", boundPaste as EventListener);
 	}
+
+	const attachBtn = document.getElementById("attachBtn") as HTMLButtonElement | null;
+	const attachInput = document.getElementById("attachInput") as HTMLInputElement | null;
+	if (attachBtn && attachInput) {
+		boundAttachClick = (): void => attachInput.click();
+		boundAttachChange = (e: Event): void => {
+			const input = e.currentTarget as HTMLInputElement;
+			if (input.files && input.files.length > 0) handleFiles(input.files);
+			input.value = "";
+		};
+		attachBtn.addEventListener("click", boundAttachClick);
+		attachInput.addEventListener("change", boundAttachChange);
+	}
 }
 
 /** Remove all listeners and clean up. */
@@ -195,6 +210,10 @@ export function teardownMediaDrop(): void {
 	if (S.chatInput && boundPaste) {
 		(S.chatInput as HTMLElement).removeEventListener("paste", boundPaste as EventListener);
 	}
+	const attachBtn = document.getElementById("attachBtn");
+	const attachInput = document.getElementById("attachInput");
+	if (attachBtn && boundAttachClick) attachBtn.removeEventListener("click", boundAttachClick);
+	if (attachInput && boundAttachChange) attachInput.removeEventListener("change", boundAttachChange);
 	if (previewStrip?.parentElement) {
 		previewStrip.parentElement.removeChild(previewStrip);
 	}
@@ -206,6 +225,8 @@ export function teardownMediaDrop(): void {
 	boundDragLeave = null;
 	boundDrop = null;
 	boundPaste = null;
+	boundAttachClick = null;
+	boundAttachChange = null;
 	dragEnterCount = 0;
 }
 

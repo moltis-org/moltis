@@ -170,6 +170,9 @@
     border-top: 1px dashed var(--border);
     background: var(--surface);
   }
+  .queued-tray.hidden {
+    display: none;
+  }
   .msg.user.queued {
     opacity: 0.6;
     border-style: dashed;
@@ -2030,6 +2033,16 @@
   .icon-waveform {
     -webkit-mask-image: url("./icons/masks/mask-waveform.svg");
     mask-image: url("./icons/masks/mask-waveform.svg");
+  }
+
+  .icon-paperclip {
+    -webkit-mask-image: url("./icons/masks/mask-paperclip.svg");
+    mask-image: url("./icons/masks/mask-paperclip.svg");
+  }
+
+  .icon-arrow-up {
+    -webkit-mask-image: url("./icons/masks/mask-arrow-up.svg");
+    mask-image: url("./icons/masks/mask-arrow-up.svg");
   }
 
   /* Status icons */
