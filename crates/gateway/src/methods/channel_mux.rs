@@ -19,8 +19,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         )
                     })?;
 
-                let mut inner = ctx.state.inner.write().await;
-                if let Some(client) = inner.clients.get_mut(&ctx.client_conn_id) {
+                let mut registry = ctx.state.client_registry.write().await;
+                if let Some(client) = registry.clients.get_mut(&ctx.client_conn_id) {
                     for ch in &channels {
                         client.joined_channels.insert(ch.clone());
                     }
@@ -47,8 +47,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         )
                     })?;
 
-                let mut inner = ctx.state.inner.write().await;
-                if let Some(client) = inner.clients.get_mut(&ctx.client_conn_id) {
+                let mut registry = ctx.state.client_registry.write().await;
+                if let Some(client) = registry.clients.get_mut(&ctx.client_conn_id) {
                     for ch in &channels {
                         client.joined_channels.remove(ch);
                     }

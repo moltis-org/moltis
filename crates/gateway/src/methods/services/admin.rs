@@ -3,6 +3,12 @@ use super::*;
 #[cfg(feature = "voice")]
 use crate::methods::voice;
 
+#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+use std::{path::PathBuf, sync::Arc};
+
+#[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+use tracing::info;
+
 pub(super) fn register(reg: &mut MethodRegistry) {
     // Update
     reg.register(
@@ -133,6 +139,67 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "projects.upsert",
         Box::new(|ctx| {
             Box::pin(async move {
+                // Check if code_index_enabled is transitioning from off → on
+                #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+                {
+                    let project_id = ctx
+                        .params
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    let new_enabled: Option<bool> = ctx
+                        .params
+                        .get("code_index_enabled")
+                        .and_then(|v| v.as_bool());
+
+                    if new_enabled == Some(true)
+                        && let Some(ref pid) = project_id
+                    {
+                        // Fetch old project to check previous state
+                        if let Ok(old) = ctx
+                            .state
+                            .services
+                            .project
+                            .get(serde_json::json!({ "id": pid }))
+                            .await
+                        {
+                            let old_enabled = old
+                                .get("code_index_enabled")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true);
+
+                            if !old_enabled {
+                                let dir = old
+                                    .get("directory")
+                                    .and_then(|v| v.as_str())
+                                    .map(PathBuf::from);
+
+                                if let Some(project_dir) = dir {
+                                    info!(
+                                        project_id = %pid,
+                                        "code-index: re-indexing project (enabled by user)"
+                                    );
+                                    let code_index = Arc::clone(&ctx.state.code_index);
+                                    let pid_owned = pid.clone();
+                                    tokio::spawn(async move {
+                                        if let Err(e) = code_index
+                                            .index_project(&pid_owned, true, &project_dir)
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                project_id = %pid_owned,
+                                                error = %e,
+                                                "code-index: background re-index failed"
+                                            );
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
                 ctx.state
                     .services
                     .project
@@ -230,7 +297,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "voice.providers.all",
             Box::new(|_ctx| {
                 Box::pin(async move {
-                    let config = moltis_config::discover_and_load();
+                    let mut config = moltis_config::discover_and_load();
+                    crate::voice::merge_voice_keys(&mut config);
                     let providers = voice::detect_voice_providers(&config).await;
                     Ok(serde_json::json!(providers))
                 })
@@ -240,7 +308,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "voice.elevenlabs.catalog",
             Box::new(|_ctx| {
                 Box::pin(async move {
-                    let config = moltis_config::discover_and_load();
+                    let mut config = moltis_config::discover_and_load();
+                    crate::voice::merge_voice_keys(&mut config);
                     Ok(voice::fetch_elevenlabs_catalog(&config).await)
                 })
             }),
@@ -446,8 +515,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "voice.config.save_key",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    use secrecy::Secret;
-
                     let provider = ctx
                         .params
                         .get("provider")
@@ -463,94 +530,74 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing api_key")
                         })?;
 
+                    // Save the API key to the credential store (KeyStore) instead
+                    // of writing it to moltis.toml.  The key store lives in
+                    // provider_keys.json and benefits from vault encryption when
+                    // enabled.
+                    let store = crate::provider_setup::KeyStore::new();
+                    let store_key = crate::voice::voice_key_store_name(provider);
+                    store
+                        .save_config(&store_key, Some(api_key.to_string()), None, None)
+                        .map_err(|e| {
+                            ErrorShape::new(
+                                error_codes::UNAVAILABLE,
+                                format!("failed to save key: {e}"),
+                            )
+                        })?;
+
+                    // Update non-secret config (provider selection, enabled flags)
+                    // and clear any legacy TOML API key entries.
                     moltis_config::update_config(|cfg| {
                         match provider {
-                            // TTS providers
-                            "elevenlabs" => {
-                                // ElevenLabs shares key between TTS and STT
-                                let key = Secret::new(api_key.to_string());
-                                cfg.voice.tts.elevenlabs.api_key = Some(key.clone());
-                                cfg.voice.stt.elevenlabs.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                                // Auto-enable both TTS and STT with ElevenLabs
-                                cfg.voice.tts.provider = "elevenlabs".to_string();
+                            "elevenlabs" | "elevenlabs-stt" => {
+                                cfg.voice.tts.elevenlabs.api_key = None;
+                                cfg.voice.stt.elevenlabs.api_key = None;
+                                cfg.voice.tts.provider =
+                                    Some(moltis_config::VoiceTtsProvider::ElevenLabs);
                                 cfg.voice.tts.enabled = true;
                                 cfg.voice.stt.provider =
                                     Some(moltis_config::VoiceSttProvider::ElevenLabs);
                                 cfg.voice.stt.enabled = true;
                             },
                             "openai" | "openai-tts" => {
-                                cfg.voice.tts.openai.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                                cfg.voice.tts.provider = "openai".to_string();
+                                cfg.voice.tts.openai.api_key = None;
+                                cfg.voice.tts.provider =
+                                    Some(moltis_config::VoiceTtsProvider::OpenAi);
                                 cfg.voice.tts.enabled = true;
                             },
-                            "google-tts" => {
-                                // Google API key is shared - set both TTS and STT
-                                let key = Secret::new(api_key.to_string());
-                                cfg.voice.tts.google.api_key = Some(key.clone());
-                                cfg.voice.stt.google.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                                // Auto-enable both TTS and STT with Google
-                                cfg.voice.tts.provider = "google".to_string();
+                            "google-tts" | "google" => {
+                                cfg.voice.tts.google.api_key = None;
+                                cfg.voice.stt.google.api_key = None;
+                                cfg.voice.tts.provider =
+                                    Some(moltis_config::VoiceTtsProvider::Google);
                                 cfg.voice.tts.enabled = true;
                                 cfg.voice.stt.provider =
                                     Some(moltis_config::VoiceSttProvider::Google);
                                 cfg.voice.stt.enabled = true;
                             },
-                            // STT providers
                             "whisper" => {
-                                cfg.voice.stt.whisper.api_key =
-                                    Some(Secret::new(api_key.to_string()));
+                                cfg.voice.stt.whisper.api_key = None;
                                 cfg.voice.stt.provider =
                                     Some(moltis_config::VoiceSttProvider::Whisper);
                                 cfg.voice.stt.enabled = true;
                             },
                             "groq" => {
-                                cfg.voice.stt.groq.api_key = Some(Secret::new(api_key.to_string()));
+                                cfg.voice.stt.groq.api_key = None;
                                 cfg.voice.stt.provider =
                                     Some(moltis_config::VoiceSttProvider::Groq);
                                 cfg.voice.stt.enabled = true;
                             },
                             "deepgram" => {
-                                cfg.voice.stt.deepgram.api_key =
-                                    Some(Secret::new(api_key.to_string()));
+                                cfg.voice.stt.deepgram.api_key = None;
                                 cfg.voice.stt.provider =
                                     Some(moltis_config::VoiceSttProvider::Deepgram);
                                 cfg.voice.stt.enabled = true;
                             },
-                            "google" => {
-                                // Google STT key - also set TTS since they share the same key
-                                let key = Secret::new(api_key.to_string());
-                                cfg.voice.stt.google.api_key = Some(key.clone());
-                                cfg.voice.tts.google.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                                // Auto-enable both STT and TTS with Google
-                                cfg.voice.stt.provider =
-                                    Some(moltis_config::VoiceSttProvider::Google);
-                                cfg.voice.stt.enabled = true;
-                                cfg.voice.tts.provider = "google".to_string();
-                                cfg.voice.tts.enabled = true;
-                            },
                             "mistral" => {
-                                cfg.voice.stt.mistral.api_key =
-                                    Some(Secret::new(api_key.to_string()));
+                                cfg.voice.stt.mistral.api_key = None;
                                 cfg.voice.stt.provider =
                                     Some(moltis_config::VoiceSttProvider::Mistral);
                                 cfg.voice.stt.enabled = true;
-                            },
-                            "elevenlabs-stt" => {
-                                // ElevenLabs shares key between TTS and STT
-                                let key = Secret::new(api_key.to_string());
-                                cfg.voice.stt.elevenlabs.api_key = Some(key.clone());
-                                cfg.voice.tts.elevenlabs.api_key =
-                                    Some(Secret::new(api_key.to_string()));
-                                // Auto-enable both STT and TTS with ElevenLabs
-                                cfg.voice.stt.provider =
-                                    Some(moltis_config::VoiceSttProvider::ElevenLabs);
-                                cfg.voice.stt.enabled = true;
-                                cfg.voice.tts.provider = "elevenlabs".to_string();
-                                cfg.voice.tts.enabled = true;
                             },
                             _ => {},
                         }
@@ -620,15 +667,20 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             ErrorShape::new(error_codes::INVALID_REQUEST, "missing provider")
                         })?;
 
+                    // Remove the key from the credential store.
+                    let store = crate::provider_setup::KeyStore::new();
+                    let store_key = crate::voice::voice_key_store_name(provider);
+                    let _ = store.remove(&store_key);
+
+                    // Also clear any legacy TOML entries.
                     moltis_config::update_config(|cfg| match provider {
-                        // TTS providers
                         "elevenlabs" => {
                             cfg.voice.tts.elevenlabs.api_key = None;
+                            cfg.voice.stt.elevenlabs.api_key = None;
                         },
-                        "openai" => {
+                        "openai" | "openai-tts" => {
                             cfg.voice.tts.openai.api_key = None;
                         },
-                        // STT providers
                         "whisper" => {
                             cfg.voice.stt.whisper.api_key = None;
                         },
@@ -638,13 +690,15 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         "deepgram" => {
                             cfg.voice.stt.deepgram.api_key = None;
                         },
-                        "google" => {
+                        "google" | "google-tts" => {
+                            cfg.voice.tts.google.api_key = None;
                             cfg.voice.stt.google.api_key = None;
                         },
                         "mistral" => {
                             cfg.voice.stt.mistral.api_key = None;
                         },
                         "elevenlabs-stt" => {
+                            cfg.voice.tts.elevenlabs.api_key = None;
                             cfg.voice.stt.elevenlabs.api_key = None;
                         },
                         _ => {},
@@ -831,6 +885,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         moltis_config::PromptMemoryMode::FrozenAtSessionStart => "frozen-at-session-start",
                     },
                     "qmd_feature_enabled": cfg!(feature = "qmd"),
+                    "enable_prefetch": memory.enable_prefetch,
+                    "prefetch_limit": memory.prefetch_limit,
+                    "auto_extract_interval": memory.auto_extract_interval,
+                    "enable_session_summary": memory.enable_session_summary,
+                    "enable_self_improvement": config.skills.enable_self_improvement,
                 }))
             })
         }),
@@ -937,6 +996,33 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     });
                 let prompt_memory_mode_value = parse_prompt_memory_mode(prompt_memory_mode)?;
                 let mut effective_disable_rag = current_memory.disable_rag;
+                let enable_prefetch = ctx
+                    .params
+                    .get("enable_prefetch")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(current_memory.enable_prefetch);
+                let prefetch_limit = ctx
+                    .params
+                    .get("prefetch_limit")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize)
+                    .unwrap_or(current_memory.prefetch_limit);
+                let auto_extract_interval = ctx
+                    .params
+                    .get("auto_extract_interval")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32)
+                    .unwrap_or(current_memory.auto_extract_interval);
+                let enable_session_summary = ctx
+                    .params
+                    .get("enable_session_summary")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(current_memory.enable_session_summary);
+                let enable_self_improvement = ctx
+                    .params
+                    .get("enable_self_improvement")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(current_config.skills.enable_self_improvement);
                 if let Err(e) = moltis_config::update_config(|cfg| {
                     cfg.memory.style = style_value;
                     cfg.memory.agent_write_mode = agent_write_mode_value;
@@ -950,6 +1036,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         cfg.memory.disable_rag = value;
                     }
                     cfg.memory.session_export = session_export;
+                    cfg.memory.enable_prefetch = enable_prefetch;
+                    cfg.memory.prefetch_limit = prefetch_limit;
+                    cfg.memory.auto_extract_interval = auto_extract_interval;
+                    cfg.memory.enable_session_summary = enable_session_summary;
+                    cfg.skills.enable_self_improvement = enable_self_improvement;
                     cfg.chat.prompt_memory_mode = prompt_memory_mode_value;
                     effective_disable_rag = cfg.memory.disable_rag;
                 }) {
@@ -971,6 +1062,11 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         moltis_config::SessionExportMode::OnNewOrReset => "on-new-or-reset",
                     },
                     "prompt_memory_mode": prompt_memory_mode,
+                    "enable_prefetch": enable_prefetch,
+                    "prefetch_limit": prefetch_limit,
+                    "auto_extract_interval": auto_extract_interval,
+                    "enable_session_summary": enable_session_summary,
+                    "enable_self_improvement": enable_self_improvement,
                 }))
             })
         }),
@@ -1206,6 +1302,93 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .services
                     .onboarding
                     .openclaw_import(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
+    // ── Claude import ────────────────────────────────────────────────────
+
+    reg.register(
+        "claude.detect",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .claude_detect()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "claude.import",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .claude_import(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
+    // ── Codex import ───────────────────────────────────────────────────
+
+    reg.register(
+        "codex.detect",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .codex_detect()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "codex.import",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .codex_import(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+
+    // ── Hermes import ──────────────────────────────────────────────────
+
+    reg.register(
+        "hermes.detect",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .hermes_detect()
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "hermes.import",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .onboarding
+                    .hermes_import(ctx.params.clone())
                     .await
                     .map_err(ErrorShape::from)
             })

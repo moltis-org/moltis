@@ -27,6 +27,20 @@ pub type ExecuteFn = Arc<
         + Sync,
 >;
 
+/// Callback type for direct channel delivery (deliver_only mode).
+pub type DeliverFn = Arc<
+    dyn Fn(DeliverRequest) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// Request to deliver a rendered message directly to a channel.
+pub struct DeliverRequest {
+    pub channel: String,
+    pub message: String,
+    pub extra: Option<serde_json::Value>,
+}
+
 /// Request to execute a webhook delivery.
 pub struct ExecuteRequest {
     pub webhook_id: i64,
@@ -43,6 +57,7 @@ pub struct WebhookWorker {
     rx: mpsc::Receiver<i64>,
     store: Arc<dyn WebhookStore>,
     execute_fn: ExecuteFn,
+    deliver_fn: Option<DeliverFn>,
 }
 
 impl WebhookWorker {
@@ -55,7 +70,14 @@ impl WebhookWorker {
             rx,
             store,
             execute_fn,
+            deliver_fn: None,
         }
+    }
+
+    /// Set the channel delivery callback for `deliver_only` mode.
+    pub fn with_deliver_fn(mut self, deliver_fn: DeliverFn) -> Self {
+        self.deliver_fn = Some(deliver_fn);
+        self
     }
 
     /// Run the worker loop, processing deliveries from the channel.
@@ -136,18 +158,109 @@ impl WebhookWorker {
             None => crate::profiles::generic::GenericProfile.normalize_payload(event_type, &body),
         };
 
-        // Build the delivery message
-        let message = crate::normalize::build_delivery_message(
-            &webhook,
-            delivery.event_type.as_deref(),
-            delivery.delivery_key.as_deref(),
-            &delivery.received_at,
-            &normalized.summary,
-        );
+        // Build the delivery message, applying template if configured.
+        let message = if let Some(ref template) = webhook.prompt_template {
+            crate::normalize::render_template(template, &body)
+        } else {
+            crate::normalize::build_delivery_message(
+                &webhook,
+                delivery.event_type.as_deref(),
+                delivery.delivery_key.as_deref(),
+                &delivery.received_at,
+                &normalized.summary,
+            )
+        };
 
         let session_key = build_session_key(&webhook, delivery_id, delivery.entity_key.as_deref());
 
         let start = std::time::Instant::now();
+
+        // deliver_only mode: render template and forward to channel, skip agent.
+        if webhook.deliver_only {
+            let channel = webhook.deliver_to.as_deref().unwrap_or("log");
+            let extra = webhook.deliver_extra.clone().map(|v| {
+                // Render template variables in deliver_extra values too.
+                if let serde_json::Value::Object(map) = &v {
+                    let mut rendered = serde_json::Map::new();
+                    for (k, val) in map {
+                        if let serde_json::Value::String(s) = val {
+                            rendered.insert(
+                                k.clone(),
+                                serde_json::Value::String(crate::normalize::render_template(
+                                    s, &body,
+                                )),
+                            );
+                        } else {
+                            rendered.insert(k.clone(), val.clone());
+                        }
+                    }
+                    serde_json::Value::Object(rendered)
+                } else {
+                    v
+                }
+            });
+
+            let deliver_result = if let Some(ref deliver_fn) = self.deliver_fn {
+                (deliver_fn)(DeliverRequest {
+                    channel: channel.to_string(),
+                    message: message.clone(),
+                    extra,
+                })
+                .await
+            } else if channel == "log" {
+                info!(
+                    webhook = %webhook.name,
+                    delivery_id,
+                    "deliver_only (log): {message}"
+                );
+                Ok(())
+            } else {
+                warn!(
+                    webhook = %webhook.name,
+                    channel,
+                    "deliver_only: no deliver callback configured, dropping message"
+                );
+                Err(anyhow::anyhow!(
+                    "deliver_only: no deliver callback configured for channel '{channel}'"
+                ))
+            };
+
+            let duration_ms = start.elapsed().as_millis() as i64;
+            match deliver_result {
+                Ok(()) => {
+                    self.store
+                        .update_delivery_status(
+                            delivery_id,
+                            DeliveryStatus::Completed,
+                            DeliveryUpdate {
+                                session_key: Some(format!("deliver_only:{channel}")),
+                                finished_at: Some(now_iso()),
+                                duration_ms: Some(duration_ms),
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                },
+                Err(e) => {
+                    warn!(delivery_id, error = %e, "deliver_only delivery failed");
+                    self.store
+                        .update_delivery_status(
+                            delivery_id,
+                            DeliveryStatus::Failed,
+                            DeliveryUpdate {
+                                run_error: Some(e.to_string()),
+                                finished_at: Some(now_iso()),
+                                duration_ms: Some(duration_ms),
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"))?;
+                },
+            }
+            return Ok(());
+        }
 
         // Execute via callback
         let result = (self.execute_fn)(ExecuteRequest {
@@ -256,6 +369,10 @@ mod tests {
             last_delivery_at: None,
             created_at: "2026-04-07T00:00:00Z".into(),
             updated_at: "2026-04-07T00:00:00Z".into(),
+            deliver_only: false,
+            prompt_template: None,
+            deliver_to: None,
+            deliver_extra: None,
         }
     }
 

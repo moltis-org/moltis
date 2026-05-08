@@ -18,7 +18,7 @@ modules:
   - name: moltis
     buildsystem: simple
     build-commands:
-      - cargo build --release --manifest-path=crates/cli/Cargo.toml
+      - ./scripts/cargo-build-moltis.sh --release
       - install -Dm755 target/release/moltis /app/bin/moltis
     sources:
       - type: dir

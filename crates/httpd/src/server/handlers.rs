@@ -20,6 +20,54 @@ pub(super) async fn health_handler(State(state): State<AppState>) -> impl IntoRe
     }))
 }
 
+#[derive(serde::Deserialize)]
+pub(super) struct RpcHttpRequest {
+    method: String,
+    #[serde(default)]
+    params: serde_json::Value,
+    #[serde(default)]
+    id: Option<String>,
+}
+
+pub(super) async fn rpc_handler(
+    State(state): State<AppState>,
+    identity: Option<axum::Extension<auth::AuthIdentity>>,
+    Json(request): Json<RpcHttpRequest>,
+) -> impl IntoResponse {
+    let scopes = identity
+        .as_ref()
+        .and_then(|axum::Extension(auth)| match auth.method {
+            auth::AuthMethod::ApiKey => Some(auth.scopes.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            vec![
+                moltis_protocol::scopes::ADMIN.into(),
+                moltis_protocol::scopes::READ.into(),
+                moltis_protocol::scopes::WRITE.into(),
+                moltis_protocol::scopes::APPROVALS.into(),
+                moltis_protocol::scopes::PAIRING.into(),
+            ]
+        });
+
+    let request_id = request.id.unwrap_or_else(|| "http-rpc".to_string());
+    let response = state
+        .methods
+        .dispatch(moltis_gateway::methods::MethodContext {
+            request_id,
+            method: request.method,
+            params: request.params,
+            client_conn_id: "http-rpc".to_string(),
+            client_role: moltis_protocol::roles::OPERATOR.to_string(),
+            client_scopes: scopes,
+            state: Arc::clone(&state.gateway),
+            channel: None,
+        })
+        .await;
+
+    Json(response)
+}
+
 pub(super) async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
     headers: axum::http::HeaderMap,

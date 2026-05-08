@@ -137,6 +137,16 @@ pub trait ChannelService: Send + Sync {
     async fn senders_list(&self, params: Value) -> ServiceResult;
     async fn sender_approve(&self, params: Value) -> ServiceResult;
     async fn sender_deny(&self, params: Value) -> ServiceResult;
+
+    async fn oauth_start(&self, params: Value) -> ServiceResult {
+        let _ = params;
+        Err("channel OAuth not supported".into())
+    }
+
+    async fn oauth_complete(&self, params: Value) -> ServiceResult {
+        let _ = params;
+        Err("channel OAuth not supported".into())
+    }
 }
 
 pub struct NoopChannelService;
@@ -598,6 +608,13 @@ pub trait SkillsService: Send + Sync {
     async fn security_status(&self) -> ServiceResult;
     async fn security_scan(&self) -> ServiceResult;
     async fn skill_save(&self, params: Value) -> ServiceResult;
+    async fn bundled_categories(&self) -> ServiceResult;
+    async fn bundled_toggle_category(&self, params: Value) -> ServiceResult;
+    async fn recipe(&self, params: Value) -> ServiceResult;
+    async fn clawhub_search(&self, params: Value) -> ServiceResult;
+    async fn clawhub_install(&self, params: Value) -> ServiceResult;
+    async fn clawhub_info(&self, params: Value) -> ServiceResult;
+    async fn clawhub_scan(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopSkillsStub;
@@ -686,6 +703,34 @@ impl SkillsService for NoopSkillsStub {
 
     async fn skill_save(&self, _params: Value) -> ServiceResult {
         Err("skills service not configured".into())
+    }
+
+    async fn bundled_categories(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "categories": [], "total_skills": 0 }))
+    }
+
+    async fn bundled_toggle_category(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn recipe(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "found": false }))
+    }
+
+    async fn clawhub_search(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "results": [] }))
+    }
+
+    async fn clawhub_install(&self, _params: Value) -> ServiceResult {
+        Err("skills service not configured".into())
+    }
+
+    async fn clawhub_info(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "found": false }))
+    }
+
+    async fn clawhub_scan(&self, _params: Value) -> ServiceResult {
+        Ok(serde_json::json!({ "security": null }))
     }
 }
 
@@ -783,6 +828,12 @@ pub trait OnboardingService: Send + Sync {
     async fn openclaw_detect(&self) -> ServiceResult;
     async fn openclaw_scan(&self) -> ServiceResult;
     async fn openclaw_import(&self, params: Value) -> ServiceResult;
+    async fn claude_detect(&self) -> ServiceResult;
+    async fn claude_import(&self, params: Value) -> ServiceResult;
+    async fn codex_detect(&self) -> ServiceResult;
+    async fn codex_import(&self, params: Value) -> ServiceResult;
+    async fn hermes_detect(&self) -> ServiceResult;
+    async fn hermes_import(&self, params: Value) -> ServiceResult;
 }
 
 pub struct NoopOnboardingService;
@@ -826,6 +877,30 @@ impl OnboardingService for NoopOnboardingService {
     }
 
     async fn openclaw_import(&self, _params: Value) -> ServiceResult {
+        Err("onboarding service not configured".into())
+    }
+
+    async fn claude_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "detected": false }))
+    }
+
+    async fn claude_import(&self, _params: Value) -> ServiceResult {
+        Err("onboarding service not configured".into())
+    }
+
+    async fn codex_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "detected": false }))
+    }
+
+    async fn codex_import(&self, _params: Value) -> ServiceResult {
+        Err("onboarding service not configured".into())
+    }
+
+    async fn hermes_detect(&self) -> ServiceResult {
+        Ok(serde_json::json!({ "detected": false }))
+    }
+
+    async fn hermes_import(&self, _params: Value) -> ServiceResult {
         Err("onboarding service not configured".into())
     }
 }
@@ -1096,6 +1171,9 @@ pub trait LocalLlmService: Send + Sync {
     async fn search_hf(&self, params: Value) -> ServiceResult;
     async fn configure_custom(&self, params: Value) -> ServiceResult;
     async fn remove_model(&self, params: Value) -> ServiceResult;
+    async fn load_model(&self, params: Value) -> ServiceResult;
+    async fn unload_model(&self, params: Value) -> ServiceResult;
+    async fn model_states(&self) -> ServiceResult;
 }
 
 pub struct NoopLocalLlmService;
@@ -1127,6 +1205,18 @@ impl LocalLlmService for NoopLocalLlmService {
     }
 
     async fn remove_model(&self, _params: Value) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn load_model(&self, _params: Value) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn unload_model(&self, _params: Value) -> ServiceResult {
+        Err("local-llm feature not enabled".into())
+    }
+
+    async fn model_states(&self) -> ServiceResult {
         Err("local-llm feature not enabled".into())
     }
 }

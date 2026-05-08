@@ -37,6 +37,24 @@ offered = ["telegram", "discord"]
 }
 
 #[test]
+fn channels_offered_telephony_accepted_for_manual_compatibility() {
+    let toml = r#"
+[channels]
+offered = ["telephony"]
+"#;
+    let result = validate_toml_str(toml);
+    let warning = result
+        .diagnostics
+        .iter()
+        .find(|d| d.path.starts_with("channels.offered") && d.category == "unknown-field");
+    assert!(
+        warning.is_none(),
+        "telephony remains a known internal channel type, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn channels_discord_config_accepted() {
     let toml = r#"
 [channels.discord.my_bot]

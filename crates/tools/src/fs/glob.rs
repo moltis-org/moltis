@@ -180,7 +180,7 @@ impl GlobTool {
         }
 
         // Sort by mtime descending.
-        results.sort_by(|a, b| b.1.cmp(&a.1));
+        results.sort_by_key(|item| std::cmp::Reverse(item.1));
 
         let truncated = results.len() > DEFAULT_GLOB_LIMIT;
         if truncated {

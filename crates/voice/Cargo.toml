@@ -4,7 +4,8 @@ name              = "moltis-voice"
 version.workspace = true
 
 [dependencies]
-anyhow      = { workspace = true }
+anyhow        = { workspace = true }
+moltis-config = { workspace = true }
 async-trait = "0.1"
 base64      = { workspace = true }
 bytes       = { workspace = true }

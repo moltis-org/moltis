@@ -397,6 +397,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             payload: Some(moltis_cron::types::CronPayload::AgentTurn {
                                 message: prompt,
                                 model: patch.model.clone(),
+                                agent_id: patch.agent_id.clone(),
                                 timeout_secs: None,
                                 deliver: patch.deliver,
                                 channel: patch.channel.clone(),
@@ -431,6 +432,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             payload: moltis_cron::types::CronPayload::AgentTurn {
                                 message: prompt,
                                 model: patch.model.clone(),
+                                agent_id: patch.agent_id.clone(),
                                 timeout_secs: None,
                                 deliver: patch.deliver,
                                 channel: patch.channel.clone(),
@@ -540,8 +542,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                 // Forward client Accept-Language, public remote IP, and timezone.
                 {
-                    let inner = ctx.state.inner.read().await;
-                    if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
+                    let registry = ctx.state.client_registry.read().await;
+                    if let Some(client) = registry.clients.get(&ctx.client_conn_id) {
                         if let Some(ref lang) = client.accept_language {
                             params["_accept_language"] = serde_json::json!(lang);
                         }
@@ -555,7 +557,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 }
                 ctx.state
                     .chat()
-                    .await
                     .send(params)
                     .await
                     .map_err(ErrorShape::from)
@@ -568,7 +569,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             Box::pin(async move {
                 ctx.state
                     .chat()
-                    .await
                     .abort(ctx.params.clone())
                     .await
                     .map_err(ErrorShape::from)
@@ -581,7 +581,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             Box::pin(async move {
                 ctx.state
                     .chat()
-                    .await
                     .peek(ctx.params.clone())
                     .await
                     .map_err(ErrorShape::from)
@@ -594,7 +593,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             Box::pin(async move {
                 ctx.state
                     .chat()
-                    .await
                     .cancel_queued(ctx.params.clone())
                     .await
                     .map_err(ErrorShape::from)
@@ -609,7 +607,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                 ctx.state
                     .chat()
-                    .await
                     .history(params)
                     .await
                     .map_err(ErrorShape::from)
@@ -622,7 +619,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             Box::pin(async move {
                 ctx.state
                     .chat()
-                    .await
                     .inject(ctx.params.clone())
                     .await
                     .map_err(ErrorShape::from)
@@ -633,11 +629,19 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "chat.clear",
         Box::new(|ctx| {
             Box::pin(async move {
+                // Export the session before the clear destroys its history.
+                if let Some(session_key) = active_session_key_for_ctx(&ctx).await {
+                    let hooks = ctx.state.inner.read().await.hook_registry.clone();
+                    if let Some(ref hooks) = hooks {
+                        crate::session::dispatch_command_hook(hooks, &session_key, "reset", None)
+                            .await;
+                    }
+                }
+
                 let mut params = ctx.params.clone();
                 params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                 ctx.state
                     .chat()
-                    .await
                     .clear(params)
                     .await
                     .map_err(ErrorShape::from)
@@ -652,7 +656,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                 ctx.state
                     .chat()
-                    .await
                     .compact(params)
                     .await
                     .map_err(ErrorShape::from)
@@ -668,7 +671,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                 ctx.state
                     .chat()
-                    .await
                     .context(params)
                     .await
                     .map_err(ErrorShape::from)
@@ -684,8 +686,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                 // Forward client Accept-Language, public remote IP, and timezone.
                 {
-                    let inner = ctx.state.inner.read().await;
-                    if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
+                    let registry = ctx.state.client_registry.read().await;
+                    if let Some(client) = registry.clients.get(&ctx.client_conn_id) {
                         if let Some(ref lang) = client.accept_language {
                             params["_accept_language"] = serde_json::json!(lang);
                         }
@@ -699,7 +701,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 }
                 ctx.state
                     .chat()
-                    .await
                     .raw_prompt(params)
                     .await
                     .map_err(ErrorShape::from)
@@ -715,8 +716,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                 // Forward client Accept-Language, public remote IP, and timezone.
                 {
-                    let inner = ctx.state.inner.read().await;
-                    if let Some(client) = inner.clients.get(&ctx.client_conn_id) {
+                    let registry = ctx.state.client_registry.read().await;
+                    if let Some(client) = registry.clients.get(&ctx.client_conn_id) {
                         if let Some(ref lang) = client.accept_language {
                             params["_accept_language"] = serde_json::json!(lang);
                         }
@@ -730,7 +731,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 }
                 ctx.state
                     .chat()
-                    .await
                     .full_context(params)
                     .await
                     .map_err(ErrorShape::from)
@@ -746,7 +746,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
                 ctx.state
                     .chat()
-                    .await
                     .refresh_prompt_memory(params)
                     .await
                     .map_err(ErrorShape::from)
@@ -772,8 +771,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
                 let previous_active_key = {
-                    let inner = ctx.state.inner.read().await;
-                    inner.active_sessions.get(&ctx.client_conn_id).cloned()
+                    let registry = ctx.state.client_registry.read().await;
+                    registry.active_sessions.get(&ctx.client_conn_id).cloned()
                 };
                 let was_existing_session =
                     if let Some(ref metadata) = ctx.state.services.session_metadata {
@@ -784,17 +783,17 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                 // Store the active session (and project if provided) for this connection.
                 {
-                    let mut inner = ctx.state.inner.write().await;
-                    inner
+                    let mut registry = ctx.state.client_registry.write().await;
+                    registry
                         .active_sessions
                         .insert(ctx.client_conn_id.clone(), key.to_string());
 
                     if let Some(project_id) = ctx.params.get("project_id").and_then(|v| v.as_str())
                     {
                         if project_id.is_empty() {
-                            inner.active_projects.remove(&ctx.client_conn_id);
+                            registry.active_projects.remove(&ctx.client_conn_id);
                         } else {
-                            inner
+                            registry
                                 .active_projects
                                 .insert(ctx.client_conn_id.clone(), project_id.to_string());
                         }
@@ -830,6 +829,19 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                 // Mark the session as seen so unread state clears.
                 ctx.state.services.session.mark_seen(key).await;
+
+                // Export the previous session when the user creates a brand-new
+                // session (e.g. "+" button or /new).  Switching between two
+                // *existing* sessions intentionally skips export — only new-
+                // session creation signals the end of the previous conversation.
+                if !was_existing_session
+                    && let Some(prev_key) = previous_active_key.as_deref().filter(|pk| *pk != key)
+                {
+                    let hooks = ctx.state.inner.read().await.hook_registry.clone();
+                    if let Some(ref hooks) = hooks {
+                        crate::session::dispatch_command_hook(hooks, prev_key, "new", None).await;
+                    }
+                }
 
                 if let Some(pid) = ctx.params.get("project_id").and_then(|v| v.as_str()) {
                     let _ = ctx
@@ -946,7 +958,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                 // Inject replying state so frontend restores thinking
                 // indicator and voice-pending state after page reload.
-                let chat = ctx.state.chat().await;
+                let chat = ctx.state.chat();
                 let active_keys = chat.active_session_keys().await;
                 let replying = active_keys.iter().any(|k| k == key);
                 if let Some(obj) = result.as_object_mut() {
@@ -973,12 +985,25 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "tts.status",
             Box::new(|ctx| {
                 Box::pin(async move {
-                    ctx.state
+                    let mut status = ctx
+                        .state
                         .services
                         .tts
                         .status()
                         .await
-                        .map_err(ErrorShape::from)
+                        .map_err(ErrorShape::from)?;
+
+                    // Enrich with active persona info.
+                    if let Some(ref store) = ctx.state.services.voice_persona_store
+                        && let Ok(Some(active)) = store.get_active().await
+                    {
+                        status["persona"] = serde_json::json!({
+                            "id": active.persona.id,
+                            "label": active.persona.label,
+                        });
+                    }
+
+                    Ok(status)
                 })
             }),
         );
@@ -1025,10 +1050,39 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             "tts.convert",
             Box::new(|ctx| {
                 Box::pin(async move {
+                    let mut params = ctx.params.clone();
+
+                    // Resolve voice persona through the full chain:
+                    // explicit personaId → session agent's voice_persona_id → global active.
+                    if params.get("persona").is_none()
+                        && let Some(ref vp_store) = ctx.state.services.voice_persona_store
+                    {
+                        let explicit_id = params.get("personaId").and_then(|v| v.as_str());
+                        let session_key = params
+                            .get("_session_key")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+
+                        let persona = crate::voice_persona::resolve_persona(
+                            vp_store,
+                            ctx.state.services.agent_persona_store.as_deref(),
+                            explicit_id,
+                            session_key.as_deref(),
+                            ctx.state.services.session_metadata.as_deref(),
+                        )
+                        .await;
+
+                        if let Some(persona) = persona
+                            && let Ok(v) = serde_json::to_value(&persona)
+                        {
+                            params["persona"] = v;
+                        }
+                    }
+
                     ctx.state
                         .services
                         .tts
-                        .convert(ctx.params.clone())
+                        .convert(params)
                         .await
                         .map_err(ErrorShape::from)
                 })

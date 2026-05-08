@@ -3,13 +3,15 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+#[cfg(any(feature = "msteams", feature = "telephony"))]
+use moltis_channels::ChannelPlugin;
+
 use {
     axum::{
         extract::ConnectInfo,
         http::StatusCode,
         response::{IntoResponse, Json},
     },
-    moltis_channels::ChannelPlugin,
     moltis_gateway::server::{PreparedGatewayCore, prepare_gateway_core},
     moltis_sessions::session_events::SessionEventBus,
 };
@@ -24,6 +26,51 @@ use super::{
 
 #[cfg(feature = "tailscale")]
 use super::TailscaleOpts;
+
+#[cfg(feature = "telephony")]
+fn header_value(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+#[cfg(feature = "telephony")]
+fn telephony_webhook_url(
+    account_id: &str,
+    endpoint: &str,
+    headers: &axum::http::HeaderMap,
+    account_config: Option<serde_json::Value>,
+    config: &moltis_config::schema::MoltisConfig,
+) -> Option<String> {
+    let base_url = account_config
+        .as_ref()
+        .and_then(|value| value["webhook_url"].as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| config.server.effective_external_url())
+        .or_else(|| {
+            let host = header_value(headers, "x-forwarded-host")
+                .or_else(|| header_value(headers, "host"))?;
+            let proto = header_value(headers, "x-forwarded-proto").unwrap_or_else(|| {
+                if config.tls.enabled {
+                    "https".to_string()
+                } else {
+                    "http".to_string()
+                }
+            });
+            Some(format!("{proto}://{host}"))
+        })?;
+
+    Some(format!(
+        "{}/api/channels/telephony/{account_id}/{endpoint}",
+        base_url.trim_end_matches('/')
+    ))
+}
 
 /// Prepare the full gateway: load config, run migrations, wire services,
 /// spawn background tasks, and return the composed axum application.
@@ -44,7 +91,7 @@ pub async fn prepare_gateway(
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
     session_event_bus: Option<SessionEventBus>,
-) -> anyhow::Result<PreparedGateway> {
+) -> crate::error::Result<PreparedGateway> {
     // Install a process-level rustls CryptoProvider early, before any channel
     // plugin (Slack, Discord, etc.) creates outbound TLS connections via
     // hyper-rustls.  Without this, `--no-tls` deployments skip the TLS cert
@@ -73,15 +120,19 @@ pub async fn prepare_gateway(
         tailscale_reset_on_exit_override,
         session_event_bus,
     )
-    .await?;
+    .await
+    .map_err(|e| crate::Error::Config(e.to_string()))?;
 
     let PreparedGatewayCore {
         state,
         methods,
         webauthn_registry,
+        #[cfg(feature = "msteams")]
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,
+        #[cfg(feature = "telephony")]
+        telephony_webhook_plugin,
         #[cfg(feature = "push-notifications")]
         push_service,
         #[cfg(feature = "trusted-network")]
@@ -152,6 +203,7 @@ pub async fn prepare_gateway(
 
     let mut app = finalize_gateway_app(router, app_state, config.server.http_request_logs);
 
+    #[cfg(feature = "msteams")]
     {
         let teams_plugin_for_webhook = Arc::clone(&msteams_webhook_plugin);
         let state_for_teams_webhook = Arc::clone(&state);
@@ -272,7 +324,7 @@ pub async fn prepare_gateway(
     }
     #[cfg(feature = "slack")]
     {
-        // Slack Events API webhook -- receives event callbacks.
+        // Slack Events API webhook
         let slack_events_plugin = Arc::clone(&slack_webhook_plugin);
         let state_for_slack_events = Arc::clone(&state);
         app = app.route(
@@ -424,6 +476,420 @@ pub async fn prepare_gateway(
                                     )
                                         .into_response(),
                                 }
+                            },
+                        }
+                    }
+                },
+            ),
+        );
+
+        // Slack slash command webhook -- receives /command payloads.
+        let slack_cmd_plugin = Arc::clone(&slack_webhook_plugin);
+        let state_for_slack_cmd = Arc::clone(&state);
+        app = app.route(
+            "/api/channels/slack/{account_id}/commands",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let plugin = Arc::clone(&slack_cmd_plugin);
+                    let gw_state = Arc::clone(&state_for_slack_cmd);
+                    async move {
+                        // Get the verifier from the plugin.
+                        let verifier = {
+                            let p = plugin.read().await;
+                            p.channel_webhook_verifier(&account_id)
+                        };
+                        let Some(verifier) = verifier else {
+                            return (
+                                StatusCode::NOT_FOUND,
+                                Json(serde_json::json!({ "ok": false, "error": "unknown Slack account" })),
+                            )
+                                .into_response();
+                        };
+
+                        // Run the middleware pipeline.
+                        match moltis_gateway::channel_webhook_middleware::channel_webhook_gate(
+                            verifier.as_ref(),
+                            &gw_state.channel_webhook_dedup,
+                            &gw_state.channel_webhook_rate_limiter,
+                            &account_id,
+                            &headers,
+                            &body,
+                        ) {
+                            Err(rejection) => {
+                                crate::channel_webhook_middleware::rejection_into_response(
+                                    rejection,
+                                )
+                            },
+                            Ok((_, moltis_channels::ChannelWebhookDedupeResult::Duplicate)) => {
+                                // Slash commands display the response body in
+                                // Slack, so return an empty 200 for deduped
+                                // requests instead of JSON the user would see.
+                                StatusCode::OK.into_response()
+                            },
+                            Ok((verified, moltis_channels::ChannelWebhookDedupeResult::New)) => {
+                                // Dispatch to Slack plugin with verified body.
+                                let result = {
+                                    let p = plugin.read().await;
+                                    p.ingest_verified_command_webhook(
+                                        &account_id,
+                                        &verified.body,
+                                    )
+                                    .await
+                                };
+                                match result {
+                                    Ok(response_text) => (
+                                        StatusCode::OK,
+                                        response_text,
+                                    )
+                                        .into_response(),
+                                    Err(e) => (
+                                        StatusCode::BAD_REQUEST,
+                                        Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
+                                    )
+                                        .into_response(),
+                                }
+                            },
+                        }
+                    }
+                },
+            ),
+        );
+    }
+
+    #[cfg(feature = "telephony")]
+    {
+        let telephony_plugin_for_webhook = Arc::clone(&telephony_webhook_plugin);
+        let telephony_config_for_status = config.clone();
+
+        // Status callback — Twilio posts call status updates here
+        app = app.route(
+            "/api/channels/telephony/{account_id}/status",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let plugin = Arc::clone(&telephony_plugin_for_webhook);
+                    async move {
+                        let plugin_guard = plugin.read().await;
+                        let mgr = match plugin_guard.call_manager(&account_id) {
+                            Some(m) => m,
+                            None => {
+                                return (
+                                    StatusCode::NOT_FOUND,
+                                    Json(serde_json::json!({"ok": false, "error": "unknown telephony account"})),
+                                )
+                                    .into_response();
+                            },
+                        };
+
+                        let manager = mgr.read().await;
+                        let provider = manager.provider().read().await;
+
+                        // Verify webhook signature before processing.
+                        let webhook_url = match telephony_webhook_url(
+                            &account_id,
+                            "status",
+                            &headers,
+                            plugin_guard.account_config_json(&account_id),
+                            &telephony_config_for_status,
+                        ) {
+                            Some(url) => url,
+                            None => {
+                                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": "missing public webhook URL"}))).into_response();
+                            },
+                        };
+                        if let Err(e) = provider.verify_webhook(&webhook_url, &headers, &body) {
+                            tracing::warn!(account_id = %account_id, "telephony status webhook verification failed: {e}");
+                            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"ok": false, "error": "signature verification failed"}))).into_response();
+                        }
+
+                        match provider.parse_webhook_event(&headers, &body) {
+                            Ok(event) => {
+                                drop(provider);
+                                manager.handle_event(&event);
+                                (
+                                    StatusCode::OK,
+                                    Json(serde_json::json!({"ok": true})),
+                                )
+                                    .into_response()
+                            },
+                            Err(e) => {
+                                tracing::warn!(account_id = %account_id, "telephony webhook parse error: {e}");
+                                (
+                                    StatusCode::BAD_REQUEST,
+                                    Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+                                )
+                                    .into_response()
+                            },
+                        }
+                    }
+                },
+            ),
+        );
+
+        // Answer URL — Twilio fetches TwiML from here when a call connects
+        let telephony_answer_plugin = Arc::clone(&telephony_webhook_plugin);
+        let telephony_config_for_answer = config.clone();
+        app = app.route(
+            "/api/channels/telephony/{account_id}/answer",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let plugin = Arc::clone(&telephony_answer_plugin);
+                    async move {
+                        let plugin_guard = plugin.read().await;
+                        let mgr = match plugin_guard.call_manager(&account_id) {
+                            Some(m) => m,
+                            None => {
+                                return (StatusCode::NOT_FOUND, "unknown account").into_response();
+                            },
+                        };
+
+                        let manager = mgr.read().await;
+
+                        // Verify webhook signature.
+                        {
+                            let provider = manager.provider().read().await;
+                            let webhook_url = match telephony_webhook_url(
+                                &account_id,
+                                "answer",
+                                &headers,
+                                plugin_guard.account_config_json(&account_id),
+                                &telephony_config_for_answer,
+                            ) {
+                                Some(url) => url,
+                                None => {
+                                    return (StatusCode::BAD_REQUEST, "missing public webhook URL").into_response();
+                                },
+                            };
+                            if let Err(e) = provider.verify_webhook(&webhook_url, &headers, &body) {
+                                tracing::warn!(account_id = %account_id, "telephony answer webhook verification failed: {e}");
+                                return (StatusCode::UNAUTHORIZED, "signature verification failed").into_response();
+                            }
+                        }
+
+                        // Parse inbound call info from body
+                        let body_str = match std::str::from_utf8(&body) {
+                            Ok(value) => value,
+                            Err(e) => {
+                                tracing::warn!(account_id = %account_id, "telephony answer body is not valid utf-8: {e}");
+                                return (StatusCode::BAD_REQUEST, "invalid webhook body").into_response();
+                            },
+                        };
+                        let params: HashMap<String, String> =
+                            url::form_urlencoded::parse(body_str.as_bytes())
+                                .map(|(k, v)| (k.to_string(), v.to_string()))
+                                .collect();
+
+                        let caller = params.get("From").map(|s| s.as_str()).unwrap_or("unknown");
+                        let called = params.get("To").map(|s| s.as_str()).unwrap_or("unknown");
+                        let call_sid = params.get("CallSid").map(|s| s.as_str()).unwrap_or("");
+
+                        // Check if this is an existing outbound call (already
+                        // registered by manager.initiate()).
+                        let existing_call = if !call_sid.is_empty() {
+                            manager.resolve_call_id(call_sid).and_then(|cid| manager.get_call(&cid))
+                        } else {
+                            None
+                        };
+
+                        let provider = manager.provider().read().await;
+                        let gather_url = match telephony_webhook_url(
+                            &account_id,
+                            "gather",
+                            &headers,
+                            plugin_guard.account_config_json(&account_id),
+                            &telephony_config_for_answer,
+                        ) {
+                            Some(url) => url,
+                            None => {
+                                return (StatusCode::BAD_REQUEST, "missing public webhook URL")
+                                    .into_response();
+                            },
+                        };
+
+                        if let Some(call) = existing_call {
+                            // Outbound call we initiated — use its mode and message.
+                            let msg = call.initial_message.as_deref();
+                            let twiml = match call.mode {
+                                moltis_telephony::types::CallMode::Notify => {
+                                    // Speak the message, then hang up.
+                                    let say_msg = msg.unwrap_or("This is a notification.");
+                                    provider.build_answer_response(Some(say_msg), None)
+                                },
+                                moltis_telephony::types::CallMode::Conversation => {
+                                    let greeting = msg.unwrap_or(
+                                        "Hello, you've reached the AI assistant. How can I help you?",
+                                    );
+                                    provider.build_answer_response(Some(greeting), Some(&gather_url))
+                                },
+                            };
+                            return (
+                                StatusCode::OK,
+                                [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                                twiml,
+                            )
+                                .into_response();
+                        }
+
+                        // New inbound call — enforce access policy.
+                        {
+                            use moltis_channels::ChannelPlugin as _;
+                            if let Some(config_view) = plugin_guard.account_config(&account_id) {
+                                let policy = config_view.dm_policy();
+                                match policy {
+                                    moltis_channels::gating::DmPolicy::Disabled => {
+                                        tracing::info!(account_id = %account_id, caller = %caller, "rejecting inbound call: inbound_policy=disabled");
+                                        let twiml = provider.build_hangup_response();
+                                        return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/xml")], twiml).into_response();
+                                    },
+                                    moltis_channels::gating::DmPolicy::Allowlist => {
+                                        if !moltis_channels::gating::is_allowed(caller, config_view.allowlist()) {
+                                            tracing::info!(account_id = %account_id, caller = %caller, "rejecting inbound call: not on allowlist");
+                                            let twiml = provider.build_hangup_response();
+                                            return (StatusCode::OK, [(axum::http::header::CONTENT_TYPE, "text/xml")], twiml).into_response();
+                                        }
+                                    },
+                                    moltis_channels::gating::DmPolicy::Open => {},
+                                }
+                            }
+                        }
+
+                        // Register the new inbound call and start conversation.
+                        if !call_sid.is_empty() {
+                            drop(provider);
+                            manager.register_inbound(call_sid, caller, called, &account_id);
+
+                            let greeting = "Hello, you've reached the AI assistant. How can I help you?";
+                            let provider = manager.provider().read().await;
+                            let twiml = provider.build_answer_response(Some(greeting), Some(&gather_url));
+                            return (
+                                StatusCode::OK,
+                                [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                                twiml,
+                            )
+                                .into_response();
+                        }
+
+                        let twiml = provider.build_hangup_response();
+                        (
+                            StatusCode::OK,
+                            [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                            twiml,
+                        )
+                            .into_response()
+                    }
+                },
+            ),
+        );
+
+        // Gather URL — receives speech/DTMF results from Twilio and dispatches
+        // to the agent loop via the plugin's ChannelEventSink.
+        let telephony_gather_plugin = Arc::clone(&telephony_webhook_plugin);
+        let telephony_config_for_gather = config.clone();
+        app = app.route(
+            "/api/channels/telephony/{account_id}/gather",
+            axum::routing::post(
+                move |axum::extract::Path(account_id): axum::extract::Path<String>,
+                      headers: axum::http::HeaderMap,
+                      body: axum::body::Bytes| {
+                    let plugin = Arc::clone(&telephony_gather_plugin);
+                    async move {
+                        let plugin_guard = plugin.read().await;
+                        let mgr = match plugin_guard.call_manager(&account_id) {
+                            Some(m) => m,
+                            None => {
+                                return (StatusCode::NOT_FOUND, "unknown account").into_response();
+                            },
+                        };
+
+                        let manager = mgr.read().await;
+                        let provider = manager.provider().read().await;
+
+                        // Verify webhook signature.
+                        let webhook_url = match telephony_webhook_url(
+                            &account_id,
+                            "gather",
+                            &headers,
+                            plugin_guard.account_config_json(&account_id),
+                            &telephony_config_for_gather,
+                        ) {
+                            Some(url) => url,
+                            None => {
+                                return (StatusCode::BAD_REQUEST, "missing public webhook URL")
+                                    .into_response();
+                            },
+                        };
+                        if let Err(e) =
+                            provider.verify_webhook(&webhook_url, &headers, &body)
+                        {
+                            tracing::warn!(account_id = %account_id, "telephony gather webhook verification failed: {e}");
+                            return (StatusCode::UNAUTHORIZED, "signature verification failed")
+                                .into_response();
+                        }
+
+                        match provider.parse_webhook_event(&headers, &body) {
+                            Ok(event) => {
+                                drop(provider);
+                                manager.handle_event(&event);
+
+                                // If speech was recognized, dispatch to the agent loop.
+                                if let moltis_telephony::types::CallEvent::Speech {
+                                    ref provider_call_id,
+                                    ref text,
+                                    ..
+                                } = event
+                                {
+                                    let call_id = manager
+                                        .resolve_call_id(provider_call_id)
+                                        .unwrap_or_default();
+
+                                    // Look up the caller from the call record.
+                                    let caller = manager
+                                        .get_call(&call_id)
+                                        .map(|r| r.from.clone())
+                                        .unwrap_or_default();
+
+                                    // Dispatch via the plugin's event sink (async, non-blocking).
+                                    let account_id_owned = account_id.clone();
+                                    let call_id_owned = call_id.clone();
+                                    let caller_owned = caller;
+                                    let text_owned = text.clone();
+                                    let plugin_for_dispatch = Arc::clone(&plugin);
+                                    tokio::spawn(async move {
+                                        let pg = plugin_for_dispatch.read().await;
+                                        pg.dispatch_speech(
+                                            &account_id_owned,
+                                            &call_id_owned,
+                                            &caller_owned,
+                                            &text_owned,
+                                        )
+                                        .await;
+                                    });
+                                }
+
+                                // Continue gathering for the next input.
+                                let provider = manager.provider().read().await;
+                                let twiml = provider.build_gather_response(None, &webhook_url);
+                                (
+                                    StatusCode::OK,
+                                    [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                                    twiml,
+                                )
+                                    .into_response()
+                            },
+                            Err(e) => {
+                                tracing::warn!(account_id = %account_id, "telephony gather parse error: {e}");
+                                let twiml = provider.build_hangup_response();
+                                (
+                                    StatusCode::OK,
+                                    [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                                    twiml,
+                                )
+                                    .into_response()
                             },
                         }
                     }
@@ -806,4 +1272,56 @@ pub async fn prepare_gateway(
         app,
     })
     .await
+}
+
+#[cfg(all(test, feature = "telephony"))]
+mod tests {
+    use axum::http::{HeaderMap, HeaderValue};
+
+    use crate::server::gateway::telephony_webhook_url;
+
+    #[test]
+    fn telephony_webhook_url_builds_absolute_url_from_forwarded_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-host",
+            HeaderValue::from_static("calls.example.com"),
+        );
+        headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
+
+        let url = telephony_webhook_url(
+            "default",
+            "gather",
+            &headers,
+            None,
+            &moltis_config::schema::MoltisConfig::default(),
+        )
+        .unwrap_or_default();
+
+        assert_eq!(
+            url,
+            "https://calls.example.com/api/channels/telephony/default/gather"
+        );
+    }
+
+    #[test]
+    fn telephony_webhook_url_prefers_account_webhook_base() {
+        let account_config = serde_json::json!({
+            "webhook_url": "https://phone.example.com/base/",
+        });
+
+        let url = telephony_webhook_url(
+            "default",
+            "answer",
+            &HeaderMap::new(),
+            Some(account_config),
+            &moltis_config::schema::MoltisConfig::default(),
+        )
+        .unwrap_or_default();
+
+        assert_eq!(
+            url,
+            "https://phone.example.com/base/api/channels/telephony/default/answer"
+        );
+    }
 }

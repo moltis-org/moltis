@@ -1,7 +1,7 @@
 //! Outbound message sending for Nostr channels.
 //!
-//! Implements `ChannelOutbound` and `ChannelStreamOutbound` — encrypts text
-//! with NIP-04 and publishes to connected relays.
+//! Implements `ChannelOutbound` and `ChannelStreamOutbound` — sends text as
+//! NIP-59 gift-wrapped DMs (kind:1059) to connected relays.
 
 use std::{
     collections::HashMap,
@@ -67,25 +67,15 @@ impl ChannelOutbound for NostrOutbound {
         #[cfg(feature = "metrics")]
         let start = tokio::time::Instant::now();
 
-        // Encrypt with NIP-04
-        let encrypted = nip04::encrypt(keys.secret_key(), &recipient, text).map_err(|e| {
-            #[cfg(feature = "metrics")]
-            counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "encrypt").increment(1);
-            moltis_channels::Error::external(
-                "nostr",
-                crate::error::Error::Encryption(format!("NIP-04 encrypt failed: {e}")),
-            )
-        })?;
-
-        // Build and publish kind:4 event
-        let tag = Tag::public_key(recipient);
-        let builder = EventBuilder::new(Kind::EncryptedDirectMessage, &encrypted).tag(tag);
-
-        client.send_event_builder(builder).await.map_err(|e| {
-            #[cfg(feature = "metrics")]
-            counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "relay").increment(1);
-            moltis_channels::Error::external("nostr", crate::error::Error::Sdk(e))
-        })?;
+        // Send as NIP-59 gift-wrapped DM (kind:1059)
+        crate::gift_wrap::send_gift_wrapped_dm(&client, &keys, &recipient, text)
+            .await
+            .map_err(|e| {
+                #[cfg(feature = "metrics")]
+                counter!(nostr_metrics::MESSAGE_SEND_ERRORS_TOTAL, "reason" => "gift_wrap")
+                    .increment(1);
+                moltis_channels::Error::external("nostr", e)
+            })?;
 
         #[cfg(feature = "metrics")]
         {
@@ -95,7 +85,7 @@ impl ChannelOutbound for NostrOutbound {
         }
 
         let npub = recipient.to_bech32().unwrap_or_else(|_| recipient.to_hex());
-        tracing::debug!(account_id, to = %npub, len = text.len(), "sent NIP-04 DM");
+        tracing::debug!(account_id, to = %npub, len = text.len(), "sent gift-wrapped DM");
 
         Ok(())
     }

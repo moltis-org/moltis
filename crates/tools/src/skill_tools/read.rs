@@ -792,7 +792,9 @@ async fn test_read_skill_unknown_name_with_empty_registry_is_clear() {
 }
 
 #[tokio::test]
-async fn test_read_skill_sidecar_rejects_empty_file_path() {
+async fn test_read_skill_empty_file_path_falls_through_to_primary() {
+    // Models often send file_path: "" instead of omitting the field.
+    // Treat empty/whitespace as absent and return the primary body.
     let tmp = tempfile::tempdir().unwrap();
     seed_personal_skill(tmp.path(), "demo", "# Demo\n");
     let tool = read_tool_for(tmp.path());
@@ -801,8 +803,9 @@ async fn test_read_skill_sidecar_rejects_empty_file_path() {
             "name": "demo",
             "file_path": ""
         }))
-        .await;
-    assert!(result.is_err(), "empty file_path must be rejected");
+        .await
+        .expect("empty file_path should fall through to read_primary");
+    assert_eq!(result.get("name").and_then(|v| v.as_str()), Some("demo"));
 }
 
 #[tokio::test]
@@ -1144,6 +1147,69 @@ async fn test_read_skill_sidecar_rejects_symlinked_skill_directory() {
     );
 }
 
+// ── Bundled skill materialization ────────────────────────────────────
+
+#[cfg(feature = "bundled-skills")]
+#[tokio::test]
+async fn test_read_bundled_skill_with_scripts_includes_skill_dir() {
+    use moltis_skills::bundled::BundledSkillStore;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Arc::new(BundledSkillStore::with_materialize_dir(
+        tmp.path().to_path_buf(),
+    ));
+    let skills = store.discover();
+    let maps = skills
+        .iter()
+        .find(|s| s.name == "maps")
+        .expect("maps should be a bundled skill")
+        .clone();
+
+    let discoverer: Arc<dyn SkillDiscoverer> = Arc::new(StaticDiscoverer::new(vec![maps]));
+    let tool = ReadSkillTool::with_bundled(discoverer, store);
+
+    let result = tool.execute(json!({ "name": "maps" })).await.unwrap();
+
+    // A bundled skill with script sidecars must include `skill_dir`
+    // so the agent can resolve script paths referenced in the body.
+    let skill_dir = result["skill_dir"]
+        .as_str()
+        .expect("bundled skill with scripts must include skill_dir in response");
+    assert!(
+        Path::new(skill_dir).join("scripts/maps_client.py").exists(),
+        "scripts/maps_client.py must be materialized at {skill_dir}"
+    );
+}
+
+#[cfg(feature = "bundled-skills")]
+#[tokio::test]
+async fn test_read_bundled_skill_without_scripts_omits_skill_dir() {
+    use moltis_skills::bundled::BundledSkillStore;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Arc::new(BundledSkillStore::with_materialize_dir(
+        tmp.path().to_path_buf(),
+    ));
+    let skills = store.discover();
+
+    // Find a skill without sidecars.
+    let no_sidecars = skills
+        .iter()
+        .find(|s| store.list_sidecars(&s.name).is_empty())
+        .expect("should have at least one skill without sidecars")
+        .clone();
+    let name = no_sidecars.name.clone();
+
+    let discoverer: Arc<dyn SkillDiscoverer> = Arc::new(StaticDiscoverer::new(vec![no_sidecars]));
+    let tool = ReadSkillTool::with_bundled(discoverer, store);
+
+    let result = tool.execute(json!({ "name": name })).await.unwrap();
+    assert!(
+        result.get("skill_dir").is_none(),
+        "bundled skill without sidecars should not include skill_dir: {result}"
+    );
+}
+
 /// Test-only `SkillDiscoverer` that returns a fixed snapshot. Lets the
 /// plugin/symlink tests construct scenarios that don't match the
 /// `FsSkillDiscoverer`'s directory-walking assumptions.
@@ -1159,7 +1225,9 @@ impl StaticDiscoverer {
 
 #[async_trait]
 impl SkillDiscoverer for StaticDiscoverer {
-    async fn discover(&self) -> anyhow::Result<Vec<moltis_skills::types::SkillMetadata>> {
+    async fn discover(
+        &self,
+    ) -> moltis_skills::error::Result<Vec<moltis_skills::types::SkillMetadata>> {
         Ok(self.skills.clone())
     }
 }

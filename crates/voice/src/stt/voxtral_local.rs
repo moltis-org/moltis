@@ -11,19 +11,12 @@
 //! ```
 
 use {
-    anyhow::{Context, Result, anyhow},
+    anyhow::{Result, anyhow},
     async_trait::async_trait,
-    reqwest::{
-        Client,
-        multipart::{Form, Part},
-    },
-    serde::Deserialize,
+    reqwest::Client,
 };
 
-use {
-    super::{SttProvider, TranscribeRequest, Transcript, Word},
-    crate::tts::AudioFormat,
-};
+use super::{SttProvider, TranscribeRequest, Transcript, openai_compat};
 
 /// Default vLLM server endpoint.
 const DEFAULT_ENDPOINT: &str = "http://localhost:8000";
@@ -69,27 +62,6 @@ impl VoxtralLocalStt {
             language,
         }
     }
-
-    /// Check if the vLLM server is reachable.
-    async fn check_server(&self) -> bool {
-        let health_url = format!("{}/health", self.endpoint);
-        self.client
-            .get(&health_url)
-            .timeout(std::time::Duration::from_secs(2))
-            .send()
-            .await
-            .is_ok_and(|r| r.status().is_success())
-    }
-
-    /// Get file extension for audio format.
-    fn file_extension(format: AudioFormat) -> &'static str {
-        format.extension()
-    }
-
-    /// Get MIME type for audio format.
-    fn mime_type(format: AudioFormat) -> &'static str {
-        format.mime_type()
-    }
 }
 
 #[async_trait]
@@ -110,104 +82,32 @@ impl SttProvider for VoxtralLocalStt {
     }
 
     async fn transcribe(&self, request: TranscribeRequest) -> Result<Transcript> {
-        // Check server availability
-        if !self.check_server().await {
+        if !openai_compat::check_server_health(&self.client, &self.endpoint).await {
             return Err(anyhow!(
                 "vLLM server not reachable at {}. Start it with: vllm serve mistralai/Voxtral-Mini-3B-2507 --tokenizer_mode mistral --config_format mistral --load_format mistral",
                 self.endpoint
             ));
         }
 
-        let filename = format!("audio.{}", Self::file_extension(request.format));
-        let mime_type = Self::mime_type(request.format);
+        let language = request.language.or_else(|| self.language.clone());
 
-        // Build multipart form (OpenAI-compatible format)
-        let file_part = Part::bytes(request.audio.to_vec())
-            .file_name(filename)
-            .mime_str(mime_type)
-            .context("failed to create file part")?;
-
-        let mut form = Form::new()
-            .part("file", file_part)
-            .text("response_format", "verbose_json");
-
-        // Add model if specified
-        if let Some(ref model) = self.model {
-            form = form.text("model", model.clone());
-        }
-
-        // Use request language if provided, otherwise fall back to configured language
-        if let Some(language) = request.language.or_else(|| self.language.clone()) {
-            form = form.text("language", language);
-        }
-
-        let url = format!("{}/v1/audio/transcriptions", self.endpoint);
-        let response = self
-            .client
-            .post(&url)
-            .multipart(form)
-            .send()
-            .await
-            .context("failed to send request to vLLM server")?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "vLLM transcription request failed: {} - {}",
-                status,
-                body
-            ));
-        }
-
-        let vllm_response: VllmResponse = response
-            .json()
-            .await
-            .context("failed to parse vLLM response")?;
-
-        Ok(Transcript {
-            text: vllm_response.text,
-            language: vllm_response.language,
-            confidence: None,
-            duration_seconds: vllm_response.duration,
-            words: vllm_response.words.map(|words| {
-                words
-                    .into_iter()
-                    .map(|w| Word {
-                        word: w.word,
-                        start: w.start,
-                        end: w.end,
-                    })
-                    .collect()
-            }),
-        })
+        openai_compat::transcribe_openai_compat(
+            &self.client,
+            &self.endpoint,
+            &request.audio,
+            request.format,
+            self.model.as_deref(),
+            language.as_deref(),
+            "vLLM",
+        )
+        .await
     }
-}
-
-// ── API Types (OpenAI-compatible) ──────────────────────────────────────────
-
-#[derive(Debug, Deserialize)]
-struct VllmResponse {
-    text: String,
-    #[serde(default)]
-    language: Option<String>,
-    #[serde(default)]
-    duration: Option<f32>,
-    #[serde(default)]
-    words: Option<Vec<VllmWord>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct VllmWord {
-    word: String,
-    start: f32,
-    end: f32,
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
-    use {super::*, bytes::Bytes};
+    use {super::*, crate::tts::AudioFormat, bytes::Bytes};
 
     #[test]
     fn test_provider_metadata() {
@@ -269,33 +169,5 @@ mod tests {
         let result = provider.transcribe(request).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not reachable"));
-    }
-
-    #[test]
-    fn test_vllm_response_parsing() {
-        let json = r#"{
-            "text": "Hello, how are you?",
-            "language": "en",
-            "duration": 2.5,
-            "words": [
-                {"word": "Hello", "start": 0.0, "end": 0.5},
-                {"word": "how", "start": 0.6, "end": 0.8}
-            ]
-        }"#;
-
-        let response: VllmResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(response.text, "Hello, how are you?");
-        assert_eq!(response.language, Some("en".into()));
-        assert_eq!(response.duration, Some(2.5));
-        assert_eq!(response.words.as_ref().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn test_vllm_response_minimal() {
-        let json = r#"{"text": "Hello"}"#;
-        let response: VllmResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(response.text, "Hello");
-        assert!(response.language.is_none());
-        assert!(response.words.is_none());
     }
 }

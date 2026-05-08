@@ -542,7 +542,7 @@ pub extern "C" fn moltis_abort_session(session_key: *const c_char) -> *mut c_cha
         let params = serde_json::json!({ "sessionKey": key });
         match BRIDGE
             .runtime
-            .block_on(async { state.chat().await.abort(params).await })
+            .block_on(async { state.chat().abort(params).await })
         {
             Ok(res) => encode_json(&res),
             Err(e) => encode_error("abort_failed", &e.to_string()),
@@ -573,7 +573,7 @@ pub extern "C" fn moltis_peek_session(session_key: *const c_char) -> *mut c_char
         let params = serde_json::json!({ "sessionKey": key });
         match BRIDGE
             .runtime
-            .block_on(async { state.chat().await.peek(params).await })
+            .block_on(async { state.chat().peek(params).await })
         {
             Ok(res) => encode_json(&res),
             Err(e) => encode_error("peek_failed", &e.to_string()),

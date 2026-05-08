@@ -32,10 +32,14 @@ pub struct PatchParams {
     pub worktree_branch: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option", alias = "sandbox_image")]
     pub sandbox_image: Option<Option<String>>,
+    #[serde(default, deserialize_with = "double_option", alias = "mode_id")]
+    pub mode_id: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option", alias = "mcp_disabled")]
     pub mcp_disabled: Option<Option<bool>>,
     #[serde(default, deserialize_with = "double_option", alias = "sandbox_enabled")]
     pub sandbox_enabled: Option<Option<bool>>,
+    #[serde(default, deserialize_with = "double_option", alias = "sandbox_backend")]
+    pub sandbox_backend: Option<Option<String>>,
 }
 
 /// Deserialize a field as `Some(inner)` when present (even if null),

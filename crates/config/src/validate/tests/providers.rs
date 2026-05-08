@@ -100,6 +100,29 @@ enabled = true
 }
 
 #[test]
+fn all_canonical_providers_accepted_without_warning() {
+    use crate::schema::KNOWN_PROVIDER_NAMES;
+    for name in KNOWN_PROVIDER_NAMES {
+        let toml = format!(
+            r#"
+[providers.{name}]
+enabled = true
+"#
+        );
+        let result = validate_toml_str(&toml);
+        let warnings: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.category == "unknown-provider")
+            .collect();
+        assert!(
+            warnings.is_empty(),
+            "canonical provider \"{name}\" triggered unknown-provider warning: {warnings:?}"
+        );
+    }
+}
+
+#[test]
 fn env_section_passes_validation() {
     let toml = r#"
 [env]

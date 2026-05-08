@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use {
     serde_json::Value,
     tokio::sync::OwnedSemaphorePermit,
-    tracing::{info, warn},
+    tracing::{debug, info, warn},
 };
 
 use {moltis_config::MessageQueueMode, moltis_service_traits::ServiceResult};
@@ -22,8 +22,8 @@ use crate::{
     },
     prompt::{
         apply_request_runtime_context, build_prompt_runtime_context, discover_skills_if_enabled,
-        load_prompt_persona_for_agent, load_prompt_persona_for_session,
-        resolve_channel_runtime_context, resolve_prompt_agent_id,
+        load_prompt_persona_for_session, resolve_channel_runtime_context, resolve_prompt_agent_id,
+        resolve_prompt_mode_context,
     },
     run_with_tools::run_with_tools,
     streaming::run_streaming,
@@ -31,6 +31,8 @@ use crate::{
 };
 
 use {super::*, crate::service::build_persisted_assistant_message};
+
+use {crate::memory_tools::AgentScopedMemoryWriter, moltis_agents::model::values_to_chat_messages};
 
 impl LiveChatService {
     #[tracing::instrument(skip(self, params), fields(session_id))]
@@ -165,6 +167,70 @@ impl LiveChatService {
             }
         }
 
+        info!(
+            session = %session_key,
+            text_len = text.len(),
+            has_content = params.get("content").is_some(),
+            model = ?explicit_model,
+            client_seq = ?client_seq,
+            queued_replay,
+            "chat.send: received"
+        );
+
+        // Decide whether this turn can run before doing provider lookup, prompt
+        // construction, hook dispatch, or other I/O. If a run already owns the
+        // session, queue immediately instead of letting a follow-up request
+        // contend with the active run's locks.
+        let message_queue_mode = self.config.chat.message_queue_mode;
+        let session_sem = self.session_semaphore(&session_key).await;
+        let permit: OwnedSemaphorePermit = match session_sem.clone().try_acquire_owned() {
+            Ok(p) => {
+                info!(
+                    session = %session_key,
+                    client_seq = ?client_seq,
+                    queued_replay,
+                    "chat.send: acquired session permit"
+                );
+                p
+            },
+            Err(_) => {
+                let queue_mode = message_queue_mode;
+                let position = {
+                    let mut q = self.message_queue.write().await;
+                    let entry = q.entry(session_key.clone()).or_default();
+                    entry.push(QueuedMessage {
+                        params: params.clone(),
+                    });
+                    entry.len()
+                };
+                info!(
+                    session = %session_key,
+                    mode = ?queue_mode,
+                    position,
+                    client_seq = ?client_seq,
+                    queued_replay,
+                    "chat.send: queued because session is active"
+                );
+                broadcast(
+                    &self.state,
+                    "chat",
+                    serde_json::json!({
+                        "sessionKey": session_key,
+                        "state": "queued",
+                        "mode": format!("{queue_mode:?}").to_lowercase(),
+                        "position": position,
+                    }),
+                    BroadcastOpts::default(),
+                )
+                .await;
+                return Ok(serde_json::json!({
+                    "ok": true,
+                    "queued": true,
+                    "mode": format!("{queue_mode:?}").to_lowercase(),
+                }));
+            },
+        };
+
         let explicit_shell_command = match &message_content {
             MessageContent::Text(raw) => parse_explicit_shell_command(raw).map(str::to_string),
             MessageContent::Multimodal(_) => None,
@@ -270,47 +336,6 @@ impl LiveChatService {
                 mode = "explicit_shell",
                 "chat.send"
             );
-
-            // Try to acquire the per-session semaphore. If a run is already active,
-            // queue the message according to MessageQueueMode.
-            let session_sem = self.session_semaphore(&session_key).await;
-            let permit: OwnedSemaphorePermit = match session_sem.clone().try_acquire_owned() {
-                Ok(p) => p,
-                Err(_) => {
-                    let queue_mode = moltis_config::discover_and_load().chat.message_queue_mode;
-                    info!(
-                        session = %session_key,
-                        mode = ?queue_mode,
-                        client_seq = ?client_seq,
-                        "queueing message (run active)"
-                    );
-                    let position = {
-                        let mut q = self.message_queue.write().await;
-                        let entry = q.entry(session_key.clone()).or_default();
-                        entry.push(QueuedMessage {
-                            params: params.clone(),
-                        });
-                        entry.len()
-                    };
-                    broadcast(
-                        &self.state,
-                        "chat",
-                        serde_json::json!({
-                            "sessionKey": session_key,
-                            "state": "queued",
-                            "mode": format!("{queue_mode:?}").to_lowercase(),
-                            "position": position,
-                        }),
-                        BroadcastOpts::default(),
-                    )
-                    .await;
-                    return Ok(serde_json::json!({
-                        "ok": true,
-                        "queued": true,
-                        "mode": format!("{queue_mode:?}").to_lowercase(),
-                    }));
-                },
-            };
 
             // Persist user message now that it will execute immediately.
             if let Err(e) = self
@@ -422,7 +447,7 @@ impl LiveChatService {
                     .remove(&session_key_clone)
                     .unwrap_or_default();
                 if !queued.is_empty() {
-                    let queue_mode = moltis_config::discover_and_load().chat.message_queue_mode;
+                    let queue_mode = message_queue_mode;
                     let chat = state_for_drain.chat_service().await;
                     match queue_mode {
                         MessageQueueMode::Followup => {
@@ -481,6 +506,13 @@ impl LiveChatService {
                 .await
                 .insert(session_key.clone(), run_id.clone());
 
+            info!(
+                run_id = %run_id,
+                session = %session_key,
+                client_seq = ?client_seq,
+                mode = "explicit_shell",
+                "chat.send: returning run id"
+            );
             return Ok(serde_json::json!({ "ok": true, "runId": run_id }));
         }
 
@@ -511,7 +543,15 @@ impl LiveChatService {
                     .ok_or_else(|| "no LLM providers configured".to_string())?
             };
 
-            if self.failover_config.enabled {
+            // When exact_model is set and the user explicitly selected a model,
+            // skip failover — use the chosen model or fail.
+            let user_selected = model_id.is_some();
+            let skip_failover = !self.failover_config.enabled
+                || (self.failover_config.exact_model && user_selected);
+
+            if skip_failover {
+                primary
+            } else {
                 let fallbacks = if self.failover_config.fallback_models.is_empty() {
                     // Auto-build: same model on other providers first, then same
                     // provider's other models, then everything else.
@@ -526,12 +566,18 @@ impl LiveChatService {
                     chain.extend(fallbacks);
                     Arc::new(moltis_agents::provider_chain::ProviderChain::new(chain))
                 }
-            } else {
-                primary
             }
         };
+        info!(
+            session = %session_key,
+            provider = provider.name(),
+            model = provider.id(),
+            stream_only,
+            client_seq = ?client_seq,
+            "chat.send: provider resolved"
+        );
 
-        // Check if this is a local model that needs downloading.
+        // Check if this is a local model that needs downloading/loading.
         // Only do this check for local-llm providers.
         #[cfg(feature = "local-llm")]
         if provider.name() == "local-llm" {
@@ -546,6 +592,11 @@ impl LiveChatService {
             );
             if let Err(e) = self.state.ensure_local_model_cached(&model_to_check).await {
                 return Err(format!("Failed to prepare local model: {}", e).into());
+            }
+            // Pre-load the model into RAM (broadcasts lifecycle events so the
+            // chat UI shows "Loading model X into memory..." before inference).
+            if let Err(e) = self.state.ensure_local_model_loaded(&model_to_check).await {
+                tracing::warn!(model = model_to_check, error = %e, "lifecycle pre-load failed, inference will still lazy-load");
             }
         }
 
@@ -564,6 +615,12 @@ impl LiveChatService {
             .read(&session_key)
             .await
             .unwrap_or_default();
+        info!(
+            session = %session_key,
+            history_len = history.len(),
+            client_seq = ?client_seq,
+            "chat.send: history loaded"
+        );
 
         // Update metadata.
         let _ = self.session_metadata.upsert(&session_key, None).await;
@@ -643,6 +700,11 @@ impl LiveChatService {
         // Hook errors are treated as fail-open: a broken hook must not be
         // able to wedge every inbound message. See GH #639.
         if let Some(ref hooks) = self.hook_registry {
+            info!(
+                session = %session_key,
+                client_seq = ?client_seq,
+                "chat.send: dispatching MessageReceived hook"
+            );
             let session_entry = self.session_metadata.get(&session_key).await;
             let channel = params
                 .get("channel")
@@ -731,6 +793,11 @@ impl LiveChatService {
                     );
                 },
             }
+            info!(
+                session = %session_key,
+                client_seq = ?client_seq,
+                "chat.send: MessageReceived hook complete"
+            );
         }
 
         // Convert session-crate content to agents-crate content for the LLM.
@@ -769,23 +836,45 @@ impl LiveChatService {
 
         // Discover enabled skills/plugins for prompt injection (gated on
         // `[skills] enabled` — see #655).
-        let discovered_skills =
-            discover_skills_if_enabled(&moltis_config::discover_and_load()).await;
+        let discovered_skills = discover_skills_if_enabled(&self.config).await;
+        info!(
+            session = %session_key,
+            skills_len = discovered_skills.len(),
+            client_seq = ?client_seq,
+            "chat.send: skills discovered"
+        );
 
         // Check if MCP tools are disabled for this session and capture
         // per-session sandbox override details for prompt runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
         let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
+        info!(
+            session = %session_key,
+            agent_id = %session_agent_id,
+            client_seq = ?client_seq,
+            "chat.send: loading persona"
+        );
         let persona = load_prompt_persona_for_session(
             &session_key,
             session_entry.as_ref(),
             self.session_state_store.as_deref(),
         )
         .await;
+        info!(
+            session = %session_key,
+            agent_id = %session_agent_id,
+            client_seq = ?client_seq,
+            "chat.send: persona loaded"
+        );
         let mcp_disabled = session_entry
             .as_ref()
             .and_then(|entry| entry.mcp_disabled)
             .unwrap_or(false);
+        info!(
+            session = %session_key,
+            client_seq = ?client_seq,
+            "chat.send: building runtime context"
+        );
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
             &provider,
@@ -793,7 +882,16 @@ impl LiveChatService {
             session_entry.as_ref(),
         )
         .await;
+        runtime_context.mode = resolve_prompt_mode_context(&persona.config, session_entry.as_ref());
         apply_request_runtime_context(&mut runtime_context.host, &params);
+        info!(
+            session = %session_key,
+            agent_id = %session_agent_id,
+            mcp_disabled,
+            has_project_context = project_context.is_some(),
+            client_seq = ?client_seq,
+            "chat.send: runtime context built"
+        );
 
         let state = Arc::clone(&self.state);
         let active_runs = Arc::clone(&self.active_runs);
@@ -847,12 +945,8 @@ impl LiveChatService {
         // `chat.compaction.threshold_percent` of the model context window.
         // The value is clamped to the 0.1–0.95 range in case config
         // validation missed a typo; the default (0.95) is loaded via
-        // load_prompt_persona_for_agent for the session's agent and
-        // matches the pre-PR-#653 hardcoded trigger.
-        let compaction_cfg = &load_prompt_persona_for_agent(&session_agent_id)
-            .config
-            .chat
-            .compaction;
+        // the session persona and matches the pre-PR-#653 hardcoded trigger.
+        let compaction_cfg = &persona.config.chat.compaction;
         let context_window = provider.context_window() as u64;
         let token_usage = session_token_usage_from_messages(&history);
         let estimated_next_input = token_usage
@@ -950,49 +1044,6 @@ impl LiveChatService {
             }
         }
 
-        // Try to acquire the per-session semaphore.  If a run is already active,
-        // queue the message according to the configured MessageQueueMode instead
-        // of blocking the caller.
-        let session_sem = self.session_semaphore(&session_key).await;
-        let permit: OwnedSemaphorePermit = match session_sem.clone().try_acquire_owned() {
-            Ok(p) => p,
-            Err(_) => {
-                // Active run — enqueue and return immediately.
-                let queue_mode = moltis_config::discover_and_load().chat.message_queue_mode;
-                info!(
-                    session = %session_key,
-                    mode = ?queue_mode,
-                    client_seq = ?client_seq,
-                    "queueing message (run active)"
-                );
-                let position = {
-                    let mut q = self.message_queue.write().await;
-                    let entry = q.entry(session_key.clone()).or_default();
-                    entry.push(QueuedMessage {
-                        params: params.clone(),
-                    });
-                    entry.len()
-                };
-                broadcast(
-                    &self.state,
-                    "chat",
-                    serde_json::json!({
-                        "sessionKey": session_key,
-                        "state": "queued",
-                        "mode": format!("{queue_mode:?}").to_lowercase(),
-                        "position": position,
-                    }),
-                    BroadcastOpts::default(),
-                )
-                .await;
-                return Ok(serde_json::json!({
-                    "ok": true,
-                    "queued": true,
-                    "mode": format!("{queue_mode:?}").to_lowercase(),
-                }));
-            },
-        };
-
         // Persist the user message now that we know it won't be queued.
         // (Queued messages skip this; they are persisted when replayed.)
         if let Err(e) = self
@@ -1002,6 +1053,26 @@ impl LiveChatService {
         {
             warn!("failed to persist user message: {e}");
         }
+
+        // Broadcast a user_message event so that other connected clients
+        // (e.g. the web UI when the message was sent via the GraphQL API)
+        // can display the message in real-time without a page reload.
+        // We intentionally omit messageIndex (same rationale as
+        // channel_user in dispatch.rs) and include `seq` so that the
+        // originating web client can suppress the echo it already
+        // rendered optimistically.
+        broadcast(
+            &self.state,
+            "chat",
+            serde_json::json!({
+                "state": "user_message",
+                "text": text,
+                "sessionKey": session_key,
+                "seq": client_seq,
+            }),
+            BroadcastOpts::default(),
+        )
+        .await;
 
         // Set preview from the first user message if not already set.
         if let Some(entry) = self.session_metadata.get(&session_key).await
@@ -1015,7 +1086,7 @@ impl LiveChatService {
             }
         }
 
-        let agent_timeout_secs = moltis_config::discover_and_load().tools.agent_timeout_secs;
+        let agent_timeout_secs = self.config.tools.agent_timeout_secs;
 
         let message_queue = Arc::clone(&self.message_queue);
         let state_for_drain = Arc::clone(&self.state);
@@ -1052,6 +1123,13 @@ impl LiveChatService {
                 )
                 .await;
             }
+            // Clone the provider for potential periodic memory extraction
+            // (the original Arc is moved into run_with_tools / run_streaming).
+            let provider_for_extraction = Arc::clone(&provider);
+            // Capture config values before persona is moved into the agent future.
+            let auto_extract_interval = persona.config.memory.auto_extract_interval;
+            let extraction_write_mode = persona.config.memory.agent_write_mode;
+            let auto_title_enabled = persona.config.chat.auto_title;
             let agent_fut = async {
                 if stream_only {
                     run_streaming(
@@ -1171,7 +1249,85 @@ impl LiveChatService {
                 // Update metadata counts.
                 if let Ok(count) = session_store.count(&session_key_clone).await {
                     session_metadata.touch(&session_key_clone, count).await;
+
+                    // ── Periodic background memory extraction ──────────────
+                    // Every `auto_extract_interval` turns, spawn a background
+                    // silent turn to save important recent context to memory.
+                    // Uses config values captured before persona was moved.
+                    let interval = auto_extract_interval;
+                    let write_mode = extraction_write_mode;
+                    // A "turn" = user + assistant = 2 messages.
+                    let turn_number = count / 2;
+                    if interval > 0
+                        && turn_number > 0
+                        && turn_number % interval == 0
+                        && !stream_only
+                        && memory_write_mode_allows_save(write_mode)
+                        && let Some(mm) = state.memory_manager()
+                    {
+                        let window = (interval as usize) * 2;
+                        let recent: Vec<serde_json::Value> =
+                            if let Ok(h) = session_store.read(&session_key_clone).await {
+                                h.into_iter()
+                                    .rev()
+                                    .take(window)
+                                    .collect::<Vec<_>>()
+                                    .into_iter()
+                                    .rev()
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                        if !recent.is_empty() {
+                            let chat_msgs = values_to_chat_messages(&recent);
+                            let agent_id = session_agent_id_clone.clone();
+                            let mm = Arc::clone(mm);
+                            let prov = Arc::clone(&provider_for_extraction);
+                            tokio::spawn(async move {
+                                let writer: Arc<dyn moltis_agents::memory_writer::MemoryWriter> =
+                                    Arc::new(AgentScopedMemoryWriter::new(
+                                        mm, agent_id, write_mode,
+                                    ));
+                                match moltis_agents::silent_turn::run_silent_memory_turn_with_prompt(
+                                        prov,
+                                        &chat_msgs,
+                                        writer,
+                                        moltis_agents::silent_turn::SilentTurnPrompt::PeriodicExtract,
+                                    )
+                                    .await
+                                    {
+                                        Ok(paths) if !paths.is_empty() => {
+                                            tracing::info!(
+                                                files = paths.len(),
+                                                turn = turn_number,
+                                                "periodic memory extraction: wrote files"
+                                            );
+                                        },
+                                        Ok(_) => {},
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                error = %e,
+                                                "periodic memory extraction failed"
+                                            );
+                                        },
+                                    }
+                            });
+                        }
+                    }
                 }
+            }
+
+            // ── Auto-title generation ──────────────────────────────
+            // After the first completed turn, trigger background title
+            // generation. We check >= 2 (not == 2) because agentic turns
+            // with tool calls produce more than 2 stored messages.
+            // `generate_title_if_needed` guards against duplicate titles.
+            if auto_title_enabled
+                && let Ok(count) = session_store.count(&session_key_clone).await
+                && count >= 2
+                && !queued_replay
+            {
+                state.trigger_auto_title(&session_key_clone).await;
             }
 
             let _ = LiveChatService::wait_for_event_forwarder(
@@ -1210,7 +1366,7 @@ impl LiveChatService {
                 .remove(&session_key_clone)
                 .unwrap_or_default();
             if !queued.is_empty() {
-                let queue_mode = moltis_config::discover_and_load().chat.message_queue_mode;
+                let queue_mode = message_queue_mode;
                 let chat = state_for_drain.chat_service().await;
                 match queue_mode {
                     MessageQueueMode::Followup => {
@@ -1272,6 +1428,12 @@ impl LiveChatService {
             .await
             .insert(session_key.clone(), run_id.clone());
 
+        info!(
+            run_id = %run_id,
+            session = %session_key,
+            client_seq = ?client_seq,
+            "chat.send: returning run id"
+        );
         Ok(serde_json::json!({ "ok": true, "runId": run_id }))
     }
 }

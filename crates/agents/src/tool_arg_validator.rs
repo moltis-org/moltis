@@ -17,6 +17,8 @@
 
 use serde_json::Value;
 
+use crate::model::ToolCallArgumentDiagnostic;
+
 /// Error returned when tool arguments fail validation.
 #[derive(Debug, Clone)]
 pub struct ToolArgError {
@@ -41,6 +43,15 @@ impl ToolArgError {
     /// identical arguments (see issue #658 for the design rationale).
     #[must_use]
     pub fn to_llm_error_message(&self, tool_name: &str) -> String {
+        self.to_llm_error_message_with_argument_diagnostic(tool_name, None)
+    }
+
+    #[must_use]
+    pub fn to_llm_error_message_with_argument_diagnostic(
+        &self,
+        tool_name: &str,
+        argument_diagnostic: Option<&ToolCallArgumentDiagnostic>,
+    ) -> String {
         let mut msg = format!("Tool call rejected before execution by `{tool_name}`.\n");
 
         if !self.missing_required.is_empty() {
@@ -57,6 +68,10 @@ impl ToolArgError {
         let received_str = serde_json::to_string(&self.received)
             .unwrap_or_else(|_| "<unserializable>".to_string());
         msg.push_str(&format!("You sent: {received_str}\n"));
+        if let Some(diagnostic) = argument_diagnostic {
+            msg.push_str(&diagnostic.llm_detail());
+            msg.push('\n');
+        }
         msg.push_str(
             "Do not retry with the same arguments. If you do not know what arguments to use, \
              respond in plain text and ask the user for clarification.",
@@ -67,6 +82,14 @@ impl ToolArgError {
     /// Short single-line description for logs and metrics.
     #[must_use]
     pub fn short_summary(&self) -> String {
+        self.short_summary_with_argument_diagnostic(None)
+    }
+
+    #[must_use]
+    pub fn short_summary_with_argument_diagnostic(
+        &self,
+        argument_diagnostic: Option<&ToolCallArgumentDiagnostic>,
+    ) -> String {
         let mut parts = Vec::new();
         if !self.missing_required.is_empty() {
             parts.push(format!("missing={}", self.missing_required.join(",")));
@@ -78,6 +101,9 @@ impl ToolArgError {
                 .map(|t| format!("{}:{}!={}", t.field, t.expected, t.actual))
                 .collect();
             parts.push(format!("type_mismatch={}", tm.join(",")));
+        }
+        if let Some(diagnostic) = argument_diagnostic {
+            parts.push(diagnostic.short_summary());
         }
         parts.join(" ")
     }
@@ -241,7 +267,11 @@ fn value_type_name(value: &Value) -> &'static str {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use {super::*, serde_json::json};
+    use {
+        super::*,
+        crate::model::{ToolCallArgumentDiagnostic, ToolCallArgumentSource},
+        serde_json::json,
+    };
 
     #[test]
     fn empty_schema_always_passes() {
@@ -268,6 +298,30 @@ mod tests {
         let err = validate_tool_args(&schema, &json!({})).unwrap_err();
         assert_eq!(err.missing_required, vec!["command".to_string()]);
         assert!(err.type_mismatches.is_empty());
+    }
+
+    #[test]
+    fn validation_error_can_include_argument_decode_diagnostic() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "command": { "type": "string" } },
+            "required": ["command"]
+        });
+        let err = validate_tool_args(&schema, &json!({})).unwrap_err();
+        let diagnostic = ToolCallArgumentDiagnostic {
+            source: ToolCallArgumentSource::EmptyString,
+            raw_len: Some(0),
+            raw_preview: Some(String::new()),
+            parse_error: None,
+        };
+
+        assert_eq!(
+            err.short_summary_with_argument_diagnostic(Some(&diagnostic)),
+            "missing=command arg_decode=empty-string raw_len=0"
+        );
+        let message = err.to_llm_error_message_with_argument_diagnostic("exec", Some(&diagnostic));
+        assert!(message.contains("Argument decode status: arg_decode=empty-string raw_len=0."));
+        assert!(!message.contains("Raw argument preview:"));
     }
 
     #[test]

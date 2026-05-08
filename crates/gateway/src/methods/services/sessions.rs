@@ -16,7 +16,7 @@ pub(super) fn register(reg: &mut MethodRegistry) {
 
                 // Inject replying state so the frontend can restore the
                 // thinking indicator after a full page reload.
-                let active_keys = ctx.state.chat().await.active_session_keys().await;
+                let active_keys = ctx.state.chat().active_session_keys().await;
                 if let Some(arr) = result.as_array_mut() {
                     for entry in arr {
                         let key_str = entry.get("key").and_then(|v| v.as_str()).map(String::from);
@@ -173,6 +173,18 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         "sessions.reset",
         Box::new(|ctx| {
             Box::pin(async move {
+                // Run session-end memory summary before clearing, if enabled.
+                let key = ctx.params.get("key").and_then(|v| v.as_str()).unwrap_or("");
+                if !key.is_empty() {
+                    crate::session::summary::run_session_summary_if_enabled(&ctx.state, key).await;
+
+                    // Export the session before the reset destroys its history.
+                    let hooks = ctx.state.inner.read().await.hook_registry.clone();
+                    if let Some(ref hooks) = hooks {
+                        crate::session::dispatch_command_hook(hooks, key, "reset", None).await;
+                    }
+                }
+
                 ctx.state
                     .services
                     .session
@@ -298,6 +310,28 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     .run_detail(ctx.params.clone())
                     .await
                     .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "sessions.generate_title",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                let key = ctx
+                    .params
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        ErrorShape::new(error_codes::INVALID_REQUEST, "missing 'key' parameter")
+                    })?
+                    .to_string();
+                crate::session::title::generate_title_for_session(&ctx.state, &key).await;
+                let label = if let Some(ref meta) = ctx.state.services.session_metadata {
+                    meta.get(&key).await.and_then(|e| e.label)
+                } else {
+                    None
+                };
+                Ok(serde_json::json!({ "ok": true, "label": label }))
             })
         }),
     );

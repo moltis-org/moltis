@@ -9,16 +9,16 @@ use std::{
 };
 
 use {
-    anyhow::Result,
     notify_debouncer_full::{
         DebounceEventResult, Debouncer, RecommendedCache, new_debouncer, notify::RecursiveMode,
     },
     tokio::sync::mpsc,
-    tracing::{debug, info, warn},
+    tracing::{debug, warn},
 };
 
 use crate::{
     discover::FsSkillDiscoverer,
+    error::Result,
     manifest::ManifestStore,
     types::{SkillSource, SkillsManifest},
 };
@@ -80,7 +80,8 @@ pub(crate) fn build_watch_specs(
             SkillSource::Project | SkillSource::Personal => {
                 insert_watch_spec(&mut specs, path.clone(), RecursiveMode::Recursive);
             },
-            SkillSource::Registry | SkillSource::Plugin => {},
+            // Registry, Plugin, and Bundled skills are not watched for changes.
+            SkillSource::Registry | SkillSource::Plugin | SkillSource::Bundled => {},
         }
     }
 
@@ -183,7 +184,7 @@ impl SkillWatcher {
         for spec in &specs {
             if spec.path.exists() {
                 watcher._debouncer.watch(&spec.path, spec.recursive_mode)?;
-                info!(
+                debug!(
                     path = %spec.path.display(),
                     recursive = matches!(spec.recursive_mode, RecursiveMode::Recursive),
                     "skill watcher: watching path"

@@ -254,7 +254,7 @@ impl LlmProvider for AsyncOpenAiProvider {
 #[cfg(test)]
 mod tests {
     use {
-        super::build_messages,
+        crate::async_openai_provider::build_messages,
         async_openai::types::chat::{
             ChatCompletionRequestMessage, ChatCompletionRequestUserMessageContent,
             ChatCompletionRequestUserMessageContentPart,

@@ -159,9 +159,9 @@ fn warn_if_unused_auxiliary_model_config(config: &CompactionConfig) {
     tracing::warn!(
         summary_model = ?config.summary_model,
         max_summary_tokens = config.max_summary_tokens,
-        "chat.compact: chat.compaction.summary_model / max_summary_tokens are reserved \
-         for the auxiliary-model subsystem (beads issue moltis-8me) and have no effect \
-         on the structured strategy yet — the session's primary provider will be used"
+        "chat.compact: chat.compaction.summary_model / max_summary_tokens are not wired \
+         into the structured strategy yet — the session's primary provider will be used. \
+         Use `[auxiliary] compaction = \"model-id\"` for auxiliary model routing once wired"
     );
 }
 

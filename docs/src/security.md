@@ -334,6 +334,30 @@ dedicated [Authentication](authentication.md) page.
 | **2** | No credentials + direct local connection | Full access (dev convenience) |
 | **3** | No credentials + remote/proxied connection | Onboarding only (setup code required) |
 
+### Node Identity (Ed25519 TOFU)
+
+Remote nodes authenticate using Ed25519 challenge-response, following the same
+Trust On First Use (TOFU) model as SSH:
+
+1. **First connection**: The operator opens the pairing window from the Nodes UI
+   or with `moltis node pairing enable`. The node generates an Ed25519 keypair
+   and presents its public key to the gateway. The operator verifies the
+   fingerprint and approves the pairing (via the web UI or `moltis node approve`).
+2. **Subsequent connections**: The gateway sends a random 32-byte nonce. The node
+   signs it with its private key. The gateway verifies the signature against the
+   stored public key. No shared secret crosses the wire.
+3. **Key pinning**: Once approved, the public key is pinned to the device ID. If
+   the same device reconnects with a different key, the connection is rejected
+   and a `node.security.key-mismatch` alert is broadcast to operators.
+4. **Revocation**: Revoked keys are kept in the database so they cannot be
+   re-paired without explicit operator action.
+
+The private key (`~/.moltis/node_key`) is stored with mode 0600 and never
+leaves the node. The gateway stores only public keys.
+
+Pairing is disabled by default. Keep it disabled except while onboarding a new
+node, then close the window with `moltis node pairing disable`.
+
 ## HTTP Endpoint Throttling
 
 Moltis includes built-in per-IP endpoint throttling to reduce brute force
@@ -441,8 +465,8 @@ If HTTP works but WebSockets fail, make sure your location block includes
 ```nginx
 location / {
     proxy_pass http://172.17.0.1:13131;
-    proxy_set_header Host $host;
-    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Real-IP $remote_addr;
@@ -474,13 +498,19 @@ If WebSockets fail behind NPM while HTTP works, ensure:
 Use this in NPM's **Advanced** field:
 
 ```nginx
-proxy_set_header Host $host;
-proxy_set_header X-Forwarded-Host $host;
+proxy_set_header Host $http_host;
+proxy_set_header X-Forwarded-Host $http_host;
 proxy_set_header X-Forwarded-Proto $scheme;
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 proxy_set_header Upgrade $http_upgrade;
 proxy_set_header Connection "upgrade";
 ```
+
+**Why `$http_host` instead of `$host`?** Nginx's `$host` strips the port,
+while `$http_host` preserves it. Moltis validates that the WebSocket `Origin`
+header matches the `Host` header (including port). On non-standard ports
+(e.g., `:444` instead of `:443`), using `$host` causes a mismatch and
+WebSocket connections are rejected with "cross-origin WebSocket upgrade".
 
 Upstream scheme guidance:
 
@@ -499,12 +529,29 @@ server process. In practice:
 - If a proxy rewrites `Host` and does not preserve browser host context,
   passkey routes can fail with "no passkey config for this hostname".
 
-For stable proxy deployments, set explicit WebAuthn identity to your public
-domain:
+For stable proxy deployments, set your public URL in `moltis.toml`:
+
+```toml
+[server]
+external_url = "https://chat.example.com"
+```
+
+Moltis derives the WebAuthn RP ID (domain) and origin from this URL
+automatically. The `MOLTIS_EXTERNAL_URL` environment variable takes
+precedence over the config field, which is useful for container
+deployments:
 
 ```bash
 MOLTIS_BEHIND_PROXY=true
 MOLTIS_NO_TLS=true
+MOLTIS_EXTERNAL_URL=https://chat.example.com
+```
+
+For fine-grained control (e.g. when the RP ID differs from the URL host),
+the existing env vars still work and take precedence after
+`external_url`:
+
+```bash
 MOLTIS_WEBAUTHN_RP_ID=chat.example.com
 MOLTIS_WEBAUTHN_ORIGIN=https://chat.example.com
 ```
@@ -512,7 +559,7 @@ MOLTIS_WEBAUTHN_ORIGIN=https://chat.example.com
 Migration guidance when changing host/domain:
 
 1. Keep password login enabled during migration.
-2. Deploy with the new `MOLTIS_WEBAUTHN_RP_ID`/`MOLTIS_WEBAUTHN_ORIGIN`.
+2. Deploy with the new `server.external_url` (or env var equivalent).
 3. Ask users to register a new passkey on the new host.
 4. Remove old passkeys after new-host login is confirmed.
 

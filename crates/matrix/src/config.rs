@@ -52,6 +52,18 @@ pub enum AutoJoinPolicy {
     Off,
 }
 
+/// How Moltis authenticates to the Matrix homeserver.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MatrixAuthMode {
+    /// Password-based login (UIAA). Supports encrypted chats.
+    Password,
+    /// Reuse an existing access token. Does not support encrypted chats.
+    AccessToken,
+    /// OAuth 2.0 / OIDC via Matrix Authentication Service (MSC3861).
+    Oidc,
+}
+
 /// Who manages the Matrix account's encryption ownership.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -69,6 +81,10 @@ pub enum MatrixOwnershipMode {
 pub struct MatrixAccountConfig {
     /// Homeserver URL (e.g. "https://matrix.ponderosa.co").
     pub homeserver: String,
+
+    /// Explicit authentication mode. When absent, auto-detected from credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_mode: Option<MatrixAuthMode>,
 
     /// Access token for authentication.
     #[serde(serialize_with = "secret_serde::serialize_secret")]
@@ -123,6 +139,10 @@ pub struct MatrixAccountConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_provider: Option<String>,
 
+    /// Agent ID override for this account.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+
     /// How streaming responses are delivered.
     pub stream_mode: StreamMode,
 
@@ -159,6 +179,7 @@ impl Default for MatrixAccountConfig {
     fn default() -> Self {
         Self {
             homeserver: String::new(),
+            auth_mode: None,
             access_token: Secret::new(String::new()),
             password: None,
             user_id: None,
@@ -173,6 +194,7 @@ impl Default for MatrixAccountConfig {
             auto_join: AutoJoinPolicy::Always,
             model: None,
             model_provider: None,
+            agent_id: None,
             stream_mode: StreamMode::EditInPlace,
             edit_throttle_ms: 500,
             stream_min_initial_chars: 30,
@@ -190,6 +212,7 @@ impl std::fmt::Debug for MatrixAccountConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MatrixAccountConfig")
             .field("homeserver", &self.homeserver)
+            .field("auth_mode", &self.auth_mode)
             .field("access_token", &"[REDACTED]")
             .field("password", &self.password.as_ref().map(|_| "[REDACTED]"))
             .field("user_id", &self.user_id)
@@ -204,6 +227,7 @@ impl std::fmt::Debug for MatrixAccountConfig {
             .field("auto_join", &self.auto_join)
             .field("model", &self.model)
             .field("model_provider", &self.model_provider)
+            .field("agent_id", &self.agent_id)
             .field("stream_mode", &self.stream_mode)
             .field("edit_throttle_ms", &self.edit_throttle_ms)
             .field("stream_min_initial_chars", &self.stream_min_initial_chars)
@@ -224,18 +248,23 @@ impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
         let mut count = 16;
+        count += c.auth_mode.is_some() as usize;
         count += c.password.is_some() as usize;
         count += c.user_id.is_some() as usize;
         count += c.device_id.is_some() as usize;
         count += c.device_display_name.is_some() as usize;
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
+        count += c.agent_id.is_some() as usize;
         count += !c.channel_overrides.is_empty() as usize;
         count += !c.user_overrides.is_empty() as usize;
         count += c.ack_reaction.is_some() as usize;
 
         let mut s = serializer.serialize_struct("MatrixAccountConfig", count)?;
         s.serialize_field("homeserver", &c.homeserver)?;
+        if c.auth_mode.is_some() {
+            s.serialize_field("auth_mode", &c.auth_mode)?;
+        }
         s.serialize_field("access_token", secret_serde::REDACTED)?;
         if c.password.is_some() {
             s.serialize_field("password", secret_serde::REDACTED)?;
@@ -261,6 +290,9 @@ impl Serialize for RedactedConfig<'_> {
         }
         if c.model_provider.is_some() {
             s.serialize_field("model_provider", &c.model_provider)?;
+        }
+        if c.agent_id.is_some() {
+            s.serialize_field("agent_id", &c.agent_id)?;
         }
         s.serialize_field("stream_mode", &c.stream_mode)?;
         s.serialize_field("edit_throttle_ms", &c.edit_throttle_ms)?;
@@ -304,6 +336,10 @@ impl ChannelConfigView for MatrixAccountConfig {
 
     fn model_provider(&self) -> Option<&str> {
         self.model_provider.as_deref()
+    }
+
+    fn agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref()
     }
 
     fn channel_model(&self, channel_id: &str) -> Option<&str> {
@@ -498,5 +534,67 @@ mod tests {
         assert_eq!(value["stream_min_initial_chars"], 30);
         assert_eq!(value["ownership_mode"], "user_managed");
         assert_eq!(value["access_token"], "[REDACTED]");
+    }
+
+    #[test]
+    fn config_round_trip_with_oidc_auth_mode() {
+        let json = serde_json::json!({
+            "homeserver": "https://matrix.example.com",
+            "auth_mode": "oidc",
+            "access_token": "",
+        });
+        let cfg: MatrixAccountConfig =
+            serde_json::from_value(json).unwrap_or_else(|error| panic!("parse failed: {error}"));
+        assert_eq!(cfg.auth_mode, Some(MatrixAuthMode::Oidc));
+
+        let value =
+            serde_json::to_value(&cfg).unwrap_or_else(|error| panic!("serialize failed: {error}"));
+        assert_eq!(value["auth_mode"], "oidc");
+    }
+
+    #[test]
+    fn config_defaults_have_no_auth_mode() {
+        let cfg = MatrixAccountConfig::default();
+        assert_eq!(cfg.auth_mode, None);
+    }
+
+    #[test]
+    fn config_backward_compat_without_auth_mode() {
+        let json = serde_json::json!({
+            "homeserver": "https://matrix.example.com",
+            "access_token": "syt_test_token",
+        });
+        let cfg: MatrixAccountConfig =
+            serde_json::from_value(json).unwrap_or_else(|error| panic!("parse failed: {error}"));
+        assert_eq!(cfg.auth_mode, None);
+    }
+
+    #[test]
+    fn redacted_config_includes_auth_mode() {
+        let cfg = MatrixAccountConfig {
+            auth_mode: Some(MatrixAuthMode::Oidc),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(RedactedConfig(&cfg))
+            .unwrap_or_else(|error| panic!("serialize failed: {error}"));
+        assert_eq!(value["auth_mode"], "oidc");
+    }
+
+    #[test]
+    fn auth_mode_serde_values() {
+        assert_eq!(
+            serde_json::to_value(MatrixAuthMode::Password)
+                .unwrap_or_else(|error| panic!("{error}")),
+            "password"
+        );
+        assert_eq!(
+            serde_json::to_value(MatrixAuthMode::AccessToken)
+                .unwrap_or_else(|error| panic!("{error}")),
+            "access_token"
+        );
+        assert_eq!(
+            serde_json::to_value(MatrixAuthMode::Oidc).unwrap_or_else(|error| panic!("{error}")),
+            "oidc"
+        );
     }
 }

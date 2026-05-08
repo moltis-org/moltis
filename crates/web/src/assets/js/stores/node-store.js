@@ -1,43 +1,9 @@
-// ── Node store (signal-based) ──────────────────────────────
-//
-// Single source of truth for connected remote nodes.
-
-import { computed, signal } from "@preact/signals";
-import { sendRpc } from "../helpers.js";
-
-// ── Signals ──────────────────────────────────────────────────
-export var nodes = signal([]);
-export var selectedNodeId = signal(null);
-
-export var selectedNode = computed(() => {
-	var id = selectedNodeId.value;
-	if (!id) return null;
-	return nodes.value.find((n) => n.nodeId === id) || null;
-});
-
-// ── Methods ──────────────────────────────────────────────────
-
-/** Replace the full node list from an RPC fetch. */
-export function setAll(arr) {
-	nodes.value = arr || [];
-}
-
-/** Fetch connected nodes from the server via RPC. */
-export function fetch() {
-	return sendRpc("node.list", {}).then((res) => {
-		if (!res?.ok) return;
-		setAll(res.payload || []);
-	});
-}
-
-/** Select a node by id. Pass null to clear (local execution). */
-export function select(id) {
-	selectedNodeId.value = id || null;
-}
-
-/** Look up a node by id. */
-export function getById(id) {
-	return nodes.value.find((n) => n.nodeId === id) || null;
-}
-
-export var nodeStore = { nodes, selectedNodeId, selectedNode, setAll, fetch, select, getById };
+const M = (window.__moltis_modules || {})["stores/node-store"] || {};
+export default M;
+export const nodes = M.nodes;
+export const selectedNodeId = M.selectedNodeId;
+export const nodeStore = M.nodeStore;
+export const setAll = (...args) => M.setAll?.(...args);
+export const select = (...args) => M.select?.(...args);
+export const getById = (...args) => M.getById?.(...args);
+export const selectedNode = M.selectedNode;

@@ -28,6 +28,7 @@ mod auth_commands;
 mod browser_commands;
 mod channel_commands;
 mod config_commands;
+mod data_commands;
 mod db_commands;
 mod doctor_commands;
 mod hooks_commands;
@@ -39,6 +40,7 @@ mod sandbox_commands;
 mod service_commands;
 #[cfg(feature = "tailscale")]
 mod tailscale_commands;
+mod voicecall_commands;
 
 use {
     anyhow::anyhow,
@@ -160,6 +162,11 @@ enum Commands {
         #[command(subcommand)]
         action: browser_commands::BrowserAction,
     },
+    /// Export and import Moltis data archives.
+    Data {
+        #[command(subcommand)]
+        action: data_commands::DataAction,
+    },
     /// Database management (reset, clear, migrate).
     Db {
         #[command(subcommand)]
@@ -191,6 +198,11 @@ enum Commands {
     Tailscale {
         #[command(subcommand)]
         action: tailscale_commands::TailscaleAction,
+    },
+    /// Voice call management (initiate, status, end).
+    VoiceCall {
+        #[command(subcommand)]
+        action: voicecall_commands::VoiceCallAction,
     },
     /// Install the Moltis CA certificate into the system trust store.
     #[cfg(feature = "tls")]
@@ -410,6 +422,10 @@ async fn main() -> anyhow::Result<()> {
         )
     });
 
+    // Initialize config directory once for all subcommands
+    // (write defaults.toml, compact, persist random port).
+    moltis_config::initialize_config();
+
     match cli.command {
         // Default: start gateway when no subcommand is provided
         None | Some(Commands::Gateway) => {
@@ -450,6 +466,7 @@ async fn main() -> anyhow::Result<()> {
                 extra_routes,
             )
             .await
+            .map_err(Into::into)
         },
         Some(Commands::Agent { message, .. }) => {
             let result = moltis_agents::runner::run_agent("default", "main", &message).await?;
@@ -464,6 +481,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Auth { action }) => auth_commands::handle_auth(action).await,
         Some(Commands::Sandbox { action }) => sandbox_commands::handle_sandbox(action).await,
         Some(Commands::Browser { action }) => browser_commands::handle_browser(action),
+        Some(Commands::Data { action }) => data_commands::handle_data(action).await,
         Some(Commands::Db { action }) => db_commands::handle_db(action).await,
         Some(Commands::Memory { action }) => memory_commands::handle_memory(action).await,
         Some(Commands::Node { action }) => node_commands::handle_node(action).await,
@@ -476,6 +494,7 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Config { action }) => config_commands::handle_config(action).await,
         Some(Commands::Doctor) => doctor_commands::handle_doctor().await,
         Some(Commands::Hooks { action }) => hooks_commands::handle_hooks(action).await,
+        Some(Commands::VoiceCall { action }) => voicecall_commands::handle_voicecall(action).await,
         #[cfg(feature = "tls")]
         Some(Commands::TrustCa) => trust_ca().await,
         Some(_) => {

@@ -207,13 +207,17 @@ pub async fn run_agent_loop_streaming(
                         cb(RunnerEvent::ThinkingText(accumulated_reasoning.clone()));
                     }
                 },
-                StreamEvent::ToolCallStart { id, name, index } => {
+                StreamEvent::ToolCallStart {
+                    id, name, index, ..
+                } => {
                     let vec_pos = tool_calls.len();
                     debug!(tool = %name, id = %id, stream_index = index, vec_pos, "tool call started in stream");
                     tool_calls.push(ToolCall {
                         id,
                         name,
                         arguments: serde_json::json!({}),
+                        argument_diagnostic: None,
+                        metadata: None,
                     });
                     stream_idx_to_vec_pos.insert(index, vec_pos);
                     tool_call_args.insert(index, String::new());
@@ -410,6 +414,8 @@ pub async fn run_agent_loop_streaming(
                 id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
+                argument_diagnostic: None,
+                metadata: None,
             }];
         }
 
@@ -624,6 +630,7 @@ pub async fn run_agent_loop_streaming(
                             id: tc.id.clone(),
                             name: tc.name.clone(),
                             arguments: args.clone(),
+                            metadata: tc.metadata.clone(),
                         });
                     }
                     info!(tool = %tc_name, id = %tc.id, args = %args, "executing tool");

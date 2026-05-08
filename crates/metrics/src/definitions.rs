@@ -158,6 +158,16 @@ pub mod memory {
     pub const DOCUMENTS_COUNT: &str = "moltis_memory_documents_count";
     /// Total memory size in bytes
     pub const SIZE_BYTES: &str = "moltis_memory_size_bytes";
+    /// Total prefetch attempts (label: status=hit|miss|skip|error)
+    pub const PREFETCH_TOTAL: &str = "moltis_memory_prefetch_total";
+    /// Prefetch search duration in seconds
+    pub const PREFETCH_DURATION_SECONDS: &str = "moltis_memory_prefetch_duration_seconds";
+    /// Total silent memory turns (label: variant=compaction|periodic-extract|session-summary)
+    pub const SILENT_TURNS_TOTAL: &str = "moltis_memory_silent_turns_total";
+    /// Silent turn duration in seconds
+    pub const SILENT_TURN_DURATION_SECONDS: &str = "moltis_memory_silent_turn_duration_seconds";
+    /// Files written by silent memory turns
+    pub const SILENT_TURN_FILES_WRITTEN: &str = "moltis_memory_silent_turn_files_written";
 }
 
 /// Plugin metrics
@@ -470,6 +480,10 @@ pub mod skills {
     /// Prompt generation duration
     pub const PROMPT_GENERATION_DURATION_SECONDS: &str =
         "moltis_skills_prompt_generation_duration_seconds";
+    /// Skill activations (read_skill primary calls)
+    pub const ACTIVATIONS_TOTAL: &str = "moltis_skills_activations_total";
+    /// Skill modifications (create + update + patch)
+    pub const MODIFICATIONS_TOTAL: &str = "moltis_skills_modifications_total";
 }
 
 /// Telegram channel metrics
@@ -576,6 +590,23 @@ pub mod labels {
     pub const KIND: &str = "kind";
     pub const REJECTION_REASON: &str = "rejection_reason";
     pub const TRANSPORT: &str = "transport";
+    pub const VARIANT: &str = "variant";
+}
+
+/// Home Assistant integration metrics
+pub mod home_assistant {
+    /// Total number of HA REST API requests
+    pub const REST_REQUESTS_TOTAL: &str = "moltis_ha_rest_requests_total";
+    /// HA REST API request duration in seconds
+    pub const REST_REQUEST_DURATION_SECONDS: &str = "moltis_ha_rest_request_duration_seconds";
+    /// HA REST API errors
+    pub const REST_ERRORS_TOTAL: &str = "moltis_ha_rest_errors_total";
+    /// Total number of HA WebSocket connections
+    pub const WS_CONNECTIONS_TOTAL: &str = "moltis_ha_ws_connections_total";
+    /// Total number of HA WebSocket events received
+    pub const WS_EVENTS_RECEIVED_TOTAL: &str = "moltis_ha_ws_events_received_total";
+    /// HA WebSocket errors
+    pub const WS_ERRORS_TOTAL: &str = "moltis_ha_ws_errors_total";
 }
 
 /// Standard histogram buckets for different metric types

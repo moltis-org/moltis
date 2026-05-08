@@ -9,7 +9,7 @@ use crate::{
     openai_compat::{
         ResponsesStreamState, SseLineResult, StreamingToolState, finalize_responses_stream,
         finalize_stream, process_openai_sse_line, process_responses_sse_line,
-        split_responses_instructions_and_input, to_openai_tools, to_responses_api_tools,
+        split_responses_instructions_and_input, to_responses_api_tools,
     },
 };
 
@@ -174,7 +174,7 @@ impl OpenAiProvider {
 
             if !tools.is_empty() {
                 body["tools"] =
-                    serde_json::Value::Array(to_openai_tools(&tools, self.needs_strict_tools()));
+                    serde_json::Value::Array(self.prepare_chat_tools(&tools));
             }
 
             self.apply_reasoning_effort_chat(&mut body);

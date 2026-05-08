@@ -1,47 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
-
-function isRetryableRpcError(message) {
-	if (typeof message !== "string") return false;
-	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
-}
-
-async function sendRpcFromPage(page, method, params) {
-	let lastResponse = null;
-	for (let attempt = 0; attempt < 40; attempt++) {
-		if (attempt > 0) {
-			await waitForWsConnected(page);
-			await page.waitForTimeout(100);
-		}
-		lastResponse = await page
-			.evaluate(
-				async ({ methodName, methodParams }) => {
-					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-					if (!appScript) throw new Error("app module script not found");
-					var appUrl = new URL(appScript.src, window.location.origin);
-					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-					var helpers = await import(`${prefix}js/helpers.js`);
-					return helpers.sendRpc(methodName, methodParams);
-				},
-				{
-					methodName: method,
-					methodParams: params,
-				},
-			)
-			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
-
-		if (lastResponse?.ok) return lastResponse;
-		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
-	}
-
-	return lastResponse;
-}
-
-async function expectRpcOk(page, method, params) {
-	const response = await sendRpcFromPage(page, method, params);
-	expect(response?.ok, `RPC ${method} failed: ${response?.error?.message || "unknown error"}`).toBeTruthy();
-	return response;
-}
+const { expectRpcOk, navigateAndWait, sendRpcFromPage, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 async function clearChatAndWait(page) {
 	await expectRpcOk(page, "chat.clear", {});
@@ -382,7 +340,8 @@ test.describe("WebSocket connection lifecycle", () => {
 		var assistant = page.locator("#messages .msg.assistant").last();
 		await expect(assistant).toContainText("voice fallback should be available");
 		await expect(assistant.locator(".msg-voice-warning")).toContainText("timeout");
-		await expect(assistant.locator(".msg-voice-action")).toHaveText("Voice it");
+		// Voice action is now an icon button in the action bar
+		await expect(assistant.locator('.msg-action-btn[title="Voice it"]')).toBeVisible();
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -409,10 +368,11 @@ test.describe("WebSocket connection lifecycle", () => {
 
 		var assistant = page.locator("#messages .msg.assistant").last();
 		await expect(assistant).toContainText("try generating voice now");
-		await expect(assistant.locator(".msg-voice-action")).toHaveText("Voice it");
-		await assistant.locator(".msg-voice-action").click();
-		await expect(assistant.locator(".msg-voice-action")).toHaveText("Retry voice");
-		await expect(assistant.locator(".msg-voice-warning")).toContainText("Voice generation failed for test.");
+		var voiceBtn = assistant.locator('.msg-action-btn[title="Voice it"]');
+		await expect(voiceBtn).toBeVisible();
+		await voiceBtn.click();
+		// After failed RPC the button title reverts and a toast is shown
+		await expect(voiceBtn).toHaveAttribute("title", "Voice it");
 		expect(pageErrors).toEqual([]);
 	});
 

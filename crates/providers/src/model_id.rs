@@ -7,7 +7,13 @@ pub(crate) const MODEL_ID_NAMESPACE_SEP: &str = "::";
 pub(crate) const REASONING_SUFFIX_SEP: char = '@';
 
 /// Reasoning effort suffixes appended to model IDs.
+///
+/// Derived from [`ReasoningEffort::ALL`] — one entry per level.
 pub(crate) const REASONING_SUFFIXES: &[(&str, moltis_agents::model::ReasoningEffort)] = &[
+    (
+        "reasoning-minimal",
+        moltis_agents::model::ReasoningEffort::Minimal,
+    ),
     ("reasoning-low", moltis_agents::model::ReasoningEffort::Low),
     (
         "reasoning-medium",
@@ -16,6 +22,10 @@ pub(crate) const REASONING_SUFFIXES: &[(&str, moltis_agents::model::ReasoningEff
     (
         "reasoning-high",
         moltis_agents::model::ReasoningEffort::High,
+    ),
+    (
+        "reasoning-xhigh",
+        moltis_agents::model::ReasoningEffort::ExtraHigh,
     ),
 ];
 
@@ -88,11 +98,31 @@ mod tests {
             split_reasoning_suffix("o3@reasoning-low"),
             ("o3", Some(ReasoningEffort::Low))
         );
+        assert_eq!(
+            split_reasoning_suffix("model@reasoning-minimal"),
+            ("model", Some(ReasoningEffort::Minimal))
+        );
+        assert_eq!(
+            split_reasoning_suffix("gpt-5@reasoning-xhigh"),
+            ("gpt-5", Some(ReasoningEffort::ExtraHigh))
+        );
         assert_eq!(split_reasoning_suffix("gpt-4o"), ("gpt-4o", None));
         assert_eq!(
             split_reasoning_suffix("model@unknown-suffix"),
             ("model@unknown-suffix", None)
         );
+    }
+
+    #[test]
+    fn reasoning_suffixes_covers_all_efforts() {
+        use moltis_agents::model::ReasoningEffort;
+        for effort in ReasoningEffort::ALL {
+            assert!(
+                REASONING_SUFFIXES.iter().any(|(_, e)| e == effort),
+                "REASONING_SUFFIXES missing entry for {:?}",
+                effort
+            );
+        }
     }
 
     #[test]

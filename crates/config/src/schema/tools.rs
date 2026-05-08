@@ -39,7 +39,7 @@ pub struct ToolsConfig {
     /// Window size for the tool-call reflex-loop detector. When this many
     /// consecutive tool calls share the same tool + (args or error), the
     /// runner injects a directive intervention message. Set to 0 to disable.
-    /// Default 3.
+    /// Default 2.
     #[serde(default = "default_agent_loop_detector_window")]
     pub agent_loop_detector_window: usize,
     /// When the loop detector fires a second time (stage 2), strip the tool
@@ -47,6 +47,21 @@ pub struct ToolsConfig {
     /// in text. Default true.
     #[serde(default = "default_agent_loop_detector_strip_tools")]
     pub agent_loop_detector_strip_tools_on_second_fire: bool,
+    /// Percentage of the provider's context window at which per-iteration
+    /// tool-result compaction starts. Oldest results are compacted first.
+    /// Set to 0 to disable per-iteration compaction entirely. Default 75.
+    #[serde(default = "default_tool_result_compaction_ratio")]
+    pub tool_result_compaction_ratio: u32,
+    /// Percentage of the provider's context window at which a hard
+    /// `ContextWindowExceeded` error fires even after compaction.
+    /// Must be greater than `tool_result_compaction_ratio`. Default 90.
+    #[serde(default = "default_preemptive_overflow_ratio")]
+    pub preemptive_overflow_ratio: u32,
+    /// Minimum number of agent loop iterations before per-iteration
+    /// tool-result compaction is allowed to fire. Prevents premature
+    /// context destruction in short loops. Default 3.
+    #[serde(default = "default_compaction_min_iterations")]
+    pub compaction_min_iterations: usize,
 }
 
 impl Default for ToolsConfig {
@@ -67,6 +82,9 @@ impl Default for ToolsConfig {
             agent_loop_detector_window: default_agent_loop_detector_window(),
             agent_loop_detector_strip_tools_on_second_fire: default_agent_loop_detector_strip_tools(
             ),
+            tool_result_compaction_ratio: default_tool_result_compaction_ratio(),
+            preemptive_overflow_ratio: default_preemptive_overflow_ratio(),
+            compaction_min_iterations: default_compaction_min_iterations(),
         }
     }
 }
@@ -206,11 +224,23 @@ fn default_max_tool_result_bytes() -> usize {
 }
 
 fn default_agent_loop_detector_window() -> usize {
-    3
+    2
 }
 
 fn default_agent_loop_detector_strip_tools() -> bool {
     true
+}
+
+fn default_tool_result_compaction_ratio() -> u32 {
+    75
+}
+
+fn default_preemptive_overflow_ratio() -> u32 {
+    90
+}
+
+fn default_compaction_min_iterations() -> usize {
+    3
 }
 
 /// Map tools configuration.
@@ -399,6 +429,12 @@ pub struct BrowserConfig {
     pub enabled: bool,
     /// Path to Chrome/Chromium binary (auto-detected if not set).
     pub chrome_path: Option<String>,
+    /// Path to the Obscura binary (auto-detected from PATH if not set).
+    /// Set `browser = "obscura"` in requests to use this lightweight headless browser.
+    pub obscura_path: Option<String>,
+    /// Path to the Lightpanda binary (auto-detected from PATH if not set).
+    /// Set `browser = "lightpanda"` in requests to use this lightweight headless browser.
+    pub lightpanda_path: Option<String>,
     /// Whether to run in headless mode.
     pub headless: bool,
     /// Default viewport width.
@@ -491,6 +527,8 @@ impl Default for BrowserConfig {
         Self {
             enabled: true,
             chrome_path: None,
+            obscura_path: None,
+            lightpanda_path: None,
             headless: true,
             viewport_width: 2560,
             viewport_height: 1440,
@@ -654,6 +692,11 @@ pub struct SandboxConfig {
     /// execution.
     pub backend: String,
     pub resource_limits: ResourceLimitsConfig,
+    /// GPU device passthrough for Docker/Podman backends.
+    /// Examples: "all", "device=0", "device=0,1".
+    /// Ignored for Apple Container and WASM backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpus: Option<String>,
     /// Packages to install via `apt-get` in the sandbox image.
     /// Set to an empty list to skip provisioning.
     #[serde(default = "default_sandbox_packages")]
@@ -668,6 +711,72 @@ pub struct SandboxConfig {
     /// Acts as layer 6 in the policy resolution chain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools_policy: Option<ToolPolicyConfig>,
+
+    // ── Remote sandbox backends ─────────────────────────────────────────
+    /// Vercel API token for the Vercel Sandbox backend.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub vercel_token: Option<Secret<String>>,
+    /// Vercel project ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_project_id: Option<String>,
+    /// Vercel team ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_team_id: Option<String>,
+    /// Vercel sandbox runtime (e.g. "node24", "python3.13").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_runtime: Option<String>,
+    /// Vercel sandbox timeout in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_timeout_ms: Option<u64>,
+    /// Vercel sandbox vCPU count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_vcpus: Option<u32>,
+
+    /// Daytona API key.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub daytona_api_key: Option<Secret<String>>,
+    /// Daytona API URL (default: https://app.daytona.io/api).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daytona_api_url: Option<String>,
+    /// Daytona target region/environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daytona_target: Option<String>,
+    /// Custom image for Daytona sandbox creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daytona_image: Option<String>,
+
+    /// Vercel snapshot ID for fast cold starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vercel_snapshot_id: Option<String>,
+
+    /// Path to the `firecracker` binary (Linux only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_bin: Option<String>,
+    /// Path to the uncompressed Linux kernel (`vmlinux`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_kernel: Option<String>,
+    /// Path to the base ext4 rootfs image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_rootfs: Option<String>,
+    /// Path to the SSH private key for VM access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_ssh_key: Option<String>,
+    /// Number of vCPUs per Firecracker VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_vcpus: Option<u32>,
+    /// Memory in MiB per Firecracker VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub firecracker_memory_mb: Option<u32>,
 }
 
 /// Default packages installed in sandbox containers.
@@ -690,8 +799,7 @@ fn default_sandbox_packages() -> Vec<String> {
         "python3-pip",
         "python3-venv",
         "python-is-python3",
-        "nodejs",
-        "npm",
+        "nodejs", // installed via NodeSource 22.x (npm bundled)
         "ruby",
         "ruby-dev",
         "golang-go",
@@ -745,6 +853,7 @@ fn default_sandbox_packages() -> Vec<String> {
         "shellcheck",
         "patchelf",
         "git-lfs",
+        "gh", // GitHub CLI
         "gettext",
         "lsb-release",
         "software-properties-common",
@@ -862,11 +971,29 @@ impl Default for SandboxConfig {
             trusted_domains: Vec::new(),
             backend: "auto".into(),
             resource_limits: ResourceLimitsConfig::default(),
+            gpus: None,
             packages: default_sandbox_packages(),
             wasm_fuel_limit: None,
             wasm_epoch_interval_ms: None,
             wasm_tool_limits: None,
             tools_policy: None,
+            vercel_token: None,
+            vercel_project_id: None,
+            vercel_team_id: None,
+            vercel_runtime: None,
+            vercel_timeout_ms: None,
+            vercel_vcpus: None,
+            daytona_api_key: None,
+            daytona_api_url: None,
+            daytona_target: None,
+            daytona_image: None,
+            vercel_snapshot_id: None,
+            firecracker_bin: None,
+            firecracker_kernel: None,
+            firecracker_rootfs: None,
+            firecracker_ssh_key: None,
+            firecracker_vcpus: None,
+            firecracker_memory_mb: None,
         }
     }
 }

@@ -4,11 +4,16 @@ use std::sync::Arc;
 #[cfg(feature = "vault")]
 use moltis_vault::Vault;
 
-use crate::credential_store::{CredentialStore, EnvVarEntry};
+#[cfg(feature = "vault")]
+use crate::Error;
+use crate::{
+    Result,
+    credential_store::{CredentialStore, EnvVarEntry},
+};
 
 impl CredentialStore {
     /// List all environment variables (names only, no values).
-    pub async fn list_env_vars(&self) -> anyhow::Result<Vec<EnvVarEntry>> {
+    pub async fn list_env_vars(&self) -> Result<Vec<EnvVarEntry>> {
         let rows: Vec<(i64, String, String, String, i64)> = sqlx::query_as(
             "SELECT id, key, strftime('%Y-%m-%dT%H:%M:%SZ', created_at), strftime('%Y-%m-%dT%H:%M:%SZ', updated_at), COALESCE(encrypted, 0) FROM env_variables ORDER BY key ASC",
         )
@@ -29,13 +34,16 @@ impl CredentialStore {
     /// Set (upsert) an environment variable.
     ///
     /// When the vault feature is enabled and the vault is unsealed, the value is encrypted before storage.
-    pub async fn set_env_var(&self, key: &str, value: &str) -> anyhow::Result<i64> {
+    pub async fn set_env_var(&self, key: &str, value: &str) -> Result<i64> {
         #[cfg(feature = "vault")]
         let (store_value, encrypted) = {
             if let Some(ref vault) = self.vault {
                 if vault.is_unsealed().await {
                     let aad = format!("env:{key}");
-                    let enc = vault.encrypt_string(value, &aad).await?;
+                    let enc = vault
+                        .encrypt_string(value, &aad)
+                        .await
+                        .map_err(|e| Error::Crypto(e.to_string()))?;
                     (enc, 1_i64)
                 } else {
                     (value.to_owned(), 0_i64)
@@ -60,7 +68,7 @@ impl CredentialStore {
     }
 
     /// Delete an environment variable by id. Returns the key name if found.
-    pub async fn delete_env_var(&self, id: i64) -> anyhow::Result<Option<String>> {
+    pub async fn delete_env_var(&self, id: i64) -> Result<Option<String>> {
         let key: Option<(String,)> = sqlx::query_as("SELECT key FROM env_variables WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -73,7 +81,7 @@ impl CredentialStore {
     }
 
     /// Get all environment variable key-value pairs (internal use for sandbox injection).
-    pub async fn get_all_env_values(&self) -> anyhow::Result<Vec<(String, String)>> {
+    pub async fn get_all_env_values(&self) -> Result<Vec<(String, String)>> {
         let rows: Vec<(String, String, i64)> = sqlx::query_as(
             "SELECT key, value, COALESCE(encrypted, 0) FROM env_variables ORDER BY key ASC",
         )

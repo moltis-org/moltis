@@ -74,6 +74,22 @@ impl BrowserTool {
         Some(Self::new(browser_config))
     }
 
+    /// Create from the full tools config so browser sandbox containers can
+    /// share exec sandbox host path resolution.
+    pub fn from_tools_config(config: &moltis_config::schema::ToolsConfig) -> Option<Self> {
+        if !config.browser.enabled {
+            return None;
+        }
+        let mut browser_config = moltis_browser::BrowserConfig::from(&config.browser);
+        browser_config.host_data_dir = config
+            .exec
+            .sandbox
+            .host_data_dir
+            .as_ref()
+            .map(std::path::PathBuf::from);
+        Some(Self::new(browser_config))
+    }
+
     fn cache_key(session_key: Option<&str>) -> Cow<'static, str> {
         match session_key {
             Some(k) => Cow::Owned(k.to_string()),
@@ -155,7 +171,7 @@ impl AgentTool for BrowserTool {
          {\"action\": \"navigate\", \"url\": \"https://example.com\"}\n\n\
          Actions: navigate, screenshot, snapshot, click, type, scroll, evaluate, wait, close\n\n\
          BROWSER CHOICE: optionally set \"browser\" to choose one (auto, chrome, chromium, \
-         edge, brave, opera, vivaldi, arc). If no browser is installed, Moltis will try \
+         edge, brave, opera, vivaldi, arc, obscura, lightpanda). If no browser is installed, Moltis will try \
          to auto-install one.\n\n\
          SESSION: The browser session is automatically tracked per chat session. \
          After 'navigate', subsequent actions in the same chat will reuse the same \
@@ -184,8 +200,8 @@ impl AgentTool for BrowserTool {
                 },
                 "browser": {
                     "type": "string",
-                    "enum": ["auto", "chrome", "chromium", "edge", "brave", "opera", "vivaldi", "arc"],
-                    "description": "Browser to use for host mode. Default: auto (first installed browser)."
+                    "enum": ["auto", "chrome", "chromium", "edge", "brave", "opera", "vivaldi", "arc", "obscura", "lightpanda"],
+                    "description": "Browser to use. Default: auto (first installed browser). Use 'obscura' or 'lightpanda' for lightweight headless browsing (no screenshots)."
                 },
                 "url": {
                     "type": "string",
@@ -345,6 +361,20 @@ mod tests {
     }
 
     #[test]
+    fn from_tools_config_carries_exec_sandbox_host_data_dir() {
+        let mut config = moltis_config::schema::ToolsConfig::default();
+        config.browser.enabled = true;
+        config.exec.sandbox.host_data_dir = Some("/host/moltis-data".to_string());
+
+        let tool = BrowserTool::from_tools_config(&config).unwrap();
+
+        assert_eq!(
+            tool.config.host_data_dir.as_deref(),
+            Some(std::path::Path::new("/host/moltis-data"))
+        );
+    }
+
+    #[test]
     fn test_parameters_schema_has_required_action() {
         let config = moltis_config::schema::BrowserConfig {
             enabled: true,
@@ -356,6 +386,11 @@ mod tests {
         assert!(
             required.iter().any(|v| v == "action"),
             "action should be in required fields"
+        );
+        let browser_values = schema["properties"]["browser"]["enum"].as_array().unwrap();
+        assert!(
+            browser_values.iter().any(|v| v == "lightpanda"),
+            "lightpanda should be a selectable browser"
         );
     }
 

@@ -61,7 +61,7 @@ prompt_memory_mode = "live-reload"
 ```
 
 - `hybrid` injects `MEMORY.md` into the prompt and keeps `memory_search`,
-  `memory_get`, and `memory_save` available
+  `memory_get`, `memory_save`, `memory_forget`, and `memory_delete` available
 - `prompt-only` injects `MEMORY.md` into the prompt, but hides memory tools
 - `search-only` skips prompt injection and relies on memory tools for recall
 - `off` disables both prompt memory injection and memory tools
@@ -88,8 +88,8 @@ Defaults today:
 - `hybrid` allows agent-authored writes to both `MEMORY.md` and `memory/*.md`
 - `prompt-only` restricts agent-authored writes to `MEMORY.md`
 - `search-only` restricts agent-authored writes to `memory/*.md`
-- `off` disables agent-authored writes, including `memory_save` and the silent
-  pre-compaction memory flush
+- `off` disables agent-authored memory mutations, including `memory_save`,
+  `memory_forget`, `memory_delete`, and the silent pre-compaction memory flush
 
 `memory.session_export` is separate again:
 
@@ -140,8 +140,9 @@ sandbox or not.
 
 With the default `workspace_mount = "ro"`, sandboxed commands may still read
 mounted files such as `MEMORY.md`, but they cannot modify them directly.
-Durable long-term writes should still happen through Moltis memory tools such
-as `memory_save`, not via shell redirection inside the sandbox.
+Durable long-term memory mutations should still happen through Moltis memory
+tools such as `memory_save`, `memory_forget`, and `memory_delete`, not via
+shell redirection inside the sandbox.
 
 ## Between Sandboxes
 

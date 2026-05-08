@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ChatConfig {
+    /// Automatically generate a session title after the first exchange.
+    #[serde(default = "default_auto_title")]
+    pub auto_title: bool,
     /// How to handle messages that arrive while an agent run is active.
     #[serde(default = "default_message_queue_mode")]
     pub message_queue_mode: MessageQueueMode,
@@ -25,6 +28,10 @@ pub struct ChatConfig {
     pub compaction: CompactionConfig,
 }
 
+fn default_auto_title() -> bool {
+    true
+}
+
 fn default_message_queue_mode() -> MessageQueueMode {
     MessageQueueMode::Followup
 }
@@ -40,6 +47,7 @@ fn default_workspace_file_max_chars() -> usize {
 impl Default for ChatConfig {
     fn default() -> Self {
         Self {
+            auto_title: default_auto_title(),
             message_queue_mode: default_message_queue_mode(),
             prompt_memory_mode: default_prompt_memory_mode(),
             workspace_file_max_chars: default_workspace_file_max_chars(),
@@ -296,4 +304,27 @@ pub enum ToolRegistryMode {
     Full,
     /// Only `tool_search` is sent; the model discovers and activates tools on demand.
     Lazy,
+}
+
+/// Auxiliary model assignments for side tasks.
+///
+/// Route compression, title generation, and vision to cheaper/faster models
+/// while keeping the main session on a more capable model. Falls back to the
+/// session's primary provider when a field is `None`.
+///
+/// ```toml
+/// [auxiliary]
+/// compaction = "openrouter/google/gemini-2.5-flash"
+/// title_generation = "openrouter/google/gemini-2.5-flash"
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuxiliaryModelsConfig {
+    /// Model for context compaction/summarization.
+    /// Overrides `chat.compaction.summary_model` when set.
+    pub compaction: Option<String>,
+    /// Model for session title generation.
+    pub title_generation: Option<String>,
+    /// Model for vision/image analysis tasks.
+    pub vision: Option<String>,
 }

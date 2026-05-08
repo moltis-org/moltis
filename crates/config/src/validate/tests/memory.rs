@@ -224,6 +224,74 @@ embedding_provider = "custom"
 }
 
 #[test]
+fn memory_prefetch_fields_are_valid() {
+    let toml = r#"
+[memory]
+enable_prefetch = true
+prefetch_limit = 5
+auto_extract_interval = 10
+enable_session_summary = false
+"#;
+    let result = validate_toml_str(toml);
+    let unknown: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.category == "unknown-field" && d.path.starts_with("memory."))
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "new memory lifecycle fields should be accepted: {unknown:?}"
+    );
+    assert!(
+        !result.has_errors(),
+        "no errors for valid memory lifecycle config: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn skills_enable_self_improvement_is_valid() {
+    let toml = r#"
+[skills]
+enable_self_improvement = false
+"#;
+    let result = validate_toml_str(toml);
+    let unknown = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path == "skills.enable_self_improvement");
+    assert!(
+        unknown.is_none(),
+        "skills.enable_self_improvement should be accepted"
+    );
+}
+
+#[test]
+fn memory_lifecycle_fields_default_to_true() {
+    let config: MoltisConfig = toml::from_str("").unwrap();
+    assert!(
+        config.memory.enable_prefetch,
+        "enable_prefetch should default true"
+    );
+    assert_eq!(
+        config.memory.prefetch_limit, 3,
+        "prefetch_limit should default 3"
+    );
+    assert_eq!(
+        config.memory.auto_extract_interval, 5,
+        "auto_extract_interval should default 5"
+    );
+    assert!(
+        config.memory.enable_session_summary,
+        "enable_session_summary should default true"
+    );
+    assert!(
+        config.skills.enable_self_improvement,
+        "enable_self_improvement should default true"
+    );
+}
+
+#[test]
 fn duplicate_field_suppression_matches_only_conflicting_replacements() {
     assert!(should_suppress_deprecated_conflict_type_error(
         "type error: duplicate field `provider`",

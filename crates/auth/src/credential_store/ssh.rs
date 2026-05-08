@@ -2,12 +2,15 @@ use std::convert::TryFrom;
 
 use secrecy::Secret;
 
-use crate::credential_store::{
-    CredentialStore, SshAuthMode, SshKeyEntry, SshResolvedTarget, SshTargetEntry,
+use crate::{
+    Error, Result,
+    credential_store::{
+        CredentialStore, SshAuthMode, SshKeyEntry, SshResolvedTarget, SshTargetEntry,
+    },
 };
 
 impl CredentialStore {
-    pub async fn list_ssh_keys(&self) -> anyhow::Result<Vec<SshKeyEntry>> {
+    pub async fn list_ssh_keys(&self) -> Result<Vec<SshKeyEntry>> {
         let rows: Vec<(i64, String, String, String, String, String, i64, i64)> = sqlx::query_as(
             "SELECT
                 k.id,
@@ -58,10 +61,10 @@ impl CredentialStore {
         private_key: &str,
         public_key: &str,
         fingerprint: &str,
-    ) -> anyhow::Result<i64> {
+    ) -> Result<i64> {
         let name = name.trim();
         if name.is_empty() {
-            anyhow::bail!("ssh key name is required");
+            return Err(Error::Ssh("ssh key name is required".into()));
         }
 
         #[cfg(feature = "vault")]
@@ -69,7 +72,10 @@ impl CredentialStore {
             if let Some(ref vault) = self.vault {
                 if vault.is_unsealed().await {
                     let aad = format!("ssh-key:{name}");
-                    let enc = vault.encrypt_string(private_key, &aad).await?;
+                    let enc = vault
+                        .encrypt_string(private_key, &aad)
+                        .await
+                        .map_err(|e| Error::Crypto(e.to_string()))?;
                     (enc, 1_i64)
                 } else {
                     (private_key.to_owned(), 0_i64)
@@ -96,7 +102,7 @@ impl CredentialStore {
         Ok(result.last_insert_rowid())
     }
 
-    pub async fn delete_ssh_key(&self, id: i64) -> anyhow::Result<()> {
+    pub async fn delete_ssh_key(&self, id: i64) -> Result<()> {
         let deleted = sqlx::query(
             "DELETE FROM ssh_keys
              WHERE id = ?
@@ -114,13 +120,15 @@ impl CredentialStore {
                     .fetch_optional(&self.pool)
                     .await?;
             if in_use.is_some_and(|(count,)| count > 0) {
-                anyhow::bail!("ssh key is still assigned to one or more targets");
+                return Err(Error::Ssh(
+                    "ssh key is still assigned to one or more targets".into(),
+                ));
             }
         }
         Ok(())
     }
 
-    pub async fn get_ssh_private_key(&self, key_id: i64) -> anyhow::Result<Option<Secret<String>>> {
+    pub async fn get_ssh_private_key(&self, key_id: i64) -> Result<Option<Secret<String>>> {
         let row: Option<(String, String, i64)> = sqlx::query_as(
             "SELECT name, private_key, COALESCE(encrypted, 0) FROM ssh_keys WHERE id = ?",
         )
@@ -136,10 +144,15 @@ impl CredentialStore {
         {
             if encrypted != 0 {
                 let Some(ref vault) = self.vault else {
-                    anyhow::bail!("vault not available for encrypted ssh key");
+                    return Err(Error::Crypto(
+                        "vault not available for encrypted ssh key".into(),
+                    ));
                 };
                 let aad = format!("ssh-key:{name}");
-                let decrypted = vault.decrypt_string(&private_key, &aad).await?;
+                let decrypted = vault
+                    .decrypt_string(&private_key, &aad)
+                    .await
+                    .map_err(|e| Error::Crypto(e.to_string()))?;
                 return Ok(Some(Secret::new(decrypted)));
             }
         }
@@ -149,7 +162,7 @@ impl CredentialStore {
         Ok(Some(Secret::new(private_key)))
     }
 
-    pub async fn list_ssh_targets(&self) -> anyhow::Result<Vec<SshTargetEntry>> {
+    pub async fn list_ssh_targets(&self) -> Result<Vec<SshTargetEntry>> {
         let rows: Vec<(
             i64,
             String,
@@ -225,7 +238,7 @@ impl CredentialStore {
         auth_mode: SshAuthMode,
         key_id: Option<i64>,
         is_default: bool,
-    ) -> anyhow::Result<i64> {
+    ) -> Result<i64> {
         let label = label.trim();
         let target = target.trim();
         let known_host = known_host
@@ -233,24 +246,24 @@ impl CredentialStore {
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned);
         if label.is_empty() {
-            anyhow::bail!("ssh target label is required");
+            return Err(Error::Ssh("ssh target label is required".into()));
         }
         if target.is_empty() {
-            anyhow::bail!("ssh target is required");
+            return Err(Error::Ssh("ssh target is required".into()));
         }
 
         let key_id = match auth_mode {
             SshAuthMode::System => None,
             SshAuthMode::Managed => {
                 let Some(key_id) = key_id else {
-                    anyhow::bail!("managed ssh targets require a key");
+                    return Err(Error::Ssh("managed ssh targets require a key".into()));
                 };
                 let exists: Option<(i64,)> = sqlx::query_as("SELECT id FROM ssh_keys WHERE id = ?")
                     .bind(key_id)
                     .fetch_optional(&self.pool)
                     .await?;
                 if exists.is_none() {
-                    anyhow::bail!("selected ssh key does not exist");
+                    return Err(Error::Ssh("selected ssh key does not exist".into()));
                 }
                 Some(key_id)
             },
@@ -286,7 +299,7 @@ impl CredentialStore {
         Ok(result.last_insert_rowid())
     }
 
-    pub async fn delete_ssh_target(&self, id: i64) -> anyhow::Result<()> {
+    pub async fn delete_ssh_target(&self, id: i64) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         let was_default: Option<(i64,)> =
             sqlx::query_as("SELECT COALESCE(is_default, 0) FROM ssh_targets WHERE id = ?")
@@ -319,7 +332,7 @@ impl CredentialStore {
         Ok(())
     }
 
-    pub async fn set_default_ssh_target(&self, id: i64) -> anyhow::Result<()> {
+    pub async fn set_default_ssh_target(&self, id: i64) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("UPDATE ssh_targets SET is_default = 0")
             .execute(&mut *tx)
@@ -331,7 +344,7 @@ impl CredentialStore {
         .execute(&mut *tx)
         .await?;
         if updated.rows_affected() == 0 {
-            anyhow::bail!("ssh target not found");
+            return Err(Error::Ssh("ssh target not found".into()));
         }
         tx.commit().await?;
         Ok(())
@@ -341,7 +354,7 @@ impl CredentialStore {
         &self,
         id: i64,
         known_host: Option<&str>,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let known_host = known_host
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -354,12 +367,12 @@ impl CredentialStore {
         .execute(&self.pool)
         .await?;
         if result.rows_affected() == 0 {
-            anyhow::bail!("ssh target not found");
+            return Err(Error::Ssh("ssh target not found".into()));
         }
         Ok(())
     }
 
-    pub async fn ssh_target_count(&self) -> anyhow::Result<usize> {
+    pub async fn ssh_target_count(&self) -> Result<usize> {
         let row: Option<(i64,)> = sqlx::query_as("SELECT COUNT(1) FROM ssh_targets")
             .fetch_optional(&self.pool)
             .await?;
@@ -367,7 +380,7 @@ impl CredentialStore {
         Ok(usize::try_from(count).unwrap_or_default())
     }
 
-    pub async fn get_default_ssh_target(&self) -> anyhow::Result<Option<SshResolvedTarget>> {
+    pub async fn get_default_ssh_target(&self) -> Result<Option<SshResolvedTarget>> {
         let row: Option<(
             i64,
             String,
@@ -413,10 +426,7 @@ impl CredentialStore {
         }))
     }
 
-    pub async fn resolve_ssh_target(
-        &self,
-        node_ref: &str,
-    ) -> anyhow::Result<Option<SshResolvedTarget>> {
+    pub async fn resolve_ssh_target(&self, node_ref: &str) -> Result<Option<SshResolvedTarget>> {
         if let Some(id_str) = node_ref.strip_prefix("ssh:target:")
             && let Ok(id) = id_str.parse::<i64>()
         {
@@ -445,10 +455,7 @@ impl CredentialStore {
         }))
     }
 
-    pub async fn resolve_ssh_target_by_id(
-        &self,
-        id: i64,
-    ) -> anyhow::Result<Option<SshResolvedTarget>> {
+    pub async fn resolve_ssh_target_by_id(&self, id: i64) -> Result<Option<SshResolvedTarget>> {
         let row: Option<(
             i64,
             String,

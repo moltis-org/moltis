@@ -145,6 +145,7 @@ impl TtsProvider for OpenAiTts {
             voice,
             response_format: Some(Self::response_format(request.output_format)),
             speed: request.speed,
+            instructions: request.instructions.as_deref(),
         };
 
         let mut req = self
@@ -196,6 +197,9 @@ struct TtsRequest<'a> {
     response_format: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     speed: Option<f32>,
+    /// Voice persona instructions (supported by gpt-4o-mini-tts and newer).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instructions: Option<&'a str>,
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -290,6 +294,7 @@ mod tests {
             voice: "alloy",
             response_format: Some("mp3"),
             speed: Some(1.5),
+            instructions: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -297,5 +302,21 @@ mod tests {
         assert!(json.contains("\"input\":\"Hello world\""));
         assert!(json.contains("\"voice\":\"alloy\""));
         assert!(json.contains("\"speed\":1.5"));
+        assert!(!json.contains("instructions"));
+    }
+
+    #[test]
+    fn test_tts_request_with_instructions() {
+        let request = TtsRequest {
+            model: "gpt-4o-mini-tts",
+            input: "Good evening, sir.",
+            voice: "cedar",
+            response_format: Some("mp3"),
+            speed: None,
+            instructions: Some("Speak as a wise British butler with dry wit."),
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(json.contains("\"instructions\":\"Speak as a wise British butler"));
     }
 }

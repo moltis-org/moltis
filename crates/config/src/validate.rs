@@ -92,6 +92,8 @@ pub fn validate(path: Option<&Path>) -> ValidationResult {
             let mut result = validate_toml_str(&content);
             result.config_path = Some(actual_path.clone());
             semantic::check_file_references(&content, actual_path, &mut result.diagnostics);
+            check_shadowed_defaults(&content, &mut result.diagnostics);
+            check_defaults_toml_health(&mut result.diagnostics);
             result
         },
         Err(e) => ValidationResult {
@@ -213,6 +215,58 @@ fn suggest<'a>(needle: &str, candidates: &[&'a str], max_distance: usize) -> Opt
         }
     }
     best.map(|(candidate, _)| candidate)
+}
+
+/// Check for user config keys that shadow built-in defaults.
+///
+/// Emits info-level diagnostics for each key in the user config that
+/// duplicates a value from `defaults.toml`.  These are not errors but
+/// they mean the user has frozen a built-in value and won't receive
+/// future updates for that setting.
+fn check_shadowed_defaults(user_toml: &str, diagnostics: &mut Vec<Diagnostic>) {
+    let shadowed = crate::defaults::find_shadowed_defaults(user_toml);
+    for key in shadowed {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Info,
+            category: "shadowed-default",
+            path: key.clone(),
+            message: format!(
+                "'{key}' duplicates a built-in default; remove it from moltis.toml \
+                 to inherit future built-in updates"
+            ),
+        });
+    }
+}
+
+/// Check the health of the Moltis-managed `defaults.toml`.
+///
+/// Emits a warning if `defaults.toml` is missing or unparseable.
+fn check_defaults_toml_health(diagnostics: &mut Vec<Diagnostic>) {
+    let Some(dir) = crate::loader::config_dir() else {
+        return;
+    };
+    let path = dir.join(crate::defaults::DEFAULTS_FILENAME);
+    if !path.exists() {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "defaults-health",
+            path: String::new(),
+            message: "defaults.toml is missing; Moltis will regenerate it on next startup".into(),
+        });
+        return;
+    }
+    if let Ok(raw) = std::fs::read_to_string(&path)
+        && toml::from_str::<MoltisConfig>(&raw).is_err()
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "defaults-health",
+            path: String::new(),
+            message: "defaults.toml exists but failed to parse; \
+                      Moltis will regenerate it on next startup"
+                .into(),
+        });
+    }
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]

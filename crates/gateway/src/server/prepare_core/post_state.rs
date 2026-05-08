@@ -5,12 +5,9 @@ use std::{
 
 use {
     async_trait::async_trait,
-    secrecy::Secret,
+    secrecy::{ExposeSecret, Secret},
     tracing::{debug, info, warn},
 };
-
-#[cfg(feature = "wasm")]
-use secrecy::ExposeSecret;
 
 use {
     moltis_providers::{PendingDiscoveries, ProviderRegistry},
@@ -70,6 +67,9 @@ pub(super) struct PostStateInputs {
     pub provider_setup_service: Arc<LiveProviderSetupService>,
     pub live_mcp: Arc<crate::mcp_service::LiveMcpService>,
     pub memory_manager: Option<moltis_memory::runtime::DynMemoryRuntime>,
+    pub code_index: Arc<moltis_code_index::CodeIndex>,
+    #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+    pub project_store: Arc<dyn moltis_projects::ProjectStore>,
     pub credential_store: Arc<auth::CredentialStore>,
     pub db_pool: sqlx::SqlitePool,
     pub session_store: Arc<SessionStore>,
@@ -86,9 +86,12 @@ pub(super) struct PostStateInputs {
     pub discovered_hooks_info: Vec<DiscoveredHookInfo>,
     pub persisted_disabled: std::collections::HashSet<String>,
     pub agents_config: Arc<tokio::sync::RwLock<moltis_config::AgentsConfig>>,
+    #[cfg(feature = "msteams")]
     pub msteams_webhook_plugin: Arc<tokio::sync::RwLock<moltis_msteams::MsTeamsPlugin>>,
     #[cfg(feature = "slack")]
     pub slack_webhook_plugin: Arc<tokio::sync::RwLock<moltis_slack::SlackPlugin>>,
+    #[cfg(feature = "telephony")]
+    pub telephony_webhook_plugin: Arc<tokio::sync::RwLock<moltis_telephony::TelephonyPlugin>>,
     #[cfg(feature = "local-llm")]
     pub local_llm_service: Option<Arc<crate::local_llm_setup::LiveLocalLlmService>>,
     #[cfg(feature = "vault")]
@@ -105,21 +108,75 @@ pub(super) struct PostStateInputs {
 
 struct CredentialEnvVarProvider {
     store: Arc<auth::CredentialStore>,
+    /// Gateway URL for sandbox-to-gateway communication via `moltis-ctl`.
+    gateway_url: Option<String>,
+    /// Auto-generated API key for sandbox use (scoped to operator.read + operator.write).
+    sandbox_api_key: Option<Secret<String>>,
 }
 
 #[async_trait]
 impl moltis_tools::exec::EnvVarProvider for CredentialEnvVarProvider {
     async fn get_env_vars(&self) -> Vec<(String, Secret<String>)> {
-        match self.store.get_all_env_values().await {
+        let mut vars = match self.store.get_all_env_values().await {
             Ok(values) => values
                 .into_iter()
+                // Filter out internal keys that should not leak into sandbox env.
+                .filter(|(key, _)| !key.starts_with("__MOLTIS_"))
                 .map(|(key, value)| (key, Secret::new(value)))
                 .collect(),
             Err(error) => {
                 warn!(error = %error, "failed to load runtime env overrides for tools");
                 Vec::new()
             },
+        };
+
+        // Inject gateway connection details for moltis-ctl inside sandboxes.
+        // Only injected when the gateway URL is set (skipped for blocked network).
+        if let Some(ref url) = self.gateway_url {
+            vars.push(("MOLTIS_GATEWAY_URL".into(), Secret::new(url.clone())));
         }
+        if let Some(ref key) = self.sandbox_api_key {
+            vars.push((
+                "MOLTIS_API_KEY".into(),
+                Secret::new(key.expose_secret().clone()),
+            ));
+        }
+
+        vars
+    }
+}
+
+/// Create (or reuse) a scoped API key for sandbox-to-gateway communication.
+///
+/// Looks for an existing key labelled `"sandbox-ctl"`. If none exists, creates
+/// one with `operator.read` + `operator.write` scopes. Returns the raw key.
+async fn ensure_sandbox_api_key(store: &auth::CredentialStore) -> Option<String> {
+    // Check if we already have a sandbox-ctl key stored in env vars.
+    if let Ok(vals) = store.get_all_env_values().await
+        && let Some((_, key)) = vals.iter().find(|(k, _)| k == "__MOLTIS_SANDBOX_API_KEY")
+    {
+        return Some(key.clone());
+    }
+
+    // Create a new API key scoped for sandbox use.
+    let scopes = vec!["operator.read".to_string(), "operator.write".to_string()];
+    match store.create_api_key("sandbox-ctl", Some(&scopes)).await {
+        Ok((_id, raw_key)) => {
+            // Persist the raw key so we can retrieve it on restart without
+            // creating a new one each time.
+            if let Err(e) = store
+                .set_env_var("__MOLTIS_SANDBOX_API_KEY", &raw_key)
+                .await
+            {
+                warn!(error = %e, "failed to persist sandbox API key");
+            }
+            info!("created sandbox-ctl API key for moltis-ctl");
+            Some(raw_key)
+        },
+        Err(e) => {
+            warn!(error = %e, "failed to create sandbox API key");
+            None
+        },
     }
 }
 
@@ -133,16 +190,46 @@ async fn build_webauthn_registry(
         "http"
     };
 
-    let explicit_rp_id = std::env::var("MOLTIS_WEBAUTHN_RP_ID")
-        .or_else(|_| std::env::var("APP_DOMAIN"))
-        .or_else(|_| std::env::var("RENDER_EXTERNAL_HOSTNAME"))
-        .or_else(|_| std::env::var("FLY_APP_NAME").map(|name| format!("{name}.fly.dev")))
-        .or_else(|_| std::env::var("RAILWAY_PUBLIC_DOMAIN"))
-        .ok();
-    let explicit_origin = std::env::var("MOLTIS_WEBAUTHN_ORIGIN")
-        .or_else(|_| std::env::var("APP_URL"))
-        .or_else(|_| std::env::var("RENDER_EXTERNAL_URL"))
-        .ok();
+    // Derive RP ID and origin from server.external_url / MOLTIS_EXTERNAL_URL
+    // when available, before falling back to fine-grained env vars.
+    let (external_rp_id, external_origin) = if let Some(ref ext_url) =
+        config.server.effective_external_url()
+    {
+        match url::Url::parse(ext_url) {
+            Ok(parsed) => {
+                let host = parsed.host_str().unwrap_or_default().to_string();
+                if host.is_empty() {
+                    warn!(
+                        "server.external_url '{ext_url}' parsed successfully but has no hostname; ignoring"
+                    );
+                    (None, None)
+                } else {
+                    (Some(host), Some(ext_url.clone()))
+                }
+            },
+            Err(e) => {
+                warn!("invalid server.external_url '{ext_url}': {e}");
+                (None, None)
+            },
+        }
+    } else {
+        (None, None)
+    };
+
+    let explicit_rp_id = external_rp_id
+        .or_else(|| std::env::var("MOLTIS_WEBAUTHN_RP_ID").ok())
+        .or_else(|| std::env::var("APP_DOMAIN").ok())
+        .or_else(|| std::env::var("RENDER_EXTERNAL_HOSTNAME").ok())
+        .or_else(|| {
+            std::env::var("FLY_APP_NAME")
+                .ok()
+                .map(|name| format!("{name}.fly.dev"))
+        })
+        .or_else(|| std::env::var("RAILWAY_PUBLIC_DOMAIN").ok());
+    let explicit_origin = external_origin
+        .or_else(|| std::env::var("MOLTIS_WEBAUTHN_ORIGIN").ok())
+        .or_else(|| std::env::var("APP_URL").ok())
+        .or_else(|| std::env::var("RENDER_EXTERNAL_URL").ok());
 
     let mut wa_registry = crate::auth_webauthn::WebAuthnRegistry::new();
     let mut any_ok = false;
@@ -231,7 +318,7 @@ pub(super) async fn complete_startup(
         resolved_auth,
         deploy_platform,
         session_event_bus,
-        services,
+        mut services,
         registry,
         effective_providers,
         config_env_overrides,
@@ -260,9 +347,12 @@ pub(super) async fn complete_startup(
         discovered_hooks_info,
         persisted_disabled,
         agents_config,
+        #[cfg(feature = "msteams")]
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,
+        #[cfg(feature = "telephony")]
+        telephony_webhook_plugin,
         #[cfg(feature = "local-llm")]
         local_llm_service,
         #[cfg(feature = "vault")]
@@ -275,6 +365,9 @@ pub(super) async fn complete_startup(
         tailscale_mode_override,
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
+        code_index,
+        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+        project_store,
     } = inputs;
 
     let openclaw_startup_status = deferred_openclaw_status();
@@ -331,6 +424,18 @@ pub(super) async fn complete_startup(
     #[cfg(not(feature = "tls"))]
     let tls_enabled_for_gateway = false;
 
+    #[cfg(feature = "qmd")]
+    let code_index_for_tools = Arc::clone(&code_index);
+
+    #[cfg(feature = "code-index-builtin")]
+    #[allow(unused_variables)]
+    let code_index_for_tools_builtin = Arc::clone(&code_index);
+
+    #[cfg(feature = "telephony")]
+    {
+        services.telephony_plugin = Some(Arc::clone(&telephony_webhook_plugin));
+    }
+
     let state = GatewayState::with_options(
         resolved_auth,
         services,
@@ -343,6 +448,7 @@ pub(super) async fn complete_startup(
         tls_enabled_for_gateway,
         hook_registry.clone(),
         memory_manager.clone(),
+        code_index,
         port,
         config.server.ws_request_logs,
         deploy_platform.clone(),
@@ -384,7 +490,7 @@ pub(super) async fn complete_startup(
             Arc::new(move |req: moltis_webhooks::worker::ExecuteRequest| {
                 let chat_state = Arc::clone(&worker_state_ref);
                 Box::pin(async move {
-                    let chat = chat_state.chat().await;
+                    let chat = chat_state.chat();
                     let mut params = serde_json::json!({
                         "text": req.message,
                         "_session_key": req.session_key,
@@ -426,6 +532,15 @@ pub(super) async fn complete_startup(
     #[cfg(feature = "local-llm")]
     if let Some(svc) = &local_llm_service {
         svc.set_state(Arc::clone(&state));
+
+        // Register existing local models with the lifecycle manager and start idle checker.
+        let global_timeout = config
+            .providers
+            .get("local")
+            .or_else(|| config.providers.get("local-llm"))
+            .and_then(|e| e.idle_timeout_secs);
+        svc.populate_lifecycle(global_timeout).await;
+        svc.lifecycle().spawn_idle_checker();
     }
 
     provider_setup_service.set_broadcaster(Arc::new(crate::provider_setup::GatewayBroadcaster {
@@ -489,7 +604,16 @@ pub(super) async fn complete_startup(
         let state_for_startup_discovery = Arc::clone(&state);
         let provider_config_for_startup_discovery = effective_providers.clone();
         let provider_config_for_registry_rebuild = provider_config_for_startup_discovery.clone();
+        let global_cw_overrides = moltis_providers::extract_cw_overrides(&config.models);
         let env_overrides_for_startup_discovery = config_env_overrides.clone();
+        #[cfg(feature = "local-llm")]
+        let local_llm_svc_for_discovery = local_llm_service.clone();
+        #[cfg(feature = "local-llm")]
+        let global_timeout_for_discovery = config
+            .providers
+            .get("local")
+            .or_else(|| config.providers.get("local-llm"))
+            .and_then(|e| e.idle_timeout_secs);
         tokio::spawn(async move {
             let startup_discovery_started = std::time::Instant::now();
             let prefetched = match tokio::task::spawn_blocking(move || {
@@ -513,6 +637,7 @@ pub(super) async fn complete_startup(
                     &provider_config_for_registry_rebuild,
                     &env_overrides_for_startup_discovery,
                     &prefetched,
+                    global_cw_overrides.clone(),
                 )
             })
             .await
@@ -536,6 +661,14 @@ pub(super) async fn complete_startup(
             {
                 let mut reg = registry_for_startup_discovery.write().await;
                 *reg = new_registry;
+            }
+
+            // Re-populate the lifecycle manager so it tracks the same
+            // Arcs the rebuilt registry uses for inference.
+            #[cfg(feature = "local-llm")]
+            if let Some(svc) = &local_llm_svc_for_discovery {
+                svc.lifecycle().clear().await;
+                svc.populate_lifecycle(global_timeout_for_discovery).await;
             }
 
             info!(
@@ -571,9 +704,35 @@ pub(super) async fn complete_startup(
     {
         let broadcaster: Arc<dyn moltis_tools::exec::ApprovalBroadcaster> =
             Arc::new(GatewayApprovalBroadcaster::new(Arc::clone(&state)));
+        // Build gateway URL for sandbox-to-gateway communication.
+        // Only inject when the sandbox network policy allows host access
+        // (Trusted or Bypass). With NetworkPolicy::Blocked the container
+        // has --network=none and host.docker.internal won't resolve.
+        let sandbox_network_allows_host = !matches!(
+            sandbox_router.config().network,
+            moltis_tools::sandbox::NetworkPolicy::Blocked
+        );
+        let sandbox_gateway_url = if sandbox_network_allows_host {
+            let scheme = if tls_enabled_for_gateway {
+                "https"
+            } else {
+                "http"
+            };
+            Some(format!("{scheme}://host.docker.internal:{port}"))
+        } else {
+            None
+        };
+        let sandbox_api_key = if sandbox_network_allows_host {
+            ensure_sandbox_api_key(&credential_store).await
+        } else {
+            None
+        };
+
         let env_provider: Arc<dyn moltis_tools::exec::EnvVarProvider> =
             Arc::new(CredentialEnvVarProvider {
                 store: Arc::clone(&credential_store),
+                gateway_url: sandbox_gateway_url,
+                sandbox_api_key: sandbox_api_key.map(Secret::new),
             });
         let eq = cron_service.events_queue().clone();
         let cs = Arc::clone(&cron_service);
@@ -582,8 +741,9 @@ pub(super) async fn complete_startup(
             let eq = Arc::clone(&eq);
             let cs = Arc::clone(&cs);
             tokio::spawn(async move {
-                eq.enqueue(summary, "exec-event".into()).await;
-                cs.wake("exec-event").await;
+                eq.enqueue(summary, moltis_cron::WAKE_REASON_EXEC_EVENT.into())
+                    .await;
+                cs.wake(moltis_cron::WAKE_REASON_EXEC_EVENT).await;
             });
         });
         let mut exec_tool = moltis_tools::exec::ExecTool::default()
@@ -718,9 +878,38 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(process_tool));
         tool_registry.register(Box::new(sandbox_packages_tool));
         tool_registry.register(Box::new(cron_tool));
+        tool_registry.register(Box::new(moltis_tools::webhook_tool::WebhookTool::new(
+            Arc::clone(&state.services.webhooks),
+        )));
         tool_registry.register(Box::new(crate::channel_agent_tools::SendMessageTool::new(
             Arc::clone(&state.services.channel),
         )));
+        #[cfg(feature = "telephony")]
+        crate::server::prepare_core::tool_registration::register_voice_call_tool(
+            &mut tool_registry,
+            &state,
+        )
+        .await;
+        // MCP management tools — let agents add/remove/restart MCP servers directly.
+        {
+            let mcp = Arc::clone(&state.services.mcp);
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpListTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpAddTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpRemoveTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpStatusTool::new(
+                Arc::clone(&mcp),
+            )));
+            tool_registry.register(Box::new(crate::mcp_agent_tools::McpRestartTool::new(
+                Arc::clone(&mcp),
+            )));
+        }
+        #[cfg(feature = "msteams")]
         {
             let tp = Arc::clone(&msteams_webhook_plugin);
             tool_registry.register(Box::new(
@@ -749,6 +938,12 @@ pub(super) async fn complete_startup(
             moltis_tools::send_image::SendImageTool::new()
                 .with_sandbox_router(Arc::clone(&sandbox_router)),
         ));
+        #[cfg(feature = "provider-openai-codex")]
+        if moltis_providers::openai_codex::has_stored_tokens() {
+            tool_registry.register(Box::new(
+                moltis_tools::image_generation::GenerateImageTool::new(),
+            ));
+        }
         tool_registry.register(Box::new(
             moltis_tools::send_document::SendDocumentTool::new()
                 .with_sandbox_router(Arc::clone(&sandbox_router))
@@ -774,7 +969,7 @@ pub(super) async fn complete_startup(
         {
             tool_registry.register(Box::new(t));
         }
-        if let Some(t) = moltis_tools::browser::BrowserTool::from_config(&config.tools.browser) {
+        if let Some(t) = moltis_tools::browser::BrowserTool::from_tools_config(&config.tools) {
             let t = if sandbox_router.backend_name() != "none" {
                 t.with_sandbox_router(Arc::clone(&sandbox_router))
             } else {
@@ -790,6 +985,15 @@ pub(super) async fn complete_startup(
             }
         }
 
+        #[cfg(feature = "home-assistant")]
+        {
+            if let Some(t) =
+                moltis_home_assistant::tool::HomeAssistantTool::from_config(&config.home_assistant)
+            {
+                tool_registry.register(Box::new(t));
+            }
+        }
+
         if let Some(ref mm) = memory_manager {
             tool_registry.register(Box::new(moltis_memory::tools::MemorySearchTool::new(
                 Arc::clone(mm),
@@ -800,6 +1004,45 @@ pub(super) async fn complete_startup(
             tool_registry.register(Box::new(moltis_memory::tools::MemorySaveTool::new(
                 Arc::clone(mm),
             )));
+            tool_registry.register(Box::new(moltis_memory::tools::MemoryDeleteTool::new(
+                Arc::clone(mm),
+            )));
+            tool_registry.register(Box::new(moltis_chat::MemoryForgetTool::new(
+                Arc::clone(mm),
+                Arc::clone(&registry),
+                Arc::clone(&session_metadata),
+            )));
+        }
+
+        // ── Code index tools ─────────────────────────────────────────────
+        #[cfg(feature = "qmd")]
+        {
+            use crate::project_aware_tools::ProjectAwareCodeIndexTool;
+            moltis_code_index::tools::register_tools_wrapped(
+                &mut tool_registry,
+                code_index_for_tools,
+                |tool| {
+                    Box::new(ProjectAwareCodeIndexTool::new(
+                        tool,
+                        Arc::clone(&project_store),
+                    ))
+                },
+            );
+        }
+
+        #[cfg(all(feature = "code-index-builtin", not(feature = "qmd")))]
+        {
+            use crate::project_aware_tools::ProjectAwareCodeIndexTool;
+            moltis_code_index::tools::register_tools_wrapped(
+                &mut tool_registry,
+                code_index_for_tools_builtin,
+                |tool| {
+                    Box::new(ProjectAwareCodeIndexTool::new(
+                        tool,
+                        Arc::clone(&project_store),
+                    ))
+                },
+            );
         }
 
         {
@@ -947,7 +1190,7 @@ pub(super) async fn complete_startup(
                     if let Some(model) = req.model {
                         params["model"] = serde_json::json!(model);
                     }
-                    let chat = state.chat().await;
+                    let chat = state.chat();
                     if req.wait_for_reply {
                         chat.send_sync(params)
                             .await
@@ -976,36 +1219,73 @@ pub(super) async fn complete_startup(
         tool_registry.register(Box::new(moltis_tools::task_list::TaskListTool::new(
             &data_dir,
         )));
-        tool_registry.register(Box::new(crate::voice_agent_tools::SpeakTool::new(
-            Arc::clone(&state.services.tts),
-        )));
+        let mut speak_tool =
+            crate::voice_agent_tools::SpeakTool::new(Arc::clone(&state.services.tts));
+        if let Some(ref vps) = state.services.voice_persona_store {
+            speak_tool = speak_tool.with_voice_persona_store(Arc::clone(vps));
+        }
+        tool_registry.register(Box::new(speak_tool));
         tool_registry.register(Box::new(crate::voice_agent_tools::TranscribeTool::new(
             Arc::clone(&state.services.stt),
         )));
 
         {
-            use moltis_skills::discover::FsSkillDiscoverer;
+            use moltis_skills::{discover::FsSkillDiscoverer, usage::SkillUsageStore};
 
-            tool_registry.register(Box::new(moltis_tools::skill_tools::CreateSkillTool::new(
-                data_dir.clone(),
-            )));
-            tool_registry.register(Box::new(moltis_tools::skill_tools::UpdateSkillTool::new(
-                data_dir.clone(),
-            )));
-            tool_registry.register(Box::new(moltis_tools::skill_tools::DeleteSkillTool::new(
-                data_dir.clone(),
-            )));
-            let read_discoverer = Arc::new(FsSkillDiscoverer::new(
-                FsSkillDiscoverer::default_paths_for(&data_dir),
+            let skill_usage = SkillUsageStore::open(&data_dir).await;
+
+            tool_registry.register(Box::new(
+                moltis_tools::skill_tools::CreateSkillTool::new(data_dir.clone())
+                    .with_usage_store(skill_usage.clone()),
             ));
-            tool_registry.register(Box::new(moltis_tools::skill_tools::ReadSkillTool::new(
-                read_discoverer,
-            )));
+            tool_registry.register(Box::new(
+                moltis_tools::skill_tools::UpdateSkillTool::new(data_dir.clone())
+                    .with_usage_store(skill_usage.clone()),
+            ));
+            tool_registry.register(Box::new(
+                moltis_tools::skill_tools::PatchSkillTool::new(data_dir.clone())
+                    .with_usage_store(skill_usage.clone()),
+            ));
+            tool_registry.register(Box::new(
+                moltis_tools::skill_tools::DeleteSkillTool::new(data_dir.clone())
+                    .with_usage_store(skill_usage.clone()),
+            ));
+
+            let fs_discoverer =
+                FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths_for(&data_dir));
+
+            #[cfg(feature = "bundled-skills")]
+            {
+                let bundled_store = Arc::new(moltis_skills::bundled::BundledSkillStore::new());
+                let read_discoverer: Arc<dyn moltis_skills::discover::SkillDiscoverer> =
+                    Arc::new(moltis_skills::discover::CompositeSkillDiscoverer::new(
+                        Box::new(fs_discoverer),
+                        Arc::clone(&bundled_store),
+                    ));
+                tool_registry.register(Box::new(
+                    moltis_tools::skill_tools::ReadSkillTool::with_bundled(
+                        read_discoverer,
+                        bundled_store,
+                    )
+                    .with_usage_store(skill_usage.clone()),
+                ));
+            }
+            #[cfg(not(feature = "bundled-skills"))]
+            {
+                let read_discoverer = Arc::new(fs_discoverer);
+                tool_registry.register(Box::new(
+                    moltis_tools::skill_tools::ReadSkillTool::new(read_discoverer)
+                        .with_usage_store(skill_usage.clone()),
+                ));
+            }
+
             if config.skills.enable_agent_sidecar_files {
                 tool_registry.register(Box::new(
                     moltis_tools::skill_tools::WriteSkillFilesTool::new(data_dir.clone()),
                 ));
             }
+
+            let _ = state.skill_usage_store.set(skill_usage);
         }
 
         tool_registry.register(Box::new(
@@ -1092,6 +1372,7 @@ pub(super) async fn complete_startup(
         )
         .with_session_state_store(Arc::clone(&session_state_store))
         .with_tools(Arc::clone(&shared_tool_registry))
+        .with_config(config.clone())
         .with_failover(config.failover.clone());
 
         if let Some(ref hooks) = state.inner.read().await.hook_registry {
@@ -1099,7 +1380,7 @@ pub(super) async fn complete_startup(
         }
 
         let live_chat = Arc::new(chat_service);
-        state.set_chat(live_chat).await;
+        state.set_chat(live_chat);
 
         live_mcp
             .set_tool_registry(Arc::clone(&shared_tool_registry))
@@ -1186,9 +1467,12 @@ pub(super) async fn complete_startup(
         state: Arc::clone(&state),
         methods: Arc::clone(&methods),
         webauthn_registry,
+        #[cfg(feature = "msteams")]
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,
+        #[cfg(feature = "telephony")]
+        telephony_webhook_plugin,
         #[cfg(feature = "push-notifications")]
         push_service,
         #[cfg(feature = "trusted-network")]

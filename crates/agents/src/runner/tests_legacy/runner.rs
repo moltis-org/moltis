@@ -315,6 +315,8 @@ pub async fn run_agent_loop_with_context(
                 id: new_synthetic_tool_call_id("forced"),
                 name: "exec".to_string(),
                 arguments: serde_json::json!({ "command": command }),
+                argument_diagnostic: None,
+                metadata: None,
             }];
         }
 
@@ -524,6 +526,7 @@ pub async fn run_agent_loop_with_context(
                             id: tc.id.clone(),
                             name: tc.name.clone(),
                             arguments: args.clone(),
+                            metadata: tc.metadata.clone(),
                         });
                     }
                     info!(tool = %tc_name, id = %tc.id, args = %args, "executing tool");

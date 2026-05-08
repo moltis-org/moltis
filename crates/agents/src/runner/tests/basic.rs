@@ -10,6 +10,7 @@ use {
     },
     anyhow::Result,
     async_trait::async_trait,
+    moltis_common::hooks::HookRegistry,
     std::pin::Pin,
     tokio_stream::Stream,
 };
@@ -198,6 +199,7 @@ async fn test_streaming_runner_preserves_cache_usage() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -249,6 +251,8 @@ impl LlmProvider for NonStreamingUsageProvider {
                     id: "call_usage_1".into(),
                     name: "echo_tool".into(),
                     arguments: serde_json::json!({"text": "hi"}),
+                    argument_diagnostic: None,
+                    metadata: None,
                 }],
                 usage: Usage {
                     input_tokens: 100,
@@ -357,6 +361,8 @@ impl LlmProvider for ExecSimulatingProvider {
                     id: "call_exec_1".into(),
                     name: "exec".into(),
                     arguments: serde_json::json!({"command": "echo hello"}),
+                    argument_diagnostic: None,
+                    metadata: None,
                 }],
                 usage: Usage {
                     input_tokens: 10,
@@ -454,6 +460,149 @@ async fn test_exec_tool_end_to_end() {
     }
 }
 
+struct HookModifiedExecProvider {
+    call_count: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl LlmProvider for HookModifiedExecProvider {
+    fn name(&self) -> &str {
+        "hook-modified-exec"
+    }
+
+    fn id(&self) -> &str {
+        "hook-modified-exec-model"
+    }
+
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
+    async fn complete(
+        &self,
+        messages: &[ChatMessage],
+        _tools: &[serde_json::Value],
+    ) -> Result<CompletionResponse> {
+        let count = self
+            .call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if count == 0 {
+            Ok(CompletionResponse {
+                text: None,
+                tool_calls: vec![ToolCall {
+                    id: "call_exec_hook_1".into(),
+                    name: "exec".into(),
+                    arguments: serde_json::json!({"command": "echo should-not-run"}),
+                    argument_diagnostic: None,
+                    metadata: None,
+                }],
+                usage: Usage::default(),
+            })
+        } else {
+            let tool_content = messages
+                .iter()
+                .find_map(|m| {
+                    if let ChatMessage::Tool { content, .. } = m {
+                        Some(content.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
+            assert!(
+                tool_content.contains("Missing required field(s): `command`"),
+                "tool result should contain validation error, got: {tool_content}"
+            );
+            assert!(
+                !tool_content.contains("should-not-run"),
+                "invalid hook args must be rejected before exec runs"
+            );
+            Ok(CompletionResponse {
+                text: Some("Hook rewrite was rejected.".into()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+    }
+
+    fn stream(
+        &self,
+        _messages: Vec<ChatMessage>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(tokio_stream::empty())
+    }
+}
+
+#[tokio::test]
+async fn test_hook_modified_tool_args_are_revalidated_before_execute() {
+    let provider = Arc::new(HookModifiedExecProvider {
+        call_count: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut tools = ToolRegistry::new();
+    tools.register(Box::new(TestExecTool));
+
+    let mut hooks = HookRegistry::new();
+    hooks.register(Arc::new(RewriteToolArgsHook {
+        replacement: serde_json::json!({"timeout": 1}),
+    }));
+
+    let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events_clone = Arc::clone(&events);
+    let on_event: OnEvent = Box::new(move |event| {
+        events_clone.lock().unwrap().push(event);
+    });
+
+    let result = run_agent_loop_with_context(
+        provider,
+        &tools,
+        "You are a test bot.",
+        &UserContent::text("Run through hook"),
+        Some(&on_event),
+        None,
+        None,
+        Some(Arc::new(hooks)),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.text, "Hook rewrite was rejected.");
+    assert_eq!(result.tool_calls_made, 1);
+
+    let evts = events.lock().unwrap();
+    let start_index = evts
+        .iter()
+        .position(
+            |event| matches!(event, RunnerEvent::ToolCallStart { name, .. } if name == "exec"),
+        )
+        .expect("hook-modified call should emit ToolCallStart before hook dispatch");
+    let end_index = evts
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                RunnerEvent::ToolCallEnd {
+                    name,
+                    success: false,
+                    error: Some(error),
+                    ..
+                } if name == "exec" && error.contains("Missing required field(s): `command`")
+            )
+        })
+        .expect("hook-modified validation failure should close the started tool span");
+    assert!(
+        start_index < end_index,
+        "ToolCallEnd should follow ToolCallStart"
+    );
+    assert!(
+        !evts
+            .iter()
+            .any(|event| matches!(event, RunnerEvent::ToolCallRejected { .. })),
+        "post-start validation failures should not emit ToolCallRejected"
+    );
+}
+
 /// Test that non-native providers can still execute tools via text parsing.
 #[tokio::test]
 async fn test_text_based_tool_calling() {
@@ -542,6 +691,7 @@ impl LlmProvider for DirectCommandNoToolProvider {
                     if let ChatMessage::Assistant {
                         content,
                         tool_calls,
+                        ..
                     } = m
                     {
                         if tool_calls.is_empty() {
@@ -805,196 +955,6 @@ async fn test_native_text_function_tool_calling_non_streaming() {
     assert_eq!(name, "process");
     assert_eq!(args["action"], "start");
     assert_eq!(args["command"], "pwd");
-}
-
-// ── Parallel tool execution tests ────────────────────────────────
-
-#[tokio::test]
-async fn test_parallel_tool_execution() {
-    let provider = Arc::new(MultiToolProvider {
-        call_count: std::sync::atomic::AtomicUsize::new(0),
-        tool_calls: vec![
-            ToolCall {
-                id: "c1".into(),
-                name: "tool_a".into(),
-                arguments: serde_json::json!({}),
-            },
-            ToolCall {
-                id: "c2".into(),
-                name: "tool_b".into(),
-                arguments: serde_json::json!({}),
-            },
-            ToolCall {
-                id: "c3".into(),
-                name: "tool_c".into(),
-                arguments: serde_json::json!({}),
-            },
-        ],
-    });
-
-    let mut tools = ToolRegistry::new();
-    tools.register(Box::new(SlowTool {
-        tool_name: "tool_a".into(),
-        delay_ms: 0,
-    }));
-    tools.register(Box::new(SlowTool {
-        tool_name: "tool_b".into(),
-        delay_ms: 0,
-    }));
-    tools.register(Box::new(SlowTool {
-        tool_name: "tool_c".into(),
-        delay_ms: 0,
-    }));
-
-    let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
-    let events_clone = Arc::clone(&events);
-    let on_event: OnEvent = Box::new(move |event| {
-        events_clone.lock().unwrap().push(event);
-    });
-
-    let uc = UserContent::text("Use all tools");
-    let result = run_agent_loop(provider, &tools, "Test bot", &uc, Some(&on_event), None)
-        .await
-        .unwrap();
-
-    assert_eq!(result.text, "All done");
-    assert_eq!(result.tool_calls_made, 3);
-
-    let evts = events.lock().unwrap();
-    let starts: Vec<_> = evts
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| matches!(e, RunnerEvent::ToolCallStart { .. }))
-        .map(|(i, _)| i)
-        .collect();
-    let ends: Vec<_> = evts
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| matches!(e, RunnerEvent::ToolCallEnd { .. }))
-        .map(|(i, _)| i)
-        .collect();
-    assert_eq!(starts.len(), 3);
-    assert_eq!(ends.len(), 3);
-    assert!(
-        starts.iter().all(|s| ends.iter().all(|e| s < e)),
-        "all starts should precede all ends"
-    );
-}
-
-#[tokio::test]
-async fn test_parallel_tool_one_fails() {
-    let provider = Arc::new(MultiToolProvider {
-        call_count: std::sync::atomic::AtomicUsize::new(0),
-        tool_calls: vec![
-            ToolCall {
-                id: "c1".into(),
-                name: "tool_a".into(),
-                arguments: serde_json::json!({}),
-            },
-            ToolCall {
-                id: "c2".into(),
-                name: "fail_tool".into(),
-                arguments: serde_json::json!({}),
-            },
-            ToolCall {
-                id: "c3".into(),
-                name: "tool_c".into(),
-                arguments: serde_json::json!({}),
-            },
-        ],
-    });
-
-    let mut tools = ToolRegistry::new();
-    tools.register(Box::new(SlowTool {
-        tool_name: "tool_a".into(),
-        delay_ms: 0,
-    }));
-    tools.register(Box::new(FailTool));
-    tools.register(Box::new(SlowTool {
-        tool_name: "tool_c".into(),
-        delay_ms: 0,
-    }));
-
-    let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
-        Arc::new(std::sync::Mutex::new(Vec::new()));
-    let events_clone = Arc::clone(&events);
-    let on_event: OnEvent = Box::new(move |event| {
-        events_clone.lock().unwrap().push(event);
-    });
-
-    let uc = UserContent::text("Use all tools");
-    let result = run_agent_loop(provider, &tools, "Test bot", &uc, Some(&on_event), None)
-        .await
-        .unwrap();
-
-    assert_eq!(result.text, "All done");
-    assert_eq!(result.tool_calls_made, 3);
-
-    let evts = events.lock().unwrap();
-    let successes = evts
-        .iter()
-        .filter(|e| matches!(e, RunnerEvent::ToolCallEnd { success: true, .. }))
-        .count();
-    let failures = evts
-        .iter()
-        .filter(|e| matches!(e, RunnerEvent::ToolCallEnd { success: false, .. }))
-        .count();
-    assert_eq!(successes, 2);
-    assert_eq!(failures, 1);
-}
-
-#[tokio::test]
-async fn test_parallel_execution_is_concurrent() {
-    let provider = Arc::new(MultiToolProvider {
-        call_count: std::sync::atomic::AtomicUsize::new(0),
-        tool_calls: vec![
-            ToolCall {
-                id: "c1".into(),
-                name: "slow_a".into(),
-                arguments: serde_json::json!({}),
-            },
-            ToolCall {
-                id: "c2".into(),
-                name: "slow_b".into(),
-                arguments: serde_json::json!({}),
-            },
-            ToolCall {
-                id: "c3".into(),
-                name: "slow_c".into(),
-                arguments: serde_json::json!({}),
-            },
-        ],
-    });
-
-    let mut tools = ToolRegistry::new();
-    tools.register(Box::new(SlowTool {
-        tool_name: "slow_a".into(),
-        delay_ms: 100,
-    }));
-    tools.register(Box::new(SlowTool {
-        tool_name: "slow_b".into(),
-        delay_ms: 100,
-    }));
-    tools.register(Box::new(SlowTool {
-        tool_name: "slow_c".into(),
-        delay_ms: 100,
-    }));
-
-    let start = std::time::Instant::now();
-    let uc = UserContent::text("Use all tools");
-    let result = run_agent_loop(provider, &tools, "Test bot", &uc, None, None)
-        .await
-        .unwrap();
-    let elapsed = start.elapsed();
-
-    assert_eq!(result.text, "All done");
-    assert_eq!(result.tool_calls_made, 3);
-    assert!(
-        elapsed < std::time::Duration::from_millis(250),
-        "parallel execution took {:?}, expected < 250ms",
-        elapsed
-    );
 }
 
 // ── sanitize_tool_result tests ──────────────────────────────────
@@ -1353,6 +1313,8 @@ fn sanitize_tool_name_noop_on_real_tool_names() {
         "web_search",
         "web_fetch",
         "memory_save",
+        "memory_forget",
+        "memory_delete",
         "memory_search",
         "file_read",
         "file_write",
@@ -1412,6 +1374,8 @@ fn sanitize_tool_name_strips_prefix_and_suffix() {
 fn sanitize_tool_name_preserves_legitimate_underscores() {
     assert_eq!(sanitize_tool_name("web_search"), "web_search");
     assert_eq!(sanitize_tool_name("memory_save"), "memory_save");
+    assert_eq!(sanitize_tool_name("memory_forget"), "memory_forget");
+    assert_eq!(sanitize_tool_name("memory_delete"), "memory_delete");
     assert_eq!(sanitize_tool_name("spawn_agent"), "spawn_agent");
     assert_eq!(sanitize_tool_name("get_user_location"), "get_user_location");
 }

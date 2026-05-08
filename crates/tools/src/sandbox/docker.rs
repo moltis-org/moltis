@@ -2,6 +2,11 @@
 
 use {
     async_trait::async_trait,
+    std::{
+        collections::{HashMap, HashSet},
+        sync::{Arc, OnceLock},
+    },
+    tokio::sync::{Mutex, Semaphore},
     tracing::{debug, info, warn},
 };
 
@@ -18,7 +23,7 @@ use {
         },
         types::{
             BuildImageResult, DEFAULT_SANDBOX_IMAGE, NetworkPolicy, SANDBOX_HOME_DIR, Sandbox,
-            SandboxConfig, SandboxId, WorkspaceMount, canonical_sandbox_packages,
+            SandboxConfig, SandboxId, WorkspaceMount, canonical_sandbox_packages, tail_lines,
             truncate_output_for_display,
         },
     },
@@ -33,31 +38,53 @@ use {
     },
 };
 
+/// Distinguishes Docker from Podman for behaviour that differs between the two
+/// OCI runtimes (hardening flags, host-gateway resolution, etc.).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BackendKind {
+    Docker,
+    Podman,
+}
+
 /// Docker/Podman-based sandbox implementation.
 ///
 /// The `cli` field selects the container CLI binary (`"docker"` or `"podman"`).
 /// Podman's CLI is a drop-in replacement for Docker, so both backends share
-/// this single implementation.
+/// this single implementation.  `kind` carries the typed backend identity for
+/// behaviour branching without string comparisons.
 pub struct DockerSandbox {
     pub config: SandboxConfig,
+    pub(crate) kind: BackendKind,
     cli: &'static str,
     backend_label: &'static str,
+    /// Container names that have already been provisioned in this process.
+    /// Prevents repeated `apt-get install` runs on the same container.
+    pub(crate) provisioned: Mutex<HashSet<String>>,
+    /// Per-container startup gates. Parallel exec calls for the same session
+    /// must not race through inspect-then-run with the same OCI container name.
+    startup_gates: Mutex<HashMap<String, Arc<Semaphore>>>,
 }
 
 impl DockerSandbox {
     pub fn new(config: SandboxConfig) -> Self {
         Self {
             config,
+            kind: BackendKind::Docker,
             cli: "docker",
             backend_label: "docker",
+            provisioned: Mutex::new(HashSet::new()),
+            startup_gates: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn podman(config: SandboxConfig) -> Self {
         Self {
             config,
+            kind: BackendKind::Podman,
             cli: "podman",
             backend_label: "podman",
+            provisioned: Mutex::new(HashSet::new()),
+            startup_gates: Mutex::new(HashMap::new()),
         }
     }
 
@@ -79,8 +106,44 @@ impl DockerSandbox {
         format!("{}-{}", self.container_prefix(), id.key)
     }
 
-    fn image_repo(&self) -> &str {
+    pub(crate) fn image_repo(&self) -> &str {
         self.container_prefix()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn startup_gate_for(&self, name: &str) -> Arc<Semaphore> {
+        self.startup_gate_for_inner(name).await
+    }
+
+    async fn startup_gate_for_inner(&self, name: &str) -> Arc<Semaphore> {
+        let mut gates = self.startup_gates.lock().await;
+        Arc::clone(
+            gates
+                .entry(name.to_string())
+                .or_insert_with(|| Arc::new(Semaphore::new(1))),
+        )
+    }
+
+    async fn remove_startup_gate_if_unshared(&self, name: &str, gate: &Arc<Semaphore>) {
+        let mut gates = self.startup_gates.lock().await;
+        let Some(stored) = gates.get(name) else {
+            return;
+        };
+        if Arc::ptr_eq(stored, gate) && Arc::strong_count(gate) == 2 {
+            gates.remove(name);
+        }
+    }
+
+    async fn is_container_running(&self, name: &str) -> bool {
+        let check = tokio::process::Command::new(self.cli)
+            .args(["inspect", "--format", "{{.State.Running}}", name])
+            .output()
+            .await;
+
+        let Ok(output) = check else {
+            return false;
+        };
+        String::from_utf8_lossy(&output.stdout).trim() == "true"
     }
 
     fn mounted_host_path(&self, id: &SandboxId, guest_path: &str) -> Option<std::path::PathBuf> {
@@ -108,6 +171,9 @@ impl DockerSandbox {
         }
         if let Some(pids) = limits.pids_max {
             args.extend(["--pids-limit".to_string(), pids.to_string()]);
+        }
+        if let Some(ref gpus) = self.config.gpus {
+            args.extend(["--gpus".to_string(), gpus.clone()]);
         }
         args
     }
@@ -138,7 +204,7 @@ impl DockerSandbox {
     /// Podman uses a bridge whose gateway we can query via
     /// `podman network inspect`.
     pub(crate) fn resolve_host_gateway(&self) -> String {
-        if self.cli != "podman" {
+        if self.kind != BackendKind::Podman {
             return "host-gateway".to_string();
         }
 
@@ -179,7 +245,7 @@ impl DockerSandbox {
     /// `is_prebuilt` controls whether `--read-only` is applied: prebuilt images
     /// already have packages baked in so the root FS can be read-only, while
     /// non-prebuilt images need a writable root for `apt-get` provisioning.
-    pub(crate) fn hardening_args(is_prebuilt: bool) -> Vec<String> {
+    pub(crate) fn hardening_args(is_prebuilt: bool, kind: BackendKind) -> Vec<String> {
         let mut args = vec![
             // --- Capability / privilege ---
             "--cap-drop".to_string(),
@@ -196,23 +262,51 @@ impl DockerSandbox {
             // and the `hostname` command do not reveal the host identity.
             "--hostname".to_string(),
             "sandbox".to_string(),
-            // Mask /sys subtrees that expose host hardware identifiers
-            // (serial numbers, BIOS/UEFI data, disk models, LUKS UUIDs).
-            // Empty read-only tmpfs overlays hide the underlying sysfs entries
-            // and work identically on Docker and Podman.
-            "--tmpfs".to_string(),
-            "/sys/firmware:ro,nosuid".to_string(),
-            "--tmpfs".to_string(),
-            "/sys/class/dmi:ro,nosuid".to_string(),
-            "--tmpfs".to_string(),
-            "/sys/devices/virtual/dmi:ro,nosuid".to_string(),
-            "--tmpfs".to_string(),
-            "/sys/class/block:ro,nosuid".to_string(),
         ];
+        // Mask /sys subtrees that expose host hardware identifiers
+        // (serial numbers, BIOS/UEFI data, disk models, LUKS UUIDs).
+        // Empty read-only tmpfs overlays hide the underlying sysfs entries.
+        //
+        // Skipped for Podman: its OCI runtime performs "tmpcopyup" on sysfs
+        // tmpfs mounts, copying directory contents into the tmpfs first.
+        // With --cap-drop ALL some sysfs files are permission-denied even for
+        // root, causing the mount (and container startup) to fail.  Podman
+        // already masks /sys/firmware via its built-in OCI MaskedPaths.
+        if kind != BackendKind::Podman {
+            for path in sysfs_paths_to_mask() {
+                args.extend(["--tmpfs".to_string(), format!("{path}:ro,nosuid")]);
+            }
+        }
         if is_prebuilt {
             args.push("--read-only".to_string());
         }
         args
+    }
+
+    /// Mount the host `moltis-ctl` binary into the sandbox at `/usr/local/bin/moltis-ctl`.
+    ///
+    /// Locates the binary next to the current executable (same directory as `moltis`),
+    /// and if found, bind-mounts it read-only. This allows skills to call `moltis-ctl`
+    /// inside sandboxes to communicate with the gateway.
+    fn moltis_ctl_mount_args() -> Vec<String> {
+        let Ok(current_exe) = std::env::current_exe() else {
+            return Vec::new();
+        };
+        let Some(exe_dir) = current_exe.parent() else {
+            return Vec::new();
+        };
+        let ctl_binary = exe_dir.join("moltis-ctl");
+        if !ctl_binary.is_file() {
+            tracing::debug!(
+                path = %ctl_binary.display(),
+                "moltis-ctl binary not found next to server, skipping sandbox mount"
+            );
+            return Vec::new();
+        }
+        vec![
+            "-v".to_string(),
+            format!("{}:/usr/local/bin/moltis-ctl:ro", ctl_binary.display()),
+        ]
     }
 
     pub(crate) fn workspace_args(&self) -> Vec<String> {
@@ -245,6 +339,7 @@ impl DockerSandbox {
 
     async fn resolve_local_image(&self, requested_image: &str) -> Result<String> {
         if sandbox_image_exists(self.cli, requested_image).await {
+            debug!(image = requested_image, "sandbox image found locally");
             return Ok(requested_image.to_string());
         }
 
@@ -277,36 +372,103 @@ impl DockerSandbox {
         };
         Ok(result.tag)
     }
-}
 
-#[async_trait]
-impl Sandbox for DockerSandbox {
-    fn backend_name(&self) -> &'static str {
-        self.backend_label
+    /// Export an image from BuildKit's cache into the Podman store.
+    ///
+    /// When Podman delegates `podman build` to a BuildKit daemon the image may
+    /// land only in BuildKit's internal cache.  This method re-runs the build
+    /// with `--output type=docker,dest=<file>` (a BuildKit cache-hit, so
+    /// essentially free) and pipes the tarball into `podman load`.
+    async fn export_buildkit_image_to_store(
+        &self,
+        tag: &str,
+        dockerfile_path: &std::path::Path,
+        context_dir: &std::path::Path,
+    ) -> Result<()> {
+        let tar_path = std::env::temp_dir().join(format!(
+            "moltis-sandbox-export-{}.tar",
+            uuid::Uuid::new_v4()
+        ));
+
+        // Re-build with docker-archive output.  The `-t` flag embeds the
+        // correct tag in the archive so `podman load` names it correctly.
+        // BuildKit's layer cache makes this a near-instant cache hit for the
+        // same Dockerfile.
+        let export_output = tokio::process::Command::new(self.cli)
+            .args([
+                "build",
+                "--output",
+                &format!("type=docker,dest={}", tar_path.display()),
+                "-t",
+                tag,
+                "-f",
+            ])
+            .arg(dockerfile_path)
+            .arg(context_dir)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await?;
+
+        if !export_output.status.success() {
+            let _ = std::fs::remove_file(&tar_path);
+            let stderr = String::from_utf8_lossy(&export_output.stderr);
+            return Err(Error::message(format!(
+                "podman build --output failed for {tag}: {}",
+                stderr.trim()
+            )));
+        }
+
+        // Load the tarball into the Podman store.
+        let load_output = tokio::process::Command::new(self.cli)
+            .args(["load", "-i"])
+            .arg(&tar_path)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .await?;
+
+        let _ = std::fs::remove_file(&tar_path);
+
+        if !load_output.status.success() {
+            let stderr = String::from_utf8_lossy(&load_output.stderr);
+            return Err(Error::message(format!(
+                "podman load failed for {tag}: {}",
+                stderr.trim()
+            )));
+        }
+
+        // Final verification.
+        if !sandbox_image_exists(self.cli, tag).await {
+            return Err(Error::message(format!(
+                "image {tag} still missing from podman store after BuildKit export"
+            )));
+        }
+
+        info!(tag, "successfully exported BuildKit image to podman store");
+        Ok(())
     }
 
-    async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+    async fn ensure_ready_locked(
+        &self,
+        id: &SandboxId,
+        image_override: Option<&str>,
+    ) -> Result<()> {
         let name = self.container_name(id);
 
-        // Check if container already running.
-        let check = tokio::process::Command::new(self.cli)
-            .args(["inspect", "--format", "{{.State.Running}}", &name])
-            .output()
-            .await;
-
-        if let Ok(output) = check {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if stdout.trim() == "true" {
-                return Ok(());
-            }
+        if self.is_container_running(&name).await {
+            debug!(container = %name, "sandbox container already running");
+            return Ok(());
         }
 
         // Resolve image first so we know whether it's prebuilt (affects hardening).
         let requested_image = image_override.unwrap_or_else(|| self.image());
         let image = self.resolve_local_image(requested_image).await?;
         let is_prebuilt = image.starts_with(&format!("{}:", self.image_repo()));
+        debug!(container = %name, %image, is_prebuilt, "resolved sandbox image");
 
         // Start a new container.
+        info!(container = %name, %image, "starting new sandbox container");
         let mut args = vec![
             "run".to_string(),
             "-d".to_string(),
@@ -321,11 +483,12 @@ impl Sandbox for DockerSandbox {
         }
 
         args.extend(self.resource_args());
-        args.extend(Self::hardening_args(is_prebuilt));
+        args.extend(Self::hardening_args(is_prebuilt, self.kind));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
+        args.extend(Self::moltis_ctl_mount_args());
 
-        args.push(image.clone());
+        args.push(image);
         args.extend(["sleep".to_string(), "infinity".to_string()]);
 
         let output = tokio::process::Command::new(self.cli)
@@ -335,20 +498,100 @@ impl Sandbox for DockerSandbox {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Error::message(format!(
-                "{} run failed: {}",
-                self.cli,
-                stderr.trim()
-            )));
+            if is_container_name_conflict(&stderr) {
+                if self.is_container_running(&name).await {
+                    debug!(
+                        container = %name,
+                        "{} run reported a name conflict, existing container is running",
+                        self.cli
+                    );
+                    return Ok(());
+                }
+
+                warn!(
+                    container = %name,
+                    "{} run reported a name conflict for a non-running container, recreating",
+                    self.cli
+                );
+                self.provisioned.lock().await.remove(&name);
+                let _ = tokio::process::Command::new(self.cli)
+                    .args(["rm", "-f", &name])
+                    .output()
+                    .await;
+
+                let retry_output = tokio::process::Command::new(self.cli)
+                    .args(&args)
+                    .output()
+                    .await?;
+                if !retry_output.status.success() {
+                    let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+                    return Err(Error::message(format!(
+                        "{} run failed after removing stale container '{}': {}",
+                        self.cli,
+                        name,
+                        retry_stderr.trim()
+                    )));
+                }
+            } else {
+                return Err(Error::message(format!(
+                    "{} run failed: {}",
+                    self.cli,
+                    stderr.trim()
+                )));
+            }
         }
 
         // Skip provisioning if the image is a pre-built instance sandbox image
         // (packages are already baked in — including /home/sandbox from the Dockerfile).
         if !is_prebuilt {
-            provision_packages(self.cli, &name, &self.config.packages).await?;
+            let needs_provisioning = {
+                let mut provisioned = self.provisioned.lock().await;
+                if provisioned.contains(&name) {
+                    false
+                } else {
+                    provisioned.insert(name.clone());
+                    true
+                }
+            };
+            if needs_provisioning {
+                if let Err(e) = provision_packages(self.cli, &name, &self.config.packages).await {
+                    self.provisioned.lock().await.remove(&name);
+                    return Err(e);
+                }
+            } else {
+                debug!(
+                    container = %name,
+                    "skipping provisioning, already completed for container"
+                );
+            }
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Sandbox for DockerSandbox {
+    fn backend_name(&self) -> &'static str {
+        self.backend_label
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        let name = self.container_name(id);
+        let gate = self.startup_gate_for_inner(&name).await;
+        let _permit = gate
+            .acquire()
+            .await
+            .map_err(|_| Error::message("sandbox startup gate closed"))?;
+        let result = self.ensure_ready_locked(id, image_override).await;
+        if result.is_err() {
+            self.remove_startup_gate_if_unshared(&name, &gate).await;
+        }
+        result
     }
 
     async fn build_image(
@@ -392,17 +635,45 @@ impl Sandbox for DockerSandbox {
             .output()
             .await;
 
-        // Clean up temp dir regardless of result.
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-
         let output = output?;
         if !output.status.success() {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
+            warn!(
+                tag,
+                stdout = %tail_lines(&stdout, 20),
+                stderr = %stderr.trim(),
+                "{} build failed",
+                self.cli,
+            );
             return Err(Error::message(format!(
                 "{} build failed for {tag}: {}",
                 self.cli,
                 stderr.trim()
             )));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        debug!(tag, output = %tail_lines(&stdout, 20), "docker build output");
+
+        // Podman with BuildKit: the build may succeed (exit 0) but leave the
+        // image in BuildKit's internal cache instead of the Podman store.
+        // Verify the image is actually present and recover if not.
+        if self.kind == BackendKind::Podman && !sandbox_image_exists(self.cli, &tag).await {
+            warn!(
+                tag,
+                "podman build succeeded but image missing from store \
+                 (likely BuildKit delegation), exporting via tarball"
+            );
+            let export_result = self
+                .export_buildkit_image_to_store(&tag, &dockerfile_path, &tmp_dir)
+                .await;
+            // Clean up temp dir regardless of export result.
+            let _ = std::fs::remove_dir_all(&tmp_dir);
+            export_result?;
+        } else {
+            let _ = std::fs::remove_dir_all(&tmp_dir);
         }
 
         info!(tag, "pre-built sandbox image ready");
@@ -522,12 +793,22 @@ impl Sandbox for DockerSandbox {
 
     async fn cleanup(&self, id: &SandboxId) -> Result<()> {
         let name = self.container_name(id);
+        self.provisioned.lock().await.remove(&name);
+        self.startup_gates.lock().await.remove(&name);
         let _ = tokio::process::Command::new(self.cli)
             .args(["rm", "-f", &name])
             .output()
             .await;
         Ok(())
     }
+}
+
+pub(crate) fn is_container_name_conflict(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("already in use")
+        && (lower.contains("container name")
+            || lower.contains("the name \"")
+            || lower.contains("the name '"))
 }
 
 /// No-op sandbox that passes through to direct execution.
@@ -540,6 +821,10 @@ impl Sandbox for NoSandbox {
     }
 
     fn is_real(&self) -> bool {
+        false
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
         false
     }
 
@@ -576,6 +861,62 @@ impl Sandbox for NoSandbox {
     async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
         Ok(())
     }
+}
+
+/// Sysfs paths to mask with empty read-only tmpfs overlays.
+///
+/// On Linux, Docker shares the host kernel's sysfs.  Paths that don't exist
+/// on the host (ARM devices without DMI, WSL2, etc.) would cause Docker to
+/// fail with "mkdirat: read-only file system" when it tries to create
+/// mountpoints on the read-only sysfs.  We probe each path and only mount
+/// the ones that actually exist.
+///
+/// On non-Linux hosts (macOS), Docker Desktop runs in a Linux VM with full
+/// sysfs, so all paths are included unconditionally — the host `/sys` layout
+/// is irrelevant.
+pub(crate) const SYSFS_MASK_PATHS: &[&str] = &[
+    "/sys/firmware",
+    "/sys/class/dmi",
+    "/sys/devices/virtual/dmi",
+    "/sys/class/block",
+];
+
+pub(crate) fn sysfs_paths_to_mask() -> Vec<&'static str> {
+    static PATHS: OnceLock<Vec<&'static str>> = OnceLock::new();
+    PATHS
+        .get_or_init(|| {
+            let paths = sysfs_paths_to_mask_from("/sys");
+            let skipped = SYSFS_MASK_PATHS.len() - paths.len();
+            if skipped > 0 {
+                warn!(
+                    skipped,
+                    "some sysfs mask paths do not exist on this host and will be skipped"
+                );
+            }
+            paths
+        })
+        .clone()
+}
+
+/// Testable inner helper: probes each `SYSFS_MASK_PATHS` entry and returns
+/// only those that exist under `sysfs_root`.  If `sysfs_root` itself doesn't
+/// exist (macOS), all paths are returned — Docker Desktop's VM will have them.
+pub(crate) fn sysfs_paths_to_mask_from(sysfs_root: &str) -> Vec<&'static str> {
+    let root = std::path::Path::new(sysfs_root);
+    if !root.exists() {
+        // Non-Linux host (macOS): Docker runs in a VM with full sysfs.
+        return SYSFS_MASK_PATHS.to_vec();
+    }
+    SYSFS_MASK_PATHS
+        .iter()
+        .copied()
+        .filter(|p| {
+            // Strip the canonical "/sys/" prefix so the path is relative,
+            // then probe under the supplied root (real or test tempdir).
+            let rel = p.strip_prefix("/sys/").unwrap_or(p);
+            root.join(rel).exists()
+        })
+        .collect()
 }
 
 /// Return `true` when the installed Podman version supports `host-gateway`

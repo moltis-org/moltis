@@ -44,8 +44,13 @@ pub struct GatewayServices {
     pub session_share_store: Option<Arc<crate::share_store::ShareStore>>,
     /// Optional agent persona store for multi-agent support.
     pub agent_persona_store: Option<Arc<crate::agent_persona::AgentPersonaStore>>,
+    /// Optional voice persona store for named voice identities.
+    pub voice_persona_store: Option<Arc<crate::voice_persona::VoicePersonaStore>>,
     /// Shared agents config (presets) for spawn_agent and RPC sync.
     pub agents_config: Option<Arc<tokio::sync::RwLock<moltis_config::AgentsConfig>>>,
+    /// Typed telephony plugin for RPC call initiation/hangup.
+    #[cfg(feature = "telephony")]
+    pub telephony_plugin: Option<Arc<tokio::sync::RwLock<moltis_telephony::TelephonyPlugin>>>,
 }
 
 impl GatewayServices {
@@ -106,6 +111,15 @@ impl GatewayServices {
         self
     }
 
+    #[cfg(feature = "telephony")]
+    pub fn with_telephony_plugin(
+        mut self,
+        plugin: Arc<tokio::sync::RwLock<moltis_telephony::TelephonyPlugin>>,
+    ) -> Self {
+        self.telephony_plugin = Some(plugin);
+        self
+    }
+
     pub fn channel_outbound_arc(&self) -> Option<Arc<dyn moltis_channels::ChannelOutbound>> {
         self.channel_outbound.clone()
     }
@@ -151,7 +165,10 @@ impl GatewayServices {
             session_store: None,
             session_share_store: None,
             agent_persona_store: None,
+            voice_persona_store: None,
             agents_config: None,
+            #[cfg(feature = "telephony")]
+            telephony_plugin: None,
         }
     }
 
@@ -201,6 +218,14 @@ impl GatewayServices {
         store: Arc<crate::agent_persona::AgentPersonaStore>,
     ) -> Self {
         self.agent_persona_store = Some(store);
+        self
+    }
+
+    pub fn with_voice_persona_store(
+        mut self,
+        store: Arc<crate::voice_persona::VoicePersonaStore>,
+    ) -> Self {
+        self.voice_persona_store = Some(store);
         self
     }
 

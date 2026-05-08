@@ -1,14 +1,16 @@
 use std::{
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
+#[cfg(feature = "agent")]
+use std::path::Component;
+
 use tracing::warn;
 
-use {
-    moltis_agents::prompt::WorkspaceFilePromptStatus,
-    moltis_protocol::{ErrorShape, error_codes},
-};
+#[cfg(feature = "agent")]
+use moltis_agents::prompt::WorkspaceFilePromptStatus;
+use moltis_protocol::{ErrorShape, error_codes};
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
@@ -26,8 +28,8 @@ async fn active_session_key_for_ctx(ctx: &MethodContext) -> Option<String> {
     {
         return Some(session_key.to_string());
     }
-    let inner = ctx.state.inner.read().await;
-    inner.active_sessions.get(&ctx.client_conn_id).cloned()
+    let registry = ctx.state.client_registry.read().await;
+    registry.active_sessions.get(&ctx.client_conn_id).cloned()
 }
 
 async fn default_agent_id_for_ctx(ctx: &MethodContext) -> String {
@@ -41,13 +43,11 @@ async fn default_agent_id_for_ctx(ctx: &MethodContext) -> String {
 }
 
 async fn agent_exists_for_ctx(ctx: &MethodContext, agent_id: &str) -> bool {
-    if agent_id == "main" {
-        return true;
-    }
     if let Some(ref store) = ctx.state.services.agent_persona_store {
         return store.get(agent_id).await.ok().flatten().is_some();
     }
-    false
+    // Without a persona store, only "main" is assumed valid.
+    agent_id == "main"
 }
 
 async fn resolve_session_agent_id_for_ctx(ctx: &MethodContext) -> String {
@@ -82,6 +82,7 @@ async fn resolve_session_agent_id_for_ctx(ctx: &MethodContext) -> String {
     default_id
 }
 
+#[cfg(feature = "agent")]
 fn parse_agent_id_param(params: &serde_json::Value) -> Option<String> {
     params
         .get("agent_id")
@@ -92,6 +93,7 @@ fn parse_agent_id_param(params: &serde_json::Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+#[cfg(feature = "agent")]
 async fn resolve_requested_agent_id(
     ctx: &MethodContext,
     params: &serde_json::Value,
@@ -110,53 +112,30 @@ async fn resolve_requested_agent_id(
 
 fn read_identity_payload_for_agent(agent_id: &str) -> serde_json::Value {
     let config = moltis_config::discover_and_load();
-    let mut identity = config.identity.clone();
-    if let Some(file_identity) = moltis_config::load_identity_for_agent(agent_id) {
-        if file_identity.name.is_some() {
-            identity.name = file_identity.name;
-        }
-        if file_identity.emoji.is_some() {
-            identity.emoji = file_identity.emoji;
-        }
-        if file_identity.theme.is_some() {
-            identity.theme = file_identity.theme;
-        }
-    }
+    let identity = moltis_config::load_identity_for_agent(agent_id).unwrap_or_default();
     let user = moltis_config::resolve_user_profile_from_config(&config);
     let resolved_name = identity
         .name
         .clone()
         .unwrap_or_else(|| "moltis".to_string());
-    let identity_path = if agent_id == "main" {
-        let main_path = moltis_config::agent_workspace_dir("main").join("IDENTITY.md");
-        if main_path.exists() {
-            main_path
-        } else {
-            moltis_config::identity_path()
-        }
-    } else {
-        moltis_config::agent_workspace_dir(agent_id).join("IDENTITY.md")
-    };
+    let identity_path = moltis_config::agent_workspace_dir(agent_id).join("IDENTITY.md");
     let identity_text = std::fs::read_to_string(identity_path)
         .ok()
         .and_then(|content| moltis_config::extract_yaml_frontmatter(&content).map(str::to_string));
     let soul = moltis_config::load_soul_for_agent(agent_id);
-    let identity_name = identity.name.clone();
-    let identity_emoji = identity.emoji.clone();
-    let identity_theme = identity.theme.clone();
     let user_name = user.name.clone();
     let user_timezone = user.timezone.as_ref().map(|tz| tz.name().to_string());
     serde_json::json!({
         "name": resolved_name,
-        "emoji": identity_emoji.clone(),
-        "theme": identity_theme.clone(),
+        "emoji": identity.emoji.clone(),
+        "theme": identity.theme.clone(),
         "user_name": user_name,
         "user_timezone": user_timezone,
         "identity": identity_text,
         "identity_fields": {
-            "name": identity_name,
-            "emoji": identity_emoji,
-            "theme": identity_theme,
+            "name": identity.name,
+            "emoji": identity.emoji,
+            "theme": identity.theme,
         },
         "soul": soul,
     })
@@ -168,6 +147,102 @@ fn write_soul_for_agent(agent_id: &str, soul: Option<String>) -> Result<(), Erro
     Ok(())
 }
 
+/// Write the `.onboarded` sentinel when both agent name and user name are
+/// present — mirrors the old `onboarding.identity_update()` behavior so the
+/// onboarding wizard doesn't re-appear after identity is saved.
+fn mark_onboarded_if_ready(
+    identity: &moltis_config::schema::AgentIdentity,
+    params: &serde_json::Value,
+) {
+    let has_agent_name = identity.name.as_ref().is_some_and(|n| !n.is_empty());
+    let has_user_name = params
+        .get("user_name")
+        .and_then(|v| v.as_str())
+        .is_some_and(|n| !n.is_empty())
+        || moltis_config::resolve_user_profile()
+            .name
+            .as_ref()
+            .is_some_and(|n| !n.is_empty());
+
+    if has_agent_name && has_user_name {
+        let sentinel = moltis_config::data_dir().join(".onboarded");
+        let _ = std::fs::write(&sentinel, "");
+    }
+}
+
+/// Save user profile fields (user_name, user_timezone, user_location) from
+/// identity update params. These are persisted to `[user]` in `moltis.toml`
+/// and `USER.md`, independent of which agent is being updated.
+fn save_user_profile_fields(params: &serde_json::Value) -> Result<(), ErrorShape> {
+    let has_user_field = params.get("user_name").is_some()
+        || params.get("user_timezone").is_some()
+        || params.get("timezone").is_some()
+        || params.get("user_location").is_some()
+        || params.get("location").is_some();
+
+    if !has_user_field {
+        return Ok(());
+    }
+
+    // Build the updated user profile, then save to both moltis.toml and USER.md.
+    // We must NOT re-read via resolve_user_profile_from_config after saving to toml,
+    // because that would let the stale USER.md override the new values.
+    let saved_user = std::sync::Mutex::new(None);
+    moltis_config::update_config(|cfg| {
+        let mut user = cfg.user.clone();
+
+        if let Some(v) = params.get("user_name").and_then(|v| v.as_str()) {
+            user.name = if v.is_empty() {
+                None
+            } else {
+                Some(v.to_string())
+            };
+        }
+        if let Some(raw) = params
+            .get("user_timezone")
+            .or_else(|| params.get("timezone"))
+            .and_then(|v| v.as_str())
+        {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                user.timezone = None;
+            } else if let Ok(tz) = trimmed.parse::<moltis_config::Timezone>() {
+                user.timezone = Some(tz);
+            }
+        }
+        if let Some(loc_val) = params
+            .get("user_location")
+            .or_else(|| params.get("location"))
+        {
+            if loc_val.is_null() {
+                user.location = None;
+            } else if let (Some(lat), Some(lon)) = (
+                loc_val.get("latitude").and_then(|v| v.as_f64()),
+                loc_val.get("longitude").and_then(|v| v.as_f64()),
+            ) {
+                let place = loc_val
+                    .get("place")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                user.location = Some(moltis_config::GeoLocation::now(lat, lon, place));
+            }
+        }
+
+        *saved_user.lock().unwrap_or_else(|e| e.into_inner()) = Some(user.clone());
+        cfg.user = user;
+    })
+    .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+
+    // Persist to USER.md using the values we just built (not re-read from config).
+    if let Some(user) = saved_user.into_inner().unwrap_or(None) {
+        let config = moltis_config::discover_and_load_readonly();
+        let _ = moltis_config::save_user_with_mode(&user, config.memory.user_profile_write_mode);
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "agent")]
 fn normalize_relative_agent_path(path: &str) -> Result<PathBuf, ErrorShape> {
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -198,6 +273,7 @@ fn normalize_relative_agent_path(path: &str) -> Result<PathBuf, ErrorShape> {
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg(feature = "agent")]
 struct WorkspacePromptFileStatusResponse {
     path: String,
     source: &'static str,
@@ -206,6 +282,7 @@ struct WorkspacePromptFileStatusResponse {
     prompt_status: WorkspaceFilePromptStatus,
 }
 
+#[cfg(feature = "agent")]
 fn workspace_file_limit_chars(ctx: &MethodContext) -> usize {
     ctx.state.config.chat.workspace_file_max_chars
 }
@@ -319,6 +396,7 @@ fn parse_prompt_memory_mode(value: &str) -> Result<moltis_config::PromptMemoryMo
     }
 }
 
+#[cfg(feature = "agent")]
 fn should_fallback_agent_file_to_root(agent_id: &str, relative_path: &Path) -> bool {
     if agent_id == "main" {
         return true;
@@ -327,6 +405,7 @@ fn should_fallback_agent_file_to_root(agent_id: &str, relative_path: &Path) -> b
     matches!(relative_path.to_str(), Some("AGENTS.md") | Some("TOOLS.md"))
 }
 
+#[cfg(feature = "agent")]
 fn resolve_agent_file_target(
     agent_id: &str,
     relative_path: &Path,
@@ -346,6 +425,7 @@ fn resolve_agent_file_target(
     None
 }
 
+#[cfg(feature = "agent")]
 fn workspace_prompt_file_status(
     agent_id: &str,
     file_name: &str,
@@ -372,6 +452,7 @@ fn workspace_prompt_file_status(
     })
 }
 
+#[cfg(feature = "agent")]
 fn workspace_prompt_files_status(agent_id: &str, limit_chars: usize) -> Vec<serde_json::Value> {
     ["AGENTS.md", "TOOLS.md"]
         .iter()
@@ -382,6 +463,7 @@ fn workspace_prompt_files_status(agent_id: &str, limit_chars: usize) -> Vec<serd
         .collect()
 }
 
+#[cfg(feature = "agent")]
 fn read_agent_file(agent_id: &str, relative_path: &Path) -> Result<String, ErrorShape> {
     let (target, _) = resolve_agent_file_target(agent_id, relative_path)
         .ok_or_else(|| ErrorShape::new(error_codes::INVALID_REQUEST, "file not found"))?;
@@ -390,6 +472,7 @@ fn read_agent_file(agent_id: &str, relative_path: &Path) -> Result<String, Error
         .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))
 }
 
+#[cfg(feature = "agent")]
 fn list_agent_workspace_files_recursively(
     root: &Path,
     base: &Path,
@@ -423,16 +506,22 @@ mod admin;
 mod agents;
 mod channels;
 mod core;
+mod modes;
 mod sessions;
 mod system;
+mod voice_personas;
+mod voicecall;
 
 pub(super) fn register(reg: &mut MethodRegistry) {
     agents::register(reg);
+    modes::register(reg);
     sessions::register(reg);
     channels::register(reg);
     core::register(reg);
     system::register(reg);
     admin::register(reg);
+    voice_personas::register(reg);
+    voicecall::register(reg);
 }
 async fn reload_hooks(state: &Arc<crate::state::GatewayState>) {
     let disabled = state.inner.read().await.disabled_hooks.clone();

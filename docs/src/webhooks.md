@@ -42,10 +42,10 @@ External Service (GitHub, Stripe, …)
 
 ## Setup
 
-Webhooks are configured exclusively from **Settings → Webhooks** in the web UI.
-They are not part of the onboarding flow.
+Webhooks can be created from the **web UI**, the **CLI**, or by the **agent** itself
+using the `webhook` tool. They are not part of the onboarding flow.
 
-### Creating a Webhook
+### Creating a Webhook (Web UI)
 
 1. Navigate to **Settings → Webhooks** and click **Create webhook**.
 2. Choose a **source profile** (GitHub, GitLab, Stripe, or Generic).
@@ -54,6 +54,39 @@ They are not part of the onboarding flow.
 5. Select a **target agent** and optional model override.
 6. Click **Create** — the endpoint URL is displayed with a copy button.
 7. Register this URL in the external service's webhook settings.
+
+### Creating a Webhook (CLI)
+
+```bash
+moltis webhooks create \
+  --name github-pr-review \
+  --source-profile github \
+  --auth-mode github_hmac_sha256 \
+  --events "pull_request.opened,pull_request.synchronize" \
+  --system-prompt "Review this PR for security issues"
+```
+
+For a zero-cost event forwarder (no LLM tokens):
+
+```bash
+moltis webhooks create \
+  --name stripe-payments \
+  --source-profile stripe \
+  --auth-mode stripe_webhook_signature \
+  --deliver-only \
+  --prompt-template "Payment: {data.object.amount} {data.object.currency} from {data.object.customer_email}" \
+  --deliver-to telegram \
+  --events "payment_intent.succeeded"
+```
+
+### Creating a Webhook (Agent Tool)
+
+The agent can create webhooks programmatically using the `webhook` tool:
+
+> "Set up a webhook for GitHub issues on my repo and forward them to my Slack channel"
+
+The agent will use the `webhook` tool with `action: "create"` to set up the endpoint,
+then tell you the URL to register in GitHub's settings.
 
 ### Endpoint URL
 
@@ -452,6 +485,118 @@ A complete example of setting up a webhook that reviews pull requests:
 | `webhooks_response_actions_total` | Counter | Response actions by tool and status |
 | `webhooks_rate_limited_total` | Counter | Rate-limited requests |
 | `webhooks_worker_queue_depth` | Gauge | Pending deliveries in worker queue |
+
+## Deliver-Only Mode (Webhook Proxy)
+
+By default, each webhook delivery triggers an agent run — the LLM processes the
+event, reasons about it, and optionally acts using tools. This costs tokens and
+takes seconds.
+
+**Deliver-only mode** skips the agent entirely. The webhook payload is rendered
+through a template and forwarded directly to a channel. Zero LLM tokens,
+sub-second delivery.
+
+This turns Moltis into a **webhook proxy**: external services POST events, and
+formatted messages appear in your Telegram, Discord, Slack, or any other
+configured channel.
+
+### When to Use Deliver-Only
+
+- **Monitoring alerts**: Datadog/Grafana/Sentry → Discord
+- **Payment notifications**: Stripe → Telegram
+- **CI/CD status**: GitHub Actions → Slack
+- **Inter-service notifications**: any HTTP POST → any channel
+- **High-volume events**: where per-event LLM calls would be wasteful
+
+### Configuration
+
+Set `deliver_only: true` and provide a `prompt_template` with `{dot.notation}`
+variables, plus a `deliver_to` channel target.
+
+**Web UI**: Toggle "Deliver only" in the webhook settings, fill in the template
+and target channel.
+
+**CLI**:
+```bash
+moltis webhooks create \
+  --name deploy-status \
+  --source-profile generic \
+  --auth-mode static_header \
+  --deliver-only \
+  --prompt-template "Deploy {status}: {environment} ({commit_sha})" \
+  --deliver-to slack
+```
+
+**Agent**: The agent can also create deliver-only webhooks using the `webhook` tool.
+
+### How It Works
+
+```
+External Service POSTs event
+        │
+        ▼
+┌──────────────────────────────────┐
+│         Ingress Handler          │
+│  verify → filter → dedup → 202  │
+└──────────────┬───────────────────┘
+               │
+               ▼
+┌──────────────────────────────────┐
+│       Background Worker          │
+│  render template → deliver to    │
+│  channel → mark completed        │
+│  (no agent, no LLM tokens)       │
+└──────────────────────────────────┘
+```
+
+## Template Rendering
+
+Templates use `{dot.notation}` to interpolate values from the webhook JSON payload.
+
+| Syntax | Resolves to |
+|--------|-------------|
+| `{action}` | Top-level field: `payload["action"]` |
+| `{pull_request.title}` | Nested: `payload["pull_request"]["title"]` |
+| `{pull_request.user.login}` | Deep nested: `payload["pull_request"]["user"]["login"]` |
+| `{__raw__}` | Full payload as indented JSON (truncated at 4000 chars) |
+
+- **Missing keys** are left as literal `{key}` in the output (no error).
+- **Objects and arrays** are JSON-serialized (truncated at 2000 chars).
+- **Strings and numbers** are inserted directly.
+
+Templates work in both `prompt_template` (the message body) and `deliver_extra`
+values (channel-specific metadata like chat IDs).
+
+### Example: GitHub Issue → Telegram
+
+```bash
+moltis webhooks create \
+  --name github-issues \
+  --source-profile github \
+  --auth-mode github_hmac_sha256 \
+  --deliver-only \
+  --prompt-template "#{issue.number} {issue.title} ({action} by {sender.login})" \
+  --deliver-to telegram \
+  --events "issues.opened,issues.closed"
+```
+
+When someone opens issue #42 "Fix auth bug", Telegram receives:
+```
+#42 Fix auth bug (opened by alice)
+```
+
+### Example: Stripe Payment → Discord
+
+```bash
+moltis webhooks create \
+  --name stripe-notify \
+  --source-profile stripe \
+  --auth-mode stripe_webhook_signature \
+  --deliver-only \
+  --prompt-template "Payment {data.object.status}: {data.object.amount} cents ({data.object.currency})" \
+  --deliver-to discord \
+  --events "payment_intent.succeeded,payment_intent.payment_failed"
+```
 
 ## Comparison with Channels and Cron
 

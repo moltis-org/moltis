@@ -213,7 +213,7 @@ impl NetworkAuditBuffer {
         }
 
         let mut by_domain: Vec<(String, u64)> = domain_counts.into_iter().collect();
-        by_domain.sort_by(|a, b| b.1.cmp(&a.1));
+        by_domain.sort_by_key(|item| std::cmp::Reverse(item.1));
         by_domain.truncate(20);
 
         NetworkAuditStats {

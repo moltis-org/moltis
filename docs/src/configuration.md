@@ -1,8 +1,36 @@
 # Configuration
 
-Moltis is configured through `moltis.toml`, located in `~/.config/moltis/` by default.
+Moltis uses a **layered config model** with two files:
 
-On first run, a complete configuration file is generated with sensible defaults. You can edit it to customize behavior.
+| File | Owner | Purpose |
+|------|-------|---------|
+| `defaults.toml` | **Moltis** | Shipped defaults, regenerated on every startup |
+| `moltis.toml` | **You** | Your overrides only |
+
+On first run, both files are created in `~/.config/moltis/`. Your `moltis.toml`
+starts nearly empty — only the installation-specific port is set. All other
+settings inherit from `defaults.toml` automatically.
+
+## Merge Order
+
+Settings are resolved in this order (later wins):
+
+1. **Built-in defaults** — compiled into Moltis (`MoltisConfig::default()`)
+2. **`defaults.toml`** — Moltis-managed, refreshed on every startup
+3. **`moltis.toml`** — your overrides (additive deep merge)
+4. **`MOLTIS_*` environment variables** — highest precedence
+
+This means you only need to put values in `moltis.toml` that you intentionally
+want to differ from the shipped defaults. When Moltis upgrades and improves a
+default, your installation picks it up automatically — unless you've overridden
+that specific setting.
+
+```admonish tip title="Don't copy defaults into moltis.toml"
+Copying a built-in default into `moltis.toml` "freezes" it — future built-in
+improvements for that setting won't apply. The Settings UI shows **Built-in**,
+**Overridden**, and **Custom** badges so you can see which values are yours
+and which are inherited.
+```
 
 ## Configuration File Location
 
@@ -10,6 +38,20 @@ On first run, a complete configuration file is generated with sensible defaults.
 |----------|--------------|
 | macOS/Linux | `~/.config/moltis/moltis.toml` |
 | Custom | Set via `--config-dir` or `MOLTIS_CONFIG_DIR` |
+
+The `defaults.toml` file lives in the same directory. Do not edit it — your
+changes will be overwritten on the next startup.
+
+## Checking Config
+
+`moltis config check` validates your override file (`moltis.toml`) against the
+known config schema. It also checks that Moltis-managed `defaults.toml` exists
+and can be parsed, but it does not treat `defaults.toml` as user-authored input.
+
+New config fields should be added to the Rust config schema and its `Default`
+implementation. Moltis regenerates `defaults.toml` from those built-in defaults
+on startup, while `moltis.toml` should contain only values you intentionally
+override.
 
 ## Basic Settings
 
@@ -168,6 +210,7 @@ Configure skill discovery and agent-managed personal skills:
 enabled = true
 auto_load = ["commit"]
 enable_agent_sidecar_files = false  # Opt-in: allow agents to write sidecar text files in personal skills
+enable_self_improvement = true     # System prompt guidance for autonomous skill creation/update
 ```
 
 `enable_agent_sidecar_files` is disabled by default. When enabled, Moltis
@@ -176,6 +219,12 @@ such as `script.sh`, `Dockerfile`, templates, or `_meta.json` inside
 `<data_dir>/skills/<name>/`. Writes stay confined to that personal skill
 directory, reject path traversal and symlink escapes, and are recorded in
 `~/.moltis/logs/security-audit.jsonl`.
+
+`enable_self_improvement` (default: true) injects system prompt guidance that
+encourages the agent to proactively create and update skills after complex
+tasks (5+ tool calls), tricky error fixes, or non-obvious workflows. The
+`patch_skill` tool allows surgical find/replace updates without rewriting the
+entire skill body.
 
 ## Chat Message Queue
 

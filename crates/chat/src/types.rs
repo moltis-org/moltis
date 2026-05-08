@@ -325,11 +325,30 @@ pub(crate) fn session_token_usage_from_messages(messages: &[Value]) -> SessionTo
 mod tests {
     use {
         super::{
-            ReplyMedium, UsageSnapshot, build_assistant_turn_output, build_chat_final_broadcast,
-            session_token_usage_from_messages,
+            ReplyMedium, UsageSnapshot, assistant_message_is_visible, build_assistant_turn_output,
+            build_chat_final_broadcast, session_token_usage_from_messages,
         },
         moltis_agents::model::Usage,
     };
+
+    #[test]
+    fn assistant_message_with_tool_calls_is_visible() {
+        let msg = serde_json::json!({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "exec", "arguments": "{}"}}]
+        });
+        assert!(assistant_message_is_visible(&msg));
+    }
+
+    #[test]
+    fn empty_assistant_message_without_tool_calls_is_hidden() {
+        let msg = serde_json::json!({
+            "role": "assistant",
+            "content": "",
+        });
+        assert!(!assistant_message_is_visible(&msg));
+    }
 
     #[test]
     fn session_token_usage_tracks_cached_tokens() {
@@ -448,6 +467,15 @@ pub(crate) fn assistant_message_is_visible(message: &Value) -> bool {
         return true;
     }
 
+    // Keep assistant messages that carry tool calls (even with empty content).
+    if message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .is_some_and(|arr| !arr.is_empty())
+    {
+        return true;
+    }
+
     ["content", "reasoning"].iter().any(|field| {
         message
             .get(*field)
@@ -498,9 +526,11 @@ pub(crate) fn truncate_at_char_boundary(text: &str, max_bytes: usize) -> &str {
 /// Extract preview text from a single message JSON value.
 pub(crate) fn extract_preview_from_value(msg: &Value) -> Option<String> {
     fn message_text(msg: &Value) -> Option<String> {
-        let text = if let Some(s) = msg.get("content").and_then(|v| v.as_str()) {
+        let content = msg.get("content")?;
+        let text = if let Some(s) = content.as_str() {
             s.to_string()
-        } else if let Some(blocks) = msg.get("content").and_then(|v| v.as_array()) {
+        } else {
+            let blocks = content.as_array()?;
             blocks
                 .iter()
                 .filter_map(|b| {
@@ -512,8 +542,6 @@ pub(crate) fn extract_preview_from_value(msg: &Value) -> Option<String> {
                 })
                 .collect::<Vec<_>>()
                 .join(" ")
-        } else {
-            return None;
         };
         let trimmed = text.trim();
         if trimmed.is_empty() {
@@ -1027,14 +1055,24 @@ pub(crate) async fn detect_host_sudo_access() -> (Option<bool>, Option<String>) 
     #[cfg(unix)]
     {
         use std::process::Stdio;
-        let output = tokio::process::Command::new("sudo")
-            .arg("-n")
-            .arg("true")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .await;
+        let output = match tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            tokio::process::Command::new("sudo")
+                .arg("-n")
+                .arg("true")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output(),
+        )
+        .await
+        {
+            Ok(output) => output,
+            Err(_) => {
+                tracing::info!("runtime sudo detection timed out");
+                return (None, Some("timeout".to_string()));
+            },
+        };
 
         match output {
             Ok(out) if out.status.success() => (Some(true), Some("passwordless".to_string())),
@@ -1186,7 +1224,7 @@ pub(crate) fn refresh_runtime_prompt_time(
     host.today = Some(prompt_today_for_timezone(host.timezone.as_deref()));
 }
 
-pub(crate) fn memory_write_mode_allows_save(mode: AgentMemoryWriteMode) -> bool {
+pub fn memory_write_mode_allows_save(mode: AgentMemoryWriteMode) -> bool {
     !matches!(mode, AgentMemoryWriteMode::Off)
 }
 

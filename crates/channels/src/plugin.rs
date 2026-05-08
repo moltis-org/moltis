@@ -23,6 +23,8 @@ pub enum ChannelType {
     Slack,
     Matrix,
     Nostr,
+    Signal,
+    Telephony,
 }
 
 impl ChannelType {
@@ -36,6 +38,8 @@ impl ChannelType {
             Self::Slack => "slack",
             Self::Matrix => "matrix",
             Self::Nostr => "nostr",
+            Self::Signal => "signal",
+            Self::Telephony => "telephony",
         }
     }
 
@@ -49,6 +53,8 @@ impl ChannelType {
             Self::Slack => "Slack",
             Self::Matrix => "Matrix",
             Self::Nostr => "Nostr",
+            Self::Signal => "Signal",
+            Self::Telephony => "Phone Call",
         }
     }
 
@@ -65,7 +71,15 @@ impl ChannelType {
                     Some("private".to_string())
                 }
             },
+            Self::Signal => {
+                if chat_id.starts_with("group:") {
+                    Some("group".to_string())
+                } else {
+                    Some("direct".to_string())
+                }
+            },
             Self::Nostr => Some("dm".to_string()),
+            Self::Telephony => Some("call".to_string()),
             _ => None,
         }
     }
@@ -80,6 +94,8 @@ impl ChannelType {
             Self::Slack => &["bot_token", "app_token", "signing_secret"],
             Self::Matrix => &["access_token", "password"],
             Self::Nostr => &["secret_key"],
+            Self::Signal => &[],
+            Self::Telephony => &["auth_token"],
         }
     }
 }
@@ -102,6 +118,8 @@ impl std::str::FromStr for ChannelType {
             "slack" => Ok(Self::Slack),
             "matrix" | "element" => Ok(Self::Matrix),
             "nostr" => Ok(Self::Nostr),
+            "signal" => Ok(Self::Signal),
+            "telephony" | "phone" | "voice_call" | "voicecall" => Ok(Self::Telephony),
             other => Err(Error::invalid_input(format!(
                 "unknown channel type: {other}"
             ))),
@@ -119,6 +137,8 @@ impl ChannelType {
         Self::Slack,
         Self::Matrix,
         Self::Nostr,
+        Self::Signal,
+        Self::Telephony,
     ];
 
     /// Returns the static descriptor for this channel type.
@@ -237,6 +257,38 @@ impl ChannelType {
                     supports_location: false,
                 },
             },
+            Self::Signal => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Signal",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::GatewayLoop,
+                    supports_outbound: true,
+                    supports_streaming: false,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: false,
+                    supports_pairing: false,
+                    supports_otp: true,
+                    supports_reactions: false,
+                    supports_location: false,
+                },
+            },
+            Self::Telephony => ChannelDescriptor {
+                channel_type: *self,
+                display_name: "Phone Call",
+                capabilities: ChannelCapabilities {
+                    inbound_mode: InboundMode::Webhook,
+                    supports_outbound: true,
+                    supports_streaming: false,
+                    supports_interactive: false,
+                    supports_threads: false,
+                    supports_voice_ingest: true,
+                    supports_pairing: false,
+                    supports_otp: false,
+                    supports_reactions: false,
+                    supports_location: false,
+                },
+            },
         }
     }
 }
@@ -350,6 +402,11 @@ pub enum ChannelEvent {
         channel_type: ChannelType,
         account_id: String,
         reason: String,
+    },
+    /// Channel account status changed (e.g. ownership bootstrap complete).
+    StatusChanged {
+        channel_type: ChannelType,
+        account_id: String,
     },
 }
 
@@ -782,6 +839,29 @@ pub trait ChannelPlugin: Send + Sync {
         _account_id: &str,
     ) -> Option<Box<dyn crate::channel_webhook_middleware::ChannelWebhookVerifier>> {
         None
+    }
+
+    /// Start an OAuth/OIDC login flow. Returns auth URL and CSRF state.
+    async fn oidc_start(
+        &self,
+        _account_id: &str,
+        _config: serde_json::Value,
+        _redirect_uri: &str,
+    ) -> Result<serde_json::Value> {
+        Err(Error::unavailable(
+            "OIDC login not supported for this channel",
+        ))
+    }
+
+    /// Complete an OAuth/OIDC login after browser redirect.
+    async fn oidc_complete(
+        &self,
+        _csrf_state: &str,
+        _callback_url: &str,
+    ) -> Result<serde_json::Value> {
+        Err(Error::unavailable(
+            "OIDC login not supported for this channel",
+        ))
     }
 }
 
@@ -1251,7 +1331,7 @@ mod tests {
     #[test]
     fn all_covers_every_variant() {
         // If a new variant is added to ChannelType, this test forces updating ALL.
-        assert_eq!(ChannelType::ALL.len(), 7);
+        assert_eq!(ChannelType::ALL.len(), 9);
         for ct in ChannelType::ALL {
             // descriptor() must not panic
             let desc = ct.descriptor();

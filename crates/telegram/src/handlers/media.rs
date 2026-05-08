@@ -67,7 +67,7 @@ pub(super) fn extract_voice_file(msg: &Message) -> Option<VoiceFileInfo> {
     match &msg.kind {
         MessageKind::Common(common) => match &common.media_kind {
             MediaKind::Voice(v) => Some(VoiceFileInfo {
-                file_id: v.voice.file.id.clone(),
+                file_id: v.voice.file.id.to_string(),
                 format: "ogg".to_string(),
             }),
             MediaKind::Audio(a) => {
@@ -86,7 +86,7 @@ pub(super) fn extract_voice_file(msg: &Message) -> Option<VoiceFileInfo> {
                     .unwrap_or("mp3")
                     .to_string();
                 Some(VoiceFileInfo {
-                    file_id: a.audio.file.id.clone(),
+                    file_id: a.audio.file.id.to_string(),
                     format,
                 })
             },
@@ -105,7 +105,7 @@ pub(super) fn extract_photo_file(msg: &Message) -> Option<PhotoFileInfo> {
     match &msg.kind {
         MessageKind::Common(common) => match &common.media_kind {
             MediaKind::Photo(p) => p.photo.last().map(|ps| PhotoFileInfo {
-                file_id: ps.file.id.clone(),
+                file_id: ps.file.id.to_string(),
                 media_type: "image/jpeg".to_string(),
             }),
             _ => None,
@@ -130,9 +130,26 @@ pub(super) fn extract_document_file(msg: &Message) -> Option<DocumentFileInfo> {
                     .as_ref()
                     .map(ToString::to_string)
                     .unwrap_or_else(|| "application/octet-stream".to_string());
+                let normalized = normalize_media_type(&raw);
+                // Telegram often sends application/octet-stream for file types
+                // it doesn't recognise (e.g. .md, .toml, .yaml). Fall back to
+                // extension-based detection so these documents aren't silently
+                // dropped. Only the last extension segment is consulted
+                // (e.g. "archive.tar.gz" → "gz"), which is intentional.
+                let media_type = if normalized == "application/octet-stream" {
+                    d.document
+                        .file_name
+                        .as_deref()
+                        .and_then(|name| name.rsplit('.').next())
+                        .and_then(moltis_media::mime::mime_from_extension)
+                        .map(str::to_string)
+                        .unwrap_or(normalized)
+                } else {
+                    normalized
+                };
                 Some(DocumentFileInfo {
-                    file_id: d.document.file.id.clone(),
-                    media_type: normalize_media_type(&raw),
+                    file_id: d.document.file.id.to_string(),
+                    media_type,
                     file_name: d.document.file_name.clone(),
                 })
             },
@@ -244,8 +261,17 @@ pub(super) fn should_inline_document_text(media_type: &str) -> bool {
             | "text/markdown"
             | "text/x-markdown"
             | "text/xml"
+            | "text/csv"
+            | "text/x-toml"
+            | "text/x-yaml"
             | "application/json"
             | "application/xml"
+            // mime_guess returns text/x-toml and text/x-yaml for the inference
+            // path; the application/* variants cover cases where Telegram (or
+            // another source) sends these MIME types directly.
+            | "application/toml"
+            | "application/yaml"
+            | "application/x-yaml"
     ) || media_type.ends_with("+json")
         || media_type.ends_with("+xml")
 }
@@ -403,7 +429,9 @@ impl ToChannelMessageKind for MediaKind {
 }
 
 pub(super) async fn download_telegram_file(bot: &Bot, file_id: &str) -> Result<Vec<u8>> {
-    let file = bot.get_file(file_id).await?;
+    let file = bot
+        .get_file(teloxide::types::FileId(file_id.to_string()))
+        .await?;
     let token = bot.token();
     let base = bot.api_url();
     let url = format!("{base}file/bot{token}/{}", file.path);

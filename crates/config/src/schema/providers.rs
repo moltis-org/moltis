@@ -5,6 +5,53 @@ use {
     std::collections::HashMap,
 };
 
+/// Canonical list of known LLM provider names and accepted config-key aliases.
+///
+/// This is the **single source of truth** for provider name validation.
+/// Config validation (`semantic.rs`) uses this to detect typos, and
+/// `moltis-providers` cross-validates its registrations against it.
+///
+/// The list includes both canonical provider names (used in registration)
+/// and config-key aliases that users may write in `[providers.<name>]`
+/// sections (e.g. `"local"` is an alias for `"local-llm"`, mapped at
+/// runtime by `ProvidersConfig::provider_entry`).
+///
+/// When adding a new provider, add its config name here.  A compile-time
+/// test in `moltis-providers` will fail if a registered provider is
+/// missing from this list.
+pub const KNOWN_PROVIDER_NAMES: &[&str] = &[
+    // Built-in providers (always available)
+    "anthropic",
+    "openai",
+    // OpenAI-compatible providers (table-driven)
+    "alibaba-coding",
+    "cerebras",
+    "deepinfra",
+    "deepseek",
+    "fireworks",
+    "gemini",
+    "lmstudio",
+    "minimax",
+    "mistral",
+    "moonshot",
+    "ollama",
+    "openrouter",
+    "venice",
+    "zai",
+    "zai-code",
+    // Feature-gated providers
+    "github-copilot",
+    "kimi-code",
+    "local", // alias for local-llm
+    "local-llm",
+    "openai-codex",
+    // Providers registered via genai/async-openai backends
+    "groq",
+    "xai",
+    // Multi-protocol proxy (opencode.ai)
+    "opencode-zen",
+];
+
 /// OAuth provider configuration (e.g. openai-codex).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthProviderConfig {
@@ -16,6 +63,24 @@ pub struct OAuthProviderConfig {
     pub scopes: Vec<String>,
     #[serde(default)]
     pub callback_port: u16,
+}
+
+/// Override configuration for a specific model.
+///
+/// Used in both `[models.<id>]` (global) and `[providers.<name>.model_overrides.<id>]`
+/// (provider-scoped) sections of `moltis.toml`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelOverride {
+    /// Override the context window size (in tokens) for this model.
+    ///
+    /// When set, this value takes precedence over the built-in heuristic.
+    /// Must be between 1 and 10,000,000 (inclusive).
+    ///
+    /// Provider-scoped overrides (`[providers.<name>.model_overrides.<id>]`)
+    /// take precedence over global overrides (`[models.<id>]`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u32>,
 }
 
 /// LLM provider configuration.
@@ -35,7 +100,7 @@ pub struct ProvidersConfig {
     pub show_legacy_models: bool,
 
     /// Provider-specific settings keyed by provider name.
-    /// Known keys: "anthropic", "openai", "gemini", "groq", "xai", "deepseek"
+    /// See [`KNOWN_PROVIDER_NAMES`] for the full list of recognised names.
     #[serde(flatten)]
     pub providers: HashMap<String, ProviderEntry>,
 
@@ -200,6 +265,39 @@ pub struct ProviderEntry {
     /// routed through this provider.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy: Option<ToolPolicyConfig>,
+
+    /// Per-model overrides for context window and other model-specific settings.
+    ///
+    /// Keys are normalized model IDs (as displayed in the chat UI).
+    /// These take precedence over global `[models.<id>]` overrides.
+    ///
+    /// ```toml
+    /// [providers.zai-code.models.glm-5-turbo]
+    /// context_window = 200_000
+    /// ```
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub model_overrides: HashMap<String, ModelOverride>,
+
+    /// Seconds of inactivity before auto-unloading local models.
+    ///
+    /// Only meaningful for `[providers.local-llm]`. Per-model values in
+    /// `local-llm.json` override this global default. `0` = never unload.
+    /// `None` (default) = models stay loaded indefinitely.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_timeout_secs: Option<u64>,
+
+    /// Timeout in seconds for completion-based model probes.
+    ///
+    /// When the lightweight catalog check (`GET /v1/models`) is unavailable,
+    /// probing falls back to sending a completion request. This setting
+    /// controls how long to wait for that fallback.
+    ///
+    /// Increase this for local LLM servers that need time to load large
+    /// models on first request (e.g. llama.cpp with 100B+ models).
+    ///
+    /// `None` (default) uses the built-in 30-second timeout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_timeout_secs: Option<u64>,
 }
 
 impl std::fmt::Debug for ProviderEntry {
@@ -217,6 +315,8 @@ impl std::fmt::Debug for ProviderEntry {
             .field("cache_retention", &self.cache_retention)
             .field("strict_tools", &self.strict_tools)
             .field("policy", &self.policy)
+            .field("model_overrides", &self.model_overrides)
+            .field("probe_timeout_secs", &self.probe_timeout_secs)
             .finish()
     }
 }
@@ -236,6 +336,9 @@ impl Default for ProviderEntry {
             cache_retention: CacheRetention::Short,
             strict_tools: None,
             policy: None,
+            model_overrides: HashMap::new(),
+            idle_timeout_secs: None,
+            probe_timeout_secs: None,
         }
     }
 }

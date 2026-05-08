@@ -62,7 +62,7 @@ pub async fn hybrid_search(
     vector_weight: f32,
     keyword_weight: f32,
     merge_strategy: MergeStrategy,
-) -> anyhow::Result<Vec<SearchResult>> {
+) -> crate::error::Result<Vec<SearchResult>> {
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 
@@ -115,7 +115,7 @@ pub async fn keyword_only_search(
     store: &dyn MemoryStore,
     query: &str,
     limit: usize,
-) -> anyhow::Result<Vec<SearchResult>> {
+) -> crate::error::Result<Vec<SearchResult>> {
     #[cfg(feature = "metrics")]
     let start = std::time::Instant::now();
 

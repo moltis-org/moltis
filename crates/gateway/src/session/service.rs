@@ -49,6 +49,7 @@ pub struct LiveSessionService {
     pub(super) store: Arc<SessionStore>,
     pub(super) metadata: Arc<SqliteSessionMetadata>,
     pub(super) agent_persona_store: Option<Arc<AgentPersonaStore>>,
+    pub(super) voice_persona_store: Option<Arc<crate::voice_persona::VoicePersonaStore>>,
     pub(super) tts_service: Option<Arc<dyn TtsService>>,
     pub(super) share_store: Option<Arc<ShareStore>>,
     pub(super) sandbox_router: Option<Arc<SandboxRouter>>,
@@ -66,6 +67,7 @@ impl LiveSessionService {
             store,
             metadata,
             agent_persona_store: None,
+            voice_persona_store: None,
             tts_service: None,
             share_store: None,
             sandbox_router: None,
@@ -83,8 +85,48 @@ impl LiveSessionService {
         self
     }
 
+    pub async fn restore_sandbox_router_overrides(&self) {
+        let Some(router) = self.sandbox_router.as_ref() else {
+            return;
+        };
+
+        Self::restore_sandbox_router_overrides_from_metadata(&self.metadata, router).await;
+    }
+
+    pub async fn restore_sandbox_router_overrides_from_metadata(
+        metadata: &SqliteSessionMetadata,
+        router: &SandboxRouter,
+    ) {
+        for entry in metadata.list().await {
+            if let Some(enabled) = entry.sandbox_enabled {
+                router.set_override(&entry.key, enabled).await;
+            }
+            if let Some(ref image) = entry.sandbox_image {
+                router.set_image_override(&entry.key, image.clone()).await;
+            }
+            if let Some(ref backend) = entry.sandbox_backend
+                && let Err(e) = router.set_backend_override(&entry.key, backend).await
+            {
+                tracing::debug!(
+                    session = entry.key,
+                    backend = backend.as_str(),
+                    error = %e,
+                    "skipping persisted sandbox backend override (backend not available)"
+                );
+            }
+        }
+    }
+
     pub fn with_agent_persona_store(mut self, store: Arc<AgentPersonaStore>) -> Self {
         self.agent_persona_store = Some(store);
+        self
+    }
+
+    pub fn with_voice_persona_store(
+        mut self,
+        store: Arc<crate::voice_persona::VoicePersonaStore>,
+    ) -> Self {
+        self.voice_persona_store = Some(store);
         self
     }
 
@@ -151,10 +193,6 @@ impl LiveSessionService {
         else {
             return fallback;
         };
-
-        if agent_id == "main" {
-            return "main".to_string();
-        }
 
         if let Some(ref store) = self.agent_persona_store {
             match store.get(agent_id).await {
@@ -321,6 +359,8 @@ impl SessionService for LiveSessionService {
                 "archived": e.archived,
                 "agent_id": agent_id,
                 "agentId": agent_id,
+                "mode_id": e.mode_id,
+                "modeId": e.mode_id,
                 "node_id": e.node_id,
                 "version": e.version,
             }));
@@ -396,6 +436,8 @@ impl SessionService for LiveSessionService {
                     "mcpDisabled": entry.mcp_disabled,
                     "agent_id": entry.agent_id,
                     "agentId": entry.agent_id,
+                    "mode_id": entry.mode_id,
+                    "modeId": entry.mode_id,
                     "node_id": entry.node_id,
                     "version": entry.version,
                 },
@@ -449,6 +491,8 @@ impl SessionService for LiveSessionService {
                 "mcpDisabled": entry.mcp_disabled,
                 "agent_id": entry.agent_id,
                 "agentId": entry.agent_id,
+                "mode_id": entry.mode_id,
+                "modeId": entry.mode_id,
                 "node_id": entry.node_id,
                 "version": entry.version,
             },
@@ -490,6 +534,13 @@ impl SessionService for LiveSessionService {
             self.metadata
                 .set_worktree_branch(key, worktree_branch)
                 .await;
+        }
+        if let Some(mode_id_opt) = p.mode_id {
+            let mode_id = mode_id_opt.filter(|s| !s.is_empty());
+            self.metadata
+                .set_mode_id(key, mode_id.as_deref())
+                .await
+                .map_err(|e| ServiceError::message(e.to_string()))?;
         }
         if let Some(sandbox_image_opt) = p.sandbox_image {
             let sandbox_image = sandbox_image_opt.filter(|s| !s.is_empty());
@@ -540,6 +591,21 @@ impl SessionService for LiveSessionService {
                 }
             }
         }
+        if let Some(sandbox_backend_opt) = p.sandbox_backend {
+            let sandbox_backend = sandbox_backend_opt.filter(|s| !s.is_empty());
+            self.metadata
+                .set_sandbox_backend(key, sandbox_backend.clone())
+                .await;
+            if let Some(ref router) = self.sandbox_router {
+                if let Some(ref name) = sandbox_backend {
+                    if let Err(e) = router.set_backend_override(key, name).await {
+                        warn!(session = key, error = %e, "failed to set sandbox backend override");
+                    }
+                } else {
+                    router.remove_backend_override(key).await;
+                }
+            }
+        }
 
         let entry = self
             .metadata
@@ -554,10 +620,13 @@ impl SessionService for LiveSessionService {
             "archived": entry.archived,
             "sandbox_enabled": entry.sandbox_enabled,
             "sandbox_image": entry.sandbox_image,
+            "sandbox_backend": entry.sandbox_backend,
             "worktree_branch": entry.worktree_branch,
             "mcpDisabled": entry.mcp_disabled,
             "agent_id": entry.agent_id,
             "agentId": entry.agent_id,
+            "mode_id": entry.mode_id,
+            "modeId": entry.mode_id,
             "node_id": entry.node_id,
             "version": entry.version,
         }))

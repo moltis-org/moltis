@@ -146,4 +146,30 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             })
         }),
     );
+    reg.register(
+        "channels.oauth_start",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .channel
+                    .oauth_start(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
+        "channels.oauth_complete",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .services
+                    .channel
+                    .oauth_complete(ctx.params.clone())
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
 }

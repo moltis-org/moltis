@@ -66,6 +66,31 @@ fn resolve_hook_channel_binding(
     (!binding.is_empty()).then_some(binding)
 }
 
+/// Dispatch a [`HookPayload::Command`] event (e.g. "new" or "reset") for the
+/// given session.  This is called from every code-path that creates or clears a
+/// session so that the `SessionMemoryHook` can export the conversation before
+/// the history is lost.
+pub(crate) async fn dispatch_command_hook(
+    hook_registry: &HookRegistry,
+    session_key: &str,
+    action: &str,
+    sender_id: Option<&str>,
+) {
+    let payload = moltis_common::hooks::HookPayload::Command {
+        session_key: session_key.to_string(),
+        action: action.to_string(),
+        sender_id: sender_id.map(str::to_string),
+    };
+    if let Err(e) = hook_registry.dispatch(&payload).await {
+        warn!(
+            session = %session_key,
+            action = %action,
+            error = %e,
+            "Command hook dispatch failed"
+        );
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TtsStatusPayload {
@@ -118,9 +143,11 @@ fn filter_ui_history(messages: Vec<Value>) -> Vec<Value> {
 
 /// Extract text content from a single message Value.
 fn message_text(msg: &Value) -> Option<String> {
-    let text = if let Some(s) = msg.get("content").and_then(|v| v.as_str()) {
+    let content = msg.get("content")?;
+    let text = if let Some(s) = content.as_str() {
         s.to_string()
-    } else if let Some(blocks) = msg.get("content").and_then(|v| v.as_array()) {
+    } else {
+        let blocks = content.as_array()?;
         blocks
             .iter()
             .filter_map(|b| {
@@ -132,8 +159,6 @@ fn message_text(msg: &Value) -> Option<String> {
             })
             .collect::<Vec<_>>()
             .join(" ")
-    } else {
-        return None;
     };
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -829,8 +854,10 @@ async fn to_shared_message(
 mod maintenance;
 mod service;
 mod share;
+pub(crate) mod summary;
 #[cfg(test)]
 mod tests;
+pub(crate) mod title;
 mod voice;
 
 pub use service::LiveSessionService;

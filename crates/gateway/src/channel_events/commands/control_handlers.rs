@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use {
     moltis_channels::{ChannelReplyTarget, Error as ChannelError, Result as ChannelResult},
+    moltis_config::ModePreset,
     moltis_sessions::metadata::SqliteSessionMetadata,
     moltis_tools::image_cache::ImageBuilder,
 };
@@ -20,6 +21,25 @@ use super::{
 };
 
 // ── Control command handlers ─────────────────────────────────────
+
+fn sorted_mode_presets(config: &moltis_config::MoltisConfig) -> Vec<(String, ModePreset)> {
+    let mut modes: Vec<(String, ModePreset)> = config
+        .modes
+        .presets
+        .iter()
+        .filter(|(_, preset)| !preset.prompt.trim().is_empty())
+        .map(|(id, preset)| (id.clone(), preset.clone()))
+        .collect();
+    modes.sort_by(|(left_id, left), (right_id, right)| {
+        let left_name = left.name.as_deref().unwrap_or(left_id);
+        let right_name = right.name.as_deref().unwrap_or(right_id);
+        left_name
+            .to_lowercase()
+            .cmp(&right_name.to_lowercase())
+            .then_with(|| left_id.cmp(right_id))
+    });
+    modes
+}
 
 pub(in crate::channel_events) async fn handle_approvals(
     state: &Arc<GatewayState>,
@@ -210,6 +230,118 @@ pub(in crate::channel_events) async fn handle_agent(
     }
 }
 
+pub(in crate::channel_events) async fn handle_mode(
+    state: &Arc<GatewayState>,
+    session_metadata: &SqliteSessionMetadata,
+    session_key: &str,
+    args: &str,
+) -> ChannelResult<String> {
+    let config = moltis_config::discover_and_load();
+    let modes = sorted_mode_presets(&config);
+    if modes.is_empty() {
+        return Ok("No modes are configured.".to_string());
+    }
+
+    let current_mode = session_metadata
+        .get(session_key)
+        .await
+        .and_then(|entry| entry.mode_id)
+        .filter(|value| !value.trim().is_empty());
+
+    if args.is_empty() {
+        let mut lines = Vec::with_capacity(modes.len() + 1);
+        for (i, (id, preset)) in modes.iter().enumerate() {
+            let marker = if current_mode.as_deref() == Some(id.as_str()) {
+                " *"
+            } else {
+                ""
+            };
+            let name = preset.name.as_deref().unwrap_or(id);
+            let description = preset.description.as_deref().unwrap_or_default();
+            if description.is_empty() {
+                lines.push(format!("{}. {} [{}]{}", i + 1, name, id, marker));
+            } else {
+                lines.push(format!(
+                    "{}. {} [{}] - {}{}",
+                    i + 1,
+                    name,
+                    id,
+                    description,
+                    marker,
+                ));
+            }
+        }
+        lines.push("\nUse /mode N, /mode <id>, or /mode none.".to_string());
+        return Ok(lines.join("\n"));
+    }
+
+    let normalized = args.trim().to_lowercase();
+    if matches!(
+        normalized.as_str(),
+        "none" | "off" | "clear" | "default" | "reset"
+    ) {
+        session_metadata
+            .set_mode_id(session_key, None)
+            .await
+            .map_err(|e| ChannelError::external("clearing session mode", e))?;
+        broadcast(
+            state,
+            "session",
+            serde_json::json!({
+                "kind": "patched",
+                "sessionKey": session_key,
+            }),
+            BroadcastOpts {
+                drop_if_slow: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        return Ok("Mode cleared.".to_string());
+    }
+
+    let chosen = if let Ok(n) = normalized.parse::<usize>() {
+        if n == 0 || n > modes.len() {
+            return Err(ChannelError::invalid_input(format!(
+                "invalid mode number. Use 1-{}.",
+                modes.len()
+            )));
+        }
+        modes.get(n - 1)
+    } else {
+        modes.iter().find(|(id, preset)| {
+            id.eq_ignore_ascii_case(args.trim())
+                || preset
+                    .name
+                    .as_deref()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(args.trim()))
+        })
+    }
+    .ok_or_else(|| ChannelError::invalid_input(format!("unknown mode: {args}")))?;
+
+    session_metadata
+        .set_mode_id(session_key, Some(&chosen.0))
+        .await
+        .map_err(|e| ChannelError::external("setting session mode", e))?;
+
+    broadcast(
+        state,
+        "session",
+        serde_json::json!({
+            "kind": "patched",
+            "sessionKey": session_key,
+        }),
+        BroadcastOpts {
+            drop_if_slow: true,
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let name = chosen.1.name.as_deref().unwrap_or(&chosen.0);
+    Ok(format!("Mode switched to: {name}"))
+}
+
 pub(in crate::channel_events) async fn handle_model(
     state: &Arc<GatewayState>,
     session_metadata: &SqliteSessionMetadata,
@@ -348,7 +480,7 @@ pub(in crate::channel_events) async fn handle_sandbox(
                 Some(img) if !img.is_empty() => img,
                 _ => {
                     if let Some(ref router) = state.sandbox_router {
-                        router.default_image().await
+                        router.resolve_default_image_nowait().await
                     } else {
                         moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string()
                     }
@@ -363,7 +495,10 @@ pub(in crate::channel_events) async fn handle_sandbox(
         };
 
         // List available images.
-        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let cfg = moltis_config::discover_and_load();
+        let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+            &cfg.tools.exec.sandbox.backend,
+        );
         let cached = builder.list_cached().await.unwrap_or_default();
 
         let default_img = moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string();
@@ -431,7 +566,10 @@ pub(in crate::channel_events) async fn handle_sandbox(
             .map_err(|_| ChannelError::invalid_input("usage: /sandbox image [number]"))?;
 
         let default_img = moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string();
-        let builder = moltis_tools::image_cache::DockerImageBuilder::new();
+        let cfg = moltis_config::discover_and_load();
+        let builder = moltis_tools::image_cache::DockerImageBuilder::for_backend(
+            &cfg.tools.exec.sandbox.backend,
+        );
         let cached = builder.list_cached().await.unwrap_or_default();
         let mut images: Vec<String> = vec![default_img];
         for img in &cached {
@@ -537,7 +675,7 @@ pub(in crate::channel_events) async fn handle_stop(
     state: &Arc<GatewayState>,
     session_key: &str,
 ) -> ChannelResult<String> {
-    let chat = state.chat().await;
+    let chat = state.chat();
     let params = serde_json::json!({ "sessionKey": session_key });
     match chat.abort(params).await {
         Ok(res) => {
@@ -555,11 +693,80 @@ pub(in crate::channel_events) async fn handle_stop(
     }
 }
 
+pub(in crate::channel_events) async fn handle_update(
+    state: &Arc<GatewayState>,
+    reply_to: &ChannelReplyTarget,
+    sender_id: Option<&str>,
+    args: &str,
+) -> ChannelResult<String> {
+    // Owner-only: same allowlist check as approve/deny.
+    let authorized = match sender_id {
+        Some(sid) => is_sender_on_allowlist(state, &reply_to.account_id, sid).await,
+        None => false,
+    };
+    if !authorized {
+        return Err(ChannelError::invalid_input(
+            "You are not authorized to update moltis. Only users on this bot's allowlist can use /update.",
+        ));
+    }
+
+    let requested_version = if args.is_empty() {
+        None
+    } else {
+        Some(args.trim())
+    };
+
+    let releases_url = crate::update_check::resolve_releases_url(
+        state.config.server.update_releases_url.as_deref(),
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent(format!("moltis-gateway/{}", state.version))
+        .build()
+        .map_err(|e| ChannelError::external("build HTTP client", e))?;
+
+    match crate::updater::perform_update(&client, &releases_url, requested_version).await {
+        Ok(crate::updater::UpdateOutcome::Updated { from, to, .. }) => {
+            // Schedule restart after a short delay so the reply is sent first.
+            let gw = Arc::clone(state);
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tracing::info!("restarting after update");
+                crate::updater::restart_process();
+            });
+            let _ = gw; // keep state alive until after spawn
+            Ok(format!(
+                "Updated from {from} to {to}. Restarting now\u{2026}"
+            ))
+        },
+        Ok(crate::updater::UpdateOutcome::DockerUpdated { from, to }) => {
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tracing::info!("restarting after Docker update");
+                crate::updater::restart_process();
+            });
+            Ok(format!(
+                "Updated from {from} to {to} (in-container). Restarting now\u{2026}\n\
+                 Note: pull the latest Docker image for persistence across container recreation."
+            ))
+        },
+        Ok(crate::updater::UpdateOutcome::AlreadyUpToDate { version }) => {
+            Ok(format!("Already up to date (v{version})."))
+        },
+        Ok(crate::updater::UpdateOutcome::ManualRequired {
+            command, version, ..
+        }) => Ok(format!(
+            "Update to {version} requires manual installation:\n`{command}`"
+        )),
+        Err(e) => Err(ChannelError::external("update", e)),
+    }
+}
+
 pub(in crate::channel_events) async fn handle_peek(
     state: &Arc<GatewayState>,
     session_key: &str,
 ) -> ChannelResult<String> {
-    let chat = state.chat().await;
+    let chat = state.chat();
     let params = serde_json::json!({ "sessionKey": session_key });
     match chat.peek(params).await {
         Ok(res) => {
@@ -583,5 +790,241 @@ pub(in crate::channel_events) async fn handle_peek(
             Ok(lines.join("\n"))
         },
         Err(e) => Err(ChannelError::external("peek", e)),
+    }
+}
+
+/// Handle `/tts` commands.
+///
+/// Subcommands:
+/// - `/tts persona` — list all personas and show active
+/// - `/tts persona <id>` — set active persona
+/// - `/tts persona off|none` — deactivate persona
+pub(in crate::channel_events) async fn handle_tts(
+    state: &Arc<GatewayState>,
+    session_key: &str,
+    args: &str,
+) -> ChannelResult<String> {
+    let sub = args.split_whitespace().next().unwrap_or("");
+    let sub_args = args[sub.len()..].trim();
+
+    match sub {
+        "persona" => handle_tts_persona(state, sub_args).await,
+        "provider" => handle_tts_provider(state, sub_args).await,
+        "chat" => handle_tts_chat(state, sub_args, session_key).await,
+        "" => {
+            // Show TTS status summary.
+            let status = state
+                .services
+                .tts
+                .status()
+                .await
+                .map_err(ChannelError::unavailable)?;
+            let enabled = status
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let provider = status
+                .get("provider")
+                .and_then(|v| v.as_str())
+                .unwrap_or("none");
+
+            let persona_line = if let Some(ref store) = state.services.voice_persona_store
+                && let Ok(Some(active)) = store.get_active().await
+            {
+                format!(
+                    "\nPersona: {} ({})",
+                    active.persona.label, active.persona.id
+                )
+            } else {
+                "\nPersona: none".to_string()
+            };
+
+            Ok(format!(
+                "TTS: {}\nProvider: {provider}{persona_line}",
+                if enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+            ))
+        },
+        other => Err(ChannelError::invalid_input(format!(
+            "unknown /tts subcommand: {other}\n\
+             Usage:\n  /tts persona [<id>|off]\n  /tts provider [<id>]\n  /tts chat [on|off|default]"
+        ))),
+    }
+}
+
+async fn handle_tts_persona(state: &Arc<GatewayState>, args: &str) -> ChannelResult<String> {
+    let Some(ref store) = state.services.voice_persona_store else {
+        return Err(ChannelError::unavailable("voice personas not available"));
+    };
+
+    if args.is_empty() {
+        // List all personas with active indicator.
+        let personas = store
+            .list()
+            .await
+            .map_err(|e| ChannelError::external("list personas", e))?;
+
+        if personas.is_empty() {
+            return Ok(
+                "No voice personas configured.\nCreate them in Settings > Voice > Voice Personas."
+                    .to_string(),
+            );
+        }
+
+        let mut lines = vec!["Voice Personas:".to_string()];
+        for p in &personas {
+            let marker = if p.is_active {
+                " (active)"
+            } else {
+                ""
+            };
+            let desc = p
+                .persona
+                .description
+                .as_deref()
+                .map(|d| format!(" — {d}"))
+                .unwrap_or_default();
+            lines.push(format!(
+                "  {} ({}){marker}{desc}",
+                p.persona.label, p.persona.id
+            ));
+        }
+        lines.push(String::new());
+        lines.push("Set: /tts persona <id>".to_string());
+        lines.push("Clear: /tts persona off".to_string());
+        return Ok(lines.join("\n"));
+    }
+
+    // Set or clear active persona.
+    let id = args.split_whitespace().next().unwrap_or("");
+    match id {
+        "off" | "none" | "default" => {
+            store
+                .set_active(None)
+                .await
+                .map_err(|e| ChannelError::external("deactivate persona", e))?;
+            Ok("Voice persona deactivated.".to_string())
+        },
+        _ => {
+            let result = store
+                .set_active(Some(id))
+                .await
+                .map_err(|e| ChannelError::external("set persona", e))?;
+            match result {
+                Some(r) => Ok(format!(
+                    "Voice persona set to: {} ({})",
+                    r.persona.label, r.persona.id
+                )),
+                None => Err(ChannelError::invalid_input(format!(
+                    "persona '{id}' not found"
+                ))),
+            }
+        },
+    }
+}
+
+/// Handle `/tts provider [<id>]` — list or set the preferred TTS provider.
+async fn handle_tts_provider(state: &Arc<GatewayState>, args: &str) -> ChannelResult<String> {
+    let providers = state
+        .services
+        .tts
+        .providers()
+        .await
+        .map_err(ChannelError::unavailable)?;
+    let provider_list: Vec<serde_json::Value> = providers.as_array().cloned().unwrap_or_default();
+
+    if args.is_empty() {
+        let status = state
+            .services
+            .tts
+            .status()
+            .await
+            .map_err(ChannelError::unavailable)?;
+        let current = status
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("auto");
+
+        let mut lines = vec!["TTS Providers:".to_string()];
+        for p in &provider_list {
+            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            let name = p.get("name").and_then(|v| v.as_str()).unwrap_or(id);
+            let configured = p
+                .get("configured")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let marker = if id == current {
+                " (active)"
+            } else {
+                ""
+            };
+            let status_str = if configured {
+                ""
+            } else {
+                " [not configured]"
+            };
+            lines.push(format!("  {name} ({id}){marker}{status_str}"));
+        }
+        lines.push(String::new());
+        lines.push("Set: /tts provider <id>".to_string());
+        return Ok(lines.join("\n"));
+    }
+
+    let id = args.split_whitespace().next().unwrap_or("");
+    state
+        .services
+        .tts
+        .set_provider(serde_json::json!({ "provider": id }))
+        .await
+        .map_err(ChannelError::unavailable)?;
+    Ok(format!("TTS provider set to: {id}"))
+}
+
+/// Handle `/tts chat [on|off|default]` — per-session auto-speak toggle.
+async fn handle_tts_chat(
+    state: &Arc<GatewayState>,
+    args: &str,
+    session_key: &str,
+) -> ChannelResult<String> {
+    let mode = args.split_whitespace().next().unwrap_or("");
+
+    match mode {
+        "on" => {
+            let mut inner = state.inner.write().await;
+            inner.tts_session_overrides.insert(
+                session_key.to_string(),
+                crate::state::TtsRuntimeOverride {
+                    provider: None,
+                    voice_id: None,
+                    model: None,
+                },
+            );
+            // We use the override presence as a signal that auto-speak is on
+            // for this session. The actual auto mode is handled at synthesis time.
+            Ok("Auto-speak enabled for this session.".to_string())
+        },
+        "off" => {
+            let mut inner = state.inner.write().await;
+            inner.tts_session_overrides.remove(session_key);
+            Ok("Auto-speak disabled for this session.".to_string())
+        },
+        "default" | "" => {
+            let inner = state.inner.read().await;
+            let has_override = inner.tts_session_overrides.contains_key(session_key);
+            Ok(format!(
+                "Session auto-speak: {}",
+                if has_override {
+                    "on (override)"
+                } else {
+                    "default (from config)"
+                }
+            ))
+        },
+        other => Err(ChannelError::invalid_input(format!(
+            "unknown /tts chat mode: {other}\nUsage: /tts chat [on|off|default]"
+        ))),
     }
 }

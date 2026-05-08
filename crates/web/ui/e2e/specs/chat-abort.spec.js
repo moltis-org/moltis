@@ -1,66 +1,19 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
-
-function isRetryableRpcError(message) {
-	if (typeof message !== "string") return false;
-	return message.includes("WebSocket not connected") || message.includes("WebSocket disconnected");
-}
-
-async function sendRpcFromPage(page, method, params) {
-	let lastResponse = null;
-	for (let attempt = 0; attempt < 40; attempt++) {
-		if (attempt > 0) {
-			await waitForWsConnected(page);
-			await page.waitForTimeout(100);
-		}
-		lastResponse = await page
-			.evaluate(
-				async ({ methodName, methodParams }) => {
-					var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-					if (!appScript) throw new Error("app module script not found");
-					var appUrl = new URL(appScript.src, window.location.origin);
-					var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-					var helpers = await import(`${prefix}js/helpers.js`);
-					return helpers.sendRpc(methodName, methodParams);
-				},
-				{
-					methodName: method,
-					methodParams: params,
-				},
-			)
-			.catch((error) => ({ ok: false, error: { message: error?.message || String(error) } }));
-
-		if (lastResponse?.ok) return lastResponse;
-		if (!isRetryableRpcError(lastResponse?.error?.message)) return lastResponse;
-	}
-	return lastResponse;
-}
-
-async function expectRpcOk(page, method, params) {
-	const response = await sendRpcFromPage(page, method, params);
-	expect(response?.ok, `RPC ${method} failed: ${response?.error?.message || "unknown error"}`).toBeTruthy();
-	return response;
-}
+const {
+	expectRpcOk,
+	navigateAndWait,
+	sendRpcFromPage,
+	waitForChatSessionReady,
+	waitForWsConnected,
+	watchPageErrors,
+} = require("../helpers");
 
 test.describe("Chat abort", () => {
 	test.beforeEach(async ({ page }) => {
 		await navigateAndWait(page, "/chats/main");
 		await waitForWsConnected(page);
 
-		// Wait for the session switch RPC to finish rendering history.
-		// Without this, renderHistory() can clear #messages after we inject
-		// fake DOM elements, causing flaky "element not found" failures.
-		await page.waitForFunction(
-			async () => {
-				var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
-				if (!appScript) return false;
-				var appUrl = new URL(appScript.src, window.location.origin);
-				var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
-				var state = await import(`${prefix}js/state.js`);
-				return !(state.sessionSwitchInProgress || state.chatBatchLoading);
-			},
-			{ timeout: 10_000 },
-		);
+		await waitForChatSessionReady(page);
 	});
 
 	test("thinking indicator shows stop button", async ({ page }) => {

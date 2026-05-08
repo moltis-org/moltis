@@ -106,6 +106,14 @@ fn build_api_routes() -> Router<AppState> {
             "/api/sandbox/containers/{name}",
             axum::routing::delete(api::api_remove_container_handler),
         )
+        .route(
+            "/api/sandbox/available-backends",
+            get(api::api_available_backends_handler),
+        )
+        .route(
+            "/api/sandbox/remote-backends",
+            get(api::api_get_remote_backends_handler).put(api::api_set_remote_backend_handler),
+        )
         .route("/api/sandbox/disk-usage", get(api::api_disk_usage_handler))
         .route(
             "/api/sandbox/daemon/restart",
@@ -185,8 +193,16 @@ fn build_api_routes() -> Router<AppState> {
             get(moltis_httpd::tools_routes::config_template),
         )
         .route(
+            "/api/config/provenance",
+            get(moltis_httpd::tools_routes::config_provenance),
+        )
+        .route(
             "/api/restart",
             axum::routing::post(moltis_httpd::tools_routes::restart),
+        )
+        .route(
+            "/api/system/update",
+            axum::routing::post(moltis_httpd::tools_routes::update),
         )
         .route("/api/sessions", get(api::api_sessions_handler))
         .route(
@@ -203,7 +219,8 @@ fn build_api_routes() -> Router<AppState> {
             "/api/sessions/{session_key}/media/{filename}",
             get(api::api_session_media_handler),
         )
-        .route("/api/logs/download", get(api::api_logs_download_handler));
+        .route("/api/logs/download", get(api::api_logs_download_handler))
+        .nest("/api/data", moltis_httpd::data_routes::data_router());
 
     // Add metrics API routes (protected).
     #[cfg(feature = "metrics")]
@@ -219,6 +236,10 @@ fn build_api_routes() -> Router<AppState> {
         .route(
             "/api/metrics/history",
             get(moltis_httpd::metrics_routes::api_metrics_history_handler),
+        )
+        .route(
+            "/api/metrics/insights",
+            get(moltis_httpd::metrics_routes::api_metrics_insights_handler),
         );
 
     protected

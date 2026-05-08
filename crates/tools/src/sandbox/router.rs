@@ -7,8 +7,9 @@ use std::{
 
 use {
     async_trait::async_trait,
+    secrecy::ExposeSecret,
     tokio::sync::RwLock,
-    tracing::{debug, warn},
+    tracing::{debug, info, warn},
 };
 
 #[cfg(target_os = "macos")]
@@ -22,6 +23,7 @@ use {
             should_use_docker_backend,
         },
         docker::{DockerSandbox, NoSandbox},
+        file_system::{SandboxGrepOptions, SandboxListFilesResult, SandboxReadResult},
         platform::RestrictedHostSandbox,
         types::{
             BuildImageResult, DEFAULT_SANDBOX_IMAGE, Sandbox, SandboxConfig, SandboxId, SandboxMode,
@@ -90,7 +92,68 @@ impl FailoverSandbox {
 #[async_trait]
 impl Sandbox for FailoverSandbox {
     fn backend_name(&self) -> &'static str {
-        self.primary_name
+        // Report the active backend so callers know the true isolation level.
+        // On lock contention (write lock held during failover switch),
+        // conservatively assume fallback is active — the safer default.
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback_name
+        } else {
+            self.primary_name
+        }
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        // On lock contention, conservatively report the fallback's (weaker)
+        // isolation level rather than the primary's.
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback.provides_fs_isolation()
+        } else {
+            self.primary.provides_fs_isolation()
+        }
+    }
+
+    fn workspace_dir(&self) -> &str {
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback.workspace_dir()
+        } else {
+            self.primary.workspace_dir()
+        }
+    }
+
+    async fn workspace_dir_for(&self, id: &SandboxId) -> String {
+        if self.fallback_enabled().await {
+            self.fallback.workspace_dir_for(id).await
+        } else {
+            self.primary.workspace_dir_for(id).await
+        }
+    }
+
+    fn is_isolated(&self) -> bool {
+        if self
+            .use_fallback
+            .try_read()
+            .map(|guard| *guard)
+            .unwrap_or(true)
+        {
+            self.fallback.is_isolated()
+        } else {
+            self.primary.is_isolated()
+        }
     }
 
     async fn ensure_ready(&self, id: &SandboxId, image_override: Option<&str>) -> Result<()> {
@@ -170,6 +233,49 @@ impl Sandbox for FailoverSandbox {
         self.primary.cleanup(id).await
     }
 
+    // Delegate file operations to the active backend's own implementations
+    // so that path-level restrictions (e.g. RestrictedHostSandbox's allowlist)
+    // are enforced. Without these overrides the default trait impls route
+    // through self.exec(), bypassing the fallback backend's read_file/etc.
+
+    async fn read_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        max_bytes: u64,
+    ) -> Result<SandboxReadResult> {
+        if self.fallback_enabled().await {
+            return self.fallback.read_file(id, file_path, max_bytes).await;
+        }
+        self.primary.read_file(id, file_path, max_bytes).await
+    }
+
+    async fn write_file(
+        &self,
+        id: &SandboxId,
+        file_path: &str,
+        content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        if self.fallback_enabled().await {
+            return self.fallback.write_file(id, file_path, content).await;
+        }
+        self.primary.write_file(id, file_path, content).await
+    }
+
+    async fn list_files(&self, id: &SandboxId, root: &str) -> Result<SandboxListFilesResult> {
+        if self.fallback_enabled().await {
+            return self.fallback.list_files(id, root).await;
+        }
+        self.primary.list_files(id, root).await
+    }
+
+    async fn grep(&self, id: &SandboxId, opts: SandboxGrepOptions) -> Result<serde_json::Value> {
+        if self.fallback_enabled().await {
+            return self.fallback.grep(id, opts).await;
+        }
+        self.primary.grep(id, opts).await
+    }
+
     async fn build_image(
         &self,
         base: &str,
@@ -209,6 +315,18 @@ pub(crate) fn create_sandbox_backend(config: SandboxConfig) -> Arc<dyn Sandbox> 
     select_backend(config)
 }
 
+/// Create a backend by explicit name, using the given config.
+///
+/// Used by the gateway to register additional backends into the multi-backend
+/// router at startup. If the backend cannot be created (missing credentials,
+/// wrong platform), falls back to `RestrictedHostSandbox`.
+pub fn select_backend_by_name(name: &str, config: &SandboxConfig) -> Arc<dyn Sandbox> {
+    select_backend(SandboxConfig {
+        backend: name.to_string(),
+        ..config.clone()
+    })
+}
+
 /// Select the sandbox backend based on config and platform availability.
 ///
 /// When `backend` is `"auto"` (the default):
@@ -237,6 +355,11 @@ pub(crate) fn select_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
             Arc::new(RestrictedHostSandbox::new(config))
         },
         "wasm" | "wasmtime" => create_wasm_backend(config),
+        #[cfg(feature = "vercel-sandbox")]
+        "vercel" => create_vercel_backend(config),
+        "daytona" => create_daytona_backend(config),
+        #[cfg(target_os = "linux")]
+        "firecracker" => create_firecracker_backend(config),
         _ => auto_detect_backend(config),
     }
 }
@@ -262,6 +385,121 @@ fn create_wasm_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         tracing::warn!("wasm sandbox requested but feature not compiled in; using restricted-host");
         Arc::new(RestrictedHostSandbox::new(config))
     }
+}
+
+/// Create a Vercel sandbox backend, falling back to `RestrictedHostSandbox` if
+/// the feature is disabled or the token is not configured.
+#[cfg(feature = "vercel-sandbox")]
+fn create_vercel_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
+    use super::vercel::{VercelSandbox, VercelSandboxConfig};
+
+    let Some(token) = config
+        .vercel_token
+        .clone()
+        .filter(|token| !token.expose_secret().is_empty())
+    else {
+        tracing::warn!(
+            "vercel sandbox requested but no token configured (set VERCEL_TOKEN); \
+             using restricted-host"
+        );
+        return Arc::new(RestrictedHostSandbox::new(config));
+    };
+
+    let vercel_config = VercelSandboxConfig {
+        token,
+        project_id: config.vercel_project_id.clone(),
+        team_id: config.vercel_team_id.clone(),
+        runtime: config
+            .vercel_runtime
+            .clone()
+            .unwrap_or_else(|| "node24".into()),
+        timeout_ms: config.vercel_timeout_ms.unwrap_or(300_000),
+        vcpus: config.vercel_vcpus.unwrap_or(2),
+        snapshot_id: config.vercel_snapshot_id.clone(),
+    };
+
+    tracing::info!(
+        runtime = vercel_config.runtime,
+        vcpus = vercel_config.vcpus,
+        "sandbox backend: vercel (Firecracker microVM)"
+    );
+    Arc::new(VercelSandbox::new(config, vercel_config))
+}
+
+/// Create a Daytona sandbox backend, falling back to `RestrictedHostSandbox`
+/// if the API key is not configured.
+fn create_daytona_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
+    use super::daytona::{DaytonaSandbox, DaytonaSandboxConfig};
+
+    let Some(api_key) = config
+        .daytona_api_key
+        .clone()
+        .filter(|api_key| !api_key.expose_secret().is_empty())
+    else {
+        tracing::warn!(
+            "daytona sandbox requested but no API key configured (set DAYTONA_API_KEY); \
+             using restricted-host"
+        );
+        return Arc::new(RestrictedHostSandbox::new(config));
+    };
+
+    let daytona_config = DaytonaSandboxConfig {
+        api_key,
+        api_url: config
+            .daytona_api_url
+            .clone()
+            .unwrap_or_else(|| "https://app.daytona.io/api".into()),
+        target: config.daytona_target.clone(),
+        image: config.daytona_image.clone(),
+        language: None,
+    };
+
+    tracing::info!(
+        api_url = daytona_config.api_url,
+        "sandbox backend: daytona (cloud sandbox)"
+    );
+    Arc::new(DaytonaSandbox::new(config, daytona_config))
+}
+
+fn has_secret(secret: &Option<secrecy::Secret<String>>) -> bool {
+    secret
+        .as_ref()
+        .is_some_and(|secret| !secret.expose_secret().is_empty())
+}
+
+/// Create a Firecracker sandbox backend.
+/// Linux-only: requires firecracker binary, kernel, rootfs, and root/CAP_NET_ADMIN.
+#[cfg(target_os = "linux")]
+fn create_firecracker_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
+    use super::firecracker::{FirecrackerSandbox, FirecrackerSandboxConfig};
+
+    let fc_config = FirecrackerSandboxConfig {
+        firecracker_bin: super::firecracker::resolve_firecracker_bin(
+            config.firecracker_bin.as_deref(),
+        ),
+        kernel_path: config
+            .firecracker_kernel
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("/opt/moltis/vmlinux")),
+        rootfs_path: config
+            .firecracker_rootfs
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("/opt/moltis/rootfs.ext4")),
+        ssh_key_path: config
+            .firecracker_ssh_key
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("/opt/moltis/ssh_key")),
+        vcpus: config.firecracker_vcpus.unwrap_or(2),
+        memory_mb: config.firecracker_memory_mb.unwrap_or(512),
+    };
+
+    tracing::info!(
+        firecracker = %fc_config.firecracker_bin.display(),
+        vcpus = fc_config.vcpus,
+        memory_mb = fc_config.memory_mb,
+        "sandbox backend: firecracker (local microVM)"
+    );
+    Arc::new(FirecrackerSandbox::new(config, fc_config))
 }
 
 /// Wrap a primary sandbox backend with a failover chain.
@@ -367,7 +605,20 @@ pub fn auto_detect_backend(config: SandboxConfig) -> Arc<dyn Sandbox> {
         );
     }
 
-    // Use restricted-host sandbox before falling back to NoSandbox.
+    // No local container runtime available — try remote backends.
+    // Env vars are resolved into config fields by the config crate.
+    #[cfg(feature = "vercel-sandbox")]
+    if has_secret(&config.vercel_token) {
+        tracing::info!("no local container runtime; using vercel sandbox");
+        return create_vercel_backend(config);
+    }
+
+    if has_secret(&config.daytona_api_key) {
+        tracing::info!("no local container runtime; using daytona sandbox");
+        return create_daytona_backend(config);
+    }
+
+    // Use restricted-host sandbox as last resort.
     tracing::info!(
         "sandbox backend: restricted-host (env clearing, rlimits; no container runtime available)"
     );
@@ -408,13 +659,25 @@ pub enum SandboxEvent {
 }
 
 /// Routes sandbox decisions per-session, with per-session overrides on top of global config.
+///
+/// Supports multiple named backends simultaneously. Each session can be routed
+/// to a different backend via per-session overrides, while the default backend
+/// serves sessions without an explicit override.
 pub struct SandboxRouter {
     config: SandboxConfig,
-    backend: Arc<dyn Sandbox>,
+    /// Default backend, stored separately for lock-free access.
+    default_backend: Arc<dyn Sandbox>,
+    /// All available backends, keyed by backend name.
+    /// The default backend is also present in this map.
+    backends: HashMap<String, Arc<dyn Sandbox>>,
     /// Per-session overrides: true = sandboxed, false = direct execution.
     overrides: RwLock<HashMap<String, bool>>,
+    /// Per-session backend override: session_key -> backend_name.
+    backend_overrides: RwLock<HashMap<String, String>>,
     /// Per-session image overrides.
     image_overrides: RwLock<HashMap<String, String>>,
+    /// Runtime image overrides scoped to a backend.
+    backend_image_overrides: RwLock<HashMap<String, String>>,
     /// Runtime override for the global default image (set via API, persisted externally).
     global_image_override: RwLock<Option<String>>,
     /// Event channel for sandbox lifecycle events (prepare/provision/build feedback).
@@ -422,41 +685,70 @@ pub struct SandboxRouter {
     /// Session keys that have already completed sandbox initialization.
     /// Used to avoid repeating first-run preparation banners on every command.
     prepared_sessions: RwLock<HashSet<String>>,
+    /// Session keys where workspace sync-in has completed.
+    /// Subsequent exec calls wait until sync_in finishes before proceeding.
+    synced_sessions: RwLock<HashSet<String>>,
+    /// Per-session first-run failures that should unblock waiters without
+    /// allowing them to run against an incomplete sandbox workspace.
+    sync_failures: RwLock<HashMap<String, String>>,
     /// Whether a sandbox image pre-build is currently in progress.
     /// Used by the gateway to show a banner in the UI.
     pub building_flag: std::sync::atomic::AtomicBool,
+    /// Notified when the background image build finishes (success or failure).
+    /// Callers that arrive while `building_flag` is true can await this to
+    /// avoid launching containers from the bare base image.
+    pub build_complete: tokio::sync::Notify,
 }
 
 impl SandboxRouter {
     pub fn new(config: SandboxConfig) -> Self {
         // Always create a real sandbox backend, even when global mode is Off,
         // because per-session overrides can enable sandboxing dynamically.
-        let backend = create_sandbox_backend(config.clone());
+        let default_backend = create_sandbox_backend(config.clone());
+        let mut backends = HashMap::new();
+        backends.insert(
+            default_backend.backend_name().to_string(),
+            Arc::clone(&default_backend),
+        );
         let (event_tx, _) = tokio::sync::broadcast::channel(32);
         Self {
             config,
-            backend,
+            default_backend,
+            backends,
             overrides: RwLock::new(HashMap::new()),
+            backend_overrides: RwLock::new(HashMap::new()),
             image_overrides: RwLock::new(HashMap::new()),
+            backend_image_overrides: RwLock::new(HashMap::new()),
             global_image_override: RwLock::new(None),
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
+            synced_sessions: RwLock::new(HashSet::new()),
+            sync_failures: RwLock::new(HashMap::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
+            build_complete: tokio::sync::Notify::new(),
         }
     }
 
     /// Create a router with a custom sandbox backend (useful for testing).
     pub fn with_backend(config: SandboxConfig, backend: Arc<dyn Sandbox>) -> Self {
+        let mut backends = HashMap::new();
+        backends.insert(backend.backend_name().to_string(), Arc::clone(&backend));
         let (event_tx, _) = tokio::sync::broadcast::channel(32);
         Self {
             config,
-            backend,
+            default_backend: backend,
+            backends,
             overrides: RwLock::new(HashMap::new()),
+            backend_overrides: RwLock::new(HashMap::new()),
             image_overrides: RwLock::new(HashMap::new()),
+            backend_image_overrides: RwLock::new(HashMap::new()),
             global_image_override: RwLock::new(None),
             event_tx,
             prepared_sessions: RwLock::new(HashSet::new()),
+            synced_sessions: RwLock::new(HashSet::new()),
+            sync_failures: RwLock::new(HashMap::new()),
             building_flag: std::sync::atomic::AtomicBool::new(false),
+            build_complete: tokio::sync::Notify::new(),
         }
     }
 
@@ -473,10 +765,15 @@ impl SandboxRouter {
     /// Mark a session as preparing for sandbox first-run work.
     /// Returns `true` only the first time for a session key.
     pub async fn mark_preparing_once(&self, session_key: &str) -> bool {
-        self.prepared_sessions
+        let inserted = self
+            .prepared_sessions
             .write()
             .await
-            .insert(session_key.to_string())
+            .insert(session_key.to_string());
+        if inserted {
+            self.clear_synced_session(session_key).await;
+        }
+        inserted
     }
 
     /// Clear preparation marker for a session (used on cleanup or prepare failure).
@@ -484,12 +781,60 @@ impl SandboxRouter {
         self.prepared_sessions.write().await.remove(session_key);
     }
 
+    /// Mark a session as having completed workspace sync-in.
+    pub async fn mark_synced(&self, session_key: &str) {
+        self.sync_failures.write().await.remove(session_key);
+        self.synced_sessions
+            .write()
+            .await
+            .insert(session_key.to_string());
+    }
+
+    /// Mark a session as unblocked after first-run preparation failed.
+    pub async fn mark_sync_failed(&self, session_key: &str, error: String) {
+        self.sync_failures
+            .write()
+            .await
+            .insert(session_key.to_string(), error);
+        self.synced_sessions
+            .write()
+            .await
+            .insert(session_key.to_string());
+    }
+
+    /// Check whether workspace sync has completed for a session.
+    pub async fn is_synced(&self, session_key: &str) -> bool {
+        self.synced_sessions.read().await.contains(session_key)
+    }
+
+    /// Return the first-run preparation failure for a session, if any.
+    pub async fn sync_failure(&self, session_key: &str) -> Option<String> {
+        self.sync_failures.read().await.get(session_key).cloned()
+    }
+
+    /// Clear sync marker for a session (used on cleanup).
+    pub async fn clear_synced_session(&self, session_key: &str) {
+        self.synced_sessions.write().await.remove(session_key);
+        self.sync_failures.write().await.remove(session_key);
+    }
+
+    /// Clear runtime initialization markers for a session.
+    ///
+    /// Backend and image changes invalidate the prepared/synced state. The
+    /// next exec must run `ensure_ready` and, for isolated backends, sync the
+    /// workspace for the newly selected runtime.
+    pub async fn clear_runtime_state(&self, session_key: &str) {
+        self.clear_prepared_session(session_key).await;
+        self.clear_synced_session(session_key).await;
+    }
+
     /// Check whether a session should run sandboxed.
-    /// Returns `false` when no real container runtime is available, regardless of
-    /// config mode or per-session overrides. Otherwise, per-session override takes
-    /// priority, then falls back to global mode.
+    /// Returns `false` when the session's resolved backend is not real, regardless
+    /// of config mode or per-session overrides. Otherwise, per-session override
+    /// takes priority, then falls back to global mode.
     pub async fn is_sandboxed(&self, session_key: &str) -> bool {
-        if !self.backend.is_real() {
+        let backend = self.resolve_backend(session_key).await;
+        if !backend.is_real() {
             return false;
         }
         if let Some(&override_val) = self.overrides.read().await.get(session_key) {
@@ -535,18 +880,105 @@ impl SandboxRouter {
     }
 
     /// Clean up sandbox resources for a session.
+    ///
+    /// For isolated backends, syncs workspace changes back to the host
+    /// before destroying the sandbox.
     pub async fn cleanup_session(&self, session_key: &str) -> Result<()> {
         let id = self.sandbox_id_for(session_key);
-        self.backend.cleanup(&id).await?;
+        let backend = self.resolve_backend(session_key).await;
+
+        // Sync workspace changes back to host for isolated backends.
+        if backend.is_isolated()
+            && let Some(host_workspace) = super::sync::resolve_sync_workspace(&self.config, &id)
+        {
+            let sandbox_workspace = backend.workspace_dir_for(&id).await;
+            if let Err(e) =
+                super::sync::sync_out(&*backend, &id, &host_workspace, &sandbox_workspace).await
+            {
+                warn!(
+                    session = session_key,
+                    %id,
+                    error = %e,
+                    "workspace sync-out failed, changes in sandbox may be lost"
+                );
+            }
+        }
+
+        backend.cleanup(&id).await?;
         self.remove_override(session_key).await;
+        self.remove_backend_override(session_key).await;
         self.remove_image_override(session_key).await;
         self.clear_prepared_session(session_key).await;
+        self.clear_synced_session(session_key).await;
         Ok(())
     }
 
-    /// Access the sandbox backend.
+    /// Access the default sandbox backend.
     pub fn backend(&self) -> &Arc<dyn Sandbox> {
-        &self.backend
+        &self.default_backend
+    }
+
+    /// Resolve the sandbox backend for a session.
+    ///
+    /// Priority (highest to lowest):
+    /// 1. Per-session backend override (`backend_overrides[session_key]`)
+    /// 2. Default backend
+    pub async fn resolve_backend(&self, session_key: &str) -> Arc<dyn Sandbox> {
+        if let Some(name) = self.backend_overrides.read().await.get(session_key) {
+            if let Some(backend) = self.backends.get(name.as_str()) {
+                return Arc::clone(backend);
+            }
+            warn!(
+                session = session_key,
+                backend = name.as_str(),
+                "per-session backend override references unknown backend, using default"
+            );
+        }
+        Arc::clone(&self.default_backend)
+    }
+
+    /// Register an additional sandbox backend.
+    ///
+    /// The backend is keyed by its `backend_name()`. If a backend with the
+    /// same name already exists it is replaced.
+    pub fn register_backend(&mut self, backend: Arc<dyn Sandbox>) {
+        let name = backend.backend_name().to_string();
+        debug!(backend = name.as_str(), "registered sandbox backend");
+        self.backends.insert(name, backend);
+    }
+
+    /// List the names of all available backends.
+    pub fn available_backends(&self) -> Vec<&str> {
+        self.backends.keys().map(String::as_str).collect()
+    }
+
+    /// List all available backend instances.
+    pub fn available_backend_instances(&self) -> Vec<Arc<dyn Sandbox>> {
+        self.backends.values().cloned().collect()
+    }
+
+    /// Set a per-session backend override.
+    ///
+    /// Returns `Err` if `backend_name` is not registered.
+    pub async fn set_backend_override(&self, session_key: &str, backend_name: &str) -> Result<()> {
+        if !self.backends.contains_key(backend_name) {
+            return Err(Error::message(format!(
+                "unknown sandbox backend: {backend_name:?} (available: {:?})",
+                self.available_backends()
+            )));
+        }
+        self.backend_overrides
+            .write()
+            .await
+            .insert(session_key.to_string(), backend_name.to_string());
+        self.clear_runtime_state(session_key).await;
+        Ok(())
+    }
+
+    /// Remove a per-session backend override (revert to default).
+    pub async fn remove_backend_override(&self, session_key: &str) {
+        self.backend_overrides.write().await.remove(session_key);
+        self.clear_runtime_state(session_key).await;
     }
 
     /// Access the global sandbox mode.
@@ -559,9 +991,9 @@ impl SandboxRouter {
         &self.config
     }
 
-    /// Human-readable name of the sandbox backend (e.g. "docker", "apple-container").
+    /// Human-readable name of the default sandbox backend (e.g. "docker", "apple-container").
     pub fn backend_name(&self) -> &'static str {
-        self.backend.backend_name()
+        self.default_backend.backend_name()
     }
 
     /// Set a per-session image override.
@@ -570,11 +1002,13 @@ impl SandboxRouter {
             .write()
             .await
             .insert(session_key.to_string(), image);
+        self.clear_runtime_state(session_key).await;
     }
 
     /// Remove a per-session image override.
     pub async fn remove_image_override(&self, session_key: &str) {
         self.image_overrides.write().await.remove(session_key);
+        self.clear_runtime_state(session_key).await;
     }
 
     /// Set a runtime override for the global default image.
@@ -583,15 +1017,121 @@ impl SandboxRouter {
         *self.global_image_override.write().await = image;
     }
 
-    /// Get the current effective default image (runtime override > config > hardcoded).
-    pub async fn default_image(&self) -> String {
-        if let Some(ref img) = *self.global_image_override.read().await {
-            return img.clone();
+    /// Set a runtime image override for a specific backend.
+    ///
+    /// Background pre-builds are backend-specific: a Docker image tag is not a
+    /// Firecracker rootfs path, and vice versa. Keep those outputs scoped so a
+    /// session routed to a secondary backend gets the image/rootfs built for
+    /// that backend.
+    pub async fn set_backend_image(&self, backend_name: &str, image: String) -> Result<()> {
+        if !self.backends.contains_key(backend_name) {
+            return Err(Error::message(format!(
+                "unknown sandbox backend: {backend_name:?} (available: {:?})",
+                self.available_backends()
+            )));
         }
+        self.backend_image_overrides
+            .write()
+            .await
+            .insert(backend_name.to_string(), image);
+        Ok(())
+    }
+
+    /// If a background image build is in progress, wait for it to finish
+    /// (with a generous timeout) so that callers get the pre-built image
+    /// instead of the bare base image.
+    async fn wait_for_build_if_needed(&self) {
+        use std::sync::atomic::Ordering;
+        if !self.building_flag.load(Ordering::Relaxed) {
+            return;
+        }
+        debug!("sandbox image build in progress, waiting before resolving image");
+        // 10 minutes should be plenty for a first-time image build; if it takes
+        // longer the caller falls through to the base image (same as before).
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            self.build_complete.notified(),
+        )
+        .await;
+    }
+
+    async fn config_default_image(&self) -> String {
         self.config
             .image
             .clone()
             .unwrap_or_else(|| DEFAULT_SANDBOX_IMAGE.to_string())
+    }
+
+    /// Get the current effective default image for a backend WITHOUT waiting
+    /// for a build to finish.
+    pub async fn resolve_default_image_for_backend_nowait(&self, backend_name: &str) -> String {
+        if let Some(img) = self.backend_image_overrides.read().await.get(backend_name) {
+            return img.clone();
+        }
+        if let Some(ref img) = *self.global_image_override.read().await {
+            return img.clone();
+        }
+        self.config_default_image().await
+    }
+
+    /// Get the current effective default image WITHOUT waiting for a build
+    /// to finish. Used by request paths that must not block on the initial
+    /// sandbox image build.
+    pub async fn resolve_default_image_nowait(&self) -> String {
+        self.resolve_default_image_for_backend_nowait(self.backend_name())
+            .await
+    }
+
+    /// Resolve the container image without waiting for any background image
+    /// build. This must stay cheap: callers use it from RPC and tool paths
+    /// where blocking on sandbox provisioning would stall user-visible work.
+    pub async fn resolve_image_nowait(
+        &self,
+        session_key: &str,
+        skill_image: Option<&str>,
+    ) -> String {
+        let backend = self.resolve_backend(session_key).await;
+        self.resolve_image_for_backend_nowait(session_key, skill_image, backend.backend_name())
+            .await
+    }
+
+    /// Resolve the container image for a session/backend without waiting for
+    /// a background image build.
+    pub async fn resolve_image_for_backend_nowait(
+        &self,
+        session_key: &str,
+        skill_image: Option<&str>,
+        backend_name: &str,
+    ) -> String {
+        if let Some(img) = skill_image {
+            return img.to_string();
+        }
+        if let Some(img) = self.image_overrides.read().await.get(session_key) {
+            return img.clone();
+        }
+        if self
+            .building_flag
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            info!(
+                session = %session_key,
+                "sandbox image build in progress, resolving image without waiting"
+            );
+        }
+        self.resolve_default_image_for_backend_nowait(backend_name)
+            .await
+    }
+
+    /// Get the current effective default image for a backend.
+    pub async fn default_image_for_backend(&self, backend_name: &str) -> String {
+        self.wait_for_build_if_needed().await;
+        self.resolve_default_image_for_backend_nowait(backend_name)
+            .await
+    }
+
+    /// Get the current effective default image (runtime override > config > hardcoded).
+    pub async fn default_image(&self) -> String {
+        self.default_image_for_backend(self.backend_name()).await
     }
 
     /// Resolve the container image for a session.
@@ -599,16 +1139,29 @@ impl SandboxRouter {
     /// Priority (highest to lowest):
     /// 1. `skill_image` — from a skill's Dockerfile cache
     /// 2. Per-session override (`session.sandbox_image`)
-    /// 3. Runtime global override (`set_global_image`)
-    /// 4. Global config (`config.tools.exec.sandbox.image`)
-    /// 5. Default constant (`DEFAULT_SANDBOX_IMAGE`)
+    /// 3. Runtime backend override (`set_backend_image`)
+    /// 4. Runtime global override (`set_global_image`)
+    /// 5. Global config (`config.tools.exec.sandbox.image`)
+    /// 6. Default constant (`DEFAULT_SANDBOX_IMAGE`)
     pub async fn resolve_image(&self, session_key: &str, skill_image: Option<&str>) -> String {
+        let backend = self.resolve_backend(session_key).await;
+        self.resolve_image_for_backend(session_key, skill_image, backend.backend_name())
+            .await
+    }
+
+    /// Resolve the container image for a session/backend.
+    pub async fn resolve_image_for_backend(
+        &self,
+        session_key: &str,
+        skill_image: Option<&str>,
+        backend_name: &str,
+    ) -> String {
         if let Some(img) = skill_image {
             return img.to_string();
         }
         if let Some(img) = self.image_overrides.read().await.get(session_key) {
             return img.clone();
         }
-        self.default_image().await
+        self.default_image_for_backend(backend_name).await
     }
 }

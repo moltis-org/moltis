@@ -53,7 +53,7 @@ test("mobile menu drives settings and sessions", async ({ page }) => {
 	await page.locator("#mobileMenuBtn").click();
 	await expect(page.locator("#mobileMenuPanel")).toHaveClass(/open/);
 	await page.locator("#mobileMenuSettingsBtn").click();
-	await expect(page).toHaveURL(/\/settings\/identity$/);
+	await expect(page).toHaveURL(/\/settings\/profile$/);
 	await expect(page.locator(".settings-sidebar")).toHaveCount(0);
 	await page.locator(".settings-mobile-menu-btn").click();
 	await expect(page.locator(".settings-sidebar")).toBeVisible();
@@ -184,9 +184,9 @@ const routeCases = [
 	},
 	{
 		path: "/settings",
-		expectedUrl: /\/settings\/identity$/,
+		expectedUrl: /\/settings\/profile$/,
 		settingsActive: true,
-		heading: "Identity",
+		heading: "User Profile",
 	},
 ];
 

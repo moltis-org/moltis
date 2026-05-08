@@ -42,8 +42,8 @@ Build a native Windows app equivalent to `apps/macos` using WinUI 3 + C#, reusin
 ## Testing
 
 - Rust:
-  - `cargo +nightly-2025-11-30 fmt --all -- --check`
-  - `cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`
+  - `cargo +nightly-2026-04-24 fmt --all -- --check`
+  - `cargo +nightly-2026-04-24 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`
   - Targeted bridge integration tests (error envelopes, callbacks, streaming terminal events)
 - Windows app:
   - Native integration tests (version/chat/session/provider roundtrips)

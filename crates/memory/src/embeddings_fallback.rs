@@ -103,7 +103,7 @@ impl FallbackEmbeddingProvider {
 
 #[async_trait]
 impl EmbeddingProvider for FallbackEmbeddingProvider {
-    async fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>> {
+    async fn embed(&self, text: &str) -> crate::error::Result<Vec<f32>> {
         let mut errors = Vec::new();
         let start_idx = self.active.load(Ordering::SeqCst);
 
@@ -136,10 +136,13 @@ impl EmbeddingProvider for FallbackEmbeddingProvider {
             }
         }
 
-        anyhow::bail!("all embedding providers failed: {}", errors.join("; "))
+        Err(crate::error::Error::Embedding(format!(
+            "all embedding providers failed: {}",
+            errors.join("; ")
+        )))
     }
 
-    async fn embed_batch(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>> {
+    async fn embed_batch(&self, texts: &[String]) -> crate::error::Result<Vec<Vec<f32>>> {
         let mut errors = Vec::new();
         let start_idx = self.active.load(Ordering::SeqCst);
 
@@ -172,10 +175,10 @@ impl EmbeddingProvider for FallbackEmbeddingProvider {
             }
         }
 
-        anyhow::bail!(
+        Err(crate::error::Error::Embedding(format!(
             "all embedding providers failed (batch): {}",
             errors.join("; ")
-        )
+        )))
     }
 
     fn model_name(&self) -> &str {
@@ -206,8 +209,8 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingProvider for FailingProvider {
-        async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
-            anyhow::bail!("always fails")
+        async fn embed(&self, _text: &str) -> crate::error::Result<Vec<f32>> {
+            Err(crate::error::Error::Embedding("always fails".into()))
         }
 
         fn model_name(&self) -> &str {
@@ -229,7 +232,7 @@ mod tests {
 
     #[async_trait]
     impl EmbeddingProvider for SuccessProvider {
-        async fn embed(&self, _text: &str) -> anyhow::Result<Vec<f32>> {
+        async fn embed(&self, _text: &str) -> crate::error::Result<Vec<f32>> {
             Ok(vec![1.0; 8])
         }
 

@@ -15,13 +15,16 @@ FROM rust:bookworm AS builder
 
 WORKDIR /build
 
-# Switch to nightly (pinned for reproducibility; wacore-binary needs portable_simd)
-RUN rustup install nightly-2025-11-30 && rustup default nightly-2025-11-30
+# Copy rust-toolchain.toml first so the nightly pin is defined in one place.
+COPY rust-toolchain.toml ./
+RUN NIGHTLY="$(sed -nE 's/^channel[[:space:]]*=[[:space:]]*"([^"]+)"/\1/p' rust-toolchain.toml)" \
+    && rustup install "$NIGHTLY" && rustup default "$NIGHTLY"
 
 # Copy manifests first for better caching
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY apps/courier ./apps/courier
+COPY scripts ./scripts
 COPY wit ./wit
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -30,22 +33,29 @@ RUN apt-get update -qq && \
     apt-get install -yqq --no-install-recommends cmake build-essential libclang-dev pkg-config git && \
     rm -rf /var/lib/apt/lists/*
 
-# Build Tailwind CSS (style.css is gitignored — must be generated before cargo build)
+# Install Node.js for Vite/esbuild builds (web assets are gitignored)
+RUN apt-get update -qq && \
+    apt-get install -yqq --no-install-recommends ca-certificates curl gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -yqq --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Build all web assets (Vite JS + Tailwind CSS + service worker)
 RUN ARCH=$(uname -m) && \
     case "$ARCH" in x86_64) TW="tailwindcss-linux-x64";; aarch64) TW="tailwindcss-linux-arm64";; esac && \
     curl -sLO "https://github.com/tailwindlabs/tailwindcss/releases/latest/download/$TW" && \
     chmod +x "$TW" && \
-    cd crates/web/ui && TAILWINDCSS="../../../$TW" ./build.sh
+    TAILWINDCSS="./$TW" ./scripts/build-web-assets.sh
 
 # Install WASM target and build WASM components (embedded via include_bytes!)
 RUN rustup target add wasm32-wasip2 && \
     cargo build --target wasm32-wasip2 -p moltis-wasm-calc -p moltis-wasm-web-fetch -p moltis-wasm-web-search --release
 
-# Build release binary — use default features plus Docker-specific extras.
-# local-llm-metal (Metal is macOS-only) is a no-op on Linux, so defaults are safe.
+# Build release binary with the same portable production feature set used by
+# release/package builds.
 ARG MOLTIS_VERSION
 ENV MOLTIS_VERSION=${MOLTIS_VERSION}
-RUN cargo build --release -p moltis --features wasm
+RUN ./scripts/cargo-build-moltis.sh --release
 
 # Runtime stage
 FROM debian:bookworm-slim

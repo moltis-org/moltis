@@ -64,6 +64,10 @@ pub struct AgentPersona {
     pub theme: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Optional voice persona ID. When set, switching to this agent
+    /// automatically activates the linked voice persona for TTS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub voice_persona_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -79,6 +83,8 @@ pub struct CreateAgentParams {
     pub theme: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub voice_persona_id: Option<String>,
 }
 
 /// Parameters for updating an existing agent.
@@ -92,6 +98,8 @@ pub struct UpdateAgentParams {
     pub theme: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub voice_persona_id: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -102,6 +110,7 @@ struct AgentRow {
     emoji: Option<String>,
     theme: Option<String>,
     description: Option<String>,
+    voice_persona_id: Option<String>,
     created_at: i64,
     updated_at: i64,
 }
@@ -115,6 +124,7 @@ impl From<AgentRow> for AgentPersona {
             emoji: r.emoji,
             theme: r.theme,
             description: r.description,
+            voice_persona_id: r.voice_persona_id,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }
@@ -171,9 +181,9 @@ impl AgentPersonaStore {
         Ok(row.unwrap_or_else(|| "main".to_string()))
     }
 
-    /// Set the default agent ID. `"main"` is always valid.
+    /// Set the default agent ID.
     pub async fn set_default(&self, id: &str) -> Result<String> {
-        if id != "main" && self.get(id).await?.is_none() {
+        if self.get(id).await?.is_none() {
             return Err(AgentError::NotFound(format!("agent '{id}' not found")));
         }
 
@@ -182,17 +192,14 @@ impl AgentPersonaStore {
             .execute(&mut *tx)
             .await?;
 
-        if id != "main" {
-            let now = now_ms();
-            let updated =
-                sqlx::query("UPDATE agents SET is_default = 1, updated_at = ? WHERE id = ?")
-                    .bind(now)
-                    .bind(id)
-                    .execute(&mut *tx)
-                    .await?;
-            if updated.rows_affected() == 0 {
-                return Err(AgentError::NotFound(format!("agent '{id}' not found")));
-            }
+        let now = now_ms();
+        let updated = sqlx::query("UPDATE agents SET is_default = 1, updated_at = ? WHERE id = ?")
+            .bind(now)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        if updated.rows_affected() == 0 {
+            return Err(AgentError::NotFound(format!("agent '{id}' not found")));
         }
 
         tx.commit().await?;
@@ -228,30 +235,21 @@ impl AgentPersonaStore {
         Ok(main_workspace)
     }
 
-    /// List all agents: synthesize "main" from config, then append DB rows.
+    /// List all agents from the database.
     pub async fn list(&self) -> Result<Vec<AgentPersona>> {
         let _ = self.ensure_main_workspace_seeded();
-        let default_id = self.default_id().await?;
-        let main = synthesize_main_agent(default_id == "main");
-        let db_agents: Vec<AgentPersona> =
+        let agents: Vec<AgentPersona> =
             sqlx::query_as::<_, AgentRow>("SELECT * FROM agents ORDER BY created_at ASC")
                 .fetch_all(&self.pool)
                 .await?
                 .into_iter()
                 .map(Into::into)
                 .collect();
-
-        let mut result = vec![main];
-        result.extend(db_agents.into_iter().filter(|agent| agent.id != "main"));
-        Ok(result)
+        Ok(agents)
     }
 
     /// Get a single agent by ID.
     pub async fn get(&self, id: &str) -> Result<Option<AgentPersona>> {
-        if id == "main" {
-            let default_id = self.default_id().await?;
-            return Ok(Some(synthesize_main_agent(default_id == "main")));
-        }
         let row = sqlx::query_as::<_, AgentRow>("SELECT * FROM agents WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -265,14 +263,15 @@ impl AgentPersonaStore {
 
         let now = now_ms();
         sqlx::query(
-            r#"INSERT INTO agents (id, name, is_default, emoji, theme, description, created_at, updated_at)
-               VALUES (?, ?, 0, ?, ?, ?, ?, ?)"#,
+            r#"INSERT INTO agents (id, name, is_default, emoji, theme, description, voice_persona_id, created_at, updated_at)
+               VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(&params.id)
         .bind(&params.name)
         .bind(&params.emoji)
         .bind(&params.theme)
         .bind(&params.description)
+        .bind(&params.voice_persona_id)
         .bind(now)
         .bind(now)
         .execute(&self.pool)
@@ -295,6 +294,7 @@ impl AgentPersonaStore {
             emoji: params.emoji,
             theme: params.theme,
             description: params.description,
+            voice_persona_id: params.voice_persona_id,
             created_at: now,
             updated_at: now,
         })
@@ -302,12 +302,6 @@ impl AgentPersonaStore {
 
     /// Update an existing agent persona.
     pub async fn update(&self, id: &str, params: UpdateAgentParams) -> Result<AgentPersona> {
-        if id == "main" {
-            return Err(AgentError::InvalidRequest(
-                "cannot modify 'main' agent through this API; use identity settings".into(),
-            ));
-        }
-
         let existing = self
             .get(id)
             .await?
@@ -317,15 +311,17 @@ impl AgentPersonaStore {
         let emoji = params.emoji.or(existing.emoji);
         let theme = params.theme.or(existing.theme);
         let description = params.description.or(existing.description);
+        let voice_persona_id = params.voice_persona_id.or(existing.voice_persona_id);
         let now = now_ms();
 
         sqlx::query(
-            "UPDATE agents SET name = ?, emoji = ?, theme = ?, description = ?, updated_at = ? WHERE id = ?",
+            "UPDATE agents SET name = ?, emoji = ?, theme = ?, description = ?, voice_persona_id = ?, updated_at = ? WHERE id = ?",
         )
         .bind(&name)
         .bind(&emoji)
         .bind(&theme)
         .bind(&description)
+        .bind(&voice_persona_id)
         .bind(now)
         .bind(id)
         .execute(&self.pool)
@@ -346,6 +342,7 @@ impl AgentPersonaStore {
             emoji,
             theme,
             description,
+            voice_persona_id,
             created_at: existing.created_at,
             updated_at: now,
         })
@@ -396,23 +393,59 @@ impl AgentPersonaStore {
         std::fs::create_dir_all(&dir)?;
         Ok(dir)
     }
-}
 
-/// Synthesize the "main" agent persona from the global identity config.
-fn synthesize_main_agent(is_default: bool) -> AgentPersona {
-    let identity = moltis_config::load_identity_for_agent("main");
-    AgentPersona {
-        id: "main".to_string(),
-        name: identity
+    /// Ensure "main" exists as a real row in the `agents` table.
+    ///
+    /// On first run (or upgrade from older versions), this seeds the DB row
+    /// from the existing `[identity]` config in `moltis.toml` and
+    /// `IDENTITY.md`. Subsequent calls are a no-op if the row exists.
+    pub async fn ensure_main_row(&self) -> Result<()> {
+        let existing =
+            sqlx::query_scalar::<_, String>("SELECT id FROM agents WHERE id = 'main' LIMIT 1")
+                .fetch_optional(&self.pool)
+                .await?;
+
+        if existing.is_some() {
+            return Ok(());
+        }
+
+        // Seed from existing identity files / config.
+        let identity = moltis_config::load_identity_for_agent("main");
+        let name = identity
             .as_ref()
             .and_then(|i| i.name.clone())
-            .unwrap_or_else(|| "moltis".to_string()),
-        is_default,
-        emoji: identity.as_ref().and_then(|i| i.emoji.clone()),
-        theme: identity.as_ref().and_then(|i| i.theme.clone()),
-        description: Some("Default agent".to_string()),
-        created_at: 0,
-        updated_at: 0,
+            .unwrap_or_else(|| "moltis".to_string());
+        let emoji = identity.as_ref().and_then(|i| i.emoji.clone());
+        let theme = identity.as_ref().and_then(|i| i.theme.clone());
+
+        // Default to is_default=1 unless another agent already holds that flag.
+        let has_other_default =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agents WHERE is_default = 1")
+                .fetch_one(&self.pool)
+                .await?
+                > 0;
+
+        let is_default: i64 = if has_other_default {
+            0
+        } else {
+            1
+        };
+        let now = now_ms();
+
+        sqlx::query(
+            r#"INSERT OR IGNORE INTO agents (id, name, is_default, emoji, theme, description, created_at, updated_at)
+               VALUES ('main', ?, ?, ?, ?, 'Default agent', ?, ?)"#,
+        )
+        .bind(&name)
+        .bind(is_default)
+        .bind(&emoji)
+        .bind(&theme)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
     }
 }
 
@@ -456,14 +489,15 @@ mod tests {
         let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS agents (
-                id          TEXT PRIMARY KEY,
-                name        TEXT NOT NULL,
-                is_default  INTEGER NOT NULL DEFAULT 0,
-                emoji       TEXT,
-                theme       TEXT,
-                description TEXT,
-                created_at  INTEGER NOT NULL,
-                updated_at  INTEGER NOT NULL
+                id                TEXT PRIMARY KEY,
+                name              TEXT NOT NULL,
+                is_default        INTEGER NOT NULL DEFAULT 0,
+                emoji             TEXT,
+                theme             TEXT,
+                description       TEXT,
+                voice_persona_id  TEXT,
+                created_at        INTEGER NOT NULL,
+                updated_at        INTEGER NOT NULL
             )"#,
         )
         .execute(&pool)
@@ -476,10 +510,21 @@ mod tests {
     async fn test_list_includes_main() {
         let pool = test_pool().await;
         let store = AgentPersonaStore::new(pool);
+        store.ensure_main_row().await.unwrap();
         let agents = store.list().await.unwrap();
         assert!(!agents.is_empty());
         assert_eq!(agents[0].id, "main");
         assert!(agents[0].is_default);
+    }
+
+    #[tokio::test]
+    async fn test_ensure_main_row_idempotent() {
+        let pool = test_pool().await;
+        let store = AgentPersonaStore::new(pool);
+        store.ensure_main_row().await.unwrap();
+        store.ensure_main_row().await.unwrap();
+        let agents = store.list().await.unwrap();
+        assert_eq!(agents.iter().filter(|a| a.id == "main").count(), 1);
     }
 
     #[tokio::test]
@@ -494,6 +539,7 @@ mod tests {
                 emoji: Some("🔬".to_string()),
                 theme: Some("analytical".to_string()),
                 description: Some("Helps with research tasks".to_string()),
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -518,6 +564,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await;
         assert!(result.is_err());
@@ -534,6 +581,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await;
         assert!(result.is_err());
@@ -550,6 +598,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -560,6 +609,7 @@ mod tests {
                 emoji: Some("✍️".to_string()),
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -569,18 +619,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_main_rejected() {
+    async fn test_update_main_allowed() {
         let pool = test_pool().await;
         let store = AgentPersonaStore::new(pool);
-        let result = store
+        store.ensure_main_row().await.unwrap();
+        let updated = store
             .update("main", UpdateAgentParams {
-                name: Some("Changed".to_string()),
-                emoji: None,
+                name: Some("My Assistant".to_string()),
+                emoji: Some("🤖".to_string()),
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
-            .await;
-        assert!(result.is_err());
+            .await
+            .unwrap();
+        assert_eq!(updated.name, "My Assistant");
+        assert_eq!(updated.emoji.as_deref(), Some("🤖"));
     }
 
     #[tokio::test]
@@ -594,6 +648,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -613,6 +668,7 @@ mod tests {
     async fn test_set_default_non_main() {
         let pool = test_pool().await;
         let store = AgentPersonaStore::new(pool);
+        store.ensure_main_row().await.unwrap();
         store
             .create(CreateAgentParams {
                 id: "ops".to_string(),
@@ -620,6 +676,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -641,6 +698,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -659,6 +717,7 @@ mod tests {
     async fn test_list_order() {
         let pool = test_pool().await;
         let store = AgentPersonaStore::new(pool);
+        store.ensure_main_row().await.unwrap();
 
         store
             .create(CreateAgentParams {
@@ -667,6 +726,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -678,6 +738,7 @@ mod tests {
                 emoji: None,
                 theme: None,
                 description: None,
+                voice_persona_id: None,
             })
             .await
             .unwrap();
@@ -693,6 +754,7 @@ mod tests {
     async fn test_get_main() {
         let pool = test_pool().await;
         let store = AgentPersonaStore::new(pool);
+        store.ensure_main_row().await.unwrap();
         let main = store.get("main").await.unwrap().unwrap();
         assert_eq!(main.id, "main");
         assert!(main.is_default);

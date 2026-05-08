@@ -268,6 +268,10 @@ impl Sandbox for CaptureWorkingDirSandbox {
         "docker"
     }
 
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
     async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
         Ok(())
     }
@@ -283,6 +287,119 @@ impl Sandbox for CaptureWorkingDirSandbox {
             stderr: String::new(),
             exit_code: 0,
         })
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct NonWaitingSandbox {
+    ensure_ready_calls: AtomicUsize,
+    image: std::sync::Mutex<Option<String>>,
+}
+
+#[async_trait]
+impl Sandbox for NonWaitingSandbox {
+    fn backend_name(&self) -> &'static str {
+        "docker"
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, image_override: Option<&str>) -> Result<()> {
+        self.ensure_ready_calls.fetch_add(1, Ordering::SeqCst);
+        *self.image.lock().unwrap_or_else(|e| e.into_inner()) =
+            image_override.map(ToOwned::to_owned);
+        Ok(())
+    }
+
+    async fn exec(&self, _id: &SandboxId, _command: &str, _opts: &ExecOpts) -> Result<ExecResult> {
+        Ok(ExecResult {
+            stdout: "ok".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+        })
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        Ok(())
+    }
+}
+
+struct FailingIsolatedSandbox;
+
+#[async_trait]
+impl Sandbox for FailingIsolatedSandbox {
+    fn backend_name(&self) -> &'static str {
+        "docker"
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
+    fn is_isolated(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        Err(Error::message("ensure_ready failed"))
+    }
+
+    async fn exec(&self, _id: &SandboxId, _command: &str, _opts: &ExecOpts) -> Result<ExecResult> {
+        Err(Error::message("no active sandbox"))
+    }
+
+    async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct SyncUploadFailingSandbox {
+    ensure_ready_calls: AtomicUsize,
+    write_file_calls: AtomicUsize,
+}
+
+#[async_trait]
+impl Sandbox for SyncUploadFailingSandbox {
+    fn backend_name(&self) -> &'static str {
+        "docker"
+    }
+
+    fn provides_fs_isolation(&self) -> bool {
+        true
+    }
+
+    fn is_isolated(&self) -> bool {
+        true
+    }
+
+    async fn ensure_ready(&self, _id: &SandboxId, _image_override: Option<&str>) -> Result<()> {
+        self.ensure_ready_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn exec(&self, _id: &SandboxId, _command: &str, _opts: &ExecOpts) -> Result<ExecResult> {
+        Ok(ExecResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        })
+    }
+
+    async fn write_file(
+        &self,
+        _id: &SandboxId,
+        _file_path: &str,
+        _content: &[u8],
+    ) -> Result<Option<serde_json::Value>> {
+        self.write_file_calls.fetch_add(1, Ordering::SeqCst);
+        Err(Error::message("upload failed"))
     }
 
     async fn cleanup(&self, _id: &SandboxId) -> Result<()> {
@@ -547,6 +664,111 @@ async fn test_exec_tool_with_sandbox_router_session_key() {
     assert_eq!(result["stdout"].as_str().unwrap().trim(), "routed");
 }
 
+#[tokio::test]
+async fn test_exec_tool_with_sandbox_router_does_not_wait_for_background_image_build() {
+    use crate::sandbox::{DEFAULT_SANDBOX_IMAGE, SandboxConfig, SandboxRouter};
+
+    let sandbox = Arc::new(NonWaitingSandbox::default());
+    let sandbox_dyn: Arc<dyn Sandbox> = Arc::clone(&sandbox) as _;
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig::default(),
+        sandbox_dyn,
+    ));
+    router.building_flag.store(true, Ordering::Relaxed);
+
+    let result = tokio::time::timeout(
+        Duration::from_millis(100),
+        ExecTool::default()
+            .with_sandbox_router(router)
+            .execute(serde_json::json!({
+                "command": "printf ok",
+                "_session_key": "session:blocking-build"
+            })),
+    )
+    .await
+    .expect("exec must not wait for the background sandbox image build")
+    .unwrap();
+
+    assert_eq!(result["stdout"].as_str().unwrap().trim(), "ok");
+    assert_eq!(result["exit_code"], 0);
+    assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        sandbox
+            .image
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_deref(),
+        Some(DEFAULT_SANDBOX_IMAGE)
+    );
+}
+
+#[tokio::test]
+async fn test_exec_tool_marks_synced_when_isolated_ensure_ready_fails() {
+    use crate::sandbox::{SandboxConfig, SandboxRouter};
+
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig::default(),
+        Arc::new(FailingIsolatedSandbox),
+    ));
+    let session_key = "session:ensure-ready-fails";
+
+    let result = ExecTool::default()
+        .with_sandbox_router(Arc::clone(&router))
+        .execute(serde_json::json!({
+            "command": "printf ok",
+            "_session_key": session_key
+        }))
+        .await;
+
+    assert!(result.is_err());
+    assert!(router.is_synced(session_key).await);
+    assert_eq!(
+        router.sync_failure(session_key).await.as_deref(),
+        Some("ensure_ready failed")
+    );
+    assert!(router.mark_preparing_once(session_key).await);
+    assert!(!router.is_synced(session_key).await);
+    assert!(router.sync_failure(session_key).await.is_none());
+}
+
+#[tokio::test]
+async fn test_exec_tool_clears_prepared_session_when_sync_in_fails() {
+    use crate::sandbox::{SandboxConfig, SandboxRouter};
+
+    let host_workspace = tempfile::tempdir().unwrap();
+    std::fs::write(host_workspace.path().join("input.txt"), "needs upload").unwrap();
+
+    let sandbox = Arc::new(SyncUploadFailingSandbox::default());
+    let router = Arc::new(SandboxRouter::with_backend(
+        SandboxConfig {
+            shared_home_dir: Some(host_workspace.path().to_path_buf()),
+            ..Default::default()
+        },
+        Arc::clone(&sandbox) as Arc<dyn Sandbox>,
+    ));
+    let session_key = "session:sync-in-fails";
+
+    let result = ExecTool::default()
+        .with_sandbox_router(Arc::clone(&router))
+        .execute(serde_json::json!({
+            "command": "printf ok",
+            "_session_key": session_key
+        }))
+        .await;
+
+    assert!(result.is_err());
+    assert_eq!(sandbox.ensure_ready_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sandbox.write_file_calls.load(Ordering::SeqCst), 1);
+    assert!(router.is_synced(session_key).await);
+    assert_eq!(
+        router.sync_failure(session_key).await.as_deref(),
+        Some("upload failed")
+    );
+    assert!(router.mark_preparing_once(session_key).await);
+    assert!(!router.is_synced(session_key).await);
+    assert!(router.sync_failure(session_key).await.is_none());
+}
+
 /// Regression test: when SandboxMode=All (the default) but the backend is
 /// NoSandbox (no container runtime), the exec tool must NOT use
 /// /home/sandbox as the working directory.  It should fall back to the host
@@ -596,7 +818,9 @@ async fn test_exec_tool_sandbox_rewrites_host_absolute_working_dir() {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
-    assert_eq!(captured, Some(PathBuf::from("/home/sandbox")));
+    // Absolute paths outside the sandbox are passed through — the backend
+    // handles remapping to its own workspace if needed.
+    assert_eq!(captured, Some(PathBuf::from("/Users/fabien")));
 }
 
 #[tokio::test]

@@ -30,12 +30,14 @@ moltis-gateway        = { workspace = true }
 moltis-graphql        = { optional = true, workspace = true }
 moltis-matrix         = { optional = true, workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
-moltis-msteams        = { workspace = true }
+moltis-msteams        = { optional = true, workspace = true }
+moltis-portable       = { workspace = true }
 moltis-protocol       = { workspace = true }
 moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
 moltis-slack          = { optional = true, workspace = true }
+moltis-telephony      = { optional = true, workspace = true }
 moltis-tls            = { optional = true, workspace = true }
 moltis-tools          = { workspace = true }
 moltis-vault          = { optional = true, workspace = true }
@@ -49,6 +51,7 @@ serde                 = { workspace = true }
 serde_json            = { workspace = true }
 sysinfo               = { workspace = true }
 tempfile              = { workspace = true }
+thiserror             = { workspace = true }
 time                  = { workspace = true }
 tokio                 = { workspace = true }
 tokio-tungstenite     = { workspace = true }
@@ -63,18 +66,23 @@ webauthn-rs           = { features = ["danger-allow-state-serialisation"], works
 
 [features]
 default = [
+  "discord",
   "graphql",
   "matrix",
   "mdns",
   "metrics",
+  "msteams",
   "nostr",
   "prometheus",
   "push-notifications",
+  "signal",
   "slack",
   "tailscale",
+  "telephony",
   "tls",
   "trusted-network",
   "vault",
+  "voice",
   "web-ui",
 ]
 graphql = [
@@ -90,14 +98,20 @@ ngrok = ["dep:ngrok"]
 nostr = ["moltis-gateway/nostr"]
 prometheus = ["metrics", "moltis-gateway/prometheus"]
 push-notifications = ["dep:chrono", "moltis-gateway/push-notifications"]
+signal = ["moltis-gateway/signal"]
+discord = ["moltis-gateway/discord"]
+msteams = ["dep:moltis-msteams", "moltis-gateway/msteams"]
 slack = ["dep:moltis-slack", "moltis-gateway/slack"]
+telephony = ["dep:moltis-telephony", "moltis-gateway/telephony"]
 tailscale = ["moltis-gateway/tailscale"]
 tls = ["dep:moltis-tls", "dep:rustls", "moltis-gateway/tls"]
 trusted-network = ["moltis-gateway/trusted-network"]
 vault = ["dep:moltis-vault", "moltis-gateway/vault"]
+voice = ["moltis-gateway/voice"]
 web-ui = ["moltis-gateway/web-ui"]
 
 [dev-dependencies]
+moltis-code-index.workspace = true
 moltis-providers = { workspace = true }
 moltis-web       = { workspace = true }
 sqlx             = { workspace = true }

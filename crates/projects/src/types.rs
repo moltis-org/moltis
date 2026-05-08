@@ -22,6 +22,8 @@ pub struct Project {
     pub sandbox_image: Option<String>,
     #[serde(default)]
     pub detected: bool,
+    #[serde(default = "default_true")]
+    pub code_index_enabled: bool,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -128,6 +130,10 @@ impl ProjectContext {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,6 +150,7 @@ mod tests {
             branch_prefix: None,
             sandbox_image: None,
             detected: false,
+            code_index_enabled: true,
             created_at: 0,
             updated_at: 0,
         }

@@ -43,13 +43,22 @@ pub async fn oauth_callback_handler(
         .await
     {
         Ok(result) => Ok(result),
-        Err(provider_error) => state
+        Err(provider_error) => match state
             .gateway
             .services
             .mcp
-            .oauth_complete(completion_params)
+            .oauth_complete(completion_params.clone())
             .await
-            .map_err(|mcp_error| (provider_error, mcp_error)),
+        {
+            Ok(result) => Ok(result),
+            Err(mcp_error) => state
+                .gateway
+                .services
+                .channel
+                .oauth_complete(completion_params)
+                .await
+                .map_err(|channel_error| (provider_error, mcp_error, channel_error)),
+        },
     };
 
     match completion {
@@ -69,10 +78,11 @@ pub async fn oauth_callback_handler(
             }
             resp
         },
-        Err((provider_error, mcp_error)) => {
+        Err((provider_error, mcp_error, channel_error)) => {
             tracing::warn!(
                 provider_error = %provider_error,
                 mcp_error = %mcp_error,
+                channel_error = %channel_error,
                 "OAuth callback completion failed"
             );
             (

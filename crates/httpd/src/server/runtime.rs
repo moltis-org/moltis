@@ -79,7 +79,7 @@ pub(super) fn instance_slug(config: &moltis_config::MoltisConfig) -> String {
 
 pub(super) async fn finalize_prepared_gateway(
     args: FinalizeGatewayArgs<'_>,
-) -> anyhow::Result<PreparedGateway> {
+) -> crate::error::Result<PreparedGateway> {
     let FinalizeGatewayArgs {
         bind,
         port,
@@ -134,14 +134,17 @@ pub(super) async fn finalize_prepared_gateway(
             (ca, cert, key)
         } else if tls_config.auto_generate {
             // Auto-generate certificates.
-            let mgr = moltis_tls::FsCertManager::new()?;
+            let mgr =
+                moltis_tls::FsCertManager::new().map_err(|e| crate::Error::Tls(e.to_string()))?;
             let runtime_sans = tls_runtime_sans(bind);
-            let (ca, cert, key) = mgr.ensure_certs(&runtime_sans)?;
+            let (ca, cert, key) = mgr
+                .ensure_certs(&runtime_sans)
+                .map_err(|e| crate::Error::Tls(e.to_string()))?;
             (Some(ca), cert, key)
         } else {
-            anyhow::bail!(
-                "TLS is enabled but no certificates configured and auto_generate is false"
-            );
+            return Err(crate::Error::Tls(
+                "TLS is enabled but no certificates configured and auto_generate is false".into(),
+            ));
         };
 
         // Add /certs/ca.pem route to the main HTTPS app if we have a CA cert.
@@ -444,8 +447,12 @@ pub(super) async fn finalize_prepared_gateway(
                     // Update gauges that are derived from server state, not events.
                     moltis_metrics::gauge!(moltis_metrics::system::UPTIME_SECONDS)
                         .set(server_start.elapsed().as_secs_f64());
-                    let session_count =
-                        metrics_state.inner.read().await.active_sessions.len() as f64;
+                    let session_count = metrics_state
+                        .client_registry
+                        .read()
+                        .await
+                        .active_sessions
+                        .len() as f64;
                     moltis_metrics::gauge!(moltis_metrics::session::ACTIVE).set(session_count);
 
                     let prometheus_text = handle.render();
@@ -755,6 +762,7 @@ pub(super) async fn finalize_prepared_gateway(
                     payload: Some(CronPayload::AgentTurn {
                         message: prompt,
                         model: hb.model.clone(),
+                        agent_id: hb.agent_id.clone(),
                         timeout_secs: None,
                         deliver: hb.deliver,
                         channel: hb.channel.clone(),
@@ -784,6 +792,7 @@ pub(super) async fn finalize_prepared_gateway(
                     payload: CronPayload::AgentTurn {
                         message: prompt,
                         model: hb.model.clone(),
+                        agent_id: hb.agent_id.clone(),
                         timeout_secs: None,
                         deliver: hb.deliver,
                         channel: hb.channel.clone(),
@@ -866,7 +875,7 @@ pub async fn prepare_gateway_embedded(
     data_dir: Option<PathBuf>,
     extra_routes: Option<RouteEnhancer>,
     session_event_bus: Option<SessionEventBus>,
-) -> anyhow::Result<PreparedGateway> {
+) -> crate::error::Result<PreparedGateway> {
     let prepared = prepare_gateway(
         bind,
         port,
@@ -913,7 +922,7 @@ pub(super) async fn start_ngrok_tunnel(
     gateway: Arc<GatewayState>,
     webauthn_registry: Option<SharedWebAuthnRegistry>,
     ngrok_config: &moltis_config::NgrokConfig,
-) -> anyhow::Result<NgrokActiveTunnel> {
+) -> crate::error::Result<NgrokActiveTunnel> {
     use ::ngrok::prelude::{EndpointInfo, ForwarderBuilder};
 
     let internal_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -939,7 +948,7 @@ pub(super) async fn start_ngrok_tunnel(
 
     let forward_to = format!("http://{internal_addr}")
         .parse()
-        .map_err(|error| anyhow::anyhow!("invalid ngrok forward target: {error}"))?;
+        .map_err(|error| crate::Error::Ngrok(format!("invalid ngrok forward target: {error}")))?;
 
     let mut session_builder = ::ngrok::Session::builder();
     if let Some(authtoken) = ngrok_config.authtoken.as_ref() {
@@ -954,7 +963,7 @@ pub(super) async fn start_ngrok_tunnel(
             if let Err(join_error) = loopback_task.await {
                 warn!(%join_error, "ngrok loopback server task join failed during startup");
             }
-            return Err(error.into());
+            return Err(crate::Error::Ngrok(error.to_string()));
         },
     };
 
@@ -973,7 +982,7 @@ pub(super) async fn start_ngrok_tunnel(
             if let Err(join_error) = loopback_task.await {
                 warn!(%join_error, "ngrok loopback server task join failed during startup");
             }
-            return Err(error.into());
+            return Err(crate::Error::Ngrok(error.to_string()));
         },
     };
     let public_url = forwarder.url().to_string();
@@ -1017,7 +1026,7 @@ pub async fn start_gateway(
     data_dir: Option<PathBuf>,
     #[cfg(feature = "tailscale")] tailscale_opts: Option<TailscaleOpts>,
     extra_routes: Option<RouteEnhancer>,
-) -> anyhow::Result<()> {
+) -> crate::error::Result<()> {
     let prepared = prepare_gateway(
         bind,
         port,
@@ -1039,7 +1048,7 @@ pub async fn start_gateway(
 
     let ip: std::net::IpAddr = bind
         .parse()
-        .map_err(|e| anyhow::anyhow!("invalid bind address '{bind}': {e}"))?;
+        .map_err(|e| crate::Error::Config(format!("invalid bind address '{bind}': {e}")))?;
     let addr = SocketAddr::new(ip, port);
 
     #[cfg_attr(not(feature = "tls"), allow(unused_variables))]
@@ -1106,20 +1115,26 @@ pub async fn start_gateway(
             (ca, cert, key)
         } else if tls_config.auto_generate {
             // Auto-generate certificates.
-            let mgr = moltis_tls::FsCertManager::new()?;
+            let mgr =
+                moltis_tls::FsCertManager::new().map_err(|e| crate::Error::Tls(e.to_string()))?;
             let runtime_sans = tls_runtime_sans(bind);
-            let (ca, cert, key) = mgr.ensure_certs(&runtime_sans)?;
+            let (ca, cert, key) = mgr
+                .ensure_certs(&runtime_sans)
+                .map_err(|e| crate::Error::Tls(e.to_string()))?;
             (Some(ca), cert, key)
         } else {
-            anyhow::bail!(
-                "TLS is enabled but no certificates configured and auto_generate is false"
-            );
+            return Err(crate::Error::Tls(
+                "TLS is enabled but no certificates configured and auto_generate is false".into(),
+            ));
         };
 
         ca_cert_path = ca_path.clone();
 
-        let mgr = moltis_tls::FsCertManager::new()?;
-        rustls_config = Some(mgr.build_rustls_config(&cert_path, &key_path)?);
+        let mgr = moltis_tls::FsCertManager::new().map_err(|e| crate::Error::Tls(e.to_string()))?;
+        rustls_config = Some(
+            mgr.build_rustls_config(&cert_path, &key_path)
+                .map_err(|e| crate::Error::Tls(e.to_string()))?,
+        );
         // Note: /certs/ca.pem route is already registered by prepare_gateway.
     }
 
@@ -1309,10 +1324,8 @@ pub async fn start_gateway(
     }
 
     // Spawn shutdown handler:
-    // - unregister mDNS service (when configured)
-    // - reset tailscale state on exit (when configured)
-    // - give browser pool 5s to shut down gracefully
-    // - force process exit to avoid hanging after ctrl-c
+    // - SIGTERM / SIGHUP (Docker/systemd): graceful — drain browser pool, unregister services
+    // - SIGINT  (ctrl-c): immediate exit
     {
         let browser_for_shutdown = Arc::clone(&banner.browser_for_lifecycle);
         #[cfg(feature = "tailscale")]
@@ -1321,9 +1334,42 @@ pub async fn start_gateway(
         #[cfg(feature = "tailscale")]
         let ts_mode = banner.tailscale_mode;
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_err() {
-                return;
+            #[cfg(unix)]
+            let signal_name: &str = {
+                use tokio::signal::unix::{SignalKind, signal};
+                let mut sigterm =
+                    signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+                let mut sighup =
+                    signal(SignalKind::hangup()).expect("failed to register SIGHUP handler");
+                tokio::select! {
+                    result = tokio::signal::ctrl_c() => {
+                        if result.is_err() { return; }
+                        "SIGINT"
+                    }
+                    result = sigterm.recv() => {
+                        if result.is_none() { return; }
+                        "SIGTERM"
+                    }
+                    result = sighup.recv() => {
+                        if result.is_none() { return; }
+                        "SIGHUP"
+                    }
+                }
+            };
+            #[cfg(not(unix))]
+            let signal_name: &str = {
+                if tokio::signal::ctrl_c().await.is_err() {
+                    return;
+                }
+                "SIGINT"
+            };
+
+            if signal_name == "SIGINT" {
+                info!("received SIGINT, exiting immediately");
+                std::process::exit(0);
             }
+
+            info!(signal = signal_name, "starting graceful shutdown");
 
             #[cfg(feature = "mdns")]
             if let Some(ref daemon) = _mdns_daemon {
@@ -1390,7 +1436,8 @@ pub async fn start_gateway(
             browser_tool_for_warmup.clone(),
         );
         moltis_tls::serve_tls_with_http_redirect(tcp_listener, Arc::new(tls_cfg), app, port, bind)
-            .await?;
+            .await
+            .map_err(|e| crate::Error::Tls(e.to_string()))?;
         return Ok(());
     }
 

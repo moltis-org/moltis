@@ -113,6 +113,15 @@ pub async fn auth_gate(
 ) -> axum::response::Response {
     let path = request.uri().path();
 
+    // Trace every SPA page request to diagnose CI hangs.
+    if !path.starts_with("/api/")
+        && !path.starts_with("/assets/")
+        && path != "/health"
+        && path != "/ws"
+    {
+        tracing::warn!(path, "auth_gate: SPA request entering middleware");
+    }
+
     // Public paths — no auth needed.
     if is_public_path(path) {
         return next.run(request).await;
@@ -240,7 +249,16 @@ fn is_public_path(path: &str) -> bool {
             | "/ws"
     ) || path.starts_with("/api/auth/")
         || path.starts_with("/api/public/")
-        || path.starts_with("/api/channels/msteams/")
+        || {
+            #[cfg(feature = "msteams")]
+            {
+                path.starts_with("/api/channels/msteams/")
+            }
+            #[cfg(not(feature = "msteams"))]
+            {
+                false
+            }
+        }
         || path.starts_with("/api/webhooks/ingest/")
         || path.starts_with("/assets/")
         || path.starts_with("/share/")

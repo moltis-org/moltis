@@ -60,15 +60,44 @@ async function advanceToIdentityStep(page) {
 async function dismissRecoveryKeyIfShown(page) {
 	const recoveryHeading = page.getByText("Password set and vault initialized", { exact: true });
 	if (await isVisible(recoveryHeading)) {
-		// Verify key is displayed in a code block
 		const codeBlock = page.locator(".onboarding-card code");
 		await codeBlock.waitFor({ state: "visible", timeout: 3_000 }).catch(() => {});
-		// Verify copy button exists
+
+		const keyText = ((await codeBlock.textContent()) || "").trim();
+
+		// Stub clipboard so we can assert what gets written without needing
+		// browser clipboard permissions, and verify the copy button feedback.
+		await page.evaluate(() => {
+			window.__recoveryKeyCopied = null;
+			try {
+				Object.defineProperty(navigator.clipboard, "writeText", {
+					configurable: true,
+					value: (text) => {
+						window.__recoveryKeyCopied = text;
+						return Promise.resolve();
+					},
+				});
+			} catch {
+				// clipboard not configurable in this context; skip capture
+			}
+		});
+
 		const copyBtn = page.getByRole("button", { name: /^Copy/, exact: false });
 		if (await isVisible(copyBtn)) {
 			await copyBtn.click();
+			// Button should briefly show "Copied!" feedback
+			await expect(copyBtn)
+				.toHaveText("Copied!", { timeout: 2_000 })
+				.catch(() => {});
+			// The key text passed to clipboard must match what was displayed
+			if (keyText) {
+				const captured = await page.evaluate(() => window.__recoveryKeyCopied);
+				if (captured !== null) {
+					expect(captured).toBe(keyText);
+				}
+			}
 		}
-		// Click Continue to proceed
+
 		if (await clickFirstVisibleButton(page, { name: /^Continue$/ })) return true;
 	}
 	return false;

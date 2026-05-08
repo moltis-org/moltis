@@ -1,22 +1,9 @@
-use {super::*, crate::schema::MoltisConfig, secrecy::ExposeSecret, std::path::Path};
-
-const KNOWN_PROVIDER_NAMES: &[&str] = &[
-    "anthropic",
-    "openai",
-    "gemini",
-    "groq",
-    "xai",
-    "deepseek",
-    "fireworks",
-    "mistral",
-    "openrouter",
-    "cerebras",
-    "minimax",
-    "moonshot",
-    "venice",
-    "ollama",
-    "lmstudio",
-];
+use {
+    super::*,
+    crate::schema::{KNOWN_PROVIDER_NAMES, MoltisConfig},
+    secrecy::ExposeSecret,
+    std::path::Path,
+};
 
 const PROVIDERS_META_KEYS: &[&str] = &["offered", "show_legacy_models"];
 
@@ -239,6 +226,29 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
                 message: format!(
                     "deny_paths entries should be absolute path globs starting with '/' (got '{entry}')"
                 ),
+            });
+        }
+    }
+
+    // server.external_url: must use http:// or https:// scheme.
+    if let Some(ref url) = config.server.external_url {
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            let scheme = url.split("://").next().unwrap_or("<unknown>");
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "invalid-value",
+                path: "server.external_url".into(),
+                message: format!(
+                    "server.external_url must use http:// or https:// scheme (got \"{scheme}://\")"
+                ),
+            });
+        }
+        if url.ends_with('/') {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "invalid-value",
+                path: "server.external_url".into(),
+                message: "server.external_url has a trailing slash; WebAuthn origins must not end with '/' (it will be stripped at runtime)".into(),
             });
         }
     }
@@ -572,6 +582,23 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         }
     }
 
+    // Sandbox GPU passthrough validation
+    if let Some(ref gpus) = config.tools.exec.sandbox.gpus {
+        let valid = gpus == "all"
+            || gpus.starts_with("device=")
+            || gpus.chars().all(|c| c.is_ascii_digit() || c == ',');
+        if !valid {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "unknown-field",
+                path: "tools.exec.sandbox.gpus".into(),
+                message: format!(
+                    "unrecognized gpus value \"{gpus}\"; expected \"all\", \"device=0\", \"device=0,1\", or a device index",
+                ),
+            });
+        }
+    }
+
     // Unknown CalDAV provider
     let valid_caldav_providers = ["fastmail", "icloud", "generic"];
     for (name, account) in &config.caldav.accounts {
@@ -586,6 +613,37 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
                     "unknown CalDAV provider \"{provider}\"; expected one of: {}",
                     valid_caldav_providers.join(", ")
                 ),
+            });
+        }
+    }
+
+    // Home Assistant instances without URL or token
+    for (name, instance) in &config.home_assistant.instances {
+        if instance.url.is_none() {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "missing-field",
+                path: format!("home_assistant.instances.{name}.url"),
+                message: format!("HA instance '{name}' has no url configured"),
+            });
+        }
+        if instance.token.is_none() {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "missing-field",
+                path: format!("home_assistant.instances.{name}.token"),
+                message: format!("HA instance '{name}' has no token configured"),
+            });
+        }
+        if let Some(ref url) = instance.url
+            && !url.starts_with("http://")
+            && !url.starts_with("https://")
+        {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "invalid-value",
+                path: format!("home_assistant.instances.{name}.url"),
+                message: "HA url should start with http:// or https://".into(),
             });
         }
     }
@@ -675,6 +733,7 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         "elevenlabs",
         "elevenlabs-stt",
         "voxtral-local",
+        "whisper-local",
         "whisper-cli",
         "sherpa-onnx",
     ];
@@ -750,6 +809,209 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             path: "server.port".into(),
             message: "port is 0; a random port will be assigned at startup".into(),
         });
+    }
+
+    // Validate global model overrides.
+    // Negative values are rejected by u32 deserialization (type error),
+    // so we only need to guard zero and unusually large values here.
+    for (model_id, override_cfg) in &config.models {
+        validate_context_window(
+            override_cfg.context_window,
+            &format!("models.{model_id}.context_window"),
+            diagnostics,
+        );
+    }
+
+    // Validate provider-scoped model overrides.
+    for (provider_name, provider_entry) in &config.providers.providers {
+        for (model_id, override_cfg) in &provider_entry.model_overrides {
+            validate_context_window(
+                override_cfg.context_window,
+                &format!("providers.{provider_name}.model_overrides.{model_id}.context_window"),
+                diagnostics,
+            );
+        }
+    }
+
+    // tools: overflow_ratio must not be zero (budget becomes 0, every iteration fails)
+    if config.tools.preemptive_overflow_ratio == 0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.preemptive_overflow_ratio".into(),
+            message: "preemptive_overflow_ratio = 0 means the overflow budget is always \
+                      0 tokens; the agent loop will fail immediately on every iteration"
+                .into(),
+        });
+    }
+
+    // tools: ratio fields should not exceed 100 (percentages)
+    if config.tools.tool_result_compaction_ratio > 100 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.tool_result_compaction_ratio".into(),
+            message: format!(
+                "tool_result_compaction_ratio ({}) exceeds 100 — compaction will trigger on every iteration regardless of context usage",
+                config.tools.tool_result_compaction_ratio
+            ),
+        });
+    }
+    if config.tools.preemptive_overflow_ratio > 100 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.preemptive_overflow_ratio".into(),
+            message: format!(
+                "preemptive_overflow_ratio ({}) exceeds 100 — overflow protection will always trigger",
+                config.tools.preemptive_overflow_ratio
+            ),
+        });
+    }
+
+    // Warn about literal API keys in config (should use env var substitution
+    // or the credential store instead).
+    check_plaintext_api_keys(config, diagnostics);
+
+    // tools: overflow_ratio must be greater than compaction_ratio
+    if config.tools.tool_result_compaction_ratio > 0
+        && config.tools.preemptive_overflow_ratio <= config.tools.tool_result_compaction_ratio
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: "tools.preemptive_overflow_ratio".into(),
+            message: format!(
+                "preemptive_overflow_ratio ({}) should be greater than tool_result_compaction_ratio ({}) to avoid context overflow on every iteration",
+                config.tools.preemptive_overflow_ratio, config.tools.tool_result_compaction_ratio
+            ),
+        });
+    }
+}
+
+/// Validate a `context_window` override value (optional field).
+fn validate_context_window(value: Option<u32>, path: &str, diagnostics: &mut Vec<Diagnostic>) {
+    let Some(cw) = value else {
+        return;
+    };
+    if cw == 0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "invalid-value",
+            path: path.into(),
+            message: "context_window must be at least 1".into(),
+        });
+    } else if cw > 10_000_000 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "invalid-value",
+            path: path.into(),
+            message: format!("context_window is {cw}, which is unusually large (> 10M)"),
+        });
+    }
+}
+
+/// Warn about literal (non-env-var) API keys stored directly in the config.
+///
+/// API keys should be supplied via environment variables (e.g. `${{ANTHROPIC_API_KEY}}`)
+/// or stored in the credential store (`provider_keys.json`), not hard-coded in
+/// `moltis.toml`.  The config file may be backed up, synced, or accidentally
+/// committed to version control.
+fn looks_like_env_var(value: &str) -> bool {
+    // ${VAR} or $VAR (POSIX)
+    if value.starts_with('$') {
+        return true;
+    }
+    // %VAR% (Windows)
+    if value.starts_with('%') && value.ends_with('%') && value.len() > 2 {
+        return true;
+    }
+    false
+}
+
+fn check_plaintext_api_keys(config: &MoltisConfig, diagnostics: &mut Vec<Diagnostic>) {
+    // LLM provider keys
+    for (name, entry) in &config.providers.providers {
+        if let Some(ref key) = entry.api_key {
+            let value = key.expose_secret();
+            if !value.is_empty() && !looks_like_env_var(value) {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    category: "security",
+                    path: format!("providers.{name}.api_key"),
+                    message: format!(
+                        "API key for provider '{name}' is stored as plain text in the config file. \
+                         Use an environment variable (api_key = \"${{{}}}\") or save it via the \
+                         web UI so it is stored in the credential store instead.",
+                        name.to_uppercase().replace('-', "_") + "_API_KEY"
+                    ),
+                });
+            }
+        }
+    }
+
+    // Voice TTS keys
+    let voice_tts_keys: &[(&str, &Option<secrecy::Secret<String>>)] = &[
+        (
+            "voice.tts.elevenlabs.api_key",
+            &config.voice.tts.elevenlabs.api_key,
+        ),
+        ("voice.tts.openai.api_key", &config.voice.tts.openai.api_key),
+        ("voice.tts.google.api_key", &config.voice.tts.google.api_key),
+    ];
+    for (path, key) in voice_tts_keys {
+        if let Some(k) = key {
+            let value = k.expose_secret();
+            if !value.is_empty() && !looks_like_env_var(value) {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    category: "security",
+                    path: (*path).into(),
+                    message: format!(
+                        "Voice API key at {path} is stored as plain text in the config file. \
+                         Save it via the web UI so it is stored in the credential store instead."
+                    ),
+                });
+            }
+        }
+    }
+
+    // Voice STT keys
+    let voice_stt_keys: &[(&str, &Option<secrecy::Secret<String>>)] = &[
+        (
+            "voice.stt.whisper.api_key",
+            &config.voice.stt.whisper.api_key,
+        ),
+        ("voice.stt.groq.api_key", &config.voice.stt.groq.api_key),
+        (
+            "voice.stt.deepgram.api_key",
+            &config.voice.stt.deepgram.api_key,
+        ),
+        ("voice.stt.google.api_key", &config.voice.stt.google.api_key),
+        (
+            "voice.stt.mistral.api_key",
+            &config.voice.stt.mistral.api_key,
+        ),
+        (
+            "voice.stt.elevenlabs.api_key",
+            &config.voice.stt.elevenlabs.api_key,
+        ),
+    ];
+    for (path, key) in voice_stt_keys {
+        if let Some(k) = key {
+            let value = k.expose_secret();
+            if !value.is_empty() && !looks_like_env_var(value) {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    category: "security",
+                    path: (*path).into(),
+                    message: format!(
+                        "Voice API key at {path} is stored as plain text in the config file. \
+                         Save it via the web UI so it is stored in the credential store instead."
+                    ),
+                });
+            }
+        }
     }
 }
 

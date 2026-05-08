@@ -38,23 +38,6 @@
 <link rel="icon" type="image/png" sizes="32x32" href="{{ asset_prefix }}icons/icon-72.png">
 <meta name="build-ts" content="{{ build_ts }}">
 <script nonce="{{ nonce }}">window.__MOLTIS__={{ gon_json|safe }};</script>
-<script nonce="{{ nonce }}" type="importmap">
-{
-  "imports": {
-    "preact": "{{ asset_prefix }}js/vendor/preact.mjs",
-    "preact/hooks": "{{ asset_prefix }}js/vendor/preact-hooks.mjs",
-    "@preact/signals": "{{ asset_prefix }}js/vendor/preact-signals.mjs",
-    "htm/preact": "{{ asset_prefix }}js/vendor/htm-preact.mjs",
-    "luxon": "{{ asset_prefix }}js/vendor/luxon.mjs",
-    "uplot": "{{ asset_prefix }}js/vendor/uplot.mjs",
-    "pretty-bytes": "{{ asset_prefix }}js/vendor/pretty-bytes.mjs",
-    "@xterm/xterm": "{{ asset_prefix }}js/vendor/xterm.mjs",
-    "@xterm/addon-fit": "{{ asset_prefix }}js/vendor/xterm-addon-fit.mjs",
-    "i18next": "{{ asset_prefix }}js/vendor/i18next.mjs",
-    "shiki": "{{ shiki_url }}"
-  }
-}
-</script>
 <link rel="stylesheet" href="{{ asset_prefix }}css/base.css">
 <link rel="stylesheet" href="{{ asset_prefix }}css/layout.css">
 <link rel="stylesheet" href="{{ asset_prefix }}css/chat.css">
@@ -63,45 +46,9 @@
 <link rel="stylesheet" href="{{ asset_prefix }}css/vendor/xterm.css">
 <link rel="stylesheet" href="{{ asset_prefix }}css/uplot.css">
 <link rel="stylesheet" href="{{ asset_prefix }}style.css">
-<link rel="modulepreload" href="{{ asset_prefix }}js/app.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/pwa.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/pwa-install.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/mobile.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/state.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/theme.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/helpers.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/events.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/router.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/websocket.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/sessions.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/session-search.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/models.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/projects.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/project-combo.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/providers.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/chat-ui.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/icons.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/sandbox.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/nav-counts.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/logs-alert.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-chat.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-crons.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-projects.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-providers.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-channels.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-logs.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-skills.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-mcp.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-hooks.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-settings.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/page-images.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/emoji-picker.js">
-<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/preact.mjs">
-<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/preact-hooks.mjs">
-<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/preact-signals.mjs">
-<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/htm-preact.mjs">
-<link rel="modulepreload" href="{{ asset_prefix }}js/vendor/luxon.mjs">
-<link rel="modulepreload" href="{{ asset_prefix }}js/time-format.js">
+<link rel="modulepreload" href="{{ asset_prefix }}dist/main.js">
+<!-- E2E compat: tests derive asset prefix from this script tag -->
+<script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}js/app.js"></script>
 </head>
 <body>
 
@@ -125,6 +72,12 @@
     <span class="icon icon-md icon-burger-mobile"></span>
   </button>
 
+  <button id="commandPaletteBtn" class="header-link-btn" title="Command palette">
+    <span class="icon icon-search"></span>
+    <kbd class="cmd-palette-header-kbd" id="cmdPaletteKbd"></kbd>
+  </button>
+  <script nonce="{{ nonce }}">!function(){var k=document.getElementById("cmdPaletteKbd");if(k)k.textContent=/Mac|iPhone|iPad/.test(navigator.userAgent)?"\u2318K":"Ctrl+K"}()</script>
+
   <div class="header-actions">
     <button id="settingsBtn" class="header-link-btn" title="Settings">
       <span class="icon icon-settings"></span>
@@ -147,8 +100,20 @@
       class="header-link-btn"
       title="Report an issue"
     >
-      <span class="icon icon-link"></span>
-      <span class="header-link-label">Report issue</span>
+      <span class="icon icon-github-issue"></span>
+      <span class="header-link-label">Issues</span>
+      <span class="header-badge" id="githubIssuesCount"></span>
+    </a>
+    <a
+      href="https://github.com/moltis-org/moltis/discussions"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="header-link-btn"
+      title="Discussions"
+    >
+      <span class="icon icon-github-discussion"></span>
+      <span class="header-link-label">Discussions</span>
+      <span class="header-badge" id="githubDiscussionsCount"></span>
     </a>
   </div>
 
@@ -200,8 +165,15 @@
     An update is available
     <strong id="updateLatestVersion"></strong>
   </span>
+  <button id="updateNowBtn" type="button" class="auth-disabled-setup">Update now</button>
   <a id="updateReleaseLink" href="https://github.com/moltis-org/moltis/releases/latest" target="_blank" rel="noopener noreferrer" class="auth-disabled-setup">View release</a>
   <button id="updateDismissBtn" type="button" class="auth-disabled-setup bg-transparent border-0 p-0 cursor-pointer">Dismiss</button>
+</div>
+
+<!-- Vault sealed banner (shown when vault is locked after restart) -->
+<div id="vaultBanner" class="info-banner" style="display:none">
+  <span>Your encryption vault is locked — API keys are unavailable until unlocked.</span>
+  <a href="{{ routes.settings }}/vault" class="auth-disabled-setup">Unlock vault</a>
 </div>
 
 <!-- PWA Install Banner (shown on mobile when not installed) -->
@@ -236,11 +208,11 @@
         </div>
       </div>
     </div>
-    <div class="h-12 px-3 border-b border-[var(--border)] relative flex items-center">
+    <div class="px-3 py-1.5 border-b border-[var(--border)] relative flex items-center">
       <div class="w-full flex items-center gap-1">
         <input id="sessionSearch" type="text" placeholder="Search sessions…"
-               class="flex-1 min-w-0 text-xs bg-[var(--surface2)] border border-[var(--border)] rounded px-2 py-1.5 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] font-sans" />
-        <button id="newSessionBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-1.5 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent" title="New session">+</button>
+               class="flex-1 min-w-0 text-xs bg-[var(--surface2)] border border-[var(--border)] rounded px-2 py-1 text-[var(--text)] focus:outline-none focus:border-[var(--border-strong)] font-sans" />
+        <button id="newSessionBtn" class="text-xs text-[var(--muted)] border border-[var(--border)] px-2 py-1 rounded hover:text-[var(--text)] hover:border-[var(--border-strong)] transition-colors cursor-pointer bg-transparent" title="New session">+</button>
       </div>
       <div id="searchResults" class="hidden"></div>
     </div>
@@ -348,6 +320,24 @@ provider = "voxtral-local"
 endpoint = "http://localhost:8000"</code>
   <br />
   <strong>Languages:</strong> English, French, German, Spanish, Portuguese, Italian, Dutch, Polish, Swedish, Norwegian, Danish, Finnish, Arabic
+</div>
+
+<div id="voice-whisper-local-instructions" class="text-xs text-[var(--muted)]" style="display:none;line-height:1.6;">
+  Run any OpenAI-compatible Whisper server locally. Popular choices:<br /><br />
+  <strong>faster-whisper-server</strong> (recommended):<br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">pip install faster-whisper-server
+faster-whisper-server --model Systran/faster-whisper-large-v3 --port 8080</code>
+  <br />
+  <strong>whisper.cpp server:</strong><br />
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">whisper-server --model ggml-large-v3.bin --port 8080</code>
+  <br />
+  <strong>Configuration:</strong><br />
+  Add to your <code class="font-mono text-xs">moltis.toml</code>:
+  <code class="font-mono text-xs block my-1 p-1.5 bg-[var(--bg)] rounded whitespace-pre-wrap">[voice.stt]
+provider = "whisper-local"
+
+[voice.stt.whisper_local]
+endpoint = "http://localhost:8080"</code>
 </div>
 
 <div id="voice-voxtral-requirements-ok" class="text-xs p-2 rounded-md mb-3 border border-[var(--accent)]" style="display:none;background:color-mix(in srgb, var(--accent) 10%, transparent);">
@@ -497,6 +487,6 @@ endpoint = "http://localhost:8000"</code>
   </div>
 </template>
 
-<script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}js/app.js"></script>
+<script nonce="{{ nonce }}" type="module" src="{{ asset_prefix }}dist/main.js"></script>
 </body>
 </html>

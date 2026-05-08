@@ -132,7 +132,7 @@ query {
 ```graphql
 mutation {
   chat {
-    send(message: "Hello from GraphQL") {
+    send(message: "Hello from GraphQL", sessionKey: "main") {
       ok
       sessionKey
     }

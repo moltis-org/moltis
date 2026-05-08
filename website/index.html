@@ -7,6 +7,7 @@
     <link rel="alternate" hreflang="en" href="https://moltis.org/index.en.html">
     <link rel="alternate" hreflang="fr" href="https://moltis.org/index.fr.html">
     <link rel="alternate" hreflang="zh" href="https://moltis.org/index.zh.html">
+    <link rel="alternate" hreflang="zh-TW" href="https://moltis.org/index.zh-TW.html">
     <link rel="alternate" hreflang="es" href="https://moltis.org/index.es.html">
     <link rel="alternate" hreflang="de" href="https://moltis.org/index.de.html">
     <link rel="alternate" hreflang="it" href="https://moltis.org/index.it.html">
@@ -17,14 +18,48 @@
     <title>Moltis</title>
     <script>
         (function () {
-            var supported = ['en', 'fr', 'zh', 'es', 'de', 'it', 'pt', 'ja', 'ko', 'ru'];
+            var supported = ['en', 'fr', 'zh', 'zh-TW', 'es', 'de', 'it', 'pt', 'ja', 'ko', 'ru'];
             var lang = "en";
-            var m = document.cookie.match(/(?:^|;\s*)lang=([a-z]{2})(?:;|$)/);
-            if (m && supported.indexOf(m[1]) !== -1) {
-                lang = m[1];
-            } else {
-                var bl = (navigator.language || "").toLowerCase().split("-")[0];
-                if (supported.indexOf(bl) !== -1) lang = bl;
+
+            function isTraditionalChineseTag(tag) {
+                return tag === 'zh-tw' ||
+                    tag.indexOf('zh-tw-') === 0 ||
+                    tag === 'zh-hk' ||
+                    tag.indexOf('zh-hk-') === 0 ||
+                    tag === 'zh-mo' ||
+                    tag.indexOf('zh-mo-') === 0 ||
+                    tag === 'zh-hant' ||
+                    tag.indexOf('zh-hant-') === 0;
+            }
+
+            function normalizeLangTag(tag) {
+                if (!tag) return null;
+                tag = tag.toLowerCase();
+
+                if (tag === 'zh' || tag.indexOf('zh-') === 0) {
+                    return isTraditionalChineseTag(tag) ? 'zh-Hant' : 'zh';
+                }
+
+                var primary = tag.split('-')[0];
+                return supported.indexOf(primary) !== -1 ? primary : null;
+            }
+
+            function resolveAssetLang(tag) {
+                var normalized = normalizeLangTag(tag);
+                if (!normalized) return null;
+                return normalized === 'zh-Hant' ? 'zh-TW' : normalized;
+            }
+
+            var resolvedLang = null;
+            var m = document.cookie.match(/(?:^|;\s*)lang=([a-zA-Z0-9-]{2,32})(?:;|$)/);
+            if (m) {
+                resolvedLang = resolveAssetLang(m[1]);
+            }
+            if (!resolvedLang) {
+                resolvedLang = resolveAssetLang(navigator.language || "");
+            }
+            if (resolvedLang) {
+                lang = resolvedLang;
             }
             location.replace("/index." + lang + ".html");
         })();

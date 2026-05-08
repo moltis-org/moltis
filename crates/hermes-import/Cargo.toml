@@ -1,0 +1,19 @@
+[package]
+description       = "Import data from a Hermes installation into Moltis"
+edition.workspace = true
+license.workspace = true
+name              = "moltis-hermes-import"
+version.workspace = true
+
+[dependencies]
+dirs-next          = { workspace = true }
+moltis-import-core = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+tracing            = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

@@ -288,6 +288,38 @@ pub(super) async fn send_sandbox_keyboard(bot: &Bot, to: &str, text: &str) {
     let _ = req.await;
 }
 
+/// Render a command's fixed choices as an inline keyboard.
+///
+/// Used for commands like `/sh` and `/fast` that have a small set of known
+/// values. The callback data format is `{cmd}_choice:{value}`, handled by
+/// `handle_callback_query` in `implementation.rs`.
+pub(super) async fn send_choices_keyboard(
+    bot: &Bot,
+    to: &str,
+    cmd: &str,
+    choices: &[(&str, &str)],
+) {
+    let (chat, thread_id) = parse_chat_target_lossy(to);
+
+    let buttons: Vec<Vec<InlineKeyboardButton>> = choices
+        .iter()
+        .map(|&(label, value)| {
+            vec![InlineKeyboardButton::callback(
+                label.to_string(),
+                format!("{cmd}_choice:{value}"),
+            )]
+        })
+        .collect();
+
+    let keyboard = InlineKeyboardMarkup::new(buttons);
+    let heading = format!("/{cmd}:");
+    let mut req = bot.send_message(chat, heading).reply_markup(keyboard);
+    if let Some(tid) = thread_id {
+        req = req.message_thread_id(tid);
+    }
+    let _ = req.await;
+}
+
 fn escape_html_simple(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -325,7 +357,7 @@ pub(super) async fn handle_callback_query(
         None
     } else {
         if let Some(ref bot) = bot {
-            let _ = bot.answer_callback_query(&query.id).await;
+            let _ = bot.answer_callback_query(query.id.clone()).await;
         }
         return Ok(());
     };
@@ -367,7 +399,7 @@ pub(super) async fn handle_callback_query(
 
     if let Some(provider_name) = data.strip_prefix("model_provider:") {
         if let Some(ref bot) = bot {
-            let _ = bot.answer_callback_query(&query.id).await;
+            let _ = bot.answer_callback_query(query.id.clone()).await;
         }
         if let Some(ref sink) = event_sink {
             let cmd = format!("model provider:{provider_name}");
@@ -407,7 +439,10 @@ pub(super) async fn handle_callback_query(
         };
 
         if let Some(ref bot) = bot {
-            let _ = bot.answer_callback_query(&query.id).text(&response).await;
+            let _ = bot
+                .answer_callback_query(query.id.clone())
+                .text(&response)
+                .await;
         }
 
         if let Err(e) = outbound
@@ -417,7 +452,7 @@ pub(super) async fn handle_callback_query(
             warn!(account_id, "failed to send callback response: {e}");
         }
     } else if let Some(ref bot) = bot {
-        let _ = bot.answer_callback_query(&query.id).await;
+        let _ = bot.answer_callback_query(query.id.clone()).await;
     }
 
     Ok(())

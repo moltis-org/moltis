@@ -8,24 +8,30 @@ default = ["metrics"]
 metrics = ["dep:moltis-metrics"]
 
 [dependencies]
-anyhow            = { workspace = true }
+base64            = { workspace = true }
+ed25519-dalek     = { workspace = true }
 futures           = { workspace = true }
 moltis-config     = { workspace = true }
 moltis-metrics    = { optional = true, workspace = true }
 moltis-protocol   = { workspace = true }
+rand              = { workspace = true }
 reqwest           = { workspace = true }
+rustls            = { workspace = true }
 serde             = { workspace = true }
 serde_json        = { workspace = true }
+sha2              = { workspace = true }
 sysinfo           = { workspace = true }
+thiserror         = { workspace = true }
 tokio             = { workspace = true }
-tokio-tungstenite = { workspace = true }
+tokio-tungstenite = { features = ["rustls-tls-webpki-roots"], workspace = true }
 tracing           = { workspace = true }
 url               = { workspace = true }
 uuid              = { workspace = true }
 which             = { workspace = true }
 
 [dev-dependencies]
-tokio = { features = ["macros", "rt-multi-thread"], workspace = true }
+tempfile = { workspace = true }
+tokio    = { features = ["macros", "rt-multi-thread"], workspace = true }
 
 [lints]
 workspace = true

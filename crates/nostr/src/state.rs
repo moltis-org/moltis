@@ -1,11 +1,10 @@
 //! Per-account runtime state for Nostr.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use {
     moltis_channels::otp::OtpState,
     nostr_sdk::prelude::{Client, Keys, PublicKey, ToBech32},
-    tokio::sync::RwLock,
     tokio_util::sync::CancellationToken,
 };
 
@@ -14,6 +13,10 @@ use crate::config::NostrAccountConfig;
 /// Shared config reference — the bus loop and plugin both read/write through
 /// this same `Arc` so runtime config updates (DM policy, allowlist) take
 /// effect immediately without restarting the account.
+///
+/// Uses `std::sync::RwLock` (not `tokio::sync::RwLock`) because several
+/// `ChannelPlugin` trait methods are synchronous and must be callable from
+/// inside a tokio runtime without panicking.
 pub type SharedConfig = Arc<RwLock<NostrAccountConfig>>;
 
 /// Shared OTP state — bus loop initiates challenges, plugin reads pending list.

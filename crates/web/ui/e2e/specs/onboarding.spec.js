@@ -100,7 +100,7 @@ async function maybeCompleteIdentity(page) {
 }
 
 async function maybeSkipOpenClawImport(page) {
-	const importHeading = page.getByRole("heading", { name: "Import from OpenClaw", exact: true });
+	const importHeading = page.getByRole("heading", { name: /^Import (from OpenClaw|Your Data)$/ });
 	if (!(await isVisible(importHeading))) return false;
 	const headingBefore = await visibleOnboardingHeadingText(page);
 
@@ -371,7 +371,7 @@ test.describe("Onboarding wizard", () => {
 		if (!isAuthStepVisible) {
 			// When auth is not needed, the wizard may show identity, OpenClaw import, or LLM step
 			const anyStepHeading = page.getByRole("heading", {
-				name: /^(Add LLMs|Add providers|Set up your identity|Import from OpenClaw)$/,
+				name: /^(Add LLMs|Add providers|Set up your identity|Import from OpenClaw|Import Your Data)$/,
 			});
 			await expect(anyStepHeading).toBeVisible();
 			return;
@@ -484,13 +484,15 @@ test.describe("Onboarding wizard", () => {
 		await page.getByRole("button", { name: "Skip for now", exact: true }).click();
 
 		const channelHeading = page.getByRole("heading", { name: "Connect a Channel", exact: true });
-		for (let i = 0; i < 3; i++) {
+		for (let i = 0; i < 6; i++) {
 			if (await channelHeading.isVisible().catch(() => false)) {
 				break;
 			}
-			const skipBtn = page.getByRole("button", { name: "Skip for now", exact: true });
-			await expect(skipBtn).toBeVisible();
-			await skipBtn.click();
+			// Each step may have "Continue", "Skip for now", or both. Try either.
+			const nextBtn = page.getByRole("button", { name: /^(Continue|Skip for now)$/ }).first();
+			await expect(nextBtn).toBeVisible({ timeout: 5_000 });
+			await nextBtn.click();
+			await page.waitForTimeout(300);
 		}
 
 		await expect(channelHeading).toBeVisible();
@@ -738,7 +740,8 @@ test.describe("Onboarding wizard", () => {
 		// Leave account ID empty — the form defaults to "main".
 		// The bug was that the polling useEffect used accountId.trim() (empty)
 		// instead of accountId.trim() || "main", so channel matching failed.
-		const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100"/></svg>';
+		const svg =
+			'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100"/></svg>';
 
 		await page.evaluate(
 			async ({ svgArg }) => {

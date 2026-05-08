@@ -30,6 +30,9 @@ impl BridgeState {
         #[cfg(test)]
         init_swift_bridge_test_dirs();
 
+        // Initialize config directory (write defaults, compact, persist port).
+        moltis_config::initialize_config();
+
         emit_log(
             "INFO",
             "bridge",
@@ -159,11 +162,19 @@ pub(crate) fn build_registry() -> ProviderRegistry {
         moltis_provider_setup::config_with_saved_keys(&config.providers, &key_store, &[]);
     #[cfg(test)]
     {
-        ProviderRegistry::from_config_with_static_catalogs(&effective, &env_overrides)
+        ProviderRegistry::from_config_with_static_catalogs(
+            &effective,
+            &env_overrides,
+            std::collections::HashMap::new(),
+        )
     }
     #[cfg(not(test))]
     {
-        ProviderRegistry::from_env_with_config_and_overrides(&effective, &env_overrides)
+        ProviderRegistry::from_env_with_config_and_overrides(
+            &effective,
+            &env_overrides,
+            moltis_providers::extract_cw_overrides(&config.models),
+        )
     }
 }
 

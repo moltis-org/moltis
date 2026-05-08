@@ -202,6 +202,38 @@ pub async fn config_template(State(state): State<crate::server::AppState>) -> im
     .into_response()
 }
 
+/// Get provenance information for configuration values.
+///
+/// Returns info about which config values are built-in defaults, user
+/// overrides, or custom additions.
+pub async fn config_provenance(State(state): State<crate::server::AppState>) -> impl IntoResponse {
+    if let Err(resp) = require_config_access(&state, None, false).await {
+        return resp.into_response();
+    }
+
+    // Use read-only load to avoid writing defaults.toml on every GET request.
+    let config = moltis_config::discover_and_load_readonly();
+
+    // Preset provenance
+    let presets = moltis_config::defaults::compute_preset_provenance(&config.agents);
+
+    // Shadowed defaults (keys in user config that shadow built-ins)
+    let path = moltis_config::find_or_default_config_path();
+    let shadowed = if path.exists() {
+        std::fs::read_to_string(&path)
+            .map(|raw| moltis_config::defaults::find_shadowed_defaults(&raw))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    Json(serde_json::json!({
+        "presets": presets,
+        "shadowed_keys": shadowed,
+    }))
+    .into_response()
+}
+
 /// Save configuration from TOML.
 pub async fn config_save(
     identity: Option<axum::Extension<AuthIdentity>>,
@@ -360,6 +392,67 @@ pub async fn restart(
         "message": "Moltis is restarting..."
     }))
     .into_response()
+}
+
+/// Perform an in-place update to the latest (or specified) version.
+///
+/// Requires `operator.admin` scope. On success with binary replacement,
+/// schedules a restart after 500 ms so the response can be sent first.
+pub async fn update(
+    identity: Option<axum::Extension<AuthIdentity>>,
+    State(state): State<crate::server::AppState>,
+    body: Option<Json<serde_json::Value>>,
+) -> impl IntoResponse {
+    let id_ref = identity.as_ref().map(|axum::Extension(id)| id);
+    if let Err(resp) = require_config_access(&state, id_ref, true).await {
+        return resp.into_response();
+    }
+
+    let requested_version = body
+        .as_ref()
+        .and_then(|Json(v)| v.get("version"))
+        .and_then(|v| v.as_str());
+
+    let releases_url = moltis_gateway::update_check::resolve_releases_url(
+        state.gateway.config.server.update_releases_url.as_deref(),
+    );
+
+    let client = match reqwest::Client::builder()
+        .user_agent(format!("moltis-gateway/{}", state.gateway.version))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(config_error("UPDATE_CLIENT_ERROR", format!("{e}"))),
+            )
+                .into_response();
+        },
+    };
+
+    match moltis_gateway::updater::perform_update(&client, &releases_url, requested_version).await {
+        Ok(ref outcome @ moltis_gateway::updater::UpdateOutcome::Updated { .. })
+        | Ok(ref outcome @ moltis_gateway::updater::UpdateOutcome::DockerUpdated { .. }) => {
+            let restarting = true;
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                tracing::info!("restarting after update via API");
+                moltis_gateway::updater::restart_process();
+            });
+            let mut json = serde_json::to_value(outcome).unwrap_or_default();
+            if let serde_json::Value::Object(ref mut map) = json {
+                map.insert("restarting".into(), serde_json::Value::Bool(restarting));
+            }
+            Json(json).into_response()
+        },
+        Ok(outcome) => Json(serde_json::to_value(&outcome).unwrap_or_default()).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(config_error("UPDATE_FAILED", format!("{e}"))),
+        )
+            .into_response(),
+    }
 }
 
 /// Validate config and return warnings.

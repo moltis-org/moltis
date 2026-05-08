@@ -6,7 +6,7 @@ use {
             maybe_deliver_cron_output, restore_saved_local_llm_models,
             validate_proxy_tls_configuration,
         },
-        init_channels, init_memory,
+        init_channels, init_code_index, init_memory,
         prepared::PreparedGatewayCore,
         workspace::{
             seed_default_workspace_markdown_files, sync_persona_into_preset,
@@ -31,14 +31,13 @@ use {
         store::SessionStore,
     },
     secrecy::{ExposeSecret, Secret},
-    std::{
-        path::PathBuf,
-        sync::{Arc, atomic::Ordering},
-    },
+    std::{path::PathBuf, sync::Arc},
     tracing::{debug, info, warn},
 };
 mod log_persistence;
 mod post_state;
+mod sandbox;
+mod tool_registration;
 /// Prepare the core gateway: load config, run migrations, wire services,
 /// spawn background tasks, and return the core state without any HTTP layer.
 /// This is the transport-agnostic initialisation. Non-HTTP consumers (TUI,
@@ -77,6 +76,8 @@ pub async fn prepare_gateway_core(
     let resolved_auth = auth::resolve_auth(token, password.clone());
 
     // Load config file (moltis.toml / .yaml / .json) if present.
+    // Note: initialize_config() is called once at CLI startup (main.rs)
+    // or by the swift-bridge before reaching here.
     let mut config = moltis_config::discover_and_load();
     info!(
         offered_channels = ?config.channels.offered,
@@ -110,6 +111,14 @@ pub async fn prepare_gateway_core(
         );
     }
     let base_provider_config = config.providers.clone();
+
+    // Migrate voice API keys from moltis.toml to the credential store on
+    // first run after upgrade.  This is idempotent — once keys are in the
+    // store the TOML entries are cleared and subsequent runs are a no-op.
+    #[cfg(feature = "voice")]
+    crate::voice::migrate_voice_keys_to_key_store(&config);
+    #[cfg(feature = "telephony")]
+    crate::methods::phone::merge_phone_keys(&mut config);
 
     // Merge any previously saved API keys into the provider config so they
     // survive gateway restarts without requiring env vars.
@@ -147,6 +156,7 @@ pub async fn prepare_gateway_core(
         ProviderRegistry::from_config_with_static_catalogs(
             &effective_providers,
             &config_env_overrides,
+            moltis_providers::extract_cw_overrides(&config.models),
         ),
     ));
     {
@@ -286,6 +296,7 @@ pub async fn prepare_gateway_core(
         deploy_platform.clone(),
     )
     .with_env_overrides(config_env_overrides.clone())
+    .with_global_cw_overrides(moltis_providers::extract_cw_overrides(&config.models))
     .with_error_parser(crate::chat_error::parse_chat_error)
     .with_callback_bind_addr(bind.to_string());
     provider_setup.set_priority_models(live_model_service.priority_models_handle());
@@ -431,15 +442,22 @@ pub async fn prepare_gateway_core(
     startup_mem_probe.checkpoint("sqlite.migrations.complete");
 
     #[cfg(feature = "vault")]
-    let vault: Option<Arc<moltis_vault::Vault>> = {
+    let (vault, auto_unsealed_vault): (Option<Arc<moltis_vault::Vault>>, bool) = {
         match moltis_vault::Vault::new(db_pool.clone()).await {
             Ok(v) => {
                 info!(status = ?v.status().await, "vault ready");
-                Some(Arc::new(v))
+                let vault = Arc::new(v);
+                let auto_unseal_result = crate::vault_lifecycle::auto_unseal_from_env(&vault).await;
+                let auto_unsealed = matches!(
+                    auto_unseal_result,
+                    crate::vault_lifecycle::AutoUnsealResult::Unsealed
+                        | crate::vault_lifecycle::AutoUnsealResult::AlreadyUnsealed
+                );
+                (Some(vault), auto_unsealed)
             },
             Err(e) => {
                 warn!(error = %e, "vault init failed, encryption disabled");
-                None
+                (None, false)
             },
         }
     };
@@ -450,6 +468,10 @@ pub async fn prepare_gateway_core(
             .await
             .expect("failed to init credential store"),
     );
+    #[cfg(feature = "vault")]
+    if auto_unsealed_vault {
+        crate::vault_lifecycle::run_vault_env_migration(&credential_store).await;
+    }
     #[cfg(not(feature = "vault"))]
     let credential_store = Arc::new(
         auth::CredentialStore::new(db_pool.clone())
@@ -466,6 +488,19 @@ pub async fn prepare_gateway_core(
             config_env_overrides.clone()
         },
     };
+
+    // GH-770: Re-resolve ${VAR} placeholders using DB-stored env vars.
+    // At initial config load, only process env vars were available.  Now
+    // that the credential store has been read, re-substitute so that TOML
+    // values like `api_key = "${OPENROUTER_API_KEY}"` resolve against UI
+    // env vars too.
+    config = moltis_config::resubstitute_config(&config, &runtime_env_overrides).unwrap_or_else(
+        |error| {
+            warn!(%error, "failed to resubstitute config with runtime env overrides");
+            config
+        },
+    );
+
     live_mcp
         .manager()
         .set_env_overrides(runtime_env_overrides.clone())
@@ -539,6 +574,13 @@ pub async fn prepare_gateway_core(
                         .set_project_id(&entry.key, entry.project_id.clone())
                         .await;
                 }
+                if entry.mode_id.is_some()
+                    && let Err(e) = sqlite_meta
+                        .set_mode_id(&entry.key, entry.mode_id.as_deref())
+                        .await
+                {
+                    tracing::warn!("failed to migrate session mode for {}: {e}", entry.key);
+                }
             }
         }
         let bak = metadata_json_path.with_extension("json.bak");
@@ -564,6 +606,18 @@ pub async fn prepare_gateway_core(
     ));
     if let Err(e) = agent_persona_store.ensure_main_workspace_seeded() {
         tracing::warn!(error = %e, "failed to seed main agent workspace");
+    }
+    if let Err(e) = agent_persona_store.ensure_main_row().await {
+        tracing::warn!(error = %e, "failed to ensure main agent DB row");
+    }
+
+    let voice_persona_store = Arc::new(crate::voice_persona::VoicePersonaStore::new(
+        db_pool.clone(),
+    ));
+    match voice_persona_store.seed_defaults().await {
+        Ok(0) => {},
+        Ok(n) => tracing::info!(count = n, "seeded default voice personas"),
+        Err(e) => tracing::warn!(error = %e, "failed to seed default voice personas"),
     }
 
     let deferred_state: Arc<tokio::sync::OnceCell<Arc<GatewayState>>> =
@@ -596,7 +650,7 @@ pub async fn prepare_gateway_core(
         let st = Arc::clone(&sys_state);
         tokio::spawn(async move {
             if let Some(state) = st.get() {
-                let chat = state.chat().await;
+                let chat = state.chat();
                 let params = serde_json::json!({ "text": text });
                 if let Err(e) = chat.send(params).await {
                     tracing::error!("cron system event failed: {e}");
@@ -646,7 +700,7 @@ pub async fn prepare_gateway_core(
                 }
             }
 
-            let chat = state.chat().await;
+            let chat = state.chat();
             let session_key = match &req.session_target {
                 moltis_cron::types::SessionTarget::Named(name) => {
                     format!("cron:{name}")
@@ -793,6 +847,21 @@ pub async fn prepare_gateway_core(
         window_ms: config.cron.rate_limit_window_secs * 1000,
     };
 
+    let default_cooldown_ms = moltis_cron::service::DEFAULT_WAKE_COOLDOWN_MS;
+    let wake_cooldown_ms =
+        match moltis_cron::parse::parse_duration_ms(&config.heartbeat.wake_cooldown) {
+            Ok(ms) => ms,
+            Err(e) => {
+                tracing::warn!(
+                    raw = %config.heartbeat.wake_cooldown,
+                    error = %e,
+                    fallback_ms = default_cooldown_ms,
+                    "invalid [heartbeat].wake_cooldown, using default"
+                );
+                default_cooldown_ms
+            },
+        };
+
     let cron_store_for_pruning = Arc::clone(&cron_store);
     let cron_service = moltis_cron::service::CronService::with_events_queue(
         cron_store,
@@ -800,6 +869,7 @@ pub async fn prepare_gateway_core(
         on_agent_turn,
         Some(on_cron_notify),
         rate_limit_config,
+        wake_cooldown_ms,
         events_queue,
     );
 
@@ -822,15 +892,11 @@ pub async fn prepare_gateway_core(
     services = services.with_webhooks(live_webhooks);
 
     // Build sandbox router from config.
-    let mut sandbox_config = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
-    sandbox_config.container_prefix = Some(sandbox_container_prefix);
-    sandbox_config.timezone = config
-        .user
-        .timezone
-        .as_ref()
-        .map(|tz| tz.name().to_string());
-    let sandbox_router = Arc::new(moltis_tools::sandbox::SandboxRouter::new(
-        sandbox_config.clone(),
+    let sandbox_config = moltis_tools::sandbox::SandboxConfig::from(&config.tools.exec.sandbox);
+    let sandbox_router = Arc::new(sandbox::build_sandbox_router(
+        &sandbox_config,
+        &sandbox_container_prefix,
+        config.user.timezone.as_ref().map(|tz| tz.name()),
     ));
 
     // ── Upstream proxy (user-configured) ─────────────────────────────────
@@ -913,185 +979,8 @@ pub async fn prepare_gateway_core(
         moltis_tools::init_shared_http_client(upstream_proxy);
     }
 
-    // Spawn background image pre-build.
-    {
-        let router = Arc::clone(&sandbox_router);
-        let backend = Arc::clone(router.backend());
-        let packages = router.config().packages.clone();
-        let base_image = router
-            .config()
-            .image
-            .clone()
-            .unwrap_or_else(|| moltis_tools::sandbox::DEFAULT_SANDBOX_IMAGE.to_string());
-
-        if super::helpers::should_prebuild_sandbox_image(router.mode(), &packages) {
-            let deferred_for_build = Arc::clone(&deferred_state);
-            sandbox_router.building_flag.store(true, Ordering::Relaxed);
-            let build_router = Arc::clone(&sandbox_router);
-            tokio::spawn(async move {
-                if let Some(state) = deferred_for_build.get() {
-                    broadcast(
-                        state,
-                        "sandbox.image.build",
-                        serde_json::json!({ "phase": "start", "packages": packages }),
-                        BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        },
-                    )
-                    .await;
-                }
-
-                match backend.build_image(&base_image, &packages).await {
-                    Ok(Some(result)) => {
-                        info!(
-                            tag = %result.tag,
-                            built = result.built,
-                            "sandbox image pre-build complete"
-                        );
-                        router.set_global_image(Some(result.tag.clone())).await;
-                        build_router.building_flag.store(false, Ordering::Relaxed);
-
-                        if let Some(state) = deferred_for_build.get() {
-                            broadcast(
-                                state,
-                                "sandbox.image.build",
-                                serde_json::json!({
-                                    "phase": "done",
-                                    "tag": result.tag,
-                                    "built": result.built,
-                                }),
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
-                            .await;
-                        }
-                    },
-                    Ok(None) => {
-                        debug!(
-                            "sandbox image pre-build: no-op (no packages or unsupported backend)"
-                        );
-                        build_router.building_flag.store(false, Ordering::Relaxed);
-                    },
-                    Err(e) => {
-                        tracing::warn!("sandbox image pre-build failed: {e}");
-                        build_router.building_flag.store(false, Ordering::Relaxed);
-                        if let Some(state) = deferred_for_build.get() {
-                            broadcast(
-                                state,
-                                "sandbox.image.build",
-                                serde_json::json!({
-                                    "phase": "error",
-                                    "error": e.to_string(),
-                                }),
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
-                            .await;
-                        }
-                    },
-                }
-            });
-        }
-    }
-
-    // Host package provisioning when no container runtime is available.
-    {
-        let packages = sandbox_router.config().packages.clone();
-        if sandbox_router.backend_name() == "none"
-            && !packages.is_empty()
-            && moltis_tools::sandbox::is_debian_host()
-        {
-            let deferred_for_host = Arc::clone(&deferred_state);
-            let pkg_count = packages.len();
-            tokio::spawn(async move {
-                if let Some(state) = deferred_for_host.get() {
-                    broadcast(
-                        state,
-                        "sandbox.host.provision",
-                        serde_json::json!({
-                            "phase": "start",
-                            "count": pkg_count,
-                        }),
-                        BroadcastOpts {
-                            drop_if_slow: true,
-                            ..Default::default()
-                        },
-                    )
-                    .await;
-                }
-
-                match moltis_tools::sandbox::provision_host_packages(&packages).await {
-                    Ok(Some(result)) => {
-                        info!(
-                            installed = result.installed.len(),
-                            skipped = result.skipped.len(),
-                            sudo = result.used_sudo,
-                            "host package provisioning complete"
-                        );
-                        if let Some(state) = deferred_for_host.get() {
-                            broadcast(
-                                state,
-                                "sandbox.host.provision",
-                                serde_json::json!({
-                                    "phase": "done",
-                                    "installed": result.installed.len(),
-                                    "skipped": result.skipped.len(),
-                                }),
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
-                            .await;
-                        }
-                    },
-                    Ok(None) => {
-                        debug!("host package provisioning: no-op (not debian or empty packages)");
-                    },
-                    Err(e) => {
-                        warn!("host package provisioning failed: {e}");
-                        if let Some(state) = deferred_for_host.get() {
-                            broadcast(
-                                state,
-                                "sandbox.host.provision",
-                                serde_json::json!({
-                                    "phase": "error",
-                                    "error": e.to_string(),
-                                }),
-                                BroadcastOpts {
-                                    drop_if_slow: true,
-                                    ..Default::default()
-                                },
-                            )
-                            .await;
-                        }
-                    },
-                }
-            });
-        }
-    }
-
-    // Startup GC: remove orphaned session containers.
-    if sandbox_router.backend_name() != "none" {
-        let prefix = sandbox_router.config().container_prefix.clone();
-        tokio::spawn(async move {
-            if let Some(prefix) = prefix {
-                match moltis_tools::sandbox::clean_all_containers(&prefix).await {
-                    Ok(0) => {},
-                    Ok(n) => info!(
-                        removed = n,
-                        "startup GC: cleaned orphaned session containers"
-                    ),
-                    Err(e) => debug!("startup GC: container cleanup skipped: {e}"),
-                }
-            }
-        });
-    }
+    // Spawn background sandbox tasks (image pre-build, host provisioning, container GC).
+    sandbox::spawn_sandbox_background_tasks(&sandbox_router, &deferred_state);
 
     // Periodic cron session retention pruning.
     if let Some(retention_days) = config.cron.session_retention_days
@@ -1223,19 +1112,11 @@ pub async fn prepare_gateway_core(
         });
     }
 
-    // Load persisted sandbox overrides from session metadata.
-    {
-        for entry in session_metadata.list().await {
-            if let Some(enabled) = entry.sandbox_enabled {
-                sandbox_router.set_override(&entry.key, enabled).await;
-            }
-            if let Some(ref image) = entry.sandbox_image {
-                sandbox_router
-                    .set_image_override(&entry.key, image.clone())
-                    .await;
-            }
-        }
-    }
+    LiveSessionService::restore_sandbox_router_overrides_from_metadata(
+        &session_metadata,
+        &sandbox_router,
+    )
+    .await;
 
     // ── Channel initialization ───────────────────────────────────────────
     let channel_result = init_channels::init_channels(
@@ -1251,14 +1132,18 @@ pub async fn prepare_gateway_core(
     )
     .await;
     services = channel_result.services;
+    #[cfg(feature = "msteams")]
     let msteams_webhook_plugin = channel_result.msteams_webhook_plugin;
     #[cfg(feature = "slack")]
     let slack_webhook_plugin = channel_result.slack_webhook_plugin;
+    #[cfg(feature = "telephony")]
+    let telephony_webhook_plugin = channel_result.telephony_webhook_plugin;
 
     services = services.with_session_metadata(Arc::clone(&session_metadata));
     services = services.with_session_store(Arc::clone(&session_store));
     services = services.with_session_share_store(Arc::clone(&session_share_store));
     services = services.with_agent_persona_store(Arc::clone(&agent_persona_store));
+    services = services.with_voice_persona_store(Arc::clone(&voice_persona_store));
     startup_mem_probe.checkpoint("channels.initialized");
 
     let agents_config = Arc::new(tokio::sync::RwLock::new(config.agents.clone()));
@@ -1303,6 +1188,7 @@ pub async fn prepare_gateway_core(
                 .with_share_store(Arc::clone(&session_share_store))
                 .with_sandbox_router(Arc::clone(&sandbox_router))
                 .with_agent_persona_store(Arc::clone(&agent_persona_store))
+                .with_voice_persona_store(Arc::clone(&voice_persona_store))
                 .with_project_store(Arc::clone(&project_store))
                 .with_state_store(Arc::clone(&session_state_store))
                 .with_browser_service(Arc::clone(&services.browser));
@@ -1326,6 +1212,10 @@ pub async fn prepare_gateway_core(
     )
     .await;
     startup_mem_probe.checkpoint("memory_manager.initialized");
+
+    // ── Code index initialization ──────────────────────────────────────
+    let code_index = init_code_index::init_code_index(&data_dir, &config).await;
+    startup_mem_probe.checkpoint("code_index.initialized");
 
     post_state::complete_startup(post_state::PostStateInputs {
         bind: bind.to_string(),
@@ -1365,9 +1255,12 @@ pub async fn prepare_gateway_core(
         discovered_hooks_info,
         persisted_disabled,
         agents_config,
+        #[cfg(feature = "msteams")]
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,
+        #[cfg(feature = "telephony")]
+        telephony_webhook_plugin,
         #[cfg(feature = "local-llm")]
         local_llm_service,
         #[cfg(feature = "vault")]
@@ -1380,6 +1273,9 @@ pub async fn prepare_gateway_core(
         tailscale_mode_override,
         #[cfg(feature = "tailscale")]
         tailscale_reset_on_exit_override,
+        code_index,
+        #[cfg(any(feature = "qmd", feature = "code-index-builtin"))]
+        project_store: Arc::clone(&project_store),
     })
     .await
 }

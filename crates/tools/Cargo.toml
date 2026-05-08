@@ -4,21 +4,32 @@ name              = "moltis-tools"
 version.workspace = true
 
 [features]
-default       = ["firecrawl", "fs-tools", "metrics", "wasm"]
-embedded-wasm = []
-firecrawl     = []
+bundled-skills        = ["moltis-skills/bundled-skills"]
+default               = ["firecrawl", "fs-tools", "metrics", "provider-openai-codex", "vercel-sandbox", "wasm"]
+embedded-wasm         = []
+firecrawl             = []
+provider-openai-codex = ["moltis-providers/provider-openai-codex"]
+vercel-sandbox        = []
 # Native filesystem tools (Read, Write, Edit, MultiEdit, Glob, Grep).
 # See moltis-org/moltis#657. Default-on; build with
 # --no-default-features to omit them from minimal builds.
-fs-tools      = ["dep:globset", "dep:grep-matcher", "dep:grep-regex", "dep:grep-searcher", "dep:ignore", "dep:pdf-extract"]
-metrics       = ["dep:moltis-metrics"]
-wasm          = ["dep:shell-words", "dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
+fs-tools = [
+  "dep:globset",
+  "dep:grep-matcher",
+  "dep:grep-regex",
+  "dep:grep-searcher",
+  "dep:ignore",
+  "dep:pdf-extract",
+]
+metrics = ["dep:moltis-metrics"]
+wasm = ["dep:wasmtime", "dep:wasmtime-wasi", "wasmtime/component-model"]
 
 [dependencies]
 anyhow                = { workspace = true }
 async-trait           = { workspace = true }
 base64                = { workspace = true }
 bytes                 = { workspace = true }
+flate2                = { workspace = true }
 futures               = { workspace = true }
 globset               = { optional = true, workspace = true }
 grep-matcher          = { optional = true, workspace = true }
@@ -29,7 +40,6 @@ ignore                = { optional = true, workspace = true }
 image                 = { workspace = true }
 ipnet                 = { workspace = true }
 moltis-agents         = { workspace = true }
-pdf-extract           = { optional = true, workspace = true }
 moltis-browser        = { workspace = true }
 moltis-common         = { workspace = true }
 moltis-config         = { workspace = true }
@@ -38,18 +48,20 @@ moltis-media          = { workspace = true }
 moltis-metrics        = { optional = true, workspace = true }
 moltis-network-filter = { workspace = true }
 moltis-providers      = { workspace = true }
+moltis-service-traits = { workspace = true }
 moltis-sessions       = { workspace = true }
 moltis-skills         = { workspace = true }
+pdf-extract           = { optional = true, workspace = true }
 regex                 = { workspace = true }
 reqwest               = { features = ["blocking"], workspace = true }
 secrecy               = { workspace = true }
 serde                 = { workspace = true }
 serde_json            = { workspace = true }
 sha2                  = { workspace = true }
-shell-words           = { optional = true, workspace = true }
+shell-words           = { workspace = true }
 sqlx                  = { workspace = true }
-tempfile              = { workspace = true }
 tar                   = { workspace = true }
+tempfile              = { workspace = true }
 thiserror             = { workspace = true }
 time                  = { workspace = true }
 tokio                 = { workspace = true }
@@ -58,6 +70,7 @@ url                   = { workspace = true }
 uuid                  = { workspace = true }
 wasmtime              = { optional = true, workspace = true }
 wasmtime-wasi         = { optional = true, workspace = true }
+which                 = { workspace = true }
 
 [dev-dependencies]
 mockito      = { workspace = true }

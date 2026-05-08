@@ -45,6 +45,13 @@ pub struct ServerConfig {
     /// this field and cannot be changed from the web UI config editor.
     #[serde(default = "default_terminal_enabled")]
     pub terminal_enabled: bool,
+    /// Public URL when running behind a reverse proxy (e.g.
+    /// `https://moltis.example.com`). Used to derive the WebAuthn RP ID
+    /// and origin so passkey auth works with the proxy's public hostname.
+    ///
+    /// The `MOLTIS_EXTERNAL_URL` environment variable takes precedence
+    /// over this field.
+    pub external_url: Option<String>,
 }
 
 fn default_log_buffer_size() -> usize {
@@ -71,6 +78,7 @@ impl Default for ServerConfig {
             db_pool_max_connections: default_db_pool_max_connections(),
             shiki_cdn_url: None,
             terminal_enabled: default_terminal_enabled(),
+            external_url: None,
         }
     }
 }
@@ -87,6 +95,24 @@ impl ServerConfig {
             return false;
         }
         self.terminal_enabled
+    }
+
+    /// Returns the effective external URL, checking `MOLTIS_EXTERNAL_URL`
+    /// env var first, then falling back to the config field. Trailing
+    /// slashes are stripped so the result can be used directly as a
+    /// WebAuthn origin.
+    pub fn effective_external_url(&self) -> Option<String> {
+        let env_val = std::env::var("MOLTIS_EXTERNAL_URL")
+            .ok()
+            .filter(|v| !v.is_empty());
+        Self::resolve_external_url(env_val.as_deref(), self.external_url.as_deref())
+    }
+
+    /// Pure helper for [`effective_external_url`] — exposed for testing
+    /// without mutating process env vars.
+    pub fn resolve_external_url(env_val: Option<&str>, config_val: Option<&str>) -> Option<String> {
+        let raw = env_val.or(config_val)?;
+        Some(raw.trim_end_matches('/').to_string())
     }
 }
 
@@ -113,6 +139,12 @@ pub struct NgrokConfig {
 pub struct FailoverConfig {
     /// Whether failover is enabled. Defaults to true.
     pub enabled: bool,
+    /// Treat user-selected models as exact choices. When true and a model
+    /// is explicitly selected (per-session or per-request), failover is
+    /// suppressed for that request — the selected model is used or the
+    /// request fails. Defaults to false.
+    #[serde(default)]
+    pub exact_model: bool,
     /// Ordered list of fallback model IDs to try when the primary fails.
     /// If empty, the chain is built from all registered models.
     #[serde(default)]
@@ -123,6 +155,7 @@ impl Default for FailoverConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            exact_model: false,
             fallback_models: Vec::new(),
         }
     }
@@ -138,6 +171,8 @@ pub struct HeartbeatConfig {
     pub every: String,
     /// Provider/model override for heartbeat turns (e.g. "anthropic/claude-sonnet-4-20250514").
     pub model: Option<String>,
+    /// Agent ID override for heartbeat turns.
+    pub agent_id: Option<String>,
     /// Custom prompt override. If empty, the built-in default is used.
     pub prompt: Option<String>,
     /// Max characters for an acknowledgment reply before truncation. Defaults to 300.
@@ -156,6 +191,10 @@ pub struct HeartbeatConfig {
     pub sandbox_enabled: bool,
     /// Override sandbox image for heartbeat. If `None`, uses the default image.
     pub sandbox_image: Option<String>,
+    /// Minimum duration between exec-triggered heartbeat wakes (e.g. "5m", "0").
+    /// Prevents exec-completion callbacks from re-waking the heartbeat in a tight loop.
+    /// Defaults to "5m". Set to "0" to disable.
+    pub wake_cooldown: String,
 }
 
 impl Default for HeartbeatConfig {
@@ -164,6 +203,7 @@ impl Default for HeartbeatConfig {
             enabled: true,
             every: "30m".into(),
             model: None,
+            agent_id: None,
             prompt: None,
             ack_max_chars: 300,
             active_hours: ActiveHoursConfig::default(),
@@ -172,6 +212,7 @@ impl Default for HeartbeatConfig {
             to: None,
             sandbox_enabled: true,
             sandbox_image: None,
+            wake_cooldown: "5m".into(),
         }
     }
 }
@@ -325,6 +366,94 @@ impl std::fmt::Debug for CalDavAccountConfig {
 
 fn default_caldav_timeout() -> u64 {
     30
+}
+
+/// Home Assistant integration configuration.
+///
+/// ```toml
+/// [home_assistant]
+/// enabled = true
+/// default_instance = "home"
+///
+/// [home_assistant.instances.home]
+/// url = "http://homeassistant.local:8123"
+/// token = "eyJ..."
+/// ```
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HomeAssistantConfig {
+    /// Whether Home Assistant integration is enabled.
+    pub enabled: bool,
+    /// Default instance name when none is specified.
+    pub default_instance: Option<String>,
+    /// Named HA instances.
+    #[serde(default)]
+    pub instances: HashMap<String, HomeAssistantAccountConfig>,
+}
+
+impl HomeAssistantConfig {
+    /// Resolve which account to use given an optional explicit name.
+    ///
+    /// Resolution order: explicit `instance` → `default_instance` →
+    /// sole instance if only one exists.
+    #[must_use]
+    pub fn resolve_account<'a>(
+        &'a self,
+        instance: Option<&'a str>,
+    ) -> Option<(&'a str, &'a HomeAssistantAccountConfig)> {
+        let name = instance.or(self.default_instance.as_deref()).or_else(|| {
+            if self.instances.len() == 1 {
+                self.instances.keys().next().map(String::as_str)
+            } else {
+                None
+            }
+        })?;
+
+        self.instances.get(name).map(|a| (name, a))
+    }
+}
+
+/// Configuration for a single Home Assistant instance.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HomeAssistantAccountConfig {
+    /// HA instance URL (e.g. "http://homeassistant.local:8123").
+    pub url: Option<String>,
+    /// Long-lived access token.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub token: Option<Secret<String>>,
+    /// HTTP request timeout in seconds.
+    #[serde(default = "default_ha_timeout")]
+    pub timeout_seconds: u64,
+}
+
+impl Default for HomeAssistantAccountConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            token: None,
+            timeout_seconds: default_ha_timeout(),
+        }
+    }
+}
+
+impl std::fmt::Debug for HomeAssistantAccountConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HomeAssistantAccountConfig")
+            .field("url", &self.url)
+            .field("token", &self.token.as_ref().map(|_| "[REDACTED]"))
+            .field("timeout_seconds", &self.timeout_seconds)
+            .finish()
+    }
+}
+
+fn default_ha_timeout() -> u64 {
+    10
 }
 
 /// Tailscale Serve/Funnel configuration.

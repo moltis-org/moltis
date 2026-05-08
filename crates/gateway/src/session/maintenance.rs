@@ -134,7 +134,7 @@ impl LiveSessionService {
 
         self.metadata.touch(&new_key, fork_point as u32).await;
 
-        // Inherit model, project, mcp_disabled, and agent_id from parent.
+        // Inherit model, project, mode, mcp_disabled, and agent_id from parent.
         if let Some(parent) = self.metadata.get(parent_key).await {
             let parent_agent = self.resolve_agent_id_for_entry(&parent, false).await;
             if parent.model.is_some() {
@@ -148,6 +148,12 @@ impl LiveSessionService {
             if parent.mcp_disabled.is_some() {
                 self.metadata
                     .set_mcp_disabled(&new_key, parent.mcp_disabled)
+                    .await;
+            }
+            if parent.mode_id.is_some() {
+                let _ = self
+                    .metadata
+                    .set_mode_id(&new_key, parent.mode_id.as_deref())
                     .await;
             }
             let _ = self

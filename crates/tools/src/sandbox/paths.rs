@@ -12,7 +12,8 @@ use {
     super::{
         containers::{is_cli_available, is_docker_daemon_available, should_use_docker_backend},
         types::{
-            HomePersistence, SandboxConfig, SandboxId, WorkspaceMount, sanitize_path_component,
+            HomePersistence, SANDBOX_HOME_DIR, SandboxConfig, SandboxId, WorkspaceMount,
+            sanitize_path_component,
         },
     },
     crate::error::Result,
@@ -364,8 +365,8 @@ pub(crate) fn resolve_home_persistence_guest_path_on_host(
     id: &SandboxId,
     guest_path: &FsPath,
 ) -> Option<PathBuf> {
-    let guest_home_dir = guest_visible_sandbox_home_persistence_host_dir(config, id)?;
-    let relative_path = guest_path.strip_prefix(&guest_home_dir).ok()?;
+    let guest_home_dir = FsPath::new(SANDBOX_HOME_DIR);
+    let relative_path = guest_path.strip_prefix(guest_home_dir).ok()?;
     let host_home_dir = sandbox_home_persistence_host_dir(config, cli, id)?;
     Some(if relative_path.as_os_str().is_empty() {
         host_home_dir

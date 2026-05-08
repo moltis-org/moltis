@@ -9,12 +9,14 @@
 // - hooks:          hook discovery, DCG guard, seeding
 // - seed_content:   large const strings for seed files
 // - workspace:      workspace file seeding, persona sync
-// - init_channels:  channel store/registry/plugin setup
-// - init_memory:    memory system / embedding provider setup
+// - init_channels:    channel store/registry/plugin setup
+// - init_code_index:  code index config-only initialization
+// - init_memory:      memory system / embedding provider setup
 
 mod helpers;
 mod hooks;
 mod init_channels;
+mod init_code_index;
 mod init_memory;
 mod location;
 mod prepare_core;
@@ -36,6 +38,7 @@ pub use {
     prepare_core::prepare_gateway_core,
     prepared::PreparedGatewayCore,
     startup::{
+        claude_detected_for_ui, codex_detected_for_ui, hermes_detected_for_ui,
         openclaw_detected_for_ui, start_browser_warmup_after_listener,
         start_openclaw_background_tasks, sync_runtime_webauthn_host_and_notice,
     },

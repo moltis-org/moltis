@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-use super::*;
+use {super::*, crate::sandbox::types::tail_lines};
 
 #[test]
 fn test_sandbox_mode_display() {
@@ -17,7 +17,7 @@ fn test_sandbox_scope_display() {
 
 #[test]
 fn test_docker_hardening_args_prebuilt() {
-    let args = DockerSandbox::hardening_args(true);
+    let args = DockerSandbox::hardening_args(true, BackendKind::Docker);
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
     assert!(args.contains(&"--security-opt".to_string()));
@@ -36,15 +36,21 @@ fn test_docker_hardening_args_prebuilt() {
         "sandbox",
         "--hostname value should be 'sandbox'"
     );
-    assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    // Sysfs masks are present (actual set depends on host — macOS includes
+    // all because /sys doesn't exist; Linux includes only existing paths).
+    // On macOS CI all four are present.
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    }
 }
 
 #[test]
 fn test_docker_hardening_args_not_prebuilt() {
-    let args = DockerSandbox::hardening_args(false);
+    let args = DockerSandbox::hardening_args(false, BackendKind::Docker);
     assert!(args.contains(&"--cap-drop".to_string()));
     assert!(args.contains(&"ALL".to_string()));
     assert!(args.contains(&"--security-opt".to_string()));
@@ -53,7 +59,7 @@ fn test_docker_hardening_args_not_prebuilt() {
     assert!(!args.contains(&"--read-only".to_string()));
     // tmpfs mounts still present
     assert!(args.contains(&"/tmp:rw,nosuid,size=256m".to_string()));
-    // Host metadata isolation still present — all 4 sysfs masks + hostname
+    // Host metadata isolation still present — hostname
     let hostname_pos = args
         .iter()
         .position(|a| a == "--hostname")
@@ -63,10 +69,80 @@ fn test_docker_hardening_args_not_prebuilt() {
         "sandbox",
         "--hostname value should be 'sandbox'"
     );
-    assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
-    assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert!(args.contains(&"/sys/firmware:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
+        assert!(args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+    }
+}
+
+#[test]
+fn test_docker_hardening_args_podman() {
+    let args = DockerSandbox::hardening_args(true, BackendKind::Podman);
+    // Core hardening flags must still be present
+    assert!(args.contains(&"--cap-drop".to_string()));
+    assert!(args.contains(&"ALL".to_string()));
+    assert!(args.contains(&"--security-opt".to_string()));
+    assert!(args.contains(&"no-new-privileges".to_string()));
+    assert!(args.contains(&"--read-only".to_string()));
+    assert!(args.contains(&"/tmp:rw,nosuid,size=256m".to_string()));
+    assert!(args.contains(&"/run:rw,nosuid,size=64m".to_string()));
+    let hostname_pos = args
+        .iter()
+        .position(|a| a == "--hostname")
+        .expect("--hostname flag missing");
+    assert_eq!(
+        args[hostname_pos + 1],
+        "sandbox",
+        "--hostname value should be 'sandbox'"
+    );
+    // Sysfs tmpfs overlays must NOT be present — Podman's tmpcopyup breaks
+    // these under --cap-drop ALL.
+    assert!(!args.contains(&"/sys/firmware:ro,nosuid".to_string()));
+    assert!(!args.contains(&"/sys/class/dmi:ro,nosuid".to_string()));
+    assert!(!args.contains(&"/sys/devices/virtual/dmi:ro,nosuid".to_string()));
+    assert!(!args.contains(&"/sys/class/block:ro,nosuid".to_string()));
+}
+
+#[test]
+fn test_sysfs_paths_to_mask_no_sysfs_root_returns_all() {
+    // When /sys doesn't exist (macOS), all paths should be returned because
+    // Docker Desktop runs in a Linux VM with full sysfs.
+    let paths = sysfs_paths_to_mask_from("/nonexistent/sysfs/root");
+    assert_eq!(paths, vec![
+        "/sys/firmware",
+        "/sys/class/dmi",
+        "/sys/devices/virtual/dmi",
+        "/sys/class/block",
+    ]);
+}
+
+#[test]
+fn test_sysfs_paths_to_mask_filters_missing_paths() {
+    // Simulate a Linux host where the sysfs root exists but specific
+    // subtrees are missing (e.g. ARM without DMI, or WSL2).
+    let dir = tempfile::tempdir().unwrap();
+    let sysfs_root = dir.path().join("sys");
+    // Create only /sys/firmware and /sys/class/block, skip DMI paths
+    // (simulates Raspberry Pi / ARM which lacks DMI).
+    std::fs::create_dir_all(sysfs_root.join("firmware")).unwrap();
+    std::fs::create_dir_all(sysfs_root.join("class/block")).unwrap();
+
+    let paths = sysfs_paths_to_mask_from(sysfs_root.to_str().unwrap());
+    // Only the two paths that exist under the tempdir sysfs root are returned.
+    assert_eq!(paths, vec!["/sys/firmware", "/sys/class/block"]);
+}
+
+#[test]
+fn test_sysfs_mask_paths_constant_contains_expected_entries() {
+    // Guard against accidentally removing paths from the constant.
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/firmware"));
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/class/dmi"));
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/devices/virtual/dmi"));
+    assert!(SYSFS_MASK_PATHS.contains(&"/sys/class/block"));
+    assert_eq!(SYSFS_MASK_PATHS.len(), 4);
 }
 
 #[test]
@@ -420,9 +496,7 @@ fn test_resolve_home_persistence_guest_path_on_host_uses_session_mount() {
         scope: SandboxScope::Session,
         key: "sess-1".into(),
     };
-    let guest_file = guest_visible_sandbox_home_persistence_host_dir(&config, &id)
-        .unwrap()
-        .join("history.txt");
+    let guest_file = PathBuf::from("/home/sandbox/history.txt");
 
     let resolved =
         resolve_home_persistence_guest_path_on_host(&config, Some("docker"), &id, &guest_file)
@@ -431,6 +505,33 @@ fn test_resolve_home_persistence_guest_path_on_host_uses_session_mount() {
     assert_eq!(
         resolved,
         host_data_dir.join("sandbox/home/session/sess-1/history.txt")
+    );
+}
+
+#[test]
+fn test_resolve_home_persistence_guest_path_on_host_uses_shared_mount() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let host_data_dir = temp_dir.path().join("moltis-data");
+    let config = SandboxConfig {
+        host_data_dir: Some(host_data_dir.clone()),
+        ..Default::default()
+    };
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "sess-1".into(),
+    };
+
+    let resolved = resolve_home_persistence_guest_path_on_host(
+        &config,
+        Some("docker"),
+        &id,
+        &PathBuf::from("/home/sandbox/history.txt"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        resolved,
+        host_data_dir.join("sandbox/home/shared/history.txt")
     );
 }
 
@@ -495,6 +596,34 @@ async fn test_docker_write_file_uses_mounted_workspace_path() {
 }
 
 #[tokio::test]
+async fn test_docker_write_file_uses_mounted_home_path() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let host_data_dir = temp_dir.path().join("moltis-data");
+    let docker = DockerSandbox::new(SandboxConfig {
+        home_persistence: HomePersistence::Session,
+        host_data_dir: Some(host_data_dir.clone()),
+        ..Default::default()
+    });
+    let id = SandboxId {
+        scope: SandboxScope::Session,
+        key: "test-docker-home-write".into(),
+    };
+    let host_home = host_data_dir.join("sandbox/home/session/test-docker-home-write");
+    std::fs::create_dir_all(&host_home).unwrap();
+
+    let result = docker
+        .write_file(&id, "/home/sandbox/todo.txt", b"docker home write")
+        .await
+        .unwrap();
+
+    assert!(result.is_none());
+    assert_eq!(
+        std::fs::read_to_string(host_home.join("todo.txt")).unwrap(),
+        "docker home write"
+    );
+}
+
+#[tokio::test]
 async fn test_docker_list_files_remaps_mounted_workspace_paths() {
     let temp_dir = tempfile::tempdir().unwrap();
     let host_data_dir = temp_dir.path().join("moltis-data");
@@ -523,4 +652,92 @@ async fn test_docker_list_files_remaps_mounted_workspace_paths() {
         guest_root.join("todo.txt").display().to_string(),
     ]);
     assert!(!files.truncated);
+}
+
+#[tokio::test]
+async fn test_provisioning_guard_skips_second_call() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    let name = "moltis-sandbox-test-guard";
+
+    // First insertion succeeds.
+    {
+        let mut guard = docker.provisioned.lock().await;
+        assert!(!guard.contains(name));
+        guard.insert(name.to_string());
+    }
+
+    // Second check shows already provisioned.
+    {
+        let guard = docker.provisioned.lock().await;
+        assert!(guard.contains(name));
+    }
+}
+
+#[tokio::test]
+async fn test_provisioning_guard_cleared_on_cleanup_entry() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    let name = "moltis-sandbox-test-cleanup";
+
+    // Mark as provisioned.
+    docker.provisioned.lock().await.insert(name.to_string());
+    assert!(docker.provisioned.lock().await.contains(name));
+
+    // Simulate cleanup clearing the entry.
+    docker.provisioned.lock().await.remove(name);
+    assert!(!docker.provisioned.lock().await.contains(name));
+}
+
+#[tokio::test]
+async fn test_provisioning_guard_independent_containers() {
+    let docker = DockerSandbox::new(SandboxConfig::default());
+
+    docker
+        .provisioned
+        .lock()
+        .await
+        .insert("container-a".to_string());
+
+    let guard = docker.provisioned.lock().await;
+    assert!(guard.contains("container-a"));
+    assert!(!guard.contains("container-b"));
+}
+
+#[test]
+fn test_podman_build_verifies_image_in_store() {
+    // The Podman constructor must set `kind = BackendKind::Podman` so the
+    // post-build verification branch in `build_image` activates.
+    let sandbox = DockerSandbox::podman(SandboxConfig::default());
+    assert_eq!(sandbox.kind, BackendKind::Podman);
+    assert_eq!(sandbox.backend_name(), "podman");
+
+    // Docker constructor must NOT be Podman.
+    let docker = DockerSandbox::new(SandboxConfig::default());
+    assert_eq!(docker.kind, BackendKind::Docker);
+    assert_ne!(docker.kind, BackendKind::Podman);
+}
+
+#[test]
+fn test_tail_lines_fewer_than_n() {
+    let text = "line1\nline2\nline3";
+    assert_eq!(tail_lines(text, 5), text);
+}
+
+#[test]
+fn test_tail_lines_exact_n() {
+    let text = "line1\nline2\nline3";
+    assert_eq!(tail_lines(text, 3), text);
+}
+
+#[test]
+fn test_tail_lines_more_than_n() {
+    let text = "line1\nline2\nline3\nline4\nline5";
+    let result = tail_lines(text, 2);
+    assert!(result.starts_with("... [3 lines truncated]"));
+    assert!(result.contains("line4\nline5"));
+    assert!(!result.contains("line3"));
+}
+
+#[test]
+fn test_tail_lines_empty() {
+    assert_eq!(tail_lines("", 5), "");
 }

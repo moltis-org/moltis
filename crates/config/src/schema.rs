@@ -11,10 +11,16 @@ use {
 mod agents;
 #[path = "schema/chat.rs"]
 mod chat;
+#[path = "schema/code_index.rs"]
+mod code_index;
 #[path = "schema/hooks.rs"]
 mod hooks;
 #[path = "schema/memory.rs"]
 mod memory;
+#[path = "schema/modes.rs"]
+mod modes;
+#[path = "schema/phone.rs"]
+mod phone;
 #[path = "schema/providers.rs"]
 mod providers;
 #[path = "schema/runtime.rs"]
@@ -27,8 +33,8 @@ mod tools;
 mod voice;
 
 pub use {
-    agents::*, chat::*, hooks::*, memory::*, providers::*, runtime::*, system::*, tools::*,
-    voice::*,
+    agents::*, chat::*, code_index::*, hooks::*, memory::*, modes::*, phone::*, providers::*,
+    runtime::*, system::*, tools::*, voice::*,
 };
 
 // ── Reasoning effort ──────────────────────────────────────────────────────
@@ -36,19 +42,63 @@ pub use {
 /// Reasoning/thinking effort level for models that support extended thinking.
 ///
 /// Maps to provider-specific parameters:
-/// - **Anthropic**: `thinking.budget_tokens` (low=4096, medium=10240, high=32768)
-/// - **OpenAI**: `reasoning_effort` field on o-series models
+/// - **Anthropic**: `thinking.budget_tokens`
+/// - **OpenAI**: `reasoning_effort` field on o-series / GPT-5 models
+/// - **Gemini**: `thinkingBudget` or `thinkingLevel`
 /// - **Other providers**: ignored if unsupported
+///
+/// Not all providers support every level. Providers map unsupported levels
+/// to their nearest supported equivalent (e.g. `ExtraHigh` → `High` when
+/// the provider caps at `High`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
+    Minimal,
     Low,
     Medium,
     High,
+    /// Extra-high reasoning effort. Serializes as `"xhigh"`.
+    #[serde(rename = "xhigh")]
+    ExtraHigh,
+}
+
+impl ReasoningEffort {
+    /// All levels in ascending order.
+    pub const ALL: &[Self] = &[
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::ExtraHigh,
+    ];
+
+    /// Wire / serialization name (matches serde output).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::ExtraHigh => "xhigh",
+        }
+    }
+
+    /// Human-readable label for UI display.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Minimal => "Minimal",
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+            Self::ExtraHigh => "Extra High",
+        }
+    }
 }
 
 /// Agent identity (name, emoji, theme).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentIdentity {
     pub name: Option<String>,
@@ -231,6 +281,7 @@ pub struct MoltisConfig {
     pub chat: ChatConfig,
     pub tools: ToolsConfig,
     pub agents: AgentsConfig,
+    pub modes: ModesConfig,
     pub skills: SkillsConfig,
     pub mcp: McpConfig,
     pub channels: ChannelsConfig,
@@ -246,9 +297,26 @@ pub struct MoltisConfig {
     pub failover: FailoverConfig,
     pub heartbeat: HeartbeatConfig,
     pub voice: VoiceConfig,
+    pub phone: PhoneConfig,
     pub cron: CronConfig,
     pub caldav: CalDavConfig,
+    pub home_assistant: HomeAssistantConfig,
     pub webhooks: WebhooksConfig,
+    /// Auxiliary model assignments for side tasks (compaction, titles, vision).
+    pub auxiliary: AuxiliaryModelsConfig,
+    /// Code-index configuration for codebase search tools.
+    pub code_index: CodeIndexTomlConfig,
+    /// Per-model overrides that apply across all providers.
+    ///
+    /// Keys are normalized model IDs. Provider-scoped overrides
+    /// (`[providers.<name>.models.<id>]`) take precedence over these.
+    ///
+    /// ```toml
+    /// [models.claude-opus-4-6]
+    /// context_window = 1_000_000
+    /// ```
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub models: HashMap<String, ModelOverride>,
     /// Upstream HTTP/SOCKS proxy for all outbound requests.
     ///
     /// Supports `http://`, `https://`, `socks5://`, and `socks5h://` schemes.

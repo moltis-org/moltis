@@ -112,6 +112,42 @@ host = "ssh"
 }
 
 #[test]
+fn browser_obscura_path_accepted() {
+    let toml = r#"
+[tools.browser]
+obscura_path = "/usr/local/bin/obscura"
+"#;
+    let result = validate_toml_str(toml);
+    let unknown = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path == "tools.browser.obscura_path");
+    assert!(
+        unknown.is_none(),
+        "obscura_path should be accepted as a browser config field, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn browser_lightpanda_path_accepted() {
+    let toml = r#"
+[tools.browser]
+lightpanda_path = "/usr/local/bin/lightpanda"
+"#;
+    let result = validate_toml_str(toml);
+    let unknown = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path == "tools.browser.lightpanda_path");
+    assert!(
+        unknown.is_none(),
+        "lightpanda_path should be accepted as a browser config field, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn tools_agent_max_iterations_must_be_positive() {
     let toml = r#"
 [tools]

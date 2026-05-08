@@ -71,6 +71,19 @@ enqueues a summary event with the command name, exit code, and a short preview
 of stdout/stderr. If the heartbeat is idle, it is woken immediately so the
 agent can react to the result.
 
+Exec-triggered wakes have a cooldown guard so a heartbeat turn that runs `exec`
+does not immediately re-wake itself in a loop. Configure it with
+`[heartbeat].wake_cooldown` in `moltis.toml`:
+
+```toml
+[heartbeat]
+wake_cooldown = "5m" # default; set "0" to disable
+```
+
+The value uses Moltis duration syntax such as `"30s"`, `"10m"`, or `"1h"`.
+The cooldown applies only to exec-completion wakes. Cron jobs with
+`wakeMode = "now"` still wake the heartbeat immediately.
+
 This means the agent learns about completed background tasks without polling
 — a long-running build or deployment that finishes while the user is away will
 surface in the next heartbeat turn.

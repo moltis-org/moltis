@@ -37,6 +37,7 @@ fields need updates in `check_semantic_warnings()`.
 - Use concrete types (`struct`/`enum`) over `serde_json::Value` wherever shape is known.
 - **Match on types, never strings.** Only convert to strings at serialization/display boundaries.
 - Prefer `From`/`Into`/`TryFrom`/`TryInto` over manual conversions. Ask before adding manual conversion paths.
+- **DRY cross-crate types:** When two crates need the same enum/struct, define it once in the lower-level crate and re-export via `pub type Alias = other_crate::Type` from the higher-level one. Never duplicate enums across crates or round-trip through strings (`parse(&id.to_string())`) to convert between mirror types.
 - Prefer streaming over non-streaming API calls.
 - Run independent async work concurrently (`tokio::join!`, `futures::join_all`).
 - Never use `block_on` inside async context.
@@ -64,20 +65,70 @@ cargo build --release        # Release build
 cargo run / cargo run --release
 ```
 
-## Web UI Assets
+## Web UI (TypeScript + Preact + Vite)
 
-Assets in `crates/web/src/assets/` (JS, CSS, HTML). Dev mode serves from disk (edit and reload);
-release mode embeds via `include_dir!` with versioned URLs.
+TypeScript/TSX source in `crates/web/ui/src/`, built with Vite to `crates/web/src/assets/dist/`.
+CSS and static assets in `crates/web/src/assets/`. Release mode embeds via `include_dir!`.
+Generated assets (`dist/`, `css/style.css`, `style.css`, `sw.js`) are gitignored.
+Run `just build-web-assets` to generate them (requires Node.js).
+A `build.rs` check warns (debug) or fails (release/embedded-assets) if they are missing.
+See `docs/src/frontend.md` for the full architecture guide.
 
-- **Always** run `biome check --write` when JS files change.
-- Avoid creating HTML from JS — add hidden elements in `index.html`, toggle visibility. Preact/HTM exceptions allowed.
+### Build Commands
+
+```bash
+cd crates/web/ui
+npm run build          # Vite: TS/TSX → dist/
+npm run build:css      # Tailwind: input.css → ../src/assets/css/style.css
+npm run build:sw       # esbuild: src/sw.ts → ../src/assets/sw.js
+npm run build:all      # All three above
+npm run dev            # Vite watch mode (rebuilds on save)
+npx tsc --noEmit       # Type check (strict, must be 0 errors)
+```
+
+**After changing TS/TSX files**, always:
+1. `biome check --write crates/web/ui/src/`
+2. `cd crates/web/ui && npm run build`
+3. `cd crates/web/ui && npx tsc --noEmit`
+
+### TypeScript Rules
+
+- **File size limit: 1,500 lines** (same rule as Rust). Split large files into modules by domain.
+  - Pages: extract sections/modals into `pages/sections/`, `pages/channels/`, `pages/chat/`, etc.
+  - Utilities: extract sub-modules into sibling directories (`providers/`, `sessions/`, `ws/`).
+  - Keep shared signals, types, and re-exports in the main file; move logic into sub-modules.
+- All UI code is **TypeScript** with **JSX** (Preact). No HTM tagged templates.
+- Add typed Props interfaces for all Preact components.
+- Use `@preact/signals` with generic type parameters: `signal<string[]>([])`.
+- Prefer typed interfaces over `Record<string, unknown>` — define concrete shapes where property access is known.
+- Use `targetValue(e)` / `targetChecked(e)` from `typed-events.ts` for form event handlers.
+- No `any` types — use `unknown` with type guards or specific interfaces.
+- Use shared components from `components/forms/` (TextField, SaveButton, ListItem, Badge, TabBar, etc.).
+
+### CSS Rules
+
 - **Always use Tailwind classes** instead of inline `style="..."`.
 - Reuse CSS classes from `components.css`: `provider-btn`, `provider-btn-secondary`, `provider-btn-danger`.
 - Match button heights/text sizes when elements sit together.
-- **Rebuild Tailwind** after adding new classes:
-  ```bash
-  cd crates/web/ui && npx tailwindcss -i input.css -o ../src/assets/style.css --minify
-  ```
+- **Rebuild Tailwind** after adding new classes: `cd crates/web/ui && npm run build:css`.
+
+### Adding Settings Nav Icons
+
+Settings sidebar icons use `::before` pseudo-elements in `components.css`, **not** the `icon`
+JSX property in the `sections` array. When adding a new settings section:
+
+1. Create the SVG mask in `crates/web/src/assets/icons/masks/` with `fill="black"` (not `currentColor`)
+2. Add `.icon-<name>` class in `crates/web/ui/input.css` under the mask-image icons section
+3. **Also add** `.settings-nav-item[data-section="<id>"]::before` in `crates/web/src/assets/css/components.css`
+   pointing to the SVG — without this the icon renders as a black square
+4. The `icon: <span className="icon icon-<name>" />` in `SettingsPage.tsx` is a fallback only
+
+### E2E Test Shims
+
+E2E tests dynamically import individual JS modules (`js/state.js`, `js/helpers.js`, etc.).
+With Vite bundling, these don't exist as standalone files. Shim files in `src/assets/js/`
+proxy to `window.__moltis_modules` (populated by `app.tsx`). When adding new modules that
+tests import, add a shim file and expose the module in `app.tsx`.
 
 ### Selection Cards
 
@@ -92,12 +143,13 @@ When adding fields, update: `ProviderConfig` struct, `available()` response, `sa
 ### Server-Injected Data (gon pattern)
 
 For server data needed at page load: add to `GonData` in `server.rs` / `build_gon_data()`.
-JS side: `import * as gon from "./gon.js"` — use `gon.get()`, `gon.onChange()`, `gon.refresh()`.
+TS side: `import * as gon from "./gon"` — use `gon.get()`, `gon.onChange()`, `gon.refresh()`.
+Types in `crates/web/ui/src/types/gon.ts` mirror the Rust `GonData` struct.
 Never inject inline `<script>` tags or build HTML in Rust.
 
 ### Event Bus
 
-Server events via WebSocket: `import { onEvent } from "./events.js"`. Returns unsubscribe function.
+Server events via WebSocket: `import { onEvent } from "./events"`. Returns unsubscribe function.
 Do **not** use `window.addEventListener`/`CustomEvent` for server events.
 
 ## API Namespace Convention
@@ -155,9 +207,14 @@ Rules: use `getByRole()`/`getByText({ exact: true })` selectors, shared helpers
 (`navigateAndWait`, `waitForWsConnected`, `watchPageErrors`), assert no JS errors,
 avoid `waitForTimeout()`.
 
+**Flaky tests must be fixed, never skipped or ignored.** If a test fails intermittently,
+find and fix the root cause (race conditions, `requestAnimationFrame` timing, missing
+waits, element detachment from re-renders). Do not use `test.skip()`, `test.fixme()`,
+or retry-count workarounds to hide flakiness.
+
 ## Code Quality
 
-- Never run `cargo fmt` on stable in this repo. Always use the pinned nightly rustfmt (`just format`, `just format-check`, or `cargo +nightly-2025-11-30 fmt ...`).
+- Never run `cargo fmt` on stable in this repo. Always use the pinned nightly rustfmt (`just format`, `just format-check`, or `cargo fmt` — `rust-toolchain.toml` selects the right nightly automatically).
 
 ```bash
 just format              # Format Rust (pinned nightly)
@@ -165,7 +222,7 @@ just format-check        # CI format check
 just release-preflight   # fmt + clippy gates
 cargo check              # Fast compile check
 taplo fmt                # Format TOML files
-biome check --write      # Lint/format JS
+biome check --write      # Lint/format TS/TSX
 ```
 
 ## Sandbox Architecture
@@ -229,6 +286,9 @@ New crate: add `run_migrations()` to `lib.rs`, call from `server.rs` in dependen
 ## Git Workflow
 
 Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): description`
+- Prefer descriptive commit subjects over terse "change stuff" summaries.
+- For bug fixes, behavioral changes, and non-obvious refactors, include a commit body that explains the concrete problem, the root cause, and why the chosen fix is correct.
+- Write commit messages so `git log` is useful without opening the diff first.
 **No `Co-Authored-By` trailers.** Update `README.md` features list with `feat` commits.
 
 ### Releases
@@ -271,28 +331,30 @@ Conventional commits: `feat|fix|docs|style|refactor|test|chore(scope): descripti
 **Always** run `./scripts/local-validate.sh <PR_NUMBER>` when a PR exists.
 
 For incremental local edits before full validation:
-- JS changed: run `biome check --write`.
-- Rust changed: run `cargo +nightly-2025-11-30 fmt --all -- --check`.
-- JS + Rust changed: run both.
+- TS/TSX changed: run `biome check --write` and `cd crates/web/ui && npm run build`.
+- Rust changed: run `cargo fmt --all -- --check`.
+- Both changed: run all three.
 
 Exact commands (must match `local-validate.sh`):
-- Fmt: `cargo +nightly-2025-11-30 fmt --all -- --check`
+- Fmt: `cargo fmt --all -- --check`
 - Clippy: `just lint` (OS-aware: on macOS excludes CUDA features, on Linux uses `--all-features`)
 - Tests: `just test` (OS-aware: on macOS uses nextest without CUDA features, on Linux uses `--all-features`)
-- macOS app (Darwin hosts): `./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination "platform=macOS" -derivedDataPath apps/macos/.derivedData-local-validate build`
+- macOS app (Darwin hosts): `./scripts/build-swift-bridge.sh && ./scripts/generate-swift-project.sh && ./scripts/lint-swift.sh && xcodebuild -project apps/macos/Moltis.xcodeproj -scheme Moltis -configuration Release -destination "platform=macOS" -derivedDataPath apps/macos/.derivedData-local-validate CODE_SIGNING_ALLOWED=NO build`
 - iOS app (Darwin hosts): `cargo run -p moltis-schema-export -- apps/ios/GraphQL/Schema/schema.graphqls && ./scripts/generate-ios-graphql.sh && ./scripts/generate-ios-project.sh && xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build`
 
 ### PR Descriptions
 
 Required sections: `## Summary`, `## Validation` (checkboxes, split into `### Completed` / `### Remaining`
 with exact commands), `## Manual QA`. Include concrete test steps.
+- Do not prefix GitHub PR titles with `[codex]`.
+- Prefer normal human-readable PR titles, ideally aligned with the conventional-commit summary.
 
 ## Code Quality Checklist
 
 **Run before every commit:**
 - [ ] No secrets or private tokens (CRITICAL)
 - [ ] `taplo fmt` (TOML changes)
-- [ ] `biome check --write` (JS changes)
+- [ ] `biome check --write` (TS/TSX changes)
 - [ ] Rust fmt passes (exact command above)
 - [ ] `just lint` passes (OS-aware clippy)
 - [ ] `just release-preflight` passes

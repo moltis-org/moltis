@@ -1,5 +1,6 @@
 use {
     crate::{
+        model::{ContentPart, UserContent},
         prompt::{
             formatting::{
                 append_truncated_text_block, format_compact_tool_schema, format_host_runtime_line,
@@ -27,7 +28,7 @@ const EXEC_ROUTING_GUIDANCE_SANDBOX: &str = "Execution routing:\n\
 - In sandbox mode, `~` and relative paths resolve under `Sandbox(exec): home=...` (usually `/home/sandbox`).\n\
 - Persistent workspace files live under `Host: data_dir=...`; when mounted, the same path appears as `Sandbox(exec): workspace_path=...`.\n\
 - With `workspace_mount=ro`, sandbox commands may read mounted files but cannot modify them.\n\
-- For durable long-term memory writes, prefer `memory_save` over shell writes to `MEMORY.md` or `memory/*.md`.\n";
+- For durable long-term memory mutations, prefer `memory_save`, `memory_forget`, or `memory_delete` over shell writes to `MEMORY.md` or `memory/*.md`.\n";
 const EXEC_ROUTING_SANDBOX_CLOSING: &str = "- Sandbox/host routing changes are expected runtime behavior. Do not frame them as surprising or anomalous.\n";
 const EXEC_ROUTING_GUIDANCE_HOST_ONLY: &str = "Execution routing:\n\
 - `exec` runs on the host and may require approval.\n";
@@ -41,6 +42,9 @@ const TOOL_GUIDELINES: &str = concat!(
     "- Use the exec tool for shell/system tasks.\n",
     "- If the user starts a message with `/sh `, run it with `exec` exactly as written.\n",
     "- Use the browser tool when the user asks to visit/read/interact with web pages.\n",
+    "- For already-connected MCP servers, use the listed `mcp__<server>__<tool>` tools directly. ",
+    "Use `mcp_list` or `mcp_status` only when you need to inspect server availability first.\n",
+    "- Skills describe workflows. They are not callable tools unless you first load them with `read_skill`.\n",
     "- Before tool calls, briefly state what you are about to do.\n",
     "- For multi-step tasks, execute one step at a time and check results before proceeding.\n",
     "- Be careful with destructive operations, confirm with the user first.\n",
@@ -218,6 +222,25 @@ pub fn build_system_prompt_minimal_runtime_details(
     )
 }
 
+/// Prepend datetime context to user content so it lives in the final
+/// (always-changing) user message rather than a separate system message
+/// that would shift position and break KV cache prefix matching.
+#[must_use]
+pub fn prepend_datetime_to_user_content(
+    user_content: &UserContent,
+    runtime_context: Option<&PromptRuntimeContext>,
+) -> Option<UserContent> {
+    let datetime_text = runtime_datetime_message(runtime_context)?;
+    Some(match user_content {
+        UserContent::Text(text) => UserContent::Text(format!("[{datetime_text}]\n\n{text}")),
+        UserContent::Multimodal(parts) => {
+            let mut new_parts = vec![ContentPart::Text(format!("[{datetime_text}]"))];
+            new_parts.extend(parts.iter().cloned());
+            UserContent::Multimodal(new_parts)
+        },
+    })
+}
+
 /// Build a short datetime string suitable for injection as a trailing system message.
 #[must_use]
 pub fn runtime_datetime_message(runtime_context: Option<&PromptRuntimeContext>) -> Option<String> {
@@ -269,10 +292,16 @@ fn build_system_prompt_full(
     });
 
     append_identity_and_user_sections(&mut prompt, identity, user, soul_text);
+    append_mode_section(&mut prompt, runtime_context);
     append_boot_section(&mut prompt, boot_text);
     append_project_context(&mut prompt, project_context);
     append_runtime_section(&mut prompt, runtime_context, include_tools);
-    append_skills_section(&mut prompt, include_tools, skills);
+    append_skills_section(
+        &mut prompt,
+        include_tools,
+        skills,
+        limits.enable_skill_self_improvement,
+    );
     let workspace_files =
         append_workspace_files_section(&mut prompt, agents_text, tools_text, limits);
     append_memory_section(&mut prompt, memory_text, &tool_schemas);
@@ -318,6 +347,25 @@ fn append_identity_and_user_sections(
     if identity.is_some() || user.is_some() {
         prompt.push('\n');
     }
+}
+
+fn append_mode_section(prompt: &mut String, runtime_context: Option<&PromptRuntimeContext>) {
+    let Some(mode) = runtime_context.and_then(|ctx| ctx.mode.as_ref()) else {
+        return;
+    };
+    let mode_prompt = mode.prompt.trim();
+    if mode_prompt.is_empty() {
+        return;
+    }
+
+    prompt.push_str("## Active Mode\n\n");
+    prompt.push_str("Mode: ");
+    prompt.push_str(&mode.name);
+    prompt.push_str(" (");
+    prompt.push_str(&mode.id);
+    prompt.push_str(")\n\n");
+    prompt.push_str(mode_prompt);
+    prompt.push_str("\n\n");
 }
 
 fn append_boot_section(prompt: &mut String, boot_text: Option<&str>) {
@@ -403,9 +451,18 @@ fn append_runtime_section(
     }
 }
 
-fn append_skills_section(prompt: &mut String, include_tools: bool, skills: &[SkillMetadata]) {
+fn append_skills_section(
+    prompt: &mut String,
+    include_tools: bool,
+    skills: &[SkillMetadata],
+    enable_self_improvement: bool,
+) {
     if include_tools && !skills.is_empty() {
         prompt.push_str(&moltis_skills::prompt_gen::generate_skills_prompt(skills));
+        if enable_self_improvement {
+            prompt.push_str(moltis_skills::prompt_gen::generate_skill_self_improvement_prompt());
+            prompt.push('\n');
+        }
     }
 }
 
@@ -455,8 +512,16 @@ fn append_memory_section(
     let has_tool_search = has_tool_schema(tool_schemas, "tool_search");
     let has_memory_search = has_tool_schema(tool_schemas, "memory_search");
     let has_memory_save = has_tool_schema(tool_schemas, "memory_save");
+    let has_memory_forget = has_tool_schema(tool_schemas, "memory_forget");
+    let has_memory_delete = has_tool_schema(tool_schemas, "memory_delete");
     let memory_content = memory_text.filter(|text| !text.is_empty());
-    if memory_content.is_none() && !has_memory_search && !has_memory_save && !has_tool_search {
+    if memory_content.is_none()
+        && !has_memory_search
+        && !has_memory_save
+        && !has_memory_forget
+        && !has_memory_delete
+        && !has_tool_search
+    {
         return;
     }
 
@@ -500,9 +565,27 @@ fn append_memory_section(
             "`memory_search` and do not consume prompt space.\n",
         ));
     }
-    if has_tool_search && !has_memory_search && !has_memory_save {
+    if has_memory_forget {
         prompt.push_str(concat!(
-            "\nMemory tools (`memory_search`, `memory_save`) are available but must be ",
+            "\n**When the user asks you to forget or remove saved memory in natural language, ",
+            "you MUST call `memory_forget`.** ",
+            "It searches memory, chooses the matching saved chunk, and deletes the exact stored text safely.\n",
+        ));
+    }
+    if has_memory_delete {
+        prompt.push_str(concat!(
+            "\nUse `memory_delete` only when you already know the exact file and exact snippet ",
+            "to remove, or when you need to delete a whole `memory/<name>.md` file directly.\n",
+        ));
+    }
+    if has_tool_search
+        && !has_memory_search
+        && !has_memory_save
+        && !has_memory_forget
+        && !has_memory_delete
+    {
+        prompt.push_str(concat!(
+            "\nMemory tools (`memory_search`, `memory_save`, `memory_forget`, `memory_delete`) are available but must be ",
             "activated first. Use `tool_search(query=\"memory\")` to discover them, ",
             "then `tool_search(name=\"memory_search\")` to activate.\n",
         ));

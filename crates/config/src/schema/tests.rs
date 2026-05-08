@@ -1,4 +1,4 @@
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, Secret};
 
 use super::*;
 
@@ -64,6 +64,12 @@ enabled = true
 }
 
 #[test]
+fn tools_loop_detector_window_defaults_to_two() {
+    let config: MoltisConfig = toml::from_str("").unwrap();
+    assert_eq!(config.tools.agent_loop_detector_window, 2);
+}
+
+#[test]
 fn env_section_parses() {
     let toml = r#"
 [env]
@@ -83,10 +89,82 @@ fn env_section_defaults_to_empty() {
 }
 
 #[test]
-fn agents_config_defaults_empty() {
+fn agents_config_defaults_include_builtin_presets() {
     let config: MoltisConfig = toml::from_str("").unwrap();
-    assert!(config.agents.default_preset.is_none());
-    assert!(config.agents.presets.is_empty());
+    assert_eq!(config.agents.default_preset.as_deref(), Some("research"));
+    for name in [
+        "research",
+        "coder",
+        "reviewer",
+        "qa",
+        "ux",
+        "docs",
+        "coordinator",
+    ] {
+        assert!(
+            config.agents.presets.contains_key(name),
+            "missing builtin preset {name}"
+        );
+    }
+    assert!(
+        config
+            .agents
+            .presets
+            .get("coordinator")
+            .is_some_and(|preset| preset.delegate_only),
+        "coordinator should be delegation-only"
+    );
+}
+
+#[test]
+fn modes_config_defaults_include_builtin_presets() {
+    let config: MoltisConfig = toml::from_str("").unwrap();
+    for name in [
+        "concise",
+        "technical",
+        "creative",
+        "teacher",
+        "plan",
+        "build",
+        "review",
+        "research",
+        "elevated",
+    ] {
+        assert!(
+            config.modes.presets.contains_key(name),
+            "missing builtin mode {name}"
+        );
+    }
+}
+
+#[test]
+fn modes_config_parses_and_overrides_presets() {
+    let config: MoltisConfig = toml::from_str(
+        r#"
+[modes.presets.concise]
+name = "Tiny"
+description = "short replies"
+prompt = "Answer in one sentence."
+
+[modes.presets.custom]
+name = "Custom"
+description = "custom mode"
+prompt = "Use the custom overlay."
+"#,
+    )
+    .unwrap();
+
+    let concise = config.modes.get_preset("concise").unwrap();
+    assert_eq!(concise.name.as_deref(), Some("Tiny"));
+    assert_eq!(concise.prompt, "Answer in one sentence.");
+    assert!(config.modes.presets.contains_key("technical"));
+    assert_eq!(
+        config
+            .modes
+            .get_preset("custom")
+            .map(|mode| mode.prompt.as_str()),
+        Some("Use the custom overlay.")
+    );
 }
 
 #[test]
@@ -154,6 +232,44 @@ deny = ["exec"]
     assert_eq!(preset.identity.theme.as_deref(), Some("thorough"));
     assert_eq!(preset.max_iterations, Some(10));
     assert_eq!(preset.timeout_secs, Some(120));
+}
+
+#[test]
+fn agents_config_merges_builtin_presets_with_user_presets() {
+    let toml = r#"
+[agents]
+default_preset = "custom"
+
+[agents.presets.custom]
+system_prompt_suffix = "Custom work."
+
+[agents.presets.custom.identity]
+name = "Custom"
+
+[agents.presets.research]
+system_prompt_suffix = "User research override."
+
+[agents.presets.research.identity]
+name = "Scout"
+"#;
+    let config: MoltisConfig = toml::from_str(toml).unwrap();
+
+    assert_eq!(config.agents.default_preset.as_deref(), Some("custom"));
+    assert!(config.agents.presets.contains_key("coder"));
+    assert_eq!(
+        config
+            .agents
+            .presets
+            .get("custom")
+            .and_then(|preset| preset.identity.name.as_deref()),
+        Some("Custom")
+    );
+    let research = config.agents.presets.get("research").unwrap();
+    assert_eq!(research.identity.name.as_deref(), Some("Scout"));
+    assert_eq!(
+        research.system_prompt_suffix.as_deref(),
+        Some("User research override.")
+    );
 }
 
 #[test]
@@ -382,6 +498,7 @@ fn channels_config_defaults_offered() {
         "slack".to_string(),
         "matrix".to_string(),
         "nostr".to_string(),
+        "signal".to_string(),
     ]);
 }
 
@@ -396,6 +513,7 @@ fn channels_config_empty_toml_defaults_offered() {
         "slack".to_string(),
         "matrix".to_string(),
         "nostr".to_string(),
+        "signal".to_string(),
     ]);
 }
 
@@ -447,6 +565,50 @@ fn sandbox_defaults_include_go_runtime() {
     assert_eq!(sandbox.home_persistence, HomePersistenceConfig::Shared);
     assert!(sandbox.host_data_dir.is_none());
     assert!(sandbox.wasm_tool_limits.is_none());
+}
+
+#[test]
+fn sandbox_config_debug_redacts_remote_backend_credentials() {
+    let sandbox = SandboxConfig {
+        vercel_token: Some(Secret::new("vercel-secret-value".into())),
+        daytona_api_key: Some(Secret::new("daytona-secret-value".into())),
+        ..SandboxConfig::default()
+    };
+
+    let debug = format!("{sandbox:?}");
+
+    assert!(!debug.contains("vercel-secret-value"));
+    assert!(!debug.contains("daytona-secret-value"));
+    assert!(debug.contains("vercel_token"));
+    assert!(debug.contains("daytona_api_key"));
+}
+
+#[test]
+fn sandbox_config_deserializes_remote_backend_credentials_as_secrets() {
+    let sandbox: SandboxConfig = toml::from_str(
+        r#"
+vercel_token = "vercel-secret-value"
+daytona_api_key = "daytona-secret-value"
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        sandbox
+            .vercel_token
+            .as_ref()
+            .map(ExposeSecret::expose_secret)
+            .map(String::as_str),
+        Some("vercel-secret-value")
+    );
+    assert_eq!(
+        sandbox
+            .daytona_api_key
+            .as_ref()
+            .map(ExposeSecret::expose_secret)
+            .map(String::as_str),
+        Some("daytona-secret-value")
+    );
 }
 
 #[test]
@@ -768,4 +930,84 @@ base_url = "http://127.0.0.1:8001/v1"
         config.voice.stt.whisper.base_url.as_deref(),
         Some("http://127.0.0.1:8001/v1")
     );
+}
+
+#[test]
+fn external_url_defaults_to_none() {
+    let cfg: MoltisConfig = toml::from_str("").unwrap();
+    assert!(cfg.server.external_url.is_none());
+}
+
+#[test]
+fn external_url_parses_from_toml() {
+    let cfg: MoltisConfig =
+        toml::from_str("[server]\nexternal_url = \"https://moltis.example.com\"\n").unwrap();
+    assert_eq!(
+        cfg.server.external_url.as_deref(),
+        Some("https://moltis.example.com")
+    );
+}
+
+#[test]
+fn effective_external_url_returns_config_value() {
+    let cfg: MoltisConfig =
+        toml::from_str("[server]\nexternal_url = \"https://from-config.example.com\"\n").unwrap();
+    // When MOLTIS_EXTERNAL_URL is not set, the config value is returned.
+    // (We cannot test the env-var override here because set_var is unsafe.)
+    let effective = cfg.server.effective_external_url();
+    assert!(effective.is_some());
+    assert_eq!(effective.unwrap(), "https://from-config.example.com");
+}
+
+#[test]
+fn effective_external_url_strips_trailing_slash() {
+    let cfg: MoltisConfig =
+        toml::from_str("[server]\nexternal_url = \"https://example.com/\"\n").unwrap();
+    assert_eq!(
+        cfg.server.effective_external_url().as_deref(),
+        Some("https://example.com")
+    );
+}
+
+#[test]
+fn effective_external_url_returns_none_when_unset() {
+    let cfg: MoltisConfig = toml::from_str("").unwrap();
+    assert!(cfg.server.effective_external_url().is_none());
+}
+
+// ── resolve_external_url (pure helper, testable without env mutation) ──
+
+#[test]
+fn resolve_external_url_env_takes_precedence_over_config() {
+    let result = ServerConfig::resolve_external_url(
+        Some("https://from-env.example.com"),
+        Some("https://from-config.example.com"),
+    );
+    assert_eq!(result.as_deref(), Some("https://from-env.example.com"));
+}
+
+#[test]
+fn resolve_external_url_empty_env_falls_back_to_config() {
+    // effective_external_url filters empty env values before calling
+    // resolve_external_url, so an empty env var becomes None here.
+    let result = ServerConfig::resolve_external_url(None, Some("https://from-config.example.com"));
+    assert_eq!(result.as_deref(), Some("https://from-config.example.com"));
+}
+
+#[test]
+fn resolve_external_url_strips_trailing_slash_from_env() {
+    let result = ServerConfig::resolve_external_url(Some("https://env.example.com/"), None);
+    assert_eq!(result.as_deref(), Some("https://env.example.com"));
+}
+
+#[test]
+fn resolve_external_url_strips_trailing_slash_from_config() {
+    let result = ServerConfig::resolve_external_url(None, Some("https://config.example.com/"));
+    assert_eq!(result.as_deref(), Some("https://config.example.com"));
+}
+
+#[test]
+fn resolve_external_url_returns_none_when_both_unset() {
+    let result = ServerConfig::resolve_external_url(None, None);
+    assert!(result.is_none());
 }

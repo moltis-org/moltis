@@ -861,6 +861,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restore_sandbox_router_overrides_rehydrates_persisted_backend() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+        metadata
+            .upsert("session:abc", Some("Cloud session".to_string()))
+            .await
+            .unwrap();
+        metadata
+            .set_sandbox_backend("session:abc", Some("restricted-host".to_string()))
+            .await;
+        metadata
+            .set_sandbox_image("session:abc", Some("custom:image".to_string()))
+            .await;
+        metadata
+            .set_sandbox_enabled("session:abc", Some(true))
+            .await;
+
+        let mut router = SandboxRouter::new(moltis_tools::sandbox::SandboxConfig {
+            backend: "docker".to_string(),
+            ..Default::default()
+        });
+        router.register_backend(Arc::new(moltis_tools::sandbox::RestrictedHostSandbox::new(
+            moltis_tools::sandbox::SandboxConfig::default(),
+        )));
+        let router = Arc::new(router);
+        let service = LiveSessionService::new(store, Arc::clone(&metadata))
+            .with_sandbox_router(Arc::clone(&router));
+
+        service.restore_sandbox_router_overrides().await;
+
+        assert_eq!(
+            router.resolve_backend("session:abc").await.backend_name(),
+            "restricted-host"
+        );
+        assert!(router.is_sandboxed("session:abc").await);
+        assert_eq!(
+            router.resolve_image("session:abc", None).await,
+            "custom:image"
+        );
+    }
+
+    #[tokio::test]
     async fn resolve_dispatches_session_start_with_channel_binding() {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));

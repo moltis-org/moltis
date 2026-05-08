@@ -19,7 +19,7 @@ use {
 const BASE_URL: &str = "https://api.kimi.com/coding/v1";
 const TEST_MODEL: &str = "kimi-k2.5";
 
-const KNOWN_MODELS: &[&str] = &["kimi-for-coding", "kimi-k2.5"];
+const KNOWN_MODELS: &[&str] = &["kimi-for-coding", "kimi-k2.5", "kimi-k2.6"];
 
 fn api_key() -> Secret<String> {
     Secret::new(
@@ -180,6 +180,8 @@ async fn multi_turn_tool_use() {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
                     arguments: tc.arguments.clone(),
+                    argument_diagnostic: tc.argument_diagnostic.clone(),
+                    metadata: tc.metadata.clone(),
                 }]),
                 ChatMessage::tool(&tc.id, r#"{"temperature": 15, "condition": "cloudy"}"#),
             ],

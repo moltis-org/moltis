@@ -10,9 +10,13 @@ use crate::services::GatewayServices;
 /// needs to store in gateway state or pass to other init phases.
 pub(crate) struct ChannelInitResult {
     pub(crate) services: GatewayServices,
+    #[cfg(feature = "msteams")]
     pub(crate) msteams_webhook_plugin: Arc<tokio::sync::RwLock<moltis_msteams::MsTeamsPlugin>>,
     #[cfg(feature = "slack")]
     pub(crate) slack_webhook_plugin: Arc<tokio::sync::RwLock<moltis_slack::SlackPlugin>>,
+    #[cfg(feature = "telephony")]
+    pub(crate) telephony_webhook_plugin:
+        Arc<tokio::sync::RwLock<moltis_telephony::TelephonyPlugin>>,
 }
 
 /// Wire the channel store, channel registry, and all channel plugins.
@@ -59,33 +63,44 @@ pub(crate) async fn init_channels(
     // Create plugins and register with the registry.
     let mut registry = ChannelRegistry::new();
 
-    let tg_plugin = Arc::new(tokio::sync::RwLock::new(
-        moltis_telegram::TelegramPlugin::new()
-            .with_message_log(Arc::clone(&message_log))
-            .with_event_sink(Arc::clone(&channel_sink)),
-    ));
-    registry
-        .register(tg_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
-        .await;
+    #[cfg(feature = "telegram")]
+    {
+        let tg_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_telegram::TelegramPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(Arc::clone(&channel_sink)),
+        ));
+        registry
+            .register(tg_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
+            .await;
+    }
 
-    let msteams_plugin = Arc::new(tokio::sync::RwLock::new(
-        moltis_msteams::MsTeamsPlugin::new()
-            .with_message_log(Arc::clone(&message_log))
-            .with_event_sink(Arc::clone(&channel_sink)),
-    ));
-    let msteams_webhook_plugin = Arc::clone(&msteams_plugin);
-    registry
-        .register(msteams_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
-        .await;
+    #[cfg(feature = "msteams")]
+    let msteams_webhook_plugin: Arc<tokio::sync::RwLock<moltis_msteams::MsTeamsPlugin>>;
+    #[cfg(feature = "msteams")]
+    {
+        let msteams_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_msteams::MsTeamsPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(Arc::clone(&channel_sink)),
+        ));
+        msteams_webhook_plugin = Arc::clone(&msteams_plugin);
+        registry
+            .register(msteams_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
+            .await;
+    }
 
-    let discord_plugin = Arc::new(tokio::sync::RwLock::new(
-        moltis_discord::DiscordPlugin::new()
-            .with_message_log(Arc::clone(&message_log))
-            .with_event_sink(Arc::clone(&channel_sink)),
-    ));
-    registry
-        .register(discord_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
-        .await;
+    #[cfg(feature = "discord")]
+    {
+        let discord_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_discord::DiscordPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(Arc::clone(&channel_sink)),
+        ));
+        registry
+            .register(discord_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
+            .await;
+    }
 
     #[cfg(feature = "matrix")]
     {
@@ -111,6 +126,18 @@ pub(crate) async fn init_channels(
             .await;
     }
 
+    #[cfg(feature = "signal")]
+    {
+        let signal_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_signal::SignalPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(Arc::clone(&channel_sink)),
+        ));
+        registry
+            .register(signal_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
+            .await;
+    }
+
     #[cfg(feature = "whatsapp")]
     {
         let wa_data_dir = data_dir.join("whatsapp");
@@ -128,6 +155,21 @@ pub(crate) async fn init_channels(
     }
     #[cfg(not(feature = "whatsapp"))]
     let _ = &channel_sink; // silence unused warning
+
+    #[cfg(feature = "telephony")]
+    let telephony_webhook_plugin: Arc<tokio::sync::RwLock<moltis_telephony::TelephonyPlugin>>;
+    #[cfg(feature = "telephony")]
+    {
+        let telephony_plugin = Arc::new(tokio::sync::RwLock::new(
+            moltis_telephony::TelephonyPlugin::new()
+                .with_message_log(Arc::clone(&message_log))
+                .with_event_sink(Arc::clone(&channel_sink)),
+        ));
+        telephony_webhook_plugin = Arc::clone(&telephony_plugin);
+        registry
+            .register(telephony_plugin as Arc<tokio::sync::RwLock<dyn ChannelPlugin>>)
+            .await;
+    }
 
     #[cfg(feature = "slack")]
     let slack_webhook_plugin: Arc<tokio::sync::RwLock<moltis_slack::SlackPlugin>>;
@@ -149,6 +191,15 @@ pub(crate) async fn init_channels(
     // don't block startup sequentially.
     let mut pending_starts: Vec<(String, String, serde_json::Value)> = Vec::new();
     let mut queued: HashSet<(String, String)> = HashSet::new();
+
+    #[cfg(feature = "telephony")]
+    if let Some((account_id, account_config)) = crate::methods::phone::phone_channel_account(config)
+    {
+        let key = ("telephony".to_string(), account_id.clone());
+        if registry.get("telephony").is_some() && queued.insert(key) {
+            pending_starts.push(("telephony".to_string(), account_id, account_config));
+        }
+    }
 
     for (channel_type, accounts) in config.channels.all_channel_configs() {
         if registry.get(channel_type).is_none() {
@@ -250,8 +301,11 @@ pub(crate) async fn init_channels(
 
     ChannelInitResult {
         services,
+        #[cfg(feature = "msteams")]
         msteams_webhook_plugin,
         #[cfg(feature = "slack")]
         slack_webhook_plugin,
+        #[cfg(feature = "telephony")]
+        telephony_webhook_plugin,
     }
 }

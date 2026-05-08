@@ -77,7 +77,7 @@ Usage:
 
 Options:
     --no-homebrew       Skip Homebrew even if available (macOS)
-    --method=METHOD     Force installation method: homebrew, binary, deb, rpm, arch, appimage, snap, source
+    --method=METHOD     Force installation method: homebrew, binary, deb, rpm, arch, appimage, snap, source, proxmox
     --version=VERSION   Install a specific version (default: latest)
     -h, --help          Show this help message
 
@@ -472,6 +472,48 @@ install_snap() {
     success "Moltis installed via Snap"
 }
 
+detect_proxmox() {
+    command_exists pveversion && [ -d /etc/pve ]
+}
+
+install_proxmox() {
+    info "Proxmox VE detected — installing Moltis as an LXC container..."
+
+    if ! detect_proxmox; then
+        error "This does not appear to be a Proxmox VE host."
+    fi
+
+    PROXMOX_REPO_URL="https://raw.githubusercontent.com/moltis-org/ProxmoxVED/feat/moltis"
+    PROXMOX_SCRIPT_URL="$PROXMOX_REPO_URL/ct/moltis.sh"
+
+    tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT
+    proxmox_script="$tmpdir/moltis-proxmox.sh"
+    patched_script="$tmpdir/moltis-proxmox-patched.sh"
+
+    download "$PROXMOX_SCRIPT_URL" "$proxmox_script" || error "Failed to download Proxmox helper"
+
+    # The upstream community-scripts install helper currently writes a hardcoded
+    # /usr/bin/update URL. Patch the fetched helper so new Moltis LXCs update
+    # from the Moltis fork until the helper honors COMMUNITY_SCRIPTS_URL there.
+    awk -v repo_url="$PROXMOX_REPO_URL" '
+        {
+            print
+            if ($0 == "description" && !patched) {
+                q = sprintf("%c", 39)
+                print "pct exec \"$CTID\" -- bash -c \"cat > /usr/bin/update <<" q "MOLTIS_UPDATE_EOF" q
+                print "bash -c \\\"\\$(curl -fsSL " repo_url "/ct/moltis.sh)\\\""
+                print "MOLTIS_UPDATE_EOF"
+                print "chmod +x /usr/bin/update\" || true"
+                patched = 1
+            }
+        }
+    ' "$proxmox_script" >"$patched_script"
+
+    info "Launching Proxmox VE helper script..."
+    bash "$patched_script"
+}
+
 install_from_source() {
     warn "Building from source. This may take several minutes..."
 
@@ -579,12 +621,39 @@ main() {
             snap)
                 install_snap
                 ;;
+            proxmox)
+                install_proxmox
+                return
+                ;;
             source)
                 install_from_source "$VERSION"
                 ;;
             *)
                 error "Unknown installation method: $PREFERRED_METHOD"
                 ;;
+        esac
+    elif [ "$OS" = "linux" ] && detect_proxmox; then
+        info "Proxmox VE host detected"
+        printf "  Install as an LXC container (recommended) or directly on this host?\n"
+        printf "  ${BOLD}1)${NC} LXC container (isolated, easy to manage)\n"
+        printf "  ${BOLD}2)${NC} Install directly on this host\n"
+        printf "\n"
+        printf "  Choice [1]: "
+        read -r choice </dev/tty 2>/dev/null || choice="1"
+        choice="${choice:-1}"
+        if [ "$choice" = "1" ]; then
+            install_proxmox
+            return
+        fi
+        # Fall through to normal Linux install
+        DISTRO=$(detect_linux_distro)
+        case "$DISTRO" in
+            ubuntu|debian|linuxmint|pop|elementary|zorin)
+                install_deb "$ARCH" "$VERSION" ;;
+            fedora|rhel|centos|rocky|alma|ol)
+                install_rpm "$ARCH" "$VERSION" ;;
+            *)
+                install_binary "$OS" "$ARCH" "$VERSION" ;;
         esac
     elif [ "$OS" = "macos" ]; then
         # macOS: prefer Homebrew, fall back to binary

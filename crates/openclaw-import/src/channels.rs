@@ -1,9 +1,10 @@
-//! Import channel configuration from OpenClaw (Telegram + Discord).
+//! Import channel configuration from OpenClaw.
 
 use std::path::Path;
 
 use {
     serde::{Deserialize, Serialize},
+    serde_json::Value,
     tracing::debug,
 };
 
@@ -45,12 +46,38 @@ pub struct ImportedDiscordChannel {
     pub guild_allowlist: Vec<String>,
 }
 
+/// Imported Signal channel configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportedSignalChannel {
+    /// Account identifier (from OpenClaw's accounts map key or `default`).
+    pub account_id: String,
+    /// Signal account loaded by signal-cli, usually an E.164 phone number.
+    pub account: Option<String>,
+    /// Signal account UUID if OpenClaw stored it.
+    pub account_uuid: Option<String>,
+    /// signal-cli daemon HTTP URL.
+    pub http_url: Option<String>,
+    /// DM policy.
+    pub dm_policy: Option<String>,
+    /// Allowed senders.
+    pub allowlist: Vec<String>,
+    /// Group policy.
+    pub group_policy: Option<String>,
+    /// Allowed Signal group IDs.
+    pub group_allowlist: Vec<String>,
+    /// Group mention mode.
+    pub mention_mode: Option<String>,
+    /// Whether the account is enabled.
+    pub enabled: Option<bool>,
+}
+
 /// Import result for channels.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ImportedChannels {
     pub telegram: Vec<ImportedTelegramChannel>,
     pub discord: Vec<ImportedDiscordChannel>,
+    pub signal: Vec<ImportedSignalChannel>,
 }
 
 /// Import channel configuration from OpenClaw.
@@ -118,6 +145,14 @@ pub fn import_channels(detection: &OpenClawDetection) -> (CategoryReport, Import
                 });
                 imported += 1;
             }
+        }
+    }
+
+    if let Some(signal) = &config.channels.signal {
+        for channel in extract_signal_channels(signal) {
+            debug!(account_id = %channel.account_id, "imported Signal account");
+            result.signal.push(channel);
+            imported += 1;
         }
     }
 
@@ -203,10 +238,77 @@ fn extract_discord_account(
     })
 }
 
+fn extract_signal_channels(value: &Value) -> Vec<ImportedSignalChannel> {
+    let mut channels = Vec::new();
+
+    if let Some(accounts) = value.get("accounts").and_then(Value::as_object) {
+        for (id, account) in accounts {
+            if let Some(channel) = extract_signal_account(id, account) {
+                channels.push(channel);
+            }
+        }
+    }
+
+    if channels.is_empty()
+        && let Some(channel) = extract_signal_account("default", value)
+    {
+        channels.push(channel);
+    }
+
+    channels
+}
+
+fn extract_signal_account(id: &str, value: &Value) -> Option<ImportedSignalChannel> {
+    if get_bool(value, &["enabled"]) == Some(false) {
+        return None;
+    }
+
+    let account = get_string(value, &[
+        "account",
+        "number",
+        "phoneNumber",
+        "phone_number",
+        "username",
+    ])
+    .or_else(|| (id != "default").then(|| id.to_string()));
+    let account_uuid = get_string(value, &["accountUuid", "account_uuid", "uuid"]);
+    let http_url = get_string(value, &["httpUrl", "http_url", "daemonUrl", "daemon_url"]);
+    let allowlist = get_string_list(value, &[
+        "allowFrom",
+        "allow_from",
+        "allowlist",
+        "allowedSenders",
+        "allowed_senders",
+    ]);
+    let group_allowlist = get_string_list(value, &[
+        "groupAllowlist",
+        "group_allowlist",
+        "groupAllowFrom",
+        "group_allow_from",
+    ]);
+
+    if account.is_none() && account_uuid.is_none() && http_url.is_none() && allowlist.is_empty() {
+        return None;
+    }
+
+    Some(ImportedSignalChannel {
+        account_id: id.to_string(),
+        account,
+        account_uuid,
+        http_url,
+        dm_policy: get_string(value, &["dmPolicy", "dm_policy"]),
+        allowlist,
+        group_policy: get_string(value, &["groupPolicy", "group_policy"]),
+        group_allowlist,
+        mention_mode: get_string(value, &["mentionMode", "mention_mode"]),
+        enabled: get_bool(value, &["enabled"]),
+    })
+}
+
 /// Parse OpenClaw's `allowFrom` array into Telegram user IDs.
 ///
 /// OpenClaw allows both numbers and strings like `"tg:123456"`.
-fn parse_allow_from(values: &[serde_json::Value]) -> Vec<i64> {
+fn parse_allow_from(values: &[Value]) -> Vec<i64> {
     values
         .iter()
         .filter_map(|v| {
@@ -224,7 +326,7 @@ fn parse_allow_from(values: &[serde_json::Value]) -> Vec<i64> {
 }
 
 /// Parse OpenClaw `allowFrom`/`guildAllowlist` arrays into string IDs.
-fn parse_allowlist(values: &[serde_json::Value]) -> Vec<String> {
+fn parse_allowlist(values: &[Value]) -> Vec<String> {
     values
         .iter()
         .filter_map(|v| {
@@ -235,6 +337,26 @@ fn parse_allowlist(values: &[serde_json::Value]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn get_string(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+}
+
+fn get_bool(value: &Value, keys: &[&str]) -> Option<bool> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_bool))
+}
+
+fn get_string_list(value: &Value, keys: &[&str]) -> Vec<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_array))
+        .map(|values| parse_allowlist(values))
+        .unwrap_or_default()
 }
 
 fn load_config(path: &Path) -> OpenClawConfig {
@@ -370,6 +492,52 @@ mod tests {
         assert_eq!(result.discord[0].account_id, "default");
         assert_eq!(result.discord[0].token, "Bot xyz");
         assert_eq!(result.discord[0].allowlist, vec!["abc"]);
+    }
+
+    #[test]
+    fn import_signal_accounts() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("openclaw.json"),
+            r#"{
+                "channels": {
+                    "signal": {
+                        "accounts": {
+                            "personal": {
+                                "account": "+15551234567",
+                                "accountUuid": "550e8400-e29b-41d4-a716-446655440000",
+                                "httpUrl": "http://127.0.0.1:8080",
+                                "dmPolicy": "allowlist",
+                                "allowFrom": ["+15557654321"],
+                                "groupPolicy": "allowlist",
+                                "groupAllowlist": ["group-1"],
+                                "mentionMode": "always"
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let detection = make_detection(tmp.path());
+        let (report, result) = import_channels(&detection);
+
+        assert_eq!(report.status, ImportStatus::Success);
+        assert_eq!(result.signal.len(), 1);
+        assert_eq!(result.signal[0].account_id, "personal");
+        assert_eq!(result.signal[0].account.as_deref(), Some("+15551234567"));
+        assert_eq!(
+            result.signal[0].account_uuid.as_deref(),
+            Some("550e8400-e29b-41d4-a716-446655440000")
+        );
+        assert_eq!(
+            result.signal[0].http_url.as_deref(),
+            Some("http://127.0.0.1:8080")
+        );
+        assert_eq!(result.signal[0].allowlist, vec!["+15557654321"]);
+        assert_eq!(result.signal[0].group_allowlist, vec!["group-1"]);
+        assert_eq!(result.signal[0].mention_mode.as_deref(), Some("always"));
     }
 
     #[test]

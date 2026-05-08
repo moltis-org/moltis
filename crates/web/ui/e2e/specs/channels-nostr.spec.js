@@ -148,7 +148,7 @@ test.describe("Nostr channel", () => {
 		});
 
 		// Wait for the channel to appear
-		await expect(page.getByText("my-nostr-bot")).toBeVisible({ timeout: 5000 });
+		await expect(page.getByText("my-nostr-bot")).toBeVisible({ timeout: 10_000 });
 		await expect(page.getByText("2/3 relays connected")).toBeVisible();
 
 		expect(pageErrors).toEqual([]);

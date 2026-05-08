@@ -386,6 +386,7 @@ async fn heartbeat_update_updates_existing_job() {
         payload: moltis_cron::types::CronPayload::AgentTurn {
             message: "Old prompt".into(),
             model: None,
+            agent_id: None,
             timeout_secs: None,
             deliver: false,
             channel: None,

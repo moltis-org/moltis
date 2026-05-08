@@ -16,8 +16,9 @@ use {
 pub(super) use {
     super::super::{
         AgentRunError, AgentRunResult, OnEvent, RunnerEvent, TOOL_RESULT_COMPACTION_PLACEHOLDER,
-        compact_tool_results_newest_first_in_place, explicit_shell_command_from_user_content,
-        is_substantive_answer_text, legacy_public_tool_alias, resolve_tool_lookup,
+        compact_tool_results_oldest_first_in_place, enforce_tool_result_context_budget,
+        explicit_shell_command_from_user_content, is_substantive_answer_text,
+        legacy_public_tool_alias, resolve_tool_lookup,
         retry::*,
         run_agent_loop, run_agent_loop_with_context, sanitize_tool_name, sanitize_tool_result,
         streaming::run_agent_loop_streaming,
@@ -53,6 +54,30 @@ impl HookHandler for RecordingHook {
     ) -> moltis_common::error::Result<HookAction> {
         self.payloads.lock().unwrap().push(payload.clone());
         Ok(HookAction::Continue)
+    }
+}
+
+pub(super) struct RewriteToolArgsHook {
+    pub replacement: serde_json::Value,
+}
+
+#[async_trait]
+impl HookHandler for RewriteToolArgsHook {
+    fn name(&self) -> &str {
+        "rewrite-tool-args-hook"
+    }
+
+    fn events(&self) -> &[HookEvent] {
+        static EVENTS: [HookEvent; 1] = [HookEvent::BeforeToolCall];
+        &EVENTS
+    }
+
+    async fn handle(
+        &self,
+        _event: HookEvent,
+        _payload: &HookPayload,
+    ) -> moltis_common::error::Result<HookAction> {
+        Ok(HookAction::ModifyPayload(self.replacement.clone()))
     }
 }
 
@@ -131,6 +156,8 @@ impl LlmProvider for ToolCallingProvider {
                     id: "call_1".into(),
                     name: "echo_tool".into(),
                     arguments: serde_json::json!({"text": "hi"}),
+                    argument_diagnostic: None,
+                    metadata: None,
                 }],
                 usage: Usage {
                     input_tokens: 10,
@@ -521,6 +548,8 @@ impl LlmProvider for PreemptiveOverflowProvider {
                     id: "overflow_call".into(),
                     name: "overflow_tool".into(),
                     arguments: serde_json::json!({}),
+                    argument_diagnostic: None,
+                    metadata: None,
                 }],
                 usage: Usage::default(),
             })
@@ -575,6 +604,8 @@ impl LlmProvider for VisionEnabledProvider {
                     id: "call_screenshot".into(),
                     name: "screenshot_tool".into(),
                     arguments: serde_json::json!({}),
+                    argument_diagnostic: None,
+                    metadata: None,
                 }],
                 usage: Usage {
                     input_tokens: 10,

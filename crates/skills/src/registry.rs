@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 use crate::{
     discover::SkillDiscoverer,
+    error::{Error, Result},
     parse,
     types::{SkillContent, SkillMetadata},
 };
@@ -12,16 +13,16 @@ use crate::{
 #[async_trait]
 pub trait SkillRegistry: Send + Sync {
     /// List metadata for all available skills.
-    async fn list_skills(&self) -> anyhow::Result<Vec<SkillMetadata>>;
+    async fn list_skills(&self) -> Result<Vec<SkillMetadata>>;
 
     /// Load the full content of a skill by name.
-    async fn load_skill(&self, name: &str) -> anyhow::Result<SkillContent>;
+    async fn load_skill(&self, name: &str) -> Result<SkillContent>;
 
     /// Install a skill from a source (e.g. git URL).
-    async fn install_skill(&self, source: &str) -> anyhow::Result<SkillMetadata>;
+    async fn install_skill(&self, source: &str) -> Result<SkillMetadata>;
 
     /// Remove an installed skill by name.
-    async fn remove_skill(&self, name: &str) -> anyhow::Result<()>;
+    async fn remove_skill(&self, name: &str) -> Result<()>;
 }
 
 /// In-memory registry backed by a discoverer.
@@ -38,7 +39,7 @@ impl InMemoryRegistry {
     }
 
     /// Populate the registry from a discoverer.
-    pub async fn from_discoverer(discoverer: &dyn SkillDiscoverer) -> anyhow::Result<Self> {
+    pub async fn from_discoverer(discoverer: &dyn SkillDiscoverer) -> Result<Self> {
         let discovered = discoverer.discover().await?;
         let mut skills = HashMap::new();
         for meta in discovered {
@@ -61,43 +62,47 @@ impl Default for InMemoryRegistry {
 
 #[async_trait]
 impl SkillRegistry for InMemoryRegistry {
-    async fn list_skills(&self) -> anyhow::Result<Vec<SkillMetadata>> {
+    async fn list_skills(&self) -> Result<Vec<SkillMetadata>> {
         Ok(self.skills.values().cloned().collect())
     }
 
-    async fn load_skill(&self, name: &str) -> anyhow::Result<SkillContent> {
+    async fn load_skill(&self, name: &str) -> Result<SkillContent> {
         let meta = self
             .skills
             .get(name)
-            .ok_or_else(|| anyhow::anyhow!("skill '{}' not found", name))?;
+            .ok_or_else(|| Error::NotFound(format!("skill '{}' not found", name)))?;
 
         let skill_md = meta.path.join("SKILL.md");
         let content = tokio::fs::read_to_string(&skill_md).await?;
         parse::parse_skill(&content, &meta.path)
     }
 
-    async fn install_skill(&self, _source: &str) -> anyhow::Result<SkillMetadata> {
-        anyhow::bail!("install not supported on in-memory registry; use install::install_skill")
+    async fn install_skill(&self, _source: &str) -> Result<SkillMetadata> {
+        Err(Error::Install(
+            "install not supported on in-memory registry; use install::install_skill".into(),
+        ))
     }
 
-    async fn remove_skill(&self, name: &str) -> anyhow::Result<()> {
+    async fn remove_skill(&self, name: &str) -> Result<()> {
         let meta = self
             .skills
             .get(name)
-            .ok_or_else(|| anyhow::anyhow!("skill '{}' not found", name))?;
+            .ok_or_else(|| Error::NotFound(format!("skill '{}' not found", name)))?;
 
         let path = &meta.path;
         if !path.exists() {
-            anyhow::bail!("skill directory does not exist: {}", path.display());
+            return Err(Error::NotFound(format!(
+                "skill directory does not exist: {}",
+                path.display()
+            )));
         }
 
         // Only allow removing registry-installed skills
         if meta.source != Some(crate::types::SkillSource::Registry) {
-            anyhow::bail!(
+            return Err(Error::Validation(format!(
                 "can only remove registry-installed skills, '{}' is {:?}",
-                name,
-                meta.source
-            );
+                name, meta.source
+            )));
         }
 
         tokio::fs::remove_dir_all(path).await?;
@@ -106,7 +111,7 @@ impl SkillRegistry for InMemoryRegistry {
 }
 
 /// Convenience: load a skill's full content given its path.
-pub async fn load_skill_from_path(skill_dir: &Path) -> anyhow::Result<SkillContent> {
+pub async fn load_skill_from_path(skill_dir: &Path) -> Result<SkillContent> {
     let skill_md = skill_dir.join("SKILL.md");
     let content = tokio::fs::read_to_string(&skill_md).await?;
     parse::parse_skill(&content, skill_dir)

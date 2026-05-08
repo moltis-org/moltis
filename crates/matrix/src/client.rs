@@ -1,18 +1,13 @@
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, future::Future, path::PathBuf, sync::Arc};
+
+mod ownership;
 
 use {
     matrix_sdk::{
         Client, Room,
         config::SyncSettings,
-        encryption::{
-            BackupDownloadStrategy, CrossSigningResetAuthType, EncryptionSettings,
-            recovery::{IdentityResetHandle, RecoveryState},
-        },
-        ruma::{
-            OwnedUserId,
-            api::client::uiaa::{AuthData, Password, UserIdentifier},
-            events::room::encrypted::OriginalSyncRoomEncryptedEvent,
-        },
+        encryption::{BackupDownloadStrategy, EncryptionSettings},
+        ruma::{OwnedUserId, events::room::encrypted::OriginalSyncRoomEncryptedEvent},
     },
     reqwest::StatusCode,
     secrecy::ExposeSecret,
@@ -24,8 +19,8 @@ use {
 use moltis_channels::{Error as ChannelError, Result as ChannelResult};
 
 use crate::{
-    config::{MatrixAccountConfig, MatrixOwnershipMode},
-    handler,
+    config::{MatrixAccountConfig, MatrixAuthMode, MatrixOwnershipMode},
+    handler, oidc,
     state::AccountStateMap,
     verification,
 };
@@ -34,18 +29,13 @@ use crate::{
 pub(crate) enum AuthMode {
     AccessToken,
     Password,
+    Oidc,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthenticatedMatrixAccount {
     pub user_id: OwnedUserId,
     pub ownership_startup_error: Option<String>,
-}
-
-#[derive(Default)]
-pub(crate) struct OwnershipAttemptResult {
-    pub startup_error: Option<String>,
-    pub pending_identity_reset: Option<IdentityResetHandle>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,10 +57,16 @@ pub(crate) async fn build_client(
     config: &MatrixAccountConfig,
 ) -> ChannelResult<Client> {
     let store_path = ensure_store_path(account_id)?;
-    Client::builder()
+    let mut builder = Client::builder()
         .homeserver_url(&config.homeserver)
         .with_encryption_settings(encryption_settings())
-        .sqlite_store(&store_path, None)
+        .sqlite_store(&store_path, None);
+
+    if matches!(auth_mode(config), Ok(AuthMode::Oidc)) {
+        builder = builder.handle_refresh_tokens();
+    }
+
+    builder
         .build()
         .await
         .map_err(|error| ChannelError::external("matrix client build", error))
@@ -122,6 +118,49 @@ fn should_rebuild_store_after_auth_error(
 }
 
 pub(crate) fn auth_mode(config: &MatrixAccountConfig) -> ChannelResult<AuthMode> {
+    // Explicit auth_mode takes precedence when present.
+    if let Some(ref explicit) = config.auth_mode {
+        return match explicit {
+            MatrixAuthMode::Oidc => {
+                if config.homeserver.trim().is_empty() {
+                    return Err(ChannelError::invalid_input(
+                        "homeserver is required when using OIDC authentication",
+                    ));
+                }
+                Ok(AuthMode::Oidc)
+            },
+            MatrixAuthMode::Password => {
+                if config.user_id.as_deref().is_none_or(str::is_empty) {
+                    return Err(ChannelError::invalid_input(
+                        "user_id is required when using password authentication",
+                    ));
+                }
+                let password = config
+                    .password
+                    .as_ref()
+                    .map(|secret| secret.expose_secret().trim())
+                    .unwrap_or_default();
+                if password.is_empty() || password == moltis_common::secret_serde::REDACTED {
+                    return Err(ChannelError::invalid_input(
+                        "password is required when auth_mode is \"password\"",
+                    ));
+                }
+                Ok(AuthMode::Password)
+            },
+            MatrixAuthMode::AccessToken => {
+                let access_token = config.access_token.expose_secret().trim();
+                if access_token.is_empty() || access_token == moltis_common::secret_serde::REDACTED
+                {
+                    return Err(ChannelError::invalid_input(
+                        "access_token is required when auth_mode is \"access_token\"",
+                    ));
+                }
+                Ok(AuthMode::AccessToken)
+            },
+        };
+    }
+
+    // Backward-compatible auto-detection from credentials.
     let access_token = config.access_token.expose_secret().trim();
     if !access_token.is_empty() && access_token != moltis_common::secret_serde::REDACTED {
         return Ok(AuthMode::AccessToken);
@@ -188,6 +227,7 @@ pub(crate) async fn authenticate_client(
                 ownership_startup_error: None,
             })
         },
+        AuthMode::Oidc => oidc::restore_oidc_session(client, account_id).await,
     }
 }
 
@@ -195,324 +235,8 @@ pub(crate) async fn maybe_take_matrix_account_ownership(
     client: &Client,
     account_id: &str,
     config: &MatrixAccountConfig,
-) -> OwnershipAttemptResult {
-    if config.ownership_mode != MatrixOwnershipMode::MoltisOwned {
-        return OwnershipAttemptResult::default();
-    }
-
-    match ensure_moltis_owned_encryption_state(client, account_id, config).await {
-        Ok(Some(handle)) => {
-            let startup_error = ownership_approval_message(&handle);
-            warn!(
-                account_id,
-                error = startup_error,
-                "matrix ownership setup failed"
-            );
-            OwnershipAttemptResult {
-                startup_error: Some(startup_error),
-                pending_identity_reset: Some(handle),
-            }
-        },
-        Ok(None) => OwnershipAttemptResult::default(),
-        Err(error) => {
-            warn!(account_id, error = %error, "matrix ownership setup failed");
-            OwnershipAttemptResult {
-                startup_error: Some(error.to_string()),
-                pending_identity_reset: None,
-            }
-        },
-    }
-}
-
-async fn wait_for_e2ee_state_to_settle(client: &Client) {
-    client
-        .encryption()
-        .wait_for_e2ee_initialization_tasks()
-        .await;
-}
-
-async fn ownership_is_ready(client: &Client) -> ChannelResult<bool> {
-    Ok(ownership_is_effectively_ready(
-        cross_signing_is_complete(client).await,
-        own_device_is_cross_signed_by_owner(client).await?,
-    ))
-}
-
-async fn try_recover_secret_storage_with_password(
-    client: &Client,
-    account_id: &str,
-    password: &str,
-) -> bool {
-    match client.encryption().recovery().recover(password).await {
-        Ok(()) => {
-            wait_for_e2ee_state_to_settle(client).await;
-            info!(
-                account_id,
-                "matrix ownership recovered existing secret storage with account password"
-            );
-            true
-        },
-        Err(error) => {
-            warn!(
-                account_id,
-                error = %error,
-                "matrix ownership could not recover existing secret storage with account password"
-            );
-            false
-        },
-    }
-}
-
-#[instrument(skip(client, config), fields(account_id))]
-async fn ensure_moltis_owned_encryption_state(
-    client: &Client,
-    account_id: &str,
-    config: &MatrixAccountConfig,
-) -> ChannelResult<Option<IdentityResetHandle>> {
-    let Some(user_id) = config
-        .user_id
-        .as_deref()
-        .filter(|user_id| !user_id.is_empty())
-    else {
-        return Err(ChannelError::invalid_input(
-            "user_id is required when Moltis owns a Matrix account",
-        ));
-    };
-    let Some(password) = config.password.as_ref() else {
-        return Err(ChannelError::invalid_input(
-            "password is required when Moltis owns a Matrix account",
-        ));
-    };
-
-    bootstrap_cross_signing_with_password(client, user_id, password.expose_secret()).await?;
-
-    if !ownership_is_ready(client).await? {
-        wait_for_e2ee_state_to_settle(client).await;
-    }
-
-    let initial_recovery_state = client.encryption().recovery().state();
-    if should_try_recover_existing_secret_storage(
-        ownership_is_ready(client).await?,
-        initial_recovery_state,
-    ) {
-        let _ =
-            try_recover_secret_storage_with_password(client, account_id, password.expose_secret())
-                .await;
-    }
-
-    if !ownership_is_ready(client).await?
-        && let Some(handle) =
-            force_take_over_existing_identity(client, account_id, user_id, password.expose_secret())
-                .await?
-    {
-        return Ok(Some(handle));
-    }
-
-    match client.encryption().recovery().state() {
-        RecoveryState::Disabled => {
-            enable_password_backed_recovery(client, password.expose_secret()).await?;
-            info!(
-                account_id,
-                "matrix ownership recovery enabled with password-backed secret storage"
-            );
-        },
-        RecoveryState::Enabled => {
-            info!(account_id, "matrix ownership recovery already enabled");
-        },
-        RecoveryState::Incomplete => {
-            if !try_recover_secret_storage_with_password(
-                client,
-                account_id,
-                password.expose_secret(),
-            )
-            .await
-            {
-                force_take_over_existing_identity(
-                    client,
-                    account_id,
-                    user_id,
-                    password.expose_secret(),
-                )
-                .await?;
-            }
-        },
-        RecoveryState::Unknown => {
-            warn!(
-                account_id,
-                "matrix recovery state is still unknown after login, skipping automatic ownership bootstrap"
-            );
-        },
-    }
-
-    ensure_own_device_is_cross_signed(client).await?;
-
-    if !ownership_is_ready(client).await? {
-        return Err(ChannelError::invalid_input(
-            "matrix ownership bootstrap completed but cross-signing is still incomplete",
-        ));
-    }
-
-    Ok(None)
-}
-
-async fn enable_password_backed_recovery(client: &Client, password: &str) -> ChannelResult<String> {
-    let recovery_key = client
-        .encryption()
-        .recovery()
-        .enable()
-        .wait_for_backups_to_upload()
-        .with_passphrase(password)
-        .await
-        .map_err(|error| ChannelError::external("matrix recovery enable", error))?;
-    wait_for_e2ee_state_to_settle(client).await;
-    Ok(recovery_key)
-}
-
-async fn ensure_own_device_is_cross_signed(client: &Client) -> ChannelResult<()> {
-    if own_device_is_cross_signed_by_owner(client).await? {
-        return Ok(());
-    }
-
-    let Some(own_device) = client
-        .encryption()
-        .get_own_device()
-        .await
-        .map_err(|error| ChannelError::external("matrix own device lookup", error))?
-    else {
-        return Ok(());
-    };
-
-    own_device
-        .verify()
-        .await
-        .map_err(|error| ChannelError::external("matrix own device self-sign", error))
-}
-
-async fn own_device_is_cross_signed_by_owner(client: &Client) -> ChannelResult<bool> {
-    Ok(client
-        .encryption()
-        .get_own_device()
-        .await
-        .map_err(|error| ChannelError::external("matrix own device lookup", error))?
-        .is_some_and(|device| device.is_cross_signed_by_owner()))
-}
-
-fn ownership_is_effectively_ready(
-    cross_signing_complete: bool,
-    own_device_cross_signed_by_owner: bool,
-) -> bool {
-    cross_signing_complete || own_device_cross_signed_by_owner
-}
-
-fn should_try_recover_existing_secret_storage(
-    ownership_ready: bool,
-    recovery_state: RecoveryState,
-) -> bool {
-    !ownership_ready
-        && matches!(
-            recovery_state,
-            RecoveryState::Enabled | RecoveryState::Incomplete
-        )
-}
-
-async fn cross_signing_is_complete(client: &Client) -> bool {
-    client
-        .encryption()
-        .cross_signing_status()
-        .await
-        .is_some_and(|status| status.is_complete())
-}
-
-fn ownership_approval_message(handle: &IdentityResetHandle) -> String {
-    match handle.auth_type() {
-        CrossSigningResetAuthType::OAuth(info) => format!(
-            "matrix account requires browser approval to reset cross-signing at {}; complete that in Element or switch to user-managed mode",
-            info.approval_url
-        ),
-        CrossSigningResetAuthType::Uiaa(_) => {
-            "matrix account requires additional authentication to reset cross-signing".to_string()
-        },
-    }
-}
-
-#[instrument(skip(client, password), fields(account_id))]
-async fn force_take_over_existing_identity(
-    client: &Client,
-    account_id: &str,
-    user_id: &str,
-    password: &str,
-) -> ChannelResult<Option<IdentityResetHandle>> {
-    let maybe_handle = client
-        .encryption()
-        .recovery()
-        .reset_identity()
-        .await
-        .map_err(|error| ChannelError::external("matrix recovery reset identity", error))?;
-
-    if let Some(handle) = maybe_handle {
-        match handle.auth_type() {
-            CrossSigningResetAuthType::Uiaa(uiaa) => {
-                let mut auth = Password::new(
-                    UserIdentifier::UserIdOrLocalpart(user_id.to_owned()),
-                    password.to_owned(),
-                );
-                auth.session = uiaa.session.clone();
-                handle
-                    .reset(Some(AuthData::Password(auth)))
-                    .await
-                    .map_err(|error| {
-                        ChannelError::external("matrix recovery reset identity auth", error)
-                    })?;
-                wait_for_e2ee_state_to_settle(client).await;
-            },
-            CrossSigningResetAuthType::OAuth(_) => {
-                return Ok(Some(handle));
-            },
-        }
-    }
-
-    let _recovery_key = enable_password_backed_recovery(client, password).await?;
-
-    info!(
-        account_id,
-        "matrix ownership forcibly reset existing recovery state and bootstrapped fresh Moltis-managed recovery"
-    );
-
-    Ok(None)
-}
-
-async fn bootstrap_cross_signing_with_password(
-    client: &Client,
-    user_id: &str,
-    password: &str,
-) -> ChannelResult<()> {
-    match client
-        .encryption()
-        .bootstrap_cross_signing_if_needed(None)
-        .await
-    {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let Some(response) = error.as_uiaa_response() else {
-                return Err(ChannelError::external(
-                    "matrix cross-signing bootstrap",
-                    error,
-                ));
-            };
-
-            let mut auth = Password::new(
-                UserIdentifier::UserIdOrLocalpart(user_id.to_owned()),
-                password.to_owned(),
-            );
-            auth.session = response.session.clone();
-
-            client
-                .encryption()
-                .bootstrap_cross_signing(Some(AuthData::Password(auth)))
-                .await
-                .map_err(|error| ChannelError::external("matrix cross-signing bootstrap", error))
-        },
-    }
+) -> ownership::OwnershipAttemptResult {
+    ownership::maybe_take_matrix_account_ownership(client, account_id, config).await
 }
 
 #[instrument(skip(client, accounts), fields(account_id, user_id = %bot_user_id))]
@@ -608,6 +332,45 @@ pub(crate) fn register_event_handlers(
     );
 }
 
+const INITIAL_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5);
+const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
+const HEALTHY_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(60);
+
+async fn retry_loop<F, Fut, T>(mut sync_fn: F, account_id: &str, cancel: CancellationToken)
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = T>,
+{
+    let mut backoff = INITIAL_BACKOFF;
+    loop {
+        let start = tokio::time::Instant::now();
+        tokio::select! {
+            _ = sync_fn() => {
+                if start.elapsed() >= HEALTHY_THRESHOLD {
+                    backoff = INITIAL_BACKOFF;
+                }
+                warn!(
+                    account_id = %account_id,
+                    "matrix sync loop ended unexpectedly, retrying in {:?}",
+                    backoff,
+                );
+                tokio::select! {
+                    () = tokio::time::sleep(backoff) => {}
+                    () = cancel.cancelled() => {
+                        info!(account_id = %account_id, "matrix sync loop cancelled during backoff");
+                        break;
+                    }
+                }
+                backoff = (backoff * 2).min(MAX_BACKOFF);
+            }
+            () = cancel.cancelled() => {
+                info!(account_id = %account_id, "matrix sync loop cancelled");
+                break;
+            }
+        }
+    }
+}
+
 #[instrument(skip(client, accounts, cancel), fields(account_id))]
 pub(crate) async fn sync_once_and_spawn_loop(
     client: &Client,
@@ -626,7 +389,7 @@ pub(crate) async fn sync_once_and_spawn_loop(
             state.mark_initial_sync_complete();
         }
     }
-    wait_for_e2ee_state_to_settle(client).await;
+    ownership::wait_for_e2ee_state_to_settle(client).await;
     let ownership_startup_error = {
         let guard = accounts.read().unwrap_or_else(|error| error.into_inner());
         guard
@@ -639,14 +402,26 @@ pub(crate) async fn sync_once_and_spawn_loop(
     };
     if let Some(ownership_attempt) = ownership_startup_error {
         let ownership_attempt = ownership_attempt.await;
-        let mut guard = accounts.write().unwrap_or_else(|error| error.into_inner());
-        if let Some(state) = guard.get_mut(account_id) {
-            state.ownership_startup_error = ownership_attempt.startup_error;
-            let mut pending_identity_reset = state
-                .pending_identity_reset
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            *pending_identity_reset = ownership_attempt.pending_identity_reset;
+        let event_sink = {
+            let mut guard = accounts.write().unwrap_or_else(|error| error.into_inner());
+            let sink = guard.get(account_id).and_then(|s| s.event_sink.clone());
+            if let Some(state) = guard.get_mut(account_id) {
+                state.ownership_startup_error = ownership_attempt.startup_error;
+                let mut pending_identity_reset = state
+                    .pending_identity_reset
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                *pending_identity_reset = ownership_attempt.pending_identity_reset;
+            }
+            sink
+        };
+        // Notify the UI that the channel status changed (ownership result).
+        if let Some(sink) = event_sink {
+            sink.emit(moltis_channels::ChannelEvent::StatusChanged {
+                channel_type: moltis_channels::ChannelType::Matrix,
+                account_id: account_id.to_string(),
+            })
+            .await;
         }
     }
     info!(
@@ -657,14 +432,12 @@ pub(crate) async fn sync_once_and_spawn_loop(
     let account_id_for_sync = account_id.to_string();
     let client_for_sync = client.clone();
     tokio::spawn(async move {
-        tokio::select! {
-            _ = client_for_sync.sync(SyncSettings::default()) => {
-                warn!(account_id = %account_id_for_sync, "matrix sync loop ended unexpectedly");
-            }
-            () = cancel.cancelled() => {
-                info!(account_id = %account_id_for_sync, "matrix sync loop cancelled");
-            }
-        }
+        retry_loop(
+            || client_for_sync.sync(SyncSettings::default()),
+            &account_id_for_sync,
+            cancel,
+        )
+        .await;
     });
 
     Ok(())
@@ -1081,45 +854,271 @@ mod tests {
     }
 
     #[test]
-    fn ownership_is_effectively_ready_when_cross_signing_is_complete() {
-        assert!(ownership_is_effectively_ready(true, false));
+    fn explicit_oidc_auth_mode_returns_oidc() {
+        let cfg = MatrixAccountConfig {
+            auth_mode: Some(MatrixAuthMode::Oidc),
+            ..config()
+        };
+        assert!(matches!(auth_mode(&cfg), Ok(AuthMode::Oidc)));
     }
 
     #[test]
-    fn ownership_is_effectively_ready_when_own_device_is_signed() {
-        assert!(ownership_is_effectively_ready(false, true));
+    fn explicit_oidc_auth_mode_requires_homeserver() {
+        let cfg = MatrixAccountConfig {
+            auth_mode: Some(MatrixAuthMode::Oidc),
+            homeserver: String::new(),
+            ..Default::default()
+        };
+        let error = match auth_mode(&cfg) {
+            Ok(mode) => panic!("OIDC with empty homeserver should fail, got {mode:?}"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("homeserver is required"));
     }
 
     #[test]
-    fn ownership_is_not_effectively_ready_when_neither_signal_is_present() {
-        assert!(!ownership_is_effectively_ready(false, false));
+    fn backward_compat_auto_detection_ignores_absent_auth_mode() {
+        // No auth_mode field — should auto-detect from credentials.
+        let token_cfg = MatrixAccountConfig {
+            access_token: Secret::new("syt_test".into()),
+            ..config()
+        };
+        assert!(matches!(auth_mode(&token_cfg), Ok(AuthMode::AccessToken)));
+
+        let password_cfg = MatrixAccountConfig {
+            password: Some(Secret::new("wordpass".into())),
+            user_id: Some("@bot:example.com".into()),
+            ..config()
+        };
+        assert!(matches!(auth_mode(&password_cfg), Ok(AuthMode::Password)));
     }
 
-    #[test]
-    fn restart_prefers_secret_storage_recovery_when_account_is_not_ready() {
-        assert!(should_try_recover_existing_secret_storage(
-            false,
-            RecoveryState::Enabled
-        ));
-        assert!(should_try_recover_existing_secret_storage(
-            false,
-            RecoveryState::Incomplete
-        ));
-    }
+    mod retry_loop_tests {
+        use std::sync::atomic::{AtomicU32, Ordering};
 
-    #[test]
-    fn restart_skips_secret_storage_recovery_when_it_cannot_help() {
-        assert!(!should_try_recover_existing_secret_storage(
-            true,
-            RecoveryState::Enabled
-        ));
-        assert!(!should_try_recover_existing_secret_storage(
-            false,
-            RecoveryState::Disabled
-        ));
-        assert!(!should_try_recover_existing_secret_storage(
-            false,
-            RecoveryState::Unknown
-        ));
+        use tokio_util::sync::CancellationToken;
+
+        use super::super::{HEALTHY_THRESHOLD, INITIAL_BACKOFF, MAX_BACKOFF, retry_loop};
+
+        #[tokio::test(start_paused = true)]
+        async fn cancellation_during_sync_exits_immediately() {
+            let cancel = CancellationToken::new();
+            let cancel_inner = cancel.clone();
+
+            let call_count = std::sync::Arc::new(AtomicU32::new(0));
+            let count = call_count.clone();
+
+            cancel_inner.cancel();
+
+            retry_loop(
+                || {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    std::future::pending::<()>()
+                },
+                "test-account",
+                cancel,
+            )
+            .await;
+
+            assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn cancellation_during_backoff_exits_without_waiting() {
+            let cancel = CancellationToken::new();
+            let cancel_inner = cancel.clone();
+
+            let call_count = std::sync::Arc::new(AtomicU32::new(0));
+            let count = call_count.clone();
+
+            tokio::spawn(async move {
+                // Let the first sync fail and enter backoff, then cancel.
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                cancel_inner.cancel();
+            });
+
+            retry_loop(
+                || {
+                    let n = count.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        if n == 0 {
+                            // First call: fail immediately.
+                            return;
+                        }
+                        // Should not be called — cancel fires during backoff.
+                        std::future::pending::<()>().await;
+                    }
+                },
+                "test-account",
+                cancel,
+            )
+            .await;
+
+            // Only 1 sync call — loop exited during backoff before retrying.
+            assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn backoff_doubles_on_consecutive_failures() {
+            let cancel = CancellationToken::new();
+            let cancel_inner = cancel.clone();
+
+            let call_count = std::sync::Arc::new(AtomicU32::new(0));
+            let count = call_count.clone();
+
+            let timestamps = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let ts = timestamps.clone();
+
+            tokio::spawn(async move {
+                // Let 3 sync failures + backoffs complete, then cancel.
+                // Backoff sequence: 5s, 10s, 20s = 35s total + tiny sync time.
+                tokio::time::sleep(std::time::Duration::from_secs(36)).await;
+                cancel_inner.cancel();
+            });
+
+            retry_loop(
+                || {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    let ts = ts.clone();
+                    async move {
+                        ts.lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(tokio::time::Instant::now());
+                    }
+                },
+                "test-account",
+                cancel,
+            )
+            .await;
+
+            let times = timestamps.lock().unwrap_or_else(|e| e.into_inner());
+            assert!(
+                times.len() >= 3,
+                "expected at least 3 sync calls, got {}",
+                times.len()
+            );
+            // Between call 1 and 2: ~5s backoff
+            let gap1 = times[1] - times[0];
+            assert!(
+                gap1 >= INITIAL_BACKOFF,
+                "first gap {gap1:?} < {INITIAL_BACKOFF:?}"
+            );
+            // Between call 2 and 3: ~10s backoff
+            let gap2 = times[2] - times[1];
+            assert!(
+                gap2 >= INITIAL_BACKOFF * 2,
+                "second gap {gap2:?} < {:?}",
+                INITIAL_BACKOFF * 2
+            );
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn backoff_resets_after_healthy_connection() {
+            let cancel = CancellationToken::new();
+            let cancel_inner = cancel.clone();
+
+            let call_count = std::sync::Arc::new(AtomicU32::new(0));
+            let count = call_count.clone();
+
+            let timestamps = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let ts = timestamps.clone();
+
+            tokio::spawn(async move {
+                // Call 1: fails immediately → 5s backoff
+                // Call 2: runs for HEALTHY_THRESHOLD (60s), then fails → backoff resets to 5s
+                // Call 3: recorded, then we cancel during backoff
+                // Total: ~0 + 5 + 60 + 5 + ~0 = ~70s, cancel at 71s.
+                tokio::time::sleep(std::time::Duration::from_secs(71)).await;
+                cancel_inner.cancel();
+            });
+
+            retry_loop(
+                || {
+                    let n = count.fetch_add(1, Ordering::SeqCst);
+                    let ts = ts.clone();
+                    async move {
+                        ts.lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(tokio::time::Instant::now());
+                        if n == 1 {
+                            // Simulate healthy connection that eventually dies.
+                            tokio::time::sleep(HEALTHY_THRESHOLD).await;
+                        }
+                        // All others fail immediately.
+                    }
+                },
+                "test-account",
+                cancel,
+            )
+            .await;
+
+            let times = timestamps.lock().unwrap_or_else(|e| e.into_inner());
+            assert!(
+                times.len() >= 3,
+                "expected at least 3 sync calls, got {}",
+                times.len()
+            );
+            // Gap between call 2 (after healthy run) and call 3 should be
+            // INITIAL_BACKOFF (reset), not doubled.
+            let gap = times[2] - times[1];
+            let expected = HEALTHY_THRESHOLD + INITIAL_BACKOFF;
+            let tolerance = std::time::Duration::from_secs(1);
+            assert!(
+                gap <= expected + tolerance,
+                "gap after healthy connection {gap:?} should be ~{expected:?} (reset backoff), not doubled"
+            );
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn backoff_caps_at_max() {
+            let cancel = CancellationToken::new();
+            let cancel_inner = cancel.clone();
+
+            let call_count = std::sync::Arc::new(AtomicU32::new(0));
+            let count = call_count.clone();
+
+            let timestamps = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let ts = timestamps.clone();
+
+            // Backoff sequence: 5, 10, 20, 40, 80, 160, 300, 300, ...
+            // After 7 calls: 5+10+20+40+80+160+300 = 615s total.
+            // Cancel at 620s to let 7th call happen.
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(620)).await;
+                cancel_inner.cancel();
+            });
+
+            retry_loop(
+                || {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    let ts = ts.clone();
+                    async move {
+                        ts.lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .push(tokio::time::Instant::now());
+                    }
+                },
+                "test-account",
+                cancel,
+            )
+            .await;
+
+            let times = timestamps.lock().unwrap_or_else(|e| e.into_inner());
+            assert!(
+                times.len() >= 8,
+                "expected at least 8 sync calls, got {}",
+                times.len()
+            );
+            // Gap between call 7 and 8 should be capped at MAX_BACKOFF.
+            let gap = times[7] - times[6];
+            assert!(
+                gap >= MAX_BACKOFF,
+                "gap {gap:?} should be at least {MAX_BACKOFF:?}"
+            );
+            assert!(
+                gap <= MAX_BACKOFF + std::time::Duration::from_secs(1),
+                "gap {gap:?} should be at most {MAX_BACKOFF:?} + 1s"
+            );
+        }
     }
 }

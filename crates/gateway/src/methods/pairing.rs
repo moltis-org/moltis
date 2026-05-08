@@ -95,11 +95,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     let list: Vec<_> = pending
                         .iter()
                         .map(|r| {
+                            let fp = r
+                                .public_key
+                                .as_deref()
+                                .and_then(|pk| crate::pairing::public_key_fingerprint(pk).ok());
                             serde_json::json!({
                                 "id": r.id,
                                 "deviceId": r.device_id,
                                 "displayName": r.display_name,
                                 "platform": r.platform,
+                                "fingerprint": fp,
                             })
                         })
                         .collect();
@@ -111,11 +116,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .list_pending()
                         .iter()
                         .map(|r| {
+                            let fp = r
+                                .public_key
+                                .as_deref()
+                                .and_then(|pk| crate::pairing::public_key_fingerprint(pk).ok());
                             serde_json::json!({
                                 "id": r.id,
                                 "deviceId": r.device_id,
                                 "displayName": r.display_name,
                                 "platform": r.platform,
+                                "fingerprint": fp,
                             })
                         })
                         .collect();
@@ -221,6 +231,48 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         Box::new(|_ctx| Box::pin(async move { Ok(serde_json::json!({ "verified": true })) })),
     );
 
+    // node.pairing.enable — open the gate for new node pairing requests.
+    reg.register(
+        "node.pairing.enable",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .node_pairing_enabled
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                tracing::info!("node pairing enabled");
+                Ok(serde_json::json!({ "enabled": true }))
+            })
+        }),
+    );
+
+    // node.pairing.disable — close the gate.
+    reg.register(
+        "node.pairing.disable",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                ctx.state
+                    .node_pairing_enabled
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                tracing::info!("node pairing disabled");
+                Ok(serde_json::json!({ "enabled": false }))
+            })
+        }),
+    );
+
+    // node.pairing.status — check if pairing is enabled.
+    reg.register(
+        "node.pairing.status",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                let enabled = ctx
+                    .state
+                    .node_pairing_enabled
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                Ok(serde_json::json!({ "enabled": enabled }))
+            })
+        }),
+    );
+
     // device.pair.list
     reg.register(
         "device.pair.list",
@@ -234,10 +286,16 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                     let list: Vec<_> = devices
                         .iter()
                         .map(|d| {
+                            let fp = d
+                                .public_key
+                                .as_deref()
+                                .and_then(|pk| crate::pairing::public_key_fingerprint(pk).ok());
                             serde_json::json!({
                                 "deviceId": d.device_id,
                                 "displayName": d.display_name,
                                 "platform": d.platform,
+                                "publicKey": d.public_key,
+                                "fingerprint": fp,
                                 "createdAt": d.created_at,
                             })
                         })

@@ -34,6 +34,7 @@ The script runs these checks:
 - `local/test`
 - `local/macos-app` — validates the native Swift macOS app build (`Darwin` only)
 - `local/e2e` — runs gateway UI Playwright coverage
+- `local/e2e-ollama` — opt-in live Ollama/Qwen Playwright regression check
 
 In PR mode, the PR workflow verifies these contexts and surfaces them as
 checks in the PR.
@@ -49,7 +50,7 @@ checks in the PR.
   packages first, for example `libvulkan-dev` and `glslang-tools` on Debian/Ubuntu
   (on Ubuntu 22.04, install `glslang-tools` from the LunarG Vulkan SDK).
 - `local/lint` uses the same clippy flags as CI and release:
-  `cargo +nightly-2025-11-30 clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings`.
+  `cargo clippy -Z unstable-options --workspace --all-features --all-targets --timings -- -D warnings` (uses the nightly pinned in `rust-toolchain.toml`).
 - `zizmor` is installed automatically (Homebrew on macOS, apt on Linux) when
   not already available.
 - `zizmor` is advisory in local runs and does not block lint/test execution.
@@ -60,6 +61,11 @@ checks in the PR.
 - `local/e2e` auto-runs `npm ci` only when `crates/web/ui/node_modules`
   is missing, then runs `npm run e2e:install` and `npm run e2e`. Override with
   `LOCAL_VALIDATE_E2E_CMD`.
+- Enable the live Ollama/Qwen regression check with
+  `LOCAL_VALIDATE_OLLAMA_QWEN_E2E=1`. It starts a local Ollama server on
+  `MOLTIS_E2E_OLLAMA_QWEN_API_PORT` (default `11435`), pulls the configured
+  Qwen model if missing, and runs the dedicated Playwright project. Override
+  the command with `LOCAL_VALIDATE_OLLAMA_QWEN_E2E_CMD`.
 
 ## Merge and release safety
 

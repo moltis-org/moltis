@@ -14,6 +14,15 @@ use crate::{
     agent_loop::ChannelReplyTargetKey, compaction_run, error, runtime::ChatRuntime, types::*,
 };
 
+/// Build the SPA URL for a push notification click-through.
+///
+/// Must match the frontend `sessionPath()` in `router.ts`:
+/// `/chats/${key.replace(/:/g, "/")}`.
+#[cfg(any(feature = "push-notifications", test))]
+pub(crate) fn push_notification_url(session_key: &str) -> String {
+    format!("/chats/{}", session_key.replace(':', "/"))
+}
+
 #[cfg(feature = "push-notifications")]
 pub(crate) async fn send_chat_push_notification(
     state: &Arc<dyn ChatRuntime>,
@@ -28,7 +37,7 @@ pub(crate) async fn send_chat_push_notification(
     };
 
     let title = "Message received";
-    let url = format!("/chat/{session_key}");
+    let url = push_notification_url(session_key);
 
     match state
         .send_push_notification(title, &summary, Some(&url), Some(session_key))
@@ -508,71 +517,80 @@ async fn deliver_channel_replies_to_targets(
                                     "failed to send logbook follow-up: {e}"
                                 );
                             }
-                        } else if transcript.len()
-                            <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT
-                        {
-                            // Short transcript fits as a caption on the voice message.
-                            payload.text = transcript;
-                            if let Err(e) = outbound
-                                .send_media(&target.account_id, &to, &payload, reply_to)
-                                .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send channel voice reply: {e}"
-                                );
-                            }
-                            // Send logbook as a follow-up if present.
-                            if !logbook_html.is_empty()
-                                && let Err(e) = outbound
-                                    .send_html(&target.account_id, &to, &logbook_html, None)
-                                    .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send logbook follow-up: {e}"
-                                );
-                            }
                         } else {
-                            // Transcript too long for a caption — send voice
-                            // without caption, then the full text as a follow-up.
-                            if let Err(e) = outbound
-                                .send_media(&target.account_id, &to, &payload, reply_to)
-                                .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send channel voice reply: {e}"
-                                );
-                            }
-                            let text_result = if logbook_html.is_empty() {
-                                outbound
-                                    .send_text(&target.account_id, &to, &transcript, None)
+                            // Check if transcript fits as Telegram caption (when feature enabled).
+                            // When telegram feature is disabled, this evaluates to false and we
+                            // send voice + follow-up text.
+                            #[cfg(feature = "telegram")]
+                            let fits_in_caption = transcript.len()
+                                <= moltis_telegram::markdown::TELEGRAM_CAPTION_LIMIT;
+                            #[cfg(not(feature = "telegram"))]
+                            let fits_in_caption = false;
+
+                            if fits_in_caption {
+                                // Short transcript fits as a caption on the voice message.
+                                payload.text = transcript;
+                                if let Err(e) = outbound
+                                    .send_media(&target.account_id, &to, &payload, reply_to)
                                     .await
+                                {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send channel voice reply: {e}"
+                                    );
+                                }
+                                // Send logbook as a follow-up if present.
+                                if !logbook_html.is_empty()
+                                    && let Err(e) = outbound
+                                        .send_html(&target.account_id, &to, &logbook_html, None)
+                                        .await
+                                {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send logbook follow-up: {e}"
+                                    );
+                                }
                             } else {
-                                outbound
-                                    .send_text_with_suffix(
-                                        &target.account_id,
-                                        &to,
-                                        &transcript,
-                                        &logbook_html,
-                                        None,
-                                    )
+                                // Transcript too long for a caption — send voice
+                                // without caption, then the full text as a follow-up.
+                                if let Err(e) = outbound
+                                    .send_media(&target.account_id, &to, &payload, reply_to)
                                     .await
-                            };
-                            if let Err(e) = text_result {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send transcript follow-up: {e}"
-                                );
+                                {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send channel voice reply: {e}"
+                                    );
+                                }
+                                let text_result = if logbook_html.is_empty() {
+                                    outbound
+                                        .send_text(&target.account_id, &to, &transcript, None)
+                                        .await
+                                } else {
+                                    outbound
+                                        .send_text_with_suffix(
+                                            &target.account_id,
+                                            &to,
+                                            &transcript,
+                                            &logbook_html,
+                                            None,
+                                        )
+                                        .await
+                                };
+                                if let Err(e) = text_result {
+                                    warn!(
+                                        account_id = target.account_id,
+                                        chat_id = target.chat_id,
+                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
+                                        "failed to send transcript follow-up: {e}"
+                                    );
+                                }
                             }
                         }
                     },
@@ -1002,6 +1020,8 @@ fn format_tool_status_message(tool_name: &str, arguments: &Value) -> String {
             }
         },
         "memory_search" => "🧠 Searching memory...".to_string(),
+        "memory_delete" => "🧠 Removing memory snippet...".to_string(),
+        "memory_forget" => "🧠 Forgetting memory...".to_string(),
         "memory_store" => "🧠 Storing to memory...".to_string(),
         _ => format!("🔧 {}", tool_name),
     }
@@ -1031,8 +1051,6 @@ pub(crate) async fn send_screenshot_to_channels(
     screenshot_data: &str,
     caption: Option<&str>,
 ) {
-    use moltis_common::types::{MediaAttachment, ReplyPayload};
-
     let targets = state.peek_channel_replies(session_key).await;
     if targets.is_empty() {
         return;
@@ -1043,6 +1061,15 @@ pub(crate) async fn send_screenshot_to_channels(
         None => return,
     };
 
+    dispatch_screenshot_to_targets(outbound, targets, screenshot_data, caption).await;
+}
+
+fn build_screenshot_reply_payload(
+    screenshot_data: &str,
+    caption: Option<&str>,
+) -> moltis_common::types::ReplyPayload {
+    use moltis_common::types::{MediaAttachment, ReplyPayload};
+
     // Extract actual MIME from "data:image/jpeg;base64,..." instead of
     // hardcoding PNG — supports JPEG, GIF, WebP from send_image tool.
     let mime_type = screenshot_data
@@ -1051,7 +1078,7 @@ pub(crate) async fn send_screenshot_to_channels(
         .unwrap_or("image/png")
         .to_string();
 
-    let payload = ReplyPayload {
+    ReplyPayload {
         text: caption.unwrap_or_default().to_string(),
         media: Some(MediaAttachment {
             url: screenshot_data.to_string(),
@@ -1060,7 +1087,16 @@ pub(crate) async fn send_screenshot_to_channels(
         }),
         reply_to_id: None,
         silent: false,
-    };
+    }
+}
+
+async fn dispatch_screenshot_to_targets(
+    outbound: Arc<dyn moltis_channels::ChannelOutbound>,
+    targets: Vec<moltis_channels::ChannelReplyTarget>,
+    screenshot_data: &str,
+    caption: Option<&str>,
+) {
+    let payload = build_screenshot_reply_payload(screenshot_data, caption);
 
     let mut tasks = Vec::with_capacity(targets.len());
     for target in targets {
@@ -1300,5 +1336,150 @@ pub(crate) async fn send_location_to_channels(
         if let Err(e) = task.await {
             warn!(error = %e, "channel location task join failed");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use {
+        super::*,
+        async_trait::async_trait,
+        moltis_channels::{ChannelReplyTarget, ChannelType},
+        moltis_common::types::ReplyPayload,
+        std::sync::{Arc, Mutex},
+    };
+
+    #[derive(Debug, Clone)]
+    struct SentMedia {
+        account_id: String,
+        to: String,
+        payload: ReplyPayload,
+        reply_to: Option<String>,
+    }
+
+    #[derive(Default)]
+    struct RecordingOutbound {
+        sent_media: Mutex<Vec<SentMedia>>,
+    }
+
+    #[async_trait]
+    impl moltis_channels::ChannelOutbound for RecordingOutbound {
+        async fn send_text(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _text: &str,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            Ok(())
+        }
+
+        async fn send_media(
+            &self,
+            account_id: &str,
+            to: &str,
+            payload: &ReplyPayload,
+            reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            self.sent_media
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(SentMedia {
+                    account_id: account_id.to_string(),
+                    to: to.to_string(),
+                    payload: payload.clone(),
+                    reply_to: reply_to.map(ToString::to_string),
+                });
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn push_notification_url_uses_chats_prefix_and_replaces_colons() {
+        // Must match frontend sessionPath(): `/chats/${key.replace(/:/g, "/")}`
+        assert_eq!(push_notification_url("session:42"), "/chats/session/42");
+    }
+
+    #[test]
+    fn push_notification_url_handles_nested_session_keys() {
+        assert_eq!(
+            push_notification_url("telegram:bot123:chat456"),
+            "/chats/telegram/bot123/chat456"
+        );
+    }
+
+    #[test]
+    fn push_notification_url_handles_key_without_colons() {
+        assert_eq!(push_notification_url("main"), "/chats/main");
+    }
+
+    #[tokio::test]
+    async fn generated_image_payload_dispatches_to_telegram_as_media() {
+        let outbound = Arc::new(RecordingOutbound::default());
+        let targets = vec![ChannelReplyTarget {
+            channel_type: ChannelType::Telegram,
+            account_id: "telegram-main".into(),
+            chat_id: "-100123".into(),
+            message_id: Some("42".into()),
+            thread_id: Some("7".into()),
+        }];
+
+        dispatch_screenshot_to_targets(
+            outbound.clone(),
+            targets,
+            "data:image/png;base64,cG5n",
+            Some("Generated image: fox"),
+        )
+        .await;
+
+        let sent = outbound
+            .sent_media
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].account_id, "telegram-main");
+        assert_eq!(sent[0].to, "-100123:7");
+        assert_eq!(sent[0].reply_to.as_deref(), Some("42"));
+        assert_eq!(sent[0].payload.text, "Generated image: fox");
+        let Some(media) = sent[0].payload.media.as_ref() else {
+            panic!("media payload");
+        };
+        assert_eq!(media.mime_type, "image/png");
+        assert_eq!(media.url, "data:image/png;base64,cG5n");
+    }
+
+    #[tokio::test]
+    async fn generated_image_payload_dispatches_to_matrix_as_media() {
+        let outbound = Arc::new(RecordingOutbound::default());
+        let targets = vec![ChannelReplyTarget {
+            channel_type: ChannelType::Matrix,
+            account_id: "matrix-main".into(),
+            chat_id: "!room:example.org".into(),
+            message_id: Some("$event".into()),
+            thread_id: None,
+        }];
+
+        dispatch_screenshot_to_targets(
+            outbound.clone(),
+            targets,
+            "data:image/webp;base64,d2VicA==",
+            Some("Generated image: logo"),
+        )
+        .await;
+
+        let sent = outbound
+            .sent_media
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].account_id, "matrix-main");
+        assert_eq!(sent[0].to, "!room:example.org");
+        assert_eq!(sent[0].reply_to.as_deref(), Some("$event"));
+        assert_eq!(sent[0].payload.text, "Generated image: logo");
+        let Some(media) = sent[0].payload.media.as_ref() else {
+            panic!("media payload");
+        };
+        assert_eq!(media.mime_type, "image/webp");
+        assert_eq!(media.url, "data:image/webp;base64,d2VicA==");
     }
 }

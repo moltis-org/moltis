@@ -11,6 +11,7 @@
 - [Comparison](comparison.md)
 - [Configuration](configuration.md)
   - [Upstream Proxy](upstream-proxy.md)
+  - [Configuration Reference](configuration-reference.md)
 - [Local Validation](local-validation.md)
 - [End-to-End Testing](e2e-testing.md)
 
@@ -38,10 +39,14 @@
   - [Matrix](matrix.md)
   - [WhatsApp](whatsapp.md)
   - [Nostr](nostr.md)
+  - [Signal](signal.md)
+  - [Telephony (Phone Calls)](channels/telephony.md)
 - [Browser Automation](browser-automation.md)
 - [CalDAV (Calendars)](caldav.md)
 - [GraphQL API](graphql.md)
 - [Session State](session-state.md)
+- [Slash Commands](commands.md)
+- [Modes](modes.md)
 - [Session Branching](session-branching.md)
 - [Checkpoints](checkpoints.md)
 - [Compaction](compaction.md)
@@ -72,12 +77,15 @@
 
 - [Docker](docker.md)
 - [Cloud Deploy](cloud-deploy.md)
+- [Remote Sandboxes](sandbox-remote.md)
+- [VPS Deployment](deploy-vps.md)
 
 ---
 
 # Architecture
 
 - [System Prompt](system-prompt.md)
+- [Frontend](frontend.md)
 - [Streaming](streaming.md)
 - [SQLite Migrations](sqlite-migration.md)
 - [Metrics & Tracing](metrics-and-tracing.md)

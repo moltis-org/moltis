@@ -6,6 +6,7 @@ use std::{
 use {
     async_trait::async_trait,
     matrix_sdk::encryption::{VerificationState, recovery::RecoveryState},
+    tokio_util::sync::CancellationToken,
     tracing::{info, instrument, warn},
 };
 
@@ -96,7 +97,11 @@ async fn matrix_status_extra(snapshot: MatrixStatusSnapshot) -> serde_json::Valu
         .await
         .unwrap_or(false);
     let backups_enabled = snapshot.client.encryption().backups().are_enabled().await;
-    let device_verified_by_owner = snapshot
+    // is_cross_signed_by_owner() has a known issue where it returns false
+    // even after a successful signature upload + sync. Use cross-signing
+    // completion as a fallback: if all private keys are present, the device
+    // is effectively verified even if the local cache lags.
+    let device_cross_signed = snapshot
         .client
         .encryption()
         .get_own_device()
@@ -104,6 +109,7 @@ async fn matrix_status_extra(snapshot: MatrixStatusSnapshot) -> serde_json::Valu
         .ok()
         .flatten()
         .is_some_and(|device| device.is_cross_signed_by_owner());
+    let device_verified_by_owner = device_cross_signed || cross_signing_complete;
     let recovery_state = effective_recovery_state(
         cached_recovery_state,
         secret_storage_enabled,
@@ -122,6 +128,7 @@ async fn matrix_status_extra(snapshot: MatrixStatusSnapshot) -> serde_json::Valu
             "ownership_mode": ownership_mode_label(snapshot.config.ownership_mode.clone()),
             "auth_mode": match client::auth_mode(&snapshot.config) {
                 Ok(client::AuthMode::Password) => "password",
+                Ok(client::AuthMode::Oidc) => "oidc",
                 _ => "access_token",
             },
             "user_id": snapshot.client.user_id().map(|user_id| user_id.to_string()).or_else(|| snapshot.config.user_id.clone()),
@@ -291,7 +298,23 @@ impl ChannelPlugin for MatrixPlugin {
             client::build_and_authenticate_client(account_id, &cfg).await?;
         let bot_user_id = authenticated.user_id;
 
-        let cancel = tokio_util::sync::CancellationToken::new();
+        // Guard: reject if another account is already connected as this Matrix user.
+        {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            for (aid, state) in accounts.iter() {
+                if aid != account_id
+                    && state.bot_user_id == bot_user_id.as_str()
+                    && !state.bot_user_id.is_empty()
+                {
+                    return Err(ChannelError::invalid_input(format!(
+                        "Matrix user {} is already connected as account '{aid}'",
+                        bot_user_id,
+                    )));
+                }
+            }
+        }
+
+        let cancel = CancellationToken::new();
 
         {
             let otp_cooldown = cfg.otp_cooldown_secs;
@@ -311,6 +334,7 @@ impl ChannelPlugin for MatrixPlugin {
                 pending_identity_reset: Mutex::new(None),
                 otp: Mutex::new(OtpState::new(otp_cooldown)),
                 verification: Mutex::new(Default::default()),
+                oidc_pending: Mutex::new(None),
             });
         }
 
@@ -352,17 +376,18 @@ impl ChannelPlugin for MatrixPlugin {
             (state.client.clone(), state.config.clone(), pending_handle)
         };
 
-        let pending_handle = pending_handle.ok_or_else(|| {
-            ChannelError::invalid_input("matrix account has no pending ownership approval to retry")
-        })?;
-
-        pending_handle.reset(None).await.map_err(|error| {
-            ChannelError::external("matrix recovery reset identity approval", error)
-        })?;
-        client
-            .encryption()
-            .wait_for_e2ee_initialization_tasks()
-            .await;
+        // If there's a pending handle (from the same session), use it.
+        // Otherwise (e.g. after restart), re-trigger ownership bootstrap
+        // which will call reset_identity() again to get a fresh handle.
+        if let Some(handle) = pending_handle {
+            handle.reset(None).await.map_err(|error| {
+                ChannelError::external("matrix recovery reset identity approval", error)
+            })?;
+            client
+                .encryption()
+                .wait_for_e2ee_initialization_tasks()
+                .await;
+        }
 
         let ownership_attempt =
             client::maybe_take_matrix_account_ownership(&client, account_id, &config).await;
@@ -460,6 +485,147 @@ impl ChannelPlugin for MatrixPlugin {
     fn as_otp_provider(&self) -> Option<&dyn ChannelOtpProvider> {
         Some(self)
     }
+
+    async fn oidc_start(
+        &self,
+        account_id: &str,
+        config: serde_json::Value,
+        redirect_uri: &str,
+    ) -> ChannelResult<serde_json::Value> {
+        let cfg = parse_account_config(config)?;
+        if cfg.homeserver.is_empty() {
+            return Err(ChannelError::invalid_input("homeserver URL is required"));
+        }
+        let redirect_url: url::Url = redirect_uri
+            .parse()
+            .map_err(|error| ChannelError::external("matrix oidc parse redirect uri", error))?;
+
+        let mx_client = client::build_client(account_id, &cfg).await?;
+        let pending = crate::oidc::start_oidc_login(
+            &mx_client,
+            account_id,
+            &redirect_url,
+            cfg.device_id.as_deref(),
+        )
+        .await?;
+
+        let csrf_state = pending.state.clone();
+        let auth_url = pending.auth_url.clone();
+
+        // Store the pending state so oidc_complete can find it.
+        {
+            let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+            let state = accounts
+                .entry(account_id.to_string())
+                .or_insert_with(|| AccountState {
+                    account_id: account_id.to_string(),
+                    config: cfg.clone(),
+                    client: mx_client.clone(),
+                    message_log: self.message_log.clone(),
+                    event_sink: self.event_sink.clone(),
+                    cancel: CancellationToken::new(),
+                    bot_user_id: String::new(),
+                    ownership_startup_error: None,
+                    initial_sync_complete: AtomicBool::new(false),
+                    pending_identity_reset: Mutex::new(None),
+                    otp: Mutex::new(OtpState::new(cfg.otp_cooldown_secs)),
+                    verification: Mutex::new(Default::default()),
+                    oidc_pending: Mutex::new(None),
+                });
+            let mut oidc_pending = state.oidc_pending.lock().unwrap_or_else(|e| e.into_inner());
+            *oidc_pending = Some(crate::state::OidcPendingState {
+                client: mx_client,
+                csrf_state: csrf_state.clone(),
+            });
+        }
+
+        Ok(serde_json::json!({
+            "auth_url": auth_url,
+            "state": csrf_state,
+        }))
+    }
+
+    async fn oidc_complete(
+        &self,
+        csrf_state: &str,
+        callback_url: &str,
+    ) -> ChannelResult<serde_json::Value> {
+        let (account_id, mx_client) = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            let mut found = None;
+            for (aid, state) in accounts.iter() {
+                let pending = state.oidc_pending.lock().unwrap_or_else(|e| e.into_inner());
+                if pending.as_ref().is_some_and(|p| p.csrf_state == csrf_state) {
+                    found = Some((aid.clone(), pending.as_ref().map(|p| p.client.clone())));
+                    break;
+                }
+            }
+            let (aid, client_opt) = found.ok_or_else(|| {
+                ChannelError::invalid_input("no pending OIDC login matches this state token")
+            })?;
+            (
+                aid,
+                client_opt.ok_or_else(|| {
+                    ChannelError::invalid_input("pending OIDC state has no client")
+                })?,
+            )
+        };
+
+        let authenticated =
+            crate::oidc::finish_oidc_login(&mx_client, &account_id, callback_url).await?;
+        let bot_user_id = authenticated.user_id.clone();
+
+        // Guard: reject if another account is already connected as this Matrix user.
+        {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            for (aid, state) in accounts.iter() {
+                if aid != &account_id
+                    && state.bot_user_id == bot_user_id.as_str()
+                    && !state.bot_user_id.is_empty()
+                {
+                    return Err(ChannelError::invalid_input(format!(
+                        "Matrix user {} is already connected as account '{aid}'",
+                        bot_user_id,
+                    )));
+                }
+            }
+        }
+
+        {
+            let mut accounts = self.accounts.write().unwrap_or_else(|e| e.into_inner());
+            if let Some(state) = accounts.get_mut(&account_id) {
+                let mut oidc_pending = state.oidc_pending.lock().unwrap_or_else(|e| e.into_inner());
+                *oidc_pending = None;
+                state.bot_user_id = bot_user_id.to_string();
+                state.config.user_id = Some(bot_user_id.to_string());
+            }
+        }
+
+        client::register_event_handlers(&mx_client, &account_id, &self.accounts, &bot_user_id);
+        let cancel = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts
+                .get(&account_id)
+                .map(|s| s.cancel.clone())
+                .unwrap_or_default()
+        };
+        client::sync_once_and_spawn_loop(&mx_client, &account_id, &self.accounts, cancel).await?;
+
+        // Read back any ownership error so the UI can show it immediately.
+        let ownership_error = {
+            let accounts = self.accounts.read().unwrap_or_else(|e| e.into_inner());
+            accounts
+                .get(&account_id)
+                .and_then(|s| s.ownership_startup_error.clone())
+        };
+
+        Ok(serde_json::json!({
+            "ok": true,
+            "account_id": account_id,
+            "user_id": bot_user_id.to_string(),
+            "ownership_error": ownership_error,
+        }))
+    }
 }
 
 impl ChannelOtpProvider for MatrixPlugin {
@@ -484,7 +650,7 @@ impl ChannelStatus for MatrixPlugin {
                     prompts
                 };
                 (
-                    state.client.matrix_auth().logged_in(),
+                    state.client.user_id().is_some(),
                     state.bot_user_id.clone(),
                     MatrixStatusSnapshot {
                         client: state.client.clone(),
@@ -568,6 +734,7 @@ mod tests {
             pending_identity_reset: Mutex::new(None),
             otp: Mutex::new(OtpState::new(300)),
             verification: Mutex::new(Default::default()),
+            oidc_pending: Mutex::new(None),
         }
     }
 

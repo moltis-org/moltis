@@ -3,10 +3,16 @@
 use std::{process::Stdio, time::Duration};
 
 use {
+    base64::Engine,
     futures::{SinkExt, StreamExt},
     tokio::process::Command,
     tokio_tungstenite::{connect_async, tungstenite::Message},
     tracing::{debug, error, info, warn},
+};
+
+use crate::{
+    error::{Error, Result},
+    identity::NodeIdentity,
 };
 
 use moltis_protocol::{
@@ -15,12 +21,14 @@ use moltis_protocol::{
 };
 
 /// Configuration for connecting a node to a gateway.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct NodeConfig {
     /// Gateway WebSocket URL (e.g. `ws://localhost:9090/ws`).
     pub gateway_url: String,
-    /// Device token obtained from the pairing flow.
+    /// Device token obtained from the pairing flow (legacy, deprecated).
     pub device_token: String,
+    /// Ed25519 identity for challenge-response authentication.
+    pub identity: Option<NodeIdentity>,
     /// Unique node identifier.
     pub node_id: String,
     /// Human-readable display name.
@@ -42,6 +50,7 @@ impl Default for NodeConfig {
         Self {
             gateway_url: "ws://localhost:9090/ws".into(),
             device_token: String::new(),
+            identity: None,
             node_id: uuid::Uuid::new_v4().to_string(),
             display_name: None,
             platform: std::env::consts::OS.into(),
@@ -128,7 +137,14 @@ impl NodeHost {
     /// Connect to the gateway and run the message loop until disconnected.
     ///
     /// Returns `Ok(())` on clean shutdown, `Err` on connection/protocol errors.
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(&self) -> Result<()> {
+        // Install a rustls CryptoProvider before any TLS connection.
+        // Without this, `connect_async` on a `wss://` URL panics because
+        // tokio-tungstenite uses rustls under the hood and no provider is
+        // registered in the node-host code path (the gateway sets its own
+        // in `gateway.rs`). See #744.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         // Validate URL first, then pass string to connect_async.
         let _url = url::Url::parse(&self.config.gateway_url)?;
         info!(url = %self.config.gateway_url, node_id = %self.config.node_id, "connecting to gateway");
@@ -161,7 +177,16 @@ impl NodeHost {
                 token: None,
                 password: None,
                 api_key: None,
-                device_token: Some(self.config.device_token.clone()),
+                device_token: if self.config.device_token.is_empty() {
+                    None
+                } else {
+                    Some(self.config.device_token.clone())
+                },
+                public_key: self
+                    .config
+                    .identity
+                    .as_ref()
+                    .map(|id| id.public_key_base64()),
             }),
             locale: None,
             timezone: None,
@@ -189,30 +214,16 @@ impl NodeHost {
         let connect_json = serde_json::to_string(&connect_req)?;
         ws_tx.send(Message::Text(connect_json.into())).await?;
 
-        // Wait for hello-ok response.
-        let hello = match tokio::time::timeout(Duration::from_secs(10), ws_rx.next()).await {
-            Ok(Some(Ok(Message::Text(text)))) => {
-                let resp: ResponseFrame = serde_json::from_str(&text)?;
-                if resp.id != connect_id {
-                    anyhow::bail!(
-                        "unexpected response id: expected {connect_id}, got {}",
-                        resp.id
-                    );
-                }
-                if !resp.ok {
-                    let err_msg = resp
-                        .error
-                        .map(|e| format!("{}: {}", e.code, e.message))
-                        .unwrap_or_else(|| "unknown error".into());
-                    anyhow::bail!("handshake failed: {err_msg}");
-                }
-                resp
-            },
-            Ok(Some(Ok(_))) => anyhow::bail!("unexpected non-text message during handshake"),
-            Ok(Some(Err(e))) => anyhow::bail!("websocket error during handshake: {e}"),
-            Ok(None) => anyhow::bail!("connection closed during handshake"),
-            Err(_) => anyhow::bail!("handshake timeout"),
+        // Wait for hello-ok, handling challenge-response if the gateway sends one.
+        // Timeout is generous to allow for operator approval of pending pair requests.
+        let handshake_timeout = if self.config.identity.is_some() {
+            Duration::from_secs(310) // 5 min approval window + 10s buffer
+        } else {
+            Duration::from_secs(10)
         };
+        let hello = self
+            .complete_handshake(&connect_id, &mut ws_tx, &mut ws_rx, handshake_timeout)
+            .await?;
 
         info!(
             server_version = hello
@@ -265,6 +276,127 @@ impl NodeHost {
         }
 
         info!("node disconnected");
+        Ok(())
+    }
+
+    /// Drive the handshake to completion, handling an optional challenge-response
+    /// round if the gateway requests Ed25519 signature verification.
+    ///
+    /// The gateway may send:
+    /// 1. A direct `hello-ok` response (token auth or already-approved key).
+    /// 2. A `node.auth.challenge` event with a nonce to sign.
+    /// 3. A `node.pair.pending` event while waiting for operator approval,
+    ///    followed eventually by a challenge or auth-failed.
+    async fn complete_handshake(
+        &self,
+        connect_id: &str,
+        ws_tx: &mut (impl SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
+        ws_rx: &mut (
+                 impl StreamExt<
+            Item = std::result::Result<Message, tokio_tungstenite::tungstenite::Error>,
+        > + Unpin
+             ),
+        timeout: Duration,
+    ) -> Result<ResponseFrame> {
+        let deadline = tokio::time::Instant::now() + timeout;
+
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(Error::Protocol("handshake timeout".into()));
+            }
+
+            let msg = match tokio::time::timeout(remaining, ws_rx.next()).await {
+                Ok(Some(Ok(Message::Text(text)))) => text,
+                Ok(Some(Ok(Message::Ping(_)))) => continue,
+                Ok(Some(Ok(_))) => {
+                    return Err(Error::Protocol(
+                        "unexpected non-text message during handshake".into(),
+                    ));
+                },
+                Ok(Some(Err(e))) => {
+                    return Err(Error::Protocol(format!(
+                        "websocket error during handshake: {e}"
+                    )));
+                },
+                Ok(None) => {
+                    return Err(Error::Protocol("connection closed during handshake".into()));
+                },
+                Err(_) => return Err(Error::Protocol("handshake timeout".into())),
+            };
+
+            // Try parsing as a response frame first (hello-ok or auth-failed).
+            if let Ok(resp) = serde_json::from_str::<ResponseFrame>(&msg)
+                && resp.id == connect_id
+            {
+                if !resp.ok {
+                    let err_msg = resp
+                        .error
+                        .map(|e| format!("{}: {}", e.code, e.message))
+                        .unwrap_or_else(|| "unknown error".into());
+                    return Err(Error::Protocol(format!("handshake failed: {err_msg}")));
+                }
+                return Ok(resp);
+            }
+
+            // Try parsing as an event frame (challenge or pending notification).
+            if let Ok(frame) = serde_json::from_str::<GatewayFrame>(&msg) {
+                match frame {
+                    GatewayFrame::Event(event) if event.event == "node.auth.challenge" => {
+                        self.handle_challenge(&event.payload, ws_tx).await?;
+                    },
+                    GatewayFrame::Event(event) if event.event == "node.pair.pending" => {
+                        info!("pairing request pending — waiting for operator approval");
+                    },
+                    _ => {
+                        debug!("ignoring unexpected frame during handshake");
+                    },
+                }
+            }
+        }
+    }
+
+    /// Sign a challenge nonce and send the response back to the gateway.
+    async fn handle_challenge(
+        &self,
+        payload: &Option<serde_json::Value>,
+        ws_tx: &mut (impl SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
+    ) -> Result<()> {
+        let identity = self.config.identity.as_ref().ok_or_else(|| {
+            Error::Protocol("gateway sent challenge but no Ed25519 identity is configured".into())
+        })?;
+
+        let nonce_b64 = payload
+            .as_ref()
+            .and_then(|p| p.get("nonce"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Protocol("challenge event missing nonce".into()))?;
+
+        let nonce_bytes = base64::engine::general_purpose::STANDARD
+            .decode(nonce_b64)
+            .map_err(|e| Error::Protocol(format!("invalid challenge nonce encoding: {e}")))?;
+
+        debug!(nonce_len = nonce_bytes.len(), "signing challenge nonce");
+
+        let signature = identity.sign(&nonce_bytes);
+        let sig_b64 = base64::engine::general_purpose::STANDARD.encode(signature.to_bytes());
+
+        let response_frame = serde_json::json!({
+            "type": "req",
+            "id": uuid::Uuid::new_v4().to_string(),
+            "method": "node.auth.challenge-response",
+            "params": {
+                "signature": sig_b64,
+            }
+        });
+
+        let json = serde_json::to_string(&response_frame)?;
+        ws_tx
+            .send(Message::Text(json.into()))
+            .await
+            .map_err(|e| Error::Protocol(format!("failed to send challenge response: {e}")))?;
+
+        info!("challenge response sent");
         Ok(())
     }
 
@@ -337,7 +469,7 @@ impl NodeHost {
             "system.providers" => self.handle_system_providers().await,
             other => {
                 warn!(command = %other, "unsupported invoke command");
-                Err(anyhow::anyhow!("unsupported command: {other}"))
+                Err(Error::Command(format!("unsupported command: {other}")))
             },
         };
 
@@ -352,14 +484,11 @@ impl NodeHost {
         }
     }
 
-    async fn handle_system_run(
-        &self,
-        args: &serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
+    async fn handle_system_run(&self, args: &serde_json::Value) -> Result<serde_json::Value> {
         let command = args
             .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'command' in args"))?;
+            .ok_or_else(|| Error::Command("missing 'command' in args".into()))?;
 
         let timeout_ms = args
             .get("timeout")
@@ -409,19 +538,18 @@ impl NodeHost {
                     "exitCode": exit_code,
                 }))
             },
-            Ok(Err(e)) => Err(anyhow::anyhow!("failed to execute command: {e}")),
-            Err(_) => Err(anyhow::anyhow!("command timed out after {timeout_ms}ms")),
+            Ok(Err(e)) => Err(Error::Command(format!("failed to execute command: {e}"))),
+            Err(_) => Err(Error::Command(format!(
+                "command timed out after {timeout_ms}ms"
+            ))),
         }
     }
 
-    async fn handle_system_which(
-        &self,
-        args: &serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
+    async fn handle_system_which(&self, args: &serde_json::Value) -> Result<serde_json::Value> {
         let binary = args
             .get("binary")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("missing 'binary' in args"))?;
+            .ok_or_else(|| Error::Command("missing 'binary' in args".into()))?;
 
         let output = Command::new("which").arg(binary).output().await?;
 
@@ -434,7 +562,7 @@ impl NodeHost {
         }))
     }
 
-    async fn handle_system_providers(&self) -> anyhow::Result<serde_json::Value> {
+    async fn handle_system_providers(&self) -> Result<serde_json::Value> {
         let mut providers = Vec::new();
 
         // Check Ollama at localhost:11434.
@@ -553,7 +681,7 @@ impl NodeHost {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
 
@@ -612,6 +740,27 @@ mod tests {
         });
         let result = host.handle_system_run(&args).await.unwrap();
         assert_eq!(result["stderr"].as_str().unwrap().trim(), "err");
+    }
+
+    /// Regression test for #744: `connect_async("wss://...")` panicked on
+    /// Windows because no rustls `CryptoProvider` was installed in the
+    /// node-host code path.  After the fix, `run()` returns a connection
+    /// error instead of panicking.
+    #[tokio::test]
+    async fn wss_url_does_not_panic_without_crypto_provider() {
+        let config = NodeConfig {
+            gateway_url: "wss://127.0.0.1:1/ws".into(),
+            device_token: "test-token".into(),
+            ..Default::default()
+        };
+        let node = NodeHost::new(config);
+        // Should return Err (unreachable host), NOT panic.
+        // Wrap in a timeout so the test doesn't hang if a firewall silently
+        // drops packets to 127.0.0.1:1 instead of refusing immediately.
+        let result = tokio::time::timeout(Duration::from_secs(5), node.run())
+            .await
+            .expect("timed out — possible firewall drop on 127.0.0.1:1");
+        assert!(result.is_err(), "expected connection error, got Ok");
     }
 
     #[tokio::test]

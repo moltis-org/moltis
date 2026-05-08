@@ -20,6 +20,8 @@ pub(crate) const TERMINAL_DISABLED: &str = "TERMINAL_DISABLED";
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct HostTerminalWsQuery {
     pub(crate) window: Option<String>,
+    /// Optional container name to exec into instead of host shell.
+    pub(crate) container: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

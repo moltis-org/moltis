@@ -13,13 +13,14 @@ use moltis_metrics::{counter, gauge, histogram, labels, mcp as mcp_metrics};
 use crate::{
     auth::SharedAuthProvider,
     error::{Context, Error, Result},
+    legacy_sse_transport::LegacySseTransport,
     remote::ResolvedRemoteConfig,
     sse_transport::SseTransport,
     traits::{McpClientTrait, McpTransport},
     transport::StdioTransport,
     types::{
         ClientCapabilities, ClientInfo, InitializeParams, InitializeResult, McpToolDef,
-        PROTOCOL_VERSION, ToolsCallParams, ToolsCallResult, ToolsListResult,
+        McpTransportError, PROTOCOL_VERSION, ToolsCallParams, ToolsCallResult, ToolsListResult,
     },
 };
 
@@ -110,6 +111,83 @@ impl McpClient {
         Ok(client)
     }
 
+    /// Connect to a remote MCP server using the legacy SSE transport.
+    ///
+    /// The legacy SSE protocol first GETs the SSE endpoint to discover the
+    /// message URL (with sessionId), then POSTs JSON-RPC messages to it.
+    pub async fn connect_legacy_sse(
+        server_name: &str,
+        remote: &ResolvedRemoteConfig,
+        request_timeout: Duration,
+    ) -> Result<Self> {
+        info!(
+            server = %server_name,
+            url = %remote.display_url(),
+            "connecting to MCP server via legacy SSE"
+        );
+        let transport = LegacySseTransport::new_with_remote(remote.clone(), request_timeout)?;
+
+        let mut client = Self {
+            server_name: server_name.into(),
+            transport,
+            state: McpClientState::Connected,
+            server_info: None,
+            tools: Vec::new(),
+        };
+
+        if let Err(e) = client.initialize().await {
+            warn!(server = %server_name, error = %e, "legacy SSE MCP initialize handshake failed");
+            return Err(e);
+        }
+
+        #[cfg(feature = "metrics")]
+        {
+            counter!(mcp_metrics::SERVER_CONNECTIONS_TOTAL, labels::SERVER => server_name.to_string())
+                .increment(1);
+            gauge!(mcp_metrics::SERVERS_CONNECTED).increment(1.0);
+        }
+
+        Ok(client)
+    }
+
+    /// Connect to a remote MCP server using the legacy SSE transport with an OAuth auth provider.
+    pub async fn connect_legacy_sse_with_auth(
+        server_name: &str,
+        remote: &ResolvedRemoteConfig,
+        auth: SharedAuthProvider,
+        request_timeout: Duration,
+    ) -> Result<Self> {
+        info!(
+            server = %server_name,
+            url = %remote.display_url(),
+            "connecting to MCP server via legacy SSE (with auth)"
+        );
+        let transport =
+            LegacySseTransport::with_auth_remote(remote.clone(), auth, request_timeout)?;
+
+        let mut client = Self {
+            server_name: server_name.into(),
+            transport,
+            state: McpClientState::Connected,
+            server_info: None,
+            tools: Vec::new(),
+        };
+
+        if let Err(e) = client.initialize().await {
+            warn!(server = %server_name, error = %e, "legacy SSE (auth) MCP initialize handshake failed");
+            return Err(e);
+        }
+
+        #[cfg(feature = "metrics")]
+        {
+            counter!(mcp_metrics::SERVER_CONNECTIONS_TOTAL, labels::SERVER => server_name.to_string())
+                .increment(1);
+            gauge!(mcp_metrics::SERVERS_CONNECTED).increment(1.0);
+        }
+
+        Ok(client)
+    }
+
     /// Connect to a remote MCP server over HTTP/SSE or Streamable HTTP with an OAuth auth provider.
     pub async fn connect_sse_with_auth(
         server_name: &str,
@@ -157,11 +235,20 @@ impl McpClient {
             },
         };
 
-        let resp = self
+        let resp = match self
             .transport
             .request("initialize", Some(serde_json::to_value(&params)?))
             .await
-            .context("MCP initialize request failed")?;
+        {
+            Ok(r) => r,
+            // Preserve 401 so the manager can trigger the OAuth re-auth flow.
+            Err(e @ Error::Transport(McpTransportError::Unauthorized { .. })) => return Err(e),
+            Err(e) => {
+                return Err(Error::message(format!(
+                    "MCP initialize request failed: {e}"
+                )));
+            },
+        };
 
         let result: InitializeResult =
             serde_json::from_value(resp.result.context("MCP initialize returned no result")?)

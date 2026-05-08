@@ -1,0 +1,53 @@
+[package]
+description       = "Text and code splitting for moltis — AST-aware chunking via tree-sitter with line-based fallback"
+edition.workspace = true
+name              = "moltis-splitter"
+version.workspace = true
+
+[features]
+default = ["code-splitter", "tracing"]
+tracing = ["dep:tracing"]
+metrics = ["dep:metrics"]
+# Core code-splitting with common languages.
+code-splitter = ["code-splitter-base", "lang-go", "lang-javascript", "lang-python", "lang-rust"]
+# Internal base feature — enables text-splitter dep.
+code-splitter-base = ["dep:text-splitter"]
+# Individual language grammars (each pulls in code-splitter-base).
+lang-bash       = ["code-splitter-base", "dep:tree-sitter-bash"]
+lang-c          = ["code-splitter-base", "dep:tree-sitter-c"]
+lang-cpp        = ["code-splitter-base", "dep:tree-sitter-cpp"]
+lang-css        = ["code-splitter-base", "dep:tree-sitter-css"]
+lang-go         = ["code-splitter-base", "dep:tree-sitter-go"]
+lang-html       = ["code-splitter-base", "dep:tree-sitter-html"]
+lang-java       = ["code-splitter-base", "dep:tree-sitter-java"]
+lang-javascript = ["code-splitter-base", "dep:tree-sitter-javascript"]
+lang-json       = ["code-splitter-base", "dep:tree-sitter-json"]
+lang-markdown   = ["code-splitter-base", "dep:tree-sitter-md"]
+lang-python     = ["code-splitter-base", "dep:tree-sitter-python"]
+lang-ruby       = ["code-splitter-base", "dep:tree-sitter-ruby"]
+lang-rust       = ["code-splitter-base", "dep:tree-sitter-rust"]
+lang-toml       = ["code-splitter-base", "dep:tree-sitter-toml-ng"]
+lang-typescript = ["code-splitter-base", "dep:tree-sitter-typescript"]
+
+[dependencies]
+text-splitter          = { optional = true, workspace = true }
+tracing                = { workspace = true, optional = true }
+metrics                = { workspace = true, optional = true }
+tree-sitter-bash       = { optional = true, workspace = true }
+tree-sitter-c          = { optional = true, workspace = true }
+tree-sitter-cpp        = { optional = true, workspace = true }
+tree-sitter-css        = { optional = true, workspace = true }
+tree-sitter-go         = { optional = true, workspace = true }
+tree-sitter-html       = { optional = true, workspace = true }
+tree-sitter-java       = { optional = true, workspace = true }
+tree-sitter-javascript = { optional = true, workspace = true }
+tree-sitter-json       = { optional = true, workspace = true }
+tree-sitter-md         = { optional = true, workspace = true }
+tree-sitter-python     = { optional = true, workspace = true }
+tree-sitter-ruby       = { optional = true, workspace = true }
+tree-sitter-rust       = { optional = true, workspace = true }
+tree-sitter-toml-ng    = { optional = true, workspace = true }
+tree-sitter-typescript = { optional = true, workspace = true }
+
+[lints]
+workspace = true

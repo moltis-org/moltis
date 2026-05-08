@@ -65,17 +65,22 @@ clap                   = { workspace = true }
 dotenvy                = { workspace = true }
 moltis-agents          = { workspace = true }
 moltis-browser         = { workspace = true }
+moltis-claude-import   = { optional = true, workspace = true }
+moltis-codex-import    = { optional = true, workspace = true }
 moltis-common          = { workspace = true }
 moltis-config          = { workspace = true }
 moltis-cron            = { workspace = true }
 moltis-gateway         = { workspace = true }
+moltis-hermes-import   = { optional = true, workspace = true }
 moltis-httpd           = { workspace = true }
+moltis-import-core     = { workspace = true }
 moltis-memory          = { workspace = true }
 moltis-node-host       = { workspace = true }
 moltis-oauth           = { workspace = true }
 moltis-onboarding      = { workspace = true }
 moltis-openclaw-import = { optional = true, workspace = true }
 moltis-plugins         = { workspace = true }
+moltis-portable        = { workspace = true }
 moltis-projects        = { workspace = true }
 moltis-sessions        = { workspace = true }
 moltis-skills          = { workspace = true }
@@ -101,87 +106,141 @@ tikv-jemallocator = { optional = true, workspace = true }
 tempfile = { workspace = true }
 
 [features]
-agent  = ["moltis-gateway/agent", "moltis-web?/agent"]
-caldav = ["moltis-gateway/caldav"]
+agent          = ["moltis-gateway/agent", "moltis-web?/agent"]
+caldav         = ["moltis-gateway/caldav"]
+home-assistant = ["moltis-gateway/home-assistant"]
 # User-facing integrations stay default-on in the CLI crate per workspace policy,
 # even when the underlying implementation remains feature-gated in lower crates.
-default = [
+#
+# `full` is the portable production feature set used by release, packaging, and
+# container builds. It intentionally excludes build-mode toggles (`embedded-*`)
+# and accelerator-specific features (`local-llm-cuda`, `local-llm-vulkan`) that
+# require host SDKs/toolchains not present on every target.
+bundled-skills = ["moltis-gateway/bundled-skills", "moltis-web?/bundled-skills"]
+default = ["full"]
+full = [
   "agent",
+  "bundled-skills",
   "caldav",
+  "claude-import",
+  "code-index-builtin",
   "code-splitter",
+  "codex-import",
+  "discord",
   "file-watcher",
   "firecrawl",
   "fs-tools",
   "graphql",
+  "hermes-import",
+  "home-assistant",
   "jemalloc",
+  "lang-bash",
+  "lang-c",
+  "lang-cpp",
+  "lang-css",
+  "lang-go",
+  "lang-html",
+  "lang-java",
+  "lang-javascript",
+  "lang-json",
+  "lang-markdown",
+  "lang-python",
+  "lang-ruby",
+  "lang-rust",
+  "lang-toml",
+  "lang-typescript",
   "llm-compaction",
+  "local-embeddings",
   "local-llm",
   "local-llm-metal",
   "matrix",
   "mdns",
   "metrics",
+  "msteams",
   "ngrok",
   "nostr",
   "openclaw-import",
   "prometheus",
+  "provider-openai-codex",
   "push-notifications",
   "qmd",
+  "signal",
   "slack",
   "tailscale",
+  "telegram",
+  "telephony",
   "tls",
   "trusted-network",
   "vault",
+  "vercel-sandbox",
   "voice",
+  "wasm",
   "web-ui",
   "whatsapp",
 ]
 llm-compaction = ["moltis-gateway/llm-compaction"]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
 # Build with: cargo build --release --no-default-features --features lightweight
-code-splitter   = ["moltis-memory/code-splitter"]
-embedded-assets = ["moltis-web?/embedded-assets"]
-embedded-wasm   = ["moltis-tools/embedded-wasm"]
-file-watcher    = ["moltis-gateway/file-watcher"]
-firecrawl       = ["moltis-gateway/firecrawl"]
-fs-tools        = ["moltis-gateway/fs-tools"]
-graphql         = ["moltis-httpd/graphql", "moltis-web?/graphql"]
-jemalloc        = ["dep:tikv-jemallocator"]
-lang-bash       = ["moltis-memory/lang-bash"]
-lang-c          = ["moltis-memory/lang-c"]
-lang-cpp        = ["moltis-memory/lang-cpp"]
-lang-css        = ["moltis-memory/lang-css"]
-lang-html       = ["moltis-memory/lang-html"]
-lang-java       = ["moltis-memory/lang-java"]
-lang-json       = ["moltis-memory/lang-json"]
-lang-markdown   = ["moltis-memory/lang-markdown"]
-lang-ruby       = ["moltis-memory/lang-ruby"]
-lang-toml       = ["moltis-memory/lang-toml"]
-lang-typescript = ["moltis-memory/lang-typescript"]
+code-index-builtin = ["moltis-gateway/code-index-builtin"]
+code-splitter      = ["moltis-memory/code-splitter"]
+discord            = ["moltis-httpd/discord"]
+embedded-assets    = ["moltis-web?/embedded-assets"]
+embedded-wasm      = ["moltis-tools/embedded-wasm"]
+file-watcher       = ["moltis-gateway/file-watcher"]
+firecrawl          = ["moltis-gateway/firecrawl"]
+fs-tools           = ["moltis-gateway/fs-tools"]
+graphql            = ["moltis-httpd/graphql", "moltis-web?/graphql"]
+jemalloc           = ["dep:tikv-jemallocator"]
+lang-bash          = ["moltis-memory/lang-bash"]
+lang-c             = ["moltis-memory/lang-c"]
+lang-cpp           = ["moltis-memory/lang-cpp"]
+lang-css           = ["moltis-memory/lang-css"]
+lang-go            = ["moltis-memory/lang-go"]
+lang-html          = ["moltis-memory/lang-html"]
+lang-java          = ["moltis-memory/lang-java"]
+lang-javascript    = ["moltis-memory/lang-javascript"]
+lang-json          = ["moltis-memory/lang-json"]
+lang-markdown      = ["moltis-memory/lang-markdown"]
+lang-python        = ["moltis-memory/lang-python"]
+lang-ruby          = ["moltis-memory/lang-ruby"]
+lang-rust          = ["moltis-memory/lang-rust"]
+lang-toml          = ["moltis-memory/lang-toml"]
+lang-typescript    = ["moltis-memory/lang-typescript"]
 # jemalloc is intentionally unavailable on linux/aarch64 to avoid runtime
 # crashes on 16 KiB page kernels (e.g. Raspberry Pi OS variants).
-lightweight        = ["jemalloc", "tls", "web-ui"]
-local-llm          = ["moltis-gateway/local-llm"]
-local-llm-cuda     = ["local-llm", "moltis-gateway/local-llm-cuda"]
-local-llm-metal    = ["local-llm", "moltis-gateway/local-llm-metal"]
-local-llm-vulkan   = ["local-llm", "moltis-gateway/local-llm-vulkan"]
-matrix             = ["moltis-httpd/matrix"]
-mdns               = ["moltis-gateway/mdns"]
-metrics            = ["moltis-httpd/metrics", "moltis-web?/metrics"]
-ngrok              = ["moltis-httpd/ngrok", "moltis-web?/ngrok"]
-nostr              = ["moltis-httpd/nostr"]
-openclaw-import    = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-import"]
-prometheus         = ["moltis-httpd/prometheus"]
-push-notifications = ["moltis-httpd/push-notifications", "moltis-web?/push-notifications"]
-qmd                = ["moltis-gateway/qmd"]
-slack              = ["moltis-httpd/slack"]
-tailscale          = ["moltis-httpd/tailscale", "moltis-web?/tailscale"]
-tls                = ["moltis-httpd/tls"]
-trusted-network    = ["moltis-httpd/trusted-network"]
-vault              = ["moltis-httpd/vault", "moltis-web?/vault"]
-voice              = ["moltis-gateway/voice", "moltis-web?/voice"]
-wasm               = ["moltis-tools/wasm"]
-web-ui             = ["dep:moltis-web", "moltis-httpd/web-ui"]
-whatsapp           = ["moltis-gateway/whatsapp"]
+claude-import         = ["dep:moltis-claude-import", "moltis-gateway/claude-import"]
+codex-import          = ["dep:moltis-codex-import", "moltis-gateway/codex-import"]
+hermes-import         = ["dep:moltis-hermes-import", "moltis-gateway/hermes-import"]
+lightweight           = ["jemalloc", "tls", "web-ui"]
+local-embeddings      = ["moltis-gateway/local-embeddings"]
+local-llm             = ["moltis-gateway/local-llm"]
+local-llm-cuda        = ["local-llm", "moltis-gateway/local-llm-cuda"]
+local-llm-metal       = ["local-llm", "moltis-gateway/local-llm-metal"]
+local-llm-vulkan      = ["local-llm", "moltis-gateway/local-llm-vulkan"]
+matrix                = ["moltis-httpd/matrix"]
+mdns                  = ["moltis-gateway/mdns"]
+metrics               = ["moltis-httpd/metrics", "moltis-web?/metrics"]
+msteams               = ["moltis-httpd/msteams"]
+ngrok                 = ["moltis-httpd/ngrok", "moltis-web?/ngrok"]
+nostr                 = ["moltis-httpd/nostr"]
+openclaw-import       = ["dep:moltis-openclaw-import", "moltis-gateway/openclaw-import"]
+prometheus            = ["moltis-httpd/prometheus"]
+provider-openai-codex = ["moltis-gateway/provider-openai-codex"]
+push-notifications    = ["moltis-httpd/push-notifications", "moltis-web?/push-notifications"]
+qmd                   = ["moltis-gateway/qmd"]
+signal                = ["moltis-httpd/signal"]
+slack                 = ["moltis-httpd/slack"]
+tailscale             = ["moltis-httpd/tailscale", "moltis-web?/tailscale"]
+telegram              = ["moltis-gateway/telegram"]
+telephony             = ["moltis-httpd/telephony"]
+tls                   = ["moltis-httpd/tls"]
+trusted-network       = ["moltis-httpd/trusted-network"]
+vault                 = ["moltis-httpd/vault", "moltis-web?/vault"]
+vercel-sandbox        = ["moltis-tools/vercel-sandbox"]
+voice                 = ["moltis-gateway/voice", "moltis-web?/voice"]
+wasm                  = ["moltis-tools/wasm"]
+web-ui                = ["dep:moltis-web", "moltis-httpd/web-ui"]
+whatsapp              = ["moltis-gateway/whatsapp"]
 
 [lints]
 workspace = true

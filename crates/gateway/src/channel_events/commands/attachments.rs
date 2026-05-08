@@ -132,7 +132,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
     // user activity as a heuristic and mark prior session history seen.
     state.services.session.mark_seen(&session_key).await;
 
-    let chat = state.chat().await;
+    let chat = state.chat();
     let mut params = serde_json::json!({
         "content": content_parts,
         "channel": &meta,

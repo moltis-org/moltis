@@ -19,6 +19,1031 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260507.05] - 2026-05-07
+### Added
+- [nodes] Ed25519 challenge-response node identity (TOFU) (#979)
+- [telephony] Add phone call support via Twilio (#920)
+
+
+### Removed
+- [release] Remove gpg signing confirmation prompt
+
+
+### Fixed
+- [website] Hide unpublished releases from changelog
+- [website] Publish 20260507.04 changelog
+- [release] Avoid signing build tools
+- [release] Read gpg signing confirmation from tty
+- [release] Log gpg signing confirmation input
+- [release] Compare gpg confirmation literally
+- [browser] Resolve sandbox profile host mounts (#980)
+- [release] Remove macos app cache from release workflow
+- [ci] Stabilize e2e navigation and nodes setup
+
+## [20260507.04] - 2026-05-07
+### Fixed
+- [e2e] Align sandbox settings tests with tabs
+
+## [20260507.03] - 2026-05-07
+### Fixed
+- [sandbox] Clean up linux firecracker checks
+
+## [20260507.02] - 2026-05-07
+### Fixed
+- [sandbox] Compile firecracker backend with all features
+
+## [20260507.01] - 2026-05-07
+### Added
+- [sandbox] Remote & multi-backend sandbox support (Vercel, Daytona, Firecracker) (#942)
+
+
+### Changed
+- [e2e] Consolidate sendRpcFromPage into shared helpers
+
+
+### Removed
+- Remove unused sendRpcFromPage import from sessions.spec.js
+- [ci] Drop e2e runtime state before cache save
+- [e2e] Remove retry-hidden flakes
+- [ci] Remove temporary websocket diagnostics
+
+
+### Fixed
+- [e2e] Revert tee log capture (breaks exec on CI), reduce RPC timeout to 5s
+- [e2e] Reduce sendRpc retries from 40 to 10 — 40×5s=200s per test was hanging CI
+- [gateway] Derive Default for ClientRegistryInner to satisfy clippy
+- [gateway] Complete ClientRegistry migration — remove duplicate fields from GatewayInner
+- [e2e] Add warmup RPC to waitForWsConnected to verify end-to-end WS
+- [ws] Spawn RPC dispatch to prevent read-loop head-of-line blocking
+- [gateway] Make chat() lock-free — move chat_override to std::sync::RwLock
+- [ws] Increase sendRpc timeout from 5s to 30s for heavy RPCs
+- [ci] Unblock chat send rpc
+- [ci] Bound chat send prompt setup
+- [ci] Avoid prompt waits on sandbox image builds
+- [ci] Keep sandbox prebuilds off request paths
+- [ci] Fail faster on e2e stalls
+- [ci] Cache e2e build prerequisites
+- [ci] Keep release e2e cache-free
+- [ci] Cap e2e startup stalls
+- [ci] Shard e2e across isolated gateways
+- [ci] Isolate e2e workers per gateway
+- [ci] Start one e2e gateway per project process
+- [e2e] Refresh share notice and split settings specs
+- [e2e] Avoid domcontentloaded navigation flake
+- [ci] Stream e2e shard progress
+- [ci] Keep e2e progress lines atomic
+- [e2e] Make autoscroll fixture deterministic
+- [e2e] Harden autoscroll setup against late renders
+- [e2e] Use real voice settings save path
+- [auth] Respect X-Forwarded-Proto for cookie Secure attribute (#970)
+- [sandbox] Serialize container startup (#971)
+- [providers] Replay DeepSeek reasoning content (#961)
+- [matrix] Add debug logging for OIDC registration and deduplicate redirect normalization (#957)
+## [20260504.01] - 2026-05-04
+
+## [20260502.01] - 2026-05-02
+### Added
+- [portable] Add data import/export for config, databases, and sessions (#951)
+- [i18n] Add zh-TW Traditional Chinese locale support (#339)
+
+
+### Fixed
+- [discord] Register slash command arguments and add all thinking levels (#950)
+- [web-ui] Prevent horizontal overflow in chat messages container (#952)
+- [portable] Allow unwrap in test modules to satisfy workspace clippy lint
+- [msteams] Collapse nested if to satisfy clippy collapsible_if lint
+- [discord] Use is_none_or and allow expect in tests for clippy
+- [e2e] Add smartScrollToBottom to chat-ui shim, fix command palette focus test
+- [e2e] Reduce appended element height below isChatAtBottom threshold in autoscroll test
+- [e2e] Add "Import Your Data" heading to auth spec onboarding matcher
+- [i18n] Add missing zh-TW reasoning keys and fix biome formatting
+- [telegram] Upgrade teloxide 0.13→0.17 to fix multipart ThreadId panic (#954)
+- [terminal] Prevent spurious "window does not exist" error on tab creation (#955)
+- [e2e] Update reasoning toggle tests for 6 effort levels (added Minimal and Extra High)
+- [e2e] Use poll-based scroll assertion in sequential messages autoscroll test
+
+## [20260501.01] - 2026-05-01
+### Added
+- [providers] Add Zen (opencode.ai) multi-protocol provider (#944)
+- [web-ui] Hide voice buttons when stt/tts disabled in config (#943)
+
+## [20260430.02] - 2026-04-30
+### Added
+- [web-ui] Add message action bar to assistant responses (#932)
+- [gateway] Auto-generate session titles from conversation (#933)
+- Add DeepInfra provider, sandbox GPU passthrough, strict model selection (#934)
+- Detect Proxmox VE and offer LXC container install
+- [skills] Add per-skill usage telemetry to /insights and web UI (#935)
+- [sandbox] Add GitHub CLI (gh) to default sandbox packages
+- [web-ui] Show progress indicator during sandbox image build
+
+
+### Fixed
+- Replace completion-based model probe with lightweight catalog check (#931)
+- [deploy] Correct subcommand in systemd service file
+- [web-ui] Clipboard copy button broken on insecure contexts (#936)
+- [deploy] Use bare moltis command in systemd service
+- [web-ui] System-notice text overflows excessively rounded container (#941)
+- [httpd] Handle SIGTERM for graceful Docker shutdown (#940)
+- [sandbox] Wait for image build before launching containers
+- [e2e] Fix clipboard, provider order, and reasoning toggle tests
+- [httpd] Gate msteams-only imports behind feature flag
+- [e2e] Fix settings-nav, voice, onboarding, and command palette tests
+
+## [20260430.01] - 2026-04-30
+### Added
+- Add /btw, /fast, /insights, /steer, /queue commands and auxiliary model config (#926)
+
+
+### Fixed
+- [mcp] Preserve auth_state on expired OAuth token so re-auth button shows (#930)
+- [web-ui] Remove scroll-hijacking ResizeObserver in chat (#922) (#925)
+
+## [20260429.02] - 2026-04-29
+### Added
+- [voice] Add voice personas for deterministic TTS identity (#916)
+
+
+### Fixed
+- [sandbox] Prevent sandbox escape via RestrictedHostSandbox and FailoverSandbox (#924)
+
+## [20260429.01] - 2026-04-29
+### Added
+- [update] Add /update command and web UI update button (#911)
+- [browser] Add Obscura as lightweight sidecar browser backend (#869)
+- [web] Add command palette (Cmd+K / Ctrl+K) (#904)
+- [import] Add multi-source import from Claude Code, Claude Desktop, and Hermes (#914)
+- [import] Add Claude Code and Hermes import to web UI (#917)
+
+
+### Changed
+- [config] Unify provider name validation into single source of truth (#912)
+- [agents] Split model.rs into chat, convert, and stream modules
+
+
+### Removed
+- [e2e] Remove dead tests for deleted UI features
+- Remove CLAUDE.local.md from repo and add to .gitignore
+- Remove unused PathBuf imports in hermes-import
+- Remove unused imports in httpd gateway
+
+
+### Fixed
+- [e2e] Stabilize rename test and skip broken Matrix ownership test
+- [docs] Use $http_host in nginx proxy examples to preserve port (#907)
+- [e2e] Fix rename assertion, unskip Matrix ownership test
+- [gateway] Prevent USER.md from overriding saved user_name
+- [e2e] Unskip clear-all and channel-rename tests, fix for new UI
+- [release] Scope changelog entries to version deltas (#909)
+- [e2e] Rewrite stop action test for thinking indicator UI
+- [tests] Update comment preservation assertion for merge behavior
+- [providers] Sanitize and strip user name field for channel messages (#915)
+- [skills] Add missing origin metadata to data-sync, birdclaw, discrawl, wacrawl, slacrawl
+- Collapse nested if-let in MCP import
+- Collapse nested if-let in claude-import MCP servers
+- Use vec![] macro instead of push-after-init in import commands
+- [e2e] Use Ctrl+K instead of Meta+K in command palette tests
+- Restore HashMap and ChannelPlugin imports in httpd gateway
+- [web] Command palette keyboard navigation in headless Chromium
+- [web] Use capture-phase listener for command palette keyboard nav
+- [web] Eliminate rAF race in session rename input
+- [web] Prevent session switch from stealing focus during rename
+- [build] Align production feature flags
+- [web] Show /mode none hint in slash command popup
+- [web] Only guard chatInput focus against text inputs
+- [e2e] Fix flaky command palette, reasoning toggle, and projects tests
+
+## [20260428.03] - 2026-04-28
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+- [web-ui] Show chat status badges in visible toolbar row (#886)
+- [local-llm] On-demand model loading/unloading with idle timeout (#884)
+- Make telegram channel optional (#891)
+- Make discord and msteams channels optional (#899)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+- [gateway] Split skills service helpers into separate module
+- [gateway] Move skills impl out of mod.rs into service.rs
+
+
+### Removed
+- Remove needless return in skills toggle_bundled_skill
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+- [gateway] Handle bundled skill disable/enable via config (#877)
+- [gateway] Derive bundled skill enabled state from config (#878)
+- [tests] Increase watcher test timeout to accommodate debounce + FSEvents latency
+- [web-ui] Stop auto-enabling all skills on repository import (#882)
+- [skills] Store per-skill relative paths for marketplace repos (#883)
+- [tests] Mark flaky FSEvents watcher test as ignored
+- [tests] Use PollWatcher in watcher tests for reliable cross-platform behavior
+- Use if-let instead of single-arm match in poll watcher test
+- [security] Store voice API keys in credential store, not moltis.toml (#885)
+- [e2e] Update session tests for inline action buttons (#886 follow-up)
+- [tests] Add missing LocalLlmService trait methods to MockLocalLlm
+- Collapse nested if-let in key_store timestamp check
+- Derive Default for ModelLifecycleManager
+- [web-ui] Restore session name and inline rename in chat toolbar (#892)
+- Use ApplicationType::Web for non-loopback Matrix OIDC redirect URIs (#893)
+- Add TSX source to Tailwind content scanning
+- Show RPC error messages in skills UI and auto-trust on install (#897)
+- [config] Add mcp field to agent preset in schema map
+- [e2e] Update tests for identity→profile route rename
+- [e2e] Complete identity→profile rename in remaining tests
+- [e2e] Stabilize session rename test against onBlur race
+- [config] Use atomic writes to prevent moltis.toml corruption
+- [config] Use unique temp file for atomic writes
+- [config] Move tempfile from dev-dependencies to dependencies
+- [e2e] Use .chat-session-name selector for rename assertion
+- [ci] Copy scripts/ into Docker build and improve download retries
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260428.02] - 2026-04-28
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+- [web-ui] Show chat status badges in visible toolbar row (#886)
+- [local-llm] On-demand model loading/unloading with idle timeout (#884)
+- Make telegram channel optional (#891)
+- Make discord and msteams channels optional (#899)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+- [gateway] Split skills service helpers into separate module
+- [gateway] Move skills impl out of mod.rs into service.rs
+
+
+### Removed
+- Remove needless return in skills toggle_bundled_skill
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+- [gateway] Handle bundled skill disable/enable via config (#877)
+- [gateway] Derive bundled skill enabled state from config (#878)
+- [tests] Increase watcher test timeout to accommodate debounce + FSEvents latency
+- [web-ui] Stop auto-enabling all skills on repository import (#882)
+- [skills] Store per-skill relative paths for marketplace repos (#883)
+- [tests] Mark flaky FSEvents watcher test as ignored
+- [tests] Use PollWatcher in watcher tests for reliable cross-platform behavior
+- Use if-let instead of single-arm match in poll watcher test
+- [security] Store voice API keys in credential store, not moltis.toml (#885)
+- [e2e] Update session tests for inline action buttons (#886 follow-up)
+- [tests] Add missing LocalLlmService trait methods to MockLocalLlm
+- Collapse nested if-let in key_store timestamp check
+- Derive Default for ModelLifecycleManager
+- [web-ui] Restore session name and inline rename in chat toolbar (#892)
+- Use ApplicationType::Web for non-loopback Matrix OIDC redirect URIs (#893)
+- Add TSX source to Tailwind content scanning
+- Show RPC error messages in skills UI and auto-trust on install (#897)
+- [config] Add mcp field to agent preset in schema map
+- [e2e] Update tests for identity→profile route rename
+- [e2e] Complete identity→profile rename in remaining tests
+- [e2e] Stabilize session rename test against onBlur race
+- [config] Use atomic writes to prevent moltis.toml corruption
+- [config] Use unique temp file for atomic writes
+- [config] Move tempfile from dev-dependencies to dependencies
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260428.01] - 2026-04-28
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+- [web-ui] Show chat status badges in visible toolbar row (#886)
+- [local-llm] On-demand model loading/unloading with idle timeout (#884)
+- Make telegram channel optional (#891)
+- Make discord and msteams channels optional (#899)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+- [gateway] Split skills service helpers into separate module
+- [gateway] Move skills impl out of mod.rs into service.rs
+
+
+### Removed
+- Remove needless return in skills toggle_bundled_skill
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+- [gateway] Handle bundled skill disable/enable via config (#877)
+- [gateway] Derive bundled skill enabled state from config (#878)
+- [tests] Increase watcher test timeout to accommodate debounce + FSEvents latency
+- [web-ui] Stop auto-enabling all skills on repository import (#882)
+- [skills] Store per-skill relative paths for marketplace repos (#883)
+- [tests] Mark flaky FSEvents watcher test as ignored
+- [tests] Use PollWatcher in watcher tests for reliable cross-platform behavior
+- Use if-let instead of single-arm match in poll watcher test
+- [security] Store voice API keys in credential store, not moltis.toml (#885)
+- [e2e] Update session tests for inline action buttons (#886 follow-up)
+- [tests] Add missing LocalLlmService trait methods to MockLocalLlm
+- Collapse nested if-let in key_store timestamp check
+- Derive Default for ModelLifecycleManager
+- [web-ui] Restore session name and inline rename in chat toolbar (#892)
+- Use ApplicationType::Web for non-loopback Matrix OIDC redirect URIs (#893)
+- Add TSX source to Tailwind content scanning
+- Show RPC error messages in skills UI and auto-trust on install (#897)
+- [config] Add mcp field to agent preset in schema map
+- [e2e] Update tests for identity→profile route rename
+- [e2e] Complete identity→profile rename in remaining tests
+- [e2e] Stabilize session rename test against onBlur race
+- [config] Use atomic writes to prevent moltis.toml corruption
+- [config] Use unique temp file for atomic writes
+- [config] Move tempfile from dev-dependencies to dependencies
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260426.05] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+- [web-ui] Show chat status badges in visible toolbar row (#886)
+- [local-llm] On-demand model loading/unloading with idle timeout (#884)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Removed
+- Remove needless return in skills toggle_bundled_skill
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+- [gateway] Handle bundled skill disable/enable via config (#877)
+- [gateway] Derive bundled skill enabled state from config (#878)
+- [tests] Increase watcher test timeout to accommodate debounce + FSEvents latency
+- [web-ui] Stop auto-enabling all skills on repository import (#882)
+- [skills] Store per-skill relative paths for marketplace repos (#883)
+- [tests] Mark flaky FSEvents watcher test as ignored
+- [tests] Use PollWatcher in watcher tests for reliable cross-platform behavior
+- Use if-let instead of single-arm match in poll watcher test
+- [security] Store voice API keys in credential store, not moltis.toml (#885)
+- [e2e] Update session tests for inline action buttons (#886 follow-up)
+- [tests] Add missing LocalLlmService trait methods to MockLocalLlm
+- Collapse nested if-let in key_store timestamp check
+- Derive Default for ModelLifecycleManager
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260426.04] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+- [ci] Add --timestamp and strip get-task-allow for macOS notarization
+
+## [20260426.03] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+
+## [20260426.02] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+- Resolve clippy lints for nightly-2026-04-24 and matrix-sdk compat
+- [mcp] Prefer native MCP tools over mcporter (#874)
+- [ci] Use keychain-profile for notarization and log failures
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+
+## [20260426.01] - 2026-04-26
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+- Derive nightly toolchain from rust-toolchain.toml everywhere
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+
+## [20260425.09] - 2026-04-25
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+
+
+### Security
+- [ci] Use correct security list-keychains syntax for macOS codesign
+- [ci] Align macOS certificate import with working arbor pattern
+
+## [20260425.08] - 2026-04-25
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+- [ci] Skip libnccl-dev to work around llama-cpp-sys-2 linking bug
+- [ci] Remove pre-installed libnccl-dev from CUDA container
+- [providers] Link NCCL when llama-cpp-sys-2 compiles with GGML_USE_NCCL
+
+## [20260425.07] - 2026-04-25
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+- [ci] Match NCCL dev headers to pre-installed runtime version
+
+## [20260425.06] - 2026-04-25
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+- [ci] Pin NCCL version to match CUDA 12.4 container
+
+## [20260425.05] - 2026-04-25
+### Added
+- [cron] Add heartbeat wake cooldown to prevent exec re-fire loop (#871)
+
+
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+
+## [20260425.04] - 2026-04-25
+### Changed
+- [config] Extract initialize_config() from discover_and_load()
+
+
+### Fixed
+- [tests] Stabilize flaky memory_config_get test
+
+## [20260425.03] - 2026-04-25
+### Fixed
+- [e2e] Stabilize flaky gemini, autoscroll, and settings-nav tests
+
+## [20260425.02] - 2026-04-25
+### Fixed
+- [ci] Allow held NCCL packages to be upgraded
+
+## [20260425.01] - 2026-04-25
+### Fixed
+- [ci] Add NCCL to build deps and fix flaky tests
+
+## [20260424.09] - 2026-04-24
+### Fixed
+- Replace expect() with let-else in splitter tests
+- [benchmarks] Update code_index bench to use free-function chunker API
+
+## [20260424.08] - 2026-04-24
+
+## [20260424.07] - 2026-04-24
+### Fixed
+- Replace unwrap() with expect() in splitter tests
+
+## [20260424.06] - 2026-04-24
+### Fixed
+- Remove needless Ok wrapper in refresh_qmd_index
+
+## [20260424.05] - 2026-04-24
+
+## [20260424.04] - 2026-04-24
+### Changed
+- [splitter] Extract moltis-splitter crate for AST-aware chunking (#791)
+
+
+### Fixed
+- [ci] Prevent releases.json from updating before GitHub release exists
+- Revert releases.json to latest published release (20260421.05)
+
+## [20260424.03] - 2026-04-24
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+- [signal] Add signal-cli channel (#841)
+- [home-assistant] Native Home Assistant integration crate (#827)
+- [web-ui] Smart auto-scroll for chat messages (#846)
+- [projects] Add code_index_enabled toggle to project settings (#837)
+- [web] Add push-to-talk, VAD continuous listening, and voice settings (#303)
+- [config] Layered config with defaults.toml and override-only user config (#864)
+- [discord] Channel name pattern filtering and per-pattern overrides (#865)
+- [config] Add default sub-agent presets (#844)
+- [config] Add config compact command and auto-compact on startup
+- [skills] MCP server management skill and post-install recipes (#840)
+
+
+### Changed
+- [providers] Split openai_compat tests into submodules
+- [config] Split loader tests into submodules (file-size limit)
+- [gateway] Extract NoopSkillsService into services/skills.rs (file-size limit)
+
+
+### Removed
+- Remove set -e from codesign-debug recipe that breaks just test
+- [web] Remove stale accountId assertion from signal channel E2E test
+- [ui] Wire up project combo dropdown in chat header (#847)
+- [config] Remove unused imports from test submodule
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+- [mcp] Show re-auth button when OAuth server needs re-authentication (#852)
+- [sandbox] Skip sysfs tmpfs mounts for missing paths (ARM/Raspberry Pi) (#853)
+- [prompt] Move datetime from system message to user content for KV cache stability (#855)
+- [providers] Deep-merge properties in schema union collapse, strip redundant boolean enum (#856)
+- [channels] Update ALL variant count for Signal channel type
+- [web] Align signal channel E2E test with actual modal text
+- [web] Stabilize flaky E2E tests
+- Enforce correct date in silent memory turn daily log filenames (#859)
+- [macos] Configure release signing and notarization (#842)
+- [web] Add vault-sealed banner to main app (#839)
+- [skills] Materialize bundled skill scripts to disk for execution (#861)
+- [web] Biome formatting and i18n parity for projects page
+- [config] Derive Default for HomeAssistantConfig and collapse nested if
+- [config] Allow unwrap in code_index tests
+- [home-assistant] Clippy collapsible-if and field-reassign-with-default
+- [benchmarks] Add missing deps for code_index bench
+- [code-index] Replace redundant closure with PathBuf::from
+- Repair code-index compilation errors in gateway and benchmarks
+- Resolve remaining clippy errors from code-index feature
+- [providers] Strip null from enum arrays for Fireworks AI (#862)
+- [web] Repair chat-autoscroll and projects E2E tests
+- [benchmarks] Wire qmd feature to moltis-qmd dep for --all-features CI
+- [ci] Explicitly set draft: false on release upload to prevent orphaned drafts
+- [agents] Add missing mode field to PromptRuntimeContext in tests
+- [gateway] Collapse nested if for clippy
+- [ctl] Clippy unnecessary_lazy_evaluations
+- [graphql] Add missing SkillsService trait methods to MockSkills
+- [gateway] Collapse nested if for clippy
+
+## [20260424.02] - 2026-04-24
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+- [signal] Add signal-cli channel (#841)
+- [home-assistant] Native Home Assistant integration crate (#827)
+- [web-ui] Smart auto-scroll for chat messages (#846)
+- [projects] Add code_index_enabled toggle to project settings (#837)
+
+
+### Changed
+- [providers] Split openai_compat tests into submodules
+
+
+### Removed
+- Remove set -e from codesign-debug recipe that breaks just test
+- [web] Remove stale accountId assertion from signal channel E2E test
+- [ui] Wire up project combo dropdown in chat header (#847)
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+- [mcp] Show re-auth button when OAuth server needs re-authentication (#852)
+- [sandbox] Skip sysfs tmpfs mounts for missing paths (ARM/Raspberry Pi) (#853)
+- [prompt] Move datetime from system message to user content for KV cache stability (#855)
+- [providers] Deep-merge properties in schema union collapse, strip redundant boolean enum (#856)
+- [channels] Update ALL variant count for Signal channel type
+- [web] Align signal channel E2E test with actual modal text
+- [web] Stabilize flaky E2E tests
+- Enforce correct date in silent memory turn daily log filenames (#859)
+- [macos] Configure release signing and notarization (#842)
+- [web] Add vault-sealed banner to main app (#839)
+- [skills] Materialize bundled skill scripts to disk for execution (#861)
+- [web] Biome formatting and i18n parity for projects page
+- [config] Derive Default for HomeAssistantConfig and collapse nested if
+- [config] Allow unwrap in code_index tests
+- [home-assistant] Clippy collapsible-if and field-reassign-with-default
+- [benchmarks] Add missing deps for code_index bench
+- [code-index] Replace redundant closure with PathBuf::from
+- Repair code-index compilation errors in gateway and benchmarks
+- Resolve remaining clippy errors from code-index feature
+- [providers] Strip null from enum arrays for Fireworks AI (#862)
+- [web] Repair chat-autoscroll and projects E2E tests
+- [benchmarks] Wire qmd feature to moltis-qmd dep for --all-features CI
+
+## [20260424.01] - 2026-04-24
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+- [signal] Add signal-cli channel (#841)
+
+
+### Changed
+- [providers] Split openai_compat tests into submodules
+
+
+### Removed
+- Remove set -e from codesign-debug recipe that breaks just test
+- [web] Remove stale accountId assertion from signal channel E2E test
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+- [mcp] Show re-auth button when OAuth server needs re-authentication (#852)
+- [sandbox] Skip sysfs tmpfs mounts for missing paths (ARM/Raspberry Pi) (#853)
+- [prompt] Move datetime from system message to user content for KV cache stability (#855)
+- [providers] Deep-merge properties in schema union collapse, strip redundant boolean enum (#856)
+- [channels] Update ALL variant count for Signal channel type
+
+## [20260423.01] - 2026-04-23
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+- [ci] Move release test job to self-hosted runner
+- [skills] Repair embedded bundled skill discovery in release builds
+
+## [20260422.01] - 2026-04-22
+### Added
+- [skills] Add bundled skill category management to onboarding and settings (#829)
+
+
+### Fixed
+- [tools] Block exec approval bypass via env-var prefix injection (#822)
+- [browser] Add diagnostic logging for container readiness failures (#820)
+- [gateway] Downgrade broadcast log from debug to trace (#830)
+- [chat] Correct push notification click-through URL (#831)
+- [tools] Skip sysfs tmpfs mounts on WSL2 (#835)
+- [chat] Preserve Gemini tool call metadata (#836)
+- [providers] Normalize non-strict tool schema unions (#833)
+- [providers] Apply Kimi router overrides in Fireworks integration tests (#832)
+- [config] Resolve ${VAR} placeholders against [env] section and DB env vars (#834)
+- [web] Repair gemini tool-signature and reasoning-toggle E2E tests
+
+## [20260421.05] - 2026-04-21
+### Fixed
+- [code-index] Use discover_opts with permissive trust for gix
+- [web] Render inline markdown in table cells
+- [code-index] Set required_trust to Reduced for gix discovery
+- [code-index] Use struct init for clippy field_reassign_with_default
+- [code-index] Use open_opts with forced Trust::Full for gix
+- [code-index] Skip git-dependent tests when .git is absent
+- [telegram] Infer MIME from filename when Telegram sends octet-stream (#819)
+- [ci] Install git before checkout in CUDA containers
+
+## [20260421.04] - 2026-04-21
+### Fixed
+- [ci] Make safe.directory step non-fatal when git is absent
+
+## [20260421.03] - 2026-04-21
+### Fixed
+- [ci] Restore original step order, fix gix open, revert npm flag
+
+## [20260421.02] - 2026-04-21
+### Fixed
+- [ci] Gix safe.directory, read_ops file_path regression, npm --ignore-scripts
+- [tools] Empty file_path falls through to read_primary, whitespace rejected
+
+## [20260421.01] - 2026-04-21
+### Added
+- [channels] Centralized command registry for all channels (#794)
+- Gemini thought_signature round-tripping and schema validation fixes (#795)
+- Self-improving agent loop — skills, memory lifecycle, deployment (#803)
+- [web] Add GitHub Issues and Discussions links with count badges (#806)
+- [sandbox] Install Node.js 22 LTS via NodeSource (#807)
+- [web] Render markdown as HTML in chat messages (#808)
+- [skills] Bundle 101 default skills with category UI and format fallback (#797)
+
+
+### Changed
+- [tools] Split skill_tools.rs into submodules
+
+
+### Fixed
+- [ci] Add safe.directory for container jobs (gix ownership check)
+- [slack] Strip leading slash from commands before gateway dispatch (#804)
+- [mcp] Implement legacy SSE transport for endpoint discovery (#805)
+- [ci] Biome formatting and file size allowlist
+- [sandbox] Verify image in Podman store after BuildKit build (#811)
+- [providers] Disable strict tools for Fireworks Kimi router (#812)
+- [ci] Npm --ignore-scripts and git install ordering
+- [ci] Pass safe.directory to gix via env vars in rust-ci container
+
+## [20260420.02] - 2026-04-20
+### Fixed
+- [ci] Address main rust failures
+
+## [20260420.01] - 2026-04-20
+### Fixed
+- [ci] Handle .ts locale files in i18n-check on Node <22
+
+## [20260419.01] - 2026-04-19
+### Added
+- [code-index] Add code indexing crate with builtin SQLite+FTS5 backend (#771)
+- [config] Add server.external_url for reverse proxy WebAuthn (#785)
+
+
+### Changed
+- Add thiserror Error types to 8 library crates (#792)
+
+
+### Fixed
+- [task_list] List all tasks by default and add list_lists action (#779)
+- [sandbox] Add observability and prevent repeated package provisioning (#784)
+
+## [20260417.02] - 2026-04-17
+### Added
+- [nostr] Add NIP-59 Gift Wrap support for private DMs (#763)
+- [matrix] Add OIDC authentication via Matrix Authentication Service (#730)
+
+
+### Removed
+- [tests] Remove hardcoded secret fixtures (#768)
+
+
+### Fixed
+- [providers] Strip $schema recursively and downgrade fallback log level (#762)
+- [matrix] Retry sync loop on transient connection failures (#761)
+- [e2e] Stabilize archived-sessions and nostr channel tests
+- [sandbox] Skip sysfs tmpfs overlays on Podman (#765)
+- [slack] Register /commands HTTP endpoint for slash commands (#767)
+- [matrix] Restore main CI after OIDC changes
+
+## [20260417.01] - 2026-04-17
+### Added
+- [web] Add reasoning effort toggle to chat toolbar (#750)
+
+
+### Fixed
+- [providers] Sanitize MCP tool schemas regardless of JSON Schema draft (#746)
+- [node-host] Install rustls CryptoProvider before wss:// connections (#749)
+- [providers] Prune orphaned required entries from tool schemas (#751)
+- [web] Satisfy biome and format gates
+- [testing] Avoid CUDA features in Darwin test recipes
+- [web] Stabilize session delete flow
+- [ci] Harden linux dependency installer
+
+## [20260416.02] - 2026-04-16
+### Added
+- [providers] Configurable context windows + oldest-first compaction (#737)
+
+
+### Changed
+- [tests] Split oversized Rust test modules
+
+
+### Fixed
+- [ci] Repair MCP e2e and iOS chat event handling
+- [providers] Detect Grok 3/4 as reasoning-capable models (#741)
+- [nostr] Replace tokio RwLock with std RwLock to prevent panic (#742)
+- [providers] Restore type annotations stripped by schema canonicalization (#740)
+- [ci] Retry Linux dependency installs and align Darwin validation
+- [ci] Install openssh client in Linux build container
+
+## [20260415.01] - 2026-04-15
+### Added
+- Allow GUIDELINES.md file override for hardcoded tool guidelines
+- [channels] Add WhatsApp to default offered channels
+- [whatsapp] Auto-approve owner, set device name, wrap buttons
+- [whatsapp] Handle PairSuccess event for instant QR dismissal
+- [whatsapp] Make Account ID optional, default to "main"
+- [web] Add Slack channel to onboarding wizard
+
+
+### Changed
+- Clean up provider tests and onboarding UI
+- Move implementation code out of mod.rs and lib.rs (#731)
+
+
+### Removed
+- [web] Remove duplicate assets warn import
+
+
+### Fixed
+- [graphql] Make sessionKey required for all chat operations
+- [graphql] Address PR review — harden subscription filter and tests
+- [onboarding] Show version in server footer
+- [web] Prefer embedded assets over stale share dir
+- [chat] Preserve sender names in user messages
+- [providers] Address sender-name review feedback
+- Move return inside empty-guard in append_guidelines_section (PR 714 review)
+- [providers] Skip strict tool schemas for Google/Gemini via OpenRouter (#716)
+- [providers] Also detect googleapis.com URLs for non-strict tools
+- [providers] Collapse type arrays in strict mode patching (#716)
+- [whatsapp] Upgrade whatsapp-rust ecosystem 0.2 → 0.5
+- [whatsapp] Use time crate for timestamps, fix DashMap sync key ordering
+- [whatsapp] Add QR code polling fallback for pairing
+- [whatsapp] Skip duplicate account start, add QR polling e2e test
+- [whatsapp] Use res.payload not res.result for QR polling
+- [whatsapp] Render QR code as SVG in polling response
+- [whatsapp] Skip history sync on pairing
+- [whatsapp] Detect pairing completion via polling
+- [channels] Add missing useRef import in page-channels.js
+- [whatsapp] Set OS name to Moltis, add no-sync hints
+- [whatsapp] Fix mangled no-sync hints in onboarding view
+- [whatsapp] Auto-approve both PN and LID JIDs, add debug logging
+- [whatsapp] Fix QR code not displaying when Account ID is empty
+- [whatsapp] Instant pairing feedback and owner auto-approve
+- [whatsapp] Subscribe to channel events in onboarding WS
+- [whatsapp] Only auto-approve owner PN JID, not LID
+- [whatsapp] Use PN JID for self-chat replies instead of LID
+- [whatsapp] Show phone number in self-chat footer instead of LID
+- [channels] Don't drop channel_user WS broadcast
+- [whatsapp] Use bare phone number as self-chat session ID
+- [agents] Strip trailing stop tokens leaked by LLMs as content
+- [agents] Address PR review comments
+- [providers] Repair openai compat CI regressions (#722)
+- [agents] Collapse nested if per clippy collapsible_if lint
+- [web] Restore setup onboarding alias
+- [providers] Add null to enum arrays for nullable optional props (#724)
+- [mcp] Treat any HTTP response as alive in health check (#732) (#733)
+- [chat] Broadcast user_message event so API-sent messages appear in web UI (#734)
+
 ## [20260414.02] - 2026-04-14
 ### Changed
 - [node-exec] Merge node exec types into owners
