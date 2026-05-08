@@ -7465,7 +7465,7 @@ dependencies = [
  "tokio-stream",
  "tokio-test",
  "tracing",
- "which 8.0.0",
+ "which 8.0.2",
 ]
 
 [[package]]
