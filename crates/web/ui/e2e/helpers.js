@@ -232,6 +232,9 @@ async function createSession(page) {
 async function waitForChatSessionReady(page) {
 	await page.waitForFunction(
 		async () => {
+			var store = window.__moltis_stores?.sessionStore;
+			if (store?.switchInProgress?.value) return false;
+			if (document.getElementById("sessionLoadIndicator")) return false;
 			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
 			if (!appScript) return false;
 			var appUrl = new URL(appScript.src, window.location.origin);
