@@ -2,8 +2,8 @@
 
 export default {
 	install: {
-		title: "將 moltis 安裝至裝置",
-		quickAccessTitle: "安裝 moltis 以快速存取",
+		title: "將 Moltis 安裝至裝置",
+		quickAccessTitle: "安裝 Moltis 以快速存取",
 		quickAccessDesc: "享有原生應用程式體驗，並支援離線使用。",
 	},
 	ios: {

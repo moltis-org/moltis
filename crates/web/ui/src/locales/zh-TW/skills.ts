@@ -22,7 +22,7 @@ export default {
 	installPlaceholder: "owner/repo 或完整 URL（例如 anthropics/skills）",
 	install: "安裝",
 	installing: "安裝中\u2026",
-	installingSource: "正在安裝 {{source}}...",
+	installingSource: "正在安裝 {{source}}\u2026",
 	installMayTakeWhile: "這可能需要一些時間（下載 + 掃描）。",
 	installedSuccess: "已安裝 {{source}}（{{count}} 個 Skills）",
 	failedGeneric: "失敗：{{error}}",
@@ -39,9 +39,9 @@ export default {
 	enabledCount: "{{enabled}}/{{total}} 已啟用",
 	sha: "sha {{sha}}",
 	sourceChanged: "來源已變更",
-	orphanedOnDisk: "磁碟上的孤立項目",
+	orphanedOnDisk: "磁碟上孤立的儲存庫",
 	remove: "移除",
-	removing: "移除中...",
+	removing: "移除中\u2026",
 	searchSkillsIn: "在 {{source}} 中搜尋 Skills\u2026",
 	orphanedRepoHint: "孤立的儲存庫：請重新安裝以還原中繼資料",
 	noMatchingSkills: "沒有相符的 Skills。",
@@ -55,8 +55,8 @@ export default {
 	disabledSkill: "已停用 {{name}}",
 	cannotDisableUnknownSource: "無法停用：未知的 Skill 來源。",
 	deleteSkillConfirm: "確定要刪除 Skill「{{name}}」嗎？這會移除 SKILL.md 檔案。",
-	disabling: "停用中...",
-	deleting: "刪除中...",
+	disabling: "停用中\u2026",
+	deleting: "刪除中\u2026",
 
 	// ── Skill detail panel ──────────────────────────────────
 	protected: "受保護",
@@ -77,7 +77,7 @@ export default {
 	// ── Badges ──────────────────────────────────────────────
 	blocked: "已封鎖",
 	eligible: "符合資格",
-	noDeps: "未宣告相依項目",
+	noDeps: "未宣告相依套件",
 	untrusted: "未信任",
 	enabled: "已啟用",
 
@@ -96,15 +96,15 @@ export default {
 	driftWarning: "自上次信任後來源已變更；請在重新啟用前檢閱更新內容。",
 
 	// ── Security warning ────────────────────────────────────
-	securityTitle: "\u26a0\ufe0f Skills 會在您的機器上執行程式碼 — 請將每個 Skill 都視為不受信任的程式碼",
+	securityTitle: "\u26a0\ufe0f Skills 會在您的電腦上執行程式碼，預設請不要信任任何 Skill",
 	securityIntro:
-		"Skills 是社群撰寫的指令，AI 代理會<strong>以您的完整系統權限</strong>來遵循執行。熱門程度或下載次數並不代表 Skill 是安全的。惡意 Skill 可能會指示代理：",
-	threat1: "在您的機器上執行任意 shell 指令（安裝惡意軟體、加密貨幣挖礦程式、後門程式）",
+		"Skills 是社群撰寫的指令，AI 助理會<strong>以您的完整系統權限</strong>執行這些指令。熱門程度或下載次數並不代表 Skill 是安全的。惡意 Skill 可能會指示 AI 助理：",
+	threat1: "在您的電腦上執行任意 shell 指令（安裝惡意軟體、加密貨幣挖礦程式、後門程式）",
 	threat2: "讀取並竊取敏感資料 — SSH 金鑰、API 權杖、瀏覽器 Cookie、憑證、環境變數",
 	threat3: "修改或刪除您檔案系統中的檔案，包括其他專案",
 	threat4: "在您不知情的情況下透過 curl/wget 將您的資料傳送至遠端伺服器",
 	securityReview:
-		"在啟用每個 Skill 前，請仔細檢查其原始碼。請閱讀完整的 SKILL.md 及其參照的所有腳本 — 這些就是代理將代替您執行的指令。不要僅因為某個 Skill 熱門、下載量高或出現在排行榜上就輕易信任。",
+		"啟用每個 Skill 前，請仔細檢查其原始程式碼。請完整閱讀 SKILL.md 和其中參照的所有腳本；AI 助理會代替您執行這些指令。不要僅因為某個 Skill 熱門、下載量高或出現在排行榜上就輕易信任。",
 	securitySandbox:
 		"啟用沙盒模式（Docker、Apple Container 或 cgroup）後，指令執行會被隔離，惡意 Skill 所能造成的損害將大幅受限。",
 	dismiss: "關閉",
@@ -112,11 +112,11 @@ export default {
 
 	// ── Bundled categories ──────────────────────────────────
 	bundledTitle: "內建 Skills 類別",
-	bundledDescription: "切換內建 Skills 的類別。停用的類別將不會納入代理的上下文。",
+	bundledDescription: "切換內建 Skills 的類別。停用的類別不會加入 AI 助理可參考的內容。",
 
 	// ── Featured skill descriptions ─────────────────────────
 	featuredOpenClaw: "來自 ClawdHub 的社群 Skills",
-	featuredAnthropic: "Anthropic 官方代理 Skills",
-	featuredVercelAgent: "Vercel 代理 Skills 集合",
+	featuredAnthropic: "Anthropic 官方 AI 助理 Skills",
+	featuredVercelAgent: "Vercel AI 助理 Skills 集合",
 	featuredVercelSkills: "Vercel Skills 工具組",
 };

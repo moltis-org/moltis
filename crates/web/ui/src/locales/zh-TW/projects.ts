@@ -6,7 +6,7 @@ export default {
 		"專案會將工作階段繫結至程式碼庫目錄。當工作階段連結至專案時，會自動載入上下文檔案（CLAUDE.md、AGENTS.md、.cursorrules 及規則目錄），掃描高風險的提示詞注入模式，並注入系統提示詞。啟用自動 worktree，可讓每個工作階段擁有自己的 git 分支以隔離作業。",
 	autoDetectDescription:
 		'<strong class="text-[var(--text)]">自動偵測</strong>會掃描家目錄下的常見目錄（<code class="font-mono text-xs">~/Projects</code>、<code class="font-mono text-xs">~/Developer</code>、<code class="font-mono text-xs">~/src</code>、<code class="font-mono text-xs">~/code</code>、<code class="font-mono text-xs">~/repos</code>、<code class="font-mono text-xs">~/workspace</code>、<code class="font-mono text-xs">~/dev</code>、<code class="font-mono text-xs">~/git</code>）及 Superset 工作目錄（<code class="font-mono text-xs">~/.superset/worktrees</code>），尋找 git 儲存庫並新增為專案。',
-	clearAllHint: "「全部清除」只會從 Moltis 中移除儲存庫項目，不會刪除磁碟上的任何檔案。",
+	clearAllHint: "「全部清除」只會從 Moltis 中移除儲存庫記錄，不會刪除磁碟上的任何檔案。",
 	noProjectsConfigured: "尚未設定專案。請在上方新增目錄或使用自動偵測。",
 	confirmClearAll: "確定要從 Moltis 中清除所有儲存庫嗎？此操作僅從清單中移除，不會刪除磁碟上的檔案。",
 	confirmClearAllButton: "全部清除",
@@ -15,7 +15,7 @@ export default {
 	clearAll: "全部清除",
 	clearing: "清除中\u2026",
 	autoDetectTooltip: "掃描常見位置中的 git 儲存庫並新增為專案",
-	clearAllTooltip: "從 Moltis 中移除所有儲存庫項目，不刪除磁碟上的檔案",
+	clearAllTooltip: "從 Moltis 中移除所有儲存庫記錄，不刪除磁碟上的檔案",
 	pathInput: {
 		directory: "目錄",
 		placeholder: "/path/to/project",
@@ -45,7 +45,7 @@ export default {
 		setupCommandPlaceholder: "例如 pnpm install",
 		teardownCommand: "Teardown 指令",
 		teardownCommandPlaceholder: "例如 docker compose down",
-		branchPrefix: "分支前綴",
+		branchPrefix: "分支字首",
 		branchPrefixPlaceholder: "預設：moltis",
 		sandboxImage: "沙盒映像檔",
 		sandboxImagePlaceholder: "預設（ubuntu:25.10）",

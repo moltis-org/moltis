@@ -63,7 +63,7 @@ export default {
 	// Share
 	share: {
 		linkCopied: "分享連結已複製",
-		privateNotice: "私人連結包含金鑰，請僅分享給信任的對象",
+		privateNotice: "私密連結包含金鑰，請僅分享給信任的對象",
 		createFailed: "建立分享連結失敗",
 	},
 

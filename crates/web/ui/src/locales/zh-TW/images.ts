@@ -4,9 +4,9 @@ export default {
 	// ── Page-level ──────────────────────────────────────────
 	title: "沙盒",
 	description:
-		"moltis 快取的容器映像檔，用於沙盒執行。您可以刪除個別映像檔或清除全部。也可以從基底映像檔搭配 apt 套件建置自訂映像檔。",
+		"Moltis 快取的容器映像檔，用於沙盒執行。您可以刪除個別映像檔或清除全部。也可以從基底映像檔搭配 apt 套件建置自訂映像檔。",
 	appleContainerNote:
-		"Apple Container 提供 VM 隔離執行，但不支援建置映像檔。需要同時安裝 Docker（或 OrbStack）才能建置和快取自訂映像檔。沙盒指令透過 Apple Container 執行；映像檔建置則使用 Docker。",
+		"Apple Container 會在虛擬機器中隔離執行，但不支援建置映像檔。需要同時安裝 Docker（或 OrbStack）才能建置和快取自訂映像檔。沙盒指令透過 Apple Container 執行；映像檔建置則使用 Docker。",
 	sandboxDisabledHint:
 		"在沒有容器執行環境的雲端部署中，沙盒功能已停用。請在具有 Docker 或 Apple Container 的 VM 上安裝以啟用此功能。",
 	noCachedImages: "沒有快取的映像檔。",
@@ -55,13 +55,13 @@ export default {
 	// ── Recommendations ────────────────────────────────────
 	recommendation: {
 		noRuntimeMacos:
-			"未偵測到容器執行環境。請安裝 Apple Container（macOS 26+）以獲得 VM 隔離沙盒功能，或安裝 Docker 作為替代方案。",
-		noRuntimeLinux: "未偵測到容器執行環境。請安裝 Docker 以執行沙盒，或確認 systemd 可用以啟用 cgroup 隔離。",
+			"未偵測到容器執行環境。請安裝 Apple Container（macOS 26+）以獲得虛擬機器隔離沙盒功能，或安裝 Docker 作為替代方案。",
+		noRuntimeLinux: "未偵測到容器執行環境。請安裝 Docker 以執行沙盒，或確認可以使用 systemd 以啟用 cgroup 隔離。",
 		noRuntimeGeneric: "未偵測到容器執行環境。請安裝 Docker 以執行沙盒。",
 		macosDockerTip:
-			"Apple Container 在 macOS 26+ 上提供更強的 VM 層級隔離。安裝後 moltis 會自動優先使用（優先於 Docker）。執行：brew install container",
+			"Apple Container 在 macOS 26+ 上提供更強的虛擬機器層級隔離。安裝後 Moltis 會自動優先使用（優先於 Docker）。執行：brew install container",
 		linuxDockerTip:
-			"Docker 是 Linux 上的良好選擇。如需更輕量的隔離而不想承擔 Docker 開銷，也可使用 systemd cgroup 沙盒。",
+			"Docker 是 Linux 上的良好選擇。若想要更輕量的隔離，並避免 Docker 的額外資源開銷，也可使用 systemd cgroup 沙盒。",
 		restrictedHostTip: "目前使用受限主機執行（env 清除、rlimits）。如需更強的隔離，請安裝 Docker 或 Apple Container。",
 		wasmTip: "目前使用 WASM 沙盒搭配檔案系統隔離。如需容器等級的隔離，請安裝 Docker 或 Apple Container。",
 	},

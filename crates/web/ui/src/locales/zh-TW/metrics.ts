@@ -17,7 +17,7 @@ export default {
 
 	// ── Empty states ───────────────────────────────────────
 	noActivityTitle: "尚無活動",
-	noActivityDescription: "開始使用 moltis 後，指標將會顯示在此處。試著傳送一則訊息或執行一個工具來檢視資料。",
+	noActivityDescription: "開始使用 Moltis 後，指標將會顯示在此處。試著傳送一則訊息或執行一個工具來檢視資料。",
 	collectingTitle: "正在收集資料\u2026",
 	collectingDescription: "收集到幾個資料點後，歷史圖表將會顯示在此處。通常需要約 20\u201330 秒。",
 
@@ -41,11 +41,11 @@ export default {
 	// ── Metric card titles ─────────────────────────────────
 	cards: {
 		uptime: "執行時間",
-		connectedClients: "已連線的客戶端",
+		connectedClients: "已連線的用戶端",
 		activeSessions: "使用中的工作階段",
 		httpRequests: "HTTP 請求",
-		processMemory: "處理程序記憶體",
-		completions: "完成次數",
+		processMemory: "Moltis 使用的記憶體",
+		completions: "LLM 推論次數",
 		inputTokens: "輸入 Token",
 		outputTokens: "輸出 Token",
 		cacheTokens: "快取 Token",
@@ -76,10 +76,10 @@ export default {
 		inputTokens: "輸入 Token",
 		outputTokens: "輸出 Token",
 		httpRequests: "HTTP 請求",
-		llmCompletions: "LLM 完成次數",
+		llmCompletions: "LLM 推論次數",
 		wsActive: "WebSocket 使用中",
 		activeSessions: "使用中的工作階段",
-		processMemory: "處理程序記憶體",
+		processMemory: "Moltis 使用的記憶體",
 		localLlamaCpp: "本機 llama.cpp",
 		toolExecutions: "工具執行次數",
 		mcpCalls: "MCP 呼叫",
@@ -88,12 +88,12 @@ export default {
 	// ── Provider table headers ─────────────────────────────
 	table: {
 		provider: "供應商",
-		completions: "完成次數",
+		completions: "推論次數",
 		inputTokens: "輸入 Token",
 		outputTokens: "輸出 Token",
 		errors: "錯誤",
 	},
 
 	// ── Prometheus section ─────────────────────────────────
-	prometheusDescription: "使用 Prometheus 抓取此端點，或匯入 Grafana 以進行進階視覺化。",
+	prometheusDescription: "使用 Prometheus 擷取此端點的指標，或匯入 Grafana 以進行進階視覺化。",
 };

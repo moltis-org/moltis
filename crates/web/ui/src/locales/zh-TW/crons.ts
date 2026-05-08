@@ -4,21 +4,21 @@ export default {
 	// ── Sidebar ─────────────────────────────────────────────
 	sidebar: {
 		cronJobs: "排程任務",
-		heartbeat: "心跳檢測",
+		heartbeat: "心跳檢查",
 	},
 
 	// ── Heartbeat section ───────────────────────────────────
 	heartbeat: {
-		title: "心跳檢測",
+		title: "心跳檢查",
 		enable: "啟用",
 		runNow: "立即執行",
 		running: "執行中\u2026",
-		description: "定期 AI 自動檢查，監控環境並回報狀態。",
-		inactiveLabel: "心跳檢測未啟用：",
-		blockedDisabled: "心跳檢測已停用。請先啟用以允許手動執行。",
+		description: "由 AI 定期自動檢查環境並回報狀態。",
+		inactiveLabel: "心跳檢查未啟用：",
+		blockedDisabled: "心跳檢查已停用。請先啟用以允許手動執行。",
 		blockedNoPrompt:
-			"心跳檢測處於非使用狀態，因為尚未設定提示詞。請新增自訂提示詞或在 HEARTBEAT.md 中撰寫可執行的內容。",
-		blockedNoJob: "心跳檢測尚未建立排程任務。請儲存心跳檢測設定以重新建立。",
+			"心跳檢查目前未啟用，因為尚未設定提示詞。請新增自訂提示詞，或在 HEARTBEAT.md 中撰寫實際的提示內容。",
+		blockedNoJob: "心跳檢查尚未建立排程任務。請儲存心跳檢查設定以重新建立。",
 		lastLabel: "上次：",
 		nextLabel: "下次：",
 		// Schedule
@@ -30,24 +30,24 @@ export default {
 		// Prompt
 		promptTitle: "提示詞",
 		customPromptLabel: "自訂提示詞（選填）",
-		customPromptPlaceholder: "留空以使用預設心跳檢測提示詞",
+		customPromptPlaceholder: "留空以使用預設心跳檢查提示詞",
 		customPromptHint:
-			"留空以使用工作區根目錄的 HEARTBEAT.md。如果該檔案存在但內容為空或僅含註解，心跳檢測 LLM 將跳過執行以節省 token。",
+			"留空以使用工作區根目錄的 HEARTBEAT.md。如果該檔案存在但內容為空或僅含註解，心跳檢查 LLM 將跳過執行以節省 token。",
 		promptSourceLabel: "生效的提示詞來源：",
 		promptSourceConfig: "組態自訂提示詞",
 		promptSourceMd: "HEARTBEAT.md",
-		promptSourceDefault: "無（心跳檢測未啟用）",
+		promptSourceDefault: "無（心跳檢查未啟用）",
 		maxResponseCharsLabel: "回應字元數上限",
 		// Active Hours
 		activeHoursTitle: "有效時段",
-		activeHoursDescription: "僅在這些時段內執行心跳檢測。",
+		activeHoursDescription: "僅在這些時段內執行心跳檢查。",
 		startLabel: "開始",
 		endLabel: "結束",
 		timezoneLabel: "時區",
 		timezoneLocal: "本地（{{tz}}）",
 		// Sandbox
 		sandboxTitle: "沙盒",
-		sandboxDescription: "在隔離的容器中執行心跳檢測指令。",
+		sandboxDescription: "在隔離的容器中執行心跳檢查指令。",
 		enableSandbox: "啟用沙盒",
 		sandboxImageLabel: "沙盒映像檔",
 		sandboxImagePlaceholder: "預設映像檔",
@@ -110,7 +110,7 @@ export default {
 		timezonePlaceholder: "時區（選填，例如 Europe/Paris）",
 		payloadTypeLabel: "內容類型",
 		systemEventOption: "系統事件",
-		agentTurnOption: "代理回合",
+		agentTurnOption: "AI 助理回合",
 		messageLabel: "訊息",
 		messagePlaceholder: "訊息內容",
 		sessionTargetLabel: "工作階段目標",
