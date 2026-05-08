@@ -7,7 +7,7 @@ IOS_DIR="${REPO_ROOT}/apps/ios"
 CLI_DIR="${IOS_DIR}/.tools"
 CLI_BIN="${CLI_DIR}/apollo-ios-cli"
 CLI_ARCHIVE="${CLI_DIR}/apollo-ios-cli.tar.gz"
-APOLLO_IOS_VERSION="2.1.0"
+APOLLO_IOS_VERSION="2.1.1"
 
 mkdir -p "${CLI_DIR}"
 
