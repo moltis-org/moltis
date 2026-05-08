@@ -113,7 +113,9 @@ async function checkSttStatus(): Promise<void> {
 
 function updateMicButton(): void {
 	if (!micBtn) return;
-	micBtn.style.display = sttConfigured && isSttEnabled() ? "" : "none";
+	const available = sttConfigured && isSttEnabled();
+	micBtn.classList.toggle("hidden", !available);
+	micBtn.style.display = available ? "" : "none";
 	micBtn.disabled = !S.connected;
 	micBtn.title = isStarting ? t("chat:micStarting") : isRecording ? t("chat:micStopAndSend") : t("chat:micTooltip");
 }
@@ -122,7 +124,9 @@ function updateMicButton(): void {
 
 function updateVadButton(): void {
 	if (!vadBtn) return;
-	vadBtn.style.display = sttConfigured && isSttEnabled() ? "" : "none";
+	const available = sttConfigured && isSttEnabled();
+	vadBtn.classList.toggle("hidden", !available);
+	vadBtn.style.display = available ? "" : "none";
 	vadBtn.disabled = !S.connected;
 	vadBtn.title = vadActive ? t("chat:vadStopTooltip") : t("chat:vadTooltip");
 }
@@ -891,6 +895,7 @@ export function initVoiceInput(btn: HTMLButtonElement | null): void {
 	if (!btn) return;
 
 	micBtn = btn;
+	updateMicButton();
 	checkSttStatus();
 
 	micBtn.addEventListener("click", onMicClick);

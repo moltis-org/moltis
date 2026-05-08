@@ -452,9 +452,6 @@ export function updateTokenBar(): void {
 	if (!S.sessionToolsEnabled) {
 		text += " \u00b7 Tools: disabled";
 	}
-	const execModeLabel = S.sessionExecMode === "sandbox" ? "sandboxed" : "host";
-	const promptSymbol = S.sessionExecPromptSymbol || "$";
-	text += ` \u00b7 Execute: ${execModeLabel} (${promptSymbol})`;
 	if (S.commandModeEnabled) {
 		text += " \u00b7 /sh mode";
 	}
