@@ -5,8 +5,9 @@ use {
     futures::StreamExt,
     moltis_config::schema::ExternalAgentsConfig,
     moltis_external_agents::{
-        AgentTransportKind, ContextSnapshot, ExternalAgentEvent, ExternalAgentRegistry,
-        ExternalAgentSession, ExternalAgentSpec,
+        AcpPermissionHandler, AcpPermissionOptionKind, AcpPermissionRequest, AgentTransportKind,
+        ContextSnapshot, ExternalAgentEvent, ExternalAgentRegistry, ExternalAgentSession,
+        ExternalAgentSpec,
         runtimes::{acp::AcpTransport, claude_code::ClaudeCodeTransport, codex::CodexTransport},
         types::ContextTurn,
     },
@@ -17,16 +18,25 @@ use {
     tracing::warn,
 };
 
+use moltis_tools::approval::{ApprovalDecision, ApprovalManager};
+
 use crate::{broadcast::BroadcastOpts, state::GatewayState};
 
 pub struct GatewayExternalAgentService {
     registry: ExternalAgentRegistry,
     config: ExternalAgentsConfig,
     session_metadata: Arc<moltis_sessions::metadata::SqliteSessionMetadata>,
-    live_sessions: Mutex<HashMap<LiveSessionKey, LiveExternalAgentSession>>,
+    live_sessions: Mutex<HashMap<LiveSessionKey, LiveSessionEntry>>,
 }
 
 type LiveExternalAgentSession = Arc<Mutex<Box<dyn ExternalAgentSession>>>;
+
+const LIVE_SESSION_IDLE_TTL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+struct LiveSessionEntry {
+    session: LiveExternalAgentSession,
+    last_used: std::time::Instant,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct LiveSessionKey {
@@ -34,15 +44,88 @@ struct LiveSessionKey {
     kind: AgentTransportKind,
 }
 
+struct GatewayAcpPermissionHandler {
+    approval_manager: Arc<ApprovalManager>,
+}
+
+impl GatewayAcpPermissionHandler {
+    fn new(approval_manager: Arc<ApprovalManager>) -> Self {
+        Self { approval_manager }
+    }
+}
+
+#[async_trait]
+impl AcpPermissionHandler for GatewayAcpPermissionHandler {
+    async fn select_option(&self, request: AcpPermissionRequest) -> anyhow::Result<Option<String>> {
+        let command = format!(
+            "ACP permission requested for {} [{}]",
+            request.tool_call,
+            request
+                .options
+                .iter()
+                .map(|option| option.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let session_key = request.moltis_session_key.as_deref();
+        let (request_id, decision_rx) = self
+            .approval_manager
+            .create_request(&command, session_key)
+            .await;
+        if let Some(session_key) = request.moltis_session_key.as_deref() {
+            tracing::info!(request_id, session_key, "ACP permission request is pending");
+        }
+        match self.approval_manager.wait_for_decision(decision_rx).await {
+            ApprovalDecision::Approved => Ok(select_allowed_acp_option(&request)),
+            ApprovalDecision::Denied | ApprovalDecision::Timeout => {
+                Ok(select_rejected_acp_option(&request))
+            },
+        }
+    }
+}
+
+fn select_allowed_acp_option(request: &AcpPermissionRequest) -> Option<String> {
+    request
+        .options
+        .iter()
+        .find(|option| option.kind == AcpPermissionOptionKind::AllowOnce)
+        .or_else(|| {
+            request
+                .options
+                .iter()
+                .find(|option| option.kind == AcpPermissionOptionKind::AllowAlways)
+        })
+        .map(|option| option.id.clone())
+}
+
+fn select_rejected_acp_option(request: &AcpPermissionRequest) -> Option<String> {
+    request
+        .options
+        .iter()
+        .find(|option| option.kind == AcpPermissionOptionKind::RejectOnce)
+        .or_else(|| {
+            request
+                .options
+                .iter()
+                .find(|option| option.kind == AcpPermissionOptionKind::RejectAlways)
+        })
+        .map(|option| option.id.clone())
+}
+
 impl GatewayExternalAgentService {
     pub fn new(
         config: ExternalAgentsConfig,
         session_metadata: Arc<moltis_sessions::metadata::SqliteSessionMetadata>,
+        approval_manager: Arc<ApprovalManager>,
     ) -> Self {
         let mut registry = ExternalAgentRegistry::new();
         registry.register(Box::new(ClaudeCodeTransport::new()));
         registry.register(Box::new(CodexTransport::new()));
-        registry.register(Box::new(AcpTransport::new("acp".to_string())));
+        registry.register(Box::new(
+            AcpTransport::new("acp".to_string()).with_permission_handler(Arc::new(
+                GatewayAcpPermissionHandler::new(approval_manager),
+            )),
+        ));
         Self {
             registry,
             config,
@@ -70,21 +153,54 @@ impl GatewayExternalAgentService {
         session_key: &str,
         kind: AgentTransportKind,
     ) -> anyhow::Result<LiveExternalAgentSession> {
+        self.shutdown_idle_sessions().await;
         let key = LiveSessionKey {
             session_key: session_key.to_string(),
             kind,
         };
         let mut live_sessions = self.live_sessions.lock().await;
-        if let Some(session) = live_sessions.get(&key) {
-            let is_alive = session.lock().await.is_alive().await;
+        if let Some(entry) = live_sessions.get_mut(&key) {
+            let is_alive = entry.session.lock().await.is_alive().await;
             if is_alive {
-                return Ok(Arc::clone(session));
+                entry.last_used = std::time::Instant::now();
+                return Ok(Arc::clone(&entry.session));
             }
         }
         let spec = self.spec_for_kind(kind)?;
+        let mut spec = spec;
+        spec.session_key = Some(session_key.to_string());
+        spec.external_session_id = self
+            .session_metadata
+            .get(session_key)
+            .await
+            .and_then(|entry| entry.external_session_id);
         let session = Arc::new(Mutex::new(self.registry.start_session(&spec).await?));
-        live_sessions.insert(key, Arc::clone(&session));
+        live_sessions.insert(key, LiveSessionEntry {
+            session: Arc::clone(&session),
+            last_used: std::time::Instant::now(),
+        });
         Ok(session)
+    }
+
+    async fn shutdown_idle_sessions(&self) {
+        let sessions = {
+            let mut live_sessions = self.live_sessions.lock().await;
+            let now = std::time::Instant::now();
+            let keys = live_sessions
+                .iter()
+                .filter(|(_, entry)| now.duration_since(entry.last_used) >= LIVE_SESSION_IDLE_TTL)
+                .map(|(key, _)| key.clone())
+                .collect::<Vec<_>>();
+            keys.into_iter()
+                .filter_map(|key| live_sessions.remove(&key).map(|entry| entry.session))
+                .collect::<Vec<_>>()
+        };
+        for session in sessions {
+            let mut session = session.lock().await;
+            if let Err(error) = session.shutdown().await {
+                warn!(%error, "failed to shut down idle external agent session");
+            }
+        }
     }
 
     pub(crate) async fn shutdown_binding(&self, session_key: &str) {
@@ -96,7 +212,7 @@ impl GatewayExternalAgentService {
                 .cloned()
                 .collect::<Vec<_>>();
             keys.into_iter()
-                .filter_map(|key| live_sessions.remove(&key))
+                .filter_map(|key| live_sessions.remove(&key).map(|entry| entry.session))
                 .collect::<Vec<_>>()
         };
         for session in sessions {
@@ -682,7 +798,10 @@ mod tests {
             services::GatewayServices,
         },
         futures::{Stream, stream},
-        moltis_external_agents::{ExternalAgentTransport, types::ExternalAgentStatus},
+        moltis_external_agents::{
+            ExternalAgentTransport,
+            types::{AcpPermissionOption, ExternalAgentStatus},
+        },
         moltis_service_traits::{ExternalAgentService, NoopChatService},
         moltis_sessions::{metadata::SqliteSessionMetadata, store::SessionStore},
     };
@@ -866,6 +985,36 @@ mod tests {
         assert!(status["kind"].is_null());
     }
 
+    #[test]
+    fn acp_permission_selection_prefers_matching_decision_kind() {
+        let request = AcpPermissionRequest {
+            moltis_session_key: Some("main".to_string()),
+            acp_session_id: "acp-1".to_string(),
+            tool_call: "run tool".to_string(),
+            options: vec![
+                AcpPermissionOption {
+                    id: "reject".to_string(),
+                    name: "Reject".to_string(),
+                    kind: AcpPermissionOptionKind::RejectOnce,
+                },
+                AcpPermissionOption {
+                    id: "allow".to_string(),
+                    name: "Allow".to_string(),
+                    kind: AcpPermissionOptionKind::AllowOnce,
+                },
+            ],
+        };
+
+        assert_eq!(
+            select_allowed_acp_option(&request),
+            Some("allow".to_string())
+        );
+        assert_eq!(
+            select_rejected_acp_option(&request),
+            Some("reject".to_string())
+        );
+    }
+
     #[tokio::test]
     async fn bound_chat_send_reuses_live_external_session() {
         let dir = tempfile::tempdir().unwrap();
@@ -910,6 +1059,38 @@ mod tests {
                 .and_then(|entry| entry.external_session_id),
             Some("fake-session-1".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn idle_live_external_sessions_are_evicted_before_reuse() {
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let agent_state = Arc::new(FakeAgentState::default());
+        let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+        external_agents
+            .bind(serde_json::json!({ "sessionKey": "main", "kind": "codex" }))
+            .await
+            .expect("bind external agent");
+
+        let first = external_agents
+            .session_for_binding("main", AgentTransportKind::Codex)
+            .await
+            .expect("first live session");
+        drop(first);
+        {
+            let mut live_sessions = external_agents.live_sessions.lock().await;
+            for entry in live_sessions.values_mut() {
+                entry.last_used = std::time::Instant::now() - LIVE_SESSION_IDLE_TTL;
+            }
+        }
+
+        let second = external_agents
+            .session_for_binding("main", AgentTransportKind::Codex)
+            .await
+            .expect("second live session");
+        drop(second);
+
+        assert_eq!(agent_state.shutdowns.load(Ordering::SeqCst), 1);
+        assert_eq!(agent_state.starts.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]

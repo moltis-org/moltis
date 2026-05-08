@@ -1,9 +1,11 @@
 use std::{
+    collections::HashMap,
     path::PathBuf,
     pin::Pin,
     process::Stdio,
     sync::{Arc, Mutex},
     thread::JoinHandle,
+    time::Duration,
 };
 
 use {
@@ -22,6 +24,7 @@ use {
 use crate::{
     transport::{ExternalAgentSession, ExternalAgentTransport},
     types::{
+        AcpPermissionHandler, AcpPermissionOption, AcpPermissionOptionKind, AcpPermissionRequest,
         AgentTransportKind, ContextSnapshot, ExternalAgentEvent, ExternalAgentSpec,
         ExternalAgentStatus,
     },
@@ -30,12 +33,25 @@ use crate::{
 /// Transport for ACP (Agent Client Protocol) agents over JSON-RPC stdio.
 pub struct AcpTransport {
     binary: String,
+    permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
 }
 
 impl AcpTransport {
     #[must_use]
     pub fn new(binary: String) -> Self {
-        Self { binary }
+        Self {
+            binary,
+            permission_handler: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_permission_handler(
+        mut self,
+        permission_handler: Arc<dyn AcpPermissionHandler>,
+    ) -> Self {
+        self.permission_handler = Some(permission_handler);
+        self
     }
 }
 
@@ -60,7 +76,9 @@ impl ExternalAgentTransport for AcpTransport {
         spec: &ExternalAgentSpec,
     ) -> anyhow::Result<Box<dyn ExternalAgentSession>> {
         let binary = spec.binary.clone().unwrap_or_else(|| self.binary.clone());
-        Ok(Box::new(AcpSession::start(binary, spec.clone()).await?))
+        Ok(Box::new(
+            AcpSession::start(binary, spec.clone(), self.permission_handler.clone()).await?,
+        ))
     }
 }
 
@@ -85,16 +103,35 @@ enum SessionCommand {
 struct AcpClientState {
     session_id: Option<String>,
     events: Vec<ExternalAgentEvent>,
+    terminals: HashMap<String, AcpTerminalState>,
+    next_terminal_id: u64,
+}
+
+#[derive(Default)]
+struct AcpTerminalState {
+    output: String,
+    truncated: bool,
+    exit_status: Option<acp::TerminalExitStatus>,
 }
 
 #[derive(Clone)]
 struct AcpClient {
     state: Arc<Mutex<AcpClientState>>,
+    moltis_session_key: Option<String>,
+    permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
 }
 
 impl AcpClient {
-    fn new(state: Arc<Mutex<AcpClientState>>) -> Self {
-        Self { state }
+    fn new(
+        state: Arc<Mutex<AcpClientState>>,
+        moltis_session_key: Option<String>,
+        permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
+    ) -> Self {
+        Self {
+            state,
+            moltis_session_key,
+            permission_handler,
+        }
     }
 
     fn set_session_id(&self, session_id: String) {
@@ -139,6 +176,15 @@ impl AcpClient {
             None => Err(acp::Error::internal_error().data("ACP session not initialized")),
         }
     }
+
+    fn next_terminal_id(&self) -> acp::Result<String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| acp::Error::internal_error().data("ACP client state lock poisoned"))?;
+        state.next_terminal_id = state.next_terminal_id.saturating_add(1);
+        Ok(format!("terminal-{}", state.next_terminal_id))
+    }
 }
 
 #[async_trait(?Send)]
@@ -147,6 +193,32 @@ impl acp::Client for AcpClient {
         &self,
         args: acp::RequestPermissionRequest,
     ) -> acp::Result<acp::RequestPermissionResponse> {
+        if let Some(handler) = &self.permission_handler {
+            let request = AcpPermissionRequest {
+                moltis_session_key: self.moltis_session_key.clone(),
+                acp_session_id: args.session_id.to_string(),
+                tool_call: tool_call_update_summary(&args.tool_call),
+                options: args
+                    .options
+                    .iter()
+                    .map(|option| AcpPermissionOption {
+                        id: option.option_id.to_string(),
+                        name: option.name.clone(),
+                        kind: permission_option_kind(option.kind),
+                    })
+                    .collect(),
+            };
+            let selected = handler.select_option(request).await.map_err(|error| {
+                acp::Error::internal_error().data(format!("ACP permission bridge failed: {error}"))
+            })?;
+            return Ok(acp::RequestPermissionResponse::new(match selected {
+                Some(option_id) => acp::RequestPermissionOutcome::Selected(
+                    acp::SelectedPermissionOutcome::new(option_id),
+                ),
+                None => acp::RequestPermissionOutcome::Cancelled,
+            }));
+        }
+
         let selected = args
             .options
             .iter()
@@ -195,7 +267,59 @@ impl acp::Client for AcpClient {
         args: acp::CreateTerminalRequest,
     ) -> acp::Result<acp::CreateTerminalResponse> {
         self.validate_session_id(&args.session_id)?;
-        Err(acp::Error::invalid_params().data("ACP terminal capability is not enabled"))
+        let terminal_id = self.next_terminal_id()?;
+        let output_byte_limit = args.output_byte_limit.unwrap_or(128 * 1024) as usize;
+        let mut command = Command::new(&args.command);
+        command.args(&args.args);
+        if let Some(cwd) = &args.cwd {
+            command.current_dir(cwd);
+        }
+        command.envs(args.env.iter().map(|env| (&env.name, &env.value)));
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::piped());
+        command.stderr(Stdio::piped());
+        command.kill_on_drop(true);
+
+        let result = tokio::time::timeout(Duration::from_secs(300), command.output()).await;
+        let terminal_state = match result {
+            Ok(Ok(output)) => {
+                let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+                text.push_str(&String::from_utf8_lossy(&output.stderr));
+                let truncated = text.len() > output_byte_limit;
+                if truncated {
+                    let keep_from = text.floor_char_boundary(text.len() - output_byte_limit);
+                    text = text[keep_from..].to_string();
+                }
+                AcpTerminalState {
+                    output: text,
+                    truncated,
+                    exit_status: Some(
+                        acp::TerminalExitStatus::new().exit_code(
+                            output
+                                .status
+                                .code()
+                                .and_then(|code| u32::try_from(code).ok()),
+                        ),
+                    ),
+                }
+            },
+            Ok(Err(error)) => AcpTerminalState {
+                output: format!("failed to run terminal command: {error}"),
+                truncated: false,
+                exit_status: Some(acp::TerminalExitStatus::new().exit_code(1)),
+            },
+            Err(_) => AcpTerminalState {
+                output: "terminal command timed out".to_string(),
+                truncated: false,
+                exit_status: Some(acp::TerminalExitStatus::new().exit_code(124)),
+            },
+        };
+        self.state
+            .lock()
+            .map_err(|_| acp::Error::internal_error().data("ACP client state lock poisoned"))?
+            .terminals
+            .insert(terminal_id.clone(), terminal_state);
+        Ok(acp::CreateTerminalResponse::new(terminal_id))
     }
 
     async fn terminal_output(
@@ -203,7 +327,18 @@ impl acp::Client for AcpClient {
         args: acp::TerminalOutputRequest,
     ) -> acp::Result<acp::TerminalOutputResponse> {
         self.validate_session_id(&args.session_id)?;
-        Err(acp::Error::invalid_params().data("ACP terminal capability is not enabled"))
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| acp::Error::internal_error().data("ACP client state lock poisoned"))?;
+        let terminal = state
+            .terminals
+            .get(&args.terminal_id.to_string())
+            .ok_or_else(|| acp::Error::invalid_params().data("unknown ACP terminal id"))?;
+        Ok(
+            acp::TerminalOutputResponse::new(terminal.output.clone(), terminal.truncated)
+                .exit_status(terminal.exit_status.clone()),
+        )
     }
 
     async fn release_terminal(
@@ -211,7 +346,12 @@ impl acp::Client for AcpClient {
         args: acp::ReleaseTerminalRequest,
     ) -> acp::Result<acp::ReleaseTerminalResponse> {
         self.validate_session_id(&args.session_id)?;
-        Err(acp::Error::invalid_params().data("ACP terminal capability is not enabled"))
+        self.state
+            .lock()
+            .map_err(|_| acp::Error::internal_error().data("ACP client state lock poisoned"))?
+            .terminals
+            .remove(&args.terminal_id.to_string());
+        Ok(acp::ReleaseTerminalResponse::new())
     }
 
     async fn wait_for_terminal_exit(
@@ -219,7 +359,17 @@ impl acp::Client for AcpClient {
         args: acp::WaitForTerminalExitRequest,
     ) -> acp::Result<acp::WaitForTerminalExitResponse> {
         self.validate_session_id(&args.session_id)?;
-        Err(acp::Error::invalid_params().data("ACP terminal capability is not enabled"))
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| acp::Error::internal_error().data("ACP client state lock poisoned"))?;
+        let terminal = state
+            .terminals
+            .get(&args.terminal_id.to_string())
+            .ok_or_else(|| acp::Error::invalid_params().data("unknown ACP terminal id"))?;
+        Ok(acp::WaitForTerminalExitResponse::new(
+            terminal.exit_status.clone().unwrap_or_default(),
+        ))
     }
 
     async fn kill_terminal(
@@ -227,7 +377,16 @@ impl acp::Client for AcpClient {
         args: acp::KillTerminalRequest,
     ) -> acp::Result<acp::KillTerminalResponse> {
         self.validate_session_id(&args.session_id)?;
-        Err(acp::Error::invalid_params().data("ACP terminal capability is not enabled"))
+        if let Some(terminal) = self
+            .state
+            .lock()
+            .map_err(|_| acp::Error::internal_error().data("ACP client state lock poisoned"))?
+            .terminals
+            .get_mut(&args.terminal_id.to_string())
+        {
+            terminal.exit_status = Some(acp::TerminalExitStatus::new().exit_code(130));
+        }
+        Ok(acp::KillTerminalResponse::new())
     }
 
     async fn session_notification(&self, args: acp::SessionNotification) -> acp::Result<()> {
@@ -277,7 +436,11 @@ impl acp::Client for AcpClient {
 }
 
 impl AcpSession {
-    async fn start(binary: String, spec: ExternalAgentSpec) -> anyhow::Result<Self> {
+    async fn start(
+        binary: String,
+        spec: ExternalAgentSpec,
+        permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
+    ) -> anyhow::Result<Self> {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         let (startup_tx, startup_rx) = oneshot::channel();
         let status = Arc::new(Mutex::new(ExternalAgentStatus::Starting));
@@ -299,6 +462,7 @@ impl AcpSession {
                 runtime.block_on(local_set.run_until(run_acp_controller(
                     binary,
                     spec,
+                    permission_handler,
                     command_rx,
                     startup_tx,
                     thread_status,
@@ -375,6 +539,7 @@ impl ExternalAgentSession for AcpSession {
 async fn run_acp_controller(
     binary: String,
     spec: ExternalAgentSpec,
+    permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
     mut command_rx: mpsc::UnboundedReceiver<SessionCommand>,
     startup_tx: oneshot::Sender<anyhow::Result<String>>,
     status: Arc<Mutex<ExternalAgentStatus>>,
@@ -401,7 +566,11 @@ async fn run_acp_controller(
             .take()
             .ok_or_else(|| anyhow::anyhow!("ACP child missing stdout"))?;
         let client_state = Arc::new(Mutex::new(AcpClientState::default()));
-        let client = Arc::new(AcpClient::new(client_state));
+        let client = Arc::new(AcpClient::new(
+            client_state,
+            spec.session_key.clone(),
+            permission_handler,
+        ));
         if let Some(stderr) = child.stderr.take() {
             tokio::task::spawn_local(forward_stderr(stderr, Arc::clone(&client)));
         }
@@ -420,9 +589,11 @@ async fn run_acp_controller(
 
         let initialize = acp::InitializeRequest::new(acp::ProtocolVersion::V1)
             .client_capabilities(
-                acp::ClientCapabilities::new().fs(acp::FileSystemCapabilities::new()
-                    .read_text_file(true)
-                    .write_text_file(true)),
+                acp::ClientCapabilities::new()
+                    .fs(acp::FileSystemCapabilities::new()
+                        .read_text_file(true)
+                        .write_text_file(true))
+                    .terminal(true),
             )
             .client_info(
                 acp::Implementation::new("moltis", env!("CARGO_PKG_VERSION")).title("Moltis"),
@@ -553,6 +724,16 @@ fn tool_call_update_summary(update: &acp::ToolCallUpdate) -> String {
     }
 }
 
+fn permission_option_kind(kind: acp::PermissionOptionKind) -> AcpPermissionOptionKind {
+    match kind {
+        acp::PermissionOptionKind::AllowOnce => AcpPermissionOptionKind::AllowOnce,
+        acp::PermissionOptionKind::AllowAlways => AcpPermissionOptionKind::AllowAlways,
+        acp::PermissionOptionKind::RejectOnce => AcpPermissionOptionKind::RejectOnce,
+        acp::PermissionOptionKind::RejectAlways => AcpPermissionOptionKind::RejectAlways,
+        _ => AcpPermissionOptionKind::RejectOnce,
+    }
+}
+
 fn session_info_summary(update: &acp::SessionInfoUpdate) -> String {
     maybe_undefined_to_string(&update.title)
         .map(|title| format!("session title: {title}"))
@@ -610,11 +791,27 @@ fn set_status(status: &Mutex<ExternalAgentStatus>, next: ExternalAgentStatus) {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use {super::*, agent_client_protocol::Client as _};
+    use {
+        super::*,
+        crate::types::{AcpPermissionHandler, AcpPermissionRequest},
+        agent_client_protocol::Client as _,
+    };
+
+    struct AllowFirstPermissionHandler;
+
+    #[async_trait]
+    impl AcpPermissionHandler for AllowFirstPermissionHandler {
+        async fn select_option(
+            &self,
+            request: AcpPermissionRequest,
+        ) -> anyhow::Result<Option<String>> {
+            Ok(request.options.first().map(|option| option.id.clone()))
+        }
+    }
 
     fn test_client() -> (AcpClient, Arc<Mutex<AcpClientState>>) {
         let state = Arc::new(Mutex::new(AcpClientState::default()));
-        let client = AcpClient::new(Arc::clone(&state));
+        let client = AcpClient::new(Arc::clone(&state), Some("main".to_string()), None);
         client.set_session_id("session-1".to_string());
         (client, state)
     }
@@ -707,5 +904,68 @@ mod tests {
         );
         assert_eq!(slice_lines("one\ntwo", None, Some(1)), "one");
         assert_eq!(slice_lines("one\ntwo", Some(10), Some(2)), "");
+    }
+
+    #[tokio::test]
+    async fn permission_handler_selects_acp_option() {
+        let state = Arc::new(Mutex::new(AcpClientState::default()));
+        let client = AcpClient::new(
+            Arc::clone(&state),
+            Some("main".to_string()),
+            Some(Arc::new(AllowFirstPermissionHandler)),
+        );
+        let response = client
+            .request_permission(acp::RequestPermissionRequest::new(
+                "session-1",
+                acp::ToolCallUpdate::new(
+                    "tool-1",
+                    acp::ToolCallUpdateFields::new().title("run tool".to_string()),
+                ),
+                vec![acp::PermissionOption::new(
+                    "allow-once",
+                    "Allow once",
+                    acp::PermissionOptionKind::AllowOnce,
+                )],
+            ))
+            .await
+            .expect("permission response");
+
+        assert!(matches!(
+            response.outcome,
+            acp::RequestPermissionOutcome::Selected(outcome) if outcome.option_id.to_string() == "allow-once"
+        ));
+    }
+
+    #[tokio::test]
+    async fn terminal_methods_capture_command_output() {
+        let (client, _state) = test_client();
+        let response = client
+            .create_terminal(
+                acp::CreateTerminalRequest::new("session-1", "/bin/sh")
+                    .args(vec!["-c".to_string(), "printf hello".to_string()]),
+            )
+            .await
+            .expect("create terminal");
+        let output = client
+            .terminal_output(acp::TerminalOutputRequest::new(
+                "session-1",
+                response.terminal_id.clone(),
+            ))
+            .await
+            .expect("terminal output");
+
+        assert_eq!(output.output, "hello");
+        assert_eq!(
+            output.exit_status.and_then(|status| status.exit_code),
+            Some(0)
+        );
+
+        client
+            .release_terminal(acp::ReleaseTerminalRequest::new(
+                "session-1",
+                response.terminal_id,
+            ))
+            .await
+            .expect("release terminal");
     }
 }

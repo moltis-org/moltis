@@ -18,6 +18,7 @@ pub use {
     registry::ExternalAgentRegistry,
     transport::{ExternalAgentSession, ExternalAgentTransport},
     types::{
+        AcpPermissionHandler, AcpPermissionOption, AcpPermissionOptionKind, AcpPermissionRequest,
         AgentTransportKind, BridgeState, ContextSnapshot, ExternalAgentEvent, ExternalAgentInfo,
         ExternalAgentSpec, ExternalAgentStatus, TokenUsage,
     },

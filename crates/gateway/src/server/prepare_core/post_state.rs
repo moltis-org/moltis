@@ -442,6 +442,7 @@ pub(super) async fn complete_startup(
     let external_agent_service = Arc::new(GatewayExternalAgentService::new(
         config.external_agents.clone(),
         Arc::clone(&session_metadata),
+        Arc::clone(&approval_manager),
     ));
     let session_service = Arc::clone(&services.session);
     services = services.with_session(Arc::new(ExternalAgentSessionService::new(

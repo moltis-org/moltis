@@ -73,6 +73,7 @@ impl ExternalAgentTransport for ClaudeCodeTransport {
             spec.env.clone(),
             spec.working_dir.clone(),
             spec.timeout_secs,
+            spec.external_session_id.clone(),
         )))
     }
 }
@@ -94,6 +95,7 @@ impl ClaudeCodeSession {
         env: HashMap<String, String>,
         working_dir: Option<PathBuf>,
         timeout_secs: Option<u64>,
+        session_id: Option<String>,
     ) -> Self {
         Self {
             binary,
@@ -101,7 +103,7 @@ impl ClaudeCodeSession {
             env,
             working_dir,
             timeout: Duration::from_secs(timeout_secs.unwrap_or(300)),
-            session_id: None,
+            session_id,
             status: ExternalAgentStatus::Idle,
         }
     }
@@ -253,6 +255,7 @@ mod tests {
             HashMap::new(),
             None,
             None,
+            None,
         );
         assert!(!session.args_for_turn().iter().any(|arg| arg == "--resume"));
         session.session_id = Some("sid".to_string());
@@ -263,6 +266,21 @@ mod tests {
             "--resume",
             "sid"
         ]);
+    }
+
+    #[test]
+    fn resumes_from_initial_external_session_id() {
+        let session = ClaudeCodeSession::new(
+            "claude".to_string(),
+            vec!["-p".to_string()],
+            HashMap::new(),
+            None,
+            None,
+            Some("persisted".to_string()),
+        );
+
+        assert_eq!(session.external_session_id(), Some("persisted"));
+        assert_eq!(session.args_for_turn(), vec!["-p", "--resume", "persisted"]);
     }
 
     #[tokio::test]
@@ -294,6 +312,7 @@ printf '%s\n' '{"result":"ok","session_id":"sid-1"}'
             env,
             None,
             Some(5),
+            None,
         );
 
         let first = session

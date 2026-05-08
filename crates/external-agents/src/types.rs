@@ -1,6 +1,9 @@
 use std::{collections::HashMap, path::PathBuf};
 
-use serde::{Deserialize, Serialize};
+use {
+    async_trait::async_trait,
+    serde::{Deserialize, Serialize},
+};
 
 pub use moltis_sessions::metadata::ExternalAgentKind as AgentTransportKind;
 
@@ -69,6 +72,8 @@ pub struct ContextTurn {
 #[derive(Debug, Clone)]
 pub struct ExternalAgentSpec {
     pub kind: AgentTransportKind,
+    pub session_key: Option<String>,
+    pub external_session_id: Option<String>,
     pub binary: Option<String>,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
@@ -83,6 +88,8 @@ impl ExternalAgentSpec {
     pub fn new(kind: AgentTransportKind) -> Self {
         Self {
             kind,
+            session_key: None,
+            external_session_id: None,
             binary: None,
             args: Vec::new(),
             env: HashMap::new(),
@@ -91,6 +98,36 @@ impl ExternalAgentSpec {
             use_tmux: false,
         }
     }
+}
+
+/// ACP permission request normalized away from ACP wire types.
+#[derive(Debug, Clone)]
+pub struct AcpPermissionRequest {
+    pub moltis_session_key: Option<String>,
+    pub acp_session_id: String,
+    pub tool_call: String,
+    pub options: Vec<AcpPermissionOption>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AcpPermissionOption {
+    pub id: String,
+    pub name: String,
+    pub kind: AcpPermissionOptionKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AcpPermissionOptionKind {
+    AllowOnce,
+    AllowAlways,
+    RejectOnce,
+    RejectAlways,
+}
+
+/// Host hook used by ACP runtimes to route permission prompts through Moltis approvals.
+#[async_trait]
+pub trait AcpPermissionHandler: Send + Sync {
+    async fn select_option(&self, request: AcpPermissionRequest) -> anyhow::Result<Option<String>>;
 }
 
 /// Persisted bridge state for a session bound to an external agent.

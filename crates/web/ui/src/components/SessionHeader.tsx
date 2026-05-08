@@ -173,6 +173,9 @@ export function SessionHeader({
 	const currentAgentId = session?.agent_id || defaultAgentId || "main";
 	const currentNodeId = session?.node_id || "";
 	const currentExternalAgentKind = session?.external_agent_kind || "";
+	const currentExternalAgent = currentExternalAgentKind
+		? externalAgentOptions.find((agent) => agent.kind === currentExternalAgentKind) || null
+		: null;
 
 	useEffect(() => {
 		let cancelled = false;
@@ -520,10 +523,17 @@ export function SessionHeader({
 		{ value: "", label: "Moltis agent" },
 		...externalAgentOptions.map((agent) => ({
 			value: agent.kind,
-			label: `${agent.name}${agent.installed ? "" : " (not installed)"}`,
+			label: `${agent.name}${agent.installed ? "" : " (unavailable)"}`,
 		})),
 	];
 	const shouldShowExternalAgentPicker = !isCron && externalAgentOptions.length > 0;
+	const externalAgentStatus = currentExternalAgentKind
+		? currentExternalAgent?.installed === false
+			? "External agent unavailable"
+			: session?.externalSessionId
+				? `External session ${session.externalSessionId}`
+				: "External agent bound"
+		: "";
 	const hasCurrentNodeOption = currentNodeId === "" || nodeOptions.some((node) => node.nodeId === currentNodeId);
 	let nodeSelectOptions: SelectOption[] = [
 		{ value: "", label: "Local" },
@@ -621,16 +631,23 @@ export function SessionHeader({
 					/>
 				)}
 				{showSelectors && shouldShowExternalAgentPicker && (
-					<ComboSelect
-						options={externalAgentSelectOptions}
-						value={currentExternalAgentKind}
-						onChange={onExternalAgentChange}
-						placeholder="External agent"
-						searchable={false}
-						allowEmpty={false}
-						fullWidth={false}
-						disabled={switchingExternalAgent}
-					/>
+					<div className="flex items-center gap-1.5">
+						<ComboSelect
+							options={externalAgentSelectOptions}
+							value={currentExternalAgentKind}
+							onChange={onExternalAgentChange}
+							placeholder="External agent"
+							searchable={false}
+							allowEmpty={false}
+							fullWidth={false}
+							disabled={switchingExternalAgent}
+						/>
+						{externalAgentStatus && (
+							<span className="text-xs text-[var(--text-muted)]" title={externalAgentStatus}>
+								{externalAgentStatus}
+							</span>
+						)}
+					</div>
 				)}
 				{!nameOwnLine && showName && nameControl}
 				{!nameOwnLine && renameCta}
