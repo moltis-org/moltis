@@ -1,6 +1,6 @@
 // ── Shared helpers used across ws/ sub-modules ───────────────
 
-import { renderMarkdown, sendRpc } from "../helpers";
+import { renderMarkdown } from "../helpers";
 import { setSessionActiveRunId } from "../sessions";
 import * as S from "../state";
 import { sessionStore } from "../stores/session-store";
@@ -21,20 +21,6 @@ export function clearChatEmptyState(): void {
 export function makeThinkingDots(): Element {
 	const tpl = S.$<HTMLTemplateElement>("tpl-thinking-dots")!;
 	return (tpl.content.cloneNode(true) as DocumentFragment).firstElementChild!;
-}
-
-export function makeThinkingStopBtn(sessionKey: string): HTMLButtonElement {
-	const btn = document.createElement("button");
-	btn.className = "thinking-stop-btn";
-	btn.type = "button";
-	btn.title = "Stop generation";
-	btn.textContent = "Stop";
-	btn.addEventListener("click", () => {
-		btn.disabled = true;
-		btn.textContent = "Stopping\u2026";
-		sendRpc("chat.abort", { sessionKey }).catch(() => undefined);
-	});
-	return btn;
 }
 
 // ── Session helpers ───────────────────────────────────────────

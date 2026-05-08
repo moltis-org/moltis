@@ -818,6 +818,16 @@
   outline: none;
 }
 
+.chat-composer-send-btn.is-stop {
+  background: #ef4444;
+  color: #fff;
+}
+
+.chat-composer-send-btn.is-stop:hover:not(:disabled),
+.chat-composer-send-btn.is-stop:focus-visible:not(:disabled) {
+  background: #dc2626;
+}
+
 .chat-composer-icon-btn:disabled,
 .chat-composer-send-btn:disabled {
   cursor: default;

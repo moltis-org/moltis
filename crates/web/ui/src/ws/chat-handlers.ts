@@ -6,6 +6,7 @@ import {
 	chatAddErrorMsg,
 	chatAddMsg,
 	removeThinking,
+	setComposerStopButton,
 	smartScrollToBottom,
 	updateTokenBar,
 } from "../chat-ui";
@@ -33,7 +34,6 @@ import {
 	hasNonWhitespaceContent,
 	isReasoningAlreadyShown,
 	makeThinkingDots,
-	makeThinkingStopBtn,
 	moveFirstQueuedToChat,
 	setSafeMarkdownHtml,
 	updateSessionHistoryIndex,
@@ -61,13 +61,13 @@ function handleChatThinking(p: ChatPayload, isActive: boolean, isChatPage: boole
 	updateSessionRunId(eventSession, p.runId);
 	setSessionReplying(eventSession, true);
 	if (!(isActive && isChatPage)) return;
+	setComposerStopButton(true, eventSession);
 	removeThinking();
 	clearChatEmptyState();
 	const thinkEl = document.createElement("div");
 	thinkEl.className = "msg assistant thinking";
 	thinkEl.id = "thinkingIndicator";
 	thinkEl.appendChild(makeThinkingDots());
-	thinkEl.appendChild(makeThinkingStopBtn(eventSession));
 	S.chatMsgBox?.appendChild(thinkEl);
 	smartScrollToBottom();
 }
@@ -76,15 +76,14 @@ function handleChatThinkingText(p: ChatPayload, isActive: boolean, isChatPage: b
 	updateSessionRunId(eventSession, p.runId);
 	setSessionReplying(eventSession, true);
 	if (!(isActive && isChatPage)) return;
+	setComposerStopButton(true, eventSession);
 	const indicator = document.getElementById("thinkingIndicator");
 	if (indicator) {
-		const existingBtn = indicator.querySelector(".thinking-stop-btn");
 		while (indicator.firstChild) indicator.removeChild(indicator.firstChild);
 		const textEl = document.createElement("span");
 		textEl.className = "thinking-text";
 		textEl.textContent = p.text || "";
 		indicator.appendChild(textEl);
-		indicator.appendChild(existingBtn || makeThinkingStopBtn(eventSession));
 		smartScrollToBottom();
 	}
 }
@@ -114,6 +113,7 @@ function handleChatToolCallStart(p: ChatPayload, isActive: boolean, isChatPage: 
 	const session = sessionStore.getByKey(eventSession);
 	if (session) session.streamText.value = "";
 	if (!(isActive && isChatPage)) return;
+	setComposerStopButton(true, eventSession);
 	handleToolCallStartDom(p, eventSession);
 }
 
@@ -284,6 +284,7 @@ function handleChatFinal(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 	if (p.messageIndex !== undefined && p.messageIndex <= lastIdx) {
 		setSessionReplying(eventSession, false);
 		setSessionActiveRunId(eventSession, null);
+		if (isActive && isChatPage) setComposerStopButton(false);
 		return;
 	}
 	updateSessionHistoryIndex(eventSession, p.messageIndex);
@@ -296,6 +297,7 @@ function handleChatFinal(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 		S.setVoicePending(false);
 		return;
 	}
+	setComposerStopButton(false);
 	removeThinking();
 	clearStaleRunningToolCards();
 
@@ -509,6 +511,7 @@ function handleChatRetrying(p: ChatPayload, isActive: boolean, isChatPage: boole
 	updateSessionRunId(eventSession, p.runId);
 	setSessionReplying(eventSession, true);
 	if (!(isActive && isChatPage)) return;
+	setComposerStopButton(true, eventSession);
 
 	let indicator = document.getElementById("thinkingIndicator");
 	if (!indicator) {
@@ -542,6 +545,7 @@ function handleChatError(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 		S.setVoicePending(false);
 		return;
 	}
+	setComposerStopButton(false);
 	removeThinking();
 	clearStaleRunningToolCards();
 	if (p.error?.title) {
@@ -637,6 +641,7 @@ function handleChatAborted(p: ChatPayload, isActive: boolean, isChatPage: boolea
 		S.setVoicePending(false);
 		return;
 	}
+	setComposerStopButton(false);
 	removeThinking();
 	clearStaleRunningToolCards();
 	renderAbortedPartialInDom(eventSession, p, partialState);
@@ -685,6 +690,7 @@ function handleChatSessionCleared(_p: ChatPayload, isActive: boolean, isChatPage
 		S.setChatSeq(0);
 	}
 	if (!(isActive && isChatPage)) return;
+	setComposerStopButton(false);
 	// Active viewer: clear the chat box and token bar.
 	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 	S.setSessionTokens({ input: 0, output: 0 });

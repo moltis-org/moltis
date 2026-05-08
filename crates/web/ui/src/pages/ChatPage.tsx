@@ -9,7 +9,13 @@
 // is preserved from the original source.
 
 import { render } from "preact";
-import { chatAddMsg, hideNewContentIndicator, isChatAtBottom, smartScrollToBottom } from "../chat-ui";
+import {
+	chatAddMsg,
+	hideNewContentIndicator,
+	isChatAtBottom,
+	setComposerStopButton,
+	smartScrollToBottom,
+} from "../chat-ui";
 import { SessionHeader } from "../components/SessionHeader";
 import { formatTokens, sendRpc } from "../helpers";
 import { initMediaDrop, teardownMediaDrop } from "../media-drop";
@@ -699,7 +705,21 @@ function bindChatComposer(): void {
 			handleHistoryDown();
 		}
 	});
-	S.chatSendBtn?.addEventListener("click", sendChat);
+	S.chatSendBtn?.addEventListener("click", handleComposerSendClick);
+}
+
+function handleComposerSendClick(e: MouseEvent): void {
+	const btn = e.currentTarget as HTMLButtonElement;
+	if (btn.dataset.mode !== "stop") {
+		sendChat();
+		return;
+	}
+	const sessionKey = btn.dataset.stopSessionKey || S.activeSessionKey;
+	btn.disabled = true;
+	btn.classList.add("is-stopping");
+	btn.title = "Stopping generation";
+	btn.setAttribute("aria-label", "Stopping generation");
+	sendRpc("chat.abort", { sessionKey }).catch(() => setComposerStopButton(true, sessionKey));
 }
 
 function initializeChatControls(): void {

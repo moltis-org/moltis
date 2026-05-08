@@ -318,26 +318,6 @@
     0%, 100% { opacity: 0.6; }
     50% { opacity: 1; }
   }
-  .thinking-stop-btn {
-    margin-left: 12px;
-    flex-shrink: 0;
-    padding: 2px 7px;
-    font-size: 0.65rem;
-    font-weight: 600;
-    color: #fff;
-    background: #ef4444;
-    border: none;
-    border-radius: 999px;
-    cursor: pointer;
-    transition: opacity 0.15s;
-  }
-  .thinking-stop-btn:hover {
-    opacity: 0.85;
-  }
-  .thinking-stop-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
   .msg-reasoning {
     margin-top: 8px;
     border: 1px solid var(--border);
@@ -2043,6 +2023,11 @@
   .icon-arrow-up {
     -webkit-mask-image: url("./icons/masks/mask-arrow-up.svg");
     mask-image: url("./icons/masks/mask-arrow-up.svg");
+  }
+
+  .icon-stop {
+    -webkit-mask-image: url("./icons/masks/mask-stop.svg");
+    mask-image: url("./icons/masks/mask-stop.svg");
   }
 
   /* Status icons */

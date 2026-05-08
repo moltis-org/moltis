@@ -1,6 +1,6 @@
 // ── Chat send logic ──────────────────────────────────────────
 
-import { chatAddMsg, chatAddMsgWithImages } from "../../chat-ui";
+import { chatAddMsg, chatAddMsgWithImages, setComposerStopButton } from "../../chat-ui";
 import { highlightCodeBlocks } from "../../code-highlight";
 import { renderMarkdown, sendRpc, warmAudioPlayback } from "../../helpers";
 import { clearPendingImages, getPendingImages, hasPendingImages } from "../../media-drop";
@@ -115,7 +115,10 @@ export function handleChatSendRpcResponse(res: RpcResponse<ChatSendPayload>, use
 		markMessageQueued(userEl, S.activeSessionKey);
 		return;
 	}
-	if (!res.ok && res.error) chatAddMsg("error", res.error.message || "Request failed");
+	if (!res.ok && res.error) {
+		setComposerStopButton(false);
+		chatAddMsg("error", res.error.message || "Request failed");
+	}
 }
 
 export function buildChatMessage(
@@ -193,6 +196,7 @@ export function sendChat(): void {
 	cacheOutgoingUserMessage(S.activeSessionKey, chatParams);
 	seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
 	setSessionReplying(S.activeSessionKey, true);
+	setComposerStopButton(true, S.activeSessionKey);
 	sendRpc<ChatSendPayload>("chat.send", chatParams).then((res) => handleChatSendRpcResponse(res, userEl));
 	maybeRefreshFullContextFn?.();
 }

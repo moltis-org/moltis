@@ -16,7 +16,7 @@ test.describe("Chat abort", () => {
 		await waitForChatSessionReady(page);
 	});
 
-	test("thinking indicator shows stop button", async ({ page }) => {
+	test("composer send button switches to stop mode while thinking", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await expectRpcOk(page, "chat.clear", {});
 		await expectRpcOk(page, "system-event", {
@@ -31,10 +31,13 @@ test.describe("Chat abort", () => {
 		var thinkingIndicator = page.locator("#thinkingIndicator");
 		await expect(thinkingIndicator).toBeVisible({ timeout: 5_000 });
 
-		var stopBtn = page.locator("#thinkingIndicator .thinking-stop-btn");
+		var stopBtn = page.locator("#sendBtn");
 		await expect(stopBtn).toBeVisible();
-		await expect(stopBtn).toHaveText("Stop");
+		await expect(stopBtn).toHaveAttribute("data-mode", "stop");
+		await expect(stopBtn).toHaveAttribute("data-stop-session-key", "main");
 		await expect(stopBtn).toHaveAttribute("title", "Stop generation");
+		await expect(stopBtn.locator(".icon-stop")).toHaveCount(1);
+		await expect(page.locator("#thinkingIndicator .thinking-stop-btn")).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -64,6 +67,8 @@ test.describe("Chat abort", () => {
 		});
 
 		await expect(thinkingIndicator).toHaveCount(0, { timeout: 5_000 });
+		await expect(page.locator("#sendBtn")).toHaveAttribute("data-mode", "send");
+		await expect(page.locator("#sendBtn")).toHaveAttribute("title", "Send");
 
 		expect(pageErrors).toEqual([]);
 	});

@@ -416,6 +416,23 @@ export function updateCommandInputUI(): void {
 	updateTokenBar();
 }
 
+export function setComposerStopButton(active: boolean, sessionKey: string = S.activeSessionKey): void {
+	const btn = S.$<HTMLButtonElement>("sendBtn");
+	if (!btn) return;
+	const icon = btn.querySelector(".icon");
+	btn.classList.toggle("is-stop", active);
+	btn.classList.remove("is-stopping");
+	btn.dataset.mode = active ? "stop" : "send";
+	btn.dataset.stopSessionKey = active ? sessionKey : "";
+	btn.title = active ? "Stop generation" : "Send";
+	btn.setAttribute("aria-label", active ? "Stop generation" : "Send");
+	btn.disabled = active ? false : !S.connected;
+	if (icon) {
+		icon.classList.toggle("icon-arrow-up", !active);
+		icon.classList.toggle("icon-stop", active);
+	}
+}
+
 export function updateTokenBar(): void {
 	const bar = S.$("tokenBar");
 	if (!bar) return;
