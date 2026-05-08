@@ -27,6 +27,7 @@ import {
 	toolCallSummary,
 } from "../helpers";
 import { appendMessageActions } from "../message-actions";
+import { upsertTtsProviderFooter } from "../message-voice";
 import { navigate } from "../router";
 import { settingsPath } from "../routes";
 import * as S from "../state";
@@ -71,6 +72,7 @@ interface AssistantMsg extends HistoryMessage {
 	durationMs?: number;
 	reasoning?: string;
 	audio?: string;
+	tts_provider?: string;
 	run_id?: string;
 	historyIndex?: number;
 	requestInputTokens?: number;
@@ -237,6 +239,7 @@ function renderHistoryAssistantMessage(msg: AssistantMsg): HTMLElement | null {
 	if (el && msg.model) {
 		const footer = createModelFooter(msg);
 		el.appendChild(footer);
+		upsertTtsProviderFooter(el, msg.tts_provider);
 		appendMessageActions({
 			messageEl: el,
 			sessionKey: S.activeSessionKey,

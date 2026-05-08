@@ -653,6 +653,7 @@ mod tests {
                     "role": "assistant",
                     "content": "hi there",
                     "audio": existing_path,
+                    "tts_provider": "openai",
                     "run_id": "run-abc",
                 }),
             )
@@ -673,6 +674,7 @@ mod tests {
 
         assert_eq!(result["reused"], true);
         assert_eq!(result["audio"].as_str(), Some("media/main/voice-msg-1.ogg"));
+        assert_eq!(result["ttsProvider"].as_str(), Some("openai"));
         assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 0);
     }
 
@@ -707,6 +709,7 @@ mod tests {
             serde_json::json!({ "enabled": true, "maxTextLength": 8000 }),
             Some(serde_json::json!({
                 "audio": general_purpose::STANDARD.encode(&audio_bytes),
+                "provider": "elevenlabs",
             })),
         ));
         let service = LiveSessionService::new(Arc::clone(&store), metadata)
@@ -720,10 +723,12 @@ mod tests {
         assert_eq!(result["reused"], false);
         let audio_path = result["audio"].as_str().unwrap_or_default().to_string();
         assert_eq!(audio_path, "media/main/voice-msg-1.ogg");
+        assert_eq!(result["ttsProvider"].as_str(), Some("elevenlabs"));
         assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 1);
 
         let history = store.read("main").await.expect("read history");
         assert_eq!(history[1]["audio"].as_str(), Some(audio_path.as_str()));
+        assert_eq!(history[1]["tts_provider"].as_str(), Some("elevenlabs"));
 
         let filename = media_filename(&audio_path).expect("filename");
         let saved = store

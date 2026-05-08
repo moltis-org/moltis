@@ -120,7 +120,13 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 			voiceBtn.classList.remove("msg-action-btn-active");
 			const payload = result?.payload as Record<string, unknown> | undefined;
 			if (result?.ok && payload?.audio) {
-				renderPersistedAudio(messageEl, sessionKey, payload.audio as string, true);
+				renderPersistedAudio(
+					messageEl,
+					sessionKey,
+					payload.audio as string,
+					true,
+					payload.ttsProvider as string | undefined,
+				);
 				voiceBtn.replaceChildren(iconSpan("icon-checkmark"));
 				voiceBtn.title = "Voice generated";
 			} else {

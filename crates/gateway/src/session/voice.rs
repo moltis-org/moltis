@@ -38,10 +38,12 @@ impl LiveSessionService {
             && let Some(filename) = media_filename(existing_audio)
             && self.store.read_media(key, filename).await.is_ok()
         {
+            let tts_provider = target_msg.get("tts_provider").and_then(|v| v.as_str());
             return Ok(serde_json::json!({
                 "sessionKey": key,
                 "messageIndex": target_index,
                 "audio": existing_audio,
+                "ttsProvider": tts_provider,
                 "reused": true,
             }));
         }
@@ -121,6 +123,16 @@ impl LiveSessionService {
             .as_object_mut()
             .ok_or_else(|| "target message is not an object".to_string())?;
         target_obj.insert("audio".to_string(), Value::String(audio_path.clone()));
+        if let Some(provider) = convert
+            .provider
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            target_obj.insert(
+                "tts_provider".to_string(),
+                Value::String(provider.to_string()),
+            );
+        }
 
         let message_count = history.len() as u32;
         self.store
@@ -133,6 +145,7 @@ impl LiveSessionService {
             "sessionKey": key,
             "messageIndex": target_index,
             "audio": audio_path,
+            "ttsProvider": convert.provider,
             "reused": false,
         }))
     }

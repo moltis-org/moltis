@@ -44,6 +44,34 @@ function upsertVoiceWarning(messageEl: HTMLElement | null, warningText: string |
 	warningEl.textContent = warningText;
 }
 
+function formatTtsProviderLabel(provider: string): string {
+	const labels: Record<string, string> = {
+		elevenlabs: "ElevenLabs",
+		openai: "OpenAI TTS",
+		google: "Google Cloud TTS",
+		piper: "Piper",
+		coqui: "Coqui TTS",
+	};
+	return labels[provider] || provider;
+}
+
+export function upsertTtsProviderFooter(messageEl: HTMLElement | null, provider: string | undefined): void {
+	if (!messageEl) return;
+	const normalized = String(provider || "").trim();
+	let footer = messageEl.querySelector(".msg-tts-provider-footer") as HTMLElement | null;
+	if (!normalized) {
+		if (footer) footer.remove();
+		return;
+	}
+	if (!footer) {
+		footer = document.createElement("div");
+		footer.className = "msg-model-footer msg-tts-provider-footer";
+		const actionBar = messageEl.querySelector(".msg-action-bar");
+		messageEl.insertBefore(footer, actionBar || null);
+	}
+	footer.textContent = `TTS: ${formatTtsProviderLabel(normalized)} (${normalized})`;
+}
+
 function ensureVoicePlayerSlot(messageEl: HTMLElement | null): HTMLElement | null {
 	if (!messageEl) return null;
 	let slot = messageEl.querySelector(".msg-voice-player-slot") as HTMLElement | null;
@@ -59,6 +87,7 @@ export function renderPersistedAudio(
 	sessionKey: string | undefined,
 	audioPath: string | undefined,
 	autoplay: boolean,
+	ttsProvider?: string,
 ): boolean {
 	const src = buildSessionMediaUrl(sessionKey, audioPath);
 	if (!src) return false;
@@ -66,6 +95,7 @@ export function renderPersistedAudio(
 	if (!slot) return false;
 	slot.textContent = "";
 	renderAudioPlayer(slot, src, autoplay === true);
+	upsertTtsProviderFooter(messageEl, ttsProvider);
 	return true;
 }
 
@@ -77,6 +107,7 @@ interface AttachMessageVoiceControlOptions {
 	runId?: string;
 	messageIndex?: number;
 	audioPath?: string;
+	ttsProvider?: string;
 	audioWarning?: string;
 	forceAction?: boolean;
 	autoplayOnGenerate?: boolean;
@@ -92,11 +123,13 @@ export async function attachMessageVoiceControl(options: AttachMessageVoiceContr
 	const runId = options?.runId;
 	const messageIndex = options?.messageIndex;
 	const audioPath = options?.audioPath;
+	const ttsProvider = options?.ttsProvider;
 	const audioWarning = options?.audioWarning;
 	const forceAction = options?.forceAction === true;
 	const autoplayOnGenerate = options?.autoplayOnGenerate === true;
 
 	upsertVoiceWarning(messageEl, audioWarning || null);
+	upsertTtsProviderFooter(messageEl, ttsProvider);
 	if (!text || audioPath) return;
 
 	const showAction = forceAction || (await isTtsEnabled());
@@ -145,6 +178,7 @@ export async function attachMessageVoiceControl(options: AttachMessageVoiceContr
 				sessionKey,
 				(result.payload as Record<string, unknown>).audio as string,
 				autoplayOnGenerate,
+				(result.payload as Record<string, unknown>).ttsProvider as string | undefined,
 			)
 		) {
 			actionBtn!.disabled = false;

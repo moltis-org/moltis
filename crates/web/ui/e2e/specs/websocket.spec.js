@@ -60,6 +60,42 @@ async function mockRpcErrorResponse(page, method, message) {
 		{ targetMethod: method, errorMessage: message },
 	);
 }
+
+async function mockRpcOkResponse(page, method, payload) {
+	await page.evaluate(
+		async ({ targetMethod, responsePayload }) => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var ws = stateModule.ws;
+			if (!ws) throw new Error("websocket unavailable");
+
+			if (!window.__origWebsocketSpecWsSend) {
+				window.__origWebsocketSpecWsSend = ws.send.bind(ws);
+			}
+
+			ws.send = (rawPayload) => {
+				try {
+					var parsed = JSON.parse(rawPayload);
+					if (parsed?.method === targetMethod) {
+						var resolver = stateModule.pending?.[parsed.id];
+						if (typeof resolver === "function") {
+							delete stateModule.pending[parsed.id];
+							resolver({ ok: true, payload: responsePayload });
+						}
+						return;
+					}
+				} catch (_err) {
+					// Fall through to the original sender.
+				}
+				return window.__origWebsocketSpecWsSend(rawPayload);
+			};
+		},
+		{ targetMethod: method, responsePayload: payload },
+	);
+}
 test.describe("WebSocket connection lifecycle", () => {
 	test("status shows connected after page load", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
@@ -373,6 +409,38 @@ test.describe("WebSocket connection lifecycle", () => {
 		await voiceBtn.click();
 		// After failed RPC the button title reverts and a toast is shown
 		await expect(voiceBtn).toHaveAttribute("title", "Voice it");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("voice fallback action shows generated TTS provider", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/chats/main");
+		await waitForWsConnected(page);
+		await waitForChatSessionReady(page);
+		await clearChatAndWait(page);
+		await mockRpcOkResponse(page, "sessions.voice.generate", {
+			audio: "media/main/voice-msg-999903.ogg",
+			ttsProvider: "openai",
+		});
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey: "main",
+				state: "final",
+				text: "generate provider metadata",
+				messageIndex: 999903,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "voice",
+			},
+		});
+
+		var assistant = page.locator("#messages .msg.assistant").last();
+		var voiceBtn = assistant.locator('.msg-action-btn[title="Voice it"]');
+		await expect(voiceBtn).toBeVisible();
+		await voiceBtn.click();
+		await expect(assistant.locator(".msg-tts-provider-footer")).toContainText("TTS: OpenAI TTS (openai)");
 		expect(pageErrors).toEqual([]);
 	});
 

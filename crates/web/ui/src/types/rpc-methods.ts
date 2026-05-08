@@ -145,7 +145,7 @@ export interface RpcMethodMap {
 	"sessions.patch": { result?: Record<string, unknown> };
 	"sessions.search": SessionMeta[];
 	"sessions.switch": unknown;
-	"sessions.voice.generate": { audio?: string };
+	"sessions.voice.generate": { audio?: string; ttsProvider?: string };
 
 	// ── Skills ──────────────────────────────────────────────────
 	"skills.emergency_disable": unknown;

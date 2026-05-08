@@ -74,6 +74,8 @@ pub(super) struct TtsStatusPayload {
 #[serde(rename_all = "camelCase")]
 pub(super) struct TtsConvertPayload {
     audio: String,
+    #[serde(default)]
+    provider: Option<String>,
 }
 
 /// Filter out empty assistant messages from history before sending to the UI.

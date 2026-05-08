@@ -402,8 +402,8 @@ impl TtsService for LiveTtsService {
         // Explicit provider selection disables fallback — fail immediately.
         let mut attempted_providers = vec![provider_id];
 
-        let output = match provider.synthesize(request.clone()).await {
-            Ok(output) => output,
+        let (actual_provider_id, output) = match provider.synthesize(request.clone()).await {
+            Ok(output) => (provider_id, output),
             Err(e) if explicit_provider => {
                 warn!(provider = %provider_id, error = %e, "TTS synthesis failed (explicit provider, no fallback)");
                 return Err(format!("TTS synthesis failed: {e}").into());
@@ -443,14 +443,14 @@ impl TtsService for LiveTtsService {
                 }
 
                 match fallback_output {
-                    Some((_fb_id, output)) => output,
+                    Some((fb_id, output)) => (fb_id, output),
                     None => return Err(format!("TTS synthesis failed: {last_error}").into()),
                 }
             },
         };
 
         info!(
-            provider = %provider_id,
+            provider = %actual_provider_id,
             format = ?output.format,
             audio_bytes = output.data.len(),
             duration_ms = ?output.duration_ms,
@@ -465,6 +465,7 @@ impl TtsService for LiveTtsService {
             "mimeType": output.format.mime_type(),
             "durationMs": output.duration_ms,
             "size": output.data.len(),
+            "provider": actual_provider_id.to_string(),
             "personaBinding": persona_binding,
             "providersAttempted": attempted_providers.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
         }))
