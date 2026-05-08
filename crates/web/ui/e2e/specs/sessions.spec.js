@@ -363,13 +363,17 @@ test.describe("Session management", () => {
 			},
 		});
 
-		// Thinking indicator with stop button should appear
-		const stopBtn = page.locator("#thinkingIndicator .thinking-stop-btn");
+		// Thinking indicator appears and the composer send button becomes stop.
+		await expect(page.locator("#thinkingIndicator")).toBeVisible({ timeout: 5_000 });
+		const stopBtn = page.locator("#sendBtn");
 		await expect(stopBtn).toBeVisible({ timeout: 5_000 });
+		await expect(stopBtn).toHaveAttribute("data-mode", "stop");
+		await expect(stopBtn).toHaveAttribute("data-stop-session-key", sessionKey);
 
-		// Click stop — button text changes to "Stopping…"
+		// Click stop — the composer shows its stopping state while abort is sent.
 		await stopBtn.click();
-		await expect(stopBtn).toHaveText("Stopping\u2026");
+		await expect(stopBtn).toHaveAttribute("title", "Stopping generation");
+		await expect(stopBtn).toBeDisabled();
 
 		expect(pageErrors).toEqual([]);
 	});
