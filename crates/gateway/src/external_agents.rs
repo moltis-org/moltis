@@ -393,6 +393,8 @@ impl ExternalAgentChatService {
             },
         };
         let mut assistant_text = String::new();
+        let mut token_usage = None;
+        let mut external_error = None;
         while let Some(event) = events.next().await {
             match event {
                 ExternalAgentEvent::TextDelta(delta) => {
@@ -426,11 +428,26 @@ impl ExternalAgentChatService {
                     )
                     .await;
                 },
-                ExternalAgentEvent::Error(error) => return Err(error.into()),
-                ExternalAgentEvent::Done { .. }
-                | ExternalAgentEvent::ToolCallStart { .. }
+                ExternalAgentEvent::Error(error) => {
+                    external_error = Some(error);
+                    break;
+                },
+                ExternalAgentEvent::Done { usage } => {
+                    token_usage = usage;
+                },
+                ExternalAgentEvent::ToolCallStart { .. }
                 | ExternalAgentEvent::ToolCallEnd { .. } => {},
             }
+        }
+        if let Some(external_session_id) = session.external_session_id().map(str::to_string) {
+            self.session_metadata
+                .set_external_agent(&session_key, Some(kind), Some(external_session_id))
+                .await;
+        }
+        drop(session);
+        if let Some(error) = external_error {
+            self.external_agents.shutdown_binding(&session_key).await;
+            return Err(error.into());
         }
         let duration_ms = start.elapsed().as_millis() as u64;
         let assistant_msg = PersistedMessage::Assistant {
@@ -438,8 +455,8 @@ impl ExternalAgentChatService {
             created_at: Some(now_ms()),
             model: Some(kind.as_str().to_string()),
             provider: Some("external-agent".to_string()),
-            input_tokens: None,
-            output_tokens: None,
+            input_tokens: token_usage.as_ref().map(|usage| usage.input_tokens),
+            output_tokens: token_usage.as_ref().map(|usage| usage.output_tokens),
             cache_read_tokens: None,
             cache_write_tokens: None,
             duration_ms: Some(duration_ms),
@@ -472,8 +489,8 @@ impl ExternalAgentChatService {
                 "text": assistant_text,
                 "model": kind.as_str(),
                 "provider": "external-agent",
-                "inputTokens": 0,
-                "outputTokens": 0,
+                "inputTokens": token_usage.as_ref().map(|usage| usage.input_tokens).unwrap_or(0),
+                "outputTokens": token_usage.as_ref().map(|usage| usage.output_tokens).unwrap_or(0),
                 "durationMs": duration_ms,
                 "messageIndex": message_count - 1,
                 "replyMedium": "text",
@@ -728,6 +745,11 @@ mod tests {
             if prompt == "fail" {
                 anyhow::bail!("fake send failure");
             }
+            if prompt == "event-error" {
+                return Ok(Box::pin(stream::iter([ExternalAgentEvent::Error(
+                    "fake event failure".to_string(),
+                )])));
+            }
             self.state
                 .prompts
                 .lock()
@@ -735,7 +757,14 @@ mod tests {
                 .push(prompt.to_string());
             Ok(Box::pin(stream::iter([
                 ExternalAgentEvent::TextDelta(format!("reply to {prompt}")),
-                ExternalAgentEvent::Done { usage: None },
+                ExternalAgentEvent::Done {
+                    usage: (prompt == "usage").then_some(
+                        moltis_external_agents::types::TokenUsage {
+                            input_tokens: 7,
+                            output_tokens: 11,
+                        },
+                    ),
+                },
             ])))
         }
 
@@ -915,6 +944,64 @@ mod tests {
             .await
             .expect("send after eviction");
         assert_eq!(agent_state.starts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn error_event_evicts_live_external_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let agent_state = Arc::new(FakeAgentState::default());
+        let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+        external_agents
+            .bind(serde_json::json!({ "sessionKey": "main", "kind": "codex" }))
+            .await
+            .expect("bind external agent");
+        let chat = test_chat_service(
+            Arc::clone(&external_agents),
+            Arc::clone(&metadata),
+            Arc::clone(&session_store),
+        )
+        .await;
+
+        let error = chat
+            .send(serde_json::json!({ "sessionKey": "main", "text": "event-error" }))
+            .await
+            .expect_err("error event should fail chat send");
+        assert_eq!(error.to_string(), "fake event failure");
+        assert_eq!(agent_state.shutdowns.load(Ordering::SeqCst), 1);
+
+        chat.send(serde_json::json!({ "sessionKey": "main", "text": "two" }))
+            .await
+            .expect("send after event-error eviction");
+        assert_eq!(agent_state.starts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn bound_chat_send_persists_external_token_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let agent_state = Arc::new(FakeAgentState::default());
+        let external_agents = fake_external_agents(Arc::clone(&metadata), agent_state);
+        external_agents
+            .bind(serde_json::json!({ "sessionKey": "main", "kind": "codex" }))
+            .await
+            .expect("bind external agent");
+        let chat = test_chat_service(
+            Arc::clone(&external_agents),
+            Arc::clone(&metadata),
+            Arc::clone(&session_store),
+        )
+        .await;
+
+        chat.send(serde_json::json!({ "sessionKey": "main", "text": "usage" }))
+            .await
+            .expect("send with usage");
+
+        let history = session_store.read("main").await.expect("read history");
+        assert_eq!(history[1]["inputTokens"], 7);
+        assert_eq!(history[1]["outputTokens"], 11);
     }
 
     #[tokio::test]

@@ -416,6 +416,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn extracts_usage_from_codex_shapes() {
+        let snake = extract_usage(&json!({
+            "params": {
+                "usage": {
+                    "input_tokens": 13,
+                    "output_tokens": 21
+                }
+            }
+        }))
+        .unwrap_or_default();
+        assert_eq!(snake.input_tokens, 13);
+        assert_eq!(snake.output_tokens, 21);
+
+        let camel = extract_usage(&json!({
+            "result": {
+                "usage": {
+                    "inputTokens": 34,
+                    "outputTokens": 55
+                }
+            }
+        }))
+        .unwrap_or_default();
+        assert_eq!(camel.input_tokens, 34);
+        assert_eq!(camel.output_tokens, 55);
+    }
+
     #[tokio::test]
     async fn codex_session_reuses_thread_for_multiple_prompts() -> anyhow::Result<()> {
         let unique = SystemTime::now()

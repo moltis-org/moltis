@@ -221,7 +221,11 @@ fn has_resume_arg(args: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {
+        super::*,
+        futures::StreamExt,
+        std::{fs, time::SystemTime},
+    };
 
     #[test]
     fn parses_claude_json_output() {
@@ -259,5 +263,59 @@ mod tests {
             "--resume",
             "sid"
         ]);
+    }
+
+    #[tokio::test]
+    async fn send_prompt_resumes_previous_claude_session() -> anyhow::Result<()> {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("moltis-claude-test-{unique}"));
+        fs::create_dir_all(&dir)?;
+        let script = dir.join("fake-claude.sh");
+        let log = dir.join("args.log");
+        fs::write(
+            &script,
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "$CLAUDE_ARGS_LOG"
+printf '%s\n' '{"result":"ok","session_id":"sid-1"}'
+"#,
+        )?;
+
+        let mut env = HashMap::new();
+        env.insert(
+            "CLAUDE_ARGS_LOG".to_string(),
+            log.to_string_lossy().to_string(),
+        );
+        let mut session = ClaudeCodeSession::new(
+            "/bin/sh".to_string(),
+            vec![script.to_string_lossy().to_string()],
+            env,
+            None,
+            Some(5),
+        );
+
+        let first = session
+            .send_prompt("hello", None)
+            .await?
+            .collect::<Vec<_>>()
+            .await;
+        let second = session
+            .send_prompt("again", None)
+            .await?
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(matches!(first.first(), Some(ExternalAgentEvent::TextDelta(text)) if text == "ok"));
+        assert!(
+            matches!(second.first(), Some(ExternalAgentEvent::TextDelta(text)) if text == "ok")
+        );
+        assert_eq!(session.external_session_id(), Some("sid-1"));
+        let args = fs::read_to_string(&log)?;
+        let lines = args.lines().collect::<Vec<_>>();
+        assert_eq!(lines, vec!["", "--resume sid-1"]);
+        fs::remove_dir_all(dir)?;
+        Ok(())
     }
 }
