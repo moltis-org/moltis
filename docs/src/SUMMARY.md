@@ -23,6 +23,7 @@
   - [Choosing a Provider](choosing-a-provider.md)
   - [Anthropic OAuth (FAQ)](anthropic-oauth.md)
 - [MCP Servers](mcp.md)
+- [External Agents](external-agents.md)
 - [Memory](memory.md)
   - [Memory Surfaces](memory-surfaces.md)
   - [Moltis vs OpenClaw](memory-comparison.md)

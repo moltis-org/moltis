@@ -27,6 +27,7 @@ pub struct GatewayServices {
     pub provider_setup: Arc<dyn ProviderSetupService>,
     pub project: Arc<dyn ProjectService>,
     pub local_llm: Arc<dyn LocalLlmService>,
+    pub external_agent: Arc<dyn ExternalAgentService>,
     pub network_audit: Arc<dyn crate::network_audit::NetworkAuditService>,
     /// Optional channel registry for direct plugin access (thread context, etc.).
     pub channel_registry: Option<Arc<moltis_channels::ChannelRegistry>>,
@@ -56,6 +57,11 @@ pub struct GatewayServices {
 impl GatewayServices {
     pub fn with_chat(mut self, chat: Arc<dyn ChatService>) -> Self {
         self.chat = chat;
+        self
+    }
+
+    pub fn with_session(mut self, session: Arc<dyn SessionService>) -> Self {
+        self.session = session;
         self
     }
 
@@ -156,6 +162,7 @@ impl GatewayServices {
             provider_setup: Arc::new(NoopProviderSetupService),
             project: Arc::new(NoopProjectService),
             local_llm: Arc::new(NoopLocalLlmService),
+            external_agent: Arc::new(NoopExternalAgentService),
             network_audit: Arc::new(crate::network_audit::NoopNetworkAuditService),
             channel_registry: None,
             channel_store: None,
@@ -182,6 +189,11 @@ impl GatewayServices {
         svc: Arc<dyn crate::network_audit::NetworkAuditService>,
     ) -> Self {
         self.network_audit = svc;
+        self
+    }
+
+    pub fn with_external_agent(mut self, external_agent: Arc<dyn ExternalAgentService>) -> Self {
+        self.external_agent = external_agent;
         self
     }
 
@@ -282,7 +294,7 @@ impl GatewayServices {
             project: self.project.clone(),
             local_llm: self.local_llm.clone(),
             system_info,
-            external_agent: Arc::new(NoopExternalAgentService),
+            external_agent: self.external_agent.clone(),
         })
     }
 

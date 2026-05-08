@@ -25,6 +25,7 @@ pub mod channel_webhook_rate_limit;
 pub mod chat;
 pub mod chat_error;
 pub mod cron;
+pub mod external_agents;
 #[cfg(feature = "local-llm")]
 pub mod local_llm_setup;
 pub mod logs;

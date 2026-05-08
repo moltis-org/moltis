@@ -21,6 +21,9 @@ use crate::{
     auth,
     broadcast::{BroadcastOpts, broadcast},
     chat::{LiveChatService, LiveModelService},
+    external_agents::{
+        ExternalAgentChatService, ExternalAgentSessionService, GatewayExternalAgentService,
+    },
     methods::MethodRegistry,
     provider_setup::LiveProviderSetupService,
     services::GatewayServices,
@@ -435,6 +438,17 @@ pub(super) async fn complete_startup(
     {
         services.telephony_plugin = Some(Arc::clone(&telephony_webhook_plugin));
     }
+
+    let external_agent_service = Arc::new(GatewayExternalAgentService::new(
+        config.external_agents.clone(),
+        Arc::clone(&session_metadata),
+    ));
+    let session_service = Arc::clone(&services.session);
+    services = services.with_session(Arc::new(ExternalAgentSessionService::new(
+        session_service,
+        Arc::clone(&external_agent_service),
+    )));
+    services = services.with_external_agent(external_agent_service.clone());
 
     let state = GatewayState::with_options(
         resolved_auth,
@@ -1380,7 +1394,14 @@ pub(super) async fn complete_startup(
         }
 
         let live_chat = Arc::new(chat_service);
-        state.set_chat(live_chat);
+        let chat_with_external_agents = Arc::new(ExternalAgentChatService::new(
+            live_chat,
+            external_agent_service,
+            Arc::clone(&state),
+            Arc::clone(&session_store),
+            Arc::clone(&session_metadata),
+        ));
+        state.set_chat(chat_with_external_agents);
 
         live_mcp
             .set_tool_registry(Arc::clone(&shared_tool_registry))

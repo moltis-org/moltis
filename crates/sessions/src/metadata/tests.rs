@@ -148,6 +148,29 @@ async fn test_sqlite_touch() {
 }
 
 #[tokio::test]
+async fn test_sqlite_set_external_agent() {
+    let pool = sqlite_pool().await;
+    let meta = SqliteSessionMetadata::new(pool);
+
+    meta.upsert("main", None).await.unwrap();
+    meta.set_external_agent(
+        "main",
+        Some(ExternalAgentKind::Codex),
+        Some("external-123".to_string()),
+    )
+    .await;
+
+    let entry = meta.get("main").await.unwrap();
+    assert_eq!(entry.external_agent_kind, Some(ExternalAgentKind::Codex));
+    assert_eq!(entry.external_session_id.as_deref(), Some("external-123"));
+
+    meta.set_external_agent("main", None, None).await;
+    let entry = meta.get("main").await.unwrap();
+    assert_eq!(entry.external_agent_kind, None);
+    assert_eq!(entry.external_session_id, None);
+}
+
+#[tokio::test]
 async fn test_sqlite_set_timestamps_and_counts() {
     let pool = sqlite_pool().await;
     let meta = SqliteSessionMetadata::new(pool);

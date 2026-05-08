@@ -620,7 +620,8 @@ port = {port}                           # Port number (auto-generated for this i
 # EXTERNAL AGENTS
 # ══════════════════════════════════════════════════════════════════════════════
 # Connect Moltis chat sessions to external CLI coding agents.
-# Each agent runs as an external process (PTY/tmux or JSON-RPC).
+# Codex and ACP use persistent JSON-RPC sessions; Claude Code uses print-mode
+# resume when the CLI returns a session_id.
 # Moltis acts as orchestrator; the CLI agent owns its own context window.
 
 [external_agents]
@@ -629,7 +630,7 @@ port = {port}                           # Port number (auto-generated for this i
 # Per-agent configuration (key = agent kind)
 # [external_agents.agents.claude-code]
 # binary = "claude"                 # Override binary path (default: look up on $PATH)
-# args = []                         # Additional CLI arguments
+# args = ["-p", "--output-format", "json"]
 # working_dir = "."                 # Override working directory
 # timeout_secs = 300                # Session timeout
 # use_tmux = false                  # Force tmux backend (vs direct PTY)
@@ -638,6 +639,11 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [external_agents.agents.codex]
 # binary = "codex"
+# args = ["app-server"]
+
+# [external_agents.agents.acp]
+# binary = "/path/to/acp-agent"
+# args = []
 
 # [external_agents.agents.opencode]
 # binary = "opencode"

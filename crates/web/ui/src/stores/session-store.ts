@@ -30,6 +30,8 @@ export class Session {
 	agent_id: string;
 	mode_id: string;
 	node_id: string | null;
+	external_agent_kind: string | null;
+	externalSessionId: string | null;
 	mcpDisabled: boolean | undefined;
 	archived: boolean | undefined;
 	activeChannel: string | undefined;
@@ -70,6 +72,8 @@ export class Session {
 		this.agent_id = serverData.agent_id || "main";
 		this.mode_id = serverData.mode_id || "";
 		this.node_id = serverData.node_id || null;
+		this.external_agent_kind = serverData.external_agent_kind || serverData.externalAgentKind || null;
+		this.externalSessionId = serverData.externalSessionId || null;
 		this.mcpDisabled = serverData.mcpDisabled;
 		this.archived = serverData.archived;
 		this.activeChannel = serverData.activeChannel;
@@ -127,6 +131,8 @@ export class Session {
 		this.agent_id = serverData.agent_id || "main";
 		this.mode_id = serverData.mode_id || "";
 		this.node_id = serverData.node_id || null;
+		this.external_agent_kind = serverData.external_agent_kind || serverData.externalAgentKind || null;
+		this.externalSessionId = serverData.externalSessionId || null;
 		this.mcpDisabled = serverData.mcpDisabled;
 		this.archived = serverData.archived;
 		this.activeChannel = serverData.activeChannel;
@@ -185,6 +191,8 @@ export class Session {
 			agent_id: this.agent_id,
 			mode_id: this.mode_id,
 			node_id: this.node_id,
+			external_agent_kind: this.external_agent_kind,
+			externalSessionId: this.externalSessionId,
 			version: this.version,
 		};
 	}

@@ -2,51 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// Which transport/runtime an external agent uses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AgentTransportKind {
-    ClaudeCode,
-    Opencode,
-    Codex,
-    PiAgent,
-    Acp,
-}
-
-impl AgentTransportKind {
-    /// Canonical string identifier used in config and persistence.
-    #[must_use]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "claude-code",
-            Self::Opencode => "opencode",
-            Self::Codex => "codex",
-            Self::PiAgent => "pi-agent",
-            Self::Acp => "acp",
-        }
-    }
-}
-
-impl std::fmt::Display for AgentTransportKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for AgentTransportKind {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "claude-code" => Ok(Self::ClaudeCode),
-            "opencode" => Ok(Self::Opencode),
-            "codex" => Ok(Self::Codex),
-            "pi-agent" => Ok(Self::PiAgent),
-            "acp" => Ok(Self::Acp),
-            other => Err(format!("unknown agent transport kind: {other}")),
-        }
-    }
-}
+pub use moltis_sessions::metadata::ExternalAgentKind as AgentTransportKind;
 
 /// Events emitted by an external agent session.
 ///

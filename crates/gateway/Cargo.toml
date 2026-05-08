@@ -34,6 +34,7 @@ moltis-common           = { workspace = true }
 moltis-config           = { workspace = true }
 moltis-cron             = { workspace = true }
 moltis-discord          = { optional = true, workspace = true }
+moltis-external-agents  = { workspace = true }
 moltis-hermes-import    = { optional = true, workspace = true }
 moltis-home-assistant   = { optional = true, workspace = true }
 moltis-matrix           = { optional = true, workspace = true }

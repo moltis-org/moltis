@@ -44,6 +44,9 @@ export interface SessionMeta {
 	/** CamelCase alias emitted alongside mode_id. */
 	modeId?: string | null;
 	node_id?: string | null;
+	external_agent_kind?: string | null;
+	externalAgentKind?: string | null;
+	externalSessionId?: string | null;
 	version?: number;
 	/** Client-side flag: set transiently during setAll merges. */
 	_localUnread?: boolean;

@@ -12,8 +12,8 @@ use crate::Result;
 
 /// External agent transport kind for session binding.
 ///
-/// Mirror of `moltis_external_agents::AgentTransportKind` — defined here so
-/// `moltis-sessions` can stay free of the `moltis-external-agents` dependency.
+/// Defined in `moltis-sessions` so runtime crates can share the persisted type
+/// without introducing a dependency from session storage to agent runtimes.
 /// Serialises to kebab-case strings matching the canonical agent identifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -393,6 +393,8 @@ struct SessionRow {
     agent_id: Option<String>,
     mode_id: Option<String>,
     node_id: Option<String>,
+    external_agent_kind: Option<String>,
+    external_session_id: Option<String>,
     version: i64,
 }
 
@@ -421,8 +423,11 @@ impl From<SessionRow> for SessionEntry {
             agent_id: r.agent_id,
             mode_id: r.mode_id,
             node_id: r.node_id,
-            external_agent_kind: None,
-            external_session_id: None,
+            external_agent_kind: r
+                .external_agent_kind
+                .as_deref()
+                .and_then(|kind| kind.parse().ok()),
+            external_session_id: r.external_session_id,
             version: r.version as u64,
         }
     }
@@ -489,6 +494,8 @@ impl SqliteSessionMetadata {
                 agent_id            TEXT,
                 mode_id             TEXT,
                 node_id             TEXT,
+                external_agent_kind TEXT,
+                external_session_id TEXT,
                 version             INTEGER NOT NULL DEFAULT 0
             )"#,
         )
@@ -576,6 +583,29 @@ impl SqliteSessionMetadata {
             "UPDATE sessions SET model = ?, updated_at = ?, version = version + 1 WHERE key = ?",
         )
         .bind(&model)
+        .bind(now)
+        .bind(key)
+        .execute(&self.pool)
+        .await
+        .ok();
+        self.emit(crate::session_events::SessionEvent::Patched {
+            session_key: key.to_string(),
+        });
+    }
+
+    pub async fn set_external_agent(
+        &self,
+        key: &str,
+        kind: Option<ExternalAgentKind>,
+        external_session_id: Option<String>,
+    ) {
+        let now = now_ms() as i64;
+        let kind = kind.map(|kind| kind.as_str().to_string());
+        sqlx::query(
+            "UPDATE sessions SET external_agent_kind = ?, external_session_id = ?, updated_at = ?, version = version + 1 WHERE key = ?",
+        )
+        .bind(&kind)
+        .bind(&external_session_id)
         .bind(now)
         .bind(key)
         .execute(&self.pool)

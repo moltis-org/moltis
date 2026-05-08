@@ -362,6 +362,9 @@ impl SessionService for LiveSessionService {
                 "mode_id": e.mode_id,
                 "modeId": e.mode_id,
                 "node_id": e.node_id,
+                "external_agent_kind": e.external_agent_kind.map(|kind| kind.as_str()),
+                "externalAgentKind": e.external_agent_kind.map(|kind| kind.as_str()),
+                "externalSessionId": e.external_session_id,
                 "version": e.version,
             }));
         }
@@ -439,6 +442,9 @@ impl SessionService for LiveSessionService {
                     "mode_id": entry.mode_id,
                     "modeId": entry.mode_id,
                     "node_id": entry.node_id,
+                    "external_agent_kind": entry.external_agent_kind.map(|kind| kind.as_str()),
+                    "externalAgentKind": entry.external_agent_kind.map(|kind| kind.as_str()),
+                    "externalSessionId": entry.external_session_id,
                     "version": entry.version,
                 },
                 "history": [],

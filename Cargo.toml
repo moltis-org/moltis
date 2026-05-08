@@ -87,8 +87,8 @@ members = [
   "crates/common",
   "crates/config",
   "crates/cron",
-  "crates/external-agents",
   "crates/ctl",
+  "crates/external-agents",
   "crates/gateway",
   "crates/graphql",
   "crates/hermes-import",
@@ -167,6 +167,7 @@ version      = "0.1.0"
 a2 = { default-features = false, features = ["ring"], version = "0.10" }
 # Async runtime
 tokio = { features = ["full"], version = "1" }
+agent-client-protocol = "0.10.2"
 # HTTP/WS server
 askama     = "0.15"
 axum       = { features = ["ws"], version = "0.8" }

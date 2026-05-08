@@ -46,6 +46,64 @@ async function deleteAgentByName(page, agentName) {
 	await expect(testCard).toHaveCount(0, { timeout: 10_000 });
 }
 
+async function mockExternalAgentsRpc(page) {
+	await page.evaluate(async () => {
+		var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+		if (!appScript) throw new Error("app module script not found");
+		var appUrl = new URL(appScript.src, window.location.origin);
+		var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+		var stateModule = await import(`${prefix}js/state.js`);
+		var ws = stateModule.ws;
+		if (!ws) throw new Error("websocket unavailable");
+
+		if (!window.__origExternalAgentWsSend) {
+			window.__origExternalAgentWsSend = ws.send.bind(ws);
+		}
+		window.__externalAgentE2ERequests = [];
+
+		function resolvePending(id, payload) {
+			var resolver = stateModule.pending?.[id];
+			if (typeof resolver !== "function") return false;
+			delete stateModule.pending[id];
+			resolver(payload);
+			return true;
+		}
+
+		ws.send = (payload) => {
+			try {
+				var parsed = JSON.parse(payload);
+				if (parsed?.method === "external_agents.list") {
+					window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
+					return resolvePending(parsed.id, {
+						ok: true,
+						payload: [
+							{ kind: "codex", name: "Codex", installed: true, version: null },
+							{ kind: "claude-code", name: "Claude Code", installed: false, version: null },
+						],
+					});
+				}
+				if (parsed?.method === "external_agents.bind") {
+					window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
+					return resolvePending(parsed.id, {
+						ok: true,
+						payload: { ok: true, sessionKey: parsed.params?.sessionKey, kind: parsed.params?.kind },
+					});
+				}
+				if (parsed?.method === "external_agents.unbind") {
+					window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
+					return resolvePending(parsed.id, {
+						ok: true,
+						payload: { ok: true, sessionKey: parsed.params?.sessionKey },
+					});
+				}
+			} catch (_err) {
+				// Fall through to the original sender.
+			}
+			return window.__origExternalAgentWsSend(payload);
+		};
+	});
+}
+
 test.describe("Agents settings page", () => {
 	test("settings/agents loads and shows heading", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
@@ -262,6 +320,97 @@ test.describe("Agents settings page", () => {
 		await testCard.getByRole("button", { name: "Delete", exact: true }).click();
 		await page.locator(".provider-modal").getByRole("button", { name: "Delete", exact: true }).click();
 		await expect(testCard).toHaveCount(0, { timeout: 10_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("session header external-agent selector binds and unbinds a session", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/chats");
+		await expectPageContentMounted(page);
+		await waitForWsConnected(page);
+		await mockExternalAgentsRpc(page);
+		await createSession(page);
+
+		const externalAgentCombo = page
+			.locator("#sessionHeaderToolbarMount .model-combo")
+			.filter({ has: page.locator(".model-combo-btn", { hasText: "Moltis agent" }) })
+			.first();
+		await expect(externalAgentCombo).toBeVisible({ timeout: 10_000 });
+		const externalAgentButton = externalAgentCombo.locator(".model-combo-btn");
+		await externalAgentButton.click();
+		const codexOption = externalAgentCombo.locator(".model-dropdown-item", { hasText: "Codex" }).first();
+		await expect(codexOption).toBeVisible({ timeout: 10_000 });
+		await codexOption.click();
+
+		const sessionKey = await page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSessionKey?.value || "");
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(() =>
+						(window.__externalAgentE2ERequests || []).some(
+							(req) => req.method === "external_agents.bind" && req.params?.kind === "codex",
+						),
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
+		await page.evaluate(() => {
+			const session = window.__moltis_stores?.sessionStore?.activeSession?.value;
+			if (!session) return;
+			session.external_agent_kind = "codex";
+			session.dataVersion.value++;
+		});
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSession?.value?.external_agent_kind),
+				{
+					timeout: 10_000,
+				},
+			)
+			.toBe("codex");
+		const codexAgentCombo = page
+			.locator("#sessionHeaderToolbarMount .model-combo")
+			.filter({ has: page.locator(".model-combo-btn", { hasText: "Codex" }) })
+			.first();
+		await expect(codexAgentCombo).toBeVisible({ timeout: 10_000 });
+		const codexAgentButton = codexAgentCombo.locator(".model-combo-btn");
+		await expect(codexAgentButton).toContainText("Codex", { timeout: 10_000 });
+
+		await codexAgentButton.click();
+		const moltisOption = codexAgentCombo.locator(".model-dropdown-item", { hasText: "Moltis agent" }).first();
+		await expect(moltisOption).toBeVisible({ timeout: 10_000 });
+		await moltisOption.click();
+
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(
+						(key) =>
+							(window.__externalAgentE2ERequests || []).some(
+								(req) => req.method === "external_agents.unbind" && req.params?.sessionKey === key,
+							),
+						sessionKey,
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
+		await page.evaluate(() => {
+			const session = window.__moltis_stores?.sessionStore?.activeSession?.value;
+			if (!session) return;
+			session.external_agent_kind = null;
+			session.dataVersion.value++;
+		});
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSession?.value?.external_agent_kind),
+				{
+					timeout: 10_000,
+				},
+			)
+			.toBe(null);
 
 		expect(pageErrors).toEqual([]);
 	});
