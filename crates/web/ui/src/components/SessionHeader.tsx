@@ -631,7 +631,7 @@ export function SessionHeader({
 					/>
 				)}
 				{showSelectors && shouldShowExternalAgentPicker && (
-					<div className="flex items-center gap-1.5">
+					<div className="flex items-center gap-1.5" data-testid="external-agent-picker">
 						<ComboSelect
 							options={externalAgentSelectOptions}
 							value={currentExternalAgentKind}

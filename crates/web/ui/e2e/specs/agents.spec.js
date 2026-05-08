@@ -332,10 +332,7 @@ test.describe("Agents settings page", () => {
 		await mockExternalAgentsRpc(page);
 		await createSession(page);
 
-		const externalAgentCombo = page
-			.locator("#sessionHeaderToolbarMount .model-combo")
-			.filter({ has: page.locator(".model-combo-btn", { hasText: "Moltis agent" }) })
-			.first();
+		const externalAgentCombo = page.getByTestId("external-agent-picker").locator(".model-combo");
 		await expect(externalAgentCombo).toBeVisible({ timeout: 10_000 });
 		const externalAgentButton = externalAgentCombo.locator(".model-combo-btn");
 		await externalAgentButton.click();
@@ -370,10 +367,7 @@ test.describe("Agents settings page", () => {
 				},
 			)
 			.toBe("codex");
-		const codexAgentCombo = page
-			.locator("#sessionHeaderToolbarMount .model-combo")
-			.filter({ has: page.locator(".model-combo-btn", { hasText: "Codex" }) })
-			.first();
+		const codexAgentCombo = page.getByTestId("external-agent-picker").locator(".model-combo");
 		await expect(codexAgentCombo).toBeVisible({ timeout: 10_000 });
 		const codexAgentButton = codexAgentCombo.locator(".model-combo-btn");
 		await expect(codexAgentButton).toContainText("Codex", { timeout: 10_000 });
