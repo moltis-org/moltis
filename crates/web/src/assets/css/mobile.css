@@ -401,16 +401,13 @@ body {
 
   .chat-composer-footer {
     align-items: flex-end;
+    flex-wrap: wrap;
     gap: 8px;
   }
 
   .chat-composer-tools {
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .chat-composer-tools::-webkit-scrollbar {
-    display: none;
+    flex-wrap: wrap;
+    overflow: visible;
   }
 
   .chat-composer-footer .model-combo-btn {

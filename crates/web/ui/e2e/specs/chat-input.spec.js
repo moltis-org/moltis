@@ -375,6 +375,20 @@ test.describe("Chat input and slash commands", () => {
 		}
 	});
 
+	test("mobile model selector dropdown is not clipped", async ({ page }) => {
+		await page.setViewportSize({ width: 390, height: 844 });
+		await page.waitForFunction(() => window.innerWidth === 390, { timeout: 5_000 });
+
+		const modelBtn = page.locator("#modelComboBtn");
+		await expect(modelBtn).toBeVisible();
+		await modelBtn.click();
+
+		const dropdown = page.locator("#modelDropdown");
+		await expect(dropdown).toBeVisible();
+		const box = await dropdown.boundingBox();
+		expect(box?.height || 0).toBeGreaterThan(40);
+	});
+
 	test("send button is present", async ({ page }) => {
 		const sendBtn = page.locator("#sendBtn");
 		await expect(sendBtn).toBeVisible();
