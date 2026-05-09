@@ -9,7 +9,7 @@ interface Props {
 const { page } = Astro.props
 const sections = await getDocsIndex()
 const { previous, next } = await getPrevNext(page.slug)
-const currentPath = Astro.url.pathname.replace(/^\//, "") || "index.html"
+const currentPath = Astro.url.pathname === "/" ? "/index.html" : Astro.url.pathname
 const searchPages = sections.flatMap((section) => section.pages)
 ---
 
