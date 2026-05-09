@@ -452,7 +452,7 @@ const slashHandlers: Record<SlashCommandName, SlashHandler> = {
 			return;
 		}
 		chatAddMsg("system", "Thinking\u2026");
-		sendRpc("chat.send_sync", { text: args, _ephemeral: true }).then((res) => {
+		sendRpc("chat.send_sync", { text: args, _ephemeral: true, _tool_policy: { deny: ["*"] } }).then((res) => {
 			if (S.chatMsgBox?.lastChild) S.chatMsgBox.removeChild(S.chatMsgBox.lastChild);
 			if (res.ok && res.payload) {
 				const text = typeof res.payload === "string" ? res.payload : (res.payload as UnknownRecord).text;

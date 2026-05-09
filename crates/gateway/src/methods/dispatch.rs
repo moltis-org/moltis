@@ -172,6 +172,7 @@ const WRITE_METHODS: &[&str] = &[
     "node.invoke",
     "nodes.set_session",
     "chat.send",
+    "chat.send_sync",
     "chat.abort",
     "chat.cancel_queued",
     "chat.clear",
@@ -735,6 +736,15 @@ mod tests {
         assert_eq!(
             resp.error.as_ref().map(|e| e.code.as_str()),
             Some("UNKNOWN_METHOD")
+        );
+    }
+
+    #[test]
+    fn chat_send_sync_is_registered_and_authorized() {
+        let reg = MethodRegistry::new();
+        assert!(reg.method_names().contains(&"chat.send_sync".to_string()));
+        assert!(
+            authorize_method("chat.send_sync", "operator", &scopes(&["operator.write"])).is_none()
         );
     }
 

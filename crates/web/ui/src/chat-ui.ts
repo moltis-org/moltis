@@ -436,18 +436,22 @@ export function setComposerStopButton(active: boolean, sessionKey: string = S.ac
 export function updateTokenBar(): void {
 	const bar = S.$("tokenBar");
 	if (!bar) return;
-	const total = S.sessionTokens.input + S.sessionTokens.output;
+	const total =
+		S.sessionCurrentContextTokens || S.sessionCurrentInputTokens || S.sessionTokens.input + S.sessionTokens.output;
 	let text = formatTokens(total);
 	if (S.sessionContextWindow > 0) {
-		const currentInput = S.sessionCurrentInputTokens || 0;
-		const pct = Math.min(100, Math.max(0, Math.round((currentInput / S.sessionContextWindow) * 100)));
+		const pct = Math.min(100, Math.max(0, Math.round((total / S.sessionContextWindow) * 100)));
 		text += ` (${pct}%)`;
 	}
+	bar.title = total > 0 ? "Context tokens used by the latest assistant turn" : "";
+	if (text === "0 (0%)") {
+		text = "";
+	}
 	if (!S.sessionToolsEnabled) {
-		text += " \u00b7 Tools: disabled";
+		text += `${text ? " \u00b7 " : ""}Tools: disabled`;
 	}
 	if (S.commandModeEnabled) {
-		text += " \u00b7 /sh mode";
+		text += `${text ? " \u00b7 " : ""}/sh mode`;
 	}
 	bar.textContent = text;
 }

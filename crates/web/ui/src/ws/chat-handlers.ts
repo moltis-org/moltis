@@ -379,6 +379,12 @@ function handleChatFinal(p: ChatPayload, isActive: boolean, isChatPage: boolean,
 	} else if (p.inputTokens || p.outputTokens) {
 		S.setSessionCurrentInputTokens(p.inputTokens || 0);
 	}
+	S.setSessionCurrentContextTokens(
+		(p.requestInputTokens ?? p.inputTokens ?? 0) +
+			(p.requestOutputTokens ?? p.outputTokens ?? 0) +
+			(p.requestCacheReadTokens ?? p.cacheReadTokens ?? 0) +
+			(p.requestCacheWriteTokens ?? p.cacheWriteTokens ?? 0),
+	);
 	updateTokenBar();
 	appendLastMessageTimestamp(Date.now());
 	// Reset per-session stream state

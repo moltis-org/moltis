@@ -564,6 +564,34 @@ pub(super) fn register(reg: &mut MethodRegistry) {
         }),
     );
     reg.register(
+        "chat.send_sync",
+        Box::new(|ctx| {
+            Box::pin(async move {
+                let mut params = ctx.params.clone();
+                params["_conn_id"] = serde_json::json!(ctx.client_conn_id);
+                {
+                    let registry = ctx.state.client_registry.read().await;
+                    if let Some(client) = registry.clients.get(&ctx.client_conn_id) {
+                        if let Some(ref lang) = client.accept_language {
+                            params["_accept_language"] = serde_json::json!(lang);
+                        }
+                        if let Some(ref ip) = client.remote_ip {
+                            params["_remote_ip"] = serde_json::json!(ip);
+                        }
+                        if let Some(ref tz) = client.timezone {
+                            params["_timezone"] = serde_json::json!(tz);
+                        }
+                    }
+                }
+                ctx.state
+                    .chat()
+                    .send_sync(params)
+                    .await
+                    .map_err(ErrorShape::from)
+            })
+        }),
+    );
+    reg.register(
         "chat.abort",
         Box::new(|ctx| {
             Box::pin(async move {

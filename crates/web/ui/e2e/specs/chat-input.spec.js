@@ -140,6 +140,45 @@ async function getChatSeq(page) {
 	});
 }
 
+async function mockChatSendSync(page) {
+	await page.evaluate(async () => {
+		var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+		if (!appScript) throw new Error("app module script not found");
+		var appUrl = new URL(appScript.src, window.location.origin);
+		var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+		var stateModule = await import(`${prefix}js/state.js`);
+		var ws = stateModule.ws;
+		if (!ws) throw new Error("websocket unavailable");
+
+		if (!window.__origBtwWsSend) {
+			window.__origBtwWsSend = ws.send.bind(ws);
+		}
+		window.__btwPayloads = [];
+
+		ws.send = (payload) => {
+			try {
+				var parsed = JSON.parse(payload);
+				if (parsed?.method === "chat.send_sync") {
+					window.__btwPayloads.push(parsed.params || {});
+					var resolver = stateModule.pending?.[parsed.id];
+					if (typeof resolver === "function") {
+						delete stateModule.pending[parsed.id];
+						resolver({ ok: true, payload: { text: "btw answer" } });
+					}
+					return;
+				}
+			} catch (_err) {
+				// Fall through to original sender.
+			}
+			return window.__origBtwWsSend(payload);
+		};
+	});
+}
+
+async function getBtwPayloads(page) {
+	return await page.evaluate(() => window.__btwPayloads || []);
+}
+
 async function closeFullContextIfOpen(page, modal) {
 	if (!(await modal.isVisible().catch(() => false))) return;
 	await page.locator("#fullContextModalCloseBtn").click();
@@ -481,6 +520,25 @@ test.describe("Chat input and slash commands", () => {
 		}
 	});
 
+	test("/btw sends an ephemeral no-tools side question", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockChatSendSync(page);
+
+		const chatInput = page.locator("#chatInput");
+		await chatInput.fill("/btw what changed?");
+		await chatInput.press("Enter");
+
+		await expect(page.locator("#messages")).toContainText("btw answer");
+		const payloads = await getBtwPayloads(page);
+		expect(payloads).toHaveLength(1);
+		expect(payloads[0]).toMatchObject({
+			text: "what changed?",
+			_ephemeral: true,
+			_tool_policy: { deny: ["*"] },
+		});
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("command mode prefixes outgoing user message with /sh", async ({ page }) => {
 		await page.evaluate(() => {
 			window.__chatSendPayloads = [];
@@ -528,6 +586,7 @@ test.describe("Chat input and slash commands", () => {
 			var state = await import(`${prefix}js/state.js`);
 			var chatUi = await import(`${prefix}js/chat-ui.js`);
 			state.setSessionTokens({ input: 0, output: 0 });
+			state.setSessionCurrentContextTokens(0);
 			state.setSessionContextWindow(0);
 			state.setSessionToolsEnabled(true);
 			state.setSessionExecMode("host");
@@ -541,6 +600,29 @@ test.describe("Chat input and slash commands", () => {
 		await expect(tokenBar).toHaveText("0");
 		await expect(tokenBar).not.toContainText("Execute:");
 		await expect(tokenBar).not.toContainText("/sh mode");
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("token bar hides empty context usage", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var state = await import(`${prefix}js/state.js`);
+			var chatUi = await import(`${prefix}js/chat-ui.js`);
+			state.setSessionTokens({ input: 0, output: 0 });
+			state.setSessionCurrentInputTokens(0);
+			state.setSessionCurrentContextTokens(0);
+			state.setSessionContextWindow(200000);
+			state.setSessionToolsEnabled(true);
+			state.setCommandModeEnabled(false);
+			chatUi.updateTokenBar();
+		});
+
+		await expect(page.locator("#tokenBar")).toBeHidden();
 		expect(pageErrors).toEqual([]);
 	});
 
@@ -563,7 +645,7 @@ test.describe("Chat input and slash commands", () => {
 		});
 	});
 
-	test("token bar shows total session tokens and current context used", async ({ page }) => {
+	test("token bar shows current context tokens and context used", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
 		const tokenBarText = await page.evaluate(async () => {
@@ -575,6 +657,7 @@ test.describe("Chat input and slash commands", () => {
 			var chatUi = await import(`${prefix}js/chat-ui.js`);
 			state.setSessionTokens({ input: 200000, output: 0 });
 			state.setSessionCurrentInputTokens(50000);
+			state.setSessionCurrentContextTokens(62000);
 			state.setSessionContextWindow(200000);
 			state.setSessionToolsEnabled(true);
 			chatUi.updateTokenBar();
@@ -584,7 +667,7 @@ test.describe("Chat input and slash commands", () => {
 
 		const tokenBar = page.locator("#tokenBar");
 		await expect(tokenBar).toBeVisible();
-		expect(tokenBarText).toBe("200.0K (25%)");
+		expect(tokenBarText).toBe("62.0K (31%)");
 		expect(pageErrors).toEqual([]);
 	});
 

@@ -78,6 +78,10 @@ impl ChatService for LiveChatService {
             .map(serde_json::from_value::<ToolPolicy>)
             .transpose()
             .map_err(|e| format!("invalid '_tool_policy' parameter: {e}"))?;
+        let ephemeral = params
+            .get("_ephemeral")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let explicit_model = params.get("model").and_then(|v| v.as_str());
         let stream_only = !self.has_tools_sync();
@@ -118,16 +122,18 @@ impl ChatService for LiveChatService {
             seq: None,
             run_id: None,
         };
-        if let Err(e) = self
-            .session_store
-            .append(&session_key, &user_msg.to_value())
-            .await
-        {
-            warn!("send_sync: failed to persist user message: {e}");
-        }
+        if !ephemeral {
+            if let Err(e) = self
+                .session_store
+                .append(&session_key, &user_msg.to_value())
+                .await
+            {
+                warn!("send_sync: failed to persist user message: {e}");
+            }
 
-        // Ensure this session appears in the sessions list.
-        let _ = self.session_metadata.upsert(&session_key, None).await;
+            // Ensure this session appears in the sessions list.
+            let _ = self.session_metadata.upsert(&session_key, None).await;
+        }
         if let Some(agent_id) = requested_agent_id.as_deref()
             && let Err(error) = self
                 .session_metadata
@@ -141,7 +147,9 @@ impl ChatService for LiveChatService {
                 "send_sync: failed to assign requested agent to session"
             );
         }
-        self.session_metadata.touch(&session_key, 1).await;
+        if !ephemeral {
+            self.session_metadata.touch(&session_key, 1).await;
+        }
 
         let session_entry = self.session_metadata.get(&session_key).await;
         let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
@@ -167,7 +175,7 @@ impl ChatService for LiveChatService {
             .read(&session_key)
             .await
             .unwrap_or_default();
-        if !history.is_empty() {
+        if !ephemeral && !history.is_empty() {
             history.pop();
         }
 
@@ -276,7 +284,7 @@ impl ChatService for LiveChatService {
         };
 
         // Persist assistant response (even empty ones — needed for LLM history coherence).
-        if let Some(ref assistant_output) = result {
+        if !ephemeral && let Some(ref assistant_output) = result {
             let assistant_msg = build_persisted_assistant_message(
                 assistant_output.clone(),
                 Some(model_id.clone()),
@@ -812,9 +820,14 @@ impl ChatService for LiveChatService {
             .await
             .unwrap_or_default();
         let usage = session_token_usage_from_messages(&messages);
-        let total_tokens = usage.session_input_tokens + usage.session_output_tokens;
-        let current_total_tokens =
-            usage.current_request_input_tokens + usage.current_request_output_tokens;
+        let total_tokens = usage.session_input_tokens
+            + usage.session_output_tokens
+            + usage.session_cache_read_tokens
+            + usage.session_cache_write_tokens;
+        let current_total_tokens = usage.current_request_input_tokens
+            + usage.current_request_output_tokens
+            + usage.current_request_cache_read_tokens
+            + usage.current_request_cache_write_tokens;
 
         // Context window from the session's provider
         let context_window = {

@@ -69,6 +69,7 @@ interface AssistantMsg extends HistoryMessage {
 	inputTokens?: number;
 	outputTokens?: number;
 	cacheReadTokens?: number;
+	cacheWriteTokens?: number;
 	durationMs?: number;
 	reasoning?: string;
 	audio?: string;
@@ -76,6 +77,9 @@ interface AssistantMsg extends HistoryMessage {
 	run_id?: string;
 	historyIndex?: number;
 	requestInputTokens?: number;
+	requestOutputTokens?: number;
+	requestCacheReadTokens?: number;
+	requestCacheWriteTokens?: number;
 }
 
 interface UserMsg extends Omit<HistoryMessage, "content"> {
@@ -108,6 +112,7 @@ interface TokenUsage {
 	outputTokens?: number;
 	estimatedNextInputTokens?: number;
 	currentInputTokens?: number;
+	currentTotal?: number;
 }
 
 /** Execution environment info returned by chat.context RPC. */
@@ -258,6 +263,12 @@ function renderHistoryAssistantMessage(msg: AssistantMsg): HTMLElement | null {
 	} else if (msg.inputTokens || msg.outputTokens) {
 		S.setSessionCurrentInputTokens(msg.inputTokens || 0);
 	}
+	S.setSessionCurrentContextTokens(
+		(msg.requestInputTokens ?? msg.inputTokens ?? 0) +
+			(msg.requestOutputTokens ?? msg.outputTokens ?? 0) +
+			(msg.requestCacheReadTokens ?? msg.cacheReadTokens ?? 0) +
+			(msg.requestCacheWriteTokens ?? msg.cacheWriteTokens ?? 0),
+	);
 	return el;
 }
 
@@ -372,6 +383,7 @@ export function postHistoryLoadActions(
 					output: tu.outputTokens || 0,
 				});
 				S.setSessionCurrentInputTokens(tu.estimatedNextInputTokens || tu.currentInputTokens || tu.inputTokens || 0);
+				S.setSessionCurrentContextTokens(tu.currentTotal || tu.estimatedNextInputTokens || tu.currentInputTokens || 0);
 			}
 			S.setSessionToolsEnabled(p.supportsTools !== false);
 			const execution = p.execution || {};

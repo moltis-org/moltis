@@ -41,6 +41,7 @@ export interface RpcMethodMap {
 	"chat.full_context": unknown;
 	"chat.prompt_memory.refresh": unknown;
 	"chat.send": unknown;
+	"chat.send_sync": unknown;
 
 	// ── Cron ────────────────────────────────────────────────────
 	"cron.list": unknown;
