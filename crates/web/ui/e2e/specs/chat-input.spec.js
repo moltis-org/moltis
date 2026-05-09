@@ -433,6 +433,39 @@ test.describe("Chat input and slash commands", () => {
 		await expect(sendBtn).toBeVisible();
 	});
 
+	test("send button resets when chat send rejects", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var stateModule = await import(`${prefix}js/state.js`);
+			var ws = stateModule.ws;
+			if (!ws) throw new Error("websocket unavailable");
+
+			var originalSend = ws.send.bind(ws);
+			ws.send = (payload) => {
+				var parsed = JSON.parse(payload);
+				if (parsed?.method === "chat.send") {
+					ws.send = originalSend;
+					throw new Error("simulated chat.send transport failure");
+				}
+				return originalSend(payload);
+			};
+		});
+
+		const chatInput = page.locator("#chatInput");
+		const sendBtn = page.locator("#sendBtn");
+		await chatInput.fill("hello");
+		await chatInput.press("Enter");
+
+		await expect(page.locator("#messages")).toContainText("Request failed");
+		await expect(sendBtn).toHaveAttribute("data-mode", "send");
+		await expect(sendBtn).toHaveAttribute("aria-label", "Send");
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("chat composer is centered with footer controls", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		const composer = page.locator("#chatComposer");

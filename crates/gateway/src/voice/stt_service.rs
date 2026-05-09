@@ -298,8 +298,24 @@ impl LiveSttService {
                 cfg.voice.stt.mistral.api_key.is_some()
                     || Self::env_secret("MISTRAL_API_KEY").is_some(),
             ),
-            (SttProviderId::VoxtralLocal, false),
-            (SttProviderId::WhisperLocal, false),
+            (
+                SttProviderId::VoxtralLocal,
+                VoxtralLocalStt::with_options(
+                    Some(cfg.voice.stt.voxtral_local.endpoint.clone()),
+                    cfg.voice.stt.voxtral_local.model.clone(),
+                    cfg.voice.stt.voxtral_local.language.clone(),
+                )
+                .is_configured(),
+            ),
+            (
+                SttProviderId::WhisperLocal,
+                WhisperLocalStt::with_options(
+                    Some(cfg.voice.stt.whisper_local.endpoint.clone()),
+                    cfg.voice.stt.whisper_local.model.clone(),
+                    cfg.voice.stt.whisper_local.language.clone(),
+                )
+                .is_configured(),
+            ),
             (
                 SttProviderId::WhisperCli,
                 cfg.voice.stt.whisper_cli.model_path.is_some(),
@@ -542,6 +558,33 @@ base_url = "http://127.0.0.1:8001/"
             LiveSttService::resolve_provider(Some(moltis_config::VoiceSttProvider::Whisper)),
             Some(SttProviderId::Whisper)
         );
+    }
+
+    #[test]
+    fn test_live_stt_local_provider_config_status_uses_provider_rules() {
+        let _guard = VoiceConfigTestGuard::with_config(
+            r#"
+[server]
+port = 18080
+
+[voice.stt.voxtral_local]
+endpoint = "http://127.0.0.1:9000/"
+
+[voice.stt.whisper_local]
+endpoint = "http://127.0.0.1:9001/"
+"#,
+        );
+
+        let providers = LiveSttService::list_providers();
+        let voxtral_local = providers
+            .iter()
+            .find(|(id, _)| *id == SttProviderId::VoxtralLocal);
+        let whisper_local = providers
+            .iter()
+            .find(|(id, _)| *id == SttProviderId::WhisperLocal);
+
+        assert_eq!(voxtral_local, Some(&(SttProviderId::VoxtralLocal, true)));
+        assert_eq!(whisper_local, Some(&(SttProviderId::WhisperLocal, true)));
     }
 
     #[tokio::test]

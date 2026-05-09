@@ -197,7 +197,13 @@ export function sendChat(): void {
 	seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
 	setSessionReplying(S.activeSessionKey, true);
 	setComposerStopButton(true, S.activeSessionKey);
-	sendRpc<ChatSendPayload>("chat.send", chatParams).then((res) => handleChatSendRpcResponse(res, userEl));
+	sendRpc<ChatSendPayload>("chat.send", chatParams)
+		.then((res) => handleChatSendRpcResponse(res, userEl))
+		.catch(() => {
+			setComposerStopButton(false);
+			setSessionReplying(S.activeSessionKey, false);
+			chatAddMsg("error", "Request failed");
+		});
 	maybeRefreshFullContextFn?.();
 }
 
