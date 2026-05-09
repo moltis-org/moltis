@@ -39,6 +39,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: docs-validation-v1
+          cache-all-crates: true
+
       - name: Install docs validation tools
         run: |
           cargo install mdbook-lint --version 0.14.3 --locked

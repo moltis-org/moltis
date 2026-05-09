@@ -156,8 +156,31 @@ const searchPages = sections.flatMap((section) => section.pages)
       button.textContent = 'Copy'
       pre.appendChild(button)
       button.addEventListener('click', async () => {
-        await navigator.clipboard.writeText(pre.dataset.code || '')
-        button.textContent = 'Copied'
+        const code = pre.dataset.code || ''
+        let copied = false
+
+        try {
+          if (navigator.clipboard) {
+            await navigator.clipboard.writeText(code)
+            copied = true
+          }
+        } catch {
+          copied = false
+        }
+
+        if (!copied) {
+          const textarea = document.createElement('textarea')
+          textarea.value = code
+          textarea.setAttribute('readonly', '')
+          textarea.style.position = 'fixed'
+          textarea.style.left = '-9999px'
+          document.body.appendChild(textarea)
+          textarea.select()
+          copied = document.execCommand('copy')
+          textarea.remove()
+        }
+
+        button.textContent = copied ? 'Copied' : 'Failed'
         window.setTimeout(() => { button.textContent = 'Copy' }, 1200)
       })
     })
@@ -174,7 +197,16 @@ const searchPages = sections.flatMap((section) => section.pages)
         .filter((page) => `${page.title} ${page.section}`.toLowerCase().includes(query))
         .slice(0, 8)
 
-      results.innerHTML = matches.map((page) => `<a href="${page.url}"><span>${page.section}</span>${page.title}</a>`).join('')
+      results.replaceChildren()
+      matches.forEach((page) => {
+        const link = document.createElement('a')
+        const section = document.createElement('span')
+        link.href = page.url
+        section.textContent = page.section
+        link.appendChild(section)
+        link.appendChild(document.createTextNode(page.title))
+        results.appendChild(link)
+      })
       results.hidden = matches.length === 0
     })
   </script>
