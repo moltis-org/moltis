@@ -452,6 +452,7 @@ function removeCompactingStatus(p: CompactPayload): void {
 function resetTokensAfterCompaction(): void {
 	S.setSessionTokens({ input: 0, output: 0 });
 	S.setSessionCurrentInputTokens(0);
+	S.setSessionCurrentContextTokens(0);
 	updateTokenBar();
 }
 
@@ -701,6 +702,7 @@ function handleChatSessionCleared(_p: ChatPayload, isActive: boolean, isChatPage
 	if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 	S.setSessionTokens({ input: 0, output: 0 });
 	S.setSessionCurrentInputTokens(0);
+	S.setSessionCurrentContextTokens(0);
 	updateTokenBar();
 }
 

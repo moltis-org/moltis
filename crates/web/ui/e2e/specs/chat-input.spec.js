@@ -832,9 +832,22 @@ test.describe("Chat input and slash commands", () => {
 	test("/clear resets client chat sequence", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await setChatSeq(page, 8);
+		await page.evaluate(async () => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var state = await import(`${prefix}js/state.js`);
+			var chatUi = await import(`${prefix}js/chat-ui.js`);
+			state.setSessionCurrentContextTokens(62000);
+			state.setSessionContextWindow(200000);
+			chatUi.updateTokenBar();
+		});
+		await expect(page.locator("#tokenBar")).toContainText("62.0K (31%)");
 
 		const reset = await runClearSlashCommandWithRetry(page);
 		expect(reset).toBeTruthy();
+		await expect(page.locator("#tokenBar")).toBeHidden();
 		expect(pageErrors).toEqual([]);
 	});
 });

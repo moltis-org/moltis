@@ -589,6 +589,7 @@ export function renderHistory(
 	const msgEls: (HTMLElement | null)[] = [];
 	S.setSessionTokens({ input: 0, output: 0 });
 	S.setSessionCurrentInputTokens(0);
+	S.setSessionCurrentContextTokens(0);
 	S.setChatBatchLoading(true);
 	history.forEach((msg) => {
 		if (msg.role === "user") {

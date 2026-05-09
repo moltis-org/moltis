@@ -165,6 +165,7 @@ function resetSwitchViewState(): void {
 	S.setLastHistoryIndex(-1);
 	S.setSessionTokens({ input: 0, output: 0 });
 	S.setSessionCurrentInputTokens(0);
+	S.setSessionCurrentContextTokens(0);
 	S.setSessionContextWindow(0);
 	setComposerStopButton(false);
 	updateTokenBar();
@@ -220,6 +221,7 @@ export function clearActiveSession(): Promise<RpcResponse> {
 			if (S.chatMsgBox) S.chatMsgBox.textContent = "";
 			S.setSessionTokens({ input: 0, output: 0 });
 			S.setSessionCurrentInputTokens(0);
+			S.setSessionCurrentContextTokens(0);
 			updateTokenBar();
 			const activeKey = sessionStore.activeSessionKey.value || S.activeSessionKey;
 			// Inline markSessionLocallyCleared to avoid circular import
