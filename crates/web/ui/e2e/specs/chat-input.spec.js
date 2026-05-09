@@ -538,7 +538,7 @@ test.describe("Chat input and slash commands", () => {
 
 		const tokenBar = page.locator("#tokenBar");
 		await expect(tokenBar).toBeVisible();
-		await expect(tokenBar).toContainText("0 in / 0 out · 0 tokens");
+		await expect(tokenBar).toHaveText("0");
 		await expect(tokenBar).not.toContainText("Execute:");
 		await expect(tokenBar).not.toContainText("/sh mode");
 		expect(pageErrors).toEqual([]);
@@ -563,7 +563,7 @@ test.describe("Chat input and slash commands", () => {
 		});
 	});
 
-	test("token bar context-left uses current request input, not cumulative totals", async ({ page }) => {
+	test("token bar shows total session tokens and current context used", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 
 		const tokenBarText = await page.evaluate(async () => {
@@ -584,7 +584,7 @@ test.describe("Chat input and slash commands", () => {
 
 		const tokenBar = page.locator("#tokenBar");
 		await expect(tokenBar).toBeVisible();
-		expect(tokenBarText).toContain("Context left before auto-compact: 75%");
+		expect(tokenBarText).toBe("200.0K (25%)");
 		expect(pageErrors).toEqual([]);
 	});
 

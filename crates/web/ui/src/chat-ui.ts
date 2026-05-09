@@ -437,17 +437,11 @@ export function updateTokenBar(): void {
 	const bar = S.$("tokenBar");
 	if (!bar) return;
 	const total = S.sessionTokens.input + S.sessionTokens.output;
-	let text =
-		formatTokens(S.sessionTokens.input) +
-		" in / " +
-		formatTokens(S.sessionTokens.output) +
-		" out \u00b7 " +
-		formatTokens(total) +
-		" tokens";
+	let text = formatTokens(total);
 	if (S.sessionContextWindow > 0) {
 		const currentInput = S.sessionCurrentInputTokens || 0;
-		const pct = Math.max(0, 100 - Math.round((currentInput / S.sessionContextWindow) * 100));
-		text += ` \u00b7 Context left before auto-compact: ${pct}%`;
+		const pct = Math.min(100, Math.max(0, Math.round((currentInput / S.sessionContextWindow) * 100)));
+		text += ` (${pct}%)`;
 	}
 	if (!S.sessionToolsEnabled) {
 		text += " \u00b7 Tools: disabled";
