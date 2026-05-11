@@ -493,12 +493,23 @@ install_proxmox() {
 
     download "$PROXMOX_SCRIPT_URL" "$proxmox_script" || error "Failed to download Proxmox helper"
 
-    # The upstream community-scripts install helper currently writes a hardcoded
-    # /usr/bin/update URL. Patch the fetched helper so new Moltis LXCs update
-    # from the Moltis fork until the helper honors COMMUNITY_SCRIPTS_URL there.
+    # Patch the fetched helper at launch time for Moltis-specific fixes that live
+    # in remote community-scripts files: keep /usr/bin/update on the Moltis fork,
+    # and make the Docker prompt safe when lxc-attach has no interactive stdin.
     awk -v repo_url="$PROXMOX_REPO_URL" '
         {
             print
+            if ($0 ~ /^source <\(curl -fsSL / && !curl_patched) {
+                print "curl() {"
+                print "  case \"${*: -1}\" in"
+                print "    */install/moltis-install.sh)"
+                print "      command curl \"$@\" | sed '\''s/read -r -p \"${TAB3}Would you like to install Docker for sandbox support? <y\\/N> \" prompt/if [[ -t 0 ]]; then read -r -p \"${TAB3}Would you like to install Docker for sandbox support? <y\\/N> \" prompt; else prompt=\"${MOLTIS_INSTALL_DOCKER:-no}\"; fi/'\''"
+                print "      ;;"
+                print "    *) command curl \"$@\" ;;"
+                print "  esac"
+                print "}"
+                curl_patched = 1
+            }
             if ($0 == "description" && !patched) {
                 q = sprintf("%c", 39)
                 print "pct exec \"$CTID\" -- bash -c \"cat > /usr/bin/update <<" q "MOLTIS_UPDATE_EOF" q
