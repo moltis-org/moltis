@@ -2,7 +2,7 @@
 name: discrawl
 description: Archive and search Discord guild messages, threads, and members via the discrawl CLI. Supports bot API sync, local cache import, full-text and semantic search, and Git-backed NDJSON snapshots.
 platforms: [linux, macos]
-homepage: https://github.com/steipete/discrawl
+homepage: https://github.com/openclaw/discrawl
 requires:
   bins: [discrawl]
   install:
@@ -11,7 +11,7 @@ requires:
       bins: [discrawl]
       os: [darwin]
     - kind: go
-      module: "github.com/steipete/discrawl/cmd/discrawl@latest"
+      module: "github.com/openclaw/discrawl/cmd/discrawl@latest"
       bins: [discrawl]
 origin:
   source: moltis

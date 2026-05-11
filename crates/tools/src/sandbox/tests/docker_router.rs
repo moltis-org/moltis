@@ -589,6 +589,8 @@ fn test_sandbox_image_dockerfile_installs_gogcli() {
 #[test]
 fn test_sandbox_image_dockerfile_installs_crawl_tools() {
     let dockerfile = sandbox_image_dockerfile("ubuntu:25.10", &["curl".into()]);
+    assert!(dockerfile.contains("go install github.com/openclaw/discrawl/cmd/discrawl@latest"));
+    assert!(!dockerfile.contains("github.com/steipete/discrawl"));
     for (module, version, _bin) in GO_TOOL_INSTALLS {
         assert!(
             dockerfile.contains(&format!("go install {module}@{version}")),

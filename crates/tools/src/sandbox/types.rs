@@ -572,7 +572,7 @@ pub(crate) const GOGCLI_VERSION: &str = "latest";
 /// (e.g. wacrawl) are host-only and install via their skill's `requires.install`.
 pub(crate) const GO_TOOL_INSTALLS: &[(&str, &str, &str)] = &[
     (
-        "github.com/steipete/discrawl/cmd/discrawl",
+        "github.com/openclaw/discrawl/cmd/discrawl",
         "latest",
         "discrawl",
     ),
