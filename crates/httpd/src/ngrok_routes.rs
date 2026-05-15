@@ -189,6 +189,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[serial_test::serial(config_dir)]
     async fn save_config_returns_error_when_ngrok_controller_is_unavailable()
     -> Result<(), Box<dyn std::error::Error>> {
         let tempdir = tempfile::tempdir()?;

@@ -118,6 +118,7 @@ web-ui = ["moltis-gateway/web-ui"]
 moltis-code-index.workspace = true
 moltis-providers            = { workspace = true }
 moltis-web                  = { workspace = true }
+serial_test                 = { workspace = true }
 sqlx                        = { workspace = true }
 
 [lints]

@@ -254,6 +254,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(config_dir)]
     async fn save_config_rejects_enabled_without_token() -> Result<(), Box<dyn std::error::Error>> {
         let tempdir = tempfile::tempdir()?;
         moltis_config::set_config_dir(tempdir.path().to_path_buf());
@@ -279,6 +280,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(config_dir)]
     async fn save_config_can_disable_without_token() -> Result<(), Box<dyn std::error::Error>> {
         let tempdir = tempfile::tempdir()?;
         moltis_config::set_config_dir(tempdir.path().to_path_buf());

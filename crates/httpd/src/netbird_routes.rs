@@ -194,6 +194,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(config_dir)]
     async fn configure_rejects_invalid_mode() -> Result<(), Box<dyn std::error::Error>> {
         let tempdir = tempfile::tempdir()?;
         moltis_config::set_config_dir(tempdir.path().to_path_buf());
@@ -216,6 +217,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(config_dir)]
     async fn configure_accepts_off_mode() -> Result<(), Box<dyn std::error::Error>> {
         let tempdir = tempfile::tempdir()?;
         moltis_config::set_config_dir(tempdir.path().to_path_buf());
