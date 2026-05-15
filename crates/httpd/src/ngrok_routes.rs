@@ -180,6 +180,10 @@ mod tests {
         },
     };
 
+    #[cfg(feature = "cloudflare-tunnel")]
+    use crate::server::CloudflareTunnelController;
+    #[cfg(feature = "netbird")]
+    use crate::server::NetbirdController;
     use crate::server::NgrokRuntimeStatus;
 
     use super::*;
@@ -191,8 +195,14 @@ mod tests {
         moltis_config::set_config_dir(tempdir.path().to_path_buf());
         moltis_config::set_data_dir(tempdir.path().to_path_buf());
 
+        let gateway = GatewayState::new(auth::resolve_auth(None, None), GatewayServices::noop());
+        #[cfg(feature = "cloudflare-tunnel")]
+        let cloudflare_tunnel_runtime = Arc::new(tokio::sync::RwLock::new(None));
+        #[cfg(feature = "netbird")]
+        let netbird_runtime = Arc::new(tokio::sync::RwLock::new(None));
+
         let state = AppState {
-            gateway: GatewayState::new(auth::resolve_auth(None, None), GatewayServices::noop()),
+            gateway: Arc::clone(&gateway),
             methods: Arc::new(MethodRegistry::new()),
             request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
             webauthn_registry: None,
@@ -202,6 +212,18 @@ mod tests {
                 public_url: "https://existing.ngrok.app".to_string(),
                 passkey_warning: None,
             }))),
+            #[cfg(feature = "cloudflare-tunnel")]
+            cloudflare_tunnel_controller: Arc::new(CloudflareTunnelController::new(
+                Arc::clone(&gateway),
+                None,
+                Arc::clone(&cloudflare_tunnel_runtime),
+            )),
+            #[cfg(feature = "cloudflare-tunnel")]
+            cloudflare_tunnel_runtime,
+            #[cfg(feature = "netbird")]
+            netbird_controller: Arc::new(NetbirdController::new(Arc::clone(&netbird_runtime))),
+            #[cfg(feature = "netbird")]
+            netbird_runtime,
             #[cfg(feature = "tailscale")]
             tailscale_manager: moltis_gateway::tailscale::CachedTailscaleManager::new_with_prefetch(
             ),
