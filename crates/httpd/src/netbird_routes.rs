@@ -112,6 +112,21 @@ async fn configure_handler(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Weak};
+
+    use {
+        axum::body::to_bytes,
+        moltis_gateway::{
+            auth, methods::MethodRegistry, services::GatewayServices, state::GatewayState,
+        },
+    };
+
+    #[cfg(feature = "cloudflare-tunnel")]
+    use crate::server::CloudflareTunnelController;
+    #[cfg(feature = "ngrok")]
+    use crate::server::NgrokRuntimeStatus;
+    use crate::server::{AppState, NetbirdController};
+
     use super::*;
 
     #[test]
@@ -132,6 +147,93 @@ mod tests {
         }))?;
 
         assert_eq!(request.mode, "serve");
+        Ok(())
+    }
+
+    fn test_state() -> AppState {
+        let gateway = GatewayState::new(auth::resolve_auth(None, None), GatewayServices::noop());
+        #[cfg(feature = "cloudflare-tunnel")]
+        let cloudflare_tunnel_runtime = Arc::new(tokio::sync::RwLock::new(None));
+        let netbird_runtime = Arc::new(tokio::sync::RwLock::new(None));
+
+        AppState {
+            gateway: Arc::clone(&gateway),
+            methods: Arc::new(MethodRegistry::new()),
+            request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
+            webauthn_registry: None,
+            #[cfg(feature = "ngrok")]
+            ngrok_controller_owner: None,
+            #[cfg(feature = "ngrok")]
+            ngrok_controller: Weak::new(),
+            #[cfg(feature = "ngrok")]
+            ngrok_runtime: Arc::new(tokio::sync::RwLock::new(Some(NgrokRuntimeStatus {
+                public_url: "https://existing.ngrok.app".to_string(),
+                passkey_warning: None,
+            }))),
+            #[cfg(feature = "cloudflare-tunnel")]
+            cloudflare_tunnel_controller: Arc::new(CloudflareTunnelController::new(
+                Arc::clone(&gateway),
+                None,
+                Arc::clone(&cloudflare_tunnel_runtime),
+            )),
+            #[cfg(feature = "cloudflare-tunnel")]
+            cloudflare_tunnel_runtime,
+            netbird_controller: Arc::new(NetbirdController::new(Arc::clone(&netbird_runtime))),
+            netbird_runtime,
+            #[cfg(feature = "tailscale")]
+            tailscale_manager: moltis_gateway::tailscale::CachedTailscaleManager::new_with_prefetch(
+            ),
+            #[cfg(feature = "push-notifications")]
+            push_service: None,
+            #[cfg(feature = "graphql")]
+            graphql_schema: crate::graphql_routes::build_graphql_schema(GatewayState::new(
+                auth::resolve_auth(None, None),
+                GatewayServices::noop(),
+            )),
+        }
+    }
+
+    #[tokio::test]
+    async fn configure_rejects_invalid_mode() -> Result<(), Box<dyn std::error::Error>> {
+        let tempdir = tempfile::tempdir()?;
+        moltis_config::set_config_dir(tempdir.path().to_path_buf());
+        moltis_config::set_data_dir(tempdir.path().to_path_buf());
+
+        let response = configure_handler(
+            State(test_state()),
+            Json(ConfigureNetbirdRequest {
+                mode: "invalid".to_string(),
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["code"], "NETBIRD_MODE_INVALID");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn configure_accepts_off_mode() -> Result<(), Box<dyn std::error::Error>> {
+        let tempdir = tempfile::tempdir()?;
+        moltis_config::set_config_dir(tempdir.path().to_path_buf());
+        moltis_config::set_data_dir(tempdir.path().to_path_buf());
+
+        let response = configure_handler(
+            State(test_state()),
+            Json(ConfigureNetbirdRequest {
+                mode: "off".to_string(),
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["ok"], true);
         Ok(())
     }
 }

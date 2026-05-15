@@ -149,9 +149,21 @@ async fn save_config_handler(
 
 #[cfg(test)]
 mod tests {
-    use secrecy::Secret;
+    use std::sync::{Arc, Weak};
 
-    use crate::server::CloudflareTunnelRuntimeStatus;
+    use {
+        axum::body::to_bytes,
+        moltis_gateway::{
+            auth, methods::MethodRegistry, services::GatewayServices, state::GatewayState,
+        },
+        secrecy::Secret,
+    };
+
+    #[cfg(feature = "netbird")]
+    use crate::server::NetbirdController;
+    #[cfg(feature = "ngrok")]
+    use crate::server::NgrokRuntimeStatus;
+    use crate::server::{AppState, CloudflareTunnelController, CloudflareTunnelRuntimeStatus};
 
     use super::*;
 
@@ -196,5 +208,100 @@ mod tests {
                 "error": "missing token",
             })
         );
+    }
+
+    fn test_state() -> AppState {
+        let gateway = GatewayState::new(auth::resolve_auth(None, None), GatewayServices::noop());
+        let cloudflare_tunnel_runtime = Arc::new(tokio::sync::RwLock::new(None));
+        #[cfg(feature = "netbird")]
+        let netbird_runtime = Arc::new(tokio::sync::RwLock::new(None));
+
+        AppState {
+            gateway: Arc::clone(&gateway),
+            methods: Arc::new(MethodRegistry::new()),
+            request_throttle: Arc::new(crate::request_throttle::RequestThrottle::new()),
+            webauthn_registry: None,
+            #[cfg(feature = "ngrok")]
+            ngrok_controller_owner: None,
+            #[cfg(feature = "ngrok")]
+            ngrok_controller: Weak::new(),
+            #[cfg(feature = "ngrok")]
+            ngrok_runtime: Arc::new(tokio::sync::RwLock::new(Some(NgrokRuntimeStatus {
+                public_url: "https://existing.ngrok.app".to_string(),
+                passkey_warning: None,
+            }))),
+            cloudflare_tunnel_controller: Arc::new(CloudflareTunnelController::new(
+                Arc::clone(&gateway),
+                None,
+                Arc::clone(&cloudflare_tunnel_runtime),
+            )),
+            cloudflare_tunnel_runtime,
+            #[cfg(feature = "netbird")]
+            netbird_controller: Arc::new(NetbirdController::new(Arc::clone(&netbird_runtime))),
+            #[cfg(feature = "netbird")]
+            netbird_runtime,
+            #[cfg(feature = "tailscale")]
+            tailscale_manager: moltis_gateway::tailscale::CachedTailscaleManager::new_with_prefetch(
+            ),
+            #[cfg(feature = "push-notifications")]
+            push_service: None,
+            #[cfg(feature = "graphql")]
+            graphql_schema: crate::graphql_routes::build_graphql_schema(GatewayState::new(
+                auth::resolve_auth(None, None),
+                GatewayServices::noop(),
+            )),
+        }
+    }
+
+    #[tokio::test]
+    async fn save_config_rejects_enabled_without_token() -> Result<(), Box<dyn std::error::Error>> {
+        let tempdir = tempfile::tempdir()?;
+        moltis_config::set_config_dir(tempdir.path().to_path_buf());
+        moltis_config::set_data_dir(tempdir.path().to_path_buf());
+
+        let response = save_config_handler(
+            State(test_state()),
+            Json(SaveCloudflareTunnelConfigRequest {
+                enabled: true,
+                token: None,
+                clear_token: true,
+                hostname: None,
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["code"], "CLOUDFLARE_TUNNEL_CONFIG_INVALID");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn save_config_can_disable_without_token() -> Result<(), Box<dyn std::error::Error>> {
+        let tempdir = tempfile::tempdir()?;
+        moltis_config::set_config_dir(tempdir.path().to_path_buf());
+        moltis_config::set_data_dir(tempdir.path().to_path_buf());
+
+        let response = save_config_handler(
+            State(test_state()),
+            Json(SaveCloudflareTunnelConfigRequest {
+                enabled: false,
+                token: None,
+                clear_token: true,
+                hostname: Some("  moltis.example.com  ".to_string()),
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let payload: serde_json::Value = serde_json::from_slice(&body)?;
+        assert_eq!(payload["ok"], true);
+        assert_eq!(payload["status"]["hostname"], "moltis.example.com");
+        assert_eq!(payload["status"]["token_present"], false);
+        Ok(())
     }
 }
