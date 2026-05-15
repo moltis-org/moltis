@@ -28,7 +28,7 @@ pub async fn handle_cloudflare_tunnel(action: CloudflareTunnelAction) -> Result<
                 "Token:   {}",
                 token_source_label(
                     config.cloudflare_tunnel.token.is_some(),
-                    std::env::var_os("CLOUDFLARE_TUNNEL_TOKEN").is_some(),
+                    env_token_present(),
                 )
             );
             if let Some(hostname) = config.cloudflare_tunnel.hostname {
@@ -36,10 +36,7 @@ pub async fn handle_cloudflare_tunnel(action: CloudflareTunnelAction) -> Result<
             }
         },
         CloudflareTunnelAction::Enable { token, hostname } => {
-            if !has_enable_token(
-                &token,
-                std::env::var_os("CLOUDFLARE_TUNNEL_TOKEN").is_some(),
-            ) {
+            if !has_enable_token(&token, env_token_present()) {
                 anyhow::bail!("Cloudflare Tunnel requires --token or CLOUDFLARE_TUNNEL_TOKEN");
             }
             moltis_config::update_config(|config| {
@@ -73,7 +70,18 @@ fn token_source_label(config_has_token: bool, env_has_token: bool) -> &'static s
 }
 
 fn has_enable_token(token: &Option<String>, env_has_token: bool) -> bool {
-    token.is_some() || env_has_token
+    token
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|token| !token.is_empty())
+        || env_has_token
+}
+
+fn env_token_present() -> bool {
+    std::env::var("CLOUDFLARE_TUNNEL_TOKEN")
+        .ok()
+        .map(|token| !token.trim().is_empty())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -98,6 +106,7 @@ mod tests {
     #[test]
     fn enable_requires_cli_or_env_token() {
         assert!(has_enable_token(&Some("token".to_string()), false));
+        assert!(!has_enable_token(&Some("   ".to_string()), false));
         assert!(has_enable_token(&None, true));
         assert!(!has_enable_token(&None, false));
     }

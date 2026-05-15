@@ -182,11 +182,13 @@ async fn run_forwarder_loop(
         let current_peer_ip = status.peer_ip.clone();
         *runtime.write().await = Some(status.clone());
         info!(url = %status.url, peer_ip = %status.peer_ip, "NetBird forwarder listening");
+        let mut status_check = tokio::time::interval(std::time::Duration::from_secs(30));
+        status_check.tick().await;
 
         loop {
             tokio::select! {
                 () = shutdown.cancelled() => return,
-                () = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                _ = status_check.tick() => {
                     match resolve_netbird_status(port, tls).await {
                         Ok(next_status) if next_status.peer_ip != current_peer_ip => {
                             info!(old_peer_ip = %current_peer_ip, new_peer_ip = %next_status.peer_ip, "NetBird peer IP changed; rebinding forwarder");

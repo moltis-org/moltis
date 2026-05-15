@@ -440,6 +440,7 @@ export function RemoteAccessSection(): VNode {
 			.catch((e: Error) => {
 				setCfSaving(false);
 				setCfError(e.message);
+				fetchCloudflareTunnelStatus();
 				rerender();
 			});
 	}
