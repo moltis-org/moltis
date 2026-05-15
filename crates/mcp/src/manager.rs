@@ -134,6 +134,7 @@ impl McpManager {
             McpOAuthProvider::new(name, remote.request_url()).with_oauth_override(
                 McpOAuthOverride {
                     client_id: ov.client_id.clone(),
+                    client_secret: ov.client_secret.clone(),
                     auth_url: ov.auth_url.clone(),
                     token_url: ov.token_url.clone(),
                     scopes: ov.scopes.clone(),
@@ -1005,6 +1006,7 @@ mod tests {
             // simulating a server that was previously configured with OAuth.
             oauth: Some(McpOAuthConfig {
                 client_id: "test-client".into(),
+                client_secret: None,
                 auth_url: "https://auth.example.com/authorize".into(),
                 token_url: "https://auth.example.com/token".into(),
                 scopes: vec![],
@@ -1049,6 +1051,7 @@ mod tests {
             enabled: true,
             oauth: Some(McpOAuthConfig {
                 client_id: "test-client".into(),
+                client_secret: None,
                 auth_url: "https://auth.example.com/authorize".into(),
                 token_url: "https://auth.example.com/token".into(),
                 scopes: vec![],

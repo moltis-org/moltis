@@ -188,6 +188,7 @@ mod tests {
     fn make_oauth_config(redirect_uri: &str) -> moltis_oauth::OAuthConfig {
         moltis_oauth::OAuthConfig {
             client_id: "client".into(),
+            client_secret: None,
             auth_url: "https://example.com/authorize".into(),
             token_url: "https://example.com/token".into(),
             redirect_uri: redirect_uri.into(),

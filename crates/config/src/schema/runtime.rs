@@ -169,6 +169,14 @@ pub struct McpServerEntry {
 pub struct McpOAuthOverrideEntry {
     /// The OAuth client ID.
     pub client_id: String,
+    /// Optional OAuth client secret sent to the token endpoint.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "super::serialize_option_secret",
+        deserialize_with = "super::deserialize_option_secret"
+    )]
+    pub client_secret: Option<Secret<String>>,
     /// The authorization endpoint URL.
     pub auth_url: String,
     /// The token endpoint URL.

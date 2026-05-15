@@ -282,6 +282,8 @@ transport = "sse"
 
 [mcp.servers.private_api.oauth]
 client_id = "your-client-id"
+# Optional: required by some servers for token exchange even with PKCE.
+client_secret = "your-client-secret"
 auth_url = "https://auth.example.com/authorize"
 token_url = "https://auth.example.com/token"
 scopes = ["mcp:read", "mcp:write"]

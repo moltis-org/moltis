@@ -38,6 +38,13 @@ impl std::fmt::Display for TransportType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpOAuthConfig {
     pub client_id: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret_string",
+        deserialize_with = "deserialize_option_secret_string"
+    )]
+    pub client_secret: Option<Secret<String>>,
     pub auth_url: String,
     pub token_url: String,
     #[serde(default)]
@@ -368,5 +375,29 @@ mod tests {
             Some("https://example.com/mcp?api_key=secret-value")
         );
         assert_eq!(server.headers["x-api-key"].expose_secret(), "header-secret");
+    }
+
+    #[test]
+    fn test_registry_roundtrips_oauth_client_secret() {
+        let mut reg = McpRegistry::new();
+        reg.servers.insert("remote".into(), McpServerConfig {
+            oauth: Some(McpOAuthConfig {
+                client_id: "client".to_string(),
+                client_secret: Some(Secret::new("secret".to_string())),
+                auth_url: "https://auth.example.com/authorize".to_string(),
+                token_url: "https://auth.example.com/token".to_string(),
+                scopes: Vec::new(),
+            }),
+            ..Default::default()
+        });
+
+        let json = serde_json::to_string(&reg).unwrap();
+        let parsed: McpRegistry = serde_json::from_str(&json).unwrap();
+        let secret = parsed.servers["remote"]
+            .oauth
+            .as_ref()
+            .and_then(|oauth| oauth.client_secret.as_ref())
+            .map(ExposeSecret::expose_secret);
+        assert_eq!(secret.map(String::as_str), Some("secret"));
     }
 }

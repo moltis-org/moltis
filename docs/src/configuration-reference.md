@@ -672,6 +672,7 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `client_id` | string | *(required)* | The OAuth client ID. |
+| `client_secret` | optional string | `None` | Optional OAuth client secret sent to the token endpoint. |
 | `auth_url` | string | *(required)* | The authorization endpoint URL. |
 | `token_url` | string | *(required)* | The token endpoint URL. |
 | `scopes` | array of string | `[]` | OAuth scopes to request. |

@@ -235,6 +235,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
     let mcp_oauth_override = || {
         Struct(HashMap::from([
             ("client_id", Leaf),
+            ("client_secret", Leaf),
             ("auth_url", Leaf),
             ("token_url", Leaf),
             ("scopes", Leaf),

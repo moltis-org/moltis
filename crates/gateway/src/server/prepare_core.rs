@@ -325,6 +325,7 @@ pub async fn prepare_gateway_core(
                     .as_ref()
                     .map(|o| moltis_mcp::registry::McpOAuthConfig {
                         client_id: o.client_id.clone(),
+                        client_secret: o.client_secret.clone(),
                         auth_url: o.auth_url.clone(),
                         token_url: o.token_url.clone(),
                         scopes: o.scopes.clone(),

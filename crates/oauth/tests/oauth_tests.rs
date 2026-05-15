@@ -125,10 +125,46 @@ async fn oauth_flow_exchange_sends_resource_indicator_when_configured() {
 
     let flow = OAuthFlow::new(OAuthConfig {
         client_id: "client-123".into(),
+        client_secret: None,
         auth_url: format!("{}/authorize", server.url()),
         token_url: format!("{}{}", server.url(), token_path),
         redirect_uri: "http://127.0.0.1:1455/auth/callback".into(),
         resource: Some(resource.into()),
+        scopes: vec![],
+        extra_auth_params: vec![],
+        device_flow: false,
+    });
+
+    let tokens = flow.exchange("code-123", "verifier-123").await.unwrap();
+    assert_eq!(tokens.access_token.expose_secret(), "token-abc");
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn oauth_flow_exchange_sends_client_secret_when_configured() {
+    let mut server = mockito::Server::new_async().await;
+    let token_path = "/token";
+
+    let mock = server
+        .mock("POST", token_path)
+        .match_body(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("client_id".into(), "client-123".into()),
+            Matcher::UrlEncoded("client_secret".into(), "secret-456".into()),
+            Matcher::UrlEncoded("grant_type".into(), "authorization_code".into()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"access_token":"token-abc","expires_in":3600}"#)
+        .create_async()
+        .await;
+
+    let flow = OAuthFlow::new(OAuthConfig {
+        client_id: "client-123".into(),
+        client_secret: Some(Secret::new("secret-456".into())),
+        auth_url: format!("{}/authorize", server.url()),
+        token_url: format!("{}{}", server.url(), token_path),
+        redirect_uri: "http://127.0.0.1:1455/auth/callback".into(),
+        resource: None,
         scopes: vec![],
         extra_auth_params: vec![],
         device_flow: false,

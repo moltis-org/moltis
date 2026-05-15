@@ -136,6 +136,10 @@ pub fn parse_server_config(
                 .and_then(|val| val.as_str())
                 .ok_or_else(|| Error::message("missing 'oauth.client_id' parameter"))?
                 .to_string();
+            let client_secret = v
+                .get("client_secret")
+                .and_then(|val| val.as_str())
+                .map(|value| Secret::new(value.to_string()));
             let auth_url = v
                 .get("auth_url")
                 .and_then(|val| val.as_str())
@@ -152,6 +156,7 @@ pub fn parse_server_config(
                 .unwrap_or_default();
             Some(McpOAuthConfig {
                 client_id,
+                client_secret,
                 auth_url,
                 token_url,
                 scopes,
@@ -350,6 +355,7 @@ mod tests {
             headers: HashMap::new(),
             oauth: Some(McpOAuthConfig {
                 client_id: "test-client".to_string(),
+                client_secret: Some(Secret::new("test-secret".to_string())),
                 auth_url: "http://auth.example.com".to_string(),
                 token_url: "http://token.example.com".to_string(),
                 scopes: vec!["read".to_string()],
@@ -367,7 +373,44 @@ mod tests {
 
         let oauth = cfg.oauth.as_ref().unwrap();
         assert_eq!(oauth.client_id, "test-client");
+        assert_eq!(
+            oauth
+                .client_secret
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("test-secret")
+        );
         assert_eq!(oauth.scopes, vec!["read"]);
+    }
+
+    #[test]
+    fn parse_server_config_accepts_oauth_client_secret() {
+        let cfg = parse_server_config(
+            &serde_json::json!({
+                "transport": "sse",
+                "url": "http://example.com/mcp",
+                "oauth": {
+                    "client_id": "test-client",
+                    "client_secret": "test-secret",
+                    "auth_url": "http://auth.example.com",
+                    "token_url": "http://token.example.com"
+                }
+            }),
+            None,
+        )
+        .unwrap();
+
+        let oauth = cfg.oauth.as_ref().unwrap();
+        assert_eq!(oauth.client_id, "test-client");
+        assert_eq!(
+            oauth
+                .client_secret
+                .as_ref()
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("test-secret")
+        );
     }
 
     #[test]

@@ -42,3 +42,28 @@ unknwon = "value"
         result.diagnostics
     );
 }
+
+#[test]
+fn mcp_oauth_client_secret_is_known_field() {
+    let toml = r#"
+[mcp.servers.hubspot]
+url = "https://mcp.hubspot.com"
+transport = "streamable-http"
+
+[mcp.servers.hubspot.oauth]
+client_id = "client-id"
+client_secret = "client-secret"
+auth_url = "https://mcp.hubspot.com/oauth/authorize/user"
+token_url = "https://mcp.hubspot.com/oauth/v3/token"
+"#;
+    let result = validate_toml_str(toml);
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.category == "unknown-field"
+                && d.path == "mcp.servers.hubspot.oauth.client_secret"),
+        "client_secret should be accepted, got: {:?}",
+        result.diagnostics
+    );
+}

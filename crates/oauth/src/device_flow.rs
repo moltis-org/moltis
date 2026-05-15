@@ -1,4 +1,7 @@
-use {reqwest::header::HeaderMap, secrecy::Secret};
+use {
+    reqwest::header::HeaderMap,
+    secrecy::{ExposeSecret, Secret},
+};
 
 use crate::{
     Error, Result,
@@ -86,14 +89,19 @@ pub async fn poll_for_token_with_headers(
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
 
+        let mut form = vec![
+            ("client_id", config.client_id.as_str()),
+            ("device_code", device_code),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+        ];
+        if let Some(client_secret) = &config.client_secret {
+            form.push(("client_secret", client_secret.expose_secret().as_str()));
+        }
+
         let mut req = client
             .post(&config.token_url)
             .header("Accept", "application/json")
-            .form(&[
-                ("client_id", config.client_id.as_str()),
-                ("device_code", device_code),
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ]);
+            .form(&form);
 
         if let Some(headers) = extra_headers {
             req = req.headers(headers.clone());
@@ -146,6 +154,7 @@ mod tests {
     fn test_config(auth_url: String, token_url: String) -> OAuthConfig {
         OAuthConfig {
             client_id: "test-client".into(),
+            client_secret: None,
             auth_url,
             token_url,
             redirect_uri: String::new(),

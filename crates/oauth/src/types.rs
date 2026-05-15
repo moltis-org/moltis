@@ -7,6 +7,13 @@ use {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthConfig {
     pub client_id: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub client_secret: Option<Secret<String>>,
     pub auth_url: String,
     pub token_url: String,
     pub redirect_uri: String,
@@ -92,4 +99,15 @@ pub fn serialize_option_secret<S: serde::Serializer>(
         Some(s) => serializer.serialize_some(s.expose_secret()),
         None => serializer.serialize_none(),
     }
+}
+
+/// Deserialize an `Option<Secret<String>>` from its stored string value.
+pub fn deserialize_option_secret<'de, D>(
+    deserializer: D,
+) -> Result<Option<Secret<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    Ok(opt.map(Secret::new))
 }

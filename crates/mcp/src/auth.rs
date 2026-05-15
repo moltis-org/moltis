@@ -81,6 +81,7 @@ pub trait McpAuthProvider: Send + Sync {
 #[derive(Debug, Clone)]
 pub struct McpOAuthOverride {
     pub client_id: String,
+    pub client_secret: Option<Secret<String>>,
     pub auth_url: String,
     pub token_url: String,
     pub scopes: Vec<String>,
@@ -180,9 +181,11 @@ impl McpOAuthProvider {
         };
 
         // Need the token endpoint. Try loading from stored registration or override.
-        let (client_id, token_url, resource) = if let Some(ov) = &self.oauth_override {
+        let (client_id, client_secret, token_url, resource) = if let Some(ov) = &self.oauth_override
+        {
             (
                 ov.client_id.clone(),
+                ov.client_secret.clone(),
                 ov.token_url.clone(),
                 Some(self.server_url.expose_secret().to_string()),
             )
@@ -190,7 +193,12 @@ impl McpOAuthProvider {
             .registration_store
             .load(self.server_url.expose_secret())
         {
-            (reg.client_id, reg.token_endpoint, Some(reg.resource))
+            (
+                reg.client_id,
+                reg.client_secret,
+                reg.token_endpoint,
+                Some(reg.resource),
+            )
         } else {
             return Ok(None); // Can't refresh without knowing where to send the request
         };
@@ -199,6 +207,7 @@ impl McpOAuthProvider {
 
         let config = OAuthConfig {
             client_id,
+            client_secret,
             auth_url: String::new(), // Not needed for refresh
             token_url,
             redirect_uri: String::new(),
@@ -241,11 +250,12 @@ impl McpOAuthProvider {
         let redirect_uri = normalize_loopback_redirect(redirect_uri);
         let redirect_uri = redirect_uri.as_str();
 
-        let (client_id, auth_url, token_url, scopes, resource) =
+        let (client_id, client_secret, auth_url, token_url, scopes, resource) =
             if let Some(ov) = &self.oauth_override {
                 // Manual override: skip discovery
                 (
                     ov.client_id.clone(),
+                    ov.client_secret.clone(),
                     ov.auth_url.clone(),
                     ov.token_url.clone(),
                     ov.scopes.clone(),
@@ -269,6 +279,7 @@ impl McpOAuthProvider {
 
         let config = OAuthConfig {
             client_id,
+            client_secret,
             auth_url,
             token_url,
             redirect_uri: redirect_uri.to_string(),
@@ -360,7 +371,7 @@ impl McpOAuthProvider {
 
     /// Discover resource + AS metadata and perform dynamic client registration.
     ///
-    /// Returns `(client_id, auth_url, token_url, scopes, resource)`.
+    /// Returns `(client_id, client_secret, auth_url, token_url, scopes, resource)`.
     ///
     /// Per the MCP Authorization spec, well-known metadata URLs are tried at the
     /// server's full URL first (path-aware), then at the origin (scheme + host)
@@ -369,7 +380,14 @@ impl McpOAuthProvider {
         &self,
         www_authenticate: Option<&str>,
         redirect_uri: &str,
-    ) -> Result<(String, String, String, Vec<String>, String)> {
+    ) -> Result<(
+        String,
+        Option<Secret<String>>,
+        String,
+        String,
+        Vec<String>,
+        String,
+    )> {
         let server_url = Url::parse(self.server_url.expose_secret())
             .with_context(|| format!("invalid MCP server URL: {}", self.server_url_display))?;
         let origin = Self::origin_url(&server_url);
@@ -474,7 +492,7 @@ impl McpOAuthProvider {
         );
 
         // Step 3: Dynamic client registration (or use cached)
-        let client_id = if let Some(cached) = self
+        let (client_id, client_secret) = if let Some(cached) = self
             .registration_store
             .load(self.server_url.expose_secret())
         {
@@ -483,7 +501,7 @@ impl McpOAuthProvider {
                 client_id = %cached.client_id,
                 "reusing cached dynamic registration"
             );
-            cached.client_id
+            (cached.client_id, cached.client_secret)
         } else if let Some(reg_endpoint) = &as_meta.registration_endpoint {
             // Register the exact callback URI that we'll use for this auth flow.
             // Some providers require an exact redirect URI match and reject
@@ -513,7 +531,7 @@ impl McpOAuthProvider {
                 .save(self.server_url.expose_secret(), &stored)
                 .context("failed to persist OAuth registration")?;
 
-            reg.client_id
+            (reg.client_id, stored.client_secret)
         } else {
             return Err(Error::message(
                 "AS does not support dynamic client registration and no client_id configured",
@@ -522,6 +540,7 @@ impl McpOAuthProvider {
 
         Ok((
             client_id,
+            client_secret,
             as_meta.authorization_endpoint,
             as_meta.token_endpoint,
             as_meta.scopes_supported,
@@ -936,12 +955,13 @@ mod tests {
             RegistrationStore::with_path(dir.path().join("registrations.json")),
         );
 
-        let (client_id, auth_url, token_url, scopes, resource) = provider
+        let (client_id, client_secret, auth_url, token_url, scopes, resource) = provider
             .discover_and_register(None, redirect_uri)
             .await
             .unwrap();
 
         assert_eq!(client_id, "client-fallback");
+        assert!(client_secret.is_none());
         assert_eq!(auth_url, format!("{base}/authorize"));
         assert_eq!(token_url, format!("{base}/token"));
         assert_eq!(scopes, vec!["read".to_string()]);

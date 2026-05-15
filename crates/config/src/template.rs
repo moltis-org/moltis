@@ -492,6 +492,13 @@ port = {port}                           # Port number (auto-generated for this i
 # env = {{ KEY = "value" }}           # Environment variables
 # transport = "stdio"               # "stdio" | "sse" | "streamable-http"
 
+# [mcp.servers.server-name.oauth]
+# client_id = "your-client-id"       # Manual OAuth client ID
+# client_secret = "your-secret"      # Optional secret for token exchange
+# auth_url = "https://auth.example.com/authorize"
+# token_url = "https://auth.example.com/token"
+# scopes = ["mcp:read"]
+
 # ══════════════════════════════════════════════════════════════════════════════
 # METRICS
 # ══════════════════════════════════════════════════════════════════════════════

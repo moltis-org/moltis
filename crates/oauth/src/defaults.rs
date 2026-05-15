@@ -10,6 +10,7 @@ fn builtin_defaults() -> HashMap<String, OAuthConfig> {
     // and the gateway recognises it as an OAuth provider.
     m.insert("github-copilot".into(), OAuthConfig {
         client_id: "Iv1.b507a08c87ecfe98".into(),
+        client_secret: None,
         auth_url: "https://github.com/login/device/code".into(),
         token_url: "https://github.com/login/oauth/access_token".into(),
         redirect_uri: String::new(),
@@ -20,6 +21,7 @@ fn builtin_defaults() -> HashMap<String, OAuthConfig> {
     });
     m.insert("kimi-code".into(), OAuthConfig {
         client_id: "17e5f671-d194-4dfb-9706-5516cb48c098".into(),
+        client_secret: None,
         auth_url: "https://auth.kimi.com/api/oauth/device_authorization".into(),
         token_url: "https://auth.kimi.com/api/oauth/token".into(),
         redirect_uri: String::new(),
@@ -30,6 +32,7 @@ fn builtin_defaults() -> HashMap<String, OAuthConfig> {
     });
     m.insert("openai-codex".into(), OAuthConfig {
         client_id: "app_EMoamEEZ73f0CkXaXp7hrann".into(),
+        client_secret: None,
         auth_url: "https://auth.openai.com/oauth/authorize".into(),
         token_url: "https://auth.openai.com/oauth/token".into(),
         redirect_uri: "http://localhost:1455/auth/callback".into(),
