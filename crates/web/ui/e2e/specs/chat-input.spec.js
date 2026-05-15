@@ -629,19 +629,23 @@ test.describe("Chat input and slash commands", () => {
 				state.setCommandModeEnabled(false);
 				chatUi.updateTokenBar();
 				var bar = document.querySelector("#tokenBar");
-				if (!bar) return { visible: false, text: "" };
+				if (!bar) return { visible: false, text: "", hasExec: false, hasCommandMode: false };
+				var text = bar.textContent || "";
 				return {
 					visible: window.getComputedStyle(bar).display !== "none",
-					text: bar.textContent || "",
+					text,
+					hasExec: text.includes("Execute:"),
+					hasCommandMode: text.includes("/sh mode"),
 				};
 			});
 		}
 
-		const tokenBar = page.locator("#tokenBar");
-		await expect.poll(forceZeroUsageTokenBar, { timeout: 10_000 }).toEqual({ visible: true, text: "0" });
-		await expect(tokenBar).toBeVisible();
-		await expect(tokenBar).not.toContainText("Execute:");
-		await expect(tokenBar).not.toContainText("/sh mode");
+		await expect.poll(forceZeroUsageTokenBar, { timeout: 10_000 }).toEqual({
+			visible: true,
+			text: "0",
+			hasExec: false,
+			hasCommandMode: false,
+		});
 		expect(pageErrors).toEqual([]);
 	});
 
