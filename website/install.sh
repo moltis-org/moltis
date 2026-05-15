@@ -495,7 +495,8 @@ install_proxmox() {
 
     # Patch the fetched helper at launch time for Moltis-specific fixes that live
     # in remote community-scripts files: keep /usr/bin/update on the Moltis fork,
-    # and make the Docker prompt safe when lxc-attach has no interactive stdin.
+    # make the Docker prompt safe when lxc-attach has no interactive stdin, and
+    # keep optional CA certificate display failures from removing the container.
     awk -v repo_url="$PROXMOX_REPO_URL" '
         {
             if ($0 ~ /^source <\(curl -fsSL / && !curl_patched) {
@@ -508,6 +509,10 @@ install_proxmox() {
                 print "  esac"
                 print "}"
                 curl_patched = 1
+            }
+            if ($0 == "CA_CERT=$(pct exec \"$CTID\" -- cat /etc/moltis/certs/ca.pem 2>/dev/null)" && !ca_cert_patched) {
+                sub(/\)$/, " || true)")
+                ca_cert_patched = 1
             }
             print
             if ($0 == "description" && !patched) {
@@ -523,6 +528,7 @@ install_proxmox() {
 
     grep -q 'curl()' "$patched_script" || error "Failed to apply Docker prompt patch to Proxmox helper"
     grep -q 'MOLTIS_UPDATE_EOF' "$patched_script" || error "Failed to apply update URL patch to Proxmox helper"
+    grep -q 'cat /etc/moltis/certs/ca.pem 2>/dev/null || true' "$patched_script" || error "Failed to apply CA certificate patch to Proxmox helper"
 
     info "Launching Proxmox VE helper script..."
     bash "$patched_script"
