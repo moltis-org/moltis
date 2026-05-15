@@ -112,7 +112,10 @@ async fn configure_handler(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Weak};
+    use std::sync::Arc;
+
+    #[cfg(feature = "ngrok")]
+    use std::sync::Weak;
 
     use {
         axum::body::to_bytes,

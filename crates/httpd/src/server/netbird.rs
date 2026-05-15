@@ -72,6 +72,11 @@ impl NetbirdController {
         if let Some(active_forwarder) = active_forwarder {
             active_forwarder.shutdown.cancel();
             active_forwarder.task.abort();
+            match active_forwarder.task.await {
+                Ok(()) => {},
+                Err(error) if error.is_cancelled() => {},
+                Err(error) => warn!(%error, "NetBird forwarder task failed while stopping"),
+            }
             info!("NetBird forwarder stopped");
         }
         *self.runtime.write().await = None;
@@ -225,6 +230,16 @@ mod tests {
 
     use super::*;
 
+    struct NotifyOnDrop(Option<tokio::sync::oneshot::Sender<()>>);
+
+    impl Drop for NotifyOnDrop {
+        fn drop(&mut self) {
+            if let Some(sender) = self.0.take() {
+                let _ = sender.send(());
+            }
+        }
+    }
+
     #[tokio::test]
     async fn apply_off_clears_runtime_without_starting_forwarder() -> crate::error::Result<()> {
         let runtime = Arc::new(tokio::sync::RwLock::new(Some(NetbirdRuntimeStatus {
@@ -240,6 +255,35 @@ mod tests {
         assert!(status.is_none());
         assert!(runtime.read().await.is_none());
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn stop_cancels_active_forwarder_and_clears_runtime() {
+        let runtime = Arc::new(tokio::sync::RwLock::new(Some(NetbirdRuntimeStatus {
+            url: "https://100.64.0.1:8080".to_string(),
+            peer_ip: "100.64.0.1".to_string(),
+        })));
+        let controller = NetbirdController::new(Arc::clone(&runtime));
+        let shutdown = CancellationToken::new();
+        let observed_shutdown = shutdown.clone();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _drop_notifier = NotifyOnDrop(Some(dropped_tx));
+            std::future::pending::<()>().await;
+        });
+
+        *controller.active_forwarder.lock().await = Some(NetbirdActiveForwarder { shutdown, task });
+        tokio::task::yield_now().await;
+
+        controller.stop().await;
+
+        assert!(observed_shutdown.is_cancelled());
+        assert!(matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), dropped_rx).await,
+            Ok(Ok(()))
+        ));
+        assert!(controller.active_forwarder.lock().await.is_none());
+        assert!(runtime.read().await.is_none());
     }
 
     #[test]
