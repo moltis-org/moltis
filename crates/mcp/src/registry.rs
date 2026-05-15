@@ -41,8 +41,8 @@ pub struct McpOAuthConfig {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_option_secret_string",
-        deserialize_with = "deserialize_option_secret_string"
+        serialize_with = "moltis_oauth::types::serialize_option_secret",
+        deserialize_with = "moltis_oauth::types::deserialize_option_secret"
     )]
     pub client_secret: Option<Secret<String>>,
     pub auth_url: String,
@@ -70,8 +70,8 @@ pub struct McpServerConfig {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_option_secret_string",
-        deserialize_with = "deserialize_option_secret_string"
+        serialize_with = "moltis_oauth::types::serialize_option_secret",
+        deserialize_with = "moltis_oauth::types::deserialize_option_secret"
     )]
     pub url: Option<Secret<String>>,
     /// Custom headers for remote HTTP/SSE transport.
@@ -214,26 +214,6 @@ impl McpRegistry {
             .map(|(name, cfg)| (name.as_str(), cfg))
             .collect()
     }
-}
-
-fn serialize_option_secret_string<S: serde::Serializer>(
-    secret: &Option<Secret<String>>,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    match secret {
-        Some(value) => serializer.serialize_some(value.expose_secret()),
-        None => serializer.serialize_none(),
-    }
-}
-
-fn deserialize_option_secret_string<'de, D>(
-    deserializer: D,
-) -> std::result::Result<Option<Secret<String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let opt: Option<String> = Option::deserialize(deserializer)?;
-    Ok(opt.map(Secret::new))
 }
 
 fn serialize_secret_string_map<S: serde::Serializer>(
