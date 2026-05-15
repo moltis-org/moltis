@@ -167,6 +167,40 @@ mode = "tunnel"
 }
 
 #[test]
+fn netbird_fields_are_recognized() {
+    let toml = r#"
+[netbird]
+mode = "serve"
+reset_on_exit = false
+"#;
+    let result = validate_toml_str(toml);
+    let unknown = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path.starts_with("netbird."));
+    assert!(
+        unknown.is_none(),
+        "netbird fields should be recognized, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn unknown_netbird_mode_warned() {
+    let toml = r#"
+[netbird]
+mode = "funnel"
+"#;
+    let result = validate_toml_str(toml);
+    let warning = result.diagnostics.iter().find(|d| d.path == "netbird.mode");
+    assert!(
+        warning.is_some(),
+        "expected warning for unknown netbird mode 'funnel', got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn ngrok_fields_are_recognized() {
     let toml = r#"
 [ngrok]
@@ -182,6 +216,47 @@ domain = "team-gateway.ngrok.app"
     assert!(
         unknown.is_none(),
         "ngrok fields should be recognized, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn cloudflare_tunnel_fields_are_recognized() {
+    let toml = r#"
+[cloudflare_tunnel]
+enabled = true
+token = "secret"
+hostname = "moltis.example.com"
+"#;
+    let result = validate_toml_str(toml);
+    let unknown = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "unknown-field" && d.path.starts_with("cloudflare_tunnel."));
+    assert!(
+        unknown.is_none(),
+        "cloudflare_tunnel fields should be recognized, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn cloudflare_tunnel_auth_disabled_warned() {
+    let toml = r#"
+[auth]
+disabled = true
+
+[cloudflare_tunnel]
+enabled = true
+"#;
+    let result = validate_toml_str(toml);
+    let warning = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "security" && d.path == "cloudflare_tunnel.enabled");
+    assert!(
+        warning.is_some(),
+        "expected security warning for Cloudflare Tunnel with disabled auth, got: {:?}",
         result.diagnostics
     );
 }
