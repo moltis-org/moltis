@@ -151,11 +151,12 @@ TLS configuration for the gateway HTTPS server.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `true` | Enable HTTPS with auto-generated certificates. |
-| `auto_generate` | bool | `true` | Auto-generate a local CA and server certificate on first run. |
+| `enabled` | bool | `true` | Enable HTTPS. Auto-generated certificates are local/private-network certificates, not public CA certificates. |
+| `auto_generate` | bool | `true` | Auto-generate a local CA and server certificate on first run. The generated certificate is only valid for names/IPs included in its SAN list. |
 | `cert_path` | optional string | — | Path to a custom server certificate (PEM). Overrides auto-generation. |
 | `key_path` | optional string | — | Path to a custom server private key (PEM). Overrides auto-generation. |
 | `ca_cert_path` | optional string | — | Path to the CA certificate (PEM) used for trust instructions. |
+| `public_ip` | optional string | — | Public IPv4 or IPv6 address to include as an IP SAN in auto-generated certificates. Use this for direct `https://<public-ip>` access after trusting Moltis' local CA. |
 | `http_redirect_port` | optional integer | — | Port for the plain-HTTP redirect/CA-download server. Defaults to the gateway port + 1 when not set. |
 
 

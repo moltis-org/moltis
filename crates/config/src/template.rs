@@ -81,6 +81,7 @@ port = {port}                           # Port number (auto-generated for this i
 # [tls]
 # enabled = true                    # Enable HTTPS (recommended)
 # auto_generate = true              # Auto-generate local CA and server certificate
+# public_ip = "203.0.113.10"        # Optional IP SAN for direct https://IP access
 # http_redirect_port = 18790        # Optional override (default: server.port + 1)
 # cert_path = "/path/to/cert.pem"   # Custom certificate file (overrides auto-gen)
 # key_path = "/path/to/key.pem"     # Custom private key file

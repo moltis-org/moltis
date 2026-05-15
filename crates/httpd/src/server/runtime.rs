@@ -136,7 +136,11 @@ pub(super) async fn finalize_prepared_gateway(
             // Auto-generate certificates.
             let mgr =
                 moltis_tls::FsCertManager::new().map_err(|e| crate::Error::Tls(e.to_string()))?;
-            let runtime_sans = tls_runtime_sans(bind);
+            let mut runtime_sans = tls_runtime_sans(bind);
+            runtime_sans.extend(
+                tls_configured_sans(tls_config.public_ip.as_deref())
+                    .map_err(|e| crate::Error::Tls(format!("invalid tls.public_ip: {e}")))?,
+            );
             let (ca, cert, key) = mgr
                 .ensure_certs(&runtime_sans)
                 .map_err(|e| crate::Error::Tls(e.to_string()))?;
@@ -1117,7 +1121,11 @@ pub async fn start_gateway(
             // Auto-generate certificates.
             let mgr =
                 moltis_tls::FsCertManager::new().map_err(|e| crate::Error::Tls(e.to_string()))?;
-            let runtime_sans = tls_runtime_sans(bind);
+            let mut runtime_sans = tls_runtime_sans(bind);
+            runtime_sans.extend(
+                tls_configured_sans(tls_config.public_ip.as_deref())
+                    .map_err(|e| crate::Error::Tls(format!("invalid tls.public_ip: {e}")))?,
+            );
             let (ca, cert, key) = mgr
                 .ensure_certs(&runtime_sans)
                 .map_err(|e| crate::Error::Tls(e.to_string()))?;

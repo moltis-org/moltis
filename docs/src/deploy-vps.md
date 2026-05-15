@@ -13,8 +13,9 @@ talk to your agent from anywhere.
 
 ## Option A: Docker (recommended)
 
-Docker is the fastest path. It handles TLS certificates, sandbox isolation,
-and upgrades via image pulls.
+Docker is the fastest path. It handles sandbox isolation and upgrades via image
+pulls. For browser-trusted TLS on a VPS, put Moltis behind a reverse proxy
+such as Caddy, nginx, or Traefik and let the proxy manage public certificates.
 
 ### 1. Install Docker
 
@@ -39,9 +40,41 @@ docker compose up -d
 
 ### 3. Access the web UI
 
-Open `https://<your-server-ip>:13131` in your browser. You'll see a TLS
-warning because Moltis generates a self-signed certificate. Accept it or
-download the CA from `http://<your-server-ip>:13132`.
+For a production VPS, use a domain name and terminate TLS at a reverse proxy:
+
+```yaml
+services:
+  moltis:
+    image: ghcr.io/moltis-org/moltis:latest
+    command: ["--bind", "0.0.0.0", "--port", "13131", "--no-tls"]
+    environment:
+      - MOLTIS_BEHIND_PROXY=true
+      - MOLTIS_EXTERNAL_URL=https://chat.example.com
+```
+
+Point your proxy at `http://<moltis-host>:13131`, then open your public URL,
+for example `https://chat.example.com`.
+
+Moltis can also auto-generate a local CA and server certificate, but that mode
+is meant for local development or private networks. Trusting the generated CA
+only makes the issuer trusted; the browser still requires the certificate's
+Subject Alternative Name (SAN) to match the exact hostname or IP you open.
+An IP-address URL such as `https://<your-server-ip>:13131` only works if the
+certificate contains that IP address as an IP SAN, and normal public TLS setups
+are domain-name based. Inside Docker, Moltis usually cannot know your VPS public
+IP or provider domain, so direct IP access may fail with a certificate name
+mismatch even after importing the CA. To use direct IP access with the
+auto-generated certificate, set the public IP explicitly:
+
+```toml
+[tls]
+public_ip = "203.0.113.10"
+```
+
+Then restart Moltis so it regenerates the server certificate and import the
+generated CA from `http://<your-server-ip>:13132/certs/ca.pem`. If you want
+Moltis to serve HTTPS directly on a public domain, configure `tls.cert_path` and
+`tls.key_path` with a certificate issued for that domain.
 
 Log in with the password you set, then configure your LLM provider in
 Settings.
@@ -107,14 +140,17 @@ instructions.
 
 ## Firewall
 
-Open ports 13131 (HTTPS gateway) and 13132 (HTTP CA download) in your
-firewall. If you put Moltis behind a reverse proxy (nginx, Caddy), you only
-need to expose the proxy port and can use `--no-tls` on Moltis.
+If you use the recommended reverse proxy setup, expose only the proxy ports
+(`80` and `443`) publicly and keep Moltis' `13131` port private to the host or
+container network.
+
+Only expose `13131` directly if you intentionally serve Moltis without a proxy.
+Only expose `13132` if you intentionally use Moltis' local CA download endpoint.
 
 ```bash
-# UFW example
-sudo ufw allow 13131/tcp
-sudo ufw allow 13132/tcp
+# UFW example for the recommended reverse proxy setup
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
 ```
 
 ## Upgrades

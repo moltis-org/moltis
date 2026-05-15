@@ -28,8 +28,8 @@ provider so you can skip the browser setup wizard entirely.
 
 | Port | Purpose |
 |------|---------|
-| 13131 | Gateway (HTTPS) — web UI, API, WebSocket |
-| 13132 | HTTP — CA certificate download for TLS trust |
+| 13131 | Gateway (HTTPS by default, HTTP with `--no-tls`) — web UI, API, WebSocket |
+| 13132 | HTTP — CA certificate download for local TLS trust |
 | 1455 | OAuth callback — required for OpenAI Codex and other providers with pre-registered redirect URIs |
 
 ### Trusting the TLS certificate
@@ -53,6 +53,29 @@ sudo update-ca-certificates
 
 After trusting the CA, restart your browser. The warning will not appear again
 (the CA persists in the mounted config volume).
+
+This local CA only solves certificate trust for names included in the generated
+server certificate, such as `localhost`, `moltis.localhost`, the container or
+host name, and sometimes an inferred non-loopback bind IP. It does not make a
+certificate valid for an arbitrary public VPS IP address or hosting-provider
+domain. Browsers still reject those targets with a certificate name mismatch if
+they are not present in the certificate SAN list. IP-address URLs require an IP
+SAN. For direct `https://<public-ip>:13131` access, set `tls.public_ip` to that
+address before starting Moltis so the auto-generated certificate includes it:
+
+```toml
+[tls]
+public_ip = "203.0.113.10"
+```
+
+Regular public TLS deployments should use a domain name.
+
+For internet-facing Docker deployments, prefer a domain name plus a reverse
+proxy with public CA certificates. Run Moltis with `--no-tls`, set
+`MOLTIS_BEHIND_PROXY=true`, and point the proxy at `http://<moltis-host>:13131`.
+If you want Moltis to serve HTTPS directly, mount a certificate and private key
+whose SANs cover the public hostname and set `tls.cert_path` and `tls.key_path`
+in `moltis.toml`.
 
 ```admonish note
 When accessing from localhost, no authentication is required. If you access Moltis from a different machine (e.g., over the network), a setup code is printed to the container logs for authentication setup:

@@ -449,6 +449,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("cert_path", Leaf),
                 ("key_path", Leaf),
                 ("ca_cert_path", Leaf),
+                ("public_ip", Leaf),
                 ("http_redirect_port", Leaf),
             ])),
         ),

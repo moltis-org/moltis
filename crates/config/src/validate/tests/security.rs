@@ -74,6 +74,38 @@ key_path = "/path/to/key.pem"
 }
 
 #[test]
+fn tls_public_ip_accepts_ip_address() {
+    let toml = r#"
+[tls]
+public_ip = "203.0.113.10"
+"#;
+    let result = validate_toml_str(toml);
+    assert!(
+        result.diagnostics.iter().all(|d| d.path != "tls.public_ip"),
+        "expected no public_ip diagnostics, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn tls_public_ip_rejects_dns_name() {
+    let toml = r#"
+[tls]
+public_ip = "chat.example.com"
+"#;
+    let result = validate_toml_str(toml);
+    let error = result
+        .diagnostics
+        .iter()
+        .find(|d| d.severity == Severity::Error && d.path == "tls.public_ip");
+    assert!(
+        error.is_some(),
+        "expected error for non-IP public_ip, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn unknown_tailscale_mode_warned() {
     let toml = r#"
 [tailscale]

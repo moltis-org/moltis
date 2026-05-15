@@ -291,7 +291,15 @@ auto_generate = true
 ```
 
 For production, use certificates from a trusted CA or configure custom
-certificates.
+certificates. The auto-generated certificate is intended for localhost and
+private-network access; importing the generated CA does not make the certificate
+valid for public IP addresses or domains that are not listed in its SANs. IP
+address URLs require a certificate with that address as an IP SAN; set
+`tls.public_ip` to include a direct-access VPS IP in Moltis' auto-generated
+certificate. Regular public TLS deployments should use a domain name. For VPS and other
+internet-facing deployments, terminate TLS at a reverse proxy or configure
+`tls.cert_path` and `tls.key_path` with a certificate issued for your public
+hostname.
 
 ### Origin Validation
 

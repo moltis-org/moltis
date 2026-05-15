@@ -282,6 +282,16 @@ pub(super) fn tls_runtime_sans(bind: &str) -> Vec<moltis_tls::ServerSan> {
     }
 }
 
+#[cfg(feature = "tls")]
+pub(super) fn tls_configured_sans(
+    public_ip: Option<&str>,
+) -> Result<Vec<moltis_tls::ServerSan>, std::net::AddrParseError> {
+    public_ip
+        .map(str::parse)
+        .transpose()
+        .map(|ip| ip.map(moltis_tls::ServerSan::Ip).into_iter().collect())
+}
+
 pub(super) fn startup_bind_line(addr: SocketAddr) -> String {
     format!("bind (--bind): {addr}")
 }
@@ -531,6 +541,20 @@ mod tests {
         assert_eq!(tls_runtime_sans("192.168.1.9"), vec![
             moltis_tls::ServerSan::Ip("192.168.1.9".parse().unwrap())
         ]);
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_configured_sans_uses_public_ip() {
+        assert_eq!(tls_configured_sans(Some("203.0.113.10")).unwrap(), vec![
+            moltis_tls::ServerSan::Ip("203.0.113.10".parse().unwrap())
+        ]);
+    }
+
+    #[cfg(feature = "tls")]
+    #[test]
+    fn tls_configured_sans_rejects_dns_name() {
+        assert!(tls_configured_sans(Some("chat.example.com")).is_err());
     }
 
     #[cfg(feature = "tls")]

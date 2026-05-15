@@ -171,6 +171,16 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             message: "tls.key_path is set but tls.cert_path is missing".into(),
         });
     }
+    if let Some(public_ip) = config.tls.public_ip.as_deref()
+        && public_ip.parse::<std::net::IpAddr>().is_err()
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Error,
+            category: "security",
+            path: "tls.public_ip".into(),
+            message: "tls.public_ip must be an IPv4 or IPv6 address".into(),
+        });
+    }
 
     // Sandbox mode off
     if config.tools.exec.sandbox.mode == "off" {

@@ -384,7 +384,11 @@ See [Slack](slack.md) for full configuration reference and setup instructions.
 enabled = true
 cert_path = "~/.config/moltis/cert.pem"
 key_path = "~/.config/moltis/key.pem"
-# If paths don't exist, a self-signed certificate is generated
+# If custom paths are not set and auto_generate is true, Moltis generates a
+# local CA and server certificate for localhost/private-network names. Public
+# VPS IP access should set public_ip; public domains should use a reverse proxy
+# or custom CA-issued certificates.
+# public_ip = "203.0.113.10"
 
 # Port for the plain-HTTP redirect / CA-download server.
 # Defaults to the server port + 1 when not set.
