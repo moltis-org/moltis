@@ -20,6 +20,8 @@ pub(super) struct FinalizeGatewayArgs<'a> {
     pub webauthn_registry: Option<SharedWebAuthnRegistry>,
     #[cfg(feature = "ngrok")]
     pub ngrok_controller: Arc<NgrokController>,
+    #[cfg(feature = "cloudflare-tunnel")]
+    pub cloudflare_tunnel_controller: Arc<CloudflareTunnelController>,
     #[cfg(feature = "trusted-network")]
     pub audit_buffer_for_broadcast: Option<moltis_gateway::network_audit::NetworkAuditBuffer>,
     #[cfg(feature = "trusted-network")]
@@ -100,6 +102,8 @@ pub(super) async fn finalize_prepared_gateway(
         webauthn_registry,
         #[cfg(feature = "ngrok")]
         ngrok_controller,
+        #[cfg(feature = "cloudflare-tunnel")]
+        cloudflare_tunnel_controller,
         #[cfg(feature = "trusted-network")]
         audit_buffer_for_broadcast,
         #[cfg(feature = "trusted-network")]
@@ -849,6 +853,8 @@ pub(super) async fn finalize_prepared_gateway(
             webauthn_registry,
             #[cfg(feature = "ngrok")]
             ngrok_controller,
+            #[cfg(feature = "cloudflare-tunnel")]
+            cloudflare_tunnel_controller,
             browser_for_lifecycle,
             browser_tool_for_warmup,
             config,
@@ -1016,6 +1022,60 @@ pub(super) async fn start_ngrok_tunnel(
     })
 }
 
+#[cfg(feature = "netbird")]
+async fn start_netbird_forwarder(
+    port: u16,
+    tls: bool,
+) -> crate::error::Result<Option<(String, tokio::task::JoinHandle<()>)>> {
+    use moltis_gateway::netbird::{CliNetbirdManager, NetbirdManager, NetbirdMode};
+
+    let manager = CliNetbirdManager::new(NetbirdMode::Serve, port, tls);
+    let status = manager
+        .status()
+        .await
+        .map_err(|error| crate::Error::Config(format!("NetBird status failed: {error}")))?;
+    let Some(peer_ip) = status.peer_ip else {
+        return Ok(None);
+    };
+
+    let listener = tokio::net::TcpListener::bind(format!("{peer_ip}:{port}"))
+        .await
+        .map_err(|error| {
+            crate::Error::Config(format!("failed to bind NetBird forwarder: {error}"))
+        })?;
+    let url = status.url.unwrap_or_else(|| {
+        format!(
+            "{}://{}:{}",
+            if tls {
+                "https"
+            } else {
+                "http"
+            },
+            peer_ip,
+            port
+        )
+    });
+    let handle = tokio::spawn(async move {
+        loop {
+            let Ok((mut inbound, _peer)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                    Ok(mut outbound) => {
+                        let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                    },
+                    Err(error) => {
+                        tracing::warn!(%error, "NetBird forwarder failed to connect to local gateway");
+                    },
+                }
+            });
+        }
+    });
+
+    Ok(Some((url, handle)))
+}
+
 /// Start the gateway HTTP + WebSocket server.
 ///
 /// Thin wrapper around [`prepare_gateway`] that adds the startup banner,
@@ -1105,6 +1165,38 @@ pub async fn start_gateway(
                 (None, Some(error.to_string()))
             },
         };
+
+    #[cfg(feature = "cloudflare-tunnel")]
+    let (cloudflare_tunnel_status, cloudflare_tunnel_startup_error) = match banner
+        .cloudflare_tunnel_controller
+        .apply(
+            &config.cloudflare_tunnel,
+            port,
+            !no_tls && config.tls.enabled,
+        )
+        .await
+    {
+        Ok(status) => (status, None),
+        Err(error) => {
+            warn!(%error, "Cloudflare Tunnel failed to start; gateway will continue without it");
+            (None, Some(error.to_string()))
+        },
+    };
+
+    #[cfg(feature = "netbird")]
+    let (netbird_url, _netbird_forwarder, netbird_startup_error) = if config.netbird.mode == "serve"
+    {
+        match start_netbird_forwarder(port, !no_tls && config.tls.enabled).await {
+            Ok(Some((url, handle))) => (Some(url), Some(handle), None),
+            Ok(None) => (None, None, Some("NetBird is not connected".to_string())),
+            Err(error) => {
+                warn!(%error, "NetBird forwarder failed to start; gateway will continue without it");
+                (None, None, Some(error.to_string()))
+            },
+        }
+    } else {
+        (None, None, None)
+    };
 
     #[cfg(feature = "tls")]
     if tls_active {
@@ -1248,6 +1340,35 @@ pub async fn start_gateway(
     if config.ngrok.enabled {
         lines.push(
             "ngrok: enabled in config but this build does not include the ngrok feature".into(),
+        );
+    }
+    #[cfg(feature = "cloudflare-tunnel")]
+    if let Some(status) = cloudflare_tunnel_status.as_ref() {
+        if let Some(public_url) = status.public_url.as_ref() {
+            lines.push(format!("cloudflare tunnel: {public_url}"));
+        } else {
+            lines.push("cloudflare tunnel: started".into());
+        }
+        if let Some(passkey_warning) = status.passkey_warning.as_ref() {
+            lines.push(format!("cloudflare tunnel note: {passkey_warning}"));
+        }
+    } else if let Some(error) = cloudflare_tunnel_startup_error.as_deref() {
+        lines.push(format!("cloudflare tunnel: failed to start ({error})"));
+    }
+    #[cfg(not(feature = "cloudflare-tunnel"))]
+    if config.cloudflare_tunnel.enabled {
+        lines.push("cloudflare tunnel: enabled in config but this build does not include the cloudflare-tunnel feature".into());
+    }
+    #[cfg(feature = "netbird")]
+    if let Some(url) = netbird_url.as_ref() {
+        lines.push(format!("netbird: {url}"));
+    } else if let Some(error) = netbird_startup_error.as_deref() {
+        lines.push(format!("netbird: failed to start ({error})"));
+    }
+    #[cfg(not(feature = "netbird"))]
+    if config.netbird.mode != "off" {
+        lines.push(
+            "netbird: enabled in config but this build does not include the netbird feature".into(),
         );
     }
     // Hint about Apple Container on macOS when using Docker or Podman.

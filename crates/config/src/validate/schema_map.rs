@@ -520,7 +520,19 @@ pub(super) fn build_schema_map() -> KnownKeys {
             ])),
         ),
         (
+            "cloudflare_tunnel",
+            Struct(HashMap::from([
+                ("enabled", Leaf),
+                ("token", Leaf),
+                ("hostname", Leaf),
+            ])),
+        ),
+        (
             "tailscale",
+            Struct(HashMap::from([("mode", Leaf), ("reset_on_exit", Leaf)])),
+        ),
+        (
+            "netbird",
             Struct(HashMap::from([("mode", Leaf), ("reset_on_exit", Leaf)])),
         ),
         (

@@ -133,6 +133,23 @@ pub struct NgrokConfig {
     pub domain: Option<String>,
 }
 
+/// Cloudflare Tunnel public HTTPS tunnel configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CloudflareTunnelConfig {
+    /// Whether the Cloudflare Tunnel connector is enabled.
+    pub enabled: bool,
+    /// Cloudflare Tunnel token. If unset, `CLOUDFLARE_TUNNEL_TOKEN` is used.
+    #[serde(
+        default,
+        serialize_with = "serialize_option_secret",
+        deserialize_with = "deserialize_option_secret"
+    )]
+    pub token: Option<Secret<String>>,
+    /// Optional public hostname for status display and WebAuthn origin updates.
+    pub hostname: Option<String>,
+}
+
 /// Failover configuration for automatic model/provider failover.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -464,6 +481,25 @@ pub struct TailscaleConfig {
     pub mode: String,
     /// Reset tailscale serve/funnel when the gateway shuts down.
     pub reset_on_exit: bool,
+}
+
+/// NetBird private mesh configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NetbirdConfig {
+    /// NetBird mode: "off" or "serve".
+    pub mode: String,
+    /// Reset NetBird serve status when the gateway shuts down.
+    pub reset_on_exit: bool,
+}
+
+impl Default for NetbirdConfig {
+    fn default() -> Self {
+        Self {
+            mode: "off".into(),
+            reset_on_exit: true,
+        }
+    }
 }
 
 impl Default for TailscaleConfig {

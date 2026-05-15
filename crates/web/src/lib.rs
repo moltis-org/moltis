@@ -250,10 +250,22 @@ fn add_feature_routes(routes: Router<AppState>) -> Router<AppState> {
     #[cfg(feature = "ngrok")]
     let routes = routes.nest("/api/ngrok", moltis_httpd::ngrok_routes::ngrok_router());
 
+    #[cfg(feature = "cloudflare-tunnel")]
+    let routes = routes.nest(
+        "/api/cloudflare-tunnel",
+        moltis_httpd::cloudflare_tunnel_routes::cloudflare_tunnel_router(),
+    );
+
     #[cfg(feature = "tailscale")]
     let routes = routes.nest(
         "/api/tailscale",
         moltis_httpd::tailscale_routes::tailscale_router(),
+    );
+
+    #[cfg(feature = "netbird")]
+    let routes = routes.nest(
+        "/api/netbird",
+        moltis_httpd::netbird_routes::netbird_router(),
     );
 
     #[cfg(feature = "push-notifications")]

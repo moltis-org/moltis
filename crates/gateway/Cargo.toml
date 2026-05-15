@@ -43,6 +43,7 @@ moltis-media            = { workspace = true }
 moltis-memory           = { workspace = true }
 moltis-metrics          = { optional = true, workspace = true }
 moltis-msteams          = { optional = true, workspace = true }
+moltis-netbird          = { optional = true, workspace = true }
 moltis-network-filter   = { features = ["proxy", "service"], optional = true, workspace = true }
 moltis-nostr            = { optional = true, workspace = true }
 moltis-oauth            = { workspace = true }
@@ -129,6 +130,7 @@ default = [
   "mdns",
   "metrics",
   "msteams",
+  "netbird",
   "nostr",
   "openclaw-import",
   "prometheus",
@@ -183,6 +185,7 @@ metrics = [
   "moltis-signal?/metrics",
 ]
 msteams = ["dep:moltis-msteams"]
+netbird = ["dep:moltis-netbird"]
 nostr = ["dep:moltis-nostr"]
 openclaw-import = ["dep:moltis-openclaw-import"]
 prometheus = ["metrics", "moltis-metrics/prometheus"]

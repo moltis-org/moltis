@@ -50,6 +50,8 @@ use moltis_tls::CertManager;
 // ── Submodules ───────────────────────────────────────────────────────────────
 
 mod builder;
+#[cfg(feature = "cloudflare-tunnel")]
+mod cloudflare_tunnel;
 mod gateway;
 mod handlers;
 mod middleware;
@@ -68,6 +70,8 @@ pub use {
     types::*,
 };
 
+#[cfg(feature = "cloudflare-tunnel")]
+pub use cloudflare_tunnel::{CloudflareTunnelController, CloudflareTunnelRuntimeStatus};
 #[cfg(feature = "ngrok")]
 use ngrok::NgrokActiveTunnel;
 #[cfg(feature = "ngrok")]

@@ -25,6 +25,8 @@ use super::{
     middleware::{apply_middleware_stack, build_cors_layer},
 };
 
+#[cfg(feature = "cloudflare-tunnel")]
+use super::cloudflare_tunnel::CloudflareTunnelController;
 #[cfg(feature = "ngrok")]
 use super::ngrok::NgrokController;
 
@@ -65,6 +67,14 @@ pub(super) fn build_gateway_base_internal(
         webauthn_registry.clone(),
         Arc::clone(&ngrok_runtime),
     ));
+    #[cfg(feature = "cloudflare-tunnel")]
+    let cloudflare_tunnel_runtime = Arc::new(tokio::sync::RwLock::new(None));
+    #[cfg(feature = "cloudflare-tunnel")]
+    let cloudflare_tunnel_controller = Arc::new(CloudflareTunnelController::new(
+        Arc::clone(&state),
+        webauthn_registry.clone(),
+        Arc::clone(&cloudflare_tunnel_runtime),
+    ));
 
     let app_state = AppState {
         gateway: state,
@@ -77,6 +87,10 @@ pub(super) fn build_gateway_base_internal(
         ngrok_controller: Arc::downgrade(&ngrok_controller),
         #[cfg(feature = "ngrok")]
         ngrok_runtime,
+        #[cfg(feature = "cloudflare-tunnel")]
+        cloudflare_tunnel_controller,
+        #[cfg(feature = "cloudflare-tunnel")]
+        cloudflare_tunnel_runtime,
         #[cfg(feature = "tailscale")]
         tailscale_manager: moltis_gateway::tailscale::CachedTailscaleManager::new_with_prefetch(),
         push_service,
@@ -171,6 +185,14 @@ pub(super) fn build_gateway_base_internal(
         webauthn_registry.clone(),
         Arc::clone(&ngrok_runtime),
     ));
+    #[cfg(feature = "cloudflare-tunnel")]
+    let cloudflare_tunnel_runtime = Arc::new(tokio::sync::RwLock::new(None));
+    #[cfg(feature = "cloudflare-tunnel")]
+    let cloudflare_tunnel_controller = Arc::new(CloudflareTunnelController::new(
+        Arc::clone(&state),
+        webauthn_registry.clone(),
+        Arc::clone(&cloudflare_tunnel_runtime),
+    ));
 
     let app_state = AppState {
         gateway: state,
@@ -183,6 +205,10 @@ pub(super) fn build_gateway_base_internal(
         ngrok_controller: Arc::downgrade(&ngrok_controller),
         #[cfg(feature = "ngrok")]
         ngrok_runtime,
+        #[cfg(feature = "cloudflare-tunnel")]
+        cloudflare_tunnel_controller,
+        #[cfg(feature = "cloudflare-tunnel")]
+        cloudflare_tunnel_runtime,
         #[cfg(feature = "tailscale")]
         tailscale_manager: moltis_gateway::tailscale::CachedTailscaleManager::new_with_prefetch(),
         #[cfg(feature = "graphql")]

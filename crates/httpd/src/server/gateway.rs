@@ -195,6 +195,9 @@ pub async fn prepare_gateway(
     );
 
     // Merge caller-provided routes (e.g. web-UI) before finalization.
+    #[cfg(feature = "cloudflare-tunnel")]
+    let cloudflare_tunnel_controller = Arc::clone(&app_state.cloudflare_tunnel_controller);
+
     let router = if let Some(enhance) = extra_routes {
         router.merge(enhance())
     } else {
@@ -1261,6 +1264,8 @@ pub async fn prepare_gateway(
         webauthn_registry,
         #[cfg(feature = "ngrok")]
         ngrok_controller,
+        #[cfg(feature = "cloudflare-tunnel")]
+        cloudflare_tunnel_controller,
         #[cfg(feature = "trusted-network")]
         audit_buffer_for_broadcast,
         #[cfg(feature = "trusted-network")]

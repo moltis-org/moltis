@@ -27,6 +27,8 @@ static malloc_conf: &[u8] = b"dirty_decay_ms:1000,muzzy_decay_ms:1000,background
 mod auth_commands;
 mod browser_commands;
 mod channel_commands;
+#[cfg(feature = "cloudflare-tunnel")]
+mod cloudflare_tunnel_commands;
 mod config_commands;
 mod data_commands;
 mod db_commands;
@@ -35,6 +37,8 @@ mod hooks_commands;
 #[cfg(feature = "openclaw-import")]
 mod import_commands;
 mod memory_commands;
+#[cfg(feature = "netbird")]
+mod netbird_commands;
 mod node_commands;
 mod sandbox_commands;
 mod service_commands;
@@ -198,6 +202,18 @@ enum Commands {
     Tailscale {
         #[command(subcommand)]
         action: tailscale_commands::TailscaleAction,
+    },
+    /// NetBird private mesh access management.
+    #[cfg(feature = "netbird")]
+    Netbird {
+        #[command(subcommand)]
+        action: netbird_commands::NetbirdAction,
+    },
+    /// Cloudflare Tunnel management.
+    #[cfg(feature = "cloudflare-tunnel")]
+    CloudflareTunnel {
+        #[command(subcommand)]
+        action: cloudflare_tunnel_commands::CloudflareTunnelAction,
     },
     /// Voice call management (initiate, status, end).
     VoiceCall {
@@ -490,6 +506,12 @@ async fn main() -> anyhow::Result<()> {
         Some(Commands::Import { action }) => import_commands::handle_import(action).await,
         #[cfg(feature = "tailscale")]
         Some(Commands::Tailscale { action }) => tailscale_commands::handle_tailscale(action).await,
+        #[cfg(feature = "netbird")]
+        Some(Commands::Netbird { action }) => netbird_commands::handle_netbird(action).await,
+        #[cfg(feature = "cloudflare-tunnel")]
+        Some(Commands::CloudflareTunnel { action }) => {
+            cloudflare_tunnel_commands::handle_cloudflare_tunnel(action).await
+        },
         Some(Commands::Skills { action }) => handle_skills(action).await,
         Some(Commands::Config { action }) => config_commands::handle_config(action).await,
         Some(Commands::Doctor) => doctor_commands::handle_doctor().await,

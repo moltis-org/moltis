@@ -180,6 +180,17 @@ ngrok public HTTPS tunnel configuration.
 | `domain` | optional string | — | Optional reserved/static domain to request from ngrok. |
 
 
+### `cloudflare_tunnel` — CloudflareTunnelConfig
+
+Cloudflare Tunnel public HTTPS connector configuration.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Whether the Cloudflare Tunnel connector is enabled. |
+| `token` | optional secret string | — | Cloudflare Tunnel token. If unset, `CLOUDFLARE_TUNNEL_TOKEN` env var is used. |
+| `hostname` | optional string | — | Optional public hostname for status display and WebAuthn origin updates. |
+
+
 ### `tailscale` — TailscaleConfig
 
 Tailscale Serve/Funnel configuration.
@@ -188,6 +199,16 @@ Tailscale Serve/Funnel configuration.
 |---|---|---|---|
 | `mode` | string | `"off"` | Tailscale mode: `"off"`, `"serve"`, or `"funnel"`. |
 | `reset_on_exit` | bool | `true` | Reset tailscale serve/funnel when the gateway shuts down. |
+
+
+### `netbird` — NetbirdConfig
+
+NetBird private mesh access configuration.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `mode` | string | `"off"` | NetBird mode: `"off"` or `"serve"`. |
+| `reset_on_exit` | bool | `true` | Reset NetBird serve status when the gateway shuts down. |
 
 
 ### `upstream_proxy` (top-level scalar)

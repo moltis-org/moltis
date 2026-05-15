@@ -7490,6 +7490,7 @@ dependencies = [
  "moltis-memory",
  "moltis-metrics",
  "moltis-msteams",
+ "moltis-netbird",
  "moltis-network-filter",
  "moltis-nostr",
  "moltis-oauth",
@@ -7826,6 +7827,18 @@ dependencies = [
  "tracing",
  "url",
  "urlencoding",
+]
+
+[[package]]
+name = "moltis-netbird"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
