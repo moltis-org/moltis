@@ -640,7 +640,6 @@ test.describe("Chat input and slash commands", () => {
 		const tokenBar = page.locator("#tokenBar");
 		await expect.poll(forceZeroUsageTokenBar, { timeout: 10_000 }).toEqual({ visible: true, text: "0" });
 		await expect(tokenBar).toBeVisible();
-		await expect(tokenBar).toHaveText("0");
 		await expect(tokenBar).not.toContainText("Execute:");
 		await expect(tokenBar).not.toContainText("/sh mode");
 		expect(pageErrors).toEqual([]);
