@@ -14,6 +14,8 @@ use moltis_gateway::tailscale::TailscaleMode;
 
 #[cfg(feature = "cloudflare-tunnel")]
 use super::cloudflare_tunnel::{CloudflareTunnelController, CloudflareTunnelRuntimeStatus};
+#[cfg(feature = "netbird")]
+use super::netbird::{NetbirdController, NetbirdRuntimeStatus};
 #[cfg(feature = "ngrok")]
 use super::ngrok::{NgrokController, NgrokRuntimeStatus};
 
@@ -42,6 +44,10 @@ pub struct AppState {
     pub cloudflare_tunnel_controller: Arc<CloudflareTunnelController>,
     #[cfg(feature = "cloudflare-tunnel")]
     pub cloudflare_tunnel_runtime: Arc<tokio::sync::RwLock<Option<CloudflareTunnelRuntimeStatus>>>,
+    #[cfg(feature = "netbird")]
+    pub netbird_controller: Arc<NetbirdController>,
+    #[cfg(feature = "netbird")]
+    pub netbird_runtime: Arc<tokio::sync::RwLock<Option<NetbirdRuntimeStatus>>>,
     #[cfg(feature = "tailscale")]
     pub tailscale_manager: Arc<moltis_gateway::tailscale::CachedTailscaleManager>,
     #[cfg(feature = "push-notifications")]
@@ -101,6 +107,8 @@ pub struct BannerMeta {
     pub ngrok_controller: Arc<NgrokController>,
     #[cfg(feature = "cloudflare-tunnel")]
     pub cloudflare_tunnel_controller: Arc<CloudflareTunnelController>,
+    #[cfg(feature = "netbird")]
+    pub netbird_controller: Arc<NetbirdController>,
     pub browser_for_lifecycle: Arc<dyn moltis_gateway::services::BrowserService>,
     pub browser_tool_for_warmup: Option<Arc<dyn moltis_agents::tool_registry::AgentTool>>,
     pub config: moltis_config::schema::MoltisConfig,

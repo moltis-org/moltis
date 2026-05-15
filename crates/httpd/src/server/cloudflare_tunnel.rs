@@ -8,7 +8,10 @@ use {
     moltis_config::schema::CloudflareTunnelConfig,
     moltis_gateway::{auth_webauthn::SharedWebAuthnRegistry, state::GatewayState},
     secrecy::ExposeSecret,
-    tokio::process::{Child, Command},
+    tokio::{
+        io::AsyncBufReadExt,
+        process::{Child, Command},
+    },
     tracing::{info, warn},
 };
 
@@ -25,7 +28,13 @@ pub struct CloudflareTunnelController {
     gateway: Arc<GatewayState>,
     webauthn_registry: Option<SharedWebAuthnRegistry>,
     runtime: Arc<tokio::sync::RwLock<Option<CloudflareTunnelRuntimeStatus>>>,
-    child: tokio::sync::Mutex<Option<Child>>,
+    active_tunnel: tokio::sync::Mutex<Option<CloudflareActiveTunnel>>,
+}
+
+#[cfg(feature = "cloudflare-tunnel")]
+struct CloudflareActiveTunnel {
+    child: Child,
+    log_task: tokio::task::JoinHandle<()>,
 }
 
 #[cfg(feature = "cloudflare-tunnel")]
@@ -39,7 +48,7 @@ impl CloudflareTunnelController {
             gateway,
             webauthn_registry,
             runtime,
-            child: tokio::sync::Mutex::new(None),
+            active_tunnel: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -77,20 +86,33 @@ impl CloudflareTunnelController {
                 "http"
             }
         );
-        let child = Command::new("cloudflared")
-            .args([
-                "tunnel",
-                "--no-autoupdate",
-                "--url",
-                &target,
-                "run",
-                "--token",
-                &token,
-            ])
+        let mut child = Command::new("cloudflared")
+            .args(["tunnel", "--no-autoupdate", "--url", &target, "run"])
+            .env("TUNNEL_TOKEN", token)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| crate::Error::Config(format!("failed to run cloudflared: {error}")))?;
+
+        let stderr = child.stderr.take();
+        let log_task = tokio::spawn(async move {
+            let Some(stderr) = stderr else {
+                return;
+            };
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        tracing::info!(target = "cloudflared", message = %line, "cloudflared")
+                    },
+                    Ok(None) => break,
+                    Err(error) => {
+                        warn!(%error, "failed to read cloudflared stderr");
+                        break;
+                    },
+                }
+            }
+        });
 
         let public_url = config
             .hostname
@@ -110,19 +132,20 @@ impl CloudflareTunnelController {
             passkey_warning,
         };
 
-        *self.child.lock().await = Some(child);
+        *self.active_tunnel.lock().await = Some(CloudflareActiveTunnel { child, log_task });
         *self.runtime.write().await = Some(status.clone());
         info!(target = %target, "Cloudflare Tunnel started");
         Ok(Some(status))
     }
 
     pub async fn stop(&self) -> crate::error::Result<()> {
-        let child = self.child.lock().await.take();
-        if let Some(mut child) = child {
-            if let Err(error) = child.kill().await {
+        let active_tunnel = self.active_tunnel.lock().await.take();
+        if let Some(mut active_tunnel) = active_tunnel {
+            if let Err(error) = active_tunnel.child.kill().await {
                 warn!(%error, "failed to stop cloudflared");
             }
-            let _ = child.wait().await;
+            let _ = active_tunnel.child.wait().await;
+            active_tunnel.log_task.abort();
             info!("Cloudflare Tunnel stopped");
         }
         *self.runtime.write().await = None;

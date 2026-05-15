@@ -51,7 +51,7 @@ async fn status_handler() -> impl IntoResponse {
 }
 
 async fn configure_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(body): Json<ConfigureNetbirdRequest>,
 ) -> impl IntoResponse {
     let existing = moltis_config::discover_and_load();
@@ -76,6 +76,9 @@ async fn configure_handler(
             .into_response();
     }
 
+    let mut updated = existing.clone();
+    updated.netbird.mode = mode.to_string();
+
     if let Err(error) = moltis_config::update_config(|config| {
         config.netbird.mode = mode.to_string();
     }) {
@@ -84,6 +87,21 @@ async fn configure_handler(
             Json(netbird_error(
                 "NETBIRD_SAVE_FAILED",
                 format!("failed to save NetBird config: {error}"),
+            )),
+        )
+            .into_response();
+    }
+
+    if let Err(error) = state
+        .netbird_controller
+        .apply(&updated.netbird, updated.server.port, updated.tls.enabled)
+        .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(netbird_error(
+                "NETBIRD_APPLY_FAILED",
+                format!("saved NetBird config but failed to apply it: {error}"),
             )),
         )
             .into_response();

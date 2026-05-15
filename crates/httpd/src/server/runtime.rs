@@ -22,6 +22,8 @@ pub(super) struct FinalizeGatewayArgs<'a> {
     pub ngrok_controller: Arc<NgrokController>,
     #[cfg(feature = "cloudflare-tunnel")]
     pub cloudflare_tunnel_controller: Arc<CloudflareTunnelController>,
+    #[cfg(feature = "netbird")]
+    pub netbird_controller: Arc<NetbirdController>,
     #[cfg(feature = "trusted-network")]
     pub audit_buffer_for_broadcast: Option<moltis_gateway::network_audit::NetworkAuditBuffer>,
     #[cfg(feature = "trusted-network")]
@@ -104,6 +106,8 @@ pub(super) async fn finalize_prepared_gateway(
         ngrok_controller,
         #[cfg(feature = "cloudflare-tunnel")]
         cloudflare_tunnel_controller,
+        #[cfg(feature = "netbird")]
+        netbird_controller,
         #[cfg(feature = "trusted-network")]
         audit_buffer_for_broadcast,
         #[cfg(feature = "trusted-network")]
@@ -855,6 +859,8 @@ pub(super) async fn finalize_prepared_gateway(
             ngrok_controller,
             #[cfg(feature = "cloudflare-tunnel")]
             cloudflare_tunnel_controller,
+            #[cfg(feature = "netbird")]
+            netbird_controller,
             browser_for_lifecycle,
             browser_tool_for_warmup,
             config,
@@ -1022,60 +1028,6 @@ pub(super) async fn start_ngrok_tunnel(
     })
 }
 
-#[cfg(feature = "netbird")]
-async fn start_netbird_forwarder(
-    port: u16,
-    tls: bool,
-) -> crate::error::Result<Option<(String, tokio::task::JoinHandle<()>)>> {
-    use moltis_gateway::netbird::{CliNetbirdManager, NetbirdManager, NetbirdMode};
-
-    let manager = CliNetbirdManager::new(NetbirdMode::Serve, port, tls);
-    let status = manager
-        .status()
-        .await
-        .map_err(|error| crate::Error::Config(format!("NetBird status failed: {error}")))?;
-    let Some(peer_ip) = status.peer_ip else {
-        return Ok(None);
-    };
-
-    let listener = tokio::net::TcpListener::bind(format!("{peer_ip}:{port}"))
-        .await
-        .map_err(|error| {
-            crate::Error::Config(format!("failed to bind NetBird forwarder: {error}"))
-        })?;
-    let url = status.url.unwrap_or_else(|| {
-        format!(
-            "{}://{}:{}",
-            if tls {
-                "https"
-            } else {
-                "http"
-            },
-            peer_ip,
-            port
-        )
-    });
-    let handle = tokio::spawn(async move {
-        loop {
-            let Ok((mut inbound, _peer)) = listener.accept().await else {
-                break;
-            };
-            tokio::spawn(async move {
-                match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
-                    Ok(mut outbound) => {
-                        let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
-                    },
-                    Err(error) => {
-                        tracing::warn!(%error, "NetBird forwarder failed to connect to local gateway");
-                    },
-                }
-            });
-        }
-    });
-
-    Ok(Some((url, handle)))
-}
-
 /// Start the gateway HTTP + WebSocket server.
 ///
 /// Thin wrapper around [`prepare_gateway`] that adds the startup banner,
@@ -1184,18 +1136,16 @@ pub async fn start_gateway(
     };
 
     #[cfg(feature = "netbird")]
-    let (netbird_url, _netbird_forwarder, netbird_startup_error) = if config.netbird.mode == "serve"
+    let (netbird_status, netbird_startup_error) = match banner
+        .netbird_controller
+        .apply(&config.netbird, port, !no_tls && config.tls.enabled)
+        .await
     {
-        match start_netbird_forwarder(port, !no_tls && config.tls.enabled).await {
-            Ok(Some((url, handle))) => (Some(url), Some(handle), None),
-            Ok(None) => (None, None, Some("NetBird is not connected".to_string())),
-            Err(error) => {
-                warn!(%error, "NetBird forwarder failed to start; gateway will continue without it");
-                (None, None, Some(error.to_string()))
-            },
-        }
-    } else {
-        (None, None, None)
+        Ok(status) => (status, None),
+        Err(error) => {
+            warn!(%error, "NetBird forwarder failed to start; gateway will continue without it");
+            (None, Some(error.to_string()))
+        },
     };
 
     #[cfg(feature = "tls")]
@@ -1360,8 +1310,8 @@ pub async fn start_gateway(
         lines.push("cloudflare tunnel: enabled in config but this build does not include the cloudflare-tunnel feature".into());
     }
     #[cfg(feature = "netbird")]
-    if let Some(url) = netbird_url.as_ref() {
-        lines.push(format!("netbird: {url}"));
+    if let Some(status) = netbird_status.as_ref() {
+        lines.push(format!("netbird: {}", status.url));
     } else if let Some(error) = netbird_startup_error.as_deref() {
         lines.push(format!("netbird: failed to start ({error})"));
     }
