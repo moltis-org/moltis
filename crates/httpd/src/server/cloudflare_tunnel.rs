@@ -87,7 +87,7 @@ impl CloudflareTunnelController {
             }
         );
         let mut child = Command::new("cloudflared")
-            .args(["tunnel", "--no-autoupdate", "--url", &target, "run"])
+            .args(cloudflared_tunnel_args(&target))
             .env("TUNNEL_TOKEN", token)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -151,6 +151,11 @@ impl CloudflareTunnelController {
         *self.runtime.write().await = None;
         Ok(())
     }
+}
+
+#[cfg(feature = "cloudflare-tunnel")]
+fn cloudflared_tunnel_args(target: &str) -> [&str; 5] {
+    ["tunnel", "--no-autoupdate", "run", "--url", target]
 }
 
 #[cfg(feature = "cloudflare-tunnel")]
@@ -239,6 +244,17 @@ mod tests {
         ]);
         assert_eq!(startup_lines(None, Some("boom")), vec![
             "cloudflare tunnel: failed to start (boom)".to_string()
+        ]);
+    }
+
+    #[test]
+    fn cloudflared_args_place_url_on_run_subcommand() {
+        assert_eq!(cloudflared_tunnel_args("http://127.0.0.1:8080"), [
+            "tunnel",
+            "--no-autoupdate",
+            "run",
+            "--url",
+            "http://127.0.0.1:8080",
         ]);
     }
 }

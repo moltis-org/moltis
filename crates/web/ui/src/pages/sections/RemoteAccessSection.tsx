@@ -420,6 +420,7 @@ export function RemoteAccessSection(): VNode {
 				setCfSaving(false);
 				if (!ok || data.error) {
 					setCfError(data.error || null);
+					fetchCloudflareTunnelStatus();
 				} else {
 					setCfMsg(successMessage);
 					if (data.status) {

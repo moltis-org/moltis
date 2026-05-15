@@ -201,6 +201,27 @@ mode = "funnel"
 }
 
 #[test]
+fn netbird_serve_auth_disabled_warned() {
+    let toml = r#"
+[auth]
+disabled = true
+
+[netbird]
+mode = "serve"
+"#;
+    let result = validate_toml_str(toml);
+    let warning = result
+        .diagnostics
+        .iter()
+        .find(|d| d.category == "security" && d.path == "netbird.mode");
+    assert!(
+        warning.is_some(),
+        "expected security warning for NetBird serve mode with disabled auth, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn ngrok_fields_are_recognized() {
     let toml = r#"
 [ngrok]

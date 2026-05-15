@@ -560,6 +560,15 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         });
     }
 
+    if config.netbird.mode == "serve" && config.auth.disabled {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "security",
+            path: "netbird.mode".into(),
+            message: "NetBird serve mode is enabled while auth.disabled is true; NetBird mesh peers will be blocked with setup required until authentication is configured".into(),
+        });
+    }
+
     if config.ngrok.enabled && config.auth.disabled {
         diagnostics.push(Diagnostic {
             severity: Severity::Warning,

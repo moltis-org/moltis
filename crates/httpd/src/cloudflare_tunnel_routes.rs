@@ -28,10 +28,30 @@ fn normalize_optional(value: Option<&str>) -> Option<String> {
 fn token_source(config: &CloudflareTunnelConfig) -> Option<&'static str> {
     if config.token.is_some() {
         Some("config")
-    } else if std::env::var_os("CLOUDFLARE_TUNNEL_TOKEN").is_some() {
+    } else if env_token_present() {
         Some("env")
     } else {
         None
+    }
+}
+
+fn env_token_present() -> bool {
+    std::env::var("CLOUDFLARE_TUNNEL_TOKEN")
+        .ok()
+        .and_then(|token| normalize_optional(Some(&token)))
+        .is_some()
+}
+
+fn cloudflare_token_will_exist(
+    clear_token: bool,
+    new_token: Option<&str>,
+    existing_token_present: bool,
+    env_token_present: bool,
+) -> bool {
+    if clear_token {
+        new_token.is_some() || env_token_present
+    } else {
+        new_token.is_some() || existing_token_present || env_token_present
     }
 }
 
@@ -79,13 +99,12 @@ async fn save_config_handler(
     let existing = moltis_config::discover_and_load();
     let hostname = normalize_optional(body.hostname.as_deref());
     let new_token = normalize_optional(body.token.as_deref());
-    let token_will_exist = if body.clear_token {
-        new_token.is_some() || std::env::var_os("CLOUDFLARE_TUNNEL_TOKEN").is_some()
-    } else {
-        new_token.is_some()
-            || existing.cloudflare_tunnel.token.is_some()
-            || std::env::var_os("CLOUDFLARE_TUNNEL_TOKEN").is_some()
-    };
+    let token_will_exist = cloudflare_token_will_exist(
+        body.clear_token,
+        new_token.as_deref(),
+        existing.cloudflare_tunnel.token.is_some(),
+        env_token_present(),
+    );
 
     if body.enabled && !token_will_exist {
         return (
@@ -211,6 +230,19 @@ mod tests {
                 "error": "missing token",
             })
         );
+    }
+
+    #[test]
+    fn token_will_exist_ignores_blank_env_tokens() {
+        assert!(!cloudflare_token_will_exist(false, None, false, false));
+        assert!(cloudflare_token_will_exist(false, None, false, true));
+        assert!(!cloudflare_token_will_exist(true, None, true, false));
+        assert!(cloudflare_token_will_exist(
+            true,
+            Some("token"),
+            true,
+            false
+        ));
     }
 
     fn test_state() -> AppState {
