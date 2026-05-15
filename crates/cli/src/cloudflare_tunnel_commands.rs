@@ -26,22 +26,20 @@ pub async fn handle_cloudflare_tunnel(action: CloudflareTunnelAction) -> Result<
             println!("Enabled: {}", config.cloudflare_tunnel.enabled);
             println!(
                 "Token:   {}",
-                if config.cloudflare_tunnel.token.is_some() {
-                    "stored in config"
-                } else if std::env::var_os("CLOUDFLARE_TUNNEL_TOKEN").is_some() {
-                    "from CLOUDFLARE_TUNNEL_TOKEN"
-                } else {
-                    "not configured"
-                }
+                token_source_label(
+                    config.cloudflare_tunnel.token.is_some(),
+                    std::env::var_os("CLOUDFLARE_TUNNEL_TOKEN").is_some(),
+                )
             );
             if let Some(hostname) = config.cloudflare_tunnel.hostname {
                 println!("URL:     https://{hostname}");
             }
         },
         CloudflareTunnelAction::Enable { token, hostname } => {
-            let has_token =
-                token.is_some() || std::env::var_os("CLOUDFLARE_TUNNEL_TOKEN").is_some();
-            if !has_token {
+            if !has_enable_token(
+                &token,
+                std::env::var_os("CLOUDFLARE_TUNNEL_TOKEN").is_some(),
+            ) {
                 anyhow::bail!("Cloudflare Tunnel requires --token or CLOUDFLARE_TUNNEL_TOKEN");
             }
             moltis_config::update_config(|config| {
@@ -62,4 +60,45 @@ pub async fn handle_cloudflare_tunnel(action: CloudflareTunnelAction) -> Result<
     }
 
     Ok(())
+}
+
+fn token_source_label(config_has_token: bool, env_has_token: bool) -> &'static str {
+    if config_has_token {
+        "stored in config"
+    } else if env_has_token {
+        "from CLOUDFLARE_TUNNEL_TOKEN"
+    } else {
+        "not configured"
+    }
+}
+
+fn has_enable_token(token: &Option<String>, env_has_token: bool) -> bool {
+    token.is_some() || env_has_token
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_source_label_prefers_config_token() {
+        assert_eq!(token_source_label(true, true), "stored in config");
+        assert_eq!(token_source_label(true, false), "stored in config");
+    }
+
+    #[test]
+    fn token_source_label_reports_env_or_missing_token() {
+        assert_eq!(
+            token_source_label(false, true),
+            "from CLOUDFLARE_TUNNEL_TOKEN"
+        );
+        assert_eq!(token_source_label(false, false), "not configured");
+    }
+
+    #[test]
+    fn enable_requires_cli_or_env_token() {
+        assert!(has_enable_token(&Some("token".to_string()), false));
+        assert!(has_enable_token(&None, true));
+        assert!(!has_enable_token(&None, false));
+    }
 }
