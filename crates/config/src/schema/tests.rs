@@ -70,6 +70,63 @@ fn tools_loop_detector_window_defaults_to_two() {
 }
 
 #[test]
+fn cloudflare_tunnel_config_defaults_to_disabled() {
+    let config: MoltisConfig = toml::from_str("").unwrap();
+    assert!(!config.cloudflare_tunnel.enabled);
+    assert!(config.cloudflare_tunnel.token.is_none());
+    assert!(config.cloudflare_tunnel.hostname.is_none());
+}
+
+#[test]
+fn cloudflare_tunnel_config_parses_token_and_hostname() {
+    let config: MoltisConfig = toml::from_str(
+        r#"
+[cloudflare_tunnel]
+enabled = true
+token = "cf-token"
+hostname = "moltis.example.com"
+"#,
+    )
+    .unwrap();
+
+    assert!(config.cloudflare_tunnel.enabled);
+    assert_eq!(
+        config
+            .cloudflare_tunnel
+            .token
+            .as_ref()
+            .map(Secret::expose_secret),
+        Some(&"cf-token".to_string())
+    );
+    assert_eq!(
+        config.cloudflare_tunnel.hostname.as_deref(),
+        Some("moltis.example.com")
+    );
+}
+
+#[test]
+fn netbird_config_defaults_to_off_with_reset() {
+    let config: MoltisConfig = toml::from_str("").unwrap();
+    assert_eq!(config.netbird.mode, "off");
+    assert!(config.netbird.reset_on_exit);
+}
+
+#[test]
+fn netbird_config_parses_serve_mode() {
+    let config: MoltisConfig = toml::from_str(
+        r#"
+[netbird]
+mode = "serve"
+reset_on_exit = false
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(config.netbird.mode, "serve");
+    assert!(!config.netbird.reset_on_exit);
+}
+
+#[test]
 fn env_section_parses() {
     let toml = r#"
 [env]
