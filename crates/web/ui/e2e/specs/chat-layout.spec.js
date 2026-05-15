@@ -40,6 +40,29 @@ async function injectLongMessages(page, count) {
 	}, count);
 }
 
+async function getHorizontalOverflow(page) {
+	return await page.evaluate(() => {
+		var messages = document.getElementById("messages");
+		var composer = document.getElementById("chatComposer");
+		var input = document.getElementById("chatInput");
+		if (!messages) throw new Error("#messages element not found");
+		if (!composer) throw new Error("#chatComposer element not found");
+		if (!input) throw new Error("#chatInput element not found");
+
+		var doc = document.documentElement;
+		return {
+			documentScrollWidth: doc.scrollWidth,
+			documentClientWidth: doc.clientWidth,
+			messagesScrollWidth: messages.scrollWidth,
+			messagesClientWidth: messages.clientWidth,
+			composerRight: composer.getBoundingClientRect().right,
+			inputScrollWidth: input.scrollWidth,
+			inputClientWidth: input.clientWidth,
+			viewportWidth: window.innerWidth,
+		};
+	});
+}
+
 test.describe("Chat layout — no horizontal overflow (#945)", () => {
 	test.beforeEach(async ({ page }) => {
 		await navigateAndWait(page, "/chats/main");
@@ -82,6 +105,34 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 			// No horizontal scrollbar: content fits within the visible area
 			expect(overflow.scrollWidth, `scrollWidth <= clientWidth at ${width}px`).toBeLessThanOrEqual(
 				overflow.clientWidth,
+			);
+		}
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("long prompt text does not widen the composer or page", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		const longPrompt = `Please inspect this path ${"very-long-unbroken-prompt-segment".repeat(24)} and explain it.`;
+
+		for (const width of [1119, 600]) {
+			await page.setViewportSize({ width, height: 800 });
+			await page.waitForFunction((w) => window.innerWidth === w, width, { timeout: 5_000 });
+
+			const chatInput = page.locator("#chatInput");
+			await expect(chatInput).toBeVisible({ timeout: 10_000 });
+			await chatInput.fill(longPrompt);
+
+			const overflow = await getHorizontalOverflow(page);
+			expect(overflow.documentScrollWidth, `document scrollWidth at ${width}px`).toBeLessThanOrEqual(
+				overflow.documentClientWidth,
+			);
+			expect(overflow.messagesScrollWidth, `messages scrollWidth at ${width}px`).toBeLessThanOrEqual(
+				overflow.messagesClientWidth,
+			);
+			expect(overflow.composerRight, `composer right edge at ${width}px`).toBeLessThanOrEqual(overflow.viewportWidth);
+			expect(overflow.inputScrollWidth, `input scrollWidth at ${width}px`).toBeLessThanOrEqual(
+				overflow.inputClientWidth,
 			);
 		}
 

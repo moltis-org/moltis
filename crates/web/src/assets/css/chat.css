@@ -39,7 +39,9 @@
 
 .msg {
   border-radius: var(--radius);
+  min-width: 0;
   word-wrap: break-word;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
   max-width: 80%;
   padding: 10px 14px;
@@ -699,11 +701,15 @@
 .chat-input-row {
   border-top: 0;
   background: var(--bg);
+  min-width: 0;
   padding: 16px 24px 18px;
 }
 
 .chat-composer {
   width: min(100%, 980px);
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   margin: 0 auto;
   border: 1px solid var(--border);
   border-radius: 18px;
@@ -721,10 +727,13 @@
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  min-width: 0;
 }
 
 .chat-composer-textarea {
   flex: 1;
+  width: 100%;
+  min-width: 0;
   min-height: 40px;
   max-height: 140px;
   border: 0;
@@ -736,6 +745,8 @@
   font-size: 0.95rem;
   line-height: 1.6;
   padding: 4px 2px;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
 }
 
 .chat-composer-textarea::placeholder {
