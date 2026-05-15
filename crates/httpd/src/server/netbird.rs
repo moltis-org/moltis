@@ -45,7 +45,9 @@ impl NetbirdController {
         port: u16,
         tls: bool,
     ) -> crate::error::Result<Option<NetbirdRuntimeStatus>> {
-        self.stop().await;
+        let mut active_forwarder = self.active_forwarder.lock().await;
+        stop_active_forwarder(active_forwarder.take()).await;
+        *self.runtime.write().await = None;
 
         if config.mode != "serve" {
             info!("NetBird forwarder disabled");
@@ -62,24 +64,29 @@ impl NetbirdController {
         });
 
         *self.runtime.write().await = Some(status.clone());
-        *self.active_forwarder.lock().await = Some(NetbirdActiveForwarder { shutdown, task });
+        *active_forwarder = Some(NetbirdActiveForwarder { shutdown, task });
         info!(url = %status.url, peer_ip = %status.peer_ip, "NetBird forwarder started");
         Ok(Some(status))
     }
 
     pub async fn stop(&self) {
         let active_forwarder = self.active_forwarder.lock().await.take();
-        if let Some(active_forwarder) = active_forwarder {
-            active_forwarder.shutdown.cancel();
-            active_forwarder.task.abort();
-            match active_forwarder.task.await {
-                Ok(()) => {},
-                Err(error) if error.is_cancelled() => {},
-                Err(error) => warn!(%error, "NetBird forwarder task failed while stopping"),
-            }
-            info!("NetBird forwarder stopped");
-        }
+        stop_active_forwarder(active_forwarder).await;
         *self.runtime.write().await = None;
+    }
+}
+
+#[cfg(feature = "netbird")]
+async fn stop_active_forwarder(active_forwarder: Option<NetbirdActiveForwarder>) {
+    if let Some(active_forwarder) = active_forwarder {
+        active_forwarder.shutdown.cancel();
+        active_forwarder.task.abort();
+        match active_forwarder.task.await {
+            Ok(()) => {},
+            Err(error) if error.is_cancelled() => {},
+            Err(error) => warn!(%error, "NetBird forwarder task failed while stopping"),
+        }
+        info!("NetBird forwarder stopped");
     }
 }
 

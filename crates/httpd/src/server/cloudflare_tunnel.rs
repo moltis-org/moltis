@@ -58,7 +58,9 @@ impl CloudflareTunnelController {
         port: u16,
         tls: bool,
     ) -> crate::error::Result<Option<CloudflareTunnelRuntimeStatus>> {
-        self.stop().await?;
+        let mut active_tunnel = self.active_tunnel.lock().await;
+        stop_active_tunnel(active_tunnel.take()).await;
+        *self.runtime.write().await = None;
 
         if !config.enabled {
             info!("Cloudflare Tunnel disabled");
@@ -132,7 +134,7 @@ impl CloudflareTunnelController {
             passkey_warning,
         };
 
-        *self.active_tunnel.lock().await = Some(CloudflareActiveTunnel { child, log_task });
+        *active_tunnel = Some(CloudflareActiveTunnel { child, log_task });
         *self.runtime.write().await = Some(status.clone());
         info!(target = %target, "Cloudflare Tunnel started");
         Ok(Some(status))
@@ -140,16 +142,21 @@ impl CloudflareTunnelController {
 
     pub async fn stop(&self) -> crate::error::Result<()> {
         let active_tunnel = self.active_tunnel.lock().await.take();
-        if let Some(mut active_tunnel) = active_tunnel {
-            if let Err(error) = active_tunnel.child.kill().await {
-                warn!(%error, "failed to stop cloudflared");
-            }
-            let _ = active_tunnel.child.wait().await;
-            active_tunnel.log_task.abort();
-            info!("Cloudflare Tunnel stopped");
-        }
+        stop_active_tunnel(active_tunnel).await;
         *self.runtime.write().await = None;
         Ok(())
+    }
+}
+
+#[cfg(feature = "cloudflare-tunnel")]
+async fn stop_active_tunnel(active_tunnel: Option<CloudflareActiveTunnel>) {
+    if let Some(mut active_tunnel) = active_tunnel {
+        if let Err(error) = active_tunnel.child.kill().await {
+            warn!(%error, "failed to stop cloudflared");
+        }
+        let _ = active_tunnel.child.wait().await;
+        active_tunnel.log_task.abort();
+        info!("Cloudflare Tunnel stopped");
     }
 }
 
