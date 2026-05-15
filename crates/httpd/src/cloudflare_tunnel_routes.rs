@@ -146,3 +146,55 @@ async fn save_config_handler(
     Json(serde_json::json!({ "ok": true, "status": status_payload(&updated, runtime) }))
         .into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use secrecy::Secret;
+
+    use crate::server::CloudflareTunnelRuntimeStatus;
+
+    use super::*;
+
+    #[test]
+    fn normalize_optional_trims_blank_values() {
+        assert_eq!(
+            normalize_optional(Some("  example.com  ")),
+            Some("example.com".to_string())
+        );
+        assert_eq!(normalize_optional(Some("   ")), None);
+        assert_eq!(normalize_optional(None), None);
+    }
+
+    #[test]
+    fn status_payload_reports_config_token_and_runtime() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.cloudflare_tunnel.enabled = true;
+        config.cloudflare_tunnel.hostname = Some("moltis.example.com".to_string());
+        config.cloudflare_tunnel.token = Some(Secret::new("token".to_string()));
+        let runtime = CloudflareTunnelRuntimeStatus {
+            public_url: Some("https://moltis.example.com".to_string()),
+            hostname: Some("moltis.example.com".to_string()),
+            passkey_warning: Some("register passkey origin".to_string()),
+        };
+
+        let payload = status_payload(&config, Some(runtime));
+
+        assert_eq!(payload["enabled"], true);
+        assert_eq!(payload["hostname"], "moltis.example.com");
+        assert_eq!(payload["token_present"], true);
+        assert_eq!(payload["token_source"], "config");
+        assert_eq!(payload["public_url"], "https://moltis.example.com");
+        assert_eq!(payload["passkey_warning"], "register passkey origin");
+    }
+
+    #[test]
+    fn tunnel_error_uses_stable_shape() {
+        assert_eq!(
+            tunnel_error("CLOUDFLARE_TUNNEL_CONFIG_INVALID", "missing token"),
+            serde_json::json!({
+                "code": "CLOUDFLARE_TUNNEL_CONFIG_INVALID",
+                "error": "missing token",
+            })
+        );
+    }
+}

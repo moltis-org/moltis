@@ -109,3 +109,29 @@ async fn configure_handler(
 
     Json(serde_json::json!({ "ok": true })).into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn netbird_error_uses_stable_shape() {
+        assert_eq!(
+            netbird_error("NETBIRD_MODE_INVALID", "invalid mode"),
+            serde_json::json!({
+                "code": "NETBIRD_MODE_INVALID",
+                "error": "invalid mode",
+            })
+        );
+    }
+
+    #[test]
+    fn configure_request_deserializes_mode() -> Result<(), serde_json::Error> {
+        let request: ConfigureNetbirdRequest = serde_json::from_value(serde_json::json!({
+            "mode": "serve",
+        }))?;
+
+        assert_eq!(request.mode, "serve");
+        Ok(())
+    }
+}

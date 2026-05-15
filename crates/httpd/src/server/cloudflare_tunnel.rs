@@ -192,3 +192,53 @@ pub fn startup_lines(
     }
     lines
 }
+
+#[cfg(all(test, feature = "cloudflare-tunnel"))]
+mod tests {
+    use std::sync::Arc;
+
+    use moltis_gateway::{auth, services::GatewayServices, state::GatewayState};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn apply_disabled_clears_runtime_without_cloudflared() -> crate::error::Result<()> {
+        let runtime = Arc::new(tokio::sync::RwLock::new(Some(
+            CloudflareTunnelRuntimeStatus {
+                public_url: Some("https://old.example.com".to_string()),
+                hostname: Some("old.example.com".to_string()),
+                passkey_warning: None,
+            },
+        )));
+        let controller = CloudflareTunnelController::new(
+            GatewayState::new(auth::resolve_auth(None, None), GatewayServices::noop()),
+            None,
+            Arc::clone(&runtime),
+        );
+
+        let status = controller
+            .apply(&CloudflareTunnelConfig::default(), 8080, false)
+            .await?;
+
+        assert!(status.is_none());
+        assert!(runtime.read().await.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn startup_lines_reports_url_warning_and_errors() {
+        let status = CloudflareTunnelRuntimeStatus {
+            public_url: Some("https://moltis.example.com".to_string()),
+            hostname: Some("moltis.example.com".to_string()),
+            passkey_warning: Some("register passkey origin".to_string()),
+        };
+
+        assert_eq!(startup_lines(Some(&status), None), vec![
+            "cloudflare tunnel: https://moltis.example.com".to_string(),
+            "cloudflare tunnel note: register passkey origin".to_string(),
+        ]);
+        assert_eq!(startup_lines(None, Some("boom")), vec![
+            "cloudflare tunnel: failed to start (boom)".to_string()
+        ]);
+    }
+}

@@ -218,3 +218,42 @@ async fn run_forwarder_loop(
 
     *runtime.write().await = None;
 }
+
+#[cfg(all(test, feature = "netbird"))]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn apply_off_clears_runtime_without_starting_forwarder() -> crate::error::Result<()> {
+        let runtime = Arc::new(tokio::sync::RwLock::new(Some(NetbirdRuntimeStatus {
+            url: "https://100.64.0.1:8080".to_string(),
+            peer_ip: "100.64.0.1".to_string(),
+        })));
+        let controller = NetbirdController::new(Arc::clone(&runtime));
+
+        let status = controller
+            .apply(&NetbirdConfig::default(), 8080, false)
+            .await?;
+
+        assert!(status.is_none());
+        assert!(runtime.read().await.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn startup_lines_reports_url_and_errors() {
+        let status = NetbirdRuntimeStatus {
+            url: "https://100.64.0.1:8080".to_string(),
+            peer_ip: "100.64.0.1".to_string(),
+        };
+
+        assert_eq!(startup_lines(Some(&status), None), vec![
+            "netbird: https://100.64.0.1:8080".to_string()
+        ]);
+        assert_eq!(startup_lines(None, Some("not connected")), vec![
+            "netbird: failed to start (not connected)".to_string()
+        ]);
+    }
+}
