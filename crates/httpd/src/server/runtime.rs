@@ -1110,43 +1110,26 @@ pub async fn start_gateway(
     let browser_tool_for_warmup = banner.browser_tool_for_warmup.clone();
     #[cfg(feature = "ngrok")]
     let (ngrok_status, ngrok_startup_error) =
-        match banner.ngrok_controller.apply(&config.ngrok).await {
-            Ok(status) => (status, None),
-            Err(error) => {
-                warn!(%error, "ngrok tunnel failed to start; gateway will continue without it");
-                (None, Some(error.to_string()))
-            },
-        };
+        ngrok::start_for_banner(&banner.ngrok_controller, &config.ngrok).await;
 
     #[cfg(feature = "cloudflare-tunnel")]
-    let (cloudflare_tunnel_status, cloudflare_tunnel_startup_error) = match banner
-        .cloudflare_tunnel_controller
-        .apply(
+    let (cloudflare_tunnel_status, cloudflare_tunnel_startup_error) =
+        cloudflare_tunnel::start_for_banner(
+            &banner.cloudflare_tunnel_controller,
             &config.cloudflare_tunnel,
             port,
             !no_tls && config.tls.enabled,
         )
-        .await
-    {
-        Ok(status) => (status, None),
-        Err(error) => {
-            warn!(%error, "Cloudflare Tunnel failed to start; gateway will continue without it");
-            (None, Some(error.to_string()))
-        },
-    };
+        .await;
 
     #[cfg(feature = "netbird")]
-    let (netbird_status, netbird_startup_error) = match banner
-        .netbird_controller
-        .apply(&config.netbird, port, !no_tls && config.tls.enabled)
-        .await
-    {
-        Ok(status) => (status, None),
-        Err(error) => {
-            warn!(%error, "NetBird forwarder failed to start; gateway will continue without it");
-            (None, Some(error.to_string()))
-        },
-    };
+    let (netbird_status, netbird_startup_error) = netbird::start_for_banner(
+        &banner.netbird_controller,
+        &config.netbird,
+        port,
+        !no_tls && config.tls.enabled,
+    )
+    .await;
 
     #[cfg(feature = "tls")]
     if tls_active {
@@ -1188,7 +1171,6 @@ pub async fn start_gateway(
         // Note: /certs/ca.pem route is already registered by prepare_gateway.
     }
 
-    // Count enabled skills and repos for startup banner.
     let (skill_count, repo_count) = {
         use moltis_skills::discover::{FsSkillDiscoverer, SkillDiscoverer};
         let discoverer = FsSkillDiscoverer::new(FsSkillDiscoverer::default_paths());
@@ -1203,14 +1185,11 @@ pub async fn start_gateway(
         (sc, rc)
     };
 
-    // Startup banner.
     let scheme = if tls_active {
         "https"
     } else {
         "http"
     };
-    // When bound to an unspecified address (0.0.0.0 / ::), resolve the
-    // machine's outbound IP so the printed URL is clickable.
     let display_ip = if addr.ip().is_unspecified() {
         resolve_outbound_ip(addr.ip().is_ipv6())
             .map(|ip| SocketAddr::new(ip, port))
@@ -1218,7 +1197,6 @@ pub async fn start_gateway(
     } else {
         addr
     };
-    // Use plain localhost for display URLs when bound to loopback with TLS.
     #[cfg(feature = "tls")]
     let display_host = if is_localhost && tls_active {
         format!("localhost:{port}")
@@ -1278,14 +1256,10 @@ pub async fn start_gateway(
     ];
     lines.extend(startup_passkey_origin_lines(&passkey_origins));
     #[cfg(feature = "ngrok")]
-    if let Some(status) = ngrok_status.as_ref() {
-        lines.push(format!("ngrok: {}", status.public_url));
-        if let Some(passkey_warning) = status.passkey_warning.as_ref() {
-            lines.push(format!("ngrok note: {passkey_warning}"));
-        }
-    } else if let Some(error) = ngrok_startup_error.as_deref() {
-        lines.push(format!("ngrok: failed to start ({error})"));
-    }
+    lines.extend(ngrok::startup_lines(
+        ngrok_status.as_ref(),
+        ngrok_startup_error.as_deref(),
+    ));
     #[cfg(not(feature = "ngrok"))]
     if config.ngrok.enabled {
         lines.push(
@@ -1293,52 +1267,39 @@ pub async fn start_gateway(
         );
     }
     #[cfg(feature = "cloudflare-tunnel")]
-    if let Some(status) = cloudflare_tunnel_status.as_ref() {
-        if let Some(public_url) = status.public_url.as_ref() {
-            lines.push(format!("cloudflare tunnel: {public_url}"));
-        } else {
-            lines.push("cloudflare tunnel: started".into());
-        }
-        if let Some(passkey_warning) = status.passkey_warning.as_ref() {
-            lines.push(format!("cloudflare tunnel note: {passkey_warning}"));
-        }
-    } else if let Some(error) = cloudflare_tunnel_startup_error.as_deref() {
-        lines.push(format!("cloudflare tunnel: failed to start ({error})"));
-    }
+    lines.extend(cloudflare_tunnel::startup_lines(
+        cloudflare_tunnel_status.as_ref(),
+        cloudflare_tunnel_startup_error.as_deref(),
+    ));
     #[cfg(not(feature = "cloudflare-tunnel"))]
     if config.cloudflare_tunnel.enabled {
         lines.push("cloudflare tunnel: enabled in config but this build does not include the cloudflare-tunnel feature".into());
     }
     #[cfg(feature = "netbird")]
-    if let Some(status) = netbird_status.as_ref() {
-        lines.push(format!("netbird: {}", status.url));
-    } else if let Some(error) = netbird_startup_error.as_deref() {
-        lines.push(format!("netbird: failed to start ({error})"));
-    }
+    lines.extend(netbird::startup_lines(
+        netbird_status.as_ref(),
+        netbird_startup_error.as_deref(),
+    ));
     #[cfg(not(feature = "netbird"))]
     if config.netbird.mode != "off" {
         lines.push(
             "netbird: enabled in config but this build does not include the netbird feature".into(),
         );
     }
-    // Hint about Apple Container on macOS when using Docker or Podman.
     #[cfg(target_os = "macos")]
     if banner.sandbox_backend_name == "docker" || banner.sandbox_backend_name == "podman" {
         lines.push(
             "hint: install Apple Container for VM-isolated sandboxing (see docs/sandbox.md)".into(),
         );
     }
-    // Warn when no sandbox backend is available.
     if banner.sandbox_backend_name == "none" {
         lines.push("⚠ no container runtime found; commands run on host".into());
     }
-    // Warn when TLS is off and the server is not localhost-only.
     if !tls_active && !is_localhost {
         lines.push(
             "⚠ TLS is disabled on a non-localhost bind address; session cookies will be sent over unencrypted HTTP".into(),
         );
     }
-    // Display setup code if one was generated.
     if let Some(ref code) = banner.setup_code_display {
         lines.extend(startup_setup_code_lines(code));
     }

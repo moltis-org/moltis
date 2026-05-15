@@ -79,6 +79,37 @@ impl NetbirdController {
 }
 
 #[cfg(feature = "netbird")]
+pub async fn start_for_banner(
+    controller: &NetbirdController,
+    config: &NetbirdConfig,
+    port: u16,
+    tls: bool,
+) -> (Option<NetbirdRuntimeStatus>, Option<String>) {
+    match controller.apply(config, port, tls).await {
+        Ok(status) => (status, None),
+        Err(error) => {
+            warn!(%error, "NetBird forwarder failed to start; gateway will continue without it");
+            (None, Some(error.to_string()))
+        },
+    }
+}
+
+#[cfg(feature = "netbird")]
+pub fn startup_lines(
+    status: Option<&NetbirdRuntimeStatus>,
+    startup_error: Option<&str>,
+) -> Vec<String> {
+    if let Some(status) = status {
+        vec![format!("netbird: {}", status.url)]
+    } else {
+        startup_error
+            .map(|error| format!("netbird: failed to start ({error})"))
+            .into_iter()
+            .collect()
+    }
+}
+
+#[cfg(feature = "netbird")]
 async fn resolve_netbird_status(
     port: u16,
     tls: bool,

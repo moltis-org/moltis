@@ -158,3 +158,36 @@ impl NgrokController {
         Ok(())
     }
 }
+
+#[cfg(feature = "ngrok")]
+pub async fn start_for_banner(
+    controller: &NgrokController,
+    config: &moltis_config::NgrokConfig,
+) -> (Option<NgrokRuntimeStatus>, Option<String>) {
+    match controller.apply(config).await {
+        Ok(status) => (status, None),
+        Err(error) => {
+            warn!(%error, "ngrok tunnel failed to start; gateway will continue without it");
+            (None, Some(error.to_string()))
+        },
+    }
+}
+
+#[cfg(feature = "ngrok")]
+pub fn startup_lines(
+    status: Option<&NgrokRuntimeStatus>,
+    startup_error: Option<&str>,
+) -> Vec<String> {
+    let Some(status) = status else {
+        return startup_error
+            .map(|error| format!("ngrok: failed to start ({error})"))
+            .into_iter()
+            .collect();
+    };
+
+    let mut lines = vec![format!("ngrok: {}", status.public_url)];
+    if let Some(passkey_warning) = status.passkey_warning.as_ref() {
+        lines.push(format!("ngrok note: {passkey_warning}"));
+    }
+    lines
+}

@@ -152,3 +152,43 @@ impl CloudflareTunnelController {
         Ok(())
     }
 }
+
+#[cfg(feature = "cloudflare-tunnel")]
+pub async fn start_for_banner(
+    controller: &CloudflareTunnelController,
+    config: &CloudflareTunnelConfig,
+    port: u16,
+    tls: bool,
+) -> (Option<CloudflareTunnelRuntimeStatus>, Option<String>) {
+    match controller.apply(config, port, tls).await {
+        Ok(status) => (status, None),
+        Err(error) => {
+            warn!(%error, "Cloudflare Tunnel failed to start; gateway will continue without it");
+            (None, Some(error.to_string()))
+        },
+    }
+}
+
+#[cfg(feature = "cloudflare-tunnel")]
+pub fn startup_lines(
+    status: Option<&CloudflareTunnelRuntimeStatus>,
+    startup_error: Option<&str>,
+) -> Vec<String> {
+    let Some(status) = status else {
+        return startup_error
+            .map(|error| format!("cloudflare tunnel: failed to start ({error})"))
+            .into_iter()
+            .collect();
+    };
+
+    let mut lines = Vec::new();
+    if let Some(public_url) = status.public_url.as_ref() {
+        lines.push(format!("cloudflare tunnel: {public_url}"));
+    } else {
+        lines.push("cloudflare tunnel: started".into());
+    }
+    if let Some(passkey_warning) = status.passkey_warning.as_ref() {
+        lines.push(format!("cloudflare tunnel note: {passkey_warning}"));
+    }
+    lines
+}
