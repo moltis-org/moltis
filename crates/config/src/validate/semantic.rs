@@ -171,15 +171,36 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             message: "tls.key_path is set but tls.cert_path is missing".into(),
         });
     }
-    if let Some(public_ip) = config.tls.public_ip.as_deref()
-        && public_ip.parse::<std::net::IpAddr>().is_err()
-    {
-        diagnostics.push(Diagnostic {
-            severity: Severity::Error,
-            category: "security",
-            path: "tls.public_ip".into(),
-            message: "tls.public_ip must be an IPv4 or IPv6 address".into(),
-        });
+    if let Some(public_ip) = config.tls.public_ip.as_deref() {
+        match public_ip.parse::<std::net::IpAddr>() {
+            Ok(ip) if ip.is_loopback() || ip.is_unspecified() => {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    category: "security",
+                    path: "tls.public_ip".into(),
+                    message: "tls.public_ip is a loopback or unspecified address and will not be useful as a public IP SAN".into(),
+                });
+            },
+            Ok(_) => {},
+            Err(_) => {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Error,
+                    category: "security",
+                    path: "tls.public_ip".into(),
+                    message: "tls.public_ip must be an IPv4 or IPv6 address".into(),
+                });
+            },
+        }
+
+        if has_cert && has_key {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "security",
+                path: "tls.public_ip".into(),
+                message: "tls.public_ip has no effect when tls.cert_path and tls.key_path are set"
+                    .into(),
+            });
+        }
     }
 
     // Sandbox mode off

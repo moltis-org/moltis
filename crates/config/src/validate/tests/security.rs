@@ -106,6 +106,50 @@ public_ip = "chat.example.com"
 }
 
 #[test]
+fn tls_public_ip_warns_for_loopback_or_unspecified_address() {
+    for public_ip in ["127.0.0.1", "::1", "0.0.0.0", "::"] {
+        let toml = format!(
+            r#"
+[tls]
+public_ip = "{public_ip}"
+"#
+        );
+        let result = validate_toml_str(&toml);
+        let warning = result.diagnostics.iter().find(|d| {
+            d.severity == Severity::Warning
+                && d.path == "tls.public_ip"
+                && d.message.contains("loopback or unspecified")
+        });
+        assert!(
+            warning.is_some(),
+            "expected warning for {public_ip}, got: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn tls_public_ip_warns_with_custom_cert_paths() {
+    let toml = r#"
+[tls]
+cert_path = "/path/to/cert.pem"
+key_path = "/path/to/key.pem"
+public_ip = "203.0.113.10"
+"#;
+    let result = validate_toml_str(toml);
+    let warning = result.diagnostics.iter().find(|d| {
+        d.severity == Severity::Warning
+            && d.path == "tls.public_ip"
+            && d.message.contains("has no effect")
+    });
+    assert!(
+        warning.is_some(),
+        "expected warning for public_ip with custom certs, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn unknown_tailscale_mode_warned() {
     let toml = r#"
 [tailscale]
