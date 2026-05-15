@@ -528,7 +528,7 @@ install_proxmox() {
 
     grep -q 'curl()' "$patched_script" || error "Failed to apply Docker prompt patch to Proxmox helper"
     grep -q 'MOLTIS_UPDATE_EOF' "$patched_script" || error "Failed to apply update URL patch to Proxmox helper"
-    grep -q 'cat /etc/moltis/certs/ca.pem 2>/dev/null || true' "$patched_script" || error "Failed to apply CA certificate patch to Proxmox helper"
+    grep -q 'cat /etc/moltis/certs/ca.pem 2>/dev/null || true' "$patched_script" || warn "Could not apply optional CA certificate patch to Proxmox helper"
 
     info "Launching Proxmox VE helper script..."
     bash "$patched_script"
