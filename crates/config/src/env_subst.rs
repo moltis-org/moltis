@@ -24,40 +24,44 @@ pub fn substitute_env_with_overrides(input: &str, overrides: &HashMap<String, St
 /// This is the implementation used by [`substitute_env`]; the separate
 /// signature makes it testable without mutating the process environment.
 fn substitute_env_with(input: &str, lookup: impl Fn(&str) -> Option<String>) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '$' && chars.peek() == Some(&'{') {
-            chars.next(); // consume '{'
-            let mut var_name = String::new();
-            let mut closed = false;
-            for c in chars.by_ref() {
-                if c == '}' {
-                    closed = true;
-                    break;
-                }
-                var_name.push(c);
-            }
-            if closed && !var_name.is_empty() {
-                match lookup(&var_name) {
-                    Some(val) => result.push_str(&val),
-                    None => {
-                        // Leave unresolved placeholder as-is.
-                        result.push_str("${");
-                        result.push_str(&var_name);
-                        result.push('}');
-                    },
-                }
-            } else {
-                // Malformed — emit literal.
-                result.push_str("${");
-                result.push_str(&var_name);
-            }
-        } else {
-            result.push(ch);
-        }
+    if !input.contains("${") {
+        return input.to_string();
     }
+
+    let mut result = String::with_capacity(input.len());
+    let mut cursor = 0;
+
+    while let Some(relative_start) = input[cursor..].find("${") {
+        let start = cursor + relative_start;
+        result.push_str(&input[cursor..start]);
+
+        let name_start = start + 2;
+        let Some(relative_end) = input[name_start..].find('}') else {
+            // Malformed — emit literal rest of input, matching the previous
+            // char-by-char behavior that consumed the unterminated placeholder.
+            result.push_str("${");
+            result.push_str(&input[name_start..]);
+            return result;
+        };
+
+        let end = name_start + relative_end;
+        let var_name = &input[name_start..end];
+        if var_name.is_empty() {
+            // Malformed — emit literal without the consumed closing brace.
+            result.push_str("${");
+        } else if let Some(value) = lookup(var_name) {
+            result.push_str(&value);
+        } else {
+            // Leave unresolved placeholder as-is.
+            result.push_str("${");
+            result.push_str(var_name);
+            result.push('}');
+        }
+
+        cursor = end + 1;
+    }
+
+    result.push_str(&input[cursor..]);
 
     result
 }
