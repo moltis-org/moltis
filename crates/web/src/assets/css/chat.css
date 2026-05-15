@@ -707,7 +707,6 @@
 
 .chat-composer {
   width: min(100%, 980px);
-  max-width: 100%;
   min-width: 0;
   box-sizing: border-box;
   margin: 0 auto;
@@ -732,7 +731,6 @@
 
 .chat-composer-textarea {
   flex: 1;
-  width: 100%;
   min-width: 0;
   min-height: 40px;
   max-height: 140px;

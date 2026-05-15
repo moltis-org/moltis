@@ -30,7 +30,8 @@ async function injectLongMessages(page, count) {
 			"This is a fairly long message that contains enough text to potentially cause horizontal overflow " +
 			"if the container does not properly constrain its width. It includes some inline code like " +
 			"`const result = await fetch('/api/endpoint')` and continues with more text to fill the line. " +
-			"The layout must wrap this text rather than extending the container beyond the viewport.";
+			"The layout must wrap this text rather than extending the container beyond the viewport. " +
+			"very-long-unbroken-message-segment".repeat(16);
 		for (var i = 0; i < msgCount; i++) {
 			var el = document.createElement("div");
 			el.className = i % 2 === 0 ? "msg assistant" : "msg user";
@@ -114,6 +115,7 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 	test("long prompt text does not widen the composer or page", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		const longPrompt = `Please inspect this path ${"very-long-unbroken-prompt-segment".repeat(24)} and explain it.`;
+		await injectLongMessages(page, 4);
 
 		for (const width of [1119, 600]) {
 			await page.setViewportSize({ width, height: 800 });
