@@ -12,8 +12,8 @@ use {
 };
 
 use moltis_agents::model::{
-    ChatMessage, CompletionResponse, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
-    decode_tool_call_arguments_from_str,
+    ChatMessage, CompletionResponse, LlmProvider, ReasoningEffort, StreamEvent, ToolCall, Usage,
+    UserContent, decode_tool_call_arguments_from_str,
 };
 
 use crate::openai_compat::to_responses_api_tools;
@@ -24,6 +24,7 @@ pub struct OpenAiCodexProvider {
     client: &'static reqwest::Client,
     token_store: TokenStore,
     stream_transport: ProviderStreamTransport,
+    reasoning_effort: Option<ReasoningEffort>,
 }
 
 const CODEX_MODELS_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/models";
@@ -58,6 +59,16 @@ impl OpenAiCodexProvider {
             client: crate::shared_http_client(),
             token_store: TokenStore::new(),
             stream_transport,
+            reasoning_effort: None,
+        }
+    }
+
+    /// Add `reasoning.effort` to a Responses-API request body when an effort
+    /// is configured. GPT-5 family models accept `minimal`, `low`, `medium`,
+    /// `high`, and `xhigh` (matching the official Codex client).
+    fn apply_reasoning(&self, body: &mut serde_json::Value) {
+        if let Some(effort) = self.reasoning_effort {
+            body["reasoning"]["effort"] = serde_json::json!(effort.as_str());
         }
     }
 
@@ -628,6 +639,24 @@ impl LlmProvider for OpenAiCodexProvider {
         super::supports_tools_for_model(&self.model)
     }
 
+    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        self.reasoning_effort
+    }
+
+    fn with_reasoning_effort(
+        self: std::sync::Arc<Self>,
+        effort: ReasoningEffort,
+    ) -> Option<std::sync::Arc<dyn LlmProvider>> {
+        Some(std::sync::Arc::new(Self {
+            model: self.model.clone(),
+            base_url: self.base_url.clone(),
+            client: self.client,
+            token_store: self.token_store.clone(),
+            stream_transport: self.stream_transport,
+            reasoning_effort: Some(effort),
+        }))
+    }
+
     async fn complete(
         &self,
         messages: &[ChatMessage],
@@ -664,6 +693,7 @@ impl LlmProvider for OpenAiCodexProvider {
             "text": {"verbosity": "medium"},
             "include": ["reasoning.encrypted_content"],
         });
+        self.apply_reasoning(&mut body);
 
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
@@ -854,6 +884,7 @@ impl LlmProvider for OpenAiCodexProvider {
                 "text": {"verbosity": "medium"},
                 "include": ["reasoning.encrypted_content"],
             });
+            self.apply_reasoning(&mut body);
 
             if !tools.is_empty() {
                 body["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
@@ -1013,9 +1044,73 @@ impl LlmProvider for OpenAiCodexProvider {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use moltis_agents::model::UserContent;
 
     use super::*;
+
+    #[test]
+    fn with_reasoning_effort_returns_new_provider_with_effort_stored() {
+        let provider = Arc::new(OpenAiCodexProvider::new("gpt-5.4".to_string()));
+        assert!(provider.reasoning_effort().is_none());
+
+        let updated = Arc::clone(&provider)
+            .with_reasoning_effort(ReasoningEffort::High)
+            .expect("openai-codex must support reasoning_effort");
+
+        assert_eq!(updated.reasoning_effort(), Some(ReasoningEffort::High));
+        // Original provider is unchanged (immutable update).
+        assert!(provider.reasoning_effort().is_none());
+        assert_eq!(updated.id(), "gpt-5.4");
+        assert_eq!(updated.name(), "openai-codex");
+    }
+
+    #[test]
+    fn apply_reasoning_is_noop_when_effort_not_configured() {
+        let provider = OpenAiCodexProvider::new("gpt-5.4".to_string());
+        let mut body = serde_json::json!({
+            "include": ["reasoning.encrypted_content"],
+        });
+        provider.apply_reasoning(&mut body);
+
+        assert!(
+            body.get("reasoning").is_none(),
+            "reasoning key should be absent when no effort configured, got: {body}"
+        );
+        assert_eq!(
+            body["include"],
+            serde_json::json!(["reasoning.encrypted_content"]),
+            "apply_reasoning must not disturb the pre-existing include field, got: {body}"
+        );
+    }
+
+    #[test]
+    fn apply_reasoning_maps_each_effort_level_to_wire_value() {
+        for (effort, expected) in [
+            (ReasoningEffort::Minimal, "minimal"),
+            (ReasoningEffort::Low, "low"),
+            (ReasoningEffort::Medium, "medium"),
+            (ReasoningEffort::High, "high"),
+            (ReasoningEffort::ExtraHigh, "xhigh"),
+        ] {
+            let mut provider = OpenAiCodexProvider::new("gpt-5.4".to_string());
+            provider.reasoning_effort = Some(effort);
+            let mut body = serde_json::json!({
+                "include": ["reasoning.encrypted_content"],
+            });
+            provider.apply_reasoning(&mut body);
+            assert_eq!(
+                body["reasoning"]["effort"], expected,
+                "unexpected wire value for {effort:?}"
+            );
+            assert_eq!(
+                body["include"],
+                serde_json::json!(["reasoning.encrypted_content"]),
+                "apply_reasoning must not disturb include when effort is set, got: {body}"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn websocket_transport_returns_clear_error() {
