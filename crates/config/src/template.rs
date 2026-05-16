@@ -589,7 +589,6 @@ port = {port}                           # Port number (auto-generated for this i
 
 # [netbird]
 # mode = "off"                      # "off" | "serve" (private mesh only)
-# reset_on_exit = true
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MEMORY / EMBEDDINGS

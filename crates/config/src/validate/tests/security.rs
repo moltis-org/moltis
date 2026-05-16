@@ -171,7 +171,6 @@ fn netbird_fields_are_recognized() {
     let toml = r#"
 [netbird]
 mode = "serve"
-reset_on_exit = false
 "#;
     let result = validate_toml_str(toml);
     let unknown = result

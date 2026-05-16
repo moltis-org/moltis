@@ -105,10 +105,9 @@ hostname = "moltis.example.com"
 }
 
 #[test]
-fn netbird_config_defaults_to_off_with_reset() {
+fn netbird_config_defaults_to_off() {
     let config: MoltisConfig = toml::from_str("").unwrap();
     assert_eq!(config.netbird.mode, "off");
-    assert!(config.netbird.reset_on_exit);
 }
 
 #[test]
@@ -117,13 +116,11 @@ fn netbird_config_parses_serve_mode() {
         r#"
 [netbird]
 mode = "serve"
-reset_on_exit = false
 "#,
     )
     .unwrap();
 
     assert_eq!(config.netbird.mode, "serve");
-    assert!(!config.netbird.reset_on_exit);
 }
 
 #[test]

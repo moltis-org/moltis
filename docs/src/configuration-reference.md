@@ -208,7 +208,6 @@ NetBird private mesh access configuration.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `mode` | string | `"off"` | NetBird mode: `"off"` or `"serve"`. |
-| `reset_on_exit` | bool | `true` | Reset NetBird serve status when the gateway shuts down. |
 
 
 ### `upstream_proxy` (top-level scalar)

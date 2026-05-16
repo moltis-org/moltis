@@ -489,16 +489,11 @@ pub struct TailscaleConfig {
 pub struct NetbirdConfig {
     /// NetBird mode: "off" or "serve".
     pub mode: String,
-    /// Reset NetBird serve status when the gateway shuts down.
-    pub reset_on_exit: bool,
 }
 
 impl Default for NetbirdConfig {
     fn default() -> Self {
-        Self {
-            mode: "off".into(),
-            reset_on_exit: true,
-        }
+        Self { mode: "off".into() }
     }
 }
 

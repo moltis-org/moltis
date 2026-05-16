@@ -60,7 +60,6 @@ Configuration:
 ```toml
 [netbird]
 mode = "serve" # "off" | "serve"
-reset_on_exit = true
 ```
 
 CLI:

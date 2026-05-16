@@ -531,10 +531,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             "tailscale",
             Struct(HashMap::from([("mode", Leaf), ("reset_on_exit", Leaf)])),
         ),
-        (
-            "netbird",
-            Struct(HashMap::from([("mode", Leaf), ("reset_on_exit", Leaf)])),
-        ),
+        ("netbird", Struct(HashMap::from([("mode", Leaf)]))),
         (
             "failover",
             Struct(HashMap::from([

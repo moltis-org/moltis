@@ -113,7 +113,6 @@ Configuration:
 ```toml
 [netbird]
 mode = "serve" # or "off"
-reset_on_exit = true
 ```
 
 NetBird does not provide a public Funnel equivalent. Use Cloudflare Tunnel,
