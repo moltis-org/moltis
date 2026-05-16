@@ -124,7 +124,7 @@ Verify releases with `gh attestation verify <artifact> -R moltis-org/moltis` or 
 - **Communication** — Web UI, Telegram, Signal, Microsoft Teams, Discord, API access, voice I/O (8 TTS + 7 STT providers), mobile PWA with push notifications
 - **Memory & Recall** — Per-agent memory workspaces, embeddings-powered long-term memory, hybrid vector + full-text search, session persistence with auto-compaction, cross-session recall, Cursor-compatible project context, context-file safety scanning
 - **Safer Agent Editing** — Automatic checkpoints before built-in skill and memory mutations, restore tooling, session branching
-- **Extensibility** — MCP servers (stdio + HTTP/SSE), skill system, 15 lifecycle hook events with circuit breaker, destructive command guard
+- **Extensibility** — MCP servers (stdio + HTTP/SSE), skill system with bundled agent-system design guidance, 15 lifecycle hook events with circuit breaker, destructive command guard
 - **Security** — Encryption-at-rest vault (XChaCha20-Poly1305 + Argon2id), password + passkey + API key auth, sandbox isolation, SSRF/CSWSH protection
 - **Operations** — Cron scheduling, OpenTelemetry tracing, Prometheus metrics, cloud deploy (Fly.io, DigitalOcean), Tailscale integration, managed SSH deploy keys, host-pinned remote targets, live tool inventory in Settings, and CLI/web remote-exec doctor flows
 
