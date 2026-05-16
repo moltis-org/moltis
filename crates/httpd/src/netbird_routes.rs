@@ -109,7 +109,12 @@ async fn configure_handler(
 
     if let Err(error) = state
         .netbird_controller
-        .apply(&updated.netbird, updated.server.port, updated.tls.enabled)
+        .apply(
+            &updated.netbird,
+            &updated.server.bind,
+            updated.server.port,
+            updated.tls.enabled,
+        )
         .await
     {
         return (

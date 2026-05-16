@@ -1126,6 +1126,7 @@ pub async fn start_gateway(
     let (netbird_status, netbird_startup_error) = netbird::start_for_banner(
         &banner.netbird_controller,
         &config.netbird,
+        &config.server.bind,
         port,
         !no_tls && config.tls.enabled,
     )

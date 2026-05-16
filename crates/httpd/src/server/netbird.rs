@@ -42,6 +42,7 @@ impl NetbirdController {
     pub async fn apply(
         &self,
         config: &NetbirdConfig,
+        bind_addr: &str,
         port: u16,
         tls: bool,
     ) -> crate::error::Result<Option<NetbirdRuntimeStatus>> {
@@ -57,10 +58,11 @@ impl NetbirdController {
         let shutdown = CancellationToken::new();
         let startup = resolve_netbird_status(port, tls).await?;
         let status = startup.clone();
+        let bind_addr = bind_addr.to_string();
         let runtime = Arc::clone(&self.runtime);
         let task_shutdown = shutdown.clone();
         let task = tokio::spawn(async move {
-            run_forwarder_loop(port, tls, task_shutdown, runtime).await;
+            run_forwarder_loop(bind_addr, port, tls, task_shutdown, runtime).await;
         });
 
         *self.runtime.write().await = Some(status.clone());
@@ -94,10 +96,11 @@ async fn stop_active_forwarder(active_forwarder: Option<NetbirdActiveForwarder>)
 pub async fn start_for_banner(
     controller: &NetbirdController,
     config: &NetbirdConfig,
+    bind_addr: &str,
     port: u16,
     tls: bool,
 ) -> (Option<NetbirdRuntimeStatus>, Option<String>) {
-    match controller.apply(config, port, tls).await {
+    match controller.apply(config, bind_addr, port, tls).await {
         Ok(status) => (status, None),
         Err(error) => {
             warn!(%error, "NetBird forwarder failed to start; gateway will continue without it");
@@ -151,6 +154,7 @@ async fn resolve_netbird_status(
 
 #[cfg(feature = "netbird")]
 async fn run_forwarder_loop(
+    bind_addr: String,
     port: u16,
     tls: bool,
     shutdown: CancellationToken,
@@ -215,8 +219,9 @@ async fn run_forwarder_loop(
                     let Ok((mut inbound, _peer)) = accepted else {
                         break;
                     };
+                    let target = gateway_forward_target(&bind_addr, port);
                     tokio::spawn(async move {
-                        match tokio::net::TcpStream::connect(("127.0.0.1", port)).await {
+                        match tokio::net::TcpStream::connect(target).await {
                             Ok(mut outbound) => {
                                 let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
                             },
@@ -231,6 +236,15 @@ async fn run_forwarder_loop(
     }
 
     *runtime.write().await = None;
+}
+
+#[cfg(feature = "netbird")]
+fn gateway_forward_target(bind_addr: &str, port: u16) -> String {
+    if bind_addr.contains(':') && !bind_addr.starts_with('[') {
+        format!("[{bind_addr}]:{port}")
+    } else {
+        format!("{bind_addr}:{port}")
+    }
 }
 
 #[cfg(all(test, feature = "netbird"))]
@@ -258,7 +272,7 @@ mod tests {
         let controller = NetbirdController::new(Arc::clone(&runtime));
 
         let status = controller
-            .apply(&NetbirdConfig::default(), 8080, false)
+            .apply(&NetbirdConfig::default(), "127.0.0.1", 8080, false)
             .await?;
 
         assert!(status.is_none());
@@ -308,5 +322,12 @@ mod tests {
         assert_eq!(startup_lines(None, Some("not connected")), vec![
             "netbird: failed to start (not connected)".to_string()
         ]);
+    }
+
+    #[test]
+    fn gateway_forward_target_preserves_configured_loopback_bind() {
+        assert_eq!(gateway_forward_target("127.0.0.1", 8080), "127.0.0.1:8080");
+        assert_eq!(gateway_forward_target("localhost", 8080), "localhost:8080");
+        assert_eq!(gateway_forward_target("::1", 8080), "[::1]:8080");
     }
 }
