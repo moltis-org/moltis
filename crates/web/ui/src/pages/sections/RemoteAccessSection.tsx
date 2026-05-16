@@ -882,6 +882,12 @@ export function RemoteAccessSection(): VNode {
 								{nbStatus.url}
 							</a>
 						) : null}
+						{currentMode === "serve" && !authReady ? (
+							<div className="alert-warning-text max-w-form">
+								<span className="alert-label-warn">Warning:</span> NetBird serve can be enabled now, but remote mesh
+								peers will see the setup-required page until authentication is configured.
+							</div>
+						) : null}
 					</div>
 				) : null}
 			</section>
