@@ -13,6 +13,9 @@ use {
 
 use crate::server::AppState;
 
+#[cfg(feature = "netbird")]
+use crate::server::NetbirdRuntimeStatus;
+
 fn netbird_error(code: &str, error: impl Into<String>) -> serde_json::Value {
     serde_json::json!({ "code": code, "error": error.into() })
 }
@@ -28,7 +31,7 @@ pub fn netbird_router() -> Router<AppState> {
         .route("/configure", post(configure_handler))
 }
 
-async fn status_handler() -> impl IntoResponse {
+async fn status_handler(State(state): State<AppState>) -> impl IntoResponse {
     let config = moltis_config::discover_and_load();
     let mode = config
         .netbird
@@ -41,13 +44,25 @@ async fn status_handler() -> impl IntoResponse {
         config.tls.enabled,
     );
     match moltis_gateway::netbird::NetbirdManager::status(&manager).await {
-        Ok(status) => Json(status).into_response(),
+        Ok(status) => {
+            let runtime = state.netbird_runtime.read().await.clone();
+            Json(status_with_runtime_forwarder(status, runtime)).into_response()
+        },
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(netbird_error("NETBIRD_STATUS_FAILED", error.to_string())),
         )
             .into_response(),
     }
+}
+
+#[cfg(feature = "netbird")]
+fn status_with_runtime_forwarder(
+    mut status: moltis_gateway::netbird::NetbirdStatus,
+    runtime: Option<NetbirdRuntimeStatus>,
+) -> moltis_gateway::netbird::NetbirdStatus {
+    status.url = runtime.map(|runtime| runtime.url);
+    status
 }
 
 async fn configure_handler(
@@ -151,6 +166,47 @@ mod tests {
 
         assert_eq!(request.mode, "serve");
         Ok(())
+    }
+
+    #[test]
+    fn status_without_runtime_does_not_expose_forwarder_url() {
+        let status = status_with_runtime_forwarder(
+            moltis_gateway::netbird::NetbirdStatus {
+                mode: moltis_gateway::netbird::NetbirdMode::Serve,
+                installed: true,
+                netbird_up: true,
+                version: Some("netbird version 0.42.0".to_string()),
+                peer_ip: Some("100.96.0.10".to_string()),
+                dns_name: Some("moltis.netbird.cloud".to_string()),
+                url: Some("https://moltis.netbird.cloud:8080".to_string()),
+            },
+            None,
+        );
+
+        assert_eq!(status.mode, moltis_gateway::netbird::NetbirdMode::Serve);
+        assert_eq!(status.peer_ip.as_deref(), Some("100.96.0.10"));
+        assert!(status.url.is_none());
+    }
+
+    #[test]
+    fn status_with_runtime_exposes_active_forwarder_url() {
+        let status = status_with_runtime_forwarder(
+            moltis_gateway::netbird::NetbirdStatus {
+                mode: moltis_gateway::netbird::NetbirdMode::Serve,
+                installed: true,
+                netbird_up: true,
+                version: Some("netbird version 0.42.0".to_string()),
+                peer_ip: Some("100.96.0.10".to_string()),
+                dns_name: Some("moltis.netbird.cloud".to_string()),
+                url: Some("https://moltis.netbird.cloud:8080".to_string()),
+            },
+            Some(NetbirdRuntimeStatus {
+                url: "https://100.96.0.10:8080".to_string(),
+                peer_ip: "100.96.0.10".to_string(),
+            }),
+        );
+
+        assert_eq!(status.url.as_deref(), Some("https://100.96.0.10:8080"));
     }
 
     fn test_state() -> AppState {
