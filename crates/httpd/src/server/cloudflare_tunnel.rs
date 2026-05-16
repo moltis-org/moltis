@@ -1,7 +1,13 @@
 //! Cloudflare Tunnel controller.
 
 #[cfg(feature = "cloudflare-tunnel")]
-use std::{process::Stdio, sync::Arc};
+use std::{
+    process::Stdio,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 #[cfg(feature = "cloudflare-tunnel")]
 use {
@@ -28,11 +34,13 @@ pub struct CloudflareTunnelController {
     gateway: Arc<GatewayState>,
     webauthn_registry: Option<SharedWebAuthnRegistry>,
     runtime: Arc<tokio::sync::RwLock<Option<CloudflareTunnelRuntimeStatus>>>,
-    active_tunnel: tokio::sync::Mutex<Option<CloudflareActiveTunnel>>,
+    active_tunnel: Arc<tokio::sync::Mutex<Option<CloudflareActiveTunnel>>>,
+    next_tunnel_id: AtomicU64,
 }
 
 #[cfg(feature = "cloudflare-tunnel")]
 struct CloudflareActiveTunnel {
+    id: u64,
     child: Child,
     log_task: tokio::task::JoinHandle<()>,
 }
@@ -48,7 +56,8 @@ impl CloudflareTunnelController {
             gateway,
             webauthn_registry,
             runtime,
-            active_tunnel: tokio::sync::Mutex::new(None),
+            active_tunnel: Arc::new(tokio::sync::Mutex::new(None)),
+            next_tunnel_id: AtomicU64::new(1),
         }
     }
 
@@ -96,7 +105,10 @@ impl CloudflareTunnelController {
             .spawn()
             .map_err(|error| crate::Error::Config(format!("failed to run cloudflared: {error}")))?;
 
+        let tunnel_id = self.next_tunnel_id.fetch_add(1, Ordering::Relaxed);
         let stderr = child.stderr.take();
+        let active_tunnel_for_log = Arc::clone(&self.active_tunnel);
+        let runtime_for_log = Arc::clone(&self.runtime);
         let log_task = tokio::spawn(async move {
             let Some(stderr) = stderr else {
                 return;
@@ -114,6 +126,12 @@ impl CloudflareTunnelController {
                     },
                 }
             }
+            clear_runtime_if_active_tunnel_exited(
+                tunnel_id,
+                active_tunnel_for_log,
+                runtime_for_log,
+            )
+            .await;
         });
 
         let public_url = config
@@ -134,7 +152,11 @@ impl CloudflareTunnelController {
             passkey_warning,
         };
 
-        *active_tunnel = Some(CloudflareActiveTunnel { child, log_task });
+        *active_tunnel = Some(CloudflareActiveTunnel {
+            id: tunnel_id,
+            child,
+            log_task,
+        });
         *self.runtime.write().await = Some(status.clone());
         info!(target = %target, "Cloudflare Tunnel started");
         Ok(Some(status))
@@ -157,6 +179,23 @@ async fn stop_active_tunnel(active_tunnel: Option<CloudflareActiveTunnel>) {
         let _ = active_tunnel.child.wait().await;
         active_tunnel.log_task.abort();
         info!("Cloudflare Tunnel stopped");
+    }
+}
+
+#[cfg(feature = "cloudflare-tunnel")]
+async fn clear_runtime_if_active_tunnel_exited(
+    tunnel_id: u64,
+    active_tunnel: Arc<tokio::sync::Mutex<Option<CloudflareActiveTunnel>>>,
+    runtime: Arc<tokio::sync::RwLock<Option<CloudflareTunnelRuntimeStatus>>>,
+) {
+    let is_active = active_tunnel
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(|active_tunnel| active_tunnel.id == tunnel_id);
+    if is_active {
+        *runtime.write().await = None;
+        warn!("Cloudflare Tunnel process exited; runtime status cleared");
     }
 }
 
@@ -233,6 +272,34 @@ mod tests {
             .await?;
 
         assert!(status.is_none());
+        assert!(runtime.read().await.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn exited_active_tunnel_clears_runtime_status() -> crate::error::Result<()> {
+        let runtime = Arc::new(tokio::sync::RwLock::new(Some(
+            CloudflareTunnelRuntimeStatus {
+                public_url: Some("https://moltis.example.com".to_string()),
+                hostname: Some("moltis.example.com".to_string()),
+                passkey_warning: None,
+            },
+        )));
+        let active_tunnel = Arc::new(tokio::sync::Mutex::new(Some(CloudflareActiveTunnel {
+            id: 7,
+            child: Command::new("sh")
+                .args(["-c", "true"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(|error| {
+                    crate::Error::Config(format!("failed to run test child: {error}"))
+                })?,
+            log_task: tokio::spawn(async {}),
+        })));
+
+        clear_runtime_if_active_tunnel_exited(7, active_tunnel, Arc::clone(&runtime)).await;
+
         assert!(runtime.read().await.is_none());
         Ok(())
     }
