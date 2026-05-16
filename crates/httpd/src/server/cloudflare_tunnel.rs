@@ -64,6 +64,7 @@ impl CloudflareTunnelController {
     pub async fn apply(
         &self,
         config: &CloudflareTunnelConfig,
+        bind_addr: &str,
         port: u16,
         tls: bool,
     ) -> crate::error::Result<Option<CloudflareTunnelRuntimeStatus>> {
@@ -89,14 +90,7 @@ impl CloudflareTunnelController {
                 )
             })?;
 
-        let target = format!(
-            "{}://127.0.0.1:{port}",
-            if tls {
-                "https"
-            } else {
-                "http"
-            }
-        );
+        let target = cloudflared_target_url(bind_addr, port, tls);
         let mut child = Command::new("cloudflared")
             .args(cloudflared_tunnel_args(&target))
             .env("TUNNEL_TOKEN", token)
@@ -205,13 +199,28 @@ fn cloudflared_tunnel_args(target: &str) -> [&str; 5] {
 }
 
 #[cfg(feature = "cloudflare-tunnel")]
+fn cloudflared_target_url(bind_addr: &str, port: u16, tls: bool) -> String {
+    let scheme = if tls {
+        "https"
+    } else {
+        "http"
+    };
+    if bind_addr.contains(':') && !bind_addr.starts_with('[') {
+        format!("{scheme}://[{bind_addr}]:{port}")
+    } else {
+        format!("{scheme}://{bind_addr}:{port}")
+    }
+}
+
+#[cfg(feature = "cloudflare-tunnel")]
 pub async fn start_for_banner(
     controller: &CloudflareTunnelController,
     config: &CloudflareTunnelConfig,
+    bind_addr: &str,
     port: u16,
     tls: bool,
 ) -> (Option<CloudflareTunnelRuntimeStatus>, Option<String>) {
-    match controller.apply(config, port, tls).await {
+    match controller.apply(config, bind_addr, port, tls).await {
         Ok(status) => (status, None),
         Err(error) => {
             warn!(%error, "Cloudflare Tunnel failed to start; gateway will continue without it");
@@ -268,7 +277,7 @@ mod tests {
         );
 
         let status = controller
-            .apply(&CloudflareTunnelConfig::default(), 8080, false)
+            .apply(&CloudflareTunnelConfig::default(), "127.0.0.1", 8080, false)
             .await?;
 
         assert!(status.is_none());
@@ -330,5 +339,21 @@ mod tests {
             "--url",
             "http://127.0.0.1:8080",
         ]);
+    }
+
+    #[test]
+    fn cloudflared_target_url_preserves_configured_loopback_bind() {
+        assert_eq!(
+            cloudflared_target_url("127.0.0.1", 8080, false),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(
+            cloudflared_target_url("localhost", 8080, true),
+            "https://localhost:8080"
+        );
+        assert_eq!(
+            cloudflared_target_url("::1", 8080, false),
+            "http://[::1]:8080"
+        );
     }
 }

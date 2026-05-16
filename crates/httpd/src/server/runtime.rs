@@ -1117,6 +1117,7 @@ pub async fn start_gateway(
         cloudflare_tunnel::start_for_banner(
             &banner.cloudflare_tunnel_controller,
             &config.cloudflare_tunnel,
+            &config.server.bind,
             port,
             !no_tls && config.tls.enabled,
         )

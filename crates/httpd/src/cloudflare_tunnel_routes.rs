@@ -144,6 +144,7 @@ async fn save_config_handler(
         .cloudflare_tunnel_controller
         .apply(
             &updated.cloudflare_tunnel,
+            &updated.server.bind,
             updated.server.port,
             updated.tls.enabled,
         )
