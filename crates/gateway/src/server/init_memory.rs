@@ -1,7 +1,8 @@
-use std::{collections::HashMap, path::Path as FsPath, sync::Arc};
-
-#[cfg(feature = "local-embeddings")]
-use std::path::PathBuf;
+use std::{
+    collections::HashMap,
+    path::{Path as FsPath, PathBuf},
+    sync::Arc,
+};
 
 use {
     secrecy::ExposeSecret,
@@ -243,9 +244,9 @@ pub(crate) async fn init_memory_system(
 fn collect_writable_roots(
     data_dir: &FsPath,
     mem_cfg: &moltis_config::schema::MemoryEmbeddingConfig,
-) -> Vec<std::path::PathBuf> {
-    let mut roots: Vec<std::path::PathBuf> = Vec::new();
-    let mut push = |path: std::path::PathBuf| {
+) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut push = |path: PathBuf| {
         if !roots.iter().any(|existing| existing == &path) {
             roots.push(path);
         }
@@ -256,7 +257,7 @@ fn collect_writable_roots(
 
     for collection in mem_cfg.qmd.collections.values() {
         for path in &collection.paths {
-            let candidate = std::path::Path::new(path);
+            let candidate = FsPath::new(path);
             let absolute = if candidate.is_absolute() {
                 candidate.to_path_buf()
             } else {
