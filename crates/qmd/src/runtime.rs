@@ -1,4 +1,7 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use {
     async_trait::async_trait,
@@ -149,6 +152,10 @@ impl MemoryRuntime for QmdMemoryRuntime {
 
     fn data_dir(&self) -> Option<&Path> {
         self.fallback.data_dir()
+    }
+
+    fn writable_roots(&self) -> &[PathBuf] {
+        self.fallback.writable_roots()
     }
 
     fn has_embeddings(&self) -> bool {

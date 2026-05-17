@@ -1,4 +1,7 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use {async_trait::async_trait, moltis_agents::memory_writer::MemoryWriter};
 
@@ -17,6 +20,10 @@ pub trait MemoryRuntime: MemoryWriter + Send + Sync {
     fn backend_name(&self) -> &'static str;
 
     fn data_dir(&self) -> Option<&Path>;
+
+    /// Roots into which the agent is allowed to save memory. Empty means
+    /// only the legacy `memory/` subtree under `data_dir`.
+    fn writable_roots(&self) -> &[PathBuf];
 
     fn has_embeddings(&self) -> bool;
 
@@ -45,6 +52,10 @@ impl MemoryRuntime for MemoryManager {
 
     fn data_dir(&self) -> Option<&Path> {
         MemoryManager::data_dir(self)
+    }
+
+    fn writable_roots(&self) -> &[PathBuf] {
+        MemoryManager::writable_roots(self)
     }
 
     fn has_embeddings(&self) -> bool {

@@ -1,5 +1,5 @@
 /// Memory manager: orchestrates file sync, chunking, embedding, and search.
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use {
     async_trait::async_trait,
@@ -92,6 +92,13 @@ impl MemoryManager {
     /// Root data directory used for memory writes, when configured.
     pub fn data_dir(&self) -> Option<&Path> {
         self.config.data_dir.as_deref()
+    }
+
+    /// Roots into which memory writes are allowed (in addition to the
+    /// `MEMORY.md` / `memory.md` root shortcuts). Empty means legacy
+    /// behaviour — only the `memory/` subtree under `data_dir`.
+    pub fn writable_roots(&self) -> &[PathBuf] {
+        &self.config.writable_roots
     }
 
     /// Whether LLM reranking is enabled.
@@ -445,7 +452,7 @@ impl MemoryWriter for MemoryManager {
             );
         }
 
-        let path = validate_memory_path(data_dir, file)?;
+        let path = validate_memory_path(data_dir, &self.config.writable_roots, file)?;
 
         // Create parent directories if needed.
         if let Some(parent) = path.parent() {
@@ -1113,7 +1120,8 @@ mod tests {
             "memory/notes.txt",
             "memory/.md",
             "memory/a b c.md",
-            "memory/sub/nested.md",
+            "memory/sub/.hidden.md",
+            "memory/sub/../escape.md",
             "random.md",
             "foo/bar.md",
         ];
@@ -1122,6 +1130,60 @@ mod tests {
             let result = manager.write_memory(name, "test", false).await;
             assert!(result.is_err(), "should reject invalid name: {name}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_accepts_nested_subfolders() {
+        let (manager, tmp) = setup_writable().await;
+        let data_dir = tmp.path().to_path_buf();
+
+        manager
+            .write_memory(
+                "memory/work/projects/alpha.md",
+                "alpha kickoff",
+                false,
+            )
+            .await
+            .unwrap();
+
+        let written = data_dir.join("memory/work/projects/alpha.md");
+        assert!(written.exists(), "nested file should be created");
+        let content = std::fs::read_to_string(&written).unwrap();
+        assert_eq!(content, "alpha kickoff");
+    }
+
+    #[tokio::test]
+    async fn test_memory_writer_writable_roots_accepts_outside_memory() {
+        let tmp = TempDir::new().unwrap();
+        let data_dir = tmp.path().to_path_buf();
+        let agents_root = data_dir.join("agents");
+        std::fs::create_dir_all(&agents_root).unwrap();
+        std::fs::create_dir_all(data_dir.join("memory")).unwrap();
+
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let config = MemoryConfig {
+            db_path: ":memory:".into(),
+            data_dir: Some(data_dir.clone()),
+            memory_dirs: vec![data_dir.join("memory"), agents_root.clone()],
+            writable_roots: vec![data_dir.join("memory"), agents_root.clone()],
+            ..Default::default()
+        };
+        let store = Box::new(SqliteMemoryStore::new(pool));
+        let manager = MemoryManager::keyword_only(config, store);
+
+        manager
+            .write_memory("agents/ops/notes.md", "deployment runbook", false)
+            .await
+            .unwrap();
+
+        assert!(agents_root.join("ops/notes.md").exists());
+
+        // Outside any configured root is still rejected.
+        let outside = manager
+            .write_memory("elsewhere/notes.md", "no", false)
+            .await;
+        assert!(outside.is_err(), "writes outside configured roots must fail");
     }
 
     #[tokio::test]
