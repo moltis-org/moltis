@@ -1138,11 +1138,7 @@ mod tests {
         let data_dir = tmp.path().to_path_buf();
 
         manager
-            .write_memory(
-                "memory/work/projects/alpha.md",
-                "alpha kickoff",
-                false,
-            )
+            .write_memory("memory/work/projects/alpha.md", "alpha kickoff", false)
             .await
             .unwrap();
 
@@ -1183,7 +1179,10 @@ mod tests {
         let outside = manager
             .write_memory("elsewhere/notes.md", "no", false)
             .await;
-        assert!(outside.is_err(), "writes outside configured roots must fail");
+        assert!(
+            outside.is_err(),
+            "writes outside configured roots must fail"
+        );
     }
 
     #[tokio::test]
