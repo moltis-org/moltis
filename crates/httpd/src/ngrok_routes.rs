@@ -32,10 +32,24 @@ fn normalize_optional(value: Option<&str>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn env_authtoken_value_present(value: Option<std::ffi::OsString>) -> bool {
+    value
+        .and_then(|value| {
+            value
+                .to_str()
+                .and_then(|value| normalize_optional(Some(value)))
+        })
+        .is_some()
+}
+
+fn env_authtoken_present() -> bool {
+    env_authtoken_value_present(std::env::var_os("NGROK_AUTHTOKEN"))
+}
+
 fn authtoken_source(config: &moltis_config::NgrokConfig) -> Option<&'static str> {
     if config.authtoken.is_some() {
         Some("config")
-    } else if std::env::var_os("NGROK_AUTHTOKEN").is_some() {
+    } else if env_authtoken_present() {
         Some("env")
     } else {
         None
@@ -98,11 +112,9 @@ async fn save_config_handler(
     let mut updated = existing.clone();
 
     let token_will_exist = if body.clear_authtoken {
-        new_authtoken.is_some() || std::env::var_os("NGROK_AUTHTOKEN").is_some()
+        new_authtoken.is_some() || env_authtoken_present()
     } else {
-        new_authtoken.is_some()
-            || existing.ngrok.authtoken.is_some()
-            || std::env::var_os("NGROK_AUTHTOKEN").is_some()
+        new_authtoken.is_some() || existing.ngrok.authtoken.is_some() || env_authtoken_present()
     };
 
     if body.enabled && !token_will_exist {
@@ -171,7 +183,10 @@ async fn save_config_handler(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Weak};
+    use std::{
+        ffi::OsString,
+        sync::{Arc, Weak},
+    };
 
     use {
         axum::{Json, body::to_bytes, extract::State},
@@ -187,6 +202,15 @@ mod tests {
     use crate::server::NgrokRuntimeStatus;
 
     use super::*;
+
+    #[test]
+    fn env_authtoken_present_ignores_blank_values() {
+        assert!(!env_authtoken_value_present(None));
+        assert!(!env_authtoken_value_present(Some(OsString::from("   "))));
+        assert!(env_authtoken_value_present(Some(OsString::from(
+            "test-token"
+        ))));
+    }
 
     #[tokio::test]
     #[serial_test::serial(config_dir)]
