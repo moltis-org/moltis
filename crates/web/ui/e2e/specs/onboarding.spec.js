@@ -225,6 +225,32 @@ async function moveToChannelStep(page) {
 	return isVisible(channelHeading);
 }
 
+async function advanceVisibleOnboardingStep(page) {
+	if (await clickFirstVisibleButton(page, { name: "Skip for now", exact: true })) return true;
+	return clickFirstVisibleButton(page, { name: "Continue", exact: true });
+}
+
+async function moveToRemoteAccessStep(page) {
+	const reachedLlm = await moveToLlmStep(page);
+	if (!reachedLlm) return false;
+
+	const remoteHeading = page.getByRole("heading", { name: "Remote Access", exact: true });
+	if (await isVisible(remoteHeading)) return true;
+
+	await expect
+		.poll(
+			async () => {
+				if (await isVisible(remoteHeading)) return true;
+				await advanceVisibleOnboardingStep(page);
+				return false;
+			},
+			{ timeout: 60_000, intervals: [1000] },
+		)
+		.toBeTruthy();
+
+	return isVisible(remoteHeading);
+}
+
 async function moveToIdentityStep(page) {
 	await waitForOnboardingStepLoaded(page);
 
@@ -359,6 +385,63 @@ test.describe("Onboarding wizard", () => {
 		expect(remoteAccessIdx).toBeGreaterThan(-1);
 		expect(channelIdx).toBeGreaterThan(-1);
 		expect(remoteAccessIdx).toBeLessThan(channelIdx);
+	});
+
+	test("remote access step shows all connector tabs", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.route("**/api/auth/status", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ auth_disabled: false, has_password: true }),
+			});
+		});
+		await page.route("**/api/tailscale/status", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ installed: true, mode: "off", tailscale_up: true }),
+			});
+		});
+		await page.route("**/api/ngrok/status", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ enabled: true, public_url: "https://team-gateway.ngrok.app" }),
+			});
+		});
+		await page.route("**/api/netbird/status", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ installed: true, mode: "serve", netbird_up: true, url: "https://100.80.0.10:8443" }),
+			});
+		});
+		await page.route("**/api/cloudflare-tunnel/status", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					enabled: true,
+					hostname: "moltis.example.com",
+					public_url: "https://moltis.example.com",
+					token_source: "config",
+				}),
+			});
+		});
+
+		await page.goto("/onboarding");
+		expect(await moveToRemoteAccessStep(page)).toBeTruthy();
+		await expect(page.getByRole("tab", { name: /Tailscale/ })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /ngrok/ })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /NetBird/ })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /Cloudflare/ })).toBeVisible();
+
+		await page.getByRole("tab", { name: /NetBird/ }).click();
+		await expect(page.getByText("https://100.80.0.10:8443", { exact: true })).toBeVisible();
+		await page.getByRole("tab", { name: /Cloudflare/ }).click();
+		await expect(page.getByRole("link", { name: "https://moltis.example.com" }).last()).toBeVisible();
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("auth step renders actionable controls when shown", async ({ page }) => {

@@ -203,7 +203,7 @@ test.describe("Settings navigation", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("remote access page shows tailscale and ngrok cards", async ({ page }) => {
+	test("remote access page shows all connector cards", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.route("**/api/auth/status", async (route) => {
 			await route.fulfill({
@@ -248,6 +248,30 @@ test.describe("Settings navigation", () => {
 				}),
 			});
 		});
+		await page.route("**/api/netbird/status", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					installed: true,
+					mode: "serve",
+					netbird_up: true,
+					url: "https://100.80.0.10:8443",
+				}),
+			});
+		});
+		await page.route("**/api/cloudflare-tunnel/status", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					enabled: true,
+					hostname: "moltis.example.com",
+					public_url: "https://moltis.example.com",
+					token_source: "config",
+				}),
+			});
+		});
 
 		await navigateAndWait(page, "/settings/remote-access");
 
@@ -255,9 +279,15 @@ test.describe("Settings navigation", () => {
 		// Tailscale tab is active by default
 		await expect(page.getByRole("tab", { name: /Tailscale/ })).toBeVisible();
 		await expect(page.getByRole("tab", { name: /ngrok/ })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /NetBird/ })).toBeVisible();
+		await expect(page.getByRole("tab", { name: /Cloudflare/ })).toBeVisible();
 		// Switch to ngrok tab to see its content
 		await page.getByRole("tab", { name: /ngrok/ }).click();
 		await expect(page.getByText("https://team-gateway.ngrok.app", { exact: true })).toBeVisible();
+		await page.getByRole("tab", { name: /NetBird/ }).click();
+		await expect(page.getByText("https://100.80.0.10:8443", { exact: true })).toBeVisible();
+		await page.getByRole("tab", { name: /Cloudflare/ }).click();
+		await expect(page.getByText("https://moltis.example.com", { exact: true })).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});

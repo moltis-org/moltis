@@ -1,4 +1,4 @@
-// ── Remote access step (Tailscale Funnel + ngrok) ─────────────
+// ── Remote access step ────────────────────────────────────────
 
 import type { VNode } from "preact";
 import { useEffect, useState } from "preact/hooks";
@@ -28,10 +28,37 @@ export interface NgrokStatus {
 	[key: string]: unknown;
 }
 
+export interface NetbirdStatus {
+	installed?: boolean;
+	netbird_up?: boolean;
+	mode?: string;
+	url?: string;
+	peer_ip?: string;
+	dns_name?: string;
+	error?: string;
+	[key: string]: unknown;
+}
+
+export interface CloudflareTunnelStatus {
+	enabled?: boolean;
+	public_url?: string;
+	hostname?: string;
+	token_source?: string;
+	passkey_warning?: string;
+	error?: string;
+	[key: string]: unknown;
+}
+
 interface NgrokForm {
 	enabled: boolean;
 	authtoken: string;
 	domain: string;
+}
+
+interface CloudflareTunnelForm {
+	enabled: boolean;
+	token: string;
+	hostname: string;
 }
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -57,12 +84,17 @@ export function fetchRemoteAccessStatus(
 }
 
 export function preferredPublicBaseUrl({
+	cloudflareStatus,
 	ngrokStatus,
 	tailscaleStatus,
 }: {
+	cloudflareStatus?: CloudflareTunnelStatus | null;
 	ngrokStatus: NgrokStatus | null;
 	tailscaleStatus: TailscaleStatus | null;
 }): string {
+	const cloudflareUrl = typeof cloudflareStatus?.public_url === "string" ? cloudflareStatus.public_url.trim() : "";
+	if (cloudflareUrl) return cloudflareUrl;
+
 	const ngrokUrl = typeof ngrokStatus?.public_url === "string" ? ngrokStatus.public_url.trim() : "";
 	if (ngrokUrl) return ngrokUrl;
 
@@ -74,7 +106,7 @@ export function preferredPublicBaseUrl({
 
 // ── RemoteAccessStep ────────────────────────────────────────
 
-// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: onboarding remote access manages two public endpoint integrations
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: onboarding remote access manages multiple endpoint integrations
 export function RemoteAccessStep({ onNext, onBack }: { onNext: () => void; onBack: () => void }): VNode {
 	const [remoteTab, setRemoteTab] = useState("tailscale");
 	const [authReady, setAuthReady] = useState(false);
@@ -88,10 +120,24 @@ export function RemoteAccessStep({ onNext, onBack }: { onNext: () => void; onBac
 	const [ngLoading, setNgLoading] = useState(true);
 	const [ngSaving, setNgSaving] = useState(false);
 	const [ngMsg, setNgMsg] = useState<string | null>(null);
+	const [nbStatus, setNbStatus] = useState<NetbirdStatus | null>(null);
+	const [nbError, setNbError] = useState<string | null>(null);
+	const [nbLoading, setNbLoading] = useState(true);
+	const [nbConfiguring, setNbConfiguring] = useState(false);
+	const [cfStatus, setCfStatus] = useState<CloudflareTunnelStatus | null>(null);
+	const [cfError, setCfError] = useState<string | null>(null);
+	const [cfLoading, setCfLoading] = useState(true);
+	const [cfSaving, setCfSaving] = useState(false);
+	const [cfMsg, setCfMsg] = useState<string | null>(null);
 	const [ngForm, setNgForm] = useState<NgrokForm>({
 		enabled: false,
 		authtoken: "",
 		domain: "",
+	});
+	const [cfForm, setCfForm] = useState<CloudflareTunnelForm>({
+		enabled: false,
+		token: "",
+		hostname: "",
 	});
 
 	function loadAuthStatus(): Promise<void> {
@@ -140,10 +186,48 @@ export function RemoteAccessStep({ onNext, onBack }: { onNext: () => void; onBac
 			});
 	}
 
+	function loadNetbirdStatus(): Promise<void> {
+		setNbLoading(true);
+		return fetchRemoteAccessStatus("/api/netbird/status", "NetBird feature is not enabled in this build.")
+			.then((data) => {
+				setNbStatus(data?.feature_disabled ? null : (data as NetbirdStatus));
+				setNbError(data?.error || null);
+				setNbLoading(false);
+			})
+			.catch((err: Error) => {
+				setNbError(err.message);
+				setNbLoading(false);
+			});
+	}
+
+	function loadCloudflareTunnelStatus(): Promise<void> {
+		setCfLoading(true);
+		return fetchRemoteAccessStatus(
+			"/api/cloudflare-tunnel/status",
+			"Cloudflare Tunnel feature is not enabled in this build.",
+		)
+			.then((data) => {
+				setCfStatus(data?.feature_disabled ? null : (data as CloudflareTunnelStatus));
+				setCfError(data?.error || null);
+				setCfLoading(false);
+				setCfForm((current) => ({
+					enabled: Boolean(data?.enabled),
+					token: current.token,
+					hostname: current.hostname || (data?.hostname as string) || "",
+				}));
+			})
+			.catch((err: Error) => {
+				setCfError(err.message);
+				setCfLoading(false);
+			});
+	}
+
 	useEffect(() => {
 		loadAuthStatus();
 		loadTailscaleStatus();
 		loadNgrokStatus();
+		loadNetbirdStatus();
+		loadCloudflareTunnelStatus();
 	}, []);
 
 	function setTailscaleMode(mode: string): void {
@@ -230,12 +314,100 @@ export function RemoteAccessStep({ onNext, onBack }: { onNext: () => void; onBac
 		applyNgrokConfig(nextForm, `ngrok ${nextForm.enabled ? "enabled" : "disabled"}.`);
 	}
 
+	function setNetbirdMode(mode: string): void {
+		setNbConfiguring(true);
+		setNbError(null);
+		fetch("/api/netbird/configure", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ mode }),
+		})
+			.then((response) =>
+				(response.json() as Promise<Record<string, unknown>>)
+					.catch((): Record<string, unknown> => ({}))
+					.then((data) => ({ ok: response.ok, data })),
+			)
+			.then(({ ok, data }) => {
+				setNbConfiguring(false);
+				if (!ok || data.error) {
+					setNbError((data.error as string) || "Failed to configure NetBird.");
+					return;
+				}
+
+				loadNetbirdStatus();
+			})
+			.catch((err: Error) => {
+				setNbConfiguring(false);
+				setNbError(err.message);
+			});
+	}
+
+	function toggleNetbirdServe(): void {
+		setNetbirdMode(nbStatus?.mode === "serve" ? "off" : "serve");
+	}
+
+	function applyCloudflareTunnelConfig(nextForm: CloudflareTunnelForm, successMessage: string): void {
+		setCfSaving(true);
+		setCfError(null);
+		setCfMsg(null);
+		fetch("/api/cloudflare-tunnel/config", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				enabled: nextForm.enabled,
+				token: nextForm.token,
+				clear_token: false,
+				hostname: nextForm.hostname,
+			}),
+		})
+			.then((response) =>
+				(response.json() as Promise<Record<string, unknown>>)
+					.catch((): Record<string, unknown> => ({}))
+					.then((data) => ({ ok: response.ok, data })),
+			)
+			.then(({ ok, data }) => {
+				setCfSaving(false);
+				if (!ok || data.error) {
+					setCfError((data.error as string) || "Failed to apply Cloudflare Tunnel settings.");
+					return;
+				}
+
+				const status = (data.status as CloudflareTunnelStatus) || null;
+				setCfMsg(successMessage);
+				setCfStatus(status);
+				setCfForm({
+					enabled: Boolean(status?.enabled),
+					token: "",
+					hostname: status?.hostname || nextForm.hostname || "",
+				});
+			})
+			.catch((err: Error) => {
+				setCfSaving(false);
+				setCfError(err.message);
+			});
+	}
+
+	function toggleCloudflareTunnelEnabled(): void {
+		const nextForm = {
+			...cfForm,
+			enabled: !cfForm.enabled,
+		};
+		setCfForm(nextForm);
+		applyCloudflareTunnelConfig(nextForm, `Cloudflare Tunnel ${nextForm.enabled ? "enabled" : "disabled"}.`);
+	}
+
 	const tailscaleAvailable = tsStatus !== null;
 	const tailscaleFunnelEnabled = tsStatus?.mode === "funnel";
 	const tailscaleInstalled = tsStatus?.installed !== false;
 	const tailscaleBlocked = !(tailscaleAvailable && tailscaleInstalled) || tsStatus?.tailscale_up === false;
 	const ngrokAvailable = ngStatus !== null;
+	const netbirdAvailable = nbStatus !== null;
+	const netbirdServeEnabled = nbStatus?.mode === "serve";
+	const netbirdInstalled = nbStatus?.installed !== false;
+	const netbirdBlocked = !(netbirdAvailable && netbirdInstalled) || nbStatus?.netbird_up === false;
+	const cloudflareAvailable = cfStatus !== null;
 	const activePublicUrl = preferredPublicBaseUrl({
+		cloudflareStatus: cfStatus,
 		ngrokStatus: ngStatus,
 		tailscaleStatus: tsStatus,
 	});
@@ -245,7 +417,7 @@ export function RemoteAccessStep({ onNext, onBack }: { onNext: () => void; onBac
 			<h2 className="text-lg font-medium text-[var(--text-strong)]">Remote Access</h2>
 			<p className="text-xs text-[var(--muted)] leading-relaxed">
 				Public endpoints are optional for most channels, but Microsoft Teams needs one. Enable Tailscale Funnel, ngrok,
-				or both before connecting team channels.
+				Cloudflare Tunnel, or configure private NetBird access before connecting team channels.
 			</p>
 			{activePublicUrl ? (
 				<div className="rounded-md border border-[var(--border)] bg-[var(--surface2)] p-3 text-xs text-[var(--muted)] flex flex-col gap-1">
@@ -270,6 +442,12 @@ export function RemoteAccessStep({ onNext, onBack }: { onNext: () => void; onBac
 						badge: tsLoading ? undefined : tailscaleFunnelEnabled ? "funnel" : undefined,
 					},
 					{ id: "ngrok", label: "ngrok", badge: ngLoading ? undefined : ngForm.enabled ? "on" : undefined },
+					{ id: "netbird", label: "NetBird", badge: nbLoading ? undefined : netbirdServeEnabled ? "serve" : undefined },
+					{
+						id: "cloudflare",
+						label: "Cloudflare",
+						badge: cfLoading ? undefined : cfForm.enabled ? "on" : undefined,
+					},
 				]}
 				active={remoteTab}
 				onChange={setRemoteTab}
@@ -406,6 +584,131 @@ export function RemoteAccessStep({ onNext, onBack }: { onNext: () => void; onBac
 						onClick={toggleNgrokEnabled}
 					>
 						{ngSaving ? "Applying\u2026" : ngForm.enabled ? "Disable ngrok" : "Enable ngrok"}
+					</button>
+				</div>
+			)}
+
+			{remoteTab === "netbird" && (
+				<div className="flex flex-col gap-4">
+					<p className="text-xs text-[var(--muted)] leading-relaxed">
+						Private mesh access through NetBird. Use this when remote clients are members of your NetBird network.
+					</p>
+					{nbLoading ? (
+						<div className="text-xs text-[var(--muted)]">Loading NetBird status&hellip;</div>
+					) : (
+						<div className="text-sm text-[var(--text-strong)]">
+							NetBird serve is {netbirdServeEnabled ? "enabled" : "disabled"}.
+						</div>
+					)}
+					{nbStatus?.url ? (
+						<a
+							href={nbStatus.url}
+							target="_blank"
+							rel="noopener"
+							className="text-sm text-[var(--accent)] underline break-all"
+						>
+							{nbStatus.url}
+						</a>
+					) : null}
+					{nbError ? <ErrorPanel message={nbError} /> : null}
+					{nbStatus?.installed === false ? (
+						<a
+							href="https://docs.netbird.io/how-to/installation"
+							target="_blank"
+							rel="noopener"
+							className="provider-btn self-start no-underline"
+						>
+							Install NetBird
+						</a>
+					) : null}
+					{nbStatus?.netbird_up === false ? (
+						<div className="alert-warning-text max-w-form">
+							<span className="alert-label-warn">Warning:</span> Install NetBird and connect this peer with{" "}
+							<code className="font-mono">netbird up</code> or the NetBird app before enabling serve.
+						</div>
+					) : null}
+					<button
+						type="button"
+						className="provider-btn self-start"
+						disabled={nbLoading || nbConfiguring || netbirdBlocked}
+						onClick={toggleNetbirdServe}
+					>
+						{nbConfiguring ? "Applying\u2026" : netbirdServeEnabled ? "Disable NetBird Serve" : "Enable NetBird Serve"}
+					</button>
+				</div>
+			)}
+
+			{remoteTab === "cloudflare" && (
+				<div className="flex flex-col gap-4">
+					<p className="text-xs text-[var(--muted)] leading-relaxed">
+						Public HTTPS through Cloudflare Tunnel. This is useful when your public DNS is managed by Cloudflare.
+					</p>
+					{cfLoading ? (
+						<div className="text-xs text-[var(--muted)]">Loading Cloudflare Tunnel status&hellip;</div>
+					) : (
+						<div className="text-sm text-[var(--text-strong)]">
+							Cloudflare Tunnel is {cfForm.enabled ? "enabled" : "disabled"}.
+						</div>
+					)}
+					{cfStatus?.public_url ? (
+						<a
+							href={cfStatus.public_url}
+							target="_blank"
+							rel="noopener"
+							className="text-sm text-[var(--accent)] underline break-all"
+						>
+							{cfStatus.public_url}
+						</a>
+					) : null}
+					{cfError ? <ErrorPanel message={cfError} /> : null}
+					{cfStatus?.passkey_warning ? (
+						<div className="alert-warning-text max-w-form">{cfStatus.passkey_warning}</div>
+					) : null}
+					<div className="flex flex-col gap-1">
+						<label className="text-xs text-[var(--muted)]" htmlFor="onboarding-cloudflare-token">
+							Tunnel token
+						</label>
+						<input
+							id="onboarding-cloudflare-token"
+							type="password"
+							className="provider-key-input w-full"
+							placeholder={
+								cfStatus?.token_source ? "Leave blank to keep the current token" : "Paste your Cloudflare Tunnel token"
+							}
+							value={cfForm.token}
+							onInput={(e) => setCfForm({ ...cfForm, token: targetValue(e) })}
+						/>
+					</div>
+					<div className="flex flex-col gap-1">
+						<label className="text-xs text-[var(--muted)]" htmlFor="onboarding-cloudflare-hostname">
+							Public hostname (optional)
+						</label>
+						<input
+							id="onboarding-cloudflare-hostname"
+							type="text"
+							className="provider-key-input w-full"
+							placeholder="moltis.example.com"
+							value={cfForm.hostname}
+							onInput={(e) => setCfForm({ ...cfForm, hostname: targetValue(e) })}
+						/>
+						<div className="text-xs text-[var(--muted)]">
+							Use a hostname if you want the UI to display your stable tunnel URL immediately.
+						</div>
+					</div>
+					{authReady ? null : (
+						<div className="alert-warning-text max-w-form">
+							<span className="alert-label-warn">Warning:</span> Remote visitors will see the setup-required page until
+							authentication is configured.
+						</div>
+					)}
+					{cfMsg ? <div className="text-xs text-[var(--ok)]">{cfMsg}</div> : null}
+					<button
+						type="button"
+						className="provider-btn self-start"
+						disabled={!cloudflareAvailable || cfLoading || cfSaving}
+						onClick={toggleCloudflareTunnelEnabled}
+					>
+						{cfSaving ? "Applying\u2026" : cfForm.enabled ? "Disable Cloudflare" : "Enable Cloudflare"}
 					</button>
 				</div>
 			)}
