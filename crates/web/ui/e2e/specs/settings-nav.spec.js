@@ -287,7 +287,7 @@ test.describe("Settings navigation", () => {
 		await page.getByRole("tab", { name: /NetBird/ }).click();
 		await expect(page.getByText("https://100.80.0.10:8443", { exact: true })).toBeVisible();
 		await page.getByRole("tab", { name: /Cloudflare/ }).click();
-		await expect(page.getByText("https://moltis.example.com", { exact: true })).toBeVisible();
+		await expect(page.getByText("https://moltis.example.com", { exact: true }).last()).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});

@@ -92,7 +92,10 @@ export function preferredPublicBaseUrl({
 	ngrokStatus: NgrokStatus | null;
 	tailscaleStatus: TailscaleStatus | null;
 }): string {
-	const cloudflareUrl = typeof cloudflareStatus?.public_url === "string" ? cloudflareStatus.public_url.trim() : "";
+	const cloudflareUrl =
+		cloudflareStatus?.enabled && typeof cloudflareStatus?.public_url === "string"
+			? cloudflareStatus.public_url.trim()
+			: "";
 	if (cloudflareUrl) return cloudflareUrl;
 
 	const ngrokUrl = typeof ngrokStatus?.public_url === "string" ? ngrokStatus.public_url.trim() : "";
