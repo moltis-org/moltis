@@ -25,6 +25,11 @@ pub trait MemoryRuntime: MemoryWriter + Send + Sync {
     /// only the legacy `memory/` subtree under `data_dir`.
     fn writable_roots(&self) -> &[PathBuf];
 
+    /// Subset of `writable_roots` representing user-configured shared
+    /// collections (no gateway defaults). Agent-scoped writers consult
+    /// this to decide which paths cross the per-agent workspace boundary.
+    fn shared_collection_roots(&self) -> &[PathBuf];
+
     fn has_embeddings(&self) -> bool;
 
     fn citation_mode(&self) -> CitationMode;
@@ -56,6 +61,10 @@ impl MemoryRuntime for MemoryManager {
 
     fn writable_roots(&self) -> &[PathBuf] {
         MemoryManager::writable_roots(self)
+    }
+
+    fn shared_collection_roots(&self) -> &[PathBuf] {
+        MemoryManager::shared_collection_roots(self)
     }
 
     fn has_embeddings(&self) -> bool {

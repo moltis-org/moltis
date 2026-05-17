@@ -101,6 +101,14 @@ impl MemoryManager {
         &self.config.writable_roots
     }
 
+    /// Subset of `writable_roots` containing only user-configured shared
+    /// collections (no gateway-added defaults). Used by the agent-scoped
+    /// writer to decide which paths cross the workspace boundary and
+    /// become shared knowledge stores.
+    pub fn shared_collection_roots(&self) -> &[PathBuf] {
+        &self.config.shared_collection_roots
+    }
+
     /// Whether LLM reranking is enabled.
     pub fn llm_reranking_enabled(&self) -> bool {
         self.config.llm_reranking

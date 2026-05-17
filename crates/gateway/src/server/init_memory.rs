@@ -244,17 +244,24 @@ pub(crate) async fn init_memory_system(
 fn collect_writable_roots(
     data_dir: &FsPath,
     mem_cfg: &moltis_config::schema::MemoryEmbeddingConfig,
-) -> Vec<PathBuf> {
-    let mut roots: Vec<PathBuf> = Vec::new();
-    let mut push = |path: PathBuf| {
-        if !roots.iter().any(|existing| existing == &path) {
-            roots.push(path);
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut writable: Vec<PathBuf> = Vec::new();
+    let mut shared: Vec<PathBuf> = Vec::new();
+
+    fn push_unique(list: &mut Vec<PathBuf>, path: PathBuf) {
+        if !list.iter().any(|existing| existing == &path) {
+            list.push(path);
         }
-    };
+    }
 
-    push(data_dir.join("memory"));
-    push(data_dir.join("agents"));
+    // Gateway defaults — usable by the global memory_save tool but not by
+    // per-agent writers (otherwise agents could cross workspace boundaries
+    // through data_dir/agents).
+    push_unique(&mut writable, data_dir.join("memory"));
+    push_unique(&mut writable, data_dir.join("agents"));
 
+    // User-configured QMD collections — shared knowledge stores available
+    // to every agent regardless of its workspace.
     for collection in mem_cfg.qmd.collections.values() {
         for path in &collection.paths {
             let candidate = FsPath::new(path);
@@ -263,11 +270,12 @@ fn collect_writable_roots(
             } else {
                 data_dir.join(candidate)
             };
-            push(absolute);
+            push_unique(&mut writable, absolute.clone());
+            push_unique(&mut shared, absolute);
         }
     }
 
-    roots
+    (writable, shared)
 }
 
 /// Build the memory runtime, start initial sync, file watchers, and periodic syncs.
@@ -297,7 +305,7 @@ async fn build_memory_runtime(
         );
     }
 
-    let writable_roots = collect_writable_roots(data_dir, mem_cfg);
+    let (writable_roots, shared_collection_roots) = collect_writable_roots(data_dir, mem_cfg);
 
     let memory_runtime_config = moltis_memory::config::MemoryConfig {
         db_path: data_dir.join("memory.db").to_string_lossy().into(),
@@ -309,6 +317,7 @@ async fn build_memory_runtime(
             agents_root,
         ],
         writable_roots,
+        shared_collection_roots,
         citations: match mem_cfg.citations {
             moltis_config::MemoryCitationsMode::On => moltis_memory::config::CitationMode::On,
             moltis_config::MemoryCitationsMode::Off => moltis_memory::config::CitationMode::Off,

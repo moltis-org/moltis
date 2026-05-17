@@ -158,6 +158,10 @@ impl MemoryRuntime for QmdMemoryRuntime {
         self.fallback.writable_roots()
     }
 
+    fn shared_collection_roots(&self) -> &[PathBuf] {
+        self.fallback.shared_collection_roots()
+    }
+
     fn has_embeddings(&self) -> bool {
         !self.disable_rag
     }
