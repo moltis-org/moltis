@@ -246,9 +246,21 @@ impl QmdManager {
     }
 
     async fn run_with_timeout(&self, mut command: Command) -> anyhow::Result<std::process::Output> {
+        // Spawn the child ourselves with kill_on_drop(true) so that, if the
+        // outer timeout fires, dropping the in-flight `wait_with_output`
+        // future drops the Child handle and sends SIGKILL. Previously we
+        // wrapped `Command::output().await` directly in `tokio::time::timeout`,
+        // which only cancelled the future and left orphaned QMD/Node
+        // subprocesses burning CPU/RAM (observed accumulating ~4 GB RSS over
+        // a few timed-out memory_search queries).
+        command.kill_on_drop(true);
         let timeout_duration = Duration::from_millis(self.config.timeout_ms);
-        match timeout(timeout_duration, command.output()).await {
-            Ok(result) => Ok(result?),
+        let child = command
+            .spawn()
+            .map_err(|error| anyhow::anyhow!("failed to spawn QMD command: {error}"))?;
+        match timeout(timeout_duration, child.wait_with_output()).await {
+            Ok(Ok(output)) => Ok(output),
+            Ok(Err(error)) => Err(anyhow::anyhow!("QMD command failed: {error}")),
             Err(_) => anyhow::bail!("QMD command timed out after {}ms", self.config.timeout_ms),
         }
     }
@@ -687,6 +699,76 @@ exit 0
         assert!(
             body.contains("gamma keyword target"),
             "expected qmd get to return indexed content, got: {body}"
+        );
+    }
+
+    /// Regression: when `run_with_timeout` cancels the wait, the spawned
+    /// child must be killed too. A previous version of this code only
+    /// dropped the future from `Command::output()` and left the process
+    /// running indefinitely, leading to multi-gigabyte memory leaks on
+    /// the host when several search queries timed out in a row.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_with_timeout_kills_child_on_expiry() {
+        let tmp = TempDir::new().unwrap();
+        let pid_path = tmp.path().join("child.pid");
+        let script_path = tmp.path().join("qmd-sleep");
+        let script = format!(
+            r#"#!/bin/sh
+echo $$ > "{}"
+sleep 30
+"#,
+            pid_path.display()
+        );
+        fs::write(&script_path, script).unwrap();
+        let mut permissions = fs::metadata(&script_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).unwrap();
+        // Avoid the rare ETXTBSY on fresh runners.
+        std::thread::sleep(Duration::from_millis(50));
+
+        let manager = QmdManager::new(QmdManagerConfig {
+            command: script_path.to_string_lossy().into_owned(),
+            timeout_ms: 200,
+            work_dir: tmp.path().to_path_buf(),
+            index_name: String::new(),
+            ..Default::default()
+        });
+
+        let mut cmd = Command::new(&manager.config.command);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let result = manager.run_with_timeout(cmd).await;
+        assert!(result.is_err(), "expected timeout to surface as an error");
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+                .contains("timed out"),
+            "expected timeout error, got: {:?}",
+            result.err()
+        );
+
+        // Read the PID the script recorded before sleeping.
+        // The child has 200ms to write before the timeout fires; give the
+        // OS a brief moment to flush the file and propagate SIGKILL.
+        std::thread::sleep(Duration::from_millis(300));
+        let pid_text = fs::read_to_string(&pid_path)
+            .expect("fake qmd should have written its PID before sleeping");
+        let pid: i32 = pid_text.trim().parse().unwrap();
+
+        // `kill -0 <pid>` exits 0 if the process exists, non-zero otherwise.
+        // After the timeout fires the child must be gone (or a reaped zombie —
+        // either way kill -0 reports "no such process").
+        let probe = std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(Stdio::null())
+            .status()
+            .expect("failed to invoke kill(1)");
+        assert!(
+            !probe.success(),
+            "orphaned QMD child {pid} still alive after timeout — the wrapper leaked it"
         );
     }
 }
