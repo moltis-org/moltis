@@ -331,7 +331,7 @@ pub(crate) async fn dispatch_before_agent_start_hook(
             )))
         },
         Ok(HookAction::ModifyPayload(_)) => {
-            tracing::debug!("BeforeAgentStart ModifyPayload ignored (startup state is typed)");
+            warn!("BeforeAgentStart ModifyPayload ignored (startup state is typed)");
             Ok(())
         },
         Ok(HookAction::Continue) => Ok(()),
