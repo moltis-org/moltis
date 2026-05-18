@@ -14,7 +14,9 @@ mod chat;
 pub use chat::{ChatMessage, ContentPart, UserContent};
 
 mod convert;
-pub use convert::{extract_tool_call_metadata, values_to_chat_messages};
+pub use convert::{
+    extract_tool_call_metadata, provider_values_to_chat_messages, values_to_chat_messages,
+};
 
 mod stream;
 pub use stream::{LlmProvider, StreamEvent};
@@ -647,6 +649,32 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert!(matches!(&msgs[0], ChatMessage::User { .. }));
         assert!(matches!(&msgs[1], ChatMessage::Assistant { .. }));
+    }
+
+    #[test]
+    fn provider_conversion_preserves_orphan_tool_messages() {
+        let values = vec![
+            serde_json::json!({"role": "user", "content": "run ls"}),
+            serde_json::json!({
+                "role": "tool",
+                "tool_call_id": "call_orphan",
+                "content": "result data"
+            }),
+            serde_json::json!({"role": "assistant", "content": "done"}),
+        ];
+
+        let session_msgs = values_to_chat_messages(&values);
+        assert_eq!(session_msgs.len(), 2);
+
+        let provider_msgs = provider_values_to_chat_messages(&values);
+        assert_eq!(provider_msgs.len(), 3);
+        assert!(matches!(
+            &provider_msgs[1],
+            ChatMessage::Tool {
+                tool_call_id,
+                content
+            } if tool_call_id == "call_orphan" && content == "result data"
+        ));
     }
 
     #[test]

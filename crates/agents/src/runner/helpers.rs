@@ -9,7 +9,7 @@ use moltis_common::hooks::{ChannelBinding, HookAction, HookPayload, HookRegistry
 use crate::{
     model::{
         ChatMessage, ToolCall, ToolCallArgumentDiagnostic, ToolCallArgumentSource, Usage,
-        UserContent, values_to_chat_messages,
+        UserContent, provider_values_to_chat_messages,
     },
     response_sanitizer::clean_response,
     tool_loop_detector::{
@@ -279,7 +279,13 @@ pub(crate) fn apply_before_llm_call_modify_payload(
         return;
     };
 
-    *messages = values_to_chat_messages(modified_messages);
+    let parsed = provider_values_to_chat_messages(modified_messages);
+    if parsed.is_empty() {
+        warn!("BeforeLLMCall ModifyPayload produced no valid messages; keeping original");
+        return;
+    }
+
+    *messages = parsed;
     tracing::debug!(
         messages_count = messages.len(),
         "BeforeLLMCall ModifyPayload applied"

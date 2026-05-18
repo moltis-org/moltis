@@ -276,6 +276,22 @@ async fn test_before_llm_call_modify_payload_updates_streaming_messages() {
     ));
 }
 
+#[test]
+fn test_before_llm_call_modify_payload_keeps_original_when_invalid() {
+    let mut messages = vec![ChatMessage::system("original system")];
+
+    apply_before_llm_call_modify_payload(
+        &mut messages,
+        serde_json::json!({"messages": [{"role": "invalid", "content": "ignored"}]}),
+    );
+
+    assert_eq!(messages.len(), 1);
+    assert!(matches!(
+        messages.first(),
+        Some(ChatMessage::System { content }) if content == "original system"
+    ));
+}
+
 struct StreamingUsageProvider;
 
 #[async_trait]

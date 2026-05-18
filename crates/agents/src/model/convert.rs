@@ -56,6 +56,22 @@ fn document_absolute_path_from_media_ref(media_ref: &str) -> String {
 /// `outputTokens`, `channel`) are silently dropped — they only exist in
 /// the persisted JSON, not in `ChatMessage`.
 pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage> {
+    values_to_chat_messages_inner(values, true)
+}
+
+/// Convert provider-format JSON messages to typed `ChatMessage`s without
+/// dropping tool results.
+///
+/// Hook-modified LLM payloads are already provider-bound, so preserve their
+/// tool messages exactly instead of applying session-store orphan filtering.
+pub fn provider_values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage> {
+    values_to_chat_messages_inner(values, false)
+}
+
+fn values_to_chat_messages_inner(
+    values: &[serde_json::Value],
+    filter_orphan_tool_results: bool,
+) -> Vec<ChatMessage> {
     let mut messages = Vec::with_capacity(values.len());
     // Track tool_call IDs emitted by assistant messages so we only include
     // tool/tool_result messages that have a matching assistant tool_call.
@@ -211,7 +227,8 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
             },
             "tool" => {
                 let tool_call_id = val["tool_call_id"].as_str().unwrap_or("").to_string();
-                if !pending_tool_call_ids.remove(&tool_call_id) {
+                let has_matching_assistant = pending_tool_call_ids.remove(&tool_call_id);
+                if filter_orphan_tool_results && !has_matching_assistant {
                     tracing::debug!(tool_call_id, "skipping orphan tool message");
                     continue;
                 }
@@ -226,7 +243,8 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
             // them to standard tool messages so the LLM sees its own results.
             "tool_result" => {
                 let tool_call_id = val["tool_call_id"].as_str().unwrap_or("").to_string();
-                if !pending_tool_call_ids.remove(&tool_call_id) {
+                let has_matching_assistant = pending_tool_call_ids.remove(&tool_call_id);
+                if filter_orphan_tool_results && !has_matching_assistant {
                     tracing::debug!(tool_call_id, "skipping orphan tool_result message");
                     continue;
                 }
