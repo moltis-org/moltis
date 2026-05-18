@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Duration};
 
 use {
     crate::error::Error,
@@ -255,11 +255,141 @@ static DANGEROUS_SET: std::sync::LazyLock<RegexSet> = std::sync::LazyLock::new(|
 /// Check if a command matches any dangerous pattern.
 /// Returns the description of the first matching pattern.
 pub fn check_dangerous(command: &str) -> Option<&'static str> {
+    let scan_command = strip_heredoc_bodies(command);
     DANGEROUS_SET
-        .matches(command)
+        .matches(scan_command.as_ref())
         .iter()
         .next()
         .map(|i| DANGEROUS_PATTERN_DEFS[i].1)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HeredocDelimiter {
+    marker: String,
+    strip_tabs: bool,
+}
+
+fn strip_heredoc_bodies(command: &str) -> Cow<'_, str> {
+    let mut stripped = String::new();
+    let mut changed = false;
+    let mut pending: Vec<HeredocDelimiter> = Vec::new();
+
+    for line in command.split_inclusive('\n') {
+        let line_without_newline = line.trim_end_matches('\n');
+
+        if let Some(delimiter) = pending.first() {
+            let candidate = if delimiter.strip_tabs {
+                line_without_newline.trim_start_matches('\t')
+            } else {
+                line_without_newline
+            };
+            if candidate == delimiter.marker {
+                pending.remove(0);
+            }
+            changed = true;
+            continue;
+        }
+
+        stripped.push_str(line);
+        let mut delimiters = heredoc_delimiters(line_without_newline);
+        if !delimiters.is_empty() {
+            changed = true;
+            pending.append(&mut delimiters);
+        }
+    }
+
+    if changed {
+        Cow::Owned(stripped)
+    } else {
+        Cow::Borrowed(command)
+    }
+}
+
+fn heredoc_delimiters(line: &str) -> Vec<HeredocDelimiter> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut delimiters = Vec::new();
+    let mut i = 0;
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while i < chars.len() {
+        match chars[i] {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                i += 1;
+            },
+            '"' if !in_single => {
+                in_double = !in_double;
+                i += 1;
+            },
+            '\\' if !in_single => {
+                i = (i + 2).min(chars.len());
+            },
+            '<' if !in_single && !in_double && chars.get(i + 1) == Some(&'<') => {
+                if chars.get(i + 2) == Some(&'<') {
+                    i += 3;
+                    continue;
+                }
+
+                i += 2;
+                let strip_tabs = chars.get(i) == Some(&'-');
+                if strip_tabs {
+                    i += 1;
+                }
+                while chars.get(i).is_some_and(|c| c.is_whitespace()) {
+                    i += 1;
+                }
+                if let Some(marker) = parse_heredoc_marker(&chars, &mut i) {
+                    delimiters.push(HeredocDelimiter { marker, strip_tabs });
+                }
+            },
+            _ => {
+                i += 1;
+            },
+        }
+    }
+
+    delimiters
+}
+
+fn parse_heredoc_marker(chars: &[char], i: &mut usize) -> Option<String> {
+    let mut marker = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+
+    while let Some(&c) = chars.get(*i) {
+        if !in_single && !in_double && (c.is_whitespace() || matches!(c, ';' | '&' | '|')) {
+            break;
+        }
+
+        match c {
+            '\'' if !in_double => {
+                in_single = !in_single;
+                *i += 1;
+            },
+            '"' if !in_single => {
+                in_double = !in_double;
+                *i += 1;
+            },
+            '\\' if !in_single => {
+                *i += 1;
+                if let Some(&escaped) = chars.get(*i) {
+                    marker.push(escaped);
+                    *i += 1;
+                }
+            },
+            _ => {
+                marker.push(c);
+                *i += 1;
+            },
+        }
+    }
+
+    if marker.is_empty() {
+        None
+    } else {
+        Some(marker)
+    }
 }
 
 /// Extract the first command/binary from a shell command string.
@@ -772,6 +902,25 @@ mod tests {
     }
 
     #[test]
+    fn test_heredoc_body_not_flagged_as_dangerous() {
+        let command = "cat > /tmp/safety-test.md << 'EOF'\n\
+WARNING: never run rm -rf / on a production server\n\
+EOF\n";
+
+        assert!(check_dangerous(command).is_none());
+    }
+
+    #[test]
+    fn test_heredoc_executable_lines_still_flagged_as_dangerous() {
+        let command = "cat <<EOF\n\
+plain text only\n\
+EOF\n\
+rm -rf /\n";
+
+        assert_eq!(check_dangerous(command), Some("rm -r on filesystem root"));
+    }
+
+    #[test]
     fn test_dangerous_rm_rf_home() {
         assert_eq!(check_dangerous("rm -rf ~"), Some("rm -r on home directory"));
         assert_eq!(
@@ -912,6 +1061,20 @@ mod tests {
             err.to_string().contains("dangerous command pattern"),
             "unexpected error message: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_heredoc_body_allowed_when_mode_off() {
+        let mgr = ApprovalManager {
+            mode: ApprovalMode::Off,
+            ..Default::default()
+        };
+        let command = "cat > /tmp/safety-test.md << 'EOF'\n\
+WARNING: never run rm -rf / on a production server\n\
+EOF\n";
+
+        let action = mgr.check_command(command).await.unwrap();
+        assert_eq!(action, ApprovalAction::Proceed);
     }
 
     #[tokio::test]
