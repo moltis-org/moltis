@@ -1,13 +1,13 @@
 use {
     super::assert_no_orphaned_required,
     crate::openai_compat::{
-        SseLineResult, StreamingToolState, parse_tool_calls, process_openai_sse_line,
-        sanitize_schema_for_openai_compat,
+        SseLineResult, StreamingToolState, finalize_stream, parse_tool_calls,
+        process_openai_sse_line, sanitize_schema_for_openai_compat,
         schema_normalization::{
             collapse_schema_unions_for_non_strict_tools, strip_null_from_typed_enums,
         },
         strict_mode::patch_schema_for_strict_mode,
-        to_openai_tools, to_responses_api_tools,
+        strip_think_tags, to_openai_tools, to_responses_api_tools,
     },
     moltis_agents::model::StreamEvent,
 };
@@ -328,6 +328,94 @@ fn parse_tool_calls_extracts_metadata() {
             .is_some_and(|m| m["thought_signature"] == "sig_abc"),
         "should extract thought_signature into metadata"
     );
+}
+
+/// Issue #1007: Gemma via Google emits internal reasoning in `<thought>` tags.
+/// The provider parser must route it to `ReasoningDelta` rather than visible text.
+#[test]
+fn streaming_content_extracts_thought_tags_as_reasoning() {
+    let data = serde_json::json!({
+        "choices": [{
+            "delta": {
+                "content": "<thought>private reasoning</thought>\n\nvisible answer"
+            }
+        }]
+    })
+    .to_string();
+
+    let mut state = StreamingToolState::default();
+    let result = process_openai_sse_line(&data, &mut state);
+    let SseLineResult::Events(events) = result else {
+        panic!("expected Events");
+    };
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::ReasoningDelta(delta) if delta == "private reasoning")),
+        "<thought> content should be emitted as reasoning: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Delta(delta) if delta == "visible answer")),
+        "content after </thought> should remain visible: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, StreamEvent::Delta(delta) if delta.contains("thought"))),
+        "visible deltas must not include thought tags: {events:?}"
+    );
+}
+
+#[test]
+fn streaming_content_handles_thought_tag_split_across_chunks() {
+    let mut state = StreamingToolState::default();
+    let chunks = [
+        "<tho",
+        "ught>private",
+        " reasoning</thou",
+        "ght>\n\nvisible answer",
+    ];
+
+    let mut events = Vec::new();
+    for content in chunks {
+        let data = serde_json::json!({
+            "choices": [{ "delta": { "content": content } }]
+        })
+        .to_string();
+        match process_openai_sse_line(&data, &mut state) {
+            SseLineResult::Events(chunk_events) => events.extend(chunk_events),
+            SseLineResult::Skip | SseLineResult::Done => {},
+        }
+    }
+    events.extend(finalize_stream(&mut state));
+
+    let reasoning = events.iter().fold(String::new(), |mut acc, event| {
+        if let StreamEvent::ReasoningDelta(delta) = event {
+            acc.push_str(delta);
+        }
+        acc
+    });
+    let visible = events.iter().fold(String::new(), |mut acc, event| {
+        if let StreamEvent::Delta(delta) = event {
+            acc.push_str(delta);
+        }
+        acc
+    });
+
+    assert_eq!(reasoning, "private reasoning");
+    assert_eq!(visible, "visible answer");
+}
+
+#[test]
+fn non_streaming_content_strips_thought_tags() {
+    let (visible, reasoning) =
+        strip_think_tags("<thought>private reasoning</thought>\n\nvisible answer");
+
+    assert_eq!(reasoning, "private reasoning");
+    assert_eq!(visible, "visible answer");
 }
 
 /// Issue #712: enum-only schemas (no `type` key) must also get null
