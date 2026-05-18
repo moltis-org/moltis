@@ -555,17 +555,17 @@ pub fn parse_openai_compat_usage_from_payload(payload: &serde_json::Value) -> Op
     usage_object_from_payload(payload).map(parse_openai_compat_usage)
 }
 
-/// Strip `<think>...</think>` tags from content, returning `(visible, thinking)`.
+/// Strip reasoning tags from content, returning `(visible, thinking)`.
 ///
 /// Models like DeepSeek R1, QwQ, and MiniMax embed chain-of-thought reasoning
-/// inside `<think>` tags in the `content` field rather than using a separate
+/// inside tags like `<think>` or `<thought>` in the `content` field rather than using a separate
 /// `reasoning_content` field.  This helper splits content into the visible
 /// answer text and the thinking text so callers can handle them appropriately.
 ///
 /// Edge cases handled:
-/// - Multiple `<think>` blocks interspersed with answer text
-/// - Unclosed `<think>` tag (remainder treated as reasoning)
-/// - Empty `<think></think>` blocks
+/// - Multiple reasoning blocks interspersed with answer text
+/// - Unclosed reasoning tag (remainder treated as reasoning)
+/// - Empty reasoning blocks
 /// - Nested angle brackets inside thinking text
 pub fn strip_think_tags(content: &str) -> (String, String) {
     let mut visible = String::new();
@@ -573,18 +573,18 @@ pub fn strip_think_tags(content: &str) -> (String, String) {
     let mut remaining = content;
 
     loop {
-        match remaining.find("<think>") {
-            Some(start) => {
+        match find_next_open_tag(remaining) {
+            Some((start, tag)) => {
                 // Text before <think> is visible
                 visible.push_str(&remaining[..start]);
-                let after_open = &remaining[start + "<think>".len()..];
-                match after_open.find("</think>") {
+                let after_open = &remaining[start + tag.open().len()..];
+                match after_open.find(tag.close()) {
                     Some(end) => {
                         thinking.push_str(&after_open[..end]);
-                        remaining = &after_open[end + "</think>".len()..];
+                        remaining = &after_open[end + tag.close().len()..];
                     },
                     None => {
-                        // Unclosed <think> — treat rest as reasoning
+                        // Unclosed reasoning tag — treat rest as reasoning
                         thinking.push_str(after_open);
                         break;
                     },
@@ -603,6 +603,45 @@ pub fn strip_think_tags(content: &str) -> (String, String) {
     )
 }
 
+#[derive(Clone, Copy)]
+enum ReasoningTag {
+    Think,
+    Thought,
+}
+
+impl ReasoningTag {
+    const ALL: [Self; 2] = [Self::Think, Self::Thought];
+
+    fn open(self) -> &'static str {
+        match self {
+            Self::Think => "<think>",
+            Self::Thought => "<thought>",
+        }
+    }
+
+    fn close(self) -> &'static str {
+        match self {
+            Self::Think => "</think>",
+            Self::Thought => "</thought>",
+        }
+    }
+}
+
+fn find_next_open_tag(text: &str) -> Option<(usize, ReasoningTag)> {
+    ReasoningTag::ALL
+        .into_iter()
+        .filter_map(|tag| text.find(tag.open()).map(|pos| (pos, tag)))
+        .min_by_key(|(pos, _)| *pos)
+}
+
+fn longest_reasoning_open_tag_suffix(text: &str) -> usize {
+    ReasoningTag::ALL
+        .into_iter()
+        .map(|tag| longest_tag_suffix(text, tag.open()))
+        .max()
+        .unwrap_or_default()
+}
+
 /// State for tracking streaming tool calls.
 #[derive(Default)]
 pub struct StreamingToolState {
@@ -612,17 +651,19 @@ pub struct StreamingToolState {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_write_tokens: u32,
-    /// Whether we are currently inside a `<think>` block in streamed content.
+    /// Whether we are currently inside a reasoning tag block in streamed content.
     in_think_block: bool,
+    /// Which reasoning tag opened the current block.
+    current_reasoning_tag: Option<ReasoningTag>,
     /// Whether we are still stripping leading whitespace at the start of a
-    /// think block. Set to `true` when entering `<think>`, cleared once
+    /// reasoning block. Set to `true` when entering a reasoning tag, cleared once
     /// non-whitespace reasoning content is emitted.
     think_strip_leading_ws: bool,
     /// Whether we are still stripping leading whitespace from visible content
-    /// after exiting a `</think>` block. Models often emit `\n\n` between
-    /// `</think>` and the actual answer.
+    /// after exiting a reasoning tag block. Models often emit `\n\n` between
+    /// reasoning and the actual answer.
     visible_strip_leading_ws: bool,
-    /// Buffer for detecting `<think>` / `</think>` tags that may be split
+    /// Buffer for detecting reasoning tags that may be split
     /// across SSE chunk boundaries.
     tag_buffer: String,
 }
@@ -678,13 +719,13 @@ fn emit_visible(text: String, strip_leading_ws: &mut bool, events: &mut Vec<Stre
     events.push(StreamEvent::Delta(emitted));
 }
 
-/// Process streamed content through the `<think>` tag state machine.
+/// Process streamed content through the reasoning-tag state machine.
 ///
-/// Content arriving inside `<think>...</think>` is emitted as
+/// Content arriving inside `<think>...</think>` or `<thought>...</thought>` is emitted as
 /// `ReasoningDelta`; content outside is emitted as `Delta`.
 /// Tags may be split across SSE chunks — `tag_buffer` accumulates
 /// partial tag fragments until they can be resolved.
-/// Leading whitespace at the start of each think block is stripped.
+/// Leading whitespace at the start of each reasoning block is stripped.
 fn process_content_think_tags(
     content: &str,
     state: &mut StreamingToolState,
@@ -694,21 +735,27 @@ fn process_content_think_tags(
 
     loop {
         if state.in_think_block {
-            // Look for </think> to exit think mode
-            match state.tag_buffer.find("</think>") {
+            let Some(current_tag) = state.current_reasoning_tag else {
+                state.in_think_block = false;
+                continue;
+            };
+            let close_tag = current_tag.close();
+            // Look for the matching close tag to exit reasoning mode.
+            match state.tag_buffer.find(close_tag) {
                 Some(pos) => {
                     let thinking = state.tag_buffer[..pos].to_string();
                     emit_reasoning(thinking, &mut state.think_strip_leading_ws, events);
                     state.in_think_block = false;
+                    state.current_reasoning_tag = None;
                     state.visible_strip_leading_ws = true;
-                    let rest = state.tag_buffer[pos + "</think>".len()..].to_string();
+                    let rest = state.tag_buffer[pos + close_tag.len()..].to_string();
                     state.tag_buffer = rest;
                     // Continue loop to process remaining content
                 },
                 None => {
-                    // Check if buffer ends with a prefix of "</think>"
+                    // Check if buffer ends with a prefix of the closing tag
                     // to avoid emitting partial tag as reasoning text.
-                    let suffix_match = longest_tag_suffix(&state.tag_buffer, "</think>");
+                    let suffix_match = longest_tag_suffix(&state.tag_buffer, close_tag);
                     if suffix_match > 0 {
                         let safe = state.tag_buffer.len() - suffix_match;
                         let emit = state.tag_buffer[..safe].to_string();
@@ -724,20 +771,21 @@ fn process_content_think_tags(
                 },
             }
         } else {
-            // Look for <think> to enter think mode
-            match state.tag_buffer.find("<think>") {
-                Some(pos) => {
+            // Look for an opening reasoning tag to enter reasoning mode.
+            match find_next_open_tag(&state.tag_buffer) {
+                Some((pos, tag)) => {
                     let visible = state.tag_buffer[..pos].to_string();
                     emit_visible(visible, &mut state.visible_strip_leading_ws, events);
                     state.in_think_block = true;
+                    state.current_reasoning_tag = Some(tag);
                     state.think_strip_leading_ws = true;
-                    let rest = state.tag_buffer[pos + "<think>".len()..].to_string();
+                    let rest = state.tag_buffer[pos + tag.open().len()..].to_string();
                     state.tag_buffer = rest;
                     // Continue loop to process remaining content
                 },
                 None => {
-                    // Check if buffer ends with a prefix of "<think>"
-                    let suffix_match = longest_tag_suffix(&state.tag_buffer, "<think>");
+                    // Check if buffer ends with a prefix of any opening reasoning tag.
+                    let suffix_match = longest_reasoning_open_tag_suffix(&state.tag_buffer);
                     if suffix_match > 0 {
                         let safe = state.tag_buffer.len() - suffix_match;
                         let emit = state.tag_buffer[..safe].to_string();

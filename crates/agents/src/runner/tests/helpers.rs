@@ -16,9 +16,9 @@ use {
 pub(super) use {
     super::super::{
         AgentRunError, AgentRunResult, OnEvent, RunnerEvent, TOOL_RESULT_COMPACTION_PLACEHOLDER,
-        compact_tool_results_oldest_first_in_place, enforce_tool_result_context_budget,
-        explicit_shell_command_from_user_content, is_substantive_answer_text,
-        legacy_public_tool_alias, resolve_tool_lookup,
+        apply_before_llm_call_modify_payload, compact_tool_results_oldest_first_in_place,
+        enforce_tool_result_context_budget, explicit_shell_command_from_user_content,
+        is_substantive_answer_text, legacy_public_tool_alias, resolve_tool_lookup,
         retry::*,
         run_agent_loop, run_agent_loop_with_context, sanitize_tool_name, sanitize_tool_result,
         streaming::run_agent_loop_streaming,

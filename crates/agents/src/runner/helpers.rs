@@ -9,7 +9,7 @@ use moltis_common::hooks::{ChannelBinding, HookAction, HookPayload, HookRegistry
 use crate::{
     model::{
         ChatMessage, ToolCall, ToolCallArgumentDiagnostic, ToolCallArgumentSource, Usage,
-        UserContent,
+        UserContent, provider_values_to_chat_messages,
     },
     response_sanitizer::clean_response,
     tool_loop_detector::{
@@ -264,6 +264,32 @@ pub(crate) fn log_tool_argument_diagnostic(
             "tool call arguments decoded with diagnostics"
         ),
     }
+}
+
+pub(crate) fn apply_before_llm_call_modify_payload(
+    messages: &mut Vec<ChatMessage>,
+    modified_payload: serde_json::Value,
+) {
+    let Some(modified_messages) = modified_payload
+        .get("messages")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| modified_payload.as_array())
+    else {
+        warn!("BeforeLLMCall ModifyPayload missing messages array");
+        return;
+    };
+
+    let parsed = provider_values_to_chat_messages(modified_messages);
+    if parsed.is_empty() {
+        warn!("BeforeLLMCall ModifyPayload produced no valid messages; keeping original");
+        return;
+    }
+
+    *messages = parsed;
+    tracing::debug!(
+        messages_count = messages.len(),
+        "BeforeLLMCall ModifyPayload applied"
+    );
 }
 
 pub(crate) async fn dispatch_after_llm_call_hook(

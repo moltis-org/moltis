@@ -81,7 +81,6 @@ pub fn load_config_value(path: &Path) -> crate::Result<serde_json::Value> {
 ///
 /// Performs all write side-effects that prepare the config directory:
 /// - Refreshes Moltis-managed `defaults.toml`
-/// - Auto-compacts user config (strips materialized defaults)
 /// - Writes a default config template on first run
 /// - Persists a randomly generated port so it stays stable
 ///
@@ -92,25 +91,6 @@ pub fn initialize_config() {
         && let Err(e) = crate::defaults::write_defaults_toml(&dir)
     {
         warn!(error = %e, "failed to write defaults.toml");
-    }
-
-    // Auto-compact: strip default values that were materialized by older
-    // versions. Idempotent — no-op when already compact.
-    if find_config_file().is_some() {
-        match compact_config() {
-            Ok((before, after)) if before > after => {
-                info!(
-                    before,
-                    after,
-                    removed = before - after,
-                    "auto-compacted user config (stripped default values)"
-                );
-            },
-            Err(e) => {
-                debug!(error = %e, "auto-compact skipped");
-            },
-            _ => {},
-        }
     }
 
     // Write default user config on first run (when no config file exists).
