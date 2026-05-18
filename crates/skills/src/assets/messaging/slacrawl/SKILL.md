@@ -11,7 +11,7 @@ requires:
       bins: [slacrawl]
       os: [darwin]
     - kind: go
-      module: "github.com/vincentkoc/slacrawl/cmd/slacrawl@latest"
+      module: "github.com/openclaw/slacrawl/cmd/slacrawl@latest"
       bins: [slacrawl]
 origin:
   source: moltis

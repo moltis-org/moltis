@@ -764,6 +764,29 @@ mod tests {
     }
 
     #[test]
+    fn slacrawl_go_install_uses_declared_module_path() {
+        let skills = store().discover();
+        let slacrawl = skills
+            .iter()
+            .find(|s| s.name == "slacrawl")
+            .expect("slacrawl should be bundled");
+
+        let modules: Vec<&str> = slacrawl
+            .requires
+            .install
+            .iter()
+            .filter_map(|install| install.module.as_deref())
+            .collect();
+
+        assert!(modules.contains(&"github.com/openclaw/slacrawl/cmd/slacrawl@latest"));
+        assert!(
+            !modules
+                .iter()
+                .any(|module| module.contains("github.com/vincentkoc/slacrawl"))
+        );
+    }
+
+    #[test]
     fn webhook_subscriptions_is_moltis_native() {
         let s = store();
         let body = s.read_skill("webhook-subscriptions").expect("should exist");

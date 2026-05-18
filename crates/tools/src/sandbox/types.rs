@@ -577,7 +577,7 @@ pub(crate) const GO_TOOL_INSTALLS: &[(&str, &str, &str)] = &[
         "discrawl",
     ),
     (
-        "github.com/vincentkoc/slacrawl/cmd/slacrawl",
+        "github.com/openclaw/slacrawl/cmd/slacrawl",
         "latest",
         "slacrawl",
     ),
