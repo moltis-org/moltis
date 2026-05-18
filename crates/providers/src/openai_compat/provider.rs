@@ -610,6 +610,8 @@ enum ReasoningTag {
 }
 
 impl ReasoningTag {
+    const ALL: [Self; 2] = [Self::Think, Self::Thought];
+
     fn open(self) -> &'static str {
         match self {
             Self::Think => "<think>",
@@ -626,15 +628,16 @@ impl ReasoningTag {
 }
 
 fn find_next_open_tag(text: &str) -> Option<(usize, ReasoningTag)> {
-    [ReasoningTag::Think, ReasoningTag::Thought]
+    ReasoningTag::ALL
         .into_iter()
         .filter_map(|tag| text.find(tag.open()).map(|pos| (pos, tag)))
         .min_by_key(|(pos, _)| *pos)
 }
 
-fn longest_reasoning_tag_suffix(text: &str, tags: &[&str]) -> usize {
-    tags.iter()
-        .map(|tag| longest_tag_suffix(text, tag))
+fn longest_reasoning_open_tag_suffix(text: &str) -> usize {
+    ReasoningTag::ALL
+        .into_iter()
+        .map(|tag| longest_tag_suffix(text, tag.open()))
         .max()
         .unwrap_or_default()
 }
@@ -648,19 +651,19 @@ pub struct StreamingToolState {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_write_tokens: u32,
-    /// Whether we are currently inside a `<think>` block in streamed content.
+    /// Whether we are currently inside a reasoning tag block in streamed content.
     in_think_block: bool,
     /// Which reasoning tag opened the current block.
     current_reasoning_tag: Option<ReasoningTag>,
     /// Whether we are still stripping leading whitespace at the start of a
-    /// think block. Set to `true` when entering `<think>`, cleared once
+    /// reasoning block. Set to `true` when entering a reasoning tag, cleared once
     /// non-whitespace reasoning content is emitted.
     think_strip_leading_ws: bool,
     /// Whether we are still stripping leading whitespace from visible content
-    /// after exiting a `</think>` block. Models often emit `\n\n` between
-    /// `</think>` and the actual answer.
+    /// after exiting a reasoning tag block. Models often emit `\n\n` between
+    /// reasoning and the actual answer.
     visible_strip_leading_ws: bool,
-    /// Buffer for detecting `<think>` / `</think>` tags that may be split
+    /// Buffer for detecting reasoning tags that may be split
     /// across SSE chunk boundaries.
     tag_buffer: String,
 }
@@ -722,7 +725,7 @@ fn emit_visible(text: String, strip_leading_ws: &mut bool, events: &mut Vec<Stre
 /// `ReasoningDelta`; content outside is emitted as `Delta`.
 /// Tags may be split across SSE chunks — `tag_buffer` accumulates
 /// partial tag fragments until they can be resolved.
-/// Leading whitespace at the start of each think block is stripped.
+/// Leading whitespace at the start of each reasoning block is stripped.
 fn process_content_think_tags(
     content: &str,
     state: &mut StreamingToolState,
@@ -782,8 +785,7 @@ fn process_content_think_tags(
                 },
                 None => {
                     // Check if buffer ends with a prefix of any opening reasoning tag.
-                    let suffix_match =
-                        longest_reasoning_tag_suffix(&state.tag_buffer, &["<think>", "<thought>"]);
+                    let suffix_match = longest_reasoning_open_tag_suffix(&state.tag_buffer);
                     if suffix_match > 0 {
                         let safe = state.tag_buffer.len() - suffix_match;
                         let emit = state.tag_buffer[..safe].to_string();
