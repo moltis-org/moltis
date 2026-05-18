@@ -82,6 +82,7 @@ pub fn values_to_chat_messages(values: &[serde_json::Value]) -> Vec<ChatMessage>
                             .as_str()
                             .or_else(|| ch["username"].as_str())
                     })
+                    .or_else(|| val["name"].as_str())
                     .map(|s| s.to_string());
 
                 let document_context = val["documents"].as_array().and_then(|documents| {

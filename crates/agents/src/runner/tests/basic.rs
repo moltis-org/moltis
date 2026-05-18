@@ -10,7 +10,7 @@ use {
     },
     anyhow::Result,
     async_trait::async_trait,
-    moltis_common::hooks::HookRegistry,
+    moltis_common::hooks::{HookAction, HookEvent, HookHandler, HookPayload, HookRegistry},
     std::pin::Pin,
     tokio_stream::Stream,
 };
@@ -133,6 +133,147 @@ async fn test_simple_text_response() {
     assert_eq!(result.text, "Hello!");
     assert_eq!(result.iterations, 1);
     assert_eq!(result.tool_calls_made, 0);
+}
+
+struct InjectBeforeLlmSystemHook;
+
+#[async_trait]
+impl HookHandler for InjectBeforeLlmSystemHook {
+    fn name(&self) -> &str {
+        "inject-before-llm-system-hook"
+    }
+
+    fn events(&self) -> &[HookEvent] {
+        static EVENTS: [HookEvent; 1] = [HookEvent::BeforeLLMCall];
+        &EVENTS
+    }
+
+    async fn handle(
+        &self,
+        _event: HookEvent,
+        payload: &HookPayload,
+    ) -> moltis_common::error::Result<HookAction> {
+        let HookPayload::BeforeLLMCall { messages, .. } = payload else {
+            return Ok(HookAction::Continue);
+        };
+        let mut messages = messages.as_array().cloned().unwrap_or_default();
+        messages.insert(
+            0,
+            serde_json::json!({"role": "system", "content": "hook-injected system"}),
+        );
+        Ok(HookAction::ModifyPayload(
+            serde_json::json!({"messages": messages}),
+        ))
+    }
+}
+
+struct RecordingMessagesProvider {
+    messages: Arc<std::sync::Mutex<Vec<ChatMessage>>>,
+}
+
+#[async_trait]
+impl LlmProvider for RecordingMessagesProvider {
+    fn name(&self) -> &str {
+        "recording-messages"
+    }
+
+    fn id(&self) -> &str {
+        "recording-messages-model"
+    }
+
+    async fn complete(
+        &self,
+        messages: &[ChatMessage],
+        _tools: &[serde_json::Value],
+    ) -> Result<CompletionResponse> {
+        *self.messages.lock().unwrap() = messages.to_vec();
+        Ok(CompletionResponse {
+            text: Some("ok".into()),
+            tool_calls: vec![],
+            usage: Usage::default(),
+        })
+    }
+
+    fn stream(
+        &self,
+        _messages: Vec<ChatMessage>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(tokio_stream::empty())
+    }
+
+    fn stream_with_tools(
+        &self,
+        messages: Vec<ChatMessage>,
+        _tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        *self.messages.lock().unwrap() = messages;
+        Box::pin(tokio_stream::iter(vec![StreamEvent::Delta("ok".into())]))
+    }
+}
+
+#[tokio::test]
+async fn test_before_llm_call_modify_payload_updates_non_streaming_messages() {
+    let recorded_messages = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let provider = Arc::new(RecordingMessagesProvider {
+        messages: Arc::clone(&recorded_messages),
+    });
+    let tools = ToolRegistry::new();
+    let mut hooks = HookRegistry::new();
+    hooks.register(Arc::new(InjectBeforeLlmSystemHook));
+
+    let result = run_agent_loop_with_context(
+        provider,
+        &tools,
+        "original system",
+        &UserContent::text("hello"),
+        None,
+        None,
+        None,
+        Some(Arc::new(hooks)),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.text, "ok");
+    let messages = recorded_messages.lock().unwrap();
+    assert!(matches!(
+        messages.first(),
+        Some(ChatMessage::System { content }) if content == "hook-injected system"
+    ));
+}
+
+#[tokio::test]
+async fn test_before_llm_call_modify_payload_updates_streaming_messages() {
+    let recorded_messages = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let provider = Arc::new(RecordingMessagesProvider {
+        messages: Arc::clone(&recorded_messages),
+    });
+    let tools = ToolRegistry::new();
+    let mut hooks = HookRegistry::new();
+    hooks.register(Arc::new(InjectBeforeLlmSystemHook));
+
+    let result = run_agent_loop_streaming(
+        provider,
+        &tools,
+        "original system",
+        &UserContent::text("hello"),
+        None,
+        None,
+        None,
+        Some(Arc::new(hooks)),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.text, "ok");
+    let messages = recorded_messages.lock().unwrap();
+    assert!(matches!(
+        messages.first(),
+        Some(ChatMessage::System { content }) if content == "hook-injected system"
+    ));
 }
 
 struct StreamingUsageProvider;

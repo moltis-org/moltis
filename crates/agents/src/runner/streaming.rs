@@ -30,8 +30,9 @@ use crate::{
 
 use super::{
     AUTO_CONTINUE_NUDGE, AgentRunError, AgentRunResult, MALFORMED_TOOL_RETRY_PROMPT, OnEvent,
-    RunnerEvent, UsageAccumulator, apply_loop_detector_intervention,
-    channel_binding_from_tool_context, dispatch_after_llm_call_hook, empty_tool_name_retry_prompt,
+    RunnerEvent, UsageAccumulator, apply_before_llm_call_modify_payload,
+    apply_loop_detector_intervention, channel_binding_from_tool_context,
+    dispatch_after_llm_call_hook, empty_tool_name_retry_prompt,
     explicit_shell_command_from_user_content, find_empty_tool_name_call, finish_agent_run,
     has_named_tool_call, is_substantive_answer_text, log_tool_argument_diagnostic,
     resolve_tool_lookup,
@@ -203,8 +204,8 @@ pub async fn run_agent_loop_streaming(
                         "blocked by BeforeLLMCall hook: {reason}"
                     )));
                 },
-                Ok(HookAction::ModifyPayload(_)) => {
-                    debug!("BeforeLLMCall ModifyPayload ignored (messages are typed)");
+                Ok(HookAction::ModifyPayload(modified_payload)) => {
+                    apply_before_llm_call_modify_payload(&mut messages, modified_payload);
                 },
                 Ok(HookAction::Continue) => {},
                 Err(e) => {
