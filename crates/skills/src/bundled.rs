@@ -764,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn slacrawl_go_install_uses_declared_module_path() {
+    fn slacrawl_install_metadata_uses_openclaw_sources() {
         let skills = store().discover();
         let slacrawl = skills
             .iter()
@@ -778,7 +778,30 @@ mod tests {
             .filter_map(|install| install.module.as_deref())
             .collect();
 
+        assert_eq!(
+            slacrawl.homepage.as_deref(),
+            Some("https://github.com/openclaw/slacrawl")
+        );
+        assert!(
+            slacrawl
+                .requires
+                .install
+                .iter()
+                .any(|install| install.formula.as_deref() == Some("openclaw/tap/slacrawl"))
+        );
         assert!(modules.contains(&"github.com/openclaw/slacrawl/cmd/slacrawl@latest"));
+        assert!(
+            !slacrawl
+                .homepage
+                .as_deref()
+                .is_some_and(|homepage| { homepage.contains("github.com/vincentkoc/slacrawl") })
+        );
+        assert!(!slacrawl.requires.install.iter().any(|install| {
+            install
+                .formula
+                .as_deref()
+                .is_some_and(|formula| formula.contains("vincentkoc/tap/slacrawl"))
+        }));
         assert!(
             !modules
                 .iter()
