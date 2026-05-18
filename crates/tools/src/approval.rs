@@ -1,4 +1,9 @@
-use std::{borrow::Cow, collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    borrow::Cow,
+    collections::{HashSet, VecDeque},
+    sync::Arc,
+    time::Duration,
+};
 
 use {
     crate::error::Error,
@@ -272,19 +277,25 @@ struct HeredocDelimiter {
 fn strip_heredoc_bodies(command: &str) -> Cow<'_, str> {
     let mut stripped = String::new();
     let mut changed = false;
-    let mut pending: Vec<HeredocDelimiter> = Vec::new();
+    let mut pending: VecDeque<HeredocDelimiter> = VecDeque::new();
+    let mut omitted = String::new();
 
     for line in command.split_inclusive('\n') {
         let line_without_newline = line.trim_end_matches('\n');
 
-        if let Some(delimiter) = pending.first() {
+        if let Some(delimiter) = pending.front() {
             let candidate = if delimiter.strip_tabs {
                 line_without_newline.trim_start_matches('\t')
             } else {
                 line_without_newline
             };
             if candidate == delimiter.marker {
-                pending.remove(0);
+                pending.pop_front();
+                if pending.is_empty() {
+                    omitted.clear();
+                }
+            } else {
+                omitted.push_str(line);
             }
             changed = true;
             continue;
@@ -294,8 +305,12 @@ fn strip_heredoc_bodies(command: &str) -> Cow<'_, str> {
         let mut delimiters = heredoc_delimiters(line_without_newline);
         if !delimiters.is_empty() {
             changed = true;
-            pending.append(&mut delimiters);
+            pending.extend(delimiters.drain(..));
         }
+    }
+
+    if !pending.is_empty() {
+        stripped.push_str(&omitted);
     }
 
     if changed {
@@ -918,6 +933,23 @@ EOF\n\
 rm -rf /\n";
 
         assert_eq!(check_dangerous(command), Some("rm -r on filesystem root"));
+    }
+
+    #[test]
+    fn test_unterminated_heredoc_body_still_scanned_as_dangerous() {
+        let command = "cat <<EOF\n\
+rm -rf /\n";
+
+        assert_eq!(check_dangerous(command), Some("rm -r on filesystem root"));
+    }
+
+    #[test]
+    fn test_strip_tabs_heredoc_body_not_flagged_as_dangerous() {
+        let command = "cat <<-EOF\n\
+\tWARNING: never run rm -rf / on a production server\n\
+\tEOF\n";
+
+        assert!(check_dangerous(command).is_none());
     }
 
     #[test]
