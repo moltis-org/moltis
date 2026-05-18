@@ -497,6 +497,41 @@ disabled = false
 }
 
 #[test]
+fn initialize_config_preserves_explicit_default_coqui_endpoint() {
+    let _guard = CONFIG_DIR_TEST_LOCK.lock().unwrap();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("moltis.toml");
+
+    std::fs::write(
+        &config_path,
+        r#"
+[server]
+port = 18789
+
+[voice.tts.coqui]
+enabled = true
+endpoint = "http://localhost:5002"
+"#,
+    )
+    .expect("write config");
+
+    set_config_dir(dir.path().to_path_buf());
+    initialize_config();
+
+    let saved = std::fs::read_to_string(&config_path).expect("read saved");
+    assert!(
+        saved.contains("endpoint = \"http://localhost:5002\""),
+        "startup initialization must not strip explicit default-valued Coqui endpoint"
+    );
+    assert!(
+        saved.contains("enabled = true"),
+        "startup initialization must not strip explicit default-valued Coqui enabled flag"
+    );
+
+    clear_config_dir();
+}
+
+#[test]
 fn strip_default_values_removes_matching_defaults() {
     let effective = r#"
 [server]
