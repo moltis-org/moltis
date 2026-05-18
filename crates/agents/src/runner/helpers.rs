@@ -309,6 +309,39 @@ pub(crate) async fn dispatch_after_llm_call_hook(
     }
 }
 
+pub(crate) async fn dispatch_before_agent_start_hook(
+    hook_registry: Option<&std::sync::Arc<HookRegistry>>,
+    session_key: &str,
+    model: &str,
+) -> Result<(), AgentRunError> {
+    let Some(hooks) = hook_registry else {
+        return Ok(());
+    };
+
+    let payload = HookPayload::BeforeAgentStart {
+        session_key: session_key.to_string(),
+        model: model.to_string(),
+    };
+
+    match hooks.dispatch(&payload).await {
+        Ok(HookAction::Block(reason)) => {
+            warn!(reason = %reason, "agent start blocked by BeforeAgentStart hook");
+            Err(AgentRunError::Other(anyhow::anyhow!(
+                "blocked by BeforeAgentStart hook: {reason}"
+            )))
+        },
+        Ok(HookAction::ModifyPayload(_)) => {
+            tracing::debug!("BeforeAgentStart ModifyPayload ignored (startup state is typed)");
+            Ok(())
+        },
+        Ok(HookAction::Continue) => Ok(()),
+        Err(e) => {
+            warn!(error = %e, "BeforeAgentStart hook dispatch failed");
+            Ok(())
+        },
+    }
+}
+
 pub(crate) fn finish_agent_run(
     final_text: String,
     iterations: usize,

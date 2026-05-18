@@ -10,7 +10,7 @@ use {
     },
     anyhow::Result,
     async_trait::async_trait,
-    moltis_common::hooks::HookRegistry,
+    moltis_common::hooks::{HookPayload, HookRegistry},
     std::pin::Pin,
     tokio_stream::Stream,
 };
@@ -135,6 +135,42 @@ async fn test_simple_text_response() {
     assert_eq!(result.tool_calls_made, 0);
 }
 
+#[tokio::test]
+async fn test_non_streaming_runner_dispatches_before_agent_start_hook() {
+    let provider = Arc::new(MockProvider {
+        response_text: "Hello!".into(),
+    });
+    let tools = ToolRegistry::new();
+    let payloads = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut hooks = HookRegistry::new();
+    hooks.register(Arc::new(AgentStartRecordingHook {
+        payloads: Arc::clone(&payloads),
+    }));
+
+    let result = run_agent_loop_with_context(
+        provider,
+        &tools,
+        "You are a test bot.",
+        &UserContent::text("Hi"),
+        None,
+        None,
+        Some(serde_json::json!({"_session_key": "session-123"})),
+        Some(Arc::new(hooks)),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.text, "Hello!");
+    let payloads = payloads.lock().unwrap();
+    assert_eq!(payloads.len(), 1);
+    assert!(matches!(
+        &payloads[0],
+        HookPayload::BeforeAgentStart { session_key, model }
+            if session_key == "session-123" && model == "mock-model"
+    ));
+}
+
 struct StreamingUsageProvider;
 
 #[async_trait]
@@ -215,6 +251,41 @@ async fn test_streaming_runner_preserves_cache_usage() {
     assert_eq!(result.request_usage.output_tokens, 17);
     assert_eq!(result.request_usage.cache_read_tokens, 12_800);
     assert_eq!(result.request_usage.cache_write_tokens, 64);
+}
+
+#[tokio::test]
+async fn test_streaming_runner_dispatches_before_agent_start_hook() {
+    let provider = Arc::new(StreamingUsageProvider);
+    let tools = ToolRegistry::new();
+    let payloads = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut hooks = HookRegistry::new();
+    hooks.register(Arc::new(AgentStartRecordingHook {
+        payloads: Arc::clone(&payloads),
+    }));
+
+    let result = run_agent_loop_streaming(
+        provider,
+        &tools,
+        "You are a test bot.",
+        &UserContent::text("Hi"),
+        None,
+        None,
+        Some(serde_json::json!({"_session_key": "stream-session-123"})),
+        Some(Arc::new(hooks)),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.text, "cached reply");
+    let payloads = payloads.lock().unwrap();
+    assert_eq!(payloads.len(), 1);
+    assert!(matches!(
+        &payloads[0],
+        HookPayload::BeforeAgentStart { session_key, model }
+            if session_key == "stream-session-123" && model == "streaming-usage-model"
+    ));
 }
 
 struct NonStreamingUsageProvider {

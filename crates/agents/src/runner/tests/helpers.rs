@@ -81,6 +81,31 @@ impl HookHandler for RewriteToolArgsHook {
     }
 }
 
+pub(super) struct AgentStartRecordingHook {
+    pub payloads: Arc<std::sync::Mutex<Vec<HookPayload>>>,
+}
+
+#[async_trait]
+impl HookHandler for AgentStartRecordingHook {
+    fn name(&self) -> &str {
+        "agent-start-recording-hook"
+    }
+
+    fn events(&self) -> &[HookEvent] {
+        static EVENTS: [HookEvent; 1] = [HookEvent::BeforeAgentStart];
+        &EVENTS
+    }
+
+    async fn handle(
+        &self,
+        _event: HookEvent,
+        payload: &HookPayload,
+    ) -> moltis_common::error::Result<HookAction> {
+        self.payloads.lock().unwrap().push(payload.clone());
+        Ok(HookAction::Continue)
+    }
+}
+
 // ── Mock providers ──────────────────────────────────────────────────────
 
 /// A mock provider that returns text on the first call.
