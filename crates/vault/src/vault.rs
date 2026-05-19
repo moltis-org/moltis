@@ -91,6 +91,7 @@ impl<C: Cipher> Vault<C> {
         let mut tx = self.pool.begin().await?;
         let recovery_key = self.initialize_in_transaction(password, &mut tx).await?;
         tx.commit().await?;
+        self.unseal(password).await?;
 
         #[cfg(feature = "tracing")]
         tracing::info!("vault initialized");
@@ -99,6 +100,9 @@ impl<C: Cipher> Vault<C> {
     }
 
     /// Initialize the vault as part of a caller-owned SQLite transaction.
+    ///
+    /// The vault remains sealed until the caller commits and explicitly unseals
+    /// it, so rolled-back transactions cannot leave an in-memory DEK live.
     pub async fn initialize_in_transaction(
         &self,
         password: &str,
@@ -140,9 +144,6 @@ impl<C: Cipher> Vault<C> {
         .bind(&recovery_hash)
         .execute(&mut **tx)
         .await?;
-
-        // Hold DEK in memory (vault is now unsealed).
-        *self.dek.write().await = Some(dek);
 
         Ok(recovery_key)
     }

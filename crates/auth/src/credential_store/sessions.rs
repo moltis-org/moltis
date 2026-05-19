@@ -401,6 +401,12 @@ impl CredentialStore {
         .await?;
 
         tx.commit().await?;
+        if recovery_key.is_some() {
+            vault
+                .unseal(password)
+                .await
+                .map_err(map_vault_password_change_error)?;
+        }
         self.setup_complete.store(true, Ordering::Relaxed);
         self.auth_disabled.store(false, Ordering::Relaxed);
         moltis_config::update_config(|c| c.auth.disabled = false).map_err(Error::from)?;
