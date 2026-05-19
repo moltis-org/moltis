@@ -1,6 +1,11 @@
 //! Vault state machine: initialization, seal/unseal, encrypt/decrypt.
 
-use {base64::Engine, sqlx::SqlitePool, tokio::sync::RwLock, zeroize::Zeroizing};
+use {
+    base64::Engine,
+    sqlx::{Sqlite, SqlitePool, Transaction},
+    tokio::sync::RwLock,
+    zeroize::Zeroizing,
+};
 
 use crate::{
     error::VaultError,
@@ -185,6 +190,24 @@ impl<C: Cipher> Vault<C> {
     ///
     /// The vault must already be unsealed (DEK in memory).
     pub async fn change_password(&self, old: &str, new: &str) -> Result<(), VaultError> {
+        let mut tx = self.pool.begin().await?;
+        self.change_password_in_transaction(old, new, &mut tx)
+            .await?;
+        tx.commit().await?;
+
+        #[cfg(feature = "tracing")]
+        tracing::info!("vault password changed (DEK re-wrapped)");
+
+        Ok(())
+    }
+
+    /// Change the password as part of a caller-owned SQLite transaction.
+    pub async fn change_password_in_transaction(
+        &self,
+        old: &str,
+        new: &str,
+        tx: &mut Transaction<'_, Sqlite>,
+    ) -> Result<(), VaultError> {
         let row = self
             .load_metadata()
             .await?
@@ -218,11 +241,8 @@ impl<C: Cipher> Vault<C> {
         .bind(&new_salt_b64)
         .bind(&params_json)
         .bind(&new_wrapped)
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
-
-        #[cfg(feature = "tracing")]
-        tracing::info!("vault password changed (DEK re-wrapped)");
 
         Ok(())
     }
@@ -233,6 +253,22 @@ impl<C: Cipher> Vault<C> {
     /// recovery-key unlock, where possession of the in-memory DEK is the proof
     /// needed to rotate the password wrapper.
     pub async fn rewrap_unsealed(&self, new: &str) -> Result<(), VaultError> {
+        let mut tx = self.pool.begin().await?;
+        self.rewrap_unsealed_in_transaction(new, &mut tx).await?;
+        tx.commit().await?;
+
+        #[cfg(feature = "tracing")]
+        tracing::info!("vault password wrapper rekeyed from unsealed DEK");
+
+        Ok(())
+    }
+
+    /// Re-wrap the DEK with a new password as part of a caller-owned SQLite transaction.
+    pub async fn rewrap_unsealed_in_transaction(
+        &self,
+        new: &str,
+        tx: &mut Transaction<'_, Sqlite>,
+    ) -> Result<(), VaultError> {
         let row = self
             .load_metadata()
             .await?
@@ -256,11 +292,8 @@ impl<C: Cipher> Vault<C> {
         .bind(&new_salt_b64)
         .bind(&params_json)
         .bind(&new_wrapped)
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
-
-        #[cfg(feature = "tracing")]
-        tracing::info!("vault password wrapper rekeyed from unsealed DEK");
 
         Ok(())
     }
@@ -358,6 +391,10 @@ mod tests {
         .await
         .unwrap();
         pool
+    }
+
+    fn test_password(label: &str) -> String {
+        format!("vault-test-{label}-{}", rand::random::<u64>())
     }
 
     #[tokio::test]
@@ -501,8 +538,10 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let old_password = test_password("old");
+        let new_password = test_password("new");
 
-        let recovery_key = vault.initialize("oldpass").await.unwrap();
+        let recovery_key = vault.initialize(&old_password).await.unwrap();
         let encrypted = vault.encrypt_string("secret", "test").await.unwrap();
         vault.seal().await;
         vault
@@ -510,14 +549,14 @@ mod tests {
             .await
             .unwrap();
 
-        vault.rewrap_unsealed("newpass").await.unwrap();
+        vault.rewrap_unsealed(&new_password).await.unwrap();
         vault.seal().await;
-        vault.unseal("newpass").await.unwrap();
+        vault.unseal(&new_password).await.unwrap();
         let decrypted = vault.decrypt_string(&encrypted, "test").await.unwrap();
         assert_eq!(decrypted, "secret");
 
         vault.seal().await;
-        let result = vault.unseal("oldpass").await;
+        let result = vault.unseal(&old_password).await;
         assert!(matches!(result, Err(VaultError::BadCredential)));
     }
 
@@ -527,11 +566,13 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let old_password = test_password("old");
+        let new_password = test_password("new");
 
-        vault.initialize("oldpass").await.unwrap();
+        vault.initialize(&old_password).await.unwrap();
         vault.seal().await;
 
-        let result = vault.rewrap_unsealed("newpass").await;
+        let result = vault.rewrap_unsealed(&new_password).await;
         assert!(matches!(result, Err(VaultError::Sealed)));
     }
 

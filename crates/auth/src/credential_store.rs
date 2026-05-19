@@ -26,6 +26,9 @@ pub use {
     util::is_loopback,
 };
 
+#[cfg(feature = "vault")]
+pub use sessions::PasswordVaultChangeError;
+
 /// Single-user credential store backed by SQLite.
 pub struct CredentialStore {
     pool: SqlitePool,

@@ -572,38 +572,43 @@ async fn change_password_handler(
     }
 
     let current_password = body.current_password.unwrap_or_default();
-    if !state
-        .credential_store
-        .verify_password(&current_password)
-        .await
-        .unwrap_or(false)
-    {
-        state
-            .login_guard
-            .record_failure(client_ip, PASSWORD_CHANGE_ACCOUNT);
-        return (StatusCode::FORBIDDEN, "current password is incorrect").into_response();
-    }
-
     #[cfg(feature = "vault")]
-    if let Some(ref vault) = state.gateway_state.vault {
-        match rotate_vault_password(vault, &current_password, &body.new_password).await {
-            Ok(()) => {},
-            Err(moltis_vault::VaultError::BadCredential) => {
-                return (
+    if state.gateway_state.vault.is_some() {
+        return match state
+            .credential_store
+            .change_password_and_rotate_vault(&current_password, &body.new_password)
+            .await
+        {
+            Ok(()) => {
+                state.login_guard.record_success(client_ip);
+                state
+                    .gateway_state
+                    .disconnect_all_clients("password_changed")
+                    .await;
+                Json(serde_json::json!({ "ok": true })).into_response()
+            },
+            Err(moltis_gateway::auth::PasswordVaultChangeError::IncorrectCurrentPassword) => {
+                state
+                    .login_guard
+                    .record_failure(client_ip, PASSWORD_CHANGE_ACCOUNT);
+                (StatusCode::FORBIDDEN, "current password is incorrect").into_response()
+            },
+            Err(moltis_gateway::auth::PasswordVaultChangeError::VaultBadCredential) => {
+                (
                     StatusCode::LOCKED,
                     "vault password does not match current password; unlock with recovery key before changing password",
                 )
-                    .into_response();
+                    .into_response()
             },
-            Err(moltis_vault::VaultError::Sealed) => {
-                return (
-                    StatusCode::LOCKED,
-                    "vault is sealed; unlock it before changing password",
+            Err(moltis_gateway::auth::PasswordVaultChangeError::VaultStateChanged) => {
+                (
+                    StatusCode::CONFLICT,
+                    "vault state changed while changing password; retry the password change",
                 )
-                    .into_response();
+                    .into_response()
             },
             Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
+        };
     }
 
     match state
@@ -629,36 +634,6 @@ async fn change_password_handler(
             } else {
                 (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
             }
-        },
-    }
-}
-
-#[cfg(feature = "vault")]
-async fn rotate_vault_password(
-    vault: &moltis_vault::Vault,
-    current_password: &str,
-    new_password: &str,
-) -> Result<(), moltis_vault::VaultError> {
-    match vault.status().await? {
-        moltis_vault::VaultStatus::Uninitialized => Ok(()),
-        moltis_vault::VaultStatus::Sealed => {
-            vault.unseal(current_password).await?;
-            vault
-                .change_password(current_password, new_password)
-                .await?;
-            tracing::info!("vault password rotated");
-            Ok(())
-        },
-        moltis_vault::VaultStatus::Unsealed => {
-            match vault.change_password(current_password, new_password).await {
-                Ok(()) => {},
-                Err(moltis_vault::VaultError::BadCredential) => {
-                    vault.rewrap_unsealed(new_password).await?;
-                },
-                Err(e) => return Err(e),
-            }
-            tracing::info!("vault password rotated");
-            Ok(())
         },
     }
 }
