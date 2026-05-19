@@ -263,6 +263,22 @@ async fn setup_handler(
             )
                 .into_response();
         }
+        #[cfg(feature = "vault")]
+        if let Some(ref vault) = state.gateway_state.vault {
+            match prepare_vault_for_new_auth_password(vault, &password).await {
+                Ok(()) => {},
+                Err(moltis_vault::VaultError::BadCredential) => {
+                    return (
+                        StatusCode::LOCKED,
+                        "password must match the existing vault password; unlock with recovery key before setting a different password",
+                    )
+                    .into_response();
+                },
+                Err(e) => {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+                },
+            }
+        }
         if let Err(e) = state.credential_store.set_initial_password(&password).await {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -483,6 +499,23 @@ async fn change_password_handler(
     let has_password = state.credential_store.has_password().await.unwrap_or(false);
 
     if !has_password {
+        #[cfg(feature = "vault")]
+        if let Some(ref vault) = state.gateway_state.vault {
+            match prepare_vault_for_new_auth_password(vault, &body.new_password).await {
+                Ok(()) => {},
+                Err(moltis_vault::VaultError::BadCredential) => {
+                    return (
+                        StatusCode::LOCKED,
+                        "password must match the existing vault password; unlock with recovery key before setting a different password",
+                    )
+                    .into_response();
+                },
+                Err(e) => {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+                },
+            }
+        }
+
         // No password set yet — add one (works even after passkey-only setup).
         return match state
             .credential_store
@@ -501,8 +534,7 @@ async fn change_password_handler(
                             Some(rk.phrase().to_owned())
                         },
                         Err(moltis_vault::VaultError::AlreadyInitialized) => {
-                            tracing::debug!("vault already initialized, unsealing");
-                            let _ = vault.unseal(&body.new_password).await;
+                            tracing::debug!("vault already initialized for first password set");
                             None
                         },
                         Err(e) => {
@@ -540,6 +572,40 @@ async fn change_password_handler(
     }
 
     let current_password = body.current_password.unwrap_or_default();
+    if !state
+        .credential_store
+        .verify_password(&current_password)
+        .await
+        .unwrap_or(false)
+    {
+        state
+            .login_guard
+            .record_failure(client_ip, PASSWORD_CHANGE_ACCOUNT);
+        return (StatusCode::FORBIDDEN, "current password is incorrect").into_response();
+    }
+
+    #[cfg(feature = "vault")]
+    if let Some(ref vault) = state.gateway_state.vault {
+        match rotate_vault_password(vault, &current_password, &body.new_password).await {
+            Ok(()) => {},
+            Err(moltis_vault::VaultError::BadCredential) => {
+                return (
+                    StatusCode::LOCKED,
+                    "vault password does not match current password; unlock with recovery key before changing password",
+                )
+                    .into_response();
+            },
+            Err(moltis_vault::VaultError::Sealed) => {
+                return (
+                    StatusCode::LOCKED,
+                    "vault is sealed; unlock it before changing password",
+                )
+                    .into_response();
+            },
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+
     match state
         .credential_store
         .change_password(&current_password, &body.new_password)
@@ -547,17 +613,6 @@ async fn change_password_handler(
     {
         Ok(()) => {
             state.login_guard.record_success(client_ip);
-            // Best-effort vault password rotation.
-            #[cfg(feature = "vault")]
-            if let Some(ref vault) = state.gateway_state.vault {
-                match vault
-                    .change_password(&current_password, &body.new_password)
-                    .await
-                {
-                    Ok(()) => tracing::info!("vault password rotated"),
-                    Err(e) => tracing::warn!(error = %e, "vault password rotation failed"),
-                }
-            }
             state
                 .gateway_state
                 .disconnect_all_clients("password_changed")
@@ -575,6 +630,48 @@ async fn change_password_handler(
                 (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
             }
         },
+    }
+}
+
+#[cfg(feature = "vault")]
+async fn rotate_vault_password(
+    vault: &moltis_vault::Vault,
+    current_password: &str,
+    new_password: &str,
+) -> Result<(), moltis_vault::VaultError> {
+    match vault.status().await? {
+        moltis_vault::VaultStatus::Uninitialized => Ok(()),
+        moltis_vault::VaultStatus::Sealed => {
+            vault.unseal(current_password).await?;
+            vault
+                .change_password(current_password, new_password)
+                .await?;
+            tracing::info!("vault password rotated");
+            Ok(())
+        },
+        moltis_vault::VaultStatus::Unsealed => {
+            match vault.change_password(current_password, new_password).await {
+                Ok(()) => {},
+                Err(moltis_vault::VaultError::BadCredential) => {
+                    vault.rewrap_unsealed(new_password).await?;
+                },
+                Err(e) => return Err(e),
+            }
+            tracing::info!("vault password rotated");
+            Ok(())
+        },
+    }
+}
+
+#[cfg(feature = "vault")]
+async fn prepare_vault_for_new_auth_password(
+    vault: &moltis_vault::Vault,
+    password: &str,
+) -> Result<(), moltis_vault::VaultError> {
+    match vault.status().await? {
+        moltis_vault::VaultStatus::Uninitialized => Ok(()),
+        moltis_vault::VaultStatus::Sealed => vault.unseal(password).await,
+        moltis_vault::VaultStatus::Unsealed => vault.rewrap_unsealed(password).await,
     }
 }
 

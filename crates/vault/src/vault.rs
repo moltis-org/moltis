@@ -227,6 +227,44 @@ impl<C: Cipher> Vault<C> {
         Ok(())
     }
 
+    /// Re-wrap the DEK with a new password without requiring the old password.
+    ///
+    /// This is only available while the vault is already unsealed, such as after
+    /// recovery-key unlock, where possession of the in-memory DEK is the proof
+    /// needed to rotate the password wrapper.
+    pub async fn rewrap_unsealed(&self, new: &str) -> Result<(), VaultError> {
+        let row = self
+            .load_metadata()
+            .await?
+            .ok_or(VaultError::NotInitialized)?;
+
+        let params: KdfParams = serde_json::from_str(&row.kdf_params)?;
+        let guard = self.dek.read().await;
+        let dek = guard.as_ref().ok_or(VaultError::Sealed)?;
+
+        let new_salt_b64 = kdf::generate_salt();
+        let new_salt = kdf::decode_salt(&new_salt_b64)?;
+        let new_kek = kdf::derive_key(new.as_bytes(), &new_salt, &params)?;
+        let new_wrapped = key_wrap::wrap_dek(&self.cipher, &new_kek, dek)?;
+        let params_json = serde_json::to_string(&params)?;
+
+        drop(guard);
+
+        sqlx::query(
+            "UPDATE vault_metadata SET kdf_salt = ?, kdf_params = ?, wrapped_dek = ?, updated_at = datetime('now') WHERE id = 1",
+        )
+        .bind(&new_salt_b64)
+        .bind(&params_json)
+        .bind(&new_wrapped)
+        .execute(&self.pool)
+        .await?;
+
+        #[cfg(feature = "tracing")]
+        tracing::info!("vault password wrapper rekeyed from unsealed DEK");
+
+        Ok(())
+    }
+
     /// Encrypt a string and return a versioned base64 blob.
     ///
     /// The AAD (additional authenticated data) should identify the context,
@@ -455,6 +493,46 @@ mod tests {
         vault.seal().await;
         let result = vault.unseal("oldpass").await;
         assert!(matches!(result, Err(VaultError::BadCredential)));
+    }
+
+    #[tokio::test]
+    async fn rewrap_unsealed_changes_password_without_old_password() {
+        let pool = test_pool().await;
+        let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
+            .await
+            .unwrap();
+
+        let recovery_key = vault.initialize("oldpass").await.unwrap();
+        let encrypted = vault.encrypt_string("secret", "test").await.unwrap();
+        vault.seal().await;
+        vault
+            .unseal_with_recovery(recovery_key.phrase())
+            .await
+            .unwrap();
+
+        vault.rewrap_unsealed("newpass").await.unwrap();
+        vault.seal().await;
+        vault.unseal("newpass").await.unwrap();
+        let decrypted = vault.decrypt_string(&encrypted, "test").await.unwrap();
+        assert_eq!(decrypted, "secret");
+
+        vault.seal().await;
+        let result = vault.unseal("oldpass").await;
+        assert!(matches!(result, Err(VaultError::BadCredential)));
+    }
+
+    #[tokio::test]
+    async fn rewrap_unsealed_fails_when_sealed() {
+        let pool = test_pool().await;
+        let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
+            .await
+            .unwrap();
+
+        vault.initialize("oldpass").await.unwrap();
+        vault.seal().await;
+
+        let result = vault.rewrap_unsealed("newpass").await;
+        assert!(matches!(result, Err(VaultError::Sealed)));
     }
 
     #[tokio::test]

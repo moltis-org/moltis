@@ -406,6 +406,107 @@ pub(super) async fn password_change_on_initialized_vault_no_recovery_key() {
     );
 
     assert!(store.has_password().await.unwrap());
+    vault.seal().await;
+    assert!(vault.unseal(&new_password).await.is_ok());
+}
+
+/// After auth reset, setting a different auth password while the existing vault
+/// is sealed would create a password/vault mismatch. Reject it instead.
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+pub(super) async fn first_password_rejects_sealed_vault_password_mismatch() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let vault_password = generated_password();
+    let new_password = different_password(&vault_password);
+
+    let _rk = vault.initialize(&vault_password).await.unwrap();
+    vault.seal().await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/password/change"))
+        .header("Content-Type", "application/json")
+        .body(json_new_password(&new_password))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 423);
+
+    assert!(!store.has_password().await.unwrap());
+    assert!(vault.unseal(&vault_password).await.is_ok());
+}
+
+/// Changing the auth password while the vault is sealed should first unseal and
+/// re-wrap the vault DEK, keeping the login and vault passwords in sync.
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+pub(super) async fn password_change_rotates_sealed_vault_password() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let current_password = generated_password();
+    let new_password = generated_password();
+
+    store.set_initial_password(&current_password).await.unwrap();
+    let token = store.create_session().await.unwrap();
+    let _rk = vault.initialize(&current_password).await.unwrap();
+    vault.seal().await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/password/change"))
+        .header("Content-Type", "application/json")
+        .header("Cookie", format!("moltis_session={token}"))
+        .body(
+            serde_json::json!({
+                "current_password": current_password,
+                "new_password": new_password,
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    assert!(store.verify_password(&new_password).await.unwrap());
+    vault.seal().await;
+    assert!(vault.unseal(&new_password).await.is_ok());
+}
+
+/// If auth and vault passwords are already out of sync, changing the auth
+/// password must fail instead of making the split-brain state worse.
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+pub(super) async fn password_change_rejects_mismatched_vault_password() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let auth_password = generated_password();
+    let vault_password = different_password(&auth_password);
+    let new_password = generated_password();
+
+    store.set_initial_password(&auth_password).await.unwrap();
+    let token = store.create_session().await.unwrap();
+    let _rk = vault.initialize(&vault_password).await.unwrap();
+    vault.seal().await;
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/password/change"))
+        .header("Content-Type", "application/json")
+        .header("Cookie", format!("moltis_session={token}"))
+        .body(
+            serde_json::json!({
+                "current_password": auth_password,
+                "new_password": new_password,
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 423);
+
+    assert!(store.verify_password(&auth_password).await.unwrap());
+    assert!(!store.verify_password(&new_password).await.unwrap());
+    assert!(vault.unseal(&vault_password).await.is_ok());
 }
 
 /// Bootstrap remains available when the vault is sealed because it does not
