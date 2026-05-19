@@ -268,6 +268,21 @@ fn test_docker_workspace_args_uses_host_data_dir_override() {
 }
 
 #[test]
+fn test_docker_hardening_args_enable_init_reaper() {
+    let args = DockerSandbox::hardening_args(true, BackendKind::Docker);
+    assert!(
+        args.contains(&"--init".to_string()),
+        "Docker sandboxes must run with an init process so orphaned children are reaped"
+    );
+}
+
+#[test]
+fn test_podman_hardening_args_do_not_require_host_init_binary() {
+    let args = DockerSandbox::hardening_args(true, BackendKind::Podman);
+    assert!(!args.contains(&"--init".to_string()));
+}
+
+#[test]
 fn test_docker_workspace_args_none() {
     let config = SandboxConfig {
         workspace_mount: WorkspaceMount::None,

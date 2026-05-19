@@ -273,6 +273,7 @@ impl DockerSandbox {
         // root, causing the mount (and container startup) to fail.  Podman
         // already masks /sys/firmware via its built-in OCI MaskedPaths.
         if kind != BackendKind::Podman {
+            args.push("--init".to_string());
             for path in sysfs_paths_to_mask() {
                 args.extend(["--tmpfs".to_string(), format!("{path}:ro,nosuid")]);
             }
