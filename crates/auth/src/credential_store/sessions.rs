@@ -307,6 +307,18 @@ impl CredentialStore {
         Ok(())
     }
 
+    /// Set the first auth password and initialize/rewrap the vault atomically when present.
+    #[cfg(feature = "vault")]
+    pub async fn set_initial_password_and_prepare_vault(
+        &self,
+        password: &str,
+    ) -> std::result::Result<Option<moltis_vault::RecoveryKey>, PasswordVaultChangeError> {
+        if self.is_setup_complete() {
+            return Err(Error::Validation("password already set".into()).into());
+        }
+        self.insert_password_and_prepare_vault(password).await
+    }
+
     /// Add a password when none exists yet (e.g. after passkey-only setup).
     ///
     /// This marks setup complete so auth is enforced immediately.
@@ -321,6 +333,78 @@ impl CredentialStore {
             .await?;
         self.mark_setup_complete().await?;
         Ok(())
+    }
+
+    /// Add an auth password and initialize/rewrap the vault atomically when present.
+    #[cfg(feature = "vault")]
+    pub async fn add_password_and_prepare_vault(
+        &self,
+        password: &str,
+    ) -> std::result::Result<Option<moltis_vault::RecoveryKey>, PasswordVaultChangeError> {
+        self.insert_password_and_prepare_vault(password).await
+    }
+
+    #[cfg(feature = "vault")]
+    async fn insert_password_and_prepare_vault(
+        &self,
+        password: &str,
+    ) -> std::result::Result<Option<moltis_vault::RecoveryKey>, PasswordVaultChangeError> {
+        let Some(ref vault) = self.vault else {
+            self.add_password(password).await?;
+            return Ok(None);
+        };
+
+        if matches!(vault.status().await?, moltis_vault::VaultStatus::Sealed) {
+            vault
+                .unseal(password)
+                .await
+                .map_err(map_vault_password_change_error)?;
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let has_password: Option<(i64,)> =
+            sqlx::query_as("SELECT id FROM auth_password WHERE id = 1")
+                .fetch_optional(&mut *tx)
+                .await?;
+        if has_password.is_some() {
+            return Err(Error::Validation("password already set".into()).into());
+        }
+
+        let recovery_key = match vault.status().await? {
+            moltis_vault::VaultStatus::Uninitialized => {
+                Some(vault.initialize_in_transaction(password, &mut tx).await?)
+            },
+            moltis_vault::VaultStatus::Sealed => {
+                return Err(PasswordVaultChangeError::VaultStateChanged);
+            },
+            moltis_vault::VaultStatus::Unsealed => {
+                vault
+                    .rewrap_unsealed_in_transaction(password, &mut tx)
+                    .await
+                    .map_err(map_vault_password_change_error)?;
+                None
+            },
+        };
+
+        let hash = hash_password(password)?;
+        sqlx::query("INSERT INTO auth_password (id, password_hash) VALUES (1, ?)")
+            .bind(&hash)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "INSERT INTO auth_state (id, auth_disabled, updated_at)
+             VALUES (1, 0, datetime('now'))
+             ON CONFLICT(id) DO UPDATE
+             SET auth_disabled = 0, updated_at = excluded.updated_at",
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        self.setup_complete.store(true, Ordering::Relaxed);
+        self.auth_disabled.store(false, Ordering::Relaxed);
+        moltis_config::update_config(|c| c.auth.disabled = false).map_err(Error::from)?;
+        Ok(recovery_key)
     }
 
     /// Mark initial setup as complete without setting a password (e.g. passkey-only setup).

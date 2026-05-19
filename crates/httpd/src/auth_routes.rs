@@ -244,6 +244,8 @@ async fn setup_handler(
     }
 
     let password = body.password.unwrap_or_default();
+    #[cfg(feature = "vault")]
+    let mut vault_recovery_key = None;
 
     let is_local = is_local_connection(&headers, addr, state.gateway_state.behind_proxy);
     if password.is_empty() && is_local {
@@ -264,21 +266,47 @@ async fn setup_handler(
                 .into_response();
         }
         #[cfg(feature = "vault")]
-        if let Some(ref vault) = state.gateway_state.vault {
-            match prepare_vault_for_new_auth_password(vault, &password).await {
-                Ok(()) => {},
-                Err(moltis_vault::VaultError::BadCredential) => {
+        if state.gateway_state.vault.is_some() {
+            match state
+                .credential_store
+                .set_initial_password_and_prepare_vault(&password)
+                .await
+            {
+                Ok(recovery_key) => {
+                    vault_recovery_key = recovery_key.map(|key| key.phrase().to_owned());
+                    run_vault_env_migration(&state).await;
+                    start_stored_channels_on_vault_unseal(&state).await;
+                },
+                Err(moltis_gateway::auth::PasswordVaultChangeError::VaultBadCredential) => {
                     return (
                         StatusCode::LOCKED,
                         "password must match the existing vault password; unlock with recovery key before setting a different password",
                     )
                     .into_response();
                 },
+                Err(moltis_gateway::auth::PasswordVaultChangeError::VaultStateChanged) => {
+                    return (
+                        StatusCode::CONFLICT,
+                        "vault state changed while setting password; retry the setup",
+                    )
+                        .into_response();
+                },
                 Err(e) => {
                     return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
                 },
             }
         }
+        #[cfg(feature = "vault")]
+        if state.gateway_state.vault.is_none()
+            && let Err(e) = state.credential_store.set_initial_password(&password).await
+        {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to set password: {e}"),
+            )
+                .into_response();
+        }
+        #[cfg(not(feature = "vault"))]
         if let Err(e) = state.credential_store.set_initial_password(&password).await {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -287,33 +315,6 @@ async fn setup_handler(
                 .into_response();
         }
     }
-
-    // Initialize the vault when a password was set.
-    #[cfg(feature = "vault")]
-    let vault_recovery_key = if !password.is_empty() {
-        if let Some(ref vault) = state.gateway_state.vault {
-            match vault.initialize(&password).await {
-                Ok(rk) => {
-                    tracing::info!("vault initialized");
-                    run_vault_env_migration(&state).await;
-                    start_stored_channels_on_vault_unseal(&state).await;
-                    Some(rk.phrase().to_owned())
-                },
-                Err(moltis_vault::VaultError::AlreadyInitialized) => {
-                    tracing::debug!("vault already initialized, skipping");
-                    None
-                },
-                Err(e) => {
-                    tracing::warn!(error = %e, "vault initialization failed");
-                    None
-                },
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
 
     // Disconnect pre-setup WebSocket clients and clear setup code.
     state
@@ -500,20 +501,45 @@ async fn change_password_handler(
 
     if !has_password {
         #[cfg(feature = "vault")]
-        if let Some(ref vault) = state.gateway_state.vault {
-            match prepare_vault_for_new_auth_password(vault, &body.new_password).await {
-                Ok(()) => {},
-                Err(moltis_vault::VaultError::BadCredential) => {
-                    return (
+        if state.gateway_state.vault.is_some() {
+            return match state
+                .credential_store
+                .add_password_and_prepare_vault(&body.new_password)
+                .await
+            {
+                Ok(recovery_key) => {
+                    run_vault_env_migration(&state).await;
+                    start_stored_channels_on_vault_unseal(&state).await;
+                    state
+                        .gateway_state
+                        .disconnect_all_clients("password_changed")
+                        .await;
+                    if let Some(rk) = recovery_key {
+                        return Json(
+                            serde_json::json!({ "ok": true, "recovery_key": rk.phrase() }),
+                        )
+                        .into_response();
+                    }
+                    Json(serde_json::json!({ "ok": true })).into_response()
+                },
+                Err(moltis_gateway::auth::PasswordVaultChangeError::VaultBadCredential) => {
+                    (
                         StatusCode::LOCKED,
                         "password must match the existing vault password; unlock with recovery key before setting a different password",
                     )
-                    .into_response();
+                    .into_response()
+                },
+                Err(moltis_gateway::auth::PasswordVaultChangeError::VaultStateChanged) => {
+                    (
+                        StatusCode::CONFLICT,
+                        "vault state changed while setting password; retry the password change",
+                    )
+                    .into_response()
                 },
                 Err(e) => {
                     return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
                 },
-            }
+            };
         }
 
         // No password set yet — add one (works even after passkey-only setup).
@@ -635,18 +661,6 @@ async fn change_password_handler(
                 (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
             }
         },
-    }
-}
-
-#[cfg(feature = "vault")]
-async fn prepare_vault_for_new_auth_password(
-    vault: &moltis_vault::Vault,
-    password: &str,
-) -> Result<(), moltis_vault::VaultError> {
-    match vault.status().await? {
-        moltis_vault::VaultStatus::Uninitialized => Ok(()),
-        moltis_vault::VaultStatus::Sealed => vault.unseal(password).await,
-        moltis_vault::VaultStatus::Unsealed => vault.rewrap_unsealed(password).await,
     }
 }
 

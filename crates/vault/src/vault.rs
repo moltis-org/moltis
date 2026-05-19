@@ -88,8 +88,24 @@ impl<C: Cipher> Vault<C> {
     /// generates a recovery key, and stores everything in the database.
     /// Returns the recovery key (shown to the user exactly once).
     pub async fn initialize(&self, password: &str) -> Result<RecoveryKey, VaultError> {
+        let mut tx = self.pool.begin().await?;
+        let recovery_key = self.initialize_in_transaction(password, &mut tx).await?;
+        tx.commit().await?;
+
+        #[cfg(feature = "tracing")]
+        tracing::info!("vault initialized");
+
+        Ok(recovery_key)
+    }
+
+    /// Initialize the vault as part of a caller-owned SQLite transaction.
+    pub async fn initialize_in_transaction(
+        &self,
+        password: &str,
+        tx: &mut Transaction<'_, Sqlite>,
+    ) -> Result<RecoveryKey, VaultError> {
         // Ensure vault doesn't already exist.
-        if self.load_metadata().await?.is_some() {
+        if self.load_metadata_in_transaction(tx).await?.is_some() {
             return Err(VaultError::AlreadyInitialized);
         }
 
@@ -122,14 +138,11 @@ impl<C: Cipher> Vault<C> {
         .bind(&wrapped_dek)
         .bind(&recovery_wrapped)
         .bind(&recovery_hash)
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
 
         // Hold DEK in memory (vault is now unsealed).
         *self.dek.write().await = Some(dek);
-
-        #[cfg(feature = "tracing")]
-        tracing::info!("vault initialized");
 
         Ok(recovery_key)
     }
@@ -209,7 +222,7 @@ impl<C: Cipher> Vault<C> {
         tx: &mut Transaction<'_, Sqlite>,
     ) -> Result<(), VaultError> {
         let row = self
-            .load_metadata()
+            .load_metadata_in_transaction(tx)
             .await?
             .ok_or(VaultError::NotInitialized)?;
 
@@ -270,7 +283,7 @@ impl<C: Cipher> Vault<C> {
         tx: &mut Transaction<'_, Sqlite>,
     ) -> Result<(), VaultError> {
         let row = self
-            .load_metadata()
+            .load_metadata_in_transaction(tx)
             .await?
             .ok_or(VaultError::NotInitialized)?;
 
@@ -351,6 +364,30 @@ impl<C: Cipher> Vault<C> {
                  FROM vault_metadata WHERE id = 1",
         )
         .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(
+            |(kdf_salt, kdf_params, wrapped_dek, recovery_wrapped_dek, recovery_key_hash)| {
+                VaultRow {
+                    kdf_salt,
+                    kdf_params,
+                    wrapped_dek,
+                    recovery_wrapped_dek,
+                    recovery_key_hash,
+                }
+            },
+        ))
+    }
+
+    async fn load_metadata_in_transaction(
+        &self,
+        tx: &mut Transaction<'_, Sqlite>,
+    ) -> Result<Option<VaultRow>, VaultError> {
+        let row: Option<(String, String, String, Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT kdf_salt, kdf_params, wrapped_dek, recovery_wrapped_dek, recovery_key_hash
+                 FROM vault_metadata WHERE id = 1",
+        )
+        .fetch_optional(&mut **tx)
         .await?;
 
         Ok(row.map(
