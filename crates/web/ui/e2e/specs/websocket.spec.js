@@ -203,15 +203,23 @@ test.describe("WebSocket connection lifecycle", () => {
 			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 			const helpers = await import(`${prefix}js/helpers.js`);
 			const state = await import(`${prefix}js/state.js`);
+			const originalWs = state.ws;
+			const originalTimeout = window.__moltisTestRpcTimeoutMs;
 
-			state.setWs({
-				readyState: WebSocket.OPEN,
-				send() {
-					// Intentionally never resolves; this exercises the client timeout path.
-				},
-			});
+			try {
+				window.__moltisTestRpcTimeoutMs = 1_000;
+				state.setWs({
+					readyState: WebSocket.OPEN,
+					send() {
+						// Intentionally never resolves; this exercises the client timeout path.
+					},
+				});
 
-			return helpers.sendRpc("test.slow_method", {});
+				return await helpers.sendRpc("test.slow_method", {});
+			} finally {
+				state.setWs(originalWs);
+				window.__moltisTestRpcTimeoutMs = originalTimeout;
+			}
 		});
 
 		expect(res).toMatchObject({

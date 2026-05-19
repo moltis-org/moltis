@@ -8,6 +8,7 @@ import type { RpcResponse } from "./types";
 declare global {
 	interface Window {
 		webkitAudioContext?: typeof AudioContext;
+		__moltisTestRpcTimeoutMs?: number;
 	}
 }
 
@@ -270,6 +271,10 @@ mdRenderer.html = ({ text }) => esc(text);
 const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
 const RPC_TIMEOUT_MS = 5_000;
 
+function rpcTimeoutMs(): number {
+	return window.__moltisTestRpcTimeoutMs ?? RPC_TIMEOUT_MS;
+}
+
 export function renderMarkdown(raw: string): string {
 	// Extract ASCII tables as placeholders before marked processes the text.
 	// Re-insert after marked is done so the HTML doesn't get escaped.
@@ -295,11 +300,12 @@ export function sendRpc<T = unknown>(method: string, params: unknown): Promise<R
 			return;
 		}
 		const id = nextId();
+		const timeoutMs = rpcTimeoutMs();
 		const timer = setTimeout(() => {
 			if (S.pending[id]) {
 				delete S.pending[id];
 				const message = `${localizedRpcErrorMessage({ code: "TIMEOUT", message: "RPC request timed out" })} (${method})`;
-				console.warn("RPC request timed out", { method, timeoutMs: RPC_TIMEOUT_MS });
+				console.warn("RPC request timed out", { method, timeoutMs });
 				resolve({
 					ok: false,
 					error: {
@@ -308,7 +314,7 @@ export function sendRpc<T = unknown>(method: string, params: unknown): Promise<R
 					},
 				} as unknown as RpcResponse<T>);
 			}
-		}, RPC_TIMEOUT_MS);
+		}, timeoutMs);
 		S.pending[id] = ((res: RpcResponse) => {
 			clearTimeout(timer);
 			resolve(res as RpcResponse<T>);
