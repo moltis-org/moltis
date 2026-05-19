@@ -431,8 +431,9 @@ mod tests {
         pool
     }
 
-    fn test_password(label: &str) -> String {
-        format!("vault-test-{label}-{}", rand::random::<u64>())
+    fn test_password() -> String {
+        let token = rand::random::<u64>();
+        format!("vault-test-{token}")
     }
 
     #[tokio::test]
@@ -450,7 +451,7 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let password = test_password("initialize");
+        let password = test_password();
 
         let rk = vault.initialize(&password).await.unwrap();
         assert!(!rk.phrase().is_empty());
@@ -471,8 +472,8 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let correct_password = test_password("correct");
-        let wrong_password = test_password("wrong");
+        let correct_password = test_password();
+        let wrong_password = test_password();
 
         vault.initialize(&correct_password).await.unwrap();
         vault.seal().await;
@@ -487,7 +488,7 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let password = test_password("recovery");
+        let password = test_password();
 
         let rk = vault.initialize(&password).await.unwrap();
         let phrase = rk.phrase().to_string();
@@ -503,7 +504,7 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let password = test_password("encrypt");
+        let password = test_password();
 
         vault.initialize(&password).await.unwrap();
 
@@ -524,7 +525,7 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let password = test_password("sealed");
+        let password = test_password();
 
         vault.initialize(&password).await.unwrap();
         vault.seal().await;
@@ -539,7 +540,7 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let password = test_password("aad");
+        let password = test_password();
 
         vault.initialize(&password).await.unwrap();
 
@@ -554,8 +555,8 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let old_password = test_password("old");
-        let new_password = test_password("new");
+        let old_password = test_password();
+        let new_password = test_password();
 
         vault.initialize(&old_password).await.unwrap();
 
@@ -588,8 +589,8 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let old_password = test_password("old");
-        let new_password = test_password("new");
+        let old_password = test_password();
+        let new_password = test_password();
 
         let recovery_key = vault.initialize(&old_password).await.unwrap();
         let encrypted = vault.encrypt_string("secret", "test").await.unwrap();
@@ -616,8 +617,8 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let old_password = test_password("old");
-        let new_password = test_password("new");
+        let old_password = test_password();
+        let new_password = test_password();
 
         vault.initialize(&old_password).await.unwrap();
         vault.seal().await;
@@ -632,8 +633,8 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let first_password = test_password("first");
-        let second_password = test_password("second");
+        let first_password = test_password();
+        let second_password = test_password();
 
         vault.initialize(&first_password).await.unwrap();
         let result = vault.initialize(&second_password).await;
@@ -646,7 +647,7 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
-        let password = test_password("missing");
+        let password = test_password();
 
         let result = vault.unseal(&password).await;
         assert!(matches!(result, Err(VaultError::NotInitialized)));
