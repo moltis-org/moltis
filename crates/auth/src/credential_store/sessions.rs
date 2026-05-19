@@ -484,13 +484,6 @@ impl CredentialStore {
             return Ok(());
         };
 
-        if matches!(vault.status().await?, moltis_vault::VaultStatus::Sealed) {
-            vault
-                .unseal(current)
-                .await
-                .map_err(map_vault_password_change_error)?;
-        }
-
         let mut tx = self.pool.begin().await?;
         let row: Option<(String,)> =
             sqlx::query_as("SELECT password_hash FROM auth_password WHERE id = 1")
@@ -501,6 +494,13 @@ impl CredentialStore {
         };
         if !verify_password(current, &current_hash) {
             return Err(PasswordVaultChangeError::IncorrectCurrentPassword);
+        }
+
+        if matches!(vault.status().await?, moltis_vault::VaultStatus::Sealed) {
+            vault
+                .unseal(current)
+                .await
+                .map_err(map_vault_password_change_error)?;
         }
 
         match vault.status().await? {

@@ -449,8 +449,9 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let password = test_password("initialize");
 
-        let rk = vault.initialize("testpassword123").await.unwrap();
+        let rk = vault.initialize(&password).await.unwrap();
         assert!(!rk.phrase().is_empty());
         assert_eq!(vault.status().await.unwrap(), VaultStatus::Unsealed);
 
@@ -459,7 +460,7 @@ mod tests {
         assert_eq!(vault.status().await.unwrap(), VaultStatus::Sealed);
 
         // Unseal with password.
-        vault.unseal("testpassword123").await.unwrap();
+        vault.unseal(&password).await.unwrap();
         assert_eq!(vault.status().await.unwrap(), VaultStatus::Unsealed);
     }
 
@@ -469,11 +470,13 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let correct_password = test_password("correct");
+        let wrong_password = test_password("wrong");
 
-        vault.initialize("correctpassword").await.unwrap();
+        vault.initialize(&correct_password).await.unwrap();
         vault.seal().await;
 
-        let result = vault.unseal("wrongpassword").await;
+        let result = vault.unseal(&wrong_password).await;
         assert!(matches!(result, Err(VaultError::BadCredential)));
     }
 
@@ -483,8 +486,9 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let password = test_password("recovery");
 
-        let rk = vault.initialize("testpassword123").await.unwrap();
+        let rk = vault.initialize(&password).await.unwrap();
         let phrase = rk.phrase().to_string();
         vault.seal().await;
 
@@ -498,8 +502,9 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let password = test_password("encrypt");
 
-        vault.initialize("password").await.unwrap();
+        vault.initialize(&password).await.unwrap();
 
         let encrypted = vault
             .encrypt_string("my secret api key", "env:OPENAI_API_KEY")
@@ -518,8 +523,9 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let password = test_password("sealed");
 
-        vault.initialize("password").await.unwrap();
+        vault.initialize(&password).await.unwrap();
         vault.seal().await;
 
         let result = vault.encrypt_string("data", "aad").await;
@@ -532,8 +538,9 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let password = test_password("aad");
 
-        vault.initialize("password").await.unwrap();
+        vault.initialize(&password).await.unwrap();
 
         let encrypted = vault.encrypt_string("secret", "env:KEY1").await.unwrap();
         let result = vault.decrypt_string(&encrypted, "env:KEY2").await;
@@ -546,18 +553,23 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let old_password = test_password("old");
+        let new_password = test_password("new");
 
-        vault.initialize("oldpass").await.unwrap();
+        vault.initialize(&old_password).await.unwrap();
 
         // Encrypt something with the old key.
         let encrypted = vault.encrypt_string("secret", "test").await.unwrap();
 
         // Change password.
-        vault.change_password("oldpass", "newpass").await.unwrap();
+        vault
+            .change_password(&old_password, &new_password)
+            .await
+            .unwrap();
 
         // Seal and unseal with new password.
         vault.seal().await;
-        vault.unseal("newpass").await.unwrap();
+        vault.unseal(&new_password).await.unwrap();
 
         // Old data should still be decryptable (same DEK).
         let decrypted = vault.decrypt_string(&encrypted, "test").await.unwrap();
@@ -565,7 +577,7 @@ mod tests {
 
         // Old password should no longer work.
         vault.seal().await;
-        let result = vault.unseal("oldpass").await;
+        let result = vault.unseal(&old_password).await;
         assert!(matches!(result, Err(VaultError::BadCredential)));
     }
 
@@ -619,9 +631,11 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let first_password = test_password("first");
+        let second_password = test_password("second");
 
-        vault.initialize("pass1").await.unwrap();
-        let result = vault.initialize("pass2").await;
+        vault.initialize(&first_password).await.unwrap();
+        let result = vault.initialize(&second_password).await;
         assert!(matches!(result, Err(VaultError::AlreadyInitialized)));
     }
 
@@ -631,8 +645,9 @@ mod tests {
         let vault = Vault::with_cipher(pool, XChaCha20Poly1305Cipher)
             .await
             .unwrap();
+        let password = test_password("missing");
 
-        let result = vault.unseal("password").await;
+        let result = vault.unseal(&password).await;
         assert!(matches!(result, Err(VaultError::NotInitialized)));
     }
 }
