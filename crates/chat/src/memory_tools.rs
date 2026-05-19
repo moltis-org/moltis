@@ -199,18 +199,15 @@ fn memory_forget_parameters_schema() -> Value {
 
 fn memory_file_label_from_root(root: &Path, path: &Path) -> Option<String> {
     let relative = path.strip_prefix(root).ok()?;
+    let rel_str = relative.to_str()?;
     let mut components = relative.components();
     let first = components.next()?.as_os_str().to_str()?;
 
     match first {
         "MEMORY.md" | "memory.md" if components.next().is_none() => Some(first.to_string()),
-        "memory" => {
-            let leaf = components.next()?.as_os_str().to_str()?;
-            if components.next().is_some() || !is_valid_agent_memory_leaf_name(leaf) {
-                return None;
-            }
-            Some(format!("memory/{leaf}"))
-        },
+        // Any depth under memory/ is valid now; return the full relative path
+        // (already using forward slashes when produced by strip_prefix).
+        "memory" if rel_str.ends_with(".md") => Some(rel_str.replace('\\', "/")),
         _ => None,
     }
 }
@@ -403,45 +400,47 @@ async fn validate_forget_actions(
     Ok((valid, issues))
 }
 
-pub(crate) fn is_valid_agent_memory_leaf_name(name: &str) -> bool {
-    if name.is_empty() || name.contains('/') || !name.ends_with(".md") {
-        return false;
-    }
-    if name.chars().any(char::is_whitespace) {
-        return false;
-    }
-    let stem = &name[..name.len() - 3];
-    !(stem.is_empty() || stem.starts_with('.'))
-}
-
 pub(crate) fn resolve_agent_memory_target_path(
     agent_id: &str,
     file: &str,
+    shared_collection_roots: &[std::path::PathBuf],
 ) -> anyhow::Result<std::path::PathBuf> {
     let trimmed = file.trim();
     if trimmed.is_empty() {
         anyhow::bail!("memory path cannot be empty");
     }
 
+    // First try a workspace-scoped resolution. This covers MEMORY.md,
+    // memory.md, and memory/**/<name>.md inside the agent's own workspace,
+    // including nested subfolders.
     let workspace = moltis_config::agent_workspace_dir(agent_id);
-    if trimmed == "MEMORY.md" || trimmed == "memory.md" {
-        return Ok(workspace.join(trimmed));
+    if let Ok(path) = moltis_memory::writer::validate_memory_path(&workspace, &[], trimmed) {
+        return Ok(path);
     }
 
-    let Some(name) = trimmed.strip_prefix("memory/") else {
-        anyhow::bail!(
-            "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
-        );
-    };
-    if !is_valid_agent_memory_leaf_name(name) {
-        anyhow::bail!(
-            "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, or memory/<name>.md"
-        );
+    // Then try resolving under a configured shared collection root
+    // (user-defined QMD collection). Paths there are accessible to every
+    // agent so collections behave as shared knowledge stores.
+    if !shared_collection_roots.is_empty()
+        && let Ok(path) = moltis_memory::writer::validate_memory_path(
+            &moltis_config::data_dir(),
+            shared_collection_roots,
+            trimmed,
+        )
+    {
+        return Ok(path);
     }
-    Ok(workspace.join("memory").join(name))
+
+    anyhow::bail!(
+        "invalid memory path '{trimmed}': allowed targets are MEMORY.md, memory.md, memory/<...>.md, or any path under a configured shared collection"
+    );
 }
 
-pub(crate) fn is_path_in_agent_memory_scope(path: &Path, agent_id: &str) -> bool {
+pub(crate) fn is_path_in_agent_memory_scope(
+    path: &Path,
+    agent_id: &str,
+    shared_collection_roots: &[std::path::PathBuf],
+) -> bool {
     let workspace = moltis_config::agent_workspace_dir(agent_id);
     let workspace_memory_dir = workspace.join("memory");
     if path == workspace.join("MEMORY.md")
@@ -449,6 +448,13 @@ pub(crate) fn is_path_in_agent_memory_scope(path: &Path, agent_id: &str) -> bool
         || path.starts_with(&workspace_memory_dir)
     {
         return true;
+    }
+
+    // Shared collections are visible to every agent.
+    for root in shared_collection_roots {
+        if path.starts_with(root) {
+            return true;
+        }
     }
 
     if agent_id != "main" {
@@ -494,7 +500,11 @@ impl AgentScopedMemoryWriter {
         moltis_tools::checkpoints::CheckpointRecord,
     )> {
         validate_agent_memory_target_for_mode(self.write_mode, file)?;
-        let path = resolve_agent_memory_target_path(&self.agent_id, file)?;
+        let path = resolve_agent_memory_target_path(
+            &self.agent_id,
+            file,
+            self.manager.shared_collection_roots(),
+        )?;
         let checkpoint = self.checkpoints.checkpoint_path(&path, reason).await?;
         Ok((path, checkpoint))
     }
@@ -585,7 +595,11 @@ impl moltis_agents::memory_writer::MemoryWriter for AgentScopedMemoryWriter {
         }
 
         validate_agent_memory_target_for_mode(self.write_mode, file)?;
-        let path = resolve_agent_memory_target_path(&self.agent_id, file)?;
+        let path = resolve_agent_memory_target_path(
+            &self.agent_id,
+            file,
+            self.manager.shared_collection_roots(),
+        )?;
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
         }
@@ -671,7 +685,13 @@ impl AgentTool for AgentScopedMemorySearchTool {
             .search(query, search_limit)
             .await?
             .into_iter()
-            .filter(|result| is_path_in_agent_memory_scope(Path::new(&result.path), &self.agent_id))
+            .filter(|result| {
+                is_path_in_agent_memory_scope(
+                    Path::new(&result.path),
+                    &self.agent_id,
+                    self.manager.shared_collection_roots(),
+                )
+            })
             .collect();
         results.truncate(limit);
 
@@ -749,7 +769,11 @@ impl AgentTool for AgentScopedMemoryGetTool {
 
         match self.manager.get_chunk(chunk_id).await? {
             Some(chunk)
-                if is_path_in_agent_memory_scope(Path::new(&chunk.path), &self.agent_id) =>
+                if is_path_in_agent_memory_scope(
+                    Path::new(&chunk.path),
+                    &self.agent_id,
+                    self.manager.shared_collection_roots(),
+                ) =>
             {
                 Ok(serde_json::json!({
                     "chunk_id": chunk.id,
@@ -793,7 +817,7 @@ impl AgentTool for AgentScopedMemorySaveTool {
     }
 
     fn description(&self) -> &str {
-        "Save content to long-term memory. Writes to MEMORY.md or memory/<name>.md. Content persists across sessions and is searchable via memory_search."
+        "Save content to long-term memory. Writes to MEMORY.md, memory.md, any nested memory/<...>.md path in this agent's workspace, or any path under a configured shared collection (e.g. people/, journal/). Content persists across sessions and is searchable via memory_search."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -806,7 +830,7 @@ impl AgentTool for AgentScopedMemorySaveTool {
                 },
                 "file": {
                     "type": "string",
-                    "description": "Target file: MEMORY.md, memory.md, or memory/<name>.md",
+                    "description": "Target file (must end with .md). Allowed: MEMORY.md, memory.md, any nested memory/<path>/<name>.md inside this agent's workspace, or any path under a configured shared collection (e.g. people/foo.md). Intermediate directories are created automatically.",
                     "default": "MEMORY.md"
                 },
                 "append": {
@@ -877,7 +901,7 @@ impl AgentTool for AgentScopedMemoryDeleteTool {
             "properties": {
                 "file": {
                     "type": "string",
-                    "description": "Target file: MEMORY.md, memory.md, or memory/<name>.md"
+                    "description": "Target file (must end with .md). Allowed: MEMORY.md, memory.md, any nested memory/<path>/<name>.md inside this agent's workspace, or any path under a configured shared collection."
                 },
                 "text": {
                     "type": "string",
@@ -979,9 +1003,10 @@ impl AgentTool for AgentScopedMemoryForgetTool {
 
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let request = parse_forget_request(&params)?;
+        let shared_roots: Vec<std::path::PathBuf> = self.manager.shared_collection_roots().to_vec();
         let candidates =
             collect_forget_candidates(&self.manager, &request.request, request.limit, |path| {
-                if is_path_in_agent_memory_scope(path, &self.agent_id) {
+                if is_path_in_agent_memory_scope(path, &self.agent_id, &shared_roots) {
                     agent_memory_file_label_for_path(path, &self.agent_id)
                 } else {
                     None

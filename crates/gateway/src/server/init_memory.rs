@@ -1,7 +1,8 @@
-use std::{collections::HashMap, path::Path as FsPath, sync::Arc};
-
-#[cfg(feature = "local-embeddings")]
-use std::path::PathBuf;
+use std::{
+    collections::HashMap,
+    path::{Path as FsPath, PathBuf},
+    sync::Arc,
+};
 
 use {
     secrecy::ExposeSecret,
@@ -234,6 +235,49 @@ pub(crate) async fn init_memory_system(
     }
 }
 
+/// Compute the set of directories into which `memory_save` is allowed to write.
+///
+/// Always includes `data_dir/memory` and `data_dir/agents` so the agent can
+/// organise notes under those roots regardless of which backend is active.
+/// When the user has configured QMD collections, their directory paths are
+/// added so writes mirror the searchable surface.
+fn collect_writable_roots(
+    data_dir: &FsPath,
+    mem_cfg: &moltis_config::schema::MemoryEmbeddingConfig,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut writable: Vec<PathBuf> = Vec::new();
+    let mut shared: Vec<PathBuf> = Vec::new();
+
+    fn push_unique(list: &mut Vec<PathBuf>, path: PathBuf) {
+        if !list.iter().any(|existing| existing == &path) {
+            list.push(path);
+        }
+    }
+
+    // Gateway defaults — usable by the global memory_save tool but not by
+    // per-agent writers (otherwise agents could cross workspace boundaries
+    // through data_dir/agents).
+    push_unique(&mut writable, data_dir.join("memory"));
+    push_unique(&mut writable, data_dir.join("agents"));
+
+    // User-configured QMD collections — shared knowledge stores available
+    // to every agent regardless of its workspace.
+    for collection in mem_cfg.qmd.collections.values() {
+        for path in &collection.paths {
+            let candidate = FsPath::new(path);
+            let absolute = if candidate.is_absolute() {
+                candidate.to_path_buf()
+            } else {
+                data_dir.join(candidate)
+            };
+            push_unique(&mut writable, absolute.clone());
+            push_unique(&mut shared, absolute);
+        }
+    }
+
+    (writable, shared)
+}
+
 /// Build the memory runtime, start initial sync, file watchers, and periodic syncs.
 async fn build_memory_runtime(
     mem_cfg: &moltis_config::schema::MemoryEmbeddingConfig,
@@ -261,6 +305,8 @@ async fn build_memory_runtime(
         );
     }
 
+    let (writable_roots, shared_collection_roots) = collect_writable_roots(data_dir, mem_cfg);
+
     let memory_runtime_config = moltis_memory::config::MemoryConfig {
         db_path: data_dir.join("memory.db").to_string_lossy().into(),
         data_dir: Some(data_dir.to_path_buf()),
@@ -270,6 +316,8 @@ async fn build_memory_runtime(
             data_memory_sub,
             agents_root,
         ],
+        writable_roots,
+        shared_collection_roots,
         citations: match mem_cfg.citations {
             moltis_config::MemoryCitationsMode::On => moltis_memory::config::CitationMode::On,
             moltis_config::MemoryCitationsMode::Off => moltis_memory::config::CitationMode::Off,

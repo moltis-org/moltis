@@ -160,7 +160,7 @@ impl AgentTool for MemorySaveTool {
     }
 
     fn description(&self) -> &str {
-        "Save content to long-term memory. Writes to MEMORY.md or memory/<name>.md. Content persists across sessions and is searchable via memory_search."
+        "Save content to long-term memory. Writes to MEMORY.md or any .md file under a configured memory root (memory/, agents/, or QMD-configured collections). Subfolders are supported. Content persists across sessions and is searchable via memory_search."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -173,7 +173,7 @@ impl AgentTool for MemorySaveTool {
                 },
                 "file": {
                     "type": "string",
-                    "description": "Target file: MEMORY.md, memory.md, or memory/<name>.md",
+                    "description": "Target file (must end with .md). Allowed: MEMORY.md, memory.md, or any path under a configured memory root, e.g. memory/work/notes.md or agents/foo/log.md. Intermediate directories are created automatically.",
                     "default": "MEMORY.md"
                 },
                 "append": {
@@ -234,7 +234,7 @@ impl AgentTool for MemoryDeleteTool {
             "properties": {
                 "file": {
                     "type": "string",
-                    "description": "Target file: MEMORY.md, memory.md, or memory/<name>.md"
+                    "description": "Target file (must end with .md). Allowed: MEMORY.md, memory.md, or any path under a configured memory root, e.g. memory/work/notes.md or agents/foo/log.md."
                 },
                 "text": {
                     "type": "string",
@@ -324,7 +324,11 @@ fn resolve_memory_tool_path(manager: &dyn MemoryRuntime, file: &str) -> anyhow::
     let data_dir = manager
         .data_dir()
         .ok_or_else(|| anyhow::anyhow!("memory writes are disabled (no data_dir configured)"))?;
-    Ok(validate_memory_path(data_dir, file)?)
+    Ok(validate_memory_path(
+        data_dir,
+        manager.writable_roots(),
+        file,
+    )?)
 }
 
 async fn checkpoint_memory_path(
@@ -715,6 +719,30 @@ mod tests {
         assert!(content.contains("Notes from 2024-01-15"));
     }
 
+    /// Nested subfolders under memory/ are accepted, intermediate dirs auto-created.
+    #[tokio::test]
+    async fn test_memory_save_nested_subfolders() {
+        let (manager, tmp) = setup_manager().await;
+        let data_dir = tmp.path().to_path_buf();
+        let tool = MemorySaveTool::new(manager.clone());
+
+        let result = tool
+            .execute(json!({
+                "content": "Project alpha kickoff notes.",
+                "file": "memory/work/projects/alpha.md"
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(result["saved"], json!(true));
+        assert_eq!(result["path"], json!("memory/work/projects/alpha.md"));
+
+        let written = data_dir.join("memory/work/projects/alpha.md");
+        assert!(written.exists(), "nested file should be written");
+        let content = std::fs::read_to_string(&written).unwrap();
+        assert!(content.contains("alpha kickoff"));
+    }
+
     /// Auto-creates memory/ directory if it doesn't exist.
     #[tokio::test]
     async fn test_memory_save_creates_memory_dir() {
@@ -800,12 +828,13 @@ mod tests {
         let tool = MemorySaveTool::new(manager.clone());
 
         let invalid = &[
-            "memory/notes.txt",     // wrong extension
-            "memory/.md",           // empty stem
-            "memory/a b c.md",      // spaces in name
-            "memory/sub/nested.md", // nested subdirectory
-            "random.md",            // not MEMORY.md or memory/
-            "foo/bar.md",           // not in allowed paths
+            "memory/notes.txt",        // wrong extension
+            "memory/.md",              // empty stem
+            "memory/a b c.md",         // spaces in name
+            "memory/sub/.hidden.md",   // hidden segment
+            "memory/sub/../escape.md", // traversal
+            "random.md",               // not MEMORY.md or memory/
+            "foo/bar.md",              // not in allowed paths
         ];
 
         for name in invalid {

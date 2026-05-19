@@ -65,6 +65,17 @@ pub struct MemoryConfig {
     pub data_dir: Option<PathBuf>,
     /// Directories to scan for markdown files.
     pub memory_dirs: Vec<PathBuf>,
+    /// Roots into which `memory_save` / `memory_delete` are allowed to write.
+    /// Empty falls back to the legacy `memory/` subtree under `data_dir`.
+    /// Paths may be absolute or relative to `data_dir`.
+    pub writable_roots: Vec<PathBuf>,
+    /// Subset of `writable_roots` that correspond to user-configured QMD
+    /// collections — shared knowledge stores that all agents may write to
+    /// regardless of their per-agent workspace. Empty when no collections
+    /// are configured. Distinct from `writable_roots` so per-agent
+    /// isolation isn't accidentally widened by gateway-added defaults
+    /// (e.g. `data_dir/agents`).
+    pub shared_collection_roots: Vec<PathBuf>,
     /// Target chunk size in tokens (approximate, counted as whitespace-split words).
     pub chunk_size: usize,
     /// Overlap between consecutive chunks in tokens.
@@ -94,6 +105,8 @@ impl Default for MemoryConfig {
             db_path: "memory.db".into(),
             data_dir: None,
             memory_dirs: vec![PathBuf::from("memory")],
+            writable_roots: Vec::new(),
+            shared_collection_roots: Vec::new(),
             chunk_size: 400,
             chunk_overlap: 80,
             vector_weight: 0.7,

@@ -1,4 +1,7 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use {async_trait::async_trait, moltis_agents::memory_writer::MemoryWriter};
 
@@ -17,6 +20,15 @@ pub trait MemoryRuntime: MemoryWriter + Send + Sync {
     fn backend_name(&self) -> &'static str;
 
     fn data_dir(&self) -> Option<&Path>;
+
+    /// Roots into which the agent is allowed to save memory. Empty means
+    /// only the legacy `memory/` subtree under `data_dir`.
+    fn writable_roots(&self) -> &[PathBuf];
+
+    /// Subset of `writable_roots` representing user-configured shared
+    /// collections (no gateway defaults). Agent-scoped writers consult
+    /// this to decide which paths cross the per-agent workspace boundary.
+    fn shared_collection_roots(&self) -> &[PathBuf];
 
     fn has_embeddings(&self) -> bool;
 
@@ -45,6 +57,14 @@ impl MemoryRuntime for MemoryManager {
 
     fn data_dir(&self) -> Option<&Path> {
         MemoryManager::data_dir(self)
+    }
+
+    fn writable_roots(&self) -> &[PathBuf] {
+        MemoryManager::writable_roots(self)
+    }
+
+    fn shared_collection_roots(&self) -> &[PathBuf] {
+        MemoryManager::shared_collection_roots(self)
     }
 
     fn has_embeddings(&self) -> bool {
