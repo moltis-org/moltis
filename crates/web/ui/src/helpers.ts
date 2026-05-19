@@ -268,7 +268,7 @@ mdRenderer.link = ({ href, text }) => {
 mdRenderer.html = ({ text }) => esc(text);
 
 const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
-const RPC_TIMEOUT_MS = 10 * 60_000;
+const RPC_TIMEOUT_MS = 5_000;
 
 export function renderMarkdown(raw: string): string {
 	// Extract ASCII tables as placeholders before marked processes the text.
@@ -298,11 +298,13 @@ export function sendRpc<T = unknown>(method: string, params: unknown): Promise<R
 		const timer = setTimeout(() => {
 			if (S.pending[id]) {
 				delete S.pending[id];
+				const message = `${localizedRpcErrorMessage({ code: "TIMEOUT", message: "RPC request timed out" })} (${method})`;
+				console.warn("RPC request timed out", { method, timeoutMs: RPC_TIMEOUT_MS });
 				resolve({
 					ok: false,
 					error: {
 						code: "TIMEOUT",
-						message: localizedRpcErrorMessage({ code: "TIMEOUT", message: "Request timed out" }),
+						message,
 					},
 				} as unknown as RpcResponse<T>);
 			}

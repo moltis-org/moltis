@@ -186,8 +186,12 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(resp.ok()).toBeTruthy();
 	});
 
-	test("long-running RPC responses do not show a false disconnect", async ({ page }) => {
+	test("RPC timeouts identify the slow method instead of reporting disconnect", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
+		const warnings = [];
+		page.on("console", (msg) => {
+			if (msg.type() === "warning") warnings.push(msg.text());
+		});
 		await page.goto("/");
 		await waitForWsConnected(page);
 
@@ -202,22 +206,24 @@ test.describe("WebSocket connection lifecycle", () => {
 
 			state.setWs({
 				readyState: WebSocket.OPEN,
-				send(rawPayload) {
-					const frame = JSON.parse(String(rawPayload));
-					setTimeout(() => {
-						const resolver = state.pending?.[frame.id];
-						if (typeof resolver === "function") {
-							delete state.pending[frame.id];
-							resolver({ ok: true, payload: { completed: true } });
-						}
-					}, 5_100);
+				send() {
+					// Intentionally never resolves; this exercises the client timeout path.
 				},
 			});
 
-			return helpers.sendRpc("test.long_running", {});
+			return helpers.sendRpc("test.slow_method", {});
 		});
 
-		expect(res).toEqual({ ok: true, payload: { completed: true } });
+		expect(res).toMatchObject({
+			ok: false,
+			error: {
+				code: "TIMEOUT",
+			},
+		});
+		expect(res.error.message).toContain("test.slow_method");
+		expect(res.error.message).not.toContain("WebSocket disconnected");
+		expect(warnings.some((warning) => warning.includes("RPC request timed out"))).toBeTruthy();
+		expect(warnings.some((warning) => warning.includes("test.slow_method"))).toBeTruthy();
 		expect(pageErrors).toEqual([]);
 	});
 
