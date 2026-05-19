@@ -186,6 +186,41 @@ test.describe("WebSocket connection lifecycle", () => {
 		expect(resp.ok()).toBeTruthy();
 	});
 
+	test("long-running RPC responses do not show a false disconnect", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.goto("/");
+		await waitForWsConnected(page);
+
+		const res = await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const helpers = await import(`${prefix}js/helpers.js`);
+			const state = await import(`${prefix}js/state.js`);
+
+			state.setWs({
+				readyState: WebSocket.OPEN,
+				send(rawPayload) {
+					const frame = JSON.parse(String(rawPayload));
+					setTimeout(() => {
+						const resolver = state.pending?.[frame.id];
+						if (typeof resolver === "function") {
+							delete state.pending[frame.id];
+							resolver({ ok: true, payload: { completed: true } });
+						}
+					}, 5_100);
+				},
+			});
+
+			return helpers.sendRpc("test.long_running", {});
+		});
+
+		expect(res).toEqual({ ok: true, payload: { completed: true } });
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("final chat text is kept when it includes tool output plus analysis", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/chats/main");
@@ -891,7 +926,9 @@ test.describe("WebSocket connection lifecycle", () => {
 					this.sent.push(JSON.parse(data));
 				}
 
-				close() {}
+				close() {
+					// Fake WebSocket used only for unit-style module testing.
+				}
 			}
 
 			const originalWebSocket = window.WebSocket;

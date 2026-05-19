@@ -268,7 +268,7 @@ mdRenderer.link = ({ href, text }) => {
 mdRenderer.html = ({ text }) => esc(text);
 
 const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: true, async: false });
-const RPC_TIMEOUT_MS = 5_000;
+const RPC_TIMEOUT_MS = 10 * 60_000;
 
 export function renderMarkdown(raw: string): string {
 	// Extract ASCII tables as placeholders before marked processes the text.
@@ -300,7 +300,10 @@ export function sendRpc<T = unknown>(method: string, params: unknown): Promise<R
 				delete S.pending[id];
 				resolve({
 					ok: false,
-					error: { code: "TIMEOUT", message: "WebSocket disconnected" },
+					error: {
+						code: "TIMEOUT",
+						message: localizedRpcErrorMessage({ code: "TIMEOUT", message: "Request timed out" }),
+					},
 				} as unknown as RpcResponse<T>);
 			}
 		}, RPC_TIMEOUT_MS);
