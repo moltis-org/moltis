@@ -549,37 +549,10 @@ async fn change_password_handler(
             .await
         {
             Ok(()) => {
-                // Initialize the vault now that we have a password.
-                #[cfg(feature = "vault")]
-                let vault_recovery_key = if let Some(ref vault) = state.gateway_state.vault {
-                    match vault.initialize(&body.new_password).await {
-                        Ok(rk) => {
-                            tracing::info!("vault initialized on first password set");
-                            run_vault_env_migration(&state).await;
-                            start_stored_channels_on_vault_unseal(&state).await;
-                            Some(rk.phrase().to_owned())
-                        },
-                        Err(moltis_vault::VaultError::AlreadyInitialized) => {
-                            tracing::debug!("vault already initialized for first password set");
-                            None
-                        },
-                        Err(e) => {
-                            tracing::warn!(error = %e, "vault initialization failed");
-                            None
-                        },
-                    }
-                } else {
-                    None
-                };
                 state
                     .gateway_state
                     .disconnect_all_clients("password_changed")
                     .await;
-                #[cfg(feature = "vault")]
-                if let Some(rk) = vault_recovery_key {
-                    return Json(serde_json::json!({ "ok": true, "recovery_key": rk }))
-                        .into_response();
-                }
                 Json(serde_json::json!({ "ok": true })).into_response()
             },
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -607,6 +580,8 @@ async fn change_password_handler(
         {
             Ok(()) => {
                 state.login_guard.record_success(client_ip);
+                run_vault_env_migration(&state).await;
+                start_stored_channels_on_vault_unseal(&state).await;
                 state
                     .gateway_state
                     .disconnect_all_clients("password_changed")
