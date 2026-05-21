@@ -411,17 +411,42 @@ async fn decrypt_provider_keys(vault: &moltis_vault::Vault) -> anyhow::Result<bo
 }
 
 async fn write_secret_file(path: &std::path::Path, content: &str) -> anyhow::Result<()> {
-    tokio::fs::write(path, content)
+    let path = path.to_path_buf();
+    let content = content.to_owned();
+    tokio::task::spawn_blocking(move || write_secret_file_blocking(&path, &content))
         .await
-        .with_context(|| format!("failed to write {}", path.display()))?;
+        .context("secret file write task failed")?
+}
+
+fn write_secret_file_blocking(path: &std::path::Path, content: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .await
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        options.mode(0o600);
+        let mut file = options
+            .open(path)
+            .with_context(|| format!("failed to open {}", path.display()))?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
             .with_context(|| format!("failed to chmod {}", path.display()))?;
+        file.write_all(content.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
+        return Ok(());
     }
-    Ok(())
+
+    #[cfg(not(unix))]
+    {
+        let mut file = options
+            .open(path)
+            .with_context(|| format!("failed to open {}", path.display()))?;
+        file.write_all(content.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
+        Ok(())
+    }
 }
 
 fn webhook_auth_secret_fields(auth_mode: &str) -> &'static [&'static str] {
