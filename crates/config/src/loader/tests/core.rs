@@ -60,6 +60,7 @@ fn apply_env_overrides_auth_disabled() {
     let vars = vec![("MOLTIS_AUTH__DISABLED".into(), "true".into())];
     let config = MoltisConfig::default();
     assert!(!config.auth.disabled);
+    assert!(config.auth.vault_enabled);
     let config = apply_env_overrides_with(config, vars.into_iter());
     assert!(config.auth.disabled);
 }

@@ -5,7 +5,7 @@ use {
 };
 
 /// Authentication configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AuthConfig {
     /// When true, authentication is explicitly disabled (no login required).
@@ -14,6 +14,15 @@ pub struct AuthConfig {
     /// When true, stored secrets are encrypted at rest using the password-backed vault.
     #[serde(default = "default_true")]
     pub vault_enabled: bool,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            disabled: false,
+            vault_enabled: true,
+        }
+    }
 }
 
 /// Runtime GraphQL server configuration.
