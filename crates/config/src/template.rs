@@ -396,6 +396,7 @@ port = {port}                           # Port number (auto-generated for this i
 # no_network = true                 # Disable network access in sandbox
 # image = "custom-image:tag"        # Custom Docker image (default: auto-built)
 # packages = [...]                  # Packages installed in sandbox containers
+# host_data_dir = "/host/moltis-data" # Host path for Moltis data when running Moltis inside Docker
 # gpus = "all"                      # GPU passthrough: "all", "device=0", "device=0,1"
                                     # (Docker/Podman only, ignored for other backends)
 

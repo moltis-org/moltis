@@ -81,6 +81,10 @@ struct ContainerMount {
 static TEST_CONTAINER_MOUNT_OVERRIDES: std::sync::OnceLock<
     std::sync::Mutex<std::collections::HashMap<String, Vec<ContainerMount>>>,
 > = std::sync::OnceLock::new();
+#[cfg(test)]
+static TEST_RUNNING_CONTAINER_REFERENCES: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
+> = std::sync::OnceLock::new();
 
 fn configured_host_data_dir(host_data_dir: Option<&Path>) -> Option<PathBuf> {
     let path = host_data_dir.filter(|path| !path.as_os_str().is_empty())?;
@@ -238,26 +242,104 @@ fn inspect_current_container_mounts(cli: &str, reference: &str) -> Vec<Container
     }
 }
 
+fn running_container_references(cli: &str) -> Vec<String> {
+    #[cfg(test)]
+    {
+        return TEST_RUNNING_CONTAINER_REFERENCES
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(cli)
+            .cloned()
+            .unwrap_or_default();
+    }
+
+    #[cfg(not(test))]
+    {
+        let output = match Command::new(cli).args(["ps", "-q", "--no-trunc"]).output() {
+            Ok(output) if output.status.success() => output,
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    cli,
+                    stderr = %stderr.trim(),
+                    "container list failed while auto-detecting browser profile host path"
+                );
+                return Vec::new();
+            },
+            Err(error) => {
+                debug!(
+                    cli,
+                    %error,
+                    "could not list containers while auto-detecting browser profile host path"
+                );
+                return Vec::new();
+            },
+        };
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+fn detect_host_data_dir_from_references(
+    cli: &str,
+    guest_data_dir: &Path,
+    references: &[String],
+) -> Option<PathBuf> {
+    let mut detected: Option<PathBuf> = None;
+    for reference in references {
+        let mounts = inspect_current_container_mounts(cli, reference);
+        if mounts.is_empty() {
+            continue;
+        }
+        let Some(resolved) = resolve_host_path_from_mounts(guest_data_dir, &mounts) else {
+            continue;
+        };
+        if let Some(existing) = &detected
+            && existing != &resolved
+        {
+            debug!(
+                cli,
+                guest_path = %guest_data_dir.display(),
+                first_host_path = %existing.display(),
+                other_host_path = %resolved.display(),
+                "ambiguous browser profile host data dir from container mounts"
+            );
+            return None;
+        }
+        detected = Some(resolved);
+    }
+    detected
+}
+
 fn detect_host_data_dir_with_references(
     cli: &str,
     guest_data_dir: &Path,
     references: &[String],
 ) -> Option<PathBuf> {
-    references.iter().find_map(|reference| {
-        let mounts = inspect_current_container_mounts(cli, reference);
-        if mounts.is_empty() {
-            return None;
-        }
-        let resolved = resolve_host_path_from_mounts(guest_data_dir, &mounts)?;
+    if let Some(resolved) = detect_host_data_dir_from_references(cli, guest_data_dir, references) {
         debug!(
             cli,
-            reference,
             guest_path = %guest_data_dir.display(),
             host_path = %resolved.display(),
             "auto-detected browser profile host data dir from current container mounts"
         );
-        Some(resolved)
-    })
+        return Some(resolved);
+    }
+
+    let running_references = running_container_references(cli);
+    let resolved = detect_host_data_dir_from_references(cli, guest_data_dir, &running_references)?;
+    debug!(
+        cli,
+        guest_path = %guest_data_dir.display(),
+        host_path = %resolved.display(),
+        "auto-detected browser profile host data dir by scanning running container mounts"
+    );
+    Some(resolved)
 }
 
 fn host_visible_data_dir_with_references(
@@ -326,6 +408,35 @@ fn profile_precreate_dir<'a>(
     let guest_dir = profile_dir?;
     let mount_dir = profile_mount_dir?;
     (guest_dir != mount_dir).then_some(guest_dir)
+}
+
+fn browser_profile_permission_hint(
+    logs: Option<&str>,
+    profile_mount_dir: Option<&Path>,
+    host_data_dir: Option<&Path>,
+) -> Option<String> {
+    if configured_host_data_dir(host_data_dir).is_some() {
+        return None;
+    }
+    let logs = logs?;
+    if !logs.contains(CONTAINER_PROFILE_PATH)
+        || !logs.contains("SingletonLock")
+        || !logs.contains("Permission denied")
+    {
+        return None;
+    }
+    let mount_dir = profile_mount_dir?;
+    Some(format!(
+        "Chrome could not write its browser profile at {CONTAINER_PROFILE_PATH}; Moltis mounted `{}` from the host. When Moltis runs inside Docker with the Docker socket mounted, set `[tools.exec.sandbox] host_data_dir = \"/absolute/host/path/to/moltis-data\"` to the host-visible path backing Moltis data, then restart Moltis",
+        mount_dir.display()
+    ))
+}
+
+fn launch_error_with_hint(error: Error, hint: String) -> Error {
+    match error {
+        Error::LaunchFailed(message) => Error::LaunchFailed(format!("{message}; {hint}")),
+        other => Error::LaunchFailed(format!("{other}; {hint}")),
+    }
 }
 
 fn ensure_profile_dir(dir: &Path) {
@@ -594,6 +705,19 @@ impl BrowserContainer {
                 warn!(container_id, "no container logs available");
             }
 
+            let permission_hint = browser_profile_permission_hint(
+                container_logs.as_deref(),
+                profile_mount_dir.as_deref(),
+                host_data_dir,
+            );
+
+            if let Some(ref hint) = permission_hint {
+                warn!(
+                    container_id,
+                    hint, "browser profile mount permission failure detected"
+                );
+            }
+
             if is_running_in_container() {
                 warn!(
                     container_host,
@@ -604,6 +728,9 @@ impl BrowserContainer {
             }
 
             stop_container_by_id(backend, &container_id);
+            if let Some(hint) = permission_hint {
+                return Err(launch_error_with_hint(error, hint));
+            }
             return Err(error);
         }
 

@@ -30,6 +30,9 @@ pub(crate) static HOST_DATA_DIR_CACHE: OnceLock<Mutex<HashMap<String, PathBuf>>>
 pub(crate) static TEST_CONTAINER_MOUNT_OVERRIDES: OnceLock<
     Mutex<HashMap<String, Vec<ContainerMount>>>,
 > = OnceLock::new();
+#[cfg(test)]
+pub(crate) static TEST_RUNNING_CONTAINER_REFERENCES: OnceLock<Mutex<HashMap<String, Vec<String>>>> =
+    OnceLock::new();
 
 pub(crate) fn configured_host_data_dir(config: &SandboxConfig) -> Option<PathBuf> {
     let guest_data_dir = moltis_config::data_dir();
@@ -192,26 +195,107 @@ pub(crate) fn inspect_current_container_mounts(cli: &str, reference: &str) -> Ve
     }
 }
 
+pub(crate) fn running_container_references(cli: &str) -> Vec<String> {
+    #[cfg(test)]
+    {
+        return TEST_RUNNING_CONTAINER_REFERENCES
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .get(cli)
+            .cloned()
+            .unwrap_or_default();
+    }
+
+    #[cfg(not(test))]
+    {
+        let output = match std::process::Command::new(cli)
+            .args(["ps", "-q", "--no-trunc"])
+            .output()
+        {
+            Ok(output) if output.status.success() => output,
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                debug!(
+                    cli,
+                    stderr = %stderr.trim(),
+                    "container list failed while auto-detecting host data dir"
+                );
+                return Vec::new();
+            },
+            Err(error) => {
+                debug!(
+                    cli,
+                    %error,
+                    "could not list containers while auto-detecting host data dir"
+                );
+                return Vec::new();
+            },
+        };
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+pub(crate) fn detect_host_data_dir_from_references(
+    cli: &str,
+    guest_data_dir: &FsPath,
+    references: &[String],
+) -> Option<PathBuf> {
+    let mut detected: Option<PathBuf> = None;
+    for reference in references {
+        let mounts = inspect_current_container_mounts(cli, reference);
+        if mounts.is_empty() {
+            continue;
+        }
+        let Some(resolved) = resolve_host_path_from_mounts(guest_data_dir, &mounts) else {
+            continue;
+        };
+        if let Some(existing) = &detected
+            && existing != &resolved
+        {
+            debug!(
+                cli,
+                guest_path = %guest_data_dir.display(),
+                first_host_path = %existing.display(),
+                other_host_path = %resolved.display(),
+                "ambiguous host data dir from container mounts"
+            );
+            return None;
+        }
+        detected = Some(resolved);
+    }
+    detected
+}
+
 pub(crate) fn detect_host_data_dir_with_references(
     cli: &str,
     guest_data_dir: &FsPath,
     references: &[String],
 ) -> Option<PathBuf> {
-    references.iter().find_map(|reference| {
-        let mounts = inspect_current_container_mounts(cli, reference);
-        if mounts.is_empty() {
-            return None;
-        }
-        let resolved = resolve_host_path_from_mounts(guest_data_dir, &mounts)?;
+    if let Some(resolved) = detect_host_data_dir_from_references(cli, guest_data_dir, references) {
         debug!(
             cli,
-            reference,
             guest_path = %guest_data_dir.display(),
             host_path = %resolved.display(),
             "auto-detected host data dir from current container mounts"
         );
-        Some(resolved)
-    })
+        return Some(resolved);
+    }
+
+    let running_references = running_container_references(cli);
+    let resolved = detect_host_data_dir_from_references(cli, guest_data_dir, &running_references)?;
+    debug!(
+        cli,
+        guest_path = %guest_data_dir.display(),
+        host_path = %resolved.display(),
+        "auto-detected host data dir by scanning running container mounts"
+    );
+    Some(resolved)
 }
 
 pub(crate) fn host_data_dir_cache() -> &'static Mutex<HashMap<String, PathBuf>> {
