@@ -30,8 +30,6 @@ struct NearAiModelMetadata {
     #[serde(default)]
     model_display_name: Option<String>,
     #[serde(default)]
-    provider_type: Option<String>,
-    #[serde(default)]
     attestation_supported: bool,
     #[serde(default)]
     architecture: Option<NearAiArchitecture>,
@@ -78,12 +76,7 @@ fn has_modality(modalities: &[String], expected: &str) -> bool {
 }
 
 fn is_tee_model(metadata: &NearAiModelMetadata) -> bool {
-    metadata.verifiable
-        || metadata.attestation_supported
-        || metadata
-            .provider_type
-            .as_deref()
-            .is_some_and(|provider_type| provider_type.eq_ignore_ascii_case("vllm"))
+    metadata.verifiable || metadata.attestation_supported
 }
 
 fn is_text_generation_model(model_id: &str, metadata: &NearAiModelMetadata) -> bool {
@@ -128,7 +121,7 @@ fn capabilities_for(model: &NearAiModel) -> ModelCapabilities {
         .unwrap_or_else(|| supports_vision_for_model(&model.model_id));
 
     ModelCapabilities {
-        tools: true,
+        tools: false,
         vision,
         reasoning: false,
     }
@@ -241,6 +234,17 @@ mod tests {
                     }
                 },
                 {
+                    "modelId": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+                    "metadata": {
+                        "modelDisplayName": "Qwen3 vLLM",
+                        "providerType": "vllm",
+                        "architecture": {
+                            "inputModalities": ["text"],
+                            "outputModalities": ["text"]
+                        }
+                    }
+                },
+                {
                     "modelId": "Qwen/Qwen3-Embedding-0.6B",
                     "metadata": {
                         "architecture": {
@@ -266,9 +270,20 @@ mod tests {
 
         assert_eq!(ids, vec![
             "zai-org/GLM-5.1-FP8",
-            "Qwen/Qwen3-VL-30B-A3B-Instruct"
+            "Qwen/Qwen3-VL-30B-A3B-Instruct",
+            "Qwen/Qwen3-235B-A22B-Instruct-2507"
         ]);
         assert!(models[0].recommended);
+        let vllm_model = models
+            .iter()
+            .find(|model| model.id == "Qwen/Qwen3-235B-A22B-Instruct-2507")
+            .expect("vLLM-hosted model is included");
+        assert!(!vllm_model.recommended);
+        assert!(
+            models
+                .iter()
+                .all(|model| !model.capabilities.expect("capabilities").tools)
+        );
         assert!(!models[0].capabilities.expect("capabilities").reasoning);
         assert!(models[1].capabilities.expect("capabilities").vision);
     }
