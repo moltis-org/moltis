@@ -69,8 +69,10 @@ impl CredentialStore {
 
         #[cfg(feature = "vault")]
         let (store_private_key, encrypted) = {
-            if let Some(ref vault) = self.vault {
-                if vault.is_unsealed().await {
+            if self.is_vault_encryption_enabled() {
+                if let Some(ref vault) = self.vault
+                    && vault.is_unsealed().await
+                {
                     let aad = format!("ssh-key:{name}");
                     let enc = vault
                         .encrypt_string(private_key, &aad)

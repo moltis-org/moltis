@@ -74,6 +74,8 @@ impl CredentialStore {
             auth_disabled: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "vault")]
             vault: None,
+            #[cfg(feature = "vault")]
+            vault_encryption_enabled: std::sync::atomic::AtomicBool::new(false),
         };
         store.init().await?;
         let has = store.has_password().await? || store.has_passkeys().await?;
@@ -105,6 +107,7 @@ impl CredentialStore {
             setup_complete: std::sync::atomic::AtomicBool::new(false),
             auth_disabled: std::sync::atomic::AtomicBool::new(false),
             vault,
+            vault_encryption_enabled: std::sync::atomic::AtomicBool::new(auth_config.vault_enabled),
         };
         store.init().await?;
         let has = store.has_password().await? || store.has_passkeys().await?;
@@ -638,6 +641,17 @@ impl CredentialStore {
     #[cfg(feature = "vault")]
     pub fn vault(&self) -> Option<&Arc<Vault>> {
         self.vault.as_ref()
+    }
+
+    #[cfg(feature = "vault")]
+    pub fn is_vault_encryption_enabled(&self) -> bool {
+        self.vault_encryption_enabled.load(Ordering::Relaxed)
+    }
+
+    #[cfg(feature = "vault")]
+    pub fn disable_vault_encryption(&self) {
+        self.vault_encryption_enabled
+            .store(false, Ordering::Relaxed);
     }
 
     /// Get a reference to the underlying database pool.

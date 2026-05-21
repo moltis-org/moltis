@@ -2,11 +2,27 @@ use {
     crate::{auth::CredentialStore, state::GatewayState},
     anyhow::Context,
     secrecy::{ExposeSecret, Secret},
-    std::{path::PathBuf, sync::Arc},
+    std::{
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+    },
 };
 
 pub const AUTO_UNSEAL_KEY_ENV: &str = "MOLTIS_VAULT_AUTO_UNSEAL_KEY";
 pub const AUTO_UNSEAL_KEY_FILE_ENV: &str = "MOLTIS_VAULT_AUTO_UNSEAL_KEY_FILE";
+
+static VAULT_ENCRYPTION_RUNTIME_ENABLED: AtomicBool = AtomicBool::new(true);
+
+pub fn set_vault_encryption_runtime_enabled(enabled: bool) {
+    VAULT_ENCRYPTION_RUNTIME_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn is_vault_encryption_runtime_enabled() -> bool {
+    VAULT_ENCRYPTION_RUNTIME_ENABLED.load(Ordering::Relaxed)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutoUnsealResult {
@@ -204,6 +220,7 @@ pub async fn disable_vault_and_decrypt_all(
         config.auth.vault_enabled = false;
     })
     .context("failed to persist auth.vault_enabled=false")?;
+    set_vault_encryption_runtime_enabled(false);
 
     tracing::info!(?report, "vault disabled after decrypting stored secrets");
     Ok(report)

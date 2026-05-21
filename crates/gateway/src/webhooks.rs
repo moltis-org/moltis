@@ -74,6 +74,10 @@ async fn encrypt_secret_config(
         return Ok(());
     };
 
+    if !crate::vault_lifecycle::is_vault_encryption_runtime_enabled() {
+        return Ok(());
+    }
+
     let Some(vault) = vault else {
         return Ok(());
     };

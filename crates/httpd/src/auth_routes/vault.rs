@@ -125,17 +125,20 @@ pub(super) async fn vault_disable_handler(
     )
     .await
     {
-        Ok(report) => Json(serde_json::json!({
-            "ok": true,
-            "report": {
-                "env_vars": report.env_vars,
-                "ssh_keys": report.ssh_keys,
-                "channels": report.channels,
-                "webhooks": report.webhooks,
-                "provider_keys": report.provider_keys,
-            }
-        }))
-        .into_response(),
+        Ok(report) => {
+            state.credential_store.disable_vault_encryption();
+            Json(serde_json::json!({
+                "ok": true,
+                "report": {
+                    "env_vars": report.env_vars,
+                    "ssh_keys": report.ssh_keys,
+                    "channels": report.channels,
+                    "webhooks": report.webhooks,
+                    "provider_keys": report.provider_keys,
+                }
+            }))
+            .into_response()
+        },
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }

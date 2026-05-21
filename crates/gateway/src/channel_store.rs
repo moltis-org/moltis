@@ -117,6 +117,10 @@ impl VaultChannelStore {
             return Ok(StoredChannel { config, ..channel });
         }
 
+        if !crate::vault_lifecycle::is_vault_encryption_runtime_enabled() {
+            return Ok(StoredChannel { config, ..channel });
+        }
+
         let Some(vault) = self.vault.as_ref() else {
             return Ok(StoredChannel { config, ..channel });
         };

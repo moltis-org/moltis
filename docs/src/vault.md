@@ -241,9 +241,11 @@ before writing `auth.vault_enabled = false`; if any decrypt step fails, the flag
 is not changed.
 
 After disabling, restart Moltis so startup no longer wires the vault into auth,
-channel, webhook, env-var, and SSH secret storage. Local secrets remain on disk
-as plaintext, so only use this mode on trusted machines with appropriate file
-and disk protections.
+channel, webhook, env-var, and SSH secret storage. The running process also
+stops encrypting new secret writes immediately after a successful disable, so
+secrets added before the restart remain readable in no-vault mode. Local secrets
+remain on disk as plaintext, so only use this mode on trusted machines with
+appropriate file and disk protections.
 
 Error responses:
 

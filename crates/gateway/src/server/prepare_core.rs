@@ -445,9 +445,11 @@ pub async fn prepare_gateway_core(
     #[cfg(feature = "vault")]
     let (vault, auto_unsealed_vault): (Option<Arc<moltis_vault::Vault>>, bool) = {
         if !config.auth.vault_enabled {
+            crate::vault_lifecycle::set_vault_encryption_runtime_enabled(false);
             info!("vault disabled by auth.vault_enabled=false");
             (None, false)
         } else {
+            crate::vault_lifecycle::set_vault_encryption_runtime_enabled(true);
             match moltis_vault::Vault::new(db_pool.clone()).await {
                 Ok(v) => {
                     info!(status = ?v.status().await, "vault ready");

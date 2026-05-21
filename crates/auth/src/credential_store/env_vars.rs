@@ -37,8 +37,10 @@ impl CredentialStore {
     pub async fn set_env_var(&self, key: &str, value: &str) -> Result<i64> {
         #[cfg(feature = "vault")]
         let (store_value, encrypted) = {
-            if let Some(ref vault) = self.vault {
-                if vault.is_unsealed().await {
+            if self.is_vault_encryption_enabled() {
+                if let Some(ref vault) = self.vault
+                    && vault.is_unsealed().await
+                {
                     let aad = format!("env:{key}");
                     let enc = vault
                         .encrypt_string(value, &aad)

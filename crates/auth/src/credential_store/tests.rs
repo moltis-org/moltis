@@ -730,6 +730,28 @@ async fn test_env_var_encryption_when_vault_unsealed() {
 
 #[cfg(feature = "vault")]
 #[tokio::test]
+async fn test_env_var_plaintext_when_vault_encryption_disabled() {
+    let vault_password = generate_token();
+    let visible_value = fixture_secret("vault-env-disabled-visible");
+    let (store, _vault) = vault_store(&vault_password).await;
+    store.disable_vault_encryption();
+
+    store
+        .set_env_var("DISABLED_KEY", &visible_value)
+        .await
+        .unwrap();
+
+    let row: (String, i64) =
+        sqlx::query_as("SELECT value, encrypted FROM env_variables WHERE key = 'DISABLED_KEY'")
+            .fetch_one(store.db_pool())
+            .await
+            .unwrap();
+    assert_eq!(row.1, 0);
+    assert_eq!(row.0, visible_value);
+}
+
+#[cfg(feature = "vault")]
+#[tokio::test]
 async fn test_env_var_plaintext_when_vault_sealed() {
     let vault_password = generate_token();
     let visible_value = fixture_secret("vault-env-plaintext-visible");

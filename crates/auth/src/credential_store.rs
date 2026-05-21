@@ -39,4 +39,6 @@ pub struct CredentialStore {
     /// Encryption-at-rest vault for environment variables.
     #[cfg(feature = "vault")]
     vault: Option<Arc<Vault>>,
+    #[cfg(feature = "vault")]
+    vault_encryption_enabled: AtomicBool,
 }
