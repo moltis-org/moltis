@@ -472,7 +472,10 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("http_redirect_port", Leaf),
             ])),
         ),
-        ("auth", Struct(HashMap::from([("disabled", Leaf)]))),
+        (
+            "auth",
+            Struct(HashMap::from([("disabled", Leaf), ("vault_enabled", Leaf)])),
+        ),
         ("graphql", Struct(HashMap::from([("enabled", Leaf)]))),
         (
             "metrics",

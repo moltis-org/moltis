@@ -85,6 +85,61 @@ pub(super) async fn vault_recovery_handler(
     }
 }
 
+#[cfg(feature = "vault")]
+#[derive(serde::Deserialize)]
+pub(super) struct VaultDisableRequest {
+    password: Option<String>,
+}
+
+#[cfg(feature = "vault")]
+pub(super) async fn vault_disable_handler(
+    _session: crate::auth_middleware::AuthSession,
+    State(state): State<AuthState>,
+    Json(body): Json<VaultDisableRequest>,
+) -> impl IntoResponse {
+    let Some(ref vault) = state.gateway_state.vault else {
+        return (StatusCode::NOT_FOUND, "vault not available").into_response();
+    };
+
+    if !vault.is_unsealed().await {
+        let Some(password) = body
+            .password
+            .as_deref()
+            .filter(|password| !password.is_empty())
+        else {
+            return (StatusCode::LOCKED, "unlock the vault before disabling it").into_response();
+        };
+        if let Err(error) = vault.unseal(password).await {
+            return match error {
+                moltis_vault::VaultError::BadCredential => {
+                    (StatusCode::LOCKED, "invalid password").into_response()
+                },
+                other => (StatusCode::INTERNAL_SERVER_ERROR, other.to_string()).into_response(),
+            };
+        }
+    }
+
+    match moltis_gateway::vault_lifecycle::disable_vault_and_decrypt_all(
+        vault,
+        state.credential_store.db_pool(),
+    )
+    .await
+    {
+        Ok(report) => Json(serde_json::json!({
+            "ok": true,
+            "report": {
+                "env_vars": report.env_vars,
+                "ssh_keys": report.ssh_keys,
+                "channels": report.channels,
+                "webhooks": report.webhooks,
+                "provider_keys": report.provider_keys,
+            }
+        }))
+        .into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
 /// Migrate plaintext secrets to encrypted storage after vault unseal.
 #[cfg(feature = "vault")]
 pub(super) async fn run_vault_env_migration(state: &AuthState) {

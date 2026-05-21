@@ -65,6 +65,8 @@ port = {port}                           # Port number (auto-generated for this i
 # [auth]
 # disabled = false                  # true = disable auth entirely (DANGEROUS if exposed)
                                     # When disabled, anyone with network access can use moltis
+# vault_enabled = true              # true = encrypt stored secrets at rest using the password vault
+#                                   # Set false to keep password auth without requiring vault unlocks after restart.
 
 # ══════════════════════════════════════════════════════════════════════════════
 # GRAPHQL

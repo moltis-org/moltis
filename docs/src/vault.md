@@ -9,6 +9,10 @@ The vault is enabled by default (the `vault` cargo feature) and requires
 no configuration. It initializes automatically when you set your first
 password (during setup or later in **Settings > Authentication**).
 
+Set `auth.vault_enabled = false` to keep password authentication without
+encrypting stored secrets at rest. Existing installs keep vault behavior on
+upgrade because the default is `true`.
+
 ## Key Hierarchy
 
 The vault uses a two-layer key hierarchy to separate the encryption key
@@ -166,6 +170,8 @@ Currently encrypted:
 |------|---------|-----|
 | Environment variables (`env_variables` table) | SQLite | `env:{key}` |
 | Managed SSH private keys (`ssh_keys` table) | SQLite | `ssh-key:{name}` |
+| Channel account secrets, including Discord bot tokens | SQLite | `channel:{type}:{account_id}:{field}` |
+| Webhook auth/source secrets | SQLite | `webhook:config:{field}` |
 | Provider API keys (`provider_keys.json.enc`) | File | `provider_keys` |
 
 The `encrypted` column in `env_variables` and `ssh_keys` tracks whether each
@@ -216,14 +222,28 @@ Allowed through regardless of vault state:
 
 ## API Endpoints
 
-All vault endpoints are under `/api/auth/vault/` and require no session
-(they are on the public auth allowlist):
+Vault unlock endpoints are under `/api/auth/vault/`. Unlock and recovery are
+available before login so a sealed vault can be opened during authentication.
+Disabling the vault requires an authenticated session.
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/api/auth/vault/status` | Returns `{"status": "uninitialized"\|"sealed"\|"unsealed"\|"disabled"}` |
 | `POST` | `/api/auth/vault/unlock` | Unseal with password: `{"password": "..."}` |
 | `POST` | `/api/auth/vault/recovery` | Unseal with recovery key: `{"recovery_key": "..."}` |
+| `POST` | `/api/auth/vault/disable` | Decrypt stored secrets and set `auth.vault_enabled = false`; accepts `{"password":"..."}` when sealed. |
+
+## Disabling The Vault
+
+Use **Settings > Encryption > Disable encryption at rest** to opt out of the
+vault while keeping password login. Moltis decrypts all known vault-backed data
+before writing `auth.vault_enabled = false`; if any decrypt step fails, the flag
+is not changed.
+
+After disabling, restart Moltis so startup no longer wires the vault into auth,
+channel, webhook, env-var, and SSH secret storage. Local secrets remain on disk
+as plaintext, so only use this mode on trusted machines with appropriate file
+and disk protections.
 
 Error responses:
 

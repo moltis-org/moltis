@@ -10,6 +10,10 @@ use {
 pub struct AuthConfig {
     /// When true, authentication is explicitly disabled (no login required).
     pub disabled: bool,
+
+    /// When true, stored secrets are encrypted at rest using the password-backed vault.
+    #[serde(default = "default_true")]
+    pub vault_enabled: bool,
 }
 
 /// Runtime GraphQL server configuration.

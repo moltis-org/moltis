@@ -444,22 +444,28 @@ pub async fn prepare_gateway_core(
 
     #[cfg(feature = "vault")]
     let (vault, auto_unsealed_vault): (Option<Arc<moltis_vault::Vault>>, bool) = {
-        match moltis_vault::Vault::new(db_pool.clone()).await {
-            Ok(v) => {
-                info!(status = ?v.status().await, "vault ready");
-                let vault = Arc::new(v);
-                let auto_unseal_result = crate::vault_lifecycle::auto_unseal_from_env(&vault).await;
-                let auto_unsealed = matches!(
-                    auto_unseal_result,
-                    crate::vault_lifecycle::AutoUnsealResult::Unsealed
-                        | crate::vault_lifecycle::AutoUnsealResult::AlreadyUnsealed
-                );
-                (Some(vault), auto_unsealed)
-            },
-            Err(e) => {
-                warn!(error = %e, "vault init failed, encryption disabled");
-                (None, false)
-            },
+        if !config.auth.vault_enabled {
+            info!("vault disabled by auth.vault_enabled=false");
+            (None, false)
+        } else {
+            match moltis_vault::Vault::new(db_pool.clone()).await {
+                Ok(v) => {
+                    info!(status = ?v.status().await, "vault ready");
+                    let vault = Arc::new(v);
+                    let auto_unseal_result =
+                        crate::vault_lifecycle::auto_unseal_from_env(&vault).await;
+                    let auto_unsealed = matches!(
+                        auto_unseal_result,
+                        crate::vault_lifecycle::AutoUnsealResult::Unsealed
+                            | crate::vault_lifecycle::AutoUnsealResult::AlreadyUnsealed
+                    );
+                    (Some(vault), auto_unsealed)
+                },
+                Err(e) => {
+                    warn!(error = %e, "vault init failed, encryption disabled");
+                    (None, false)
+                },
+            }
         }
     };
 

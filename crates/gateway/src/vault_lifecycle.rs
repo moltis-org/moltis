@@ -1,7 +1,11 @@
 use {
     crate::{auth::CredentialStore, state::GatewayState},
+    anyhow::Context,
     secrecy::{ExposeSecret, Secret},
-    std::{path::PathBuf, sync::Arc},
+    std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    },
 };
 
 pub const AUTO_UNSEAL_KEY_ENV: &str = "MOLTIS_VAULT_AUTO_UNSEAL_KEY";
@@ -169,6 +173,254 @@ pub async fn run_vault_env_migration(credential_store: &CredentialStore) {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct VaultDisableReport {
+    pub env_vars: usize,
+    pub ssh_keys: usize,
+    pub channels: usize,
+    pub webhooks: usize,
+    pub provider_keys: bool,
+}
+
+/// Decrypt all known vault-backed data and disable vault use in config.
+///
+/// This must only run while the vault is unsealed. The config flag is written
+/// after all decryptions succeed, so a partial failure leaves vault mode intact.
+#[tracing::instrument(skip(vault, pool))]
+pub async fn disable_vault_and_decrypt_all(
+    vault: &moltis_vault::Vault,
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<VaultDisableReport> {
+    if !vault.is_unsealed().await {
+        anyhow::bail!("vault must be unlocked before disabling encryption at rest");
+    }
+
+    let report = VaultDisableReport {
+        env_vars: decrypt_env_vars(vault, pool).await?,
+        ssh_keys: decrypt_ssh_keys(vault, pool).await?,
+        channels: decrypt_channels(vault, pool).await?,
+        webhooks: decrypt_webhooks(vault, pool).await?,
+        provider_keys: decrypt_provider_keys(vault).await?,
+    };
+
+    moltis_config::update_config(|config| {
+        config.auth.vault_enabled = false;
+    })
+    .context("failed to persist auth.vault_enabled=false")?;
+
+    tracing::info!(?report, "vault disabled after decrypting stored secrets");
+    Ok(report)
+}
+
+async fn decrypt_env_vars(
+    vault: &moltis_vault::Vault,
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<usize> {
+    let rows: Vec<(i64, String, String)> =
+        sqlx::query_as("SELECT id, key, value FROM env_variables WHERE encrypted = 1")
+            .fetch_all(pool)
+            .await?;
+    let count = rows.len();
+    for (id, key, ciphertext) in rows {
+        let plaintext = vault
+            .decrypt_string(&ciphertext, &format!("env:{key}"))
+            .await?;
+        sqlx::query("UPDATE env_variables SET value = ?, encrypted = 0, updated_at = datetime('now') WHERE id = ?")
+            .bind(plaintext)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(count)
+}
+
+async fn decrypt_ssh_keys(
+    vault: &moltis_vault::Vault,
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<usize> {
+    let rows: Vec<(i64, String, String)> =
+        sqlx::query_as("SELECT id, name, private_key FROM ssh_keys WHERE encrypted = 1")
+            .fetch_all(pool)
+            .await?;
+    let count = rows.len();
+    for (id, name, ciphertext) in rows {
+        let plaintext = vault
+            .decrypt_string(&ciphertext, &format!("ssh-key:{name}"))
+            .await?;
+        sqlx::query("UPDATE ssh_keys SET private_key = ?, encrypted = 0, updated_at = datetime('now') WHERE id = ?")
+            .bind(plaintext)
+            .bind(id)
+            .execute(pool)
+            .await?;
+    }
+    Ok(count)
+}
+
+async fn decrypt_channels(
+    vault: &moltis_vault::Vault,
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<usize> {
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT channel_type, account_id, config FROM channels")
+            .fetch_all(pool)
+            .await?;
+    let mut changed = 0;
+    for (channel_type, account_id, config_json) in rows {
+        let channel_type_enum = match channel_type.parse::<moltis_channels::plugin::ChannelType>() {
+            Ok(channel_type) => channel_type,
+            Err(_) => continue,
+        };
+        let secret_fields = channel_type_enum.secret_fields();
+        if secret_fields.is_empty() {
+            continue;
+        }
+        let mut config: serde_json::Value = serde_json::from_str(&config_json)
+            .with_context(|| format!("invalid channel config for {channel_type}:{account_id}"))?;
+        if !moltis_secret_store::has_encrypted_secret_fields(&config, secret_fields)? {
+            continue;
+        }
+        moltis_secret_store::decrypt_secret_fields(
+            &mut config,
+            secret_fields,
+            &format!("channel:{channel_type}:{account_id}"),
+            vault,
+        )
+        .await?;
+        sqlx::query("UPDATE channels SET config = ?, updated_at = ? WHERE channel_type = ? AND account_id = ?")
+            .bind(serde_json::to_string(&config)?)
+            .bind(unix_now_i64())
+            .bind(&channel_type)
+            .bind(&account_id)
+            .execute(pool)
+            .await?;
+        changed += 1;
+    }
+    Ok(changed)
+}
+
+async fn decrypt_webhooks(
+    vault: &moltis_vault::Vault,
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<usize> {
+    let rows: Vec<(i64, String, Option<String>, String, Option<String>)> = sqlx::query_as(
+        "SELECT id, auth_mode, auth_config_json, source_profile, source_config_json FROM webhooks",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut changed = 0;
+    for (id, auth_mode, auth_config_json, source_profile, source_config_json) in rows {
+        let mut row_changed = false;
+        let auth_config = if let Some(config_json) = auth_config_json {
+            let mut config: serde_json::Value = serde_json::from_str(&config_json)
+                .with_context(|| format!("invalid auth_config_json for webhook {id}"))?;
+            let fields = webhook_auth_secret_fields(&auth_mode);
+            if !fields.is_empty()
+                && moltis_secret_store::has_encrypted_secret_fields(&config, fields)?
+            {
+                moltis_secret_store::decrypt_secret_fields(
+                    &mut config,
+                    fields,
+                    "webhook:config",
+                    vault,
+                )
+                .await?;
+                row_changed = true;
+            }
+            Some(serde_json::to_string(&config)?)
+        } else {
+            None
+        };
+        let source_config = if let Some(config_json) = source_config_json {
+            let mut config: serde_json::Value = serde_json::from_str(&config_json)
+                .with_context(|| format!("invalid source_config_json for webhook {id}"))?;
+            let fields = webhook_source_secret_fields(&source_profile);
+            if moltis_secret_store::has_encrypted_secret_fields(&config, fields)? {
+                moltis_secret_store::decrypt_secret_fields(
+                    &mut config,
+                    fields,
+                    "webhook:config",
+                    vault,
+                )
+                .await?;
+                row_changed = true;
+            }
+            Some(serde_json::to_string(&config)?)
+        } else {
+            None
+        };
+        if row_changed {
+            sqlx::query("UPDATE webhooks SET auth_config_json = ?, source_config_json = ?, updated_at = datetime('now') WHERE id = ?")
+                .bind(auth_config)
+                .bind(source_config)
+                .bind(id)
+                .execute(pool)
+                .await?;
+            changed += 1;
+        }
+    }
+    Ok(changed)
+}
+
+async fn decrypt_provider_keys(vault: &moltis_vault::Vault) -> anyhow::Result<bool> {
+    let Some(config_dir) = moltis_config::config_dir() else {
+        return Ok(false);
+    };
+    let path = config_dir.join("provider_keys.json");
+    let enc_path = path.with_extension("json.enc");
+    if !enc_path.exists() {
+        return Ok(false);
+    }
+    let encrypted = std::fs::read_to_string(&enc_path)
+        .with_context(|| format!("failed to read {}", enc_path.display()))?;
+    let plaintext = vault.decrypt_string(&encrypted, "provider_keys").await?;
+    write_secret_file(&path, &plaintext)?;
+    std::fs::remove_file(&enc_path)
+        .with_context(|| format!("failed to remove {}", enc_path.display()))?;
+    Ok(true)
+}
+
+fn write_secret_file(path: &Path, content: &str) -> anyhow::Result<()> {
+    std::fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to chmod {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn webhook_auth_secret_fields(auth_mode: &str) -> &'static [&'static str] {
+    match auth_mode {
+        "static_header" => &["value"],
+        "bearer" | "gitlab_token" => &["token"],
+        "github_hmac_sha256"
+        | "stripe_webhook_signature"
+        | "linear_webhook_signature"
+        | "pagerduty_v2_signature"
+        | "sentry_webhook_signature" => &["secret"],
+        _ => &[],
+    }
+}
+
+fn webhook_source_secret_fields(_source_profile: &str) -> &'static [&'static str] {
+    &[
+        "access_token",
+        "api_key",
+        "api_token",
+        "bearer_token",
+        "client_secret",
+        "secret",
+        "signing_secret",
+        "token",
+        "webhook_secret",
+    ]
+}
+
+fn unix_now_i64() -> i64 {
+    time::OffsetDateTime::now_utc().unix_timestamp()
+}
+
 /// Start stored channel accounts after vault unseal.
 ///
 /// When the vault is unsealed, previously encrypted channel configs become
@@ -238,6 +490,7 @@ mod tests {
     use {
         crate::vault_lifecycle::{
             AutoUnsealResult, AutoUnsealSecret, AutoUnsealSourceKind, auto_unseal_with_secret,
+            disable_vault_and_decrypt_all,
         },
         secrecy::Secret,
         sqlx::SqlitePool,
@@ -325,5 +578,97 @@ mod tests {
             vault.status().await.unwrap(),
             moltis_vault::VaultStatus::Sealed
         );
+    }
+
+    #[tokio::test]
+    async fn disable_vault_decrypts_stored_secrets_before_flipping_config() {
+        let config_dir = tempfile::tempdir().unwrap();
+        moltis_config::set_config_dir(config_dir.path().to_path_buf());
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        moltis_vault::run_migrations(&pool).await.unwrap();
+        create_disable_test_tables(&pool).await;
+        let vault = Arc::new(moltis_vault::Vault::new(pool.clone()).await.unwrap());
+        vault.initialize("test-password-123").await.unwrap();
+
+        let env_ciphertext = vault
+            .encrypt_string("env-secret", "env:API_KEY")
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO env_variables (id, key, value, encrypted, updated_at) VALUES (1, 'API_KEY', ?, 1, datetime('now'))")
+            .bind(env_ciphertext)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let ssh_ciphertext = vault
+            .encrypt_string("private-key", "ssh-key:deploy")
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO ssh_keys (id, name, private_key, encrypted, updated_at) VALUES (1, 'deploy', ?, 1, datetime('now'))")
+            .bind(ssh_ciphertext)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut channel_config = serde_json::json!({ "token": "Bot discord-token" });
+        moltis_secret_store::encrypt_secret_fields(
+            &mut channel_config,
+            &["token"],
+            "channel:discord:main",
+            vault.as_ref(),
+        )
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO channels (channel_type, account_id, config, created_at, updated_at) VALUES ('discord', 'main', ?, 1, 1)")
+            .bind(serde_json::to_string(&channel_config).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut webhook_config = serde_json::json!({ "token": "webhook-token" });
+        moltis_secret_store::encrypt_secret_fields(
+            &mut webhook_config,
+            &["token"],
+            "webhook:config",
+            vault.as_ref(),
+        )
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO webhooks (id, auth_mode, auth_config_json, source_profile, source_config_json, updated_at) VALUES (1, 'bearer', ?, 'generic', NULL, datetime('now'))")
+            .bind(serde_json::to_string(&webhook_config).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let report = disable_vault_and_decrypt_all(&vault, &pool).await.unwrap();
+        assert_eq!(report.env_vars, 1);
+        assert_eq!(report.ssh_keys, 1);
+        assert_eq!(report.channels, 1);
+        assert_eq!(report.webhooks, 1);
+
+        let env: (String, i64) =
+            sqlx::query_as("SELECT value, encrypted FROM env_variables WHERE key = 'API_KEY'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(env, ("env-secret".to_owned(), 0));
+        let channel: (String,) =
+            sqlx::query_as("SELECT config FROM channels WHERE account_id = 'main'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let channel_json: serde_json::Value = serde_json::from_str(&channel.0).unwrap();
+        assert_eq!(channel_json["token"], "Bot discord-token");
+    }
+
+    async fn create_disable_test_tables(pool: &SqlitePool) {
+        for sql in [
+            "CREATE TABLE env_variables (id INTEGER PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL, encrypted INTEGER NOT NULL DEFAULT 0, updated_at TEXT)",
+            "CREATE TABLE ssh_keys (id INTEGER PRIMARY KEY, name TEXT NOT NULL, private_key TEXT NOT NULL, encrypted INTEGER NOT NULL DEFAULT 0, updated_at TEXT)",
+            "CREATE TABLE channels (channel_type TEXT NOT NULL, account_id TEXT NOT NULL, config TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (channel_type, account_id))",
+            "CREATE TABLE webhooks (id INTEGER PRIMARY KEY, auth_mode TEXT NOT NULL, auth_config_json TEXT, source_profile TEXT NOT NULL, source_config_json TEXT, updated_at TEXT)",
+        ] {
+            sqlx::query(sql).execute(pool).await.unwrap();
+        }
     }
 }

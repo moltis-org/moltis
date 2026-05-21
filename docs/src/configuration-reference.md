@@ -143,6 +143,7 @@ Authentication configuration.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `disabled` | bool | `false` | When `true`, authentication is explicitly disabled (no login required). |
+| `vault_enabled` | bool | `true` | When `true`, stored secrets are encrypted at rest using the password-backed vault. Set `false` to keep password auth without vault unlocks after restart. |
 
 
 ### `tls` — TlsConfig

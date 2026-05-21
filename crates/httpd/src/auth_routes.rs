@@ -97,6 +97,7 @@ fn vault_routes() -> axum::Router<AuthState> {
         .route("/vault/status", get(vault::vault_status_handler))
         .route("/vault/unlock", post(vault::vault_unlock_handler))
         .route("/vault/recovery", post(vault::vault_recovery_handler))
+        .route("/vault/disable", post(vault::vault_disable_handler))
 }
 
 #[cfg(not(feature = "vault"))]
