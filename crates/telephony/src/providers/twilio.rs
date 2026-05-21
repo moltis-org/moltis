@@ -268,6 +268,21 @@ impl TelephonyProvider for TwilioProvider {
 
         let call_sid = params.get("CallSid").cloned().unwrap_or_default();
 
+        if let Some(speech) = params.get("SpeechResult") {
+            let confidence = params.get("Confidence").and_then(|c| c.parse::<f32>().ok());
+            return Ok(CallEvent::Speech {
+                provider_call_id: call_sid,
+                text: speech.clone(),
+                confidence,
+            });
+        }
+        if let Some(digits) = params.get("Digits") {
+            return Ok(CallEvent::Dtmf {
+                provider_call_id: call_sid,
+                digits: digits.clone(),
+            });
+        }
+
         let status = params.get("CallStatus").map(String::as_str).unwrap_or("");
 
         match status {
@@ -297,21 +312,6 @@ impl TelephonyProvider for TwilioProvider {
                 reason: CallEndReason::Error,
             }),
             other => {
-                // Check for speech result from <Gather>.
-                if let Some(speech) = params.get("SpeechResult") {
-                    let confidence = params.get("Confidence").and_then(|c| c.parse::<f32>().ok());
-                    return Ok(CallEvent::Speech {
-                        provider_call_id: call_sid,
-                        text: speech.clone(),
-                        confidence,
-                    });
-                }
-                if let Some(digits) = params.get("Digits") {
-                    return Ok(CallEvent::Dtmf {
-                        provider_call_id: call_sid,
-                        digits: digits.clone(),
-                    });
-                }
                 debug!(status = %other, "unrecognized Twilio status, treating as error");
                 Ok(CallEvent::Error {
                     provider_call_id: call_sid,
@@ -543,6 +543,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_webhook_speech_result_with_in_progress_status() {
+        let provider = TwilioProvider::new("AC_TEST".into(), Secret::new("TOKEN".into()));
+        let body =
+            b"CallSid=CA456&CallStatus=in-progress&SpeechResult=hello%20world&Confidence=0.92";
+        let headers = HeaderMap::new();
+        let event = provider
+            .parse_webhook_event(&headers, body)
+            .unwrap_or_else(|e| panic!("{e}"));
+        match event {
+            CallEvent::Speech {
+                provider_call_id,
+                text,
+                confidence,
+            } => {
+                assert_eq!(provider_call_id, "CA456");
+                assert_eq!(text, "hello world");
+                assert!((confidence.unwrap_or(0.0) - 0.92).abs() < 0.01);
+            },
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_webhook_dtmf_digits() {
         let provider = TwilioProvider::new("AC_TEST".into(), Secret::new("TOKEN".into()));
         let body = b"CallSid=CA789&Digits=123";
@@ -552,6 +575,26 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e}"));
         match event {
             CallEvent::Dtmf { digits, .. } => assert_eq!(digits, "123"),
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_webhook_dtmf_digits_with_in_progress_status() {
+        let provider = TwilioProvider::new("AC_TEST".into(), Secret::new("TOKEN".into()));
+        let body = b"CallSid=CA789&CallStatus=in-progress&Digits=123";
+        let headers = HeaderMap::new();
+        let event = provider
+            .parse_webhook_event(&headers, body)
+            .unwrap_or_else(|e| panic!("{e}"));
+        match event {
+            CallEvent::Dtmf {
+                provider_call_id,
+                digits,
+            } => {
+                assert_eq!(provider_call_id, "CA789");
+                assert_eq!(digits, "123");
+            },
             other => panic!("unexpected event: {other:?}"),
         }
     }

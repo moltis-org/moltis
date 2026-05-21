@@ -838,6 +838,33 @@ pub async fn prepare_gateway(
 
                         match provider.parse_webhook_event(&headers, &body) {
                             Ok(event) => {
+                                match &event {
+                                    moltis_telephony::types::CallEvent::Speech {
+                                        provider_call_id,
+                                        text,
+                                        confidence,
+                                    } => tracing::debug!(
+                                        account_id = %account_id,
+                                        provider_call_id = %provider_call_id,
+                                        speech_len = text.len(),
+                                        confidence = ?confidence,
+                                        "telephony gather received speech"
+                                    ),
+                                    moltis_telephony::types::CallEvent::Dtmf {
+                                        provider_call_id,
+                                        ..
+                                    } => tracing::debug!(
+                                        account_id = %account_id,
+                                        provider_call_id = %provider_call_id,
+                                        "telephony gather received DTMF"
+                                    ),
+                                    other => tracing::debug!(
+                                        account_id = %account_id,
+                                        event = ?other,
+                                        "telephony gather parsed non-input event"
+                                    ),
+                                }
+
                                 drop(provider);
                                 manager.handle_event(&event);
 
@@ -851,6 +878,21 @@ pub async fn prepare_gateway(
                                     let call_id = manager
                                         .resolve_call_id(provider_call_id)
                                         .unwrap_or_default();
+
+                                    if call_id.is_empty() {
+                                        tracing::warn!(
+                                            account_id = %account_id,
+                                            provider_call_id = %provider_call_id,
+                                            "telephony gather speech for unknown call"
+                                        );
+                                    } else {
+                                        tracing::debug!(
+                                            account_id = %account_id,
+                                            provider_call_id = %provider_call_id,
+                                            call_id = %call_id,
+                                            "telephony gather dispatching speech"
+                                        );
+                                    }
 
                                     // Look up the caller from the call record.
                                     let caller = manager

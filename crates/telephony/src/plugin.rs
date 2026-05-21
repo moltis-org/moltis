@@ -305,7 +305,77 @@ impl ChannelPlugin for TelephonyPlugin {
 
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::providers::mock::MockProvider};
+    use {
+        super::*,
+        crate::providers::mock::MockProvider,
+        async_trait::async_trait,
+        moltis_channels::{ChannelEvent, ChannelMessageMeta, ChannelReplyTarget, ChannelType},
+        std::sync::Mutex,
+    };
+
+    #[derive(Clone)]
+    struct CapturedDispatch {
+        text: String,
+        reply_to: ChannelReplyTarget,
+        meta: ChannelMessageMeta,
+    }
+
+    struct CapturingSink {
+        dispatches: Mutex<Vec<CapturedDispatch>>,
+    }
+
+    impl CapturingSink {
+        fn new() -> Self {
+            Self {
+                dispatches: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn dispatches(&self) -> Vec<CapturedDispatch> {
+            self.dispatches
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl ChannelEventSink for CapturingSink {
+        async fn emit(&self, _event: ChannelEvent) {}
+
+        async fn dispatch_to_chat(
+            &self,
+            text: &str,
+            reply_to: ChannelReplyTarget,
+            meta: ChannelMessageMeta,
+        ) {
+            self.dispatches
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(CapturedDispatch {
+                    text: text.to_string(),
+                    reply_to,
+                    meta,
+                });
+        }
+
+        async fn dispatch_command(
+            &self,
+            _command: &str,
+            _reply_to: ChannelReplyTarget,
+            _sender_id: Option<&str>,
+        ) -> moltis_channels::Result<String> {
+            Ok(String::new())
+        }
+
+        async fn request_disable_account(
+            &self,
+            _channel_type: &str,
+            _account_id: &str,
+            _reason: &str,
+        ) {
+        }
+    }
 
     fn twilio_config(from_number: &str) -> serde_json::Value {
         serde_json::json!({
@@ -393,5 +463,49 @@ mod tests {
             plugin.routing_outbound.gather_url(account_id).as_deref(),
             Some("https://calls.example.com/base/api/channels/telephony/default/gather")
         );
+    }
+
+    #[tokio::test]
+    async fn dispatch_speech_sends_voice_message_to_event_sink() {
+        let account_id = "default";
+        let sink = Arc::new(CapturingSink::new());
+        let manager = Arc::new(RwLock::new(CallManager::new(
+            Box::new(MockProvider::new()),
+            60,
+        )));
+        let mut plugin = TelephonyPlugin::new().with_event_sink(sink.clone());
+        plugin.set_test_account(
+            account_id.to_string(),
+            TelephonyAccountConfig {
+                from_number: "+15550000002".to_string(),
+                model: Some("anthropic/claude-test".to_string()),
+                agent_id: Some("phone-agent".to_string()),
+                ..TelephonyAccountConfig::default()
+            },
+            manager,
+        );
+
+        plugin
+            .dispatch_speech(account_id, "call-123", "+15551112222", "hello world")
+            .await;
+
+        let dispatches = sink.dispatches();
+        assert_eq!(dispatches.len(), 1);
+        let captured = &dispatches[0];
+        assert_eq!(captured.text, "hello world");
+        assert_eq!(captured.reply_to.channel_type, ChannelType::Telephony);
+        assert_eq!(captured.reply_to.account_id, account_id);
+        assert_eq!(captured.reply_to.chat_id, "call-123");
+        assert_eq!(captured.meta.channel_type, ChannelType::Telephony);
+        assert_eq!(captured.meta.sender_id.as_deref(), Some("+15551112222"));
+        assert!(matches!(
+            captured.meta.message_kind,
+            Some(moltis_channels::ChannelMessageKind::Voice)
+        ));
+        assert_eq!(
+            captured.meta.model.as_deref(),
+            Some("anthropic/claude-test")
+        );
+        assert_eq!(captured.meta.agent_id.as_deref(), Some("phone-agent"));
     }
 }
