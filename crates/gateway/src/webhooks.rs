@@ -531,6 +531,7 @@ mod tests {
         Arc<moltis_webhooks::store::SqliteWebhookStore>,
         Arc<moltis_vault::Vault>,
     ) {
+        crate::vault_lifecycle::set_vault_encryption_runtime_enabled(true);
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         moltis_webhooks::run_migrations(&pool).await.unwrap();
         let raw = Arc::new(moltis_webhooks::store::SqliteWebhookStore::with_pool(
@@ -543,6 +544,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(vault_runtime)]
     async fn vault_store_encrypts_webhook_secret_configs() {
         let (store, raw, vault) = make_store().await;
 
@@ -601,6 +603,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(vault_runtime)]
     async fn sealed_vault_rejects_plaintext_secret_updates() {
         let (store, _raw, vault) = make_store().await;
         let webhook = store

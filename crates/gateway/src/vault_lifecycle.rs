@@ -549,7 +549,7 @@ mod tests {
     use {
         crate::vault_lifecycle::{
             AutoUnsealResult, AutoUnsealSecret, AutoUnsealSourceKind, auto_unseal_with_secret,
-            disable_vault_and_decrypt_all,
+            disable_vault_and_decrypt_all, set_vault_encryption_runtime_enabled,
         },
         secrecy::Secret,
         sqlx::SqlitePool,
@@ -647,7 +647,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial(vault_runtime)]
     async fn disable_vault_decrypts_stored_secrets_before_flipping_config() {
+        set_vault_encryption_runtime_enabled(true);
         let config_dir = tempfile::tempdir().unwrap();
         moltis_config::set_config_dir(config_dir.path().to_path_buf());
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -725,6 +727,7 @@ mod tests {
                 .unwrap();
         let channel_json: serde_json::Value = serde_json::from_str(&channel.0).unwrap();
         assert_eq!(channel_json["token"], "Bot discord-token");
+        set_vault_encryption_runtime_enabled(true);
     }
 
     async fn create_disable_test_tables(pool: &SqlitePool) {
