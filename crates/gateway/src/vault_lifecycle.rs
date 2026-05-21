@@ -2,10 +2,7 @@ use {
     crate::{auth::CredentialStore, state::GatewayState},
     anyhow::Context,
     secrecy::{ExposeSecret, Secret},
-    std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-    },
+    std::{path::PathBuf, sync::Arc},
 };
 
 pub const AUTO_UNSEAL_KEY_ENV: &str = "MOLTIS_VAULT_AUTO_UNSEAL_KEY";
@@ -309,8 +306,9 @@ async fn decrypt_webhooks(
     .await?;
     let mut changed = 0;
     for (id, auth_mode, auth_config_json, source_profile, source_config_json) in rows {
-        let mut row_changed = false;
-        let auth_config = if let Some(config_json) = auth_config_json {
+        let mut auth_config_update = None;
+        let mut source_config_update = None;
+        if let Some(config_json) = auth_config_json {
             let mut config: serde_json::Value = serde_json::from_str(&config_json)
                 .with_context(|| format!("invalid auth_config_json for webhook {id}"))?;
             let fields = webhook_auth_secret_fields(&auth_mode);
@@ -324,13 +322,10 @@ async fn decrypt_webhooks(
                     vault,
                 )
                 .await?;
-                row_changed = true;
+                auth_config_update = Some(serde_json::to_string(&config)?);
             }
-            Some(serde_json::to_string(&config)?)
-        } else {
-            None
-        };
-        let source_config = if let Some(config_json) = source_config_json {
+        }
+        if let Some(config_json) = source_config_json {
             let mut config: serde_json::Value = serde_json::from_str(&config_json)
                 .with_context(|| format!("invalid source_config_json for webhook {id}"))?;
             let fields = webhook_source_secret_fields(&source_profile);
@@ -342,20 +337,37 @@ async fn decrypt_webhooks(
                     vault,
                 )
                 .await?;
-                row_changed = true;
+                source_config_update = Some(serde_json::to_string(&config)?);
             }
-            Some(serde_json::to_string(&config)?)
-        } else {
-            None
-        };
-        if row_changed {
-            sqlx::query("UPDATE webhooks SET auth_config_json = ?, source_config_json = ?, updated_at = datetime('now') WHERE id = ?")
-                .bind(auth_config)
-                .bind(source_config)
-                .bind(id)
-                .execute(pool)
-                .await?;
-            changed += 1;
+        }
+
+        match (auth_config_update, source_config_update) {
+            (Some(auth_config), Some(source_config)) => {
+                sqlx::query("UPDATE webhooks SET auth_config_json = ?, source_config_json = ?, updated_at = datetime('now') WHERE id = ?")
+                    .bind(auth_config)
+                    .bind(source_config)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                changed += 1;
+            },
+            (Some(auth_config), None) => {
+                sqlx::query("UPDATE webhooks SET auth_config_json = ?, updated_at = datetime('now') WHERE id = ?")
+                    .bind(auth_config)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                changed += 1;
+            },
+            (None, Some(source_config)) => {
+                sqlx::query("UPDATE webhooks SET source_config_json = ?, updated_at = datetime('now') WHERE id = ?")
+                    .bind(source_config)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                changed += 1;
+            },
+            (None, None) => {},
         }
     }
     Ok(changed)
@@ -370,21 +382,26 @@ async fn decrypt_provider_keys(vault: &moltis_vault::Vault) -> anyhow::Result<bo
     if !enc_path.exists() {
         return Ok(false);
     }
-    let encrypted = std::fs::read_to_string(&enc_path)
+    let encrypted = tokio::fs::read_to_string(&enc_path)
+        .await
         .with_context(|| format!("failed to read {}", enc_path.display()))?;
     let plaintext = vault.decrypt_string(&encrypted, "provider_keys").await?;
-    write_secret_file(&path, &plaintext)?;
-    std::fs::remove_file(&enc_path)
+    write_secret_file(&path, &plaintext).await?;
+    tokio::fs::remove_file(&enc_path)
+        .await
         .with_context(|| format!("failed to remove {}", enc_path.display()))?;
     Ok(true)
 }
 
-fn write_secret_file(path: &Path, content: &str) -> anyhow::Result<()> {
-    std::fs::write(path, content).with_context(|| format!("failed to write {}", path.display()))?;
+async fn write_secret_file(path: &std::path::Path, content: &str) -> anyhow::Result<()> {
+    tokio::fs::write(path, content)
+        .await
+        .with_context(|| format!("failed to write {}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .await
             .with_context(|| format!("failed to chmod {}", path.display()))?;
     }
     Ok(())
@@ -503,10 +520,17 @@ mod tests {
         Arc::new(moltis_vault::Vault::new(pool).await.unwrap())
     }
 
+    fn test_password() -> String {
+        format!(
+            "test-password-{}",
+            time::OffsetDateTime::now_utc().unix_timestamp_nanos()
+        )
+    }
+
     #[tokio::test]
     async fn auto_unseal_with_recovery_key_unseals_vault() {
         let vault = test_vault().await;
-        let recovery_key = vault.initialize("test-password-123").await.unwrap();
+        let recovery_key = vault.initialize(&test_password()).await.unwrap();
         let recovery_phrase = recovery_key.phrase().to_owned();
         vault.seal().await;
 
@@ -526,7 +550,7 @@ mod tests {
     #[tokio::test]
     async fn auto_unseal_already_unsealed_is_successful_noop() {
         let vault = test_vault().await;
-        let recovery_key = vault.initialize("test-password-123").await.unwrap();
+        let recovery_key = vault.initialize(&test_password()).await.unwrap();
         let recovery_phrase = recovery_key.phrase().to_owned();
 
         let result = auto_unseal_with_secret(&vault, AutoUnsealSecret {
@@ -545,7 +569,7 @@ mod tests {
     #[tokio::test]
     async fn auto_unseal_rejects_wrong_recovery_key() {
         let vault = test_vault().await;
-        vault.initialize("test-password-123").await.unwrap();
+        vault.initialize(&test_password()).await.unwrap();
         vault.seal().await;
 
         let result = auto_unseal_with_secret(&vault, AutoUnsealSecret {
@@ -564,7 +588,7 @@ mod tests {
     #[tokio::test]
     async fn auto_unseal_empty_secret_is_noop() {
         let vault = test_vault().await;
-        vault.initialize("test-password-123").await.unwrap();
+        vault.initialize(&test_password()).await.unwrap();
         vault.seal().await;
 
         let result = auto_unseal_with_secret(&vault, AutoUnsealSecret {
@@ -588,7 +612,7 @@ mod tests {
         moltis_vault::run_migrations(&pool).await.unwrap();
         create_disable_test_tables(&pool).await;
         let vault = Arc::new(moltis_vault::Vault::new(pool.clone()).await.unwrap());
-        vault.initialize("test-password-123").await.unwrap();
+        vault.initialize(&test_password()).await.unwrap();
 
         let env_ciphertext = vault
             .encrypt_string("env-secret", "env:API_KEY")
