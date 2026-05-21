@@ -7,8 +7,8 @@ Moltis can make and receive phone calls, enabling voice-based AI conversations o
 | Provider | Status | Features |
 |----------|--------|----------|
 | **Twilio** | Supported | Outbound calls, inbound calls, TTS, speech recognition, DTMF |
-| **Telnyx** | Supported | Outbound calls, inbound calls |
-| **Plivo** | Supported | Outbound calls, inbound calls |
+| **Telnyx** | Supported | Outbound calls, inbound calls, TTS, transcription events, DTMF events |
+| **Plivo** | Supported | Outbound calls, inbound calls, TTS, speech recognition, DTMF |
 
 ## Quick Start
 
@@ -127,11 +127,11 @@ When configured with a public `webhook_url`, the gateway exposes:
 | `POST /api/channels/telephony/{account}/answer` | TwiML for answered calls |
 | `POST /api/channels/telephony/{account}/gather` | Speech/DTMF result handler |
 
-Configure these in your Twilio phone number settings, or they are set automatically when initiating outbound calls.
+Configure these in your provider's phone number or call-control settings, or they are set automatically when initiating outbound calls. Twilio and Plivo use XML responses from `/answer` and `/gather`; Telnyx uses Call Control commands from the `/answer` webhook and sends transcription events back to the same webhook URL.
 
 ## Security
 
-- **Webhook verification**: Twilio webhooks are verified using HMAC-SHA1 signature validation
+- **Webhook verification**: Twilio webhooks are verified using HMAC-SHA1 signature validation; Plivo and Telnyx verification are used when their signature credentials are configured
 - **Inbound access control**: Phone numbers can be restricted via allowlist
 - **Credential storage**: Provider credentials are stored in the credential store when configured from Settings > Phone
 - **Max duration**: Calls are automatically terminated after the configured max duration
@@ -139,7 +139,7 @@ Configure these in your Twilio phone number settings, or they are set automatica
 ## Audio Pipeline
 
 ```
-User Speech -> Twilio STT -> Text -> Agent (LLM) -> Text -> TTS -> mu-law 8kHz -> Caller
+User Speech -> Provider STT/transcription -> Text -> Agent (LLM) -> Text -> Provider TTS -> Caller
 ```
 
 The telephony audio pipeline converts between PSTN-standard mu-law encoding (8 kHz, ITU-T G.711) and the PCM audio used by TTS providers.

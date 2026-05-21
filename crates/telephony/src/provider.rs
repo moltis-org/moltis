@@ -70,6 +70,16 @@ pub trait TelephonyProvider: Send + Sync {
     /// Send DTMF digits to the remote party.
     async fn send_dtmf(&self, provider_call_id: &str, digits: &str) -> anyhow::Result<()>;
 
+    /// Answer an inbound call when the provider requires an API call instead of response XML.
+    async fn answer_call(&self, _provider_call_id: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Start provider-side transcription for an answered call when required.
+    async fn start_transcription(&self, _provider_call_id: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     /// Query the provider for current call status.
     async fn get_call_status(&self, provider_call_id: &str) -> anyhow::Result<ProviderCallStatus>;
 

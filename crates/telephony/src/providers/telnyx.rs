@@ -201,6 +201,50 @@ impl TelephonyProvider for TelnyxProvider {
         Ok(())
     }
 
+    async fn answer_call(&self, provider_call_id: &str) -> anyhow::Result<()> {
+        let url = format!("{}/calls/{provider_call_id}/actions/answer", self.base_url);
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", self.auth_header())
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({ "command_id": uuid::Uuid::new_v4().to_string() }))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Telnyx answer failed: {text}");
+        }
+        Ok(())
+    }
+
+    async fn start_transcription(&self, provider_call_id: &str) -> anyhow::Result<()> {
+        let url = format!(
+            "{}/calls/{provider_call_id}/actions/transcription_start",
+            self.base_url
+        );
+
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", self.auth_header())
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({
+                "command_id": uuid::Uuid::new_v4().to_string(),
+                "language": "en",
+            }))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Telnyx transcription_start failed: {text}");
+        }
+        Ok(())
+    }
+
     async fn get_call_status(&self, provider_call_id: &str) -> anyhow::Result<ProviderCallStatus> {
         let url = format!("{}/calls/{provider_call_id}", self.base_url);
 
@@ -599,5 +643,29 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("Telnyx API error 404"));
         assert!(message.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn answer_call_accepts_success_response() {
+        let base_url = serve_telnyx_response("200 OK", r#"{"data":{"result":"ok"}}"#).await;
+        let provider =
+            TelnyxProvider::new(Secret::new("key".into()), "conn".into()).with_base_url(base_url);
+
+        provider
+            .answer_call("call-123")
+            .await
+            .unwrap_or_else(|error| panic!("answer should succeed: {error}"));
+    }
+
+    #[tokio::test]
+    async fn start_transcription_accepts_success_response() {
+        let base_url = serve_telnyx_response("200 OK", r#"{"data":{"result":"ok"}}"#).await;
+        let provider =
+            TelnyxProvider::new(Secret::new("key".into()), "conn".into()).with_base_url(base_url);
+
+        provider
+            .start_transcription("call-123")
+            .await
+            .unwrap_or_else(|error| panic!("transcription start should succeed: {error}"));
     }
 }

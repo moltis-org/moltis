@@ -72,6 +72,31 @@ fn telephony_webhook_url(
     ))
 }
 
+#[cfg(feature = "telephony")]
+fn telnyx_payload_string(payload: &serde_json::Value, field: &str) -> Option<String> {
+    payload[field]
+        .as_str()
+        .or_else(|| payload[field]["phone_number"].as_str())
+        .map(ToOwned::to_owned)
+}
+
+#[cfg(feature = "telephony")]
+fn telnyx_call_fields(body: &[u8]) -> (String, String, String) {
+    let payload = serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| value["data"]["payload"].as_object().cloned())
+        .map(serde_json::Value::Object)
+        .unwrap_or_default();
+
+    let call_control_id = payload["call_control_id"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    let from = telnyx_payload_string(&payload, "from").unwrap_or_else(|| "unknown".to_string());
+    let to = telnyx_payload_string(&payload, "to").unwrap_or_else(|| "unknown".to_string());
+    (call_control_id, from, to)
+}
+
 /// Prepare the full gateway: load config, run migrations, wire services,
 /// spawn background tasks, and return the composed axum application.
 ///
@@ -634,7 +659,7 @@ pub async fn prepare_gateway(
             ),
         );
 
-        // Answer URL — Twilio fetches TwiML from here when a call connects
+        // Answer URL — providers fetch call instructions here when a call connects.
         let telephony_answer_plugin = Arc::clone(&telephony_webhook_plugin);
         let telephony_config_for_answer = config.clone();
         app = app.route(
@@ -674,6 +699,122 @@ pub async fn prepare_gateway(
                                 tracing::warn!(account_id = %account_id, "telephony answer webhook verification failed: {e}");
                                 return (StatusCode::UNAUTHORIZED, "signature verification failed").into_response();
                             }
+                        }
+
+                        if manager.provider().read().await.id() == "telnyx" {
+                            let provider = manager.provider().read().await;
+                            let event = match provider.parse_webhook_event(&headers, &body) {
+                                Ok(event) => event,
+                                Err(e) => {
+                                    tracing::warn!(account_id = %account_id, "telephony Telnyx answer webhook parse error: {e}");
+                                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok": false, "error": e.to_string()}))).into_response();
+                                },
+                            };
+
+                            match event {
+                                moltis_telephony::types::CallEvent::Initiated {
+                                    ref provider_call_id,
+                                } => {
+                                    let (_, caller, called) = telnyx_call_fields(&body);
+                                    let existing_call = manager
+                                        .resolve_call_id(provider_call_id)
+                                        .and_then(|call_id| manager.get_call(&call_id));
+                                    if let Some(config_view) = plugin_guard.account_config(&account_id)
+                                    {
+                                        let policy = config_view.dm_policy();
+                                        let rejected = match policy {
+                                            moltis_channels::gating::DmPolicy::Disabled => true,
+                                            moltis_channels::gating::DmPolicy::Allowlist => {
+                                                !moltis_channels::gating::is_allowed(
+                                                    &caller,
+                                                    config_view.allowlist(),
+                                                )
+                                            },
+                                            moltis_channels::gating::DmPolicy::Open => false,
+                                        };
+                                        if rejected {
+                                            tracing::info!(account_id = %account_id, caller = %caller, "rejecting Telnyx inbound call");
+                                            let _ = provider.hangup_call(provider_call_id).await;
+                                            return (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response();
+                                        }
+                                    }
+
+                                    if existing_call.is_none() {
+                                        manager.register_inbound(
+                                            provider_call_id,
+                                            &caller,
+                                            &called,
+                                            &account_id,
+                                        );
+                                    }
+
+                                    let is_conversation = existing_call
+                                        .as_ref()
+                                        .map(|call| {
+                                            matches!(
+                                                call.mode,
+                                                moltis_telephony::types::CallMode::Conversation
+                                            )
+                                        })
+                                        .unwrap_or(true);
+                                    let greeting = existing_call
+                                        .as_ref()
+                                        .and_then(|call| call.initial_message.as_deref())
+                                        .unwrap_or(
+                                            "Hello, you've reached the AI assistant. How can I help you?",
+                                        );
+
+                                    if let Err(e) = provider.answer_call(provider_call_id).await {
+                                        tracing::warn!(account_id = %account_id, provider_call_id = %provider_call_id, "failed to answer Telnyx call: {e}");
+                                    }
+                                    if let Err(e) = provider.play_tts(provider_call_id, greeting, None, None).await {
+                                        tracing::warn!(account_id = %account_id, provider_call_id = %provider_call_id, "failed to greet Telnyx call: {e}");
+                                    }
+                                    if is_conversation && let Err(e) = provider.start_transcription(provider_call_id).await {
+                                        tracing::warn!(account_id = %account_id, provider_call_id = %provider_call_id, "failed to start Telnyx transcription: {e}");
+                                    }
+                                },
+                                moltis_telephony::types::CallEvent::Speech {
+                                    ref provider_call_id,
+                                    ref text,
+                                    ..
+                                } => {
+                                    drop(provider);
+                                    manager.handle_event(&event);
+                                    let call_id = manager
+                                        .resolve_call_id(provider_call_id)
+                                        .unwrap_or_default();
+                                    if call_id.is_empty() {
+                                        tracing::warn!(account_id = %account_id, provider_call_id = %provider_call_id, "Telnyx transcription for unknown call");
+                                        return (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response();
+                                    }
+                                    let caller = manager
+                                        .get_call(&call_id)
+                                        .map(|r| r.from.clone())
+                                        .unwrap_or_default();
+                                    let account_id_owned = account_id.clone();
+                                    let call_id_owned = call_id.clone();
+                                    let text_owned = text.clone();
+                                    let plugin_for_dispatch = Arc::clone(&plugin);
+                                    tokio::spawn(async move {
+                                        let pg = plugin_for_dispatch.read().await;
+                                        pg.dispatch_speech(
+                                            &account_id_owned,
+                                            &call_id_owned,
+                                            &caller,
+                                            &text_owned,
+                                        )
+                                        .await;
+                                    });
+                                },
+                                ref other => {
+                                    tracing::debug!(account_id = %account_id, event = ?other, "handling Telnyx telephony event");
+                                    manager.handle_event(other);
+                                },
+                            }
+
+                            return (StatusCode::OK, Json(serde_json::json!({"ok": true})))
+                                .into_response();
                         }
 
                         // Parse inbound call info from body

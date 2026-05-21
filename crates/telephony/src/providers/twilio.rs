@@ -327,7 +327,7 @@ impl TelephonyProvider for TwilioProvider {
         if let Some(url) = gather_url {
             let url = xml_escape(url);
             twiml.push_str(&format!(
-                r#"<Gather input="speech" action="{url}" speechTimeout="auto">"#
+                r#"<Gather input="speech dtmf" action="{url}" speechTimeout="auto">"#
             ));
             if let Some(msg) = message {
                 twiml.push_str(&format!(
@@ -352,7 +352,7 @@ impl TelephonyProvider for TwilioProvider {
         let mut twiml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?><Response>"#);
         let action_url = xml_escape(action_url);
         twiml.push_str(&format!(
-            r#"<Gather input="speech" action="{action_url}" speechTimeout="auto">"#
+            r#"<Gather input="speech dtmf" action="{action_url}" speechTimeout="auto">"#
         ));
         if let Some(p) = prompt {
             twiml.push_str(&format!(
@@ -384,7 +384,7 @@ fn build_say_gather_twiml(text: &str, voice: Option<&str>, gather_url: Option<&s
         .unwrap_or_default();
 
     format!(
-        r#"<Response><Say voice="{voice_attr}">{text}</Say><Gather input="speech"{gather_action} speechTimeout="auto" timeout="30"/><Pause length="120"/></Response>"#
+        r#"<Response><Say voice="{voice_attr}">{text}</Say><Gather input="speech dtmf"{gather_action} speechTimeout="auto" timeout="30"/><Pause length="120"/></Response>"#
     )
 }
 
@@ -448,6 +448,7 @@ mod tests {
             .build_answer_response(Some("Hello caller"), Some("https://example.com/gather"));
         let twiml = std::str::from_utf8(&resp).unwrap_or("");
         assert!(twiml.contains("<Gather"));
+        assert!(twiml.contains(r#"input="speech dtmf""#));
         assert!(twiml.contains("Hello caller"));
         assert!(twiml.contains("https://example.com/gather"));
     }
@@ -464,6 +465,7 @@ mod tests {
 
         let gather = provider.build_gather_response(None, url);
         let gather_twiml = std::str::from_utf8(&gather).unwrap_or("");
+        assert!(gather_twiml.contains(r#"input="speech dtmf""#));
         assert!(gather_twiml.contains("foo=1&amp;bar=&quot;two&quot;"));
         assert!(!gather_twiml.contains("foo=1&bar=\"two\""));
     }
@@ -477,6 +479,7 @@ mod tests {
         );
 
         assert!(twiml.contains(r#"voice="voice&quot;attr""#));
+        assert!(twiml.contains(r#"input="speech dtmf""#));
         assert!(twiml.contains("hello &amp; goodbye"));
         assert!(
             twiml.contains(r#"action="https://example.com/gather?foo=1&amp;bar=&quot;two&quot;""#)

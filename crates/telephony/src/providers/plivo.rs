@@ -332,7 +332,7 @@ impl TelephonyProvider for PlivoProvider {
         if let Some(url) = gather_url {
             let url = xml_escape(url);
             xml.push_str(&format!(
-                r#"<GetInput action="{url}" method="POST" inputType="speech" speechEndTimeout="auto">"#
+                r#"<GetInput action="{url}" method="POST" inputType="dtmf speech" speechEndTimeout="auto">"#
             ));
             if let Some(msg) = message {
                 xml.push_str(&format!(
@@ -357,7 +357,7 @@ impl TelephonyProvider for PlivoProvider {
         let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?><Response>"#);
         let action_url = xml_escape(action_url);
         xml.push_str(&format!(
-            r#"<GetInput action="{action_url}" method="POST" inputType="speech" speechEndTimeout="auto">"#
+            r#"<GetInput action="{action_url}" method="POST" inputType="dtmf speech" speechEndTimeout="auto">"#
         ));
         if let Some(p) = prompt {
             xml.push_str(&format!(
@@ -522,6 +522,7 @@ mod tests {
             provider.build_answer_response(Some("Hello"), Some("https://example.com/gather"));
         let xml = std::str::from_utf8(&resp).unwrap_or("");
         assert!(xml.contains("<GetInput"));
+        assert!(xml.contains(r#"inputType="dtmf speech""#));
         assert!(xml.contains("Hello"));
         assert!(xml.contains("https://example.com/gather"));
     }
@@ -538,6 +539,7 @@ mod tests {
 
         let gather = provider.build_gather_response(None, url);
         let gather_xml = std::str::from_utf8(&gather).unwrap_or("");
+        assert!(gather_xml.contains(r#"inputType="dtmf speech""#));
         assert!(gather_xml.contains("foo=1&amp;bar=&quot;two&quot;"));
         assert!(!gather_xml.contains("foo=1&bar=\"two\""));
     }
