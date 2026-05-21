@@ -475,7 +475,10 @@ mod tests {
     async fn auth_disabled_still_requires_setup_for_remote_requests()
     -> Result<(), Box<dyn std::error::Error>> {
         let pool = SqlitePool::connect("sqlite::memory:").await?;
-        let auth_config = moltis_config::AuthConfig { disabled: true };
+        let auth_config = moltis_config::AuthConfig {
+            disabled: true,
+            ..Default::default()
+        };
         let store = CredentialStore::with_config(pool, &auth_config).await?;
         let headers = HeaderMap::new();
 
