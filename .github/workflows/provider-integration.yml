@@ -88,6 +88,8 @@ jobs:
             skip_reason: "configured account has insufficient credits"
           - provider: openai
             test: openai_integration
+          - provider: nearai
+            test: nearai_integration
           - provider: mistral
             test: mistral_integration
             skip_reason: "configured account is currently rate limited by the provider"
@@ -175,6 +177,18 @@ jobs:
             exit 0
           fi
           echo "OPENAI_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
+
+      - name: Configure provider secret (nearai)
+        if: matrix.provider == 'nearai'
+        env:
+          PROVIDER_API_KEY: ${{ secrets.NEARAI_API_KEY }}
+        run: |
+          if [ -z "$PROVIDER_API_KEY" ]; then
+            echo "::warning::Secret not configured — skipping tests"
+            echo "SKIP=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          echo "NEARAI_API_KEY=$PROVIDER_API_KEY" >> "$GITHUB_ENV"
 
       - name: Configure provider secret (mistral)
         if: matrix.provider == 'mistral'

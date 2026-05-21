@@ -34,6 +34,7 @@ supported by Moltis so you can pick the best fit for your use case.
 | **Z.AI Coding** | CodeGeeX, GLM-4 Code | Full | Yes | 128K | $ | Fast | Optimized for code tasks |
 | **Moonshot** | Kimi | Full | Yes | 200K | $ | Medium | Long context, Chinese/English |
 | **Venice** | Various | Varies | Yes | Varies | $ | Medium | Privacy-focused, uncensored models |
+| **NEAR AI Cloud** | GLM, Qwen, GPT OSS, Claude | Full | Yes | Varies | Varies | Medium | TEE-backed private inference with attestation-aware catalog |
 | **Ollama** | Any GGUF model | Varies | Yes | Varies | Free | Varies | Local inference, no API key |
 | **Local LLM** | Any GGUF model | Varies | Yes | Varies | Free | Varies | Built-in GGUF runner, no server needed |
 | **GitHub Copilot** | GPT-4o, Claude (via Copilot) | Full | Yes | Varies | Subscription | Fast | Uses existing Copilot subscription |

@@ -20,6 +20,7 @@ pub mod local_llm;
 pub mod model_capabilities;
 pub mod model_catalogs;
 pub mod model_id;
+pub mod nearai;
 pub mod ollama;
 pub mod openai;
 #[cfg(feature = "provider-openai-codex")]

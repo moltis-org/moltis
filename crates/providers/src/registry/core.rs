@@ -35,6 +35,7 @@ use crate::{
         REASONING_SUFFIX_SEP, REASONING_SUFFIXES, namespaced_model_id, raw_model_id,
         split_reasoning_suffix,
     },
+    nearai,
     ollama::{
         self, OllamaShowResponse, probe_ollama_models_batch, probe_ollama_models_batch_async,
         resolve_ollama_tool_mode,
@@ -262,6 +263,11 @@ pub async fn fetch_discoverable_models(
             tasks.push((
                 def.config_name.into(),
                 Box::pin(ollama::discover_ollama_models_from_api(base_url)),
+            ));
+        } else if def.config_name == "nearai" {
+            tasks.push((
+                def.config_name.into(),
+                Box::pin(nearai::fetch_models_from_api(base_url)),
             ));
         } else {
             tasks.push((
@@ -1013,6 +1019,11 @@ impl ProviderRegistry {
                     pending.push((
                         def.config_name.into(),
                         ollama::start_ollama_discovery(&base_url),
+                    ));
+                } else if def.config_name == "nearai" {
+                    pending.push((
+                        def.config_name.into(),
+                        nearai::start_model_discovery(base_url),
                     ));
                 } else {
                     pending.push((

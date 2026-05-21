@@ -126,6 +126,10 @@ impl OpenAiProvider {
         self.rejects_null_in_enums
     }
 
+    fn omits_strict_tool_field(&self) -> bool {
+        self.is_nearai_provider()
+    }
+
     /// Convert raw tool schemas into the provider-compatible Chat
     /// Completions format, applying all provider-specific post-processing.
     ///
@@ -139,6 +143,16 @@ impl OpenAiProvider {
             for tool in &mut converted {
                 if let Some(params) = tool.pointer_mut("/function/parameters") {
                     crate::openai_compat::strip_null_from_typed_enums(params);
+                }
+            }
+        }
+        if self.omits_strict_tool_field() {
+            for tool in &mut converted {
+                if let Some(function) = tool
+                    .get_mut("function")
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    function.remove("strict");
                 }
             }
         }
@@ -813,6 +827,31 @@ mod tests {
             Some(false),
             "Kimi router tools must have strict=false, got: {:?}",
             serialized[0]
+        );
+    }
+
+    #[test]
+    fn nearai_tool_schema_omits_strict_field() {
+        let p = provider(
+            "zai-org/GLM-5.1-FP8",
+            "nearai",
+            "https://cloud-api.near.ai/v1",
+        );
+        let tools = vec![serde_json::json!({
+            "name": "get_weather",
+            "description": "Get weather",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": { "type": "string" }
+                }
+            }
+        })];
+
+        let converted = p.prepare_chat_tools(&tools);
+        assert!(
+            converted[0]["function"].get("strict").is_none(),
+            "NEAR AI Cloud should not receive the unsupported strict tool field"
         );
     }
 

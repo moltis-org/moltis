@@ -30,7 +30,17 @@ import type {
 
 // ── Constants ───────────────────────────────────────────────
 
-const OPENAI_COMPATIBLE = ["openai", "mistral", "openrouter", "cerebras", "minimax", "moonshot", "venice", "ollama"];
+const OPENAI_COMPATIBLE = [
+	"openai",
+	"mistral",
+	"openrouter",
+	"cerebras",
+	"minimax",
+	"moonshot",
+	"venice",
+	"nearai",
+	"ollama",
+];
 const BYOM_PROVIDERS = ["venice"];
 const RECOMMENDED_PROVIDERS = new Set([
 	"anthropic",

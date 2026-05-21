@@ -42,6 +42,7 @@ export const OPENAI_COMPATIBLE_PROVIDERS: string[] = [
 	"minimax",
 	"moonshot",
 	"venice",
+	"nearai",
 	"ollama",
 ];
 

@@ -713,6 +713,7 @@ async fn save_key_accepts_new_providers() {
         "zai-code",
         "kimi-code",
         "venice",
+        "nearai",
         "ollama",
         "lmstudio",
     ] {
@@ -751,6 +752,7 @@ async fn available_includes_new_providers() {
         "zai-code",
         "kimi-code",
         "venice",
+        "nearai",
         "ollama",
         "lmstudio",
         "github-copilot",

@@ -34,6 +34,7 @@ pub const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "minimax",
     "mistral",
     "moonshot",
+    "nearai",
     "ollama",
     "openrouter",
     "venice",

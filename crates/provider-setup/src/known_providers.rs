@@ -228,6 +228,16 @@ pub fn known_providers() -> Vec<KnownProvider> {
             local_only: false,
         },
         KnownProvider {
+            name: "nearai",
+            display_name: "NEAR AI Cloud",
+            auth_type: AuthType::ApiKey,
+            env_key: Some("NEARAI_API_KEY"),
+            default_base_url: Some("https://cloud-api.near.ai/v1"),
+            requires_model: false,
+            key_optional: false,
+            local_only: false,
+        },
+        KnownProvider {
             name: "ollama",
             display_name: "Ollama",
             auth_type: AuthType::ApiKey,
@@ -370,6 +380,7 @@ mod tests {
         assert!(names.contains(&"zai-code"), "missing zai-code");
         assert!(names.contains(&"kimi-code"), "missing kimi-code");
         assert!(names.contains(&"venice"), "missing venice");
+        assert!(names.contains(&"nearai"), "missing nearai");
         assert!(names.contains(&"ollama"), "missing ollama");
         assert!(names.contains(&"lmstudio"), "missing lmstudio");
         // OAuth providers
@@ -436,6 +447,7 @@ mod tests {
             ("zai-code", "Z_CODE_API_KEY"),
             ("kimi-code", "KIMI_API_KEY"),
             ("venice", "VENICE_API_KEY"),
+            ("nearai", "NEARAI_API_KEY"),
             ("ollama", "OLLAMA_API_KEY"),
             ("lmstudio", "LMSTUDIO_API_KEY"),
         ];

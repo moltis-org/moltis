@@ -1084,6 +1084,7 @@ test.describe("Onboarding wizard", () => {
 			{ providerName: "xAI (Grok)", linkName: "xAI Console" },
 			{ providerName: "Cerebras", linkName: "Cerebras Cloud" },
 			{ providerName: "Venice", linkName: "Venice Settings" },
+			{ providerName: "NEAR AI Cloud", linkName: "NEAR AI Cloud" },
 			{ providerName: "OpenRouter", linkName: "OpenRouter Settings" },
 			{ providerName: "Moonshot", linkName: "Moonshot Platform" },
 			{ providerName: "MiniMax", linkName: "MiniMax Platform" },

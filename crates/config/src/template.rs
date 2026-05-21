@@ -137,7 +137,7 @@ port = {port}                           # Port number (auto-generated for this i
 # All available providers (canonical list in schema/providers.rs):
 #   "anthropic", "openai", "gemini", "groq", "xai", "deepinfra",
 #   "deepseek", "fireworks", "mistral", "openrouter", "cerebras", "minimax",
-#   "moonshot", "zai", "zai-code", "venice", "alibaba-coding",
+#   "moonshot", "zai", "zai-code", "venice", "nearai", "alibaba-coding",
 #   "ollama", "lmstudio", "local-llm", "openai-codex",
 #   "github-copilot", "kimi-code"
 
@@ -227,6 +227,15 @@ port = {port}                           # Port number (auto-generated for this i
 # models = ["kimi-k2.5"]                      # Preferred models shown first
 # base_url = "https://api.moonshot.ai/v1"
 # alias = "moonshot"
+
+# ── NEAR AI Cloud ─────────────────────────────────────────────
+# [providers.nearai]
+# enabled = true
+# api_key = "..."                             # Or set NEARAI_API_KEY env var
+# models = ["zai-org/GLM-5.1-FP8"]           # Optional preferred models
+# fetch_models = true                          # Discover models from NEAR AI Cloud
+# base_url = "https://cloud-api.near.ai/v1"
+# alias = "nearai"
 
 # ── Ollama ────────────────────────────────────────────────────
 # [providers.ollama]

@@ -267,6 +267,16 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
+        config_name: "nearai",
+        env_key: "NEARAI_API_KEY",
+        env_base_url_key: "NEARAI_BASE_URL",
+        default_base_url: "https://cloud-api.near.ai/v1",
+        models: &[],
+        supports_model_discovery: true,
+        requires_api_key: true,
+        local_only: false,
+    },
+    OpenAiCompatDef {
         config_name: "deepinfra",
         env_key: "DEEPINFRA_API_KEY",
         env_base_url_key: "DEEPINFRA_BASE_URL",
@@ -470,6 +480,20 @@ mod tests {
         assert!(alibaba.requires_api_key);
         assert!(!alibaba.local_only);
         assert!(alibaba.supports_model_discovery);
+    }
+
+    #[test]
+    fn nearai_provider_exists() {
+        let nearai = OPENAI_COMPAT_PROVIDERS
+            .iter()
+            .find(|d| d.config_name == "nearai")
+            .expect("nearai entry must exist");
+        assert_eq!(nearai.env_key, "NEARAI_API_KEY");
+        assert_eq!(nearai.env_base_url_key, "NEARAI_BASE_URL");
+        assert_eq!(nearai.default_base_url, "https://cloud-api.near.ai/v1");
+        assert!(nearai.requires_api_key);
+        assert!(!nearai.local_only);
+        assert!(nearai.supports_model_discovery);
     }
 
     #[test]

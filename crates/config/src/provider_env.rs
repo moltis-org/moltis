@@ -93,6 +93,7 @@ pub fn normalize_provider_name(value: &str) -> Option<String> {
         "z-ai" | "z.ai" | "zhipu" | "zhipu-ai" => "zai",
         "zai-code" | "zai-coding" | "zhipu-code" => "zai-code",
         "alibaba" | "alibaba-coding" | "dashscope-coding" => "alibaba-coding",
+        "near-ai" | "near-ai-cloud" => "nearai",
         other => other,
     };
 
@@ -166,6 +167,17 @@ mod tests {
             normalize_provider_name("ALIBABA_CODING"),
             Some("alibaba-coding".into())
         );
+    }
+
+    #[test]
+    fn normalize_nearai_aliases() {
+        for alias in &["nearai", "near-ai", "near-ai-cloud", "NEARAI"] {
+            assert_eq!(
+                normalize_provider_name(alias).as_deref(),
+                Some("nearai"),
+                "expected alias {alias:?} to normalize to \"nearai\""
+            );
+        }
     }
 
     #[test]
@@ -247,6 +259,9 @@ mod tests {
             "alibaba",
             "alibaba-coding",
             "dashscope-coding",
+            "nearai",
+            "near-ai",
+            "near-ai-cloud",
         ];
 
         for alias in aliases {

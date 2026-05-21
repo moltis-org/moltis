@@ -71,6 +71,10 @@ const KEY_SOURCE_BY_PROVIDER: Record<string, KeySource> = {
 		url: "https://venice.ai/settings/api-keys",
 		label: "Venice Settings",
 	},
+	nearai: {
+		url: "https://cloud.near.ai",
+		label: "NEAR AI Cloud",
+	},
 };
 
 export function providerApiKeyHelp(provider: ProviderInfo | null): ApiKeyHelp | null {

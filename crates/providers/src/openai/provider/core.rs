@@ -208,6 +208,14 @@ impl OpenAiProvider {
                 .contains("api.deepseek.com")
     }
 
+    pub(super) fn is_nearai_provider(&self) -> bool {
+        self.provider_name.eq_ignore_ascii_case("nearai")
+            || self
+                .base_url
+                .to_ascii_lowercase()
+                .contains("cloud-api.near.ai")
+    }
+
     fn is_mistral_provider(&self) -> bool {
         self.provider_name.eq_ignore_ascii_case("mistral")
             || self.base_url.to_ascii_lowercase().contains("mistral.ai")
@@ -306,6 +314,9 @@ impl OpenAiProvider {
     /// are clamped to the nearest supported value.
     pub(crate) fn reasoning_effort_str(&self) -> Option<&'static str> {
         use moltis_agents::model::ReasoningEffort;
+        if self.is_nearai_provider() {
+            return None;
+        }
         if self.is_deepseek_provider() {
             return self.reasoning_effort.map(|e| match e {
                 ReasoningEffort::Minimal
@@ -397,6 +408,9 @@ impl LlmProvider for OpenAiProvider {
         self: std::sync::Arc<Self>,
         effort: moltis_agents::model::ReasoningEffort,
     ) -> Option<std::sync::Arc<dyn LlmProvider>> {
+        if self.is_nearai_provider() {
+            return None;
+        }
         Some(std::sync::Arc::new(Self {
             api_key: self.api_key.clone(),
             model: self.model.clone(),
@@ -663,4 +677,27 @@ pub(crate) fn apply_openai_chat_tool_choice(
         },
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use {super::*, moltis_agents::model::ReasoningEffort, std::sync::Arc};
+
+    #[test]
+    fn nearai_does_not_accept_reasoning_effort_suffixes() {
+        let provider = Arc::new(OpenAiProvider::new_with_name(
+            secrecy::Secret::new("test-key".to_string()),
+            "openai/gpt-oss-120b".to_string(),
+            "https://cloud-api.near.ai/v1".to_string(),
+            "nearai".to_string(),
+        ));
+
+        assert!(
+            provider
+                .with_reasoning_effort(ReasoningEffort::High)
+                .is_none(),
+            "NEAR AI Cloud does not support the OpenAI reasoning_effort field"
+        );
+    }
 }

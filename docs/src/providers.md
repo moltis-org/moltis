@@ -21,6 +21,7 @@ Configure providers through the web UI or directly in configuration files.
 | **MiniMax** | `minimax` | `MINIMAX_API_KEY` | Streaming, tools |
 | **Moonshot (Kimi)** | `moonshot` | `MOONSHOT_API_KEY` | Streaming, tools, model discovery |
 | **Venice** | `venice` | `VENICE_API_KEY` | Streaming, tools, model discovery |
+| **NEAR AI Cloud** | `nearai` | `NEARAI_API_KEY` | Streaming, tools, TEE-aware model discovery |
 | **Z.AI (Zhipu)** | `zai` | `Z_API_KEY` | Streaming, tools, model discovery |
 | **Z.AI Coding Plan** | `zai-code` | `Z_CODE_API_KEY` | Streaming, tools, model discovery (Coding plan billing endpoint) |
 
@@ -130,6 +131,23 @@ Gemini supports native tool calling, vision/multimodal inputs, streaming, and au
 
 1. Get an API key from [platform.openai.com](https://platform.openai.com/).
 2. Set `OPENAI_API_KEY` in your environment.
+
+### NEAR AI Cloud
+
+NEAR AI Cloud exposes an OpenAI-compatible chat completions API with a public
+model catalog that includes TEE and attestation metadata.
+
+1. Get an API key from [cloud.near.ai](https://cloud.near.ai/).
+2. Set `NEARAI_API_KEY` in your environment.
+3. Models are discovered from `https://cloud-api.near.ai/v1/model/list`.
+
+```toml
+[providers.nearai]
+enabled = true
+models = ["zai-org/GLM-5.1-FP8"]
+# api_key = "..."                    # Or set NEARAI_API_KEY
+# base_url = "https://cloud-api.near.ai/v1"
+```
 
 ### OpenAI Codex
 

@@ -124,6 +124,7 @@ const PROVIDER_ENV_MAP: &[(&str, &str, bool)] = &[
     ("minimax", "MINIMAX_API_KEY", false),
     ("moonshot", "MOONSHOT_API_KEY", false),
     ("venice", "VENICE_API_KEY", false),
+    ("nearai", "NEARAI_API_KEY", false),
     ("ollama", "OLLAMA_API_KEY", true),
     ("kimi-code", "KIMI_API_KEY", false),
 ];

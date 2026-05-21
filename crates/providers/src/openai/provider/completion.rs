@@ -42,10 +42,11 @@ impl OpenAiProvider {
     fn apply_probe_output_cap_chat(&self, body: &mut serde_json::Value) {
         let raw = raw_model_id(&self.model).to_ascii_lowercase();
         let capability = raw.rsplit('/').next().unwrap_or(raw.as_str());
-        let uses_max_completion_tokens = capability.starts_with("gpt-5")
-            || capability.starts_with("o1")
-            || capability.starts_with("o3")
-            || capability.starts_with("o4");
+        let uses_max_completion_tokens = !self.is_nearai_provider()
+            && (capability.starts_with("gpt-5")
+                || capability.starts_with("o1")
+                || capability.starts_with("o3")
+                || capability.starts_with("o4"));
         if uses_max_completion_tokens {
             // GPT-5 and reasoning models need a higher minimum output cap.
             // Values below ~10 can trigger 400 errors on some models.
@@ -578,5 +579,52 @@ fn collect_model_ids<'a>(value: &'a serde_json::Value, out: &mut Vec<&'a str>) {
         if let Some(id) = entry.get("id").and_then(serde_json::Value::as_str) {
             out.push(id);
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    fn provider(model: &str, provider_name: &str, base_url: &str) -> OpenAiProvider {
+        OpenAiProvider::new_with_name(
+            secrecy::Secret::new("test-key".to_string()),
+            model.to_string(),
+            base_url.to_string(),
+            provider_name.to_string(),
+        )
+    }
+
+    #[test]
+    fn nearai_probe_uses_max_tokens_for_gpt_models() {
+        let provider = provider(
+            "openai/gpt-oss-120b",
+            "nearai",
+            "https://cloud-api.near.ai/v1",
+        );
+        let mut body = serde_json::json!({
+            "model": "openai/gpt-oss-120b",
+            "messages": [{"role": "user", "content": "ping"}],
+        });
+
+        provider.apply_probe_output_cap_chat(&mut body);
+
+        assert_eq!(body["max_tokens"], 1);
+        assert!(body.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn openai_probe_still_uses_max_completion_tokens_for_gpt5_models() {
+        let provider = provider("gpt-5.2", "openai", "https://api.openai.com/v1");
+        let mut body = serde_json::json!({
+            "model": "gpt-5.2",
+            "messages": [{"role": "user", "content": "ping"}],
+        });
+
+        provider.apply_probe_output_cap_chat(&mut body);
+
+        assert_eq!(body["max_completion_tokens"], 16);
+        assert!(body.get("max_tokens").is_none());
     }
 }
