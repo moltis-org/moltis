@@ -132,6 +132,61 @@ fn test_no_skills_block_when_empty() {
 }
 
 #[test]
+fn test_documentation_section_includes_local_docs_path() {
+    let tools = ToolRegistry::new();
+    let runtime = PromptRuntimeContext {
+        host: PromptHostRuntimeContext {
+            docs_path: Some("/tmp/moltis/docs/moltis".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let prompt = build_system_prompt_with_session_runtime(
+        &tools,
+        true,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(&runtime),
+        None,
+        None,
+    );
+
+    assert!(prompt.contains("## Documentation"));
+    assert!(prompt.contains("Moltis docs: /tmp/moltis/docs/moltis"));
+    assert!(prompt.contains("consult local docs first"));
+    assert!(prompt.contains("config-template.md"));
+}
+
+#[test]
+fn test_documentation_section_falls_back_to_public_docs() {
+    let tools = ToolRegistry::new();
+    let prompt = build_system_prompt_with_session_runtime(
+        &tools,
+        true,
+        None,
+        &[],
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+
+    assert!(prompt.contains("Moltis docs: https://docs.moltis.org"));
+}
+
+#[test]
 fn test_identity_injected_into_prompt() {
     let tools = ToolRegistry::new();
     let identity = AgentIdentity {
@@ -302,6 +357,8 @@ fn test_runtime_context_injected_when_provided() {
             channel_chat_type: None,
             channel_sender_id: None,
             data_dir: Some("/home/moltis/.moltis".into()),
+            docs_path: None,
+            config_template_path: None,
             sudo_non_interactive: Some(true),
             sudo_status: Some("passwordless".into()),
             timezone: Some("Europe/Paris".into()),

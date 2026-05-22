@@ -20,6 +20,11 @@ assets = [
     "644",
   ],
   [
+    "../../docs/src/**/*",
+    "usr/share/moltis/docs/",
+    "644",
+  ],
+  [
     "target/release/moltis_wasm_calc.wasm",
     "usr/share/moltis/wasm/",
     "644",
@@ -45,6 +50,7 @@ section = "net"
 [package.metadata.generate-rpm]
 assets = [
   { dest = "/usr/bin/moltis", mode = "0755", source = "target/release/moltis" },
+  { dest = "/usr/share/moltis/docs/", mode = "0644", source = "docs/src/**/*" },
   { dest = "/usr/share/moltis/wasm/", mode = "0644", source = "target/wasm32-wasip2/release/moltis_wasm_calc.wasm" },
   { dest = "/usr/share/moltis/wasm/", mode = "0644", source = "target/wasm32-wasip2/release/moltis_wasm_web_fetch.wasm" },
   { dest = "/usr/share/moltis/wasm/", mode = "0644", source = "target/wasm32-wasip2/release/moltis_wasm_web_search.wasm" },

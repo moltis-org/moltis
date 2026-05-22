@@ -53,6 +53,20 @@ implementation. Moltis regenerates `defaults.toml` from those built-in defaults
 on startup, while `moltis.toml` should contain only values you intentionally
 override.
 
+## Agent-Readable Docs
+
+Moltis packages the documentation as local markdown files when the install
+format supports external share files, such as `.deb`, `.rpm`, Homebrew, and
+similar system packages. Agents are pointed at those local files through the
+system prompt so they can read setup, configuration, channel, and
+troubleshooting docs without needing web access.
+
+Resolution order is `MOLTIS_DOCS_DIR`, the packaged share docs directory
+(`<share>/docs`), the source checkout docs in development, then an embedded
+fallback copied to `~/.moltis/docs/moltis/`. Moltis also writes a generated
+`config-template.md` under `~/.moltis/docs/moltis/` for the current server port
+and points agents at it separately.
+
 ## Basic Settings
 
 ```toml

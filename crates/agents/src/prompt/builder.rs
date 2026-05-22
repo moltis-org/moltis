@@ -1,5 +1,6 @@
 use {
     crate::{
+        docs::MOLTIS_DOCS_URL,
         model::{ContentPart, UserContent},
         prompt::{
             formatting::{
@@ -296,6 +297,7 @@ fn build_system_prompt_full(
     append_boot_section(&mut prompt, boot_text);
     append_project_context(&mut prompt, project_context);
     append_runtime_section(&mut prompt, runtime_context, include_tools);
+    append_documentation_section(&mut prompt, runtime_context);
     append_skills_section(
         &mut prompt,
         include_tools,
@@ -313,6 +315,35 @@ fn build_system_prompt_full(
     PromptBuildOutput {
         prompt,
         metadata: PromptBuildMetadata { workspace_files },
+    }
+}
+
+fn append_documentation_section(
+    prompt: &mut String,
+    runtime_context: Option<&PromptRuntimeContext>,
+) {
+    let docs_path = runtime_context
+        .and_then(|ctx| ctx.host.docs_path.as_deref())
+        .filter(|value| !value.is_empty());
+    let config_template_path = runtime_context
+        .and_then(|ctx| ctx.host.config_template_path.as_deref())
+        .filter(|value| !value.is_empty());
+
+    prompt.push_str("## Documentation\n\n");
+    if let Some(path) = docs_path {
+        prompt.push_str(&format!("Moltis docs: {path}\n"));
+        prompt.push_str(&format!("Mirror: {MOLTIS_DOCS_URL}\n"));
+        prompt.push_str("For Moltis behavior, commands, config, channels, or architecture: consult local docs first.\n");
+        if let Some(config_path) = config_template_path {
+            prompt.push_str(&format!(
+                "For config template examples, read `{config_path}`.\n\n"
+            ));
+        } else {
+            prompt.push_str("For config template examples, read `config-template.md` in the Moltis docs directory.\n\n");
+        }
+    } else {
+        prompt.push_str(&format!("Moltis docs: {MOLTIS_DOCS_URL}\n"));
+        prompt.push_str("For Moltis behavior, commands, config, channels, or architecture: consult the docs first.\n\n");
     }
 }
 

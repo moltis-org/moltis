@@ -158,6 +158,8 @@ pub(crate) fn format_host_runtime_line(host: &PromptHostRuntimeContext) -> Optio
         ("channel_chat_id", host.channel_chat_id.as_deref()),
         ("channel_chat_type", host.channel_chat_type.as_deref()),
         ("data_dir", host.data_dir.as_deref()),
+        ("docs_path", host.docs_path.as_deref()),
+        ("config_template", host.config_template_path.as_deref()),
     ] {
         push_non_empty_runtime_field(&mut parts, key, value);
     }

@@ -161,6 +161,7 @@ impl ChatService for LiveChatService {
         .await;
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
+            &persona.config,
             &provider,
             &session_key,
             session_entry.as_ref(),
@@ -989,6 +990,7 @@ impl ChatService for LiveChatService {
         .await;
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
+            &persona.config,
             &provider,
             &session_key,
             session_entry.as_ref(),
@@ -1119,6 +1121,7 @@ impl ChatService for LiveChatService {
         .await;
         let mut runtime_context = build_prompt_runtime_context(
             &self.state,
+            &persona.config,
             &provider,
             &session_key,
             session_entry.as_ref(),

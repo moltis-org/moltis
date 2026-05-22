@@ -55,6 +55,8 @@ pub struct PromptHostRuntimeContext {
     pub channel_chat_type: Option<String>,
     pub channel_sender_id: Option<String>,
     pub data_dir: Option<String>,
+    pub docs_path: Option<String>,
+    pub config_template_path: Option<String>,
     pub sudo_non_interactive: Option<bool>,
     pub sudo_status: Option<String>,
     pub timezone: Option<String>,

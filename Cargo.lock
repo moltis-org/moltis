@@ -7142,6 +7142,7 @@ dependencies = [
  "axum",
  "futures",
  "http 1.4.0",
+ "include_dir",
  "moltis-common",
  "moltis-config",
  "moltis-metrics",
