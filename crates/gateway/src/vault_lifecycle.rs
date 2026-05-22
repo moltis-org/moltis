@@ -282,7 +282,18 @@ async fn decrypt_channels(
     for (channel_type, account_id, config_json) in rows {
         let channel_type_enum = match channel_type.parse::<moltis_channels::plugin::ChannelType>() {
             Ok(channel_type) => channel_type,
-            Err(_) => continue,
+            Err(_) => {
+                let config: serde_json::Value =
+                    serde_json::from_str(&config_json).with_context(|| {
+                        format!("invalid channel config for {channel_type}:{account_id}")
+                    })?;
+                if contains_vault_encrypted_secret(&config) {
+                    anyhow::bail!(
+                        "cannot disable vault: channel {channel_type}:{account_id} has encrypted secrets but the channel type is unavailable"
+                    );
+                }
+                continue;
+            },
         };
         let secret_fields = channel_type_enum.secret_fields();
         if secret_fields.is_empty() {
@@ -310,6 +321,17 @@ async fn decrypt_channels(
         changed += 1;
     }
     Ok(changed)
+}
+
+fn contains_vault_encrypted_secret(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.get("kind").and_then(serde_json::Value::as_str) == Some("vault_encrypted")
+                || map.values().any(contains_vault_encrypted_secret)
+        },
+        serde_json::Value::Array(values) => values.iter().any(contains_vault_encrypted_secret),
+        _ => false,
+    }
 }
 
 async fn decrypt_webhooks(
@@ -548,7 +570,8 @@ mod tests {
     use {
         crate::vault_lifecycle::{
             AutoUnsealResult, AutoUnsealSecret, AutoUnsealSourceKind, auto_unseal_with_secret,
-            disable_vault_and_decrypt_all, set_vault_encryption_runtime_enabled,
+            disable_vault_and_decrypt_all, is_vault_encryption_runtime_enabled,
+            set_vault_encryption_runtime_enabled,
         },
         secrecy::Secret,
         sqlx::SqlitePool,
@@ -742,6 +765,43 @@ mod tests {
                 .unwrap();
         let channel_json: serde_json::Value = serde_json::from_str(&channel.0).unwrap();
         assert_eq!(channel_json["token"], "Bot discord-token");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial(vault_runtime)]
+    async fn disable_vault_fails_on_unknown_channel_with_encrypted_secret() {
+        let _runtime_flag = VaultRuntimeFlagGuard::enabled();
+        let config_dir = tempfile::tempdir().unwrap();
+        moltis_config::set_config_dir(config_dir.path().to_path_buf());
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        moltis_vault::run_migrations(&pool).await.unwrap();
+        create_disable_test_tables(&pool).await;
+        let vault = Arc::new(moltis_vault::Vault::new(pool.clone()).await.unwrap());
+        vault.initialize(&test_password()).await.unwrap();
+
+        let config = serde_json::json!({
+            "token": {
+                "kind": "vault_encrypted",
+                "ciphertext": "unavailable-channel-ciphertext"
+            }
+        });
+        sqlx::query("INSERT INTO channels (channel_type, account_id, config, created_at, updated_at) VALUES ('future-channel', 'main', ?, 1, 1)")
+            .bind(serde_json::to_string(&config).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        set_vault_encryption_runtime_enabled(true);
+        let error = disable_vault_and_decrypt_all(&vault, &pool)
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("channel future-channel:main has encrypted secrets")
+        );
+        assert!(is_vault_encryption_runtime_enabled());
     }
 
     async fn create_disable_test_tables(pool: &SqlitePool) {
