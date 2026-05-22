@@ -53,18 +53,20 @@ impl PiperTts {
         path.to_string()
     }
 
-    fn sample_rate_hz(&self, model_path: &str) -> u32 {
+    async fn sample_rate_hz(&self, model_path: &str) -> u32 {
         let config_path = self
             .config_path
             .as_deref()
             .map(Self::expand_path)
             .unwrap_or_else(|| format!("{model_path}.json"));
 
-        Self::read_sample_rate_hz(Path::new(&config_path)).unwrap_or(DEFAULT_SAMPLE_RATE_HZ)
+        Self::read_sample_rate_hz(Path::new(&config_path))
+            .await
+            .unwrap_or(DEFAULT_SAMPLE_RATE_HZ)
     }
 
-    fn read_sample_rate_hz(path: &Path) -> Option<u32> {
-        let config = std::fs::read(path).ok()?;
+    async fn read_sample_rate_hz(path: &Path) -> Option<u32> {
+        let config = tokio::fs::read(path).await.ok()?;
         let value: serde_json::Value = serde_json::from_slice(&config).ok()?;
         let sample_rate = value.pointer("/audio/sample_rate")?.as_u64()?;
         u32::try_from(sample_rate).ok()
@@ -167,7 +169,7 @@ impl TtsProvider for PiperTts {
             | AudioFormat::Aac
             | AudioFormat::Wav
             | AudioFormat::Webm => {
-                let sample_rate_hz = self.sample_rate_hz(&model_path);
+                let sample_rate_hz = self.sample_rate_hz(&model_path).await;
                 (
                     audio::wav_from_s16le_mono(&output.stdout, sample_rate_hz)?,
                     AudioFormat::Wav,
@@ -219,13 +221,13 @@ mod tests {
         assert!(!expanded.starts_with("~/"));
     }
 
-    #[test]
-    fn test_read_sample_rate_hz_from_piper_config() -> Result<()> {
+    #[tokio::test]
+    async fn test_read_sample_rate_hz_from_piper_config() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("voice.onnx.json");
         std::fs::write(&path, r#"{"audio":{"sample_rate":16000}}"#)?;
 
-        assert_eq!(PiperTts::read_sample_rate_hz(&path), Some(16_000));
+        assert_eq!(PiperTts::read_sample_rate_hz(&path).await, Some(16_000));
         Ok(())
     }
 }
