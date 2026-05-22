@@ -137,6 +137,7 @@ fn test_documentation_section_includes_local_docs_path() {
     let runtime = PromptRuntimeContext {
         host: PromptHostRuntimeContext {
             docs_path: Some("/tmp/moltis/docs/moltis".into()),
+            config_template_path: Some("/tmp/moltis/docs/moltis/config-template.md".into()),
             ..Default::default()
         },
         ..Default::default()

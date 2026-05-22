@@ -339,7 +339,7 @@ fn append_documentation_section(
                 "For config template examples, read `{config_path}`.\n\n"
             ));
         } else {
-            prompt.push_str("For config template examples, read `config-template.md` in the Moltis docs directory.\n\n");
+            prompt.push('\n');
         }
     } else {
         prompt.push_str(&format!("Moltis docs: {MOLTIS_DOCS_URL}\n"));
