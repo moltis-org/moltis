@@ -167,7 +167,12 @@ function appendImageAttachments(el: HTMLElement, images: ImageAttachment[]): voi
 
 function appendDocumentAttachments(el: HTMLElement, documents: DocumentAttachment[]): void {
 	for (const doc of documents) {
-		renderDocument(el, doc.url || "#", doc.display_name || doc.stored_filename, doc.mime_type, doc.size_bytes);
+		const mediaSrc =
+			doc.url ||
+			(doc.stored_filename
+				? `/api/sessions/${encodeURIComponent(S.activeSessionKey)}/media/${encodeURIComponent(doc.stored_filename)}`
+				: "#");
+		renderDocument(el, mediaSrc, doc.display_name || doc.stored_filename, doc.mime_type, doc.size_bytes);
 	}
 }
 
