@@ -103,6 +103,7 @@ impl OpenAiTts {
             AudioFormat::Opus | AudioFormat::Webm => "opus",
             AudioFormat::Aac => "aac",
             AudioFormat::Pcm => "pcm",
+            AudioFormat::Wav => "wav",
         }
     }
 }
@@ -224,6 +225,8 @@ mod tests {
         assert_eq!(OpenAiTts::response_format(AudioFormat::Mp3), "mp3");
         assert_eq!(OpenAiTts::response_format(AudioFormat::Opus), "opus");
         assert_eq!(OpenAiTts::response_format(AudioFormat::Aac), "aac");
+        assert_eq!(OpenAiTts::response_format(AudioFormat::Pcm), "pcm");
+        assert_eq!(OpenAiTts::response_format(AudioFormat::Wav), "wav");
     }
 
     #[test]

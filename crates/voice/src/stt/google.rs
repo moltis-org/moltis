@@ -82,7 +82,7 @@ impl GoogleStt {
             crate::tts::AudioFormat::Mp3 => "MP3",
             crate::tts::AudioFormat::Opus | crate::tts::AudioFormat::Webm => "OGG_OPUS",
             crate::tts::AudioFormat::Aac => "MP3", // Fallback, not directly supported
-            crate::tts::AudioFormat::Pcm => "LINEAR16",
+            crate::tts::AudioFormat::Pcm | crate::tts::AudioFormat::Wav => "LINEAR16",
         }
     }
 }

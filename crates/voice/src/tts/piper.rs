@@ -7,14 +7,16 @@
 use {
     crate::{
         config::PiperTtsConfig,
-        tts::{AudioFormat, AudioOutput, SynthesizeRequest, TtsProvider, Voice},
+        tts::{AudioFormat, AudioOutput, SynthesizeRequest, TtsProvider, Voice, audio},
     },
     anyhow::{Result, anyhow},
     async_trait::async_trait,
     bytes::Bytes,
-    std::process::Stdio,
+    std::{path::Path, process::Stdio},
     tokio::{io::AsyncWriteExt, process::Command},
 };
+
+const DEFAULT_SAMPLE_RATE_HZ: u32 = 22_050;
 
 /// Piper TTS (local) provider.
 pub struct PiperTts {
@@ -50,6 +52,23 @@ impl PiperTts {
         }
         path.to_string()
     }
+
+    fn sample_rate_hz(&self, model_path: &str) -> u32 {
+        let config_path = self
+            .config_path
+            .as_deref()
+            .map(Self::expand_path)
+            .unwrap_or_else(|| format!("{model_path}.json"));
+
+        Self::read_sample_rate_hz(Path::new(&config_path)).unwrap_or(DEFAULT_SAMPLE_RATE_HZ)
+    }
+
+    fn read_sample_rate_hz(path: &Path) -> Option<u32> {
+        let config = std::fs::read(path).ok()?;
+        let value: serde_json::Value = serde_json::from_slice(&config).ok()?;
+        let sample_rate = value.pointer("/audio/sample_rate")?.as_u64()?;
+        u32::try_from(sample_rate).ok()
+    }
 }
 
 #[async_trait]
@@ -70,7 +89,7 @@ impl TtsProvider for PiperTts {
         // Piper doesn't have a dynamic voice list - the voice is determined by the model file
         // Return a single voice representing the configured model
         if let Some(model_path) = &self.model_path {
-            let model_name = std::path::Path::new(model_path)
+            let model_name = Path::new(model_path)
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("piper-voice");
@@ -140,14 +159,19 @@ impl TtsProvider for PiperTts {
             return Err(anyhow!("Piper failed: {}", stderr));
         }
 
-        // Piper outputs raw 16-bit PCM at 22050 Hz by default
-        // Convert to requested format if needed
+        // Piper outputs raw 16-bit mono PCM; wrap it as WAV unless raw PCM was requested.
         let (data, format) = match request.output_format {
             AudioFormat::Pcm => (Bytes::from(output.stdout), AudioFormat::Pcm),
-            AudioFormat::Mp3 | AudioFormat::Opus | AudioFormat::Aac | AudioFormat::Webm => {
-                // For other formats, we'd need ffmpeg conversion
-                // For now, return PCM and let caller handle conversion
-                (Bytes::from(output.stdout), AudioFormat::Pcm)
+            AudioFormat::Mp3
+            | AudioFormat::Opus
+            | AudioFormat::Aac
+            | AudioFormat::Wav
+            | AudioFormat::Webm => {
+                let sample_rate_hz = self.sample_rate_hz(&model_path);
+                (
+                    audio::wav_from_s16le_mono(&output.stdout, sample_rate_hz)?,
+                    AudioFormat::Wav,
+                )
             },
         };
 
@@ -193,5 +217,15 @@ mod tests {
     fn test_expand_path() {
         let expanded = PiperTts::expand_path("~/test/path");
         assert!(!expanded.starts_with("~/"));
+    }
+
+    #[test]
+    fn test_read_sample_rate_hz_from_piper_config() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("voice.onnx.json");
+        std::fs::write(&path, r#"{"audio":{"sample_rate":16000}}"#)?;
+
+        assert_eq!(PiperTts::read_sample_rate_hz(&path), Some(16_000));
+        Ok(())
     }
 }

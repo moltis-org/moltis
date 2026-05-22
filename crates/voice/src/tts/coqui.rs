@@ -140,7 +140,7 @@ impl TtsProvider for CoquiTts {
         // The response is WAV format
         Ok(AudioOutput {
             data: Bytes::from(audio_data.to_vec()),
-            format: AudioFormat::Pcm, // WAV is essentially PCM with headers
+            format: AudioFormat::Wav,
             duration_ms: None,
         })
     }

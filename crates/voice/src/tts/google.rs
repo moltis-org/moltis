@@ -175,7 +175,7 @@ impl GoogleTts {
             AudioFormat::Mp3 => "MP3",
             AudioFormat::Opus | AudioFormat::Webm => "OGG_OPUS",
             AudioFormat::Aac => "MP3",
-            AudioFormat::Pcm => "LINEAR16",
+            AudioFormat::Pcm | AudioFormat::Wav => "LINEAR16",
         };
 
         let input = if contains_ssml(&request.text) {

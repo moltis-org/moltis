@@ -13,7 +13,9 @@ use {
     tracing::{debug, info, warn},
 };
 
-use super::{AudioFormat, AudioOutput, SynthesizeRequest, TtsProvider, Voice, contains_ssml};
+use super::{
+    AudioFormat, AudioOutput, SynthesizeRequest, TtsProvider, Voice, audio, contains_ssml,
+};
 
 /// ElevenLabs API base URL.
 const API_BASE: &str = "https://api.elevenlabs.io/v1";
@@ -117,6 +119,7 @@ impl ElevenLabsTts {
             AudioFormat::Opus => "opus_48000_64", // Good for Telegram voice notes
             AudioFormat::Aac => "aac_44100",
             AudioFormat::Pcm => "pcm_44100",
+            AudioFormat::Wav => "pcm_44100",
             AudioFormat::Webm => "opus_48000_64", // WebM uses Opus codec
         }
     }
@@ -241,20 +244,28 @@ impl TtsProvider for ElevenLabsTts {
             ));
         }
 
-        let data = response
+        let response_data = response
             .bytes()
             .await
             .context("failed to read ElevenLabs TTS response")?;
+        let (data, format) = if request.output_format == AudioFormat::Wav {
+            (
+                audio::wav_from_s16le_mono(&response_data, 44_100)?,
+                AudioFormat::Wav,
+            )
+        } else {
+            (response_data, request.output_format)
+        };
 
         info!(
             audio_bytes = data.len(),
-            format = ?request.output_format,
+            format = ?format,
             "ElevenLabs TTS synthesis complete"
         );
 
         Ok(AudioOutput {
             data,
-            format: request.output_format,
+            format,
             duration_ms: None, // ElevenLabs doesn't return duration in response
         })
     }
@@ -333,6 +344,10 @@ mod tests {
         assert_eq!(
             ElevenLabsTts::output_format_param(AudioFormat::Opus),
             "opus_48000_64"
+        );
+        assert_eq!(
+            ElevenLabsTts::output_format_param(AudioFormat::Wav),
+            "pcm_44100"
         );
     }
 

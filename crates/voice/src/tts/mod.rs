@@ -1,5 +1,6 @@
 //! Text-to-Speech provider abstraction and implementations.
 
+mod audio;
 mod coqui;
 mod elevenlabs;
 mod google;
@@ -46,6 +47,8 @@ pub enum AudioFormat {
     Aac,
     /// PCM (raw audio).
     Pcm,
+    /// WAV container with PCM audio.
+    Wav,
     /// WebM container (browser MediaRecorder default).
     Webm,
 }
@@ -59,6 +62,7 @@ impl AudioFormat {
             Self::Opus => "audio/ogg",
             Self::Aac => "audio/aac",
             Self::Pcm => "audio/pcm",
+            Self::Wav => "audio/wav",
             Self::Webm => "audio/webm",
         }
     }
@@ -71,6 +75,7 @@ impl AudioFormat {
             Self::Opus => "ogg",
             Self::Aac => "aac",
             Self::Pcm => "pcm",
+            Self::Wav => "wav",
             Self::Webm => "webm",
         }
     }
@@ -84,7 +89,8 @@ impl AudioFormat {
             "audio/ogg" | "audio/opus" => Some(Self::Opus),
             "audio/mpeg" | "audio/mp3" => Some(Self::Mp3),
             "audio/aac" | "audio/mp4" | "audio/m4a" => Some(Self::Aac),
-            "audio/pcm" | "audio/wav" | "audio/x-wav" => Some(Self::Pcm),
+            "audio/pcm" => Some(Self::Pcm),
+            "audio/wav" | "audio/x-wav" => Some(Self::Wav),
             _ => None,
         }
     }
@@ -96,7 +102,8 @@ impl AudioFormat {
             "webm" => Self::Webm,
             "opus" | "ogg" => Self::Opus,
             "aac" | "m4a" => Self::Aac,
-            "pcm" | "wav" => Self::Pcm,
+            "pcm" => Self::Pcm,
+            "wav" => Self::Wav,
             _ => Self::Mp3,
         }
     }
@@ -854,6 +861,7 @@ For more details, check the **official documentation** at https://doc.rust-lang.
         assert_eq!(AudioFormat::Webm.mime_type(), "audio/webm");
         assert_eq!(AudioFormat::Aac.mime_type(), "audio/aac");
         assert_eq!(AudioFormat::Pcm.mime_type(), "audio/pcm");
+        assert_eq!(AudioFormat::Wav.mime_type(), "audio/wav");
     }
 
     #[test]
@@ -863,6 +871,7 @@ For more details, check the **official documentation** at https://doc.rust-lang.
         assert_eq!(AudioFormat::Webm.extension(), "webm");
         assert_eq!(AudioFormat::Aac.extension(), "aac");
         assert_eq!(AudioFormat::Pcm.extension(), "pcm");
+        assert_eq!(AudioFormat::Wav.extension(), "wav");
     }
 
     #[test]
@@ -901,7 +910,11 @@ For more details, check the **official documentation** at https://doc.rust-lang.
         );
         assert_eq!(
             AudioFormat::from_content_type("audio/wav"),
-            Some(AudioFormat::Pcm)
+            Some(AudioFormat::Wav)
+        );
+        assert_eq!(
+            AudioFormat::from_content_type("audio/x-wav"),
+            Some(AudioFormat::Wav)
         );
         assert_eq!(AudioFormat::from_content_type("image/png"), None);
         assert_eq!(AudioFormat::from_content_type("text/plain"), None);
@@ -914,7 +927,7 @@ For more details, check the **official documentation** at https://doc.rust-lang.
         assert_eq!(AudioFormat::from_short_name("ogg"), AudioFormat::Opus);
         assert_eq!(AudioFormat::from_short_name("aac"), AudioFormat::Aac);
         assert_eq!(AudioFormat::from_short_name("pcm"), AudioFormat::Pcm);
-        assert_eq!(AudioFormat::from_short_name("wav"), AudioFormat::Pcm);
+        assert_eq!(AudioFormat::from_short_name("wav"), AudioFormat::Wav);
         assert_eq!(AudioFormat::from_short_name("mp3"), AudioFormat::Mp3);
         assert_eq!(AudioFormat::from_short_name("unknown"), AudioFormat::Mp3);
     }
