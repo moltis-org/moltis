@@ -755,7 +755,7 @@ impl Sandbox for DockerSandbox {
             max_bytes,
         )
         .await?;
-        if matches!(host_result, SandboxReadResult::Ok(_)) {
+        if !matches!(host_result, SandboxReadResult::NotFound) {
             return Ok(host_result);
         }
 
