@@ -1026,14 +1026,22 @@ pub async fn prepare_gateway(
                                             provider_call_id = %provider_call_id,
                                             "telephony gather speech for unknown call"
                                         );
-                                    } else {
-                                        tracing::debug!(
-                                            account_id = %account_id,
-                                            provider_call_id = %provider_call_id,
-                                            call_id = %call_id,
-                                            "telephony gather dispatching speech"
-                                        );
+                                        let provider = manager.provider().read().await;
+                                        let twiml = provider.build_gather_response(None, &webhook_url);
+                                        return (
+                                            StatusCode::OK,
+                                            [(axum::http::header::CONTENT_TYPE, "text/xml")],
+                                            twiml,
+                                        )
+                                            .into_response();
                                     }
+
+                                    tracing::debug!(
+                                        account_id = %account_id,
+                                        provider_call_id = %provider_call_id,
+                                        call_id = %call_id,
+                                        "telephony gather dispatching speech"
+                                    );
 
                                     // Look up the caller from the call record.
                                     let caller = manager
