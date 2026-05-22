@@ -20,7 +20,9 @@ use moltis_gateway::{auth::CredentialStore, state::GatewayState};
 
 #[cfg(feature = "vault")]
 pub(super) async fn vault_status_handler(State(state): State<AuthState>) -> impl IntoResponse {
-    let status = if let Some(ref vault) = state.gateway_state.vault {
+    let status = if !moltis_gateway::vault_lifecycle::is_vault_encryption_runtime_enabled() {
+        "disabled".to_owned()
+    } else if let Some(ref vault) = state.gateway_state.vault {
         match vault.status().await {
             Ok(s) => format!("{s:?}").to_lowercase(),
             Err(_) => "error".to_owned(),
@@ -42,6 +44,9 @@ pub(super) async fn vault_unlock_handler(
     State(state): State<AuthState>,
     Json(body): Json<VaultUnlockRequest>,
 ) -> impl IntoResponse {
+    if !moltis_gateway::vault_lifecycle::is_vault_encryption_runtime_enabled() {
+        return (StatusCode::NOT_FOUND, "vault not available").into_response();
+    }
     let Some(ref vault) = state.gateway_state.vault else {
         return (StatusCode::NOT_FOUND, "vault not available").into_response();
     };
@@ -69,6 +74,9 @@ pub(super) async fn vault_recovery_handler(
     State(state): State<AuthState>,
     Json(body): Json<VaultRecoveryRequest>,
 ) -> impl IntoResponse {
+    if !moltis_gateway::vault_lifecycle::is_vault_encryption_runtime_enabled() {
+        return (StatusCode::NOT_FOUND, "vault not available").into_response();
+    }
     let Some(ref vault) = state.gateway_state.vault else {
         return (StatusCode::NOT_FOUND, "vault not available").into_response();
     };
@@ -97,6 +105,9 @@ pub(super) async fn vault_disable_handler(
     State(state): State<AuthState>,
     Json(body): Json<VaultDisableRequest>,
 ) -> impl IntoResponse {
+    if !moltis_gateway::vault_lifecycle::is_vault_encryption_runtime_enabled() {
+        return (StatusCode::NOT_FOUND, "vault not available").into_response();
+    }
     let Some(ref vault) = state.gateway_state.vault else {
         return (StatusCode::NOT_FOUND, "vault not available").into_response();
     };
@@ -126,6 +137,7 @@ pub(super) async fn vault_disable_handler(
     .await
     {
         Ok(report) => {
+            vault.seal().await;
             state.credential_store.disable_vault_encryption();
             Json(serde_json::json!({
                 "ok": true,

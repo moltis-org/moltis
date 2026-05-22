@@ -316,13 +316,12 @@ async fn decrypt_webhooks(
     vault: &moltis_vault::Vault,
     pool: &sqlx::SqlitePool,
 ) -> anyhow::Result<usize> {
-    let rows: Vec<(i64, String, Option<String>, String, Option<String>)> = sqlx::query_as(
-        "SELECT id, auth_mode, auth_config_json, source_profile, source_config_json FROM webhooks",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(i64, String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT id, auth_mode, auth_config_json, source_config_json FROM webhooks")
+            .fetch_all(pool)
+            .await?;
     let mut changed = 0;
-    for (id, auth_mode, auth_config_json, source_profile, source_config_json) in rows {
+    for (id, auth_mode, auth_config_json, source_config_json) in rows {
         let mut auth_config_update = None;
         let mut source_config_update = None;
         if let Some(config_json) = auth_config_json {
@@ -345,7 +344,7 @@ async fn decrypt_webhooks(
         if let Some(config_json) = source_config_json {
             let mut config: serde_json::Value = serde_json::from_str(&config_json)
                 .with_context(|| format!("invalid source_config_json for webhook {id}"))?;
-            let fields = webhook_source_secret_fields(&source_profile);
+            let fields = webhook_source_secret_fields();
             if moltis_secret_store::has_encrypted_secret_fields(&config, fields)? {
                 moltis_secret_store::decrypt_secret_fields(
                     &mut config,
@@ -462,7 +461,7 @@ fn webhook_auth_secret_fields(auth_mode: &str) -> &'static [&'static str] {
     }
 }
 
-fn webhook_source_secret_fields(_source_profile: &str) -> &'static [&'static str] {
+fn webhook_source_secret_fields() -> &'static [&'static str] {
     &[
         "access_token",
         "api_key",
@@ -562,6 +561,21 @@ mod tests {
         Arc::new(moltis_vault::Vault::new(pool).await.unwrap())
     }
 
+    struct VaultRuntimeFlagGuard;
+
+    impl VaultRuntimeFlagGuard {
+        fn enabled() -> Self {
+            set_vault_encryption_runtime_enabled(true);
+            Self
+        }
+    }
+
+    impl Drop for VaultRuntimeFlagGuard {
+        fn drop(&mut self) {
+            set_vault_encryption_runtime_enabled(true);
+        }
+    }
+
     fn test_password() -> String {
         format!(
             "test-password-{}",
@@ -649,7 +663,7 @@ mod tests {
     #[tokio::test]
     #[serial_test::serial(vault_runtime)]
     async fn disable_vault_decrypts_stored_secrets_before_flipping_config() {
-        set_vault_encryption_runtime_enabled(true);
+        let _runtime_flag = VaultRuntimeFlagGuard::enabled();
         let config_dir = tempfile::tempdir().unwrap();
         moltis_config::set_config_dir(config_dir.path().to_path_buf());
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -708,6 +722,7 @@ mod tests {
             .await
             .unwrap();
 
+        set_vault_encryption_runtime_enabled(true);
         let report = disable_vault_and_decrypt_all(&vault, &pool).await.unwrap();
         assert_eq!(report.env_vars, 1);
         assert_eq!(report.ssh_keys, 1);
@@ -727,7 +742,6 @@ mod tests {
                 .unwrap();
         let channel_json: serde_json::Value = serde_json::from_str(&channel.0).unwrap();
         assert_eq!(channel_json["token"], "Bot discord-token");
-        set_vault_encryption_runtime_enabled(true);
     }
 
     async fn create_disable_test_tables(pool: &SqlitePool) {
