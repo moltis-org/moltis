@@ -3,6 +3,7 @@
 use std::{
     fs,
     path::{Component, Path, PathBuf},
+    sync::OnceLock,
 };
 
 use {
@@ -19,7 +20,15 @@ static BUNDLED_DOCS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../docs/src"
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MoltisDocsReference {
     pub docs_dir: PathBuf,
-    pub config_template_path: PathBuf,
+    pub config_template_path: Option<PathBuf>,
+}
+
+static DOCS_REFERENCE: OnceLock<Option<MoltisDocsReference>> = OnceLock::new();
+
+pub fn cached_moltis_docs_reference(data_dir: &Path, port: u16) -> Option<MoltisDocsReference> {
+    DOCS_REFERENCE
+        .get_or_init(|| resolve_moltis_docs_reference(data_dir, port))
+        .clone()
 }
 
 #[must_use]
@@ -68,7 +77,7 @@ pub fn resolve_moltis_docs_reference(data_dir: &Path, port: u16) -> Option<Molti
     })
 }
 
-fn write_config_template(data_dir: &Path, port: u16) -> PathBuf {
+fn write_config_template(data_dir: &Path, port: u16) -> Option<PathBuf> {
     let path = data_dir
         .join(BUNDLED_DOCS_RELATIVE_DIR)
         .join(CONFIG_TEMPLATE_DOC);
@@ -78,8 +87,11 @@ fn write_config_template(data_dir: &Path, port: u16) -> PathBuf {
     );
     let mut updated = 0usize;
     let mut errors = 0usize;
-    write_if_changed(&path, config_template.as_bytes(), &mut updated, &mut errors);
-    path
+    if write_if_changed(&path, config_template.as_bytes(), &mut updated, &mut errors) {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn ensure_embedded_moltis_docs_dir(data_dir: &Path) -> Option<PathBuf> {
@@ -140,29 +152,52 @@ fn safe_relative_path(path: &Path) -> Option<PathBuf> {
     (!cleaned.as_os_str().is_empty()).then_some(cleaned)
 }
 
-fn write_if_changed(path: &Path, content: &[u8], updated: &mut usize, errors: &mut usize) {
+fn write_if_changed(path: &Path, content: &[u8], updated: &mut usize, errors: &mut usize) -> bool {
     if fs::read(path).is_ok_and(|existing| existing == content) {
-        return;
+        return true;
     }
     if let Some(parent) = path.parent()
         && let Err(error) = fs::create_dir_all(parent)
     {
         *errors += 1;
         warn!(path = %parent.display(), error = %error, "failed to create bundled doc parent directory");
-        return;
+        return false;
     }
     match fs::write(path, content) {
-        Ok(()) => *updated += 1,
+        Ok(()) => {
+            *updated += 1;
+            true
+        },
         Err(error) => {
             *errors += 1;
             warn!(path = %path.display(), error = %error, "failed to write bundled Moltis doc");
+            false
         },
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
+
+    static SHARE_DIR_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    struct ShareDirOverrideGuard;
+
+    impl ShareDirOverrideGuard {
+        fn set(path: PathBuf) -> Self {
+            moltis_config::set_share_dir(path);
+            Self
+        }
+    }
+
+    impl Drop for ShareDirOverrideGuard {
+        fn drop(&mut self) {
+            moltis_config::clear_share_dir();
+        }
+    }
 
     #[test]
     fn materializes_bundled_docs_and_config_template() {
@@ -172,7 +207,10 @@ mod tests {
             .unwrap_or_else(|| panic!("docs reference was not resolved"));
 
         assert!(reference.docs_dir.join("SUMMARY.md").is_file());
-        let config_template = fs::read_to_string(reference.config_template_path)
+        let config_template_path = reference
+            .config_template_path
+            .unwrap_or_else(|| panic!("config template path was not resolved"));
+        let config_template = fs::read_to_string(config_template_path)
             .unwrap_or_else(|error| panic!("read config template failed: {error}"));
         assert!(config_template.contains("# Moltis configuration template"));
         assert!(config_template.contains("port = 18789"));
@@ -180,6 +218,9 @@ mod tests {
 
     #[test]
     fn prefers_external_docs_dir_when_available() {
+        let _guard = SHARE_DIR_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let data = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir failed: {error}"));
         let share = tempfile::tempdir().unwrap_or_else(|error| panic!("tempdir failed: {error}"));
         let docs = share.path().join("docs");
@@ -187,13 +228,15 @@ mod tests {
         fs::write(docs.join("SUMMARY.md"), "# Summary\n")
             .unwrap_or_else(|error| panic!("write summary failed: {error}"));
 
-        moltis_config::set_share_dir(share.path().to_path_buf());
+        let _share_dir = ShareDirOverrideGuard::set(share.path().to_path_buf());
         let reference = resolve_moltis_docs_reference(data.path(), 18789)
             .unwrap_or_else(|| panic!("docs reference was not resolved"));
-        moltis_config::clear_share_dir();
 
         assert_eq!(reference.docs_dir, docs);
-        assert!(reference.config_template_path.starts_with(data.path()));
+        let config_template_path = reference
+            .config_template_path
+            .unwrap_or_else(|| panic!("config template path was not resolved"));
+        assert!(config_template_path.starts_with(data.path()));
     }
 
     #[test]

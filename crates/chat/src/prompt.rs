@@ -381,7 +381,7 @@ pub(crate) async fn build_prompt_runtime_context(
     let data_dir = moltis_config::data_dir();
     let data_dir_display = data_dir.display().to_string();
     let docs_reference =
-        moltis_agents::docs::resolve_moltis_docs_reference(&data_dir, config.server.port);
+        moltis_agents::docs::cached_moltis_docs_reference(&data_dir, config.server.port);
 
     let sudo_fut = detect_host_sudo_access();
     let sandbox_fut = async {
@@ -452,7 +452,8 @@ pub(crate) async fn build_prompt_runtime_context(
             .map(|reference| reference.docs_dir.display().to_string()),
         config_template_path: docs_reference
             .as_ref()
-            .map(|reference| reference.config_template_path.display().to_string()),
+            .and_then(|reference| reference.config_template_path.as_ref())
+            .map(|path| path.display().to_string()),
         sudo_non_interactive,
         sudo_status,
         timezone,
