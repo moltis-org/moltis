@@ -75,7 +75,8 @@ impl AgentTool for SendDocumentTool {
 
     fn description(&self) -> &str {
         "Send a local file (PDF, CSV, DOCX, TXT, JSON, ZIP, etc.) to the current \
-         conversation's channel. Use send_image for image files. Maximum size: 20 MB."
+         conversation's channel. In sandboxed sessions, the path is resolved inside \
+         the sandbox. Use send_image for image files. Maximum size: 20 MB."
     }
 
     fn parameters_schema(&self) -> Value {

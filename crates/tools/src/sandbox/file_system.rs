@@ -1050,7 +1050,10 @@ pub async fn oci_container_read_file(
                     .take()
                     .ok_or_else(|| Error::message("failed to open OCI copy stdout"))?;
                 let result = extract_single_file_from_tar_reader(stdout, &file_path, max_bytes);
-                let stop_child = !matches!(result, Ok(SandboxReadResult::Ok(_)));
+                let stop_child = matches!(
+                    result,
+                    Ok(SandboxReadResult::NotRegularFile | SandboxReadResult::TooLarge(_))
+                );
 
                 if stop_child {
                     let _ = child.kill();
@@ -1385,5 +1388,38 @@ mod tests {
         let tar_bytes = build_single_file_tar("/tmp/example.txt", b"hello tar").unwrap();
         let result = extract_single_file_from_tar(&tar_bytes, "/tmp/example.txt", 4).unwrap();
         assert!(matches!(result, SandboxReadResult::TooLarge(9)));
+    }
+
+    #[tokio::test]
+    async fn oci_read_reports_copy_stderr_when_tar_stream_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli_path = dir.path().join("fake-oci");
+        std::fs::write(
+            &cli_path,
+            "#!/bin/sh\n\
+             if [ \"$1\" = \"exec\" ]; then printf 'file\\t5\\n'; exit 0; fi\n\
+             if [ \"$1\" = \"cp\" ]; then echo 'Error: no such file or directory' >&2; exit 1; fi\n\
+             exit 2\n",
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mut permissions = std::fs::metadata(&cli_path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&cli_path, permissions).unwrap();
+        }
+
+        let result = oci_container_read_file(
+            cli_path.to_str().unwrap(),
+            "fake-container",
+            "/tmp/example.txt",
+            1024,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(result, SandboxReadResult::NotFound));
     }
 }
