@@ -37,9 +37,10 @@ let boundAttachChange: ((e: Event) => void) | null = null;
 let dragEnterCount = 0;
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
+const INLINE_IMAGE_TYPES = new Set<string>(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 function isImageFile(file: File): boolean {
-	return file.type.startsWith("image/");
+	return INLINE_IMAGE_TYPES.has(file.type);
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -173,6 +174,7 @@ function onPaste(e: ClipboardEvent): void {
 	const items = e.clipboardData?.files;
 	if (!items || items.length === 0) return;
 
+	// Accept any non-empty clipboard file; handleFiles enforces size caps.
 	const pastedFiles: File[] = [];
 	for (const f of items) {
 		if (f.size > 0) pastedFiles.push(f);

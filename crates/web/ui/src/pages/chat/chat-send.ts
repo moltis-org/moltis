@@ -209,11 +209,11 @@ async function sendChatAsync(): Promise<void> {
 	warmAudioPlayback();
 	try {
 		if (tryHandleLocalSlashCommand(text, hasAttachments)) return;
-		rememberChatHistory(text);
-		resetComposerAfterSend();
 		const outgoingText = normalizeOutgoingText(text, hasAttachments);
 		S.setChatSeq(S.chatSeq + 1);
 		const msg = await buildChatMessage(outgoingText, S.chatSeq, text);
+		rememberChatHistory(text);
+		resetComposerAfterSend();
 		const chatParams = msg.params;
 		const userEl = msg.el;
 		if (userEl) highlightCodeBlocks(userEl);

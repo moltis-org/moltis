@@ -604,7 +604,7 @@ test.describe("Chat input and slash commands", () => {
 						return last?.text || "";
 					}),
 				{ timeout: 5_000 },
-		)
+			)
 			.toBe("/sh echo hello");
 	});
 
@@ -671,6 +671,30 @@ test.describe("Chat input and slash commands", () => {
 				mime_type: "text/calendar",
 				size_bytes: 30,
 			});
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("preserves typed text when attachment upload fails", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.route("**/api/sessions/main/upload", async (route) => {
+			await route.fulfill({
+				status: 500,
+				contentType: "application/json",
+				body: JSON.stringify({ ok: false, error: "upload failed" }),
+			});
+		});
+
+		await page.locator("#attachInput").setInputFiles({
+			name: "broken.ics",
+			mimeType: "text/calendar",
+			buffer: Buffer.from("BEGIN:VCALENDAR\nEND:VCALENDAR\n"),
+		});
+		await page.locator("#chatInput").fill("do not lose this");
+		await page.locator("#chatInput").press("Enter");
+
+		await expect(page.locator(".msg.error")).toContainText("File upload failed");
+		await expect(page.locator("#chatInput")).toHaveValue("do not lose this");
+		await expect(page.locator(".media-preview-item")).toContainText("broken.ics");
 		expect(pageErrors).toEqual([]);
 	});
 
