@@ -4,7 +4,6 @@
 //! best available option (Apple Container on macOS → Podman → Docker).
 
 use std::{
-    collections::HashSet,
     fmt::Display,
     path::{Path, PathBuf},
     process::Command,
@@ -71,21 +70,6 @@ fn new_browser_container_name(container_prefix: &str) -> String {
     )
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ContainerMount {
-    source: PathBuf,
-    destination: PathBuf,
-}
-
-#[cfg(test)]
-static TEST_CONTAINER_MOUNT_OVERRIDES: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, Vec<ContainerMount>>>,
-> = std::sync::OnceLock::new();
-#[cfg(test)]
-static TEST_RUNNING_CONTAINER_REFERENCES: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>,
-> = std::sync::OnceLock::new();
-
 fn configured_host_data_dir(host_data_dir: Option<&Path>) -> Option<PathBuf> {
     let path = host_data_dir.filter(|path| !path.as_os_str().is_empty())?;
     if path.is_absolute() {
@@ -98,250 +82,6 @@ fn configured_host_data_dir(host_data_dir: Option<&Path>) -> Option<PathBuf> {
     None
 }
 
-fn read_trimmed_file(path: &str) -> Option<String> {
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|contents| contents.trim().to_string())
-        .filter(|contents| !contents.is_empty())
-}
-
-fn normalize_cgroup_container_ref(segment: &str) -> Option<String> {
-    let mut value = segment.trim();
-    if value.is_empty() {
-        return None;
-    }
-    if let Some(stripped) = value.strip_suffix(".scope") {
-        value = stripped;
-    }
-    for prefix in ["docker-", "libpod-", "cri-containerd-"] {
-        if let Some(stripped) = value.strip_prefix(prefix) {
-            value = stripped;
-            break;
-        }
-    }
-    if value.len() < 12 || !value.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return None;
-    }
-    Some(value.to_string())
-}
-
-fn current_container_references() -> Vec<String> {
-    let mut refs = Vec::new();
-    let mut seen = HashSet::new();
-    for candidate in [
-        std::env::var("HOSTNAME").ok(),
-        read_trimmed_file("/etc/hostname"),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if seen.insert(candidate.clone()) {
-            refs.push(candidate);
-        }
-    }
-    if let Ok(cgroup) = std::fs::read_to_string("/proc/self/cgroup") {
-        for candidate in cgroup
-            .lines()
-            .flat_map(|line| line.split(['/', ':']))
-            .filter_map(normalize_cgroup_container_ref)
-        {
-            if seen.insert(candidate.clone()) {
-                refs.push(candidate);
-            }
-        }
-    }
-    refs
-}
-
-fn parse_container_mounts_from_inspect(stdout: &str) -> Vec<ContainerMount> {
-    let Ok(json): std::result::Result<serde_json::Value, _> = serde_json::from_str(stdout) else {
-        return Vec::new();
-    };
-    let root = json
-        .as_array()
-        .and_then(|entries| entries.first())
-        .unwrap_or(&json);
-    root.get("Mounts")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            let source = entry.get("Source")?.as_str()?.trim();
-            let destination = entry.get("Destination")?.as_str()?.trim();
-            if source.is_empty() || destination.is_empty() {
-                return None;
-            }
-            Some(ContainerMount {
-                source: PathBuf::from(source),
-                destination: PathBuf::from(destination),
-            })
-        })
-        .collect()
-}
-
-fn resolve_host_path_from_mounts(guest_path: &Path, mounts: &[ContainerMount]) -> Option<PathBuf> {
-    mounts
-        .iter()
-        .filter_map(|mount| {
-            let relative = guest_path.strip_prefix(&mount.destination).ok()?;
-            Some((
-                mount.destination.components().count(),
-                if relative.as_os_str().is_empty() {
-                    mount.source.clone()
-                } else {
-                    mount.source.join(relative)
-                },
-            ))
-        })
-        .max_by_key(|(depth, _)| *depth)
-        .map(|(_, resolved)| resolved)
-}
-
-#[cfg(test)]
-fn test_container_mount_override_key(cli: &str, reference: &str) -> String {
-    format!("{cli}:{reference}")
-}
-
-fn inspect_current_container_mounts(cli: &str, reference: &str) -> Vec<ContainerMount> {
-    #[cfg(test)]
-    {
-        let overrides = TEST_CONTAINER_MOUNT_OVERRIDES
-            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
-        let guard = overrides.lock().unwrap_or_else(|error| error.into_inner());
-        guard
-            .get(&test_container_mount_override_key(cli, reference))
-            .cloned()
-            .unwrap_or_default()
-    }
-
-    #[cfg(not(test))]
-    {
-        let output = match Command::new(cli).args(["inspect", reference]).output() {
-            Ok(output) if output.status.success() => output,
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                debug!(
-                    cli,
-                    reference,
-                    stderr = %stderr.trim(),
-                    "container inspect failed while auto-detecting browser profile host path"
-                );
-                return Vec::new();
-            },
-            Err(error) => {
-                debug!(
-                    cli,
-                    reference,
-                    %error,
-                    "could not inspect current container while auto-detecting browser profile host path"
-                );
-                return Vec::new();
-            },
-        };
-        parse_container_mounts_from_inspect(&String::from_utf8_lossy(&output.stdout))
-    }
-}
-
-fn running_container_references(cli: &str) -> Vec<String> {
-    #[cfg(test)]
-    {
-        return TEST_RUNNING_CONTAINER_REFERENCES
-            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .get(cli)
-            .cloned()
-            .unwrap_or_default();
-    }
-
-    #[cfg(not(test))]
-    {
-        let output = match Command::new(cli).args(["ps", "-q", "--no-trunc"]).output() {
-            Ok(output) if output.status.success() => output,
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                debug!(
-                    cli,
-                    stderr = %stderr.trim(),
-                    "container list failed while auto-detecting browser profile host path"
-                );
-                return Vec::new();
-            },
-            Err(error) => {
-                debug!(
-                    cli,
-                    %error,
-                    "could not list containers while auto-detecting browser profile host path"
-                );
-                return Vec::new();
-            },
-        };
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(str::to_string)
-            .collect()
-    }
-}
-
-fn detect_host_data_dir_from_references(
-    cli: &str,
-    guest_data_dir: &Path,
-    references: &[String],
-) -> Option<PathBuf> {
-    let mut detected: Option<PathBuf> = None;
-    for reference in references {
-        let mounts = inspect_current_container_mounts(cli, reference);
-        if mounts.is_empty() {
-            continue;
-        }
-        let Some(resolved) = resolve_host_path_from_mounts(guest_data_dir, &mounts) else {
-            continue;
-        };
-        if let Some(existing) = &detected
-            && existing != &resolved
-        {
-            debug!(
-                cli,
-                guest_path = %guest_data_dir.display(),
-                first_host_path = %existing.display(),
-                other_host_path = %resolved.display(),
-                "ambiguous browser profile host data dir from container mounts"
-            );
-            return None;
-        }
-        detected = Some(resolved);
-    }
-    detected
-}
-
-fn detect_host_data_dir_with_references(
-    cli: &str,
-    guest_data_dir: &Path,
-    references: &[String],
-) -> Option<PathBuf> {
-    if let Some(resolved) = detect_host_data_dir_from_references(cli, guest_data_dir, references) {
-        debug!(
-            cli,
-            guest_path = %guest_data_dir.display(),
-            host_path = %resolved.display(),
-            "auto-detected browser profile host data dir from current container mounts"
-        );
-        return Some(resolved);
-    }
-
-    let running_references = running_container_references(cli);
-    let resolved = detect_host_data_dir_from_references(cli, guest_data_dir, &running_references)?;
-    debug!(
-        cli,
-        guest_path = %guest_data_dir.display(),
-        host_path = %resolved.display(),
-        "auto-detected browser profile host data dir by scanning running container mounts"
-    );
-    Some(resolved)
-}
-
 fn host_visible_data_dir_with_references(
     cli: &str,
     configured_data_dir: Option<&Path>,
@@ -351,8 +91,12 @@ fn host_visible_data_dir_with_references(
     if let Some(configured) = configured_host_data_dir(configured_data_dir) {
         return configured;
     }
-    detect_host_data_dir_with_references(cli, guest_data_dir, references)
-        .unwrap_or_else(|| guest_data_dir.to_path_buf())
+    moltis_config::container_mounts::detect_host_data_dir_with_references(
+        cli,
+        guest_data_dir,
+        references,
+    )
+    .unwrap_or_else(|| guest_data_dir.to_path_buf())
 }
 
 fn host_visible_path_with_references(
@@ -383,7 +127,7 @@ fn host_visible_path(cli: &str, configured_data_dir: Option<&Path>, path: &Path)
         cli,
         configured_data_dir,
         path,
-        &current_container_references(),
+        &moltis_config::container_mounts::current_container_references(),
     )
 }
 
@@ -427,7 +171,7 @@ fn browser_profile_permission_hint(
     }
     let mount_dir = profile_mount_dir?;
     Some(format!(
-        "Chrome could not write its browser profile at {CONTAINER_PROFILE_PATH}; Moltis mounted `{}` from the host. When Moltis runs inside Docker with the Docker socket mounted, set `[tools.exec.sandbox] host_data_dir = \"/absolute/host/path/to/moltis-data\"` to the host-visible path backing Moltis data, then restart Moltis",
+        "Chrome could not write its browser profile at {CONTAINER_PROFILE_PATH}; Moltis mounted `{}` from the host. When Moltis runs inside Docker with the Docker socket mounted, add `host_data_dir = \"/absolute/host/path/to/moltis-data\"` under `[tools.exec.sandbox]` in moltis.toml to the host-visible path backing Moltis data, then restart Moltis",
         mount_dir.display()
     ))
 }

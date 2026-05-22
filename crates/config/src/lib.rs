@@ -6,6 +6,7 @@
 //! Supports `${ENV_VAR}` substitution in all string values.
 
 pub mod agent_defs;
+pub mod container_mounts;
 pub mod defaults;
 pub mod env_subst;
 pub mod error;

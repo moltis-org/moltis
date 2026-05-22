@@ -1,10 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::{
-    collections::HashMap,
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -24,41 +23,7 @@ use {
         exec::{ExecOpts, ExecResult},
         sandbox::file_system::SandboxReadResult,
     },
-    serial_test::serial,
 };
-
-fn clear_host_data_dir_test_state() {
-    host_data_dir_cache()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clear();
-    let overrides = TEST_CONTAINER_MOUNT_OVERRIDES.get_or_init(|| Mutex::new(HashMap::new()));
-    overrides
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clear();
-    TEST_RUNNING_CONTAINER_REFERENCES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clear();
-}
-
-fn set_test_container_mount_override(cli: &str, reference: &str, mounts: Vec<ContainerMount>) {
-    let overrides = TEST_CONTAINER_MOUNT_OVERRIDES.get_or_init(|| Mutex::new(HashMap::new()));
-    overrides
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .insert(test_container_mount_override_key(cli, reference), mounts);
-}
-
-fn set_test_running_container_references(cli: &str, references: Vec<String>) {
-    TEST_RUNNING_CONTAINER_REFERENCES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .insert(cli.to_string(), references);
-}
 
 #[cfg(target_os = "macos")]
 const OCI_RUNTIME_E2E_ENV: &str = "MOLTIS_SANDBOX_RUNTIME_E2E";
@@ -188,154 +153,6 @@ async fn assert_runtime_oci_file_transfers(cli: &str) -> Result<()> {
     assert!(!files.truncated);
 
     Ok(())
-}
-
-#[test]
-fn test_normalize_cgroup_container_ref() {
-    assert_eq!(
-        normalize_cgroup_container_ref(
-            "docker-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.scope"
-        ),
-        Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into())
-    );
-    assert_eq!(
-        normalize_cgroup_container_ref(
-            "libpod-abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef.scope"
-        ),
-        Some("abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdef".into())
-    );
-    assert!(normalize_cgroup_container_ref("user.slice").is_none());
-}
-
-#[test]
-fn test_parse_container_mounts_from_inspect() {
-    let mounts = parse_container_mounts_from_inspect(
-        r#"[{
-            "Mounts": [
-                {
-                    "Source": "/host/data",
-                    "Destination": "/home/moltis/.moltis"
-                },
-                {
-                    "Source": "/host/config",
-                    "Destination": "/home/moltis/.config/moltis"
-                }
-            ]
-        }]"#,
-    );
-    assert_eq!(mounts, vec![
-        ContainerMount {
-            source: PathBuf::from("/host/data"),
-            destination: PathBuf::from("/home/moltis/.moltis"),
-        },
-        ContainerMount {
-            source: PathBuf::from("/host/config"),
-            destination: PathBuf::from("/home/moltis/.config/moltis"),
-        },
-    ]);
-}
-
-#[test]
-fn test_resolve_host_path_from_mounts_prefers_longest_prefix() {
-    let mounts = vec![
-        ContainerMount {
-            source: PathBuf::from("/host"),
-            destination: PathBuf::from("/home"),
-        },
-        ContainerMount {
-            source: PathBuf::from("/host/data"),
-            destination: PathBuf::from("/home/moltis/.moltis"),
-        },
-    ];
-    let resolved = resolve_host_path_from_mounts(
-        &PathBuf::from("/home/moltis/.moltis/sandbox/home/shared"),
-        &mounts,
-    );
-    assert_eq!(
-        resolved,
-        Some(PathBuf::from("/host/data/sandbox/home/shared"))
-    );
-}
-
-#[test]
-#[serial(host_data_dir_mount_overrides)]
-fn test_detect_host_data_dir_with_references_uses_mount_overrides() {
-    clear_host_data_dir_test_state();
-    let guest_data_dir = PathBuf::from("/home/moltis/.moltis");
-    set_test_container_mount_override("docker", "parent-container", vec![ContainerMount {
-        source: PathBuf::from("/srv/moltis/data"),
-        destination: guest_data_dir.clone(),
-    }]);
-
-    let detected =
-        detect_host_data_dir_with_references("docker", &guest_data_dir, &[String::from(
-            "parent-container",
-        )]);
-
-    assert_eq!(detected, Some(PathBuf::from("/srv/moltis/data")));
-}
-
-#[test]
-#[serial(host_data_dir_mount_overrides)]
-fn test_detect_host_data_dir_scans_running_container_mounts() {
-    clear_host_data_dir_test_state();
-    let cli = "docker-scan-test";
-    let guest_data_dir = PathBuf::from("/home/moltis/.moltis");
-    set_test_running_container_references(cli, vec![String::from("current-container")]);
-    set_test_container_mount_override(cli, "current-container", vec![ContainerMount {
-        source: PathBuf::from("/home/user/moltis/data"),
-        destination: guest_data_dir.clone(),
-    }]);
-
-    let detected = detect_host_data_dir_with_references(cli, &guest_data_dir, &[]);
-
-    assert_eq!(detected, Some(PathBuf::from("/home/user/moltis/data")));
-}
-
-#[test]
-#[serial(host_data_dir_mount_overrides)]
-fn test_detect_host_data_dir_ignores_ambiguous_scanned_mounts() {
-    clear_host_data_dir_test_state();
-    let cli = "docker-ambiguous-test";
-    let guest_data_dir = PathBuf::from("/home/moltis/.moltis");
-    set_test_running_container_references(cli, vec![String::from("first"), String::from("second")]);
-    set_test_container_mount_override(cli, "first", vec![ContainerMount {
-        source: PathBuf::from("/host/one"),
-        destination: guest_data_dir.clone(),
-    }]);
-    set_test_container_mount_override(cli, "second", vec![ContainerMount {
-        source: PathBuf::from("/host/two"),
-        destination: guest_data_dir.clone(),
-    }]);
-
-    let detected = detect_host_data_dir_with_references(cli, &guest_data_dir, &[]);
-
-    assert_eq!(detected, None);
-}
-
-#[test]
-#[serial(host_data_dir_mount_overrides)]
-fn test_detect_host_data_dir_does_not_cache_missing_result() {
-    clear_host_data_dir_test_state();
-    let guest_data_dir = PathBuf::from("/home/moltis/.moltis");
-    assert_eq!(detect_host_data_dir("docker", &guest_data_dir), None);
-    let cache_key = format!("docker:{}", guest_data_dir.display());
-    assert!(
-        !host_data_dir_cache()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .contains_key(&cache_key)
-    );
-
-    let reference = String::from("retry-container");
-
-    set_test_container_mount_override("docker", &reference, vec![ContainerMount {
-        source: PathBuf::from("/srv/moltis/data"),
-        destination: guest_data_dir.clone(),
-    }]);
-
-    let detected = detect_host_data_dir_with_references("docker", &guest_data_dir, &[reference]);
-    assert_eq!(detected, Some(PathBuf::from("/srv/moltis/data")));
 }
 
 #[test]

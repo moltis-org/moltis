@@ -1,33 +1,4 @@
-use {super::*, serial_test::serial};
-
-fn clear_container_mount_test_state() {
-    TEST_CONTAINER_MOUNT_OVERRIDES
-        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clear();
-    TEST_RUNNING_CONTAINER_REFERENCES
-        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .clear();
-}
-
-fn set_test_container_mount_override(cli: &str, reference: &str, mounts: Vec<ContainerMount>) {
-    TEST_CONTAINER_MOUNT_OVERRIDES
-        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .insert(test_container_mount_override_key(cli, reference), mounts);
-}
-
-fn set_test_running_container_references(cli: &str, references: Vec<String>) {
-    TEST_RUNNING_CONTAINER_REFERENCES
-        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-        .lock()
-        .unwrap_or_else(|error| error.into_inner())
-        .insert(cli.to_string(), references);
-}
+use super::*;
 
 #[test]
 fn test_find_available_port() {
@@ -123,27 +94,6 @@ fn test_build_container_launch_args_without_profile_dir() {
 }
 
 #[test]
-fn test_parse_container_mounts_from_inspect() {
-    let mounts = parse_container_mounts_from_inspect(
-        r#"[
-                {
-                    "Mounts": [
-                        {
-                            "Source": "/var/lib/docker/volumes/moltis-data/_data",
-                            "Destination": "/home/moltis/.moltis"
-                        }
-                    ]
-                }
-            ]"#,
-    );
-
-    assert_eq!(mounts, vec![ContainerMount {
-        source: PathBuf::from("/var/lib/docker/volumes/moltis-data/_data"),
-        destination: PathBuf::from("/home/moltis/.moltis"),
-    }]);
-}
-
-#[test]
 fn browser_profile_mount_path_uses_configured_host_data_dir() {
     let guest_profile = moltis_config::data_dir()
         .join("browser")
@@ -176,85 +126,6 @@ fn browser_profile_mount_path_ignores_relative_host_data_dir() {
         &guest_profile,
         Some(Path::new("relative-host-data")),
     );
-
-    assert_eq!(mount_dir, guest_profile);
-}
-
-#[test]
-#[serial(browser_container_mount_overrides)]
-fn browser_profile_mount_path_auto_detects_host_data_dir() {
-    clear_container_mount_test_state();
-    let guest_data_dir = moltis_config::data_dir();
-    set_test_container_mount_override("docker", "parent-container", vec![ContainerMount {
-        source: PathBuf::from("/var/lib/docker/volumes/moltis-data/_data"),
-        destination: guest_data_dir.clone(),
-    }]);
-    let guest_profile = guest_data_dir
-        .join("browser")
-        .join("profile")
-        .join("sandbox")
-        .join("browser-issue-977");
-
-    let mount_dir =
-        host_visible_path_with_references("docker", None, &guest_profile, &[String::from(
-            "parent-container",
-        )]);
-
-    assert_eq!(
-        mount_dir,
-        PathBuf::from(
-            "/var/lib/docker/volumes/moltis-data/_data/browser/profile/sandbox/browser-issue-977"
-        )
-    );
-}
-
-#[test]
-#[serial(browser_container_mount_overrides)]
-fn browser_profile_mount_path_auto_detects_host_data_dir_by_scanning_containers() {
-    clear_container_mount_test_state();
-    let cli = "docker-browser-scan-test";
-    let guest_data_dir = moltis_config::data_dir();
-    set_test_running_container_references(cli, vec![String::from("current-container")]);
-    set_test_container_mount_override(cli, "current-container", vec![ContainerMount {
-        source: PathBuf::from("/home/user/moltis/data"),
-        destination: guest_data_dir.clone(),
-    }]);
-    let guest_profile = guest_data_dir
-        .join("browser")
-        .join("profile")
-        .join("sandbox")
-        .join("browser-scan");
-
-    let mount_dir = host_visible_path_with_references(cli, None, &guest_profile, &[]);
-
-    assert_eq!(
-        mount_dir,
-        PathBuf::from("/home/user/moltis/data/browser/profile/sandbox/browser-scan")
-    );
-}
-
-#[test]
-#[serial(browser_container_mount_overrides)]
-fn browser_profile_mount_path_does_not_guess_ambiguous_scanned_containers() {
-    clear_container_mount_test_state();
-    let cli = "docker-browser-ambiguous-test";
-    let guest_data_dir = moltis_config::data_dir();
-    set_test_running_container_references(cli, vec![String::from("first"), String::from("second")]);
-    set_test_container_mount_override(cli, "first", vec![ContainerMount {
-        source: PathBuf::from("/host/one"),
-        destination: guest_data_dir.clone(),
-    }]);
-    set_test_container_mount_override(cli, "second", vec![ContainerMount {
-        source: PathBuf::from("/host/two"),
-        destination: guest_data_dir.clone(),
-    }]);
-    let guest_profile = guest_data_dir
-        .join("browser")
-        .join("profile")
-        .join("sandbox")
-        .join("browser-ambiguous");
-
-    let mount_dir = host_visible_path_with_references(cli, None, &guest_profile, &[]);
 
     assert_eq!(mount_dir, guest_profile);
 }
@@ -303,7 +174,7 @@ fn browser_profile_permission_hint_points_to_host_data_dir() {
     )
     .unwrap();
 
-    assert!(hint.contains("[tools.exec.sandbox] host_data_dir"));
+    assert!(hint.contains("under `[tools.exec.sandbox]`"));
     assert!(hint.contains("/home/moltis/.moltis/browser/profile/sandbox/browser-abc"));
 }
 

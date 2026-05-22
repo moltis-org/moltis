@@ -75,7 +75,6 @@ which                 = { workspace = true }
 [dev-dependencies]
 mockito      = { workspace = true }
 rstest       = { workspace = true }
-serial_test  = { workspace = true }
 tokio        = { features = ["macros", "rt-multi-thread"], workspace = true }
 tokio-stream = { workspace = true }
 
