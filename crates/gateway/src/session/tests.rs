@@ -573,6 +573,7 @@ mod tests {
         convert_payload: Option<Value>,
         convert_error: Option<String>,
         convert_calls: AtomicU32,
+        last_convert_params: std::sync::Mutex<Option<Value>>,
     }
 
     impl MockTtsService {
@@ -582,6 +583,7 @@ mod tests {
                 convert_payload,
                 convert_error: None,
                 convert_calls: AtomicU32::new(0),
+                last_convert_params: std::sync::Mutex::new(None),
             }
         }
 
@@ -591,6 +593,7 @@ mod tests {
                 convert_payload: None,
                 convert_error: Some(error.to_string()),
                 convert_calls: AtomicU32::new(0),
+                last_convert_params: std::sync::Mutex::new(None),
             }
         }
     }
@@ -613,8 +616,9 @@ mod tests {
             Ok(serde_json::json!({}))
         }
 
-        async fn convert(&self, _params: Value) -> ServiceResult {
+        async fn convert(&self, params: Value) -> ServiceResult {
             self.convert_calls.fetch_add(1, Ordering::SeqCst);
+            *self.last_convert_params.lock().unwrap() = Some(params);
             if let Some(ref error) = self.convert_error {
                 return Err(error.clone().into());
             }
@@ -679,7 +683,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn voice_generate_creates_and_persists_audio() {
+    async fn voice_generate_creates_and_persists_mp3_audio() {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
@@ -722,9 +726,17 @@ mod tests {
 
         assert_eq!(result["reused"], false);
         let audio_path = result["audio"].as_str().unwrap_or_default().to_string();
-        assert_eq!(audio_path, "media/main/voice-msg-1.ogg");
+        assert_eq!(audio_path, "media/main/voice-msg-1.mp3");
         assert_eq!(result["ttsProvider"].as_str(), Some("elevenlabs"));
         assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 1);
+        let convert_params = mock_tts
+            .last_convert_params
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_default();
+        assert_eq!(convert_params["format"].as_str(), Some("mp3"));
+        assert_eq!(convert_params["text"].as_str(), Some("here is the reply"));
 
         let history = store.read("main").await.expect("read history");
         assert_eq!(history[1]["audio"].as_str(), Some(audio_path.as_str()));
