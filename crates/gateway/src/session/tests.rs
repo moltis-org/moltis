@@ -683,7 +683,75 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn voice_generate_creates_and_persists_mp3_audio() {
+    async fn voice_generate_uses_mp3_for_openai_compatible_tts() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let pool = sqlite_pool().await;
+        let metadata = Arc::new(SqliteSessionMetadata::new(pool));
+
+        store
+            .append(
+                "main",
+                &serde_json::json!({ "role": "user", "content": "hello" }),
+            )
+            .await
+            .expect("append user");
+        store
+            .append(
+                "main",
+                &serde_json::json!({
+                    "role": "assistant",
+                    "content": "here is the reply",
+                    "run_id": "run-generate",
+                }),
+            )
+            .await
+            .expect("append assistant");
+
+        let audio_bytes = b"ID3new".to_vec();
+        let mock_tts = Arc::new(MockTtsService::new(
+            serde_json::json!({ "enabled": true, "provider": "openai", "maxTextLength": 8000 }),
+            Some(serde_json::json!({
+                "audio": general_purpose::STANDARD.encode(&audio_bytes),
+                "provider": "openai",
+            })),
+        ));
+        let service = LiveSessionService::new(Arc::clone(&store), metadata)
+            .with_tts_service(Arc::clone(&mock_tts) as Arc<dyn TtsService>);
+
+        let result = service
+            .voice_generate(serde_json::json!({ "key": "main", "runId": "run-generate" }))
+            .await
+            .expect("voice generate");
+
+        assert_eq!(result["reused"], false);
+        let audio_path = result["audio"].as_str().unwrap_or_default().to_string();
+        assert_eq!(audio_path, "media/main/voice-msg-1.mp3");
+        assert_eq!(result["ttsProvider"].as_str(), Some("openai"));
+        assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 1);
+        let convert_params = mock_tts
+            .last_convert_params
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_default();
+        assert_eq!(convert_params["format"].as_str(), Some("mp3"));
+        assert_eq!(convert_params["text"].as_str(), Some("here is the reply"));
+
+        let history = store.read("main").await.expect("read history");
+        assert_eq!(history[1]["audio"].as_str(), Some(audio_path.as_str()));
+        assert_eq!(history[1]["tts_provider"].as_str(), Some("openai"));
+
+        let filename = media_filename(&audio_path).expect("filename");
+        let saved = store
+            .read_media("main", filename)
+            .await
+            .expect("read media");
+        assert_eq!(saved, audio_bytes);
+    }
+
+    #[tokio::test]
+    async fn voice_generate_keeps_ogg_for_non_openai_tts() {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
         let pool = sqlite_pool().await;
@@ -710,7 +778,7 @@ mod tests {
 
         let audio_bytes = b"OggSnew".to_vec();
         let mock_tts = Arc::new(MockTtsService::new(
-            serde_json::json!({ "enabled": true, "maxTextLength": 8000 }),
+            serde_json::json!({ "enabled": true, "provider": "elevenlabs", "maxTextLength": 8000 }),
             Some(serde_json::json!({
                 "audio": general_purpose::STANDARD.encode(&audio_bytes),
                 "provider": "elevenlabs",
@@ -726,28 +794,15 @@ mod tests {
 
         assert_eq!(result["reused"], false);
         let audio_path = result["audio"].as_str().unwrap_or_default().to_string();
-        assert_eq!(audio_path, "media/main/voice-msg-1.mp3");
+        assert_eq!(audio_path, "media/main/voice-msg-1.ogg");
         assert_eq!(result["ttsProvider"].as_str(), Some("elevenlabs"));
-        assert_eq!(mock_tts.convert_calls.load(Ordering::SeqCst), 1);
         let convert_params = mock_tts
             .last_convert_params
             .lock()
             .unwrap()
             .clone()
             .unwrap_or_default();
-        assert_eq!(convert_params["format"].as_str(), Some("mp3"));
-        assert_eq!(convert_params["text"].as_str(), Some("here is the reply"));
-
-        let history = store.read("main").await.expect("read history");
-        assert_eq!(history[1]["audio"].as_str(), Some(audio_path.as_str()));
-        assert_eq!(history[1]["tts_provider"].as_str(), Some("elevenlabs"));
-
-        let filename = media_filename(&audio_path).expect("filename");
-        let saved = store
-            .read_media("main", filename)
-            .await
-            .expect("read media");
-        assert_eq!(saved, audio_bytes);
+        assert_eq!(convert_params["format"].as_str(), Some("ogg"));
     }
 
     #[tokio::test]

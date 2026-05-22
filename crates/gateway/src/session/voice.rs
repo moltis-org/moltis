@@ -77,9 +77,10 @@ impl LiveSessionService {
 
         // Resolve voice persona through the full chain:
         // session agent's voice_persona_id → global active persona.
+        let format = session_voice_format(&status);
         let mut convert_params = serde_json::json!({
             "text": sanitized,
-            "format": "mp3",
+            "format": format,
         });
         if let Some(ref vp_store) = self.voice_persona_store {
             let persona = crate::voice_persona::resolve_persona(
@@ -109,7 +110,7 @@ impl LiveSessionService {
                 ServiceError::message("invalid base64 audio payload returned by TTS provider")
             })?;
 
-        let filename = format!("voice-msg-{target_index}.mp3");
+        let filename = format!("voice-msg-{target_index}.{format}");
         let audio_path = self
             .store
             .save_media(key, &filename, &audio_bytes)
