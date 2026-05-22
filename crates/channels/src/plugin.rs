@@ -613,6 +613,9 @@ pub struct ChannelDocumentFile {
     pub stored_filename: String,
     /// MIME type reported by the channel.
     pub mime_type: String,
+    /// Attachment size when the channel exposes it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
 }
 
 /// Metadata for an inbound channel file saved to session media.

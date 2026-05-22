@@ -713,9 +713,13 @@ export function renderScreenshot(container: HTMLElement, imgSrc: string, scale?:
 /**
  * Return an icon string for a given MIME type / filename extension.
  */
-function documentIcon(mimeType?: string, filename?: string): string {
+export function documentIcon(mimeType?: string, filename?: string): string {
 	const ext = (filename || "").split(".").pop()?.toLowerCase() || "";
 	if (mimeType === "application/pdf" || ext === "pdf") return "\uD83D\uDCC4"; // 📄
+	if ((mimeType || "").startsWith("text/") || /^(txt|md|ics|json|xml|log)$/.test(ext)) return "\uD83D\uDCDD"; // 📝
+	if ((mimeType || "").startsWith("image/")) return "\uD83D\uDDBC\uFE0F"; // 🖼️
+	if ((mimeType || "").startsWith("audio/")) return "\uD83C\uDFB5"; // 🎵
+	if ((mimeType || "").startsWith("video/")) return "\uD83C\uDFA5"; // 🎥
 	if (mimeType === "application/zip" || mimeType === "application/gzip" || ext === "zip" || ext === "gz")
 		return "\uD83D\uDCE6"; // 📦
 	if (/spreadsheet|csv|xls/.test(mimeType || "") || /^(csv|xls|xlsx)$/.test(ext)) return "\uD83D\uDCCA"; // 📊
@@ -727,7 +731,7 @@ function documentIcon(mimeType?: string, filename?: string): string {
 /**
  * Format a byte count for display (e.g. "1.2 MB", "345 KB").
  */
-function formatDocSize(bytes: number): string {
+export function formatDocSize(bytes: number): string {
 	if (typeof bytes !== "number" || bytes < 0) return "";
 	if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
 	if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;

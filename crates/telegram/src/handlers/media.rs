@@ -222,6 +222,7 @@ pub(super) fn channel_document_file(
             .to_string(),
         stored_filename: saved.filename.clone(),
         mime_type: media_type.to_string(),
+        size_bytes: None,
     }
 }
 

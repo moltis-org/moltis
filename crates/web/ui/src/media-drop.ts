@@ -1,17 +1,28 @@
-// ── Media drag-and-drop + paste module ──────────────────────
-// Handles drag-and-drop image upload, clipboard paste, and
-// image preview strip above the chat input area.
+// ── Attachment drag-and-drop + paste module ─────────────────
+// Handles drag-and-drop file upload, clipboard paste, and
+// attachment preview strip above the chat input area.
 
+import { documentIcon, formatDocSize } from "./helpers";
 import { t } from "./i18n";
 import * as S from "./state";
 
-interface PendingImage {
-	dataUrl: string;
-	file: File;
-	name: string;
+export interface UploadedDocumentFile {
+	display_name: string;
+	stored_filename: string;
+	mime_type: string;
+	size_bytes?: number;
+	url?: string;
 }
 
-let pendingImages: PendingImage[] = [];
+export interface PendingAttachment {
+	file: File;
+	name: string;
+	mimeType: string;
+	sizeBytes: number;
+	dataUrl?: string;
+}
+
+let pendingAttachments: PendingAttachment[] = [];
 let previewStrip: HTMLElement | null = null;
 let chatMsgBoxRef: HTMLElement | null = null;
 
@@ -25,11 +36,10 @@ let boundAttachClick: (() => void) | null = null;
 let boundAttachChange: ((e: Event) => void) | null = null;
 let dragEnterCount = 0;
 
-const ACCEPTED_TYPES: string[] = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 
 function isImageFile(file: File): boolean {
-	return ACCEPTED_TYPES.indexOf(file.type) !== -1;
+	return file.type.startsWith("image/");
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -45,13 +55,19 @@ function readFileAsDataUrl(file: File): Promise<string> {
 	});
 }
 
-function addImage(dataUrl: string, file: File): void {
-	pendingImages.push({ dataUrl: dataUrl, file: file, name: file.name });
+function addAttachment(file: File, dataUrl?: string): void {
+	pendingAttachments.push({
+		file,
+		name: file.name,
+		mimeType: file.type || "application/octet-stream",
+		sizeBytes: file.size,
+		dataUrl,
+	});
 	renderPreview();
 }
 
-function removeImage(index: number): void {
-	pendingImages.splice(index, 1);
+function removeAttachment(index: number): void {
+	pendingAttachments.splice(index, 1);
 	renderPreview();
 }
 
@@ -59,27 +75,41 @@ function renderPreview(): void {
 	if (!previewStrip) return;
 	previewStrip.textContent = "";
 
-	if (pendingImages.length === 0) {
+	if (pendingAttachments.length === 0) {
 		previewStrip.classList.add("hidden");
 		return;
 	}
 
 	previewStrip.classList.remove("hidden");
 
-	for (let i = 0; i < pendingImages.length; i++) {
+	for (let i = 0; i < pendingAttachments.length; i++) {
+		const attachment = pendingAttachments[i];
 		const item = document.createElement("div");
 		item.className = "media-preview-item";
 
-		const img = document.createElement("img");
-		img.className = "media-preview-thumb";
-		img.src = pendingImages[i].dataUrl;
-		img.alt = pendingImages[i].name;
-		item.appendChild(img);
+		if (attachment.dataUrl) {
+			const img = document.createElement("img");
+			img.className = "media-preview-thumb";
+			img.src = attachment.dataUrl;
+			img.alt = attachment.name;
+			item.appendChild(img);
+		} else {
+			const icon = document.createElement("span");
+			icon.className = "media-preview-file-icon";
+			icon.textContent = documentIcon(attachment.mimeType, attachment.name);
+			item.appendChild(icon);
+		}
 
 		const name = document.createElement("span");
 		name.className = "media-preview-name";
-		name.textContent = pendingImages[i].name;
+		name.textContent = attachment.name;
+		name.title = `${attachment.name} \u00b7 ${attachment.mimeType} \u00b7 ${formatDocSize(attachment.sizeBytes)}`;
 		item.appendChild(name);
+
+		const meta = document.createElement("span");
+		meta.className = "media-preview-meta";
+		meta.textContent = formatDocSize(attachment.sizeBytes);
+		item.appendChild(meta);
 
 		const removeBtn = document.createElement("button");
 		removeBtn.className = "media-preview-remove";
@@ -88,7 +118,7 @@ function renderPreview(): void {
 		removeBtn.dataset.idx = String(i);
 		removeBtn.addEventListener("click", (e: MouseEvent): void => {
 			const idx = Number.parseInt((e.currentTarget as HTMLButtonElement).dataset.idx!, 10);
-			removeImage(idx);
+			removeAttachment(idx);
 		});
 		item.appendChild(removeBtn);
 
@@ -98,11 +128,10 @@ function renderPreview(): void {
 
 async function handleFiles(files: FileList | File[]): Promise<void> {
 	for (const file of files) {
-		if (!isImageFile(file)) continue;
 		if (file.size > MAX_FILE_SIZE) continue;
 		try {
-			const dataUrl = await readFileAsDataUrl(file);
-			addImage(dataUrl, file);
+			const dataUrl = isImageFile(file) ? await readFileAsDataUrl(file) : undefined;
+			addAttachment(file, dataUrl);
 		} catch (err) {
 			console.warn("[media-drop] Failed to read file:", err);
 		}
@@ -111,7 +140,7 @@ async function handleFiles(files: FileList | File[]): Promise<void> {
 
 function onDragOver(e: DragEvent): void {
 	e.preventDefault();
-	e.dataTransfer!.dropEffect = "copy";
+	if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
 }
 
 function onDragEnter(e: DragEvent): void {
@@ -144,13 +173,13 @@ function onPaste(e: ClipboardEvent): void {
 	const items = e.clipboardData?.files;
 	if (!items || items.length === 0) return;
 
-	const imageFiles: File[] = [];
+	const pastedFiles: File[] = [];
 	for (const f of items) {
-		if (isImageFile(f)) imageFiles.push(f);
+		if (f.size > 0) pastedFiles.push(f);
 	}
-	if (imageFiles.length > 0) {
+	if (pastedFiles.length > 0) {
 		e.preventDefault();
-		handleFiles(imageFiles);
+		handleFiles(pastedFiles);
 	}
 }
 
@@ -217,7 +246,7 @@ export function teardownMediaDrop(): void {
 	if (previewStrip?.parentElement) {
 		previewStrip.parentElement.removeChild(previewStrip);
 	}
-	pendingImages = [];
+	pendingAttachments = [];
 	previewStrip = null;
 	chatMsgBoxRef = null;
 	boundDragOver = null;
@@ -230,16 +259,58 @@ export function teardownMediaDrop(): void {
 	dragEnterCount = 0;
 }
 
-export function getPendingImages(): PendingImage[] {
-	return pendingImages;
+export function getPendingAttachments(): PendingAttachment[] {
+	return pendingAttachments;
 }
 
-/** Clear pending images and hide preview strip. */
-export function clearPendingImages(): void {
-	pendingImages = [];
+/** Clear pending attachments and hide preview strip. */
+export function clearPendingAttachments(): void {
+	pendingAttachments = [];
 	renderPreview();
 }
 
-export function hasPendingImages(): boolean {
-	return pendingImages.length > 0;
+export function hasPendingAttachments(): boolean {
+	return pendingAttachments.length > 0;
+}
+
+function safeHeaderFilename(name: string): string {
+	const safe = name.replace(/[^A-Za-z0-9._-]/g, "").replace(/^\.+/, "");
+	return safe || "upload";
+}
+
+export async function uploadDocumentAttachment(
+	attachment: PendingAttachment,
+	sessionKey: string,
+): Promise<UploadedDocumentFile> {
+	const resp = await fetch(`/api/sessions/${encodeURIComponent(sessionKey)}/upload`, {
+		method: "POST",
+		headers: {
+			"Content-Type": attachment.mimeType,
+			"X-Filename": safeHeaderFilename(attachment.name),
+		},
+		body: attachment.file,
+	});
+	const payload: unknown = await resp.json().catch(() => null);
+	if (!isSuccessfulUploadPayload(resp, payload)) {
+		throw new Error("File upload failed");
+	}
+	return {
+		display_name: attachment.name,
+		stored_filename: typeof payload.filename === "string" ? payload.filename : safeHeaderFilename(attachment.name),
+		mime_type: typeof payload.contentType === "string" ? payload.contentType : attachment.mimeType,
+		size_bytes: typeof payload.size === "number" ? payload.size : attachment.sizeBytes,
+		url: typeof payload.url === "string" ? payload.url : undefined,
+	};
+}
+
+interface UploadPayload {
+	ok: true;
+	filename?: unknown;
+	contentType?: unknown;
+	size?: unknown;
+	url?: unknown;
+}
+
+function isSuccessfulUploadPayload(response: Response, payload: unknown): payload is UploadPayload {
+	return response.ok && typeof payload === "object" && payload !== null && "ok" in payload && payload.ok === true;
 }

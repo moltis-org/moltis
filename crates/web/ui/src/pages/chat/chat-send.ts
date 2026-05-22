@@ -1,9 +1,16 @@
 // ── Chat send logic ──────────────────────────────────────────
 
-import { chatAddMsg, chatAddMsgWithImages, setComposerStopButton } from "../../chat-ui";
+import { chatAddMsg, chatAddMsgWithAttachments, setComposerStopButton } from "../../chat-ui";
 import { highlightCodeBlocks } from "../../code-highlight";
 import { renderMarkdown, sendRpc, warmAudioPlayback } from "../../helpers";
-import { clearPendingImages, getPendingImages, hasPendingImages } from "../../media-drop";
+import {
+	clearPendingAttachments,
+	getPendingAttachments,
+	hasPendingAttachments,
+	type PendingAttachment,
+	type UploadedDocumentFile,
+	uploadDocumentAttachment,
+} from "../../media-drop";
 import { setSessionModel } from "../../models";
 import {
 	bumpSessionCount,
@@ -22,11 +29,16 @@ import { handleSlashCommand, parseSlashCommand, shouldHandleSlashLocally, slashH
 export interface ChatSendParams {
 	text?: string;
 	content?: ChatContentPart[];
+	_document_files?: UploadedDocumentFile[];
 	_seq: number;
 	model?: string;
 }
 
 export type ChatContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
+interface PendingImageAttachment extends PendingAttachment {
+	dataUrl: string;
+}
 
 export interface ChatSendPayload {
 	runId?: string;
@@ -43,8 +55,8 @@ function chatAutoResize(): void {
 
 // ── Slash command integration ───────────────────────────────
 
-export function tryHandleLocalSlashCommand(text: string, hasImages: boolean): boolean {
-	if (text.charAt(0) !== "/" || hasImages) return false;
+export function tryHandleLocalSlashCommand(text: string, hasAttachments: boolean): boolean {
+	if (text.charAt(0) !== "/" || hasAttachments) return false;
 	const slash = parseSlashCommand(text);
 	if (!(slash && shouldHandleSlashLocally(slash.name, slash.args))) return false;
 	(S.chatInput as HTMLTextAreaElement).value = "";
@@ -95,8 +107,8 @@ export function resetComposerAfterSend(): void {
 	if (window.innerWidth < 768) S.chatInput?.blur();
 }
 
-export function normalizeOutgoingText(text: string, hasImages: boolean): string {
-	if (!(S.commandModeEnabled && text && !hasImages)) return text;
+export function normalizeOutgoingText(text: string, hasAttachments: boolean): string {
+	if (!(S.commandModeEnabled && text && !hasAttachments)) return text;
 	const parsed = parseSlashCommand(text);
 	if (parsed && parsed.name === "sh") return text;
 	return `/sh ${text}`;
@@ -121,21 +133,26 @@ export function handleChatSendRpcResponse(res: RpcResponse<ChatSendPayload>, use
 	}
 }
 
-export function buildChatMessage(
+export async function buildChatMessage(
 	text: string,
 	seq: number,
 	displayText?: string,
-): { params: ChatSendParams; el: HTMLElement | null } {
+): Promise<{ params: ChatSendParams; el: HTMLElement | null }> {
 	const userText = displayText !== undefined ? displayText : text;
-	const images = hasPendingImages() ? getPendingImages() : [];
-	if (images.length > 0) {
+	const attachments = hasPendingAttachments() ? getPendingAttachments() : [];
+	const images = attachments.filter((attachment): attachment is PendingImageAttachment => Boolean(attachment.dataUrl));
+	const documents = attachments.filter((attachment) => !attachment.dataUrl);
+	if (attachments.length > 0) {
+		const uploadedDocuments = await Promise.all(
+			documents.map((attachment) => uploadDocumentAttachment(attachment, S.activeSessionKey)),
+		);
 		const content: ChatContentPart[] = [];
 		if (text) content.push({ type: "text", text });
-		for (const img of images)
-			content.push({ type: "image_url", image_url: { url: (img as { dataUrl: string }).dataUrl } });
-		const params: ChatSendParams = { content, _seq: seq };
-		const el = chatAddMsgWithImages("user", userText ? renderMarkdown(userText) : "", images);
-		clearPendingImages();
+		for (const img of images) if (img.dataUrl) content.push({ type: "image_url", image_url: { url: img.dataUrl } });
+		const params: ChatSendParams = content.length > 0 ? { content, _seq: seq } : { text, _seq: seq };
+		if (uploadedDocuments.length > 0) params._document_files = uploadedDocuments;
+		const el = chatAddMsgWithAttachments("user", userText ? renderMarkdown(userText) : "", images, uploadedDocuments);
+		clearPendingAttachments();
 		return { params, el };
 	}
 	return { params: { text, _seq: seq }, el: chatAddMsg("user", renderMarkdown(userText), true) };
@@ -177,34 +194,49 @@ export function setMaybeRefreshFullContextFn(fn: () => void): void {
 	maybeRefreshFullContextFn = fn;
 }
 
+let sendInProgress = false;
+
 export function sendChat(): void {
+	void sendChatAsync();
+}
+
+async function sendChatAsync(): Promise<void> {
+	if (sendInProgress) return;
 	const text = (S.chatInput as HTMLTextAreaElement).value.trim();
-	const hasImages = hasPendingImages();
-	if (!((text || hasImages) && S.connected)) return;
+	const hasAttachments = hasPendingAttachments();
+	if (!((text || hasAttachments) && S.connected)) return;
+	sendInProgress = true;
 	warmAudioPlayback();
-	if (tryHandleLocalSlashCommand(text, hasImages)) return;
-	rememberChatHistory(text);
-	resetComposerAfterSend();
-	const outgoingText = normalizeOutgoingText(text, hasImages);
-	S.setChatSeq(S.chatSeq + 1);
-	const msg = buildChatMessage(outgoingText, S.chatSeq, text);
-	const chatParams = msg.params;
-	const userEl = msg.el;
-	if (userEl) highlightCodeBlocks(userEl);
-	applySelectedModelToChatParams(chatParams);
-	bumpSessionCount(S.activeSessionKey, 1);
-	cacheOutgoingUserMessage(S.activeSessionKey, chatParams);
-	seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
-	setSessionReplying(S.activeSessionKey, true);
-	setComposerStopButton(true, S.activeSessionKey);
-	sendRpc<ChatSendPayload>("chat.send", chatParams)
-		.then((res) => handleChatSendRpcResponse(res, userEl))
-		.catch(() => {
+	try {
+		if (tryHandleLocalSlashCommand(text, hasAttachments)) return;
+		rememberChatHistory(text);
+		resetComposerAfterSend();
+		const outgoingText = normalizeOutgoingText(text, hasAttachments);
+		S.setChatSeq(S.chatSeq + 1);
+		const msg = await buildChatMessage(outgoingText, S.chatSeq, text);
+		const chatParams = msg.params;
+		const userEl = msg.el;
+		if (userEl) highlightCodeBlocks(userEl);
+		applySelectedModelToChatParams(chatParams);
+		bumpSessionCount(S.activeSessionKey, 1);
+		cacheOutgoingUserMessage(S.activeSessionKey, chatParams);
+		seedSessionPreviewFromUserText(S.activeSessionKey, text || outgoingText);
+		setSessionReplying(S.activeSessionKey, true);
+		setComposerStopButton(true, S.activeSessionKey);
+		try {
+			const res = await sendRpc<ChatSendPayload>("chat.send", chatParams);
+			handleChatSendRpcResponse(res, userEl);
+		} catch {
 			setComposerStopButton(false);
 			setSessionReplying(S.activeSessionKey, false);
 			chatAddMsg("error", "Request failed");
-		});
-	maybeRefreshFullContextFn?.();
+		}
+		maybeRefreshFullContextFn?.();
+	} catch (err) {
+		chatAddMsg("error", err instanceof Error ? err.message : "File upload failed");
+	} finally {
+		sendInProgress = false;
+	}
 }
 
 export { chatAutoResize };

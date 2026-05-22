@@ -38,6 +38,8 @@ pub(crate) struct InputChannelDocumentFile {
     pub display_name: String,
     pub stored_filename: String,
     pub mime_type: String,
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]

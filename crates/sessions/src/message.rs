@@ -166,6 +166,8 @@ pub struct UserDocument {
     pub display_name: String,
     pub stored_filename: String,
     pub mime_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
     pub media_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub absolute_path: Option<String>,
@@ -551,6 +553,7 @@ mod tests {
                 display_name: "report.pdf".to_string(),
                 stored_filename: "abc_report.pdf".to_string(),
                 mime_type: "application/pdf".to_string(),
+                size_bytes: Some(12_345),
                 media_ref: "media/main/abc_report.pdf".to_string(),
                 absolute_path: Some("/tmp/main/abc_report.pdf".to_string()),
             }]),
@@ -564,6 +567,7 @@ mod tests {
             json["documents"][0]["media_ref"],
             "media/main/abc_report.pdf"
         );
+        assert_eq!(json["documents"][0]["size_bytes"], 12_345);
     }
 
     #[test]

@@ -30,10 +30,15 @@ pub(crate) fn format_user_documents_context(documents: &[UserDocument]) -> Optio
     let mut sections = Vec::with_capacity(documents.len() + 1);
     sections.push("[Inbound documents available]".to_string());
     for document in documents {
+        let size = document
+            .size_bytes
+            .map(|value| format!("\nsize_bytes: {value}"))
+            .unwrap_or_default();
         sections.push(format!(
-            "filename: {}\nmime_type: {}\nlocal_path: {}\nmedia_ref: {}",
+            "filename: {}\nmime_type: {}{}\nlocal_path: {}\nmedia_ref: {}",
             document.display_name,
             document.mime_type,
+            size,
             document
                 .absolute_path
                 .as_deref()
@@ -303,6 +308,7 @@ pub(crate) fn user_documents_from_params(
             display_name,
             stored_filename: stored_filename.to_string(),
             mime_type: mime_type.to_string(),
+            size_bytes: document.size_bytes,
             media_ref: format!("media/{media_dir_key}/{stored_filename}"),
             absolute_path: Some(
                 session_store

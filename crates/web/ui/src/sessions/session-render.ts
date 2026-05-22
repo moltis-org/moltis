@@ -84,6 +84,13 @@ interface AssistantMsg extends HistoryMessage {
 
 interface UserMsg extends Omit<HistoryMessage, "content"> {
 	content?: string | unknown[];
+	documents?: Array<{
+		display_name?: string;
+		stored_filename?: string;
+		mime_type?: string;
+		size_bytes?: number;
+		media_ref?: string;
+	}>;
 	channel?: {
 		channel_type?: string;
 		username?: string;
@@ -189,6 +196,14 @@ function renderHistoryUserMessage(msg: UserMsg): HTMLElement | null {
 		el = chatAddMsgWithImages("user", text ? renderMarkdown(text) : "", images);
 	} else {
 		el = chatAddMsg("user", renderMarkdown(text), true);
+	}
+	if (el && Array.isArray(msg.documents)) {
+		for (const doc of msg.documents) {
+			const storedName = doc.stored_filename || doc.media_ref?.split("/").pop() || "";
+			if (!storedName) continue;
+			const mediaSrc = `/api/sessions/${encodeURIComponent(S.activeSessionKey)}/media/${encodeURIComponent(storedName)}`;
+			renderDocument(el, mediaSrc, doc.display_name || storedName, doc.mime_type, doc.size_bytes);
+		}
 	}
 	if (el && msg.channel) appendChannelFooter(el, msg.channel);
 	return el;

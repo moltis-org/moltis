@@ -604,8 +604,74 @@ test.describe("Chat input and slash commands", () => {
 						return last?.text || "";
 					}),
 				{ timeout: 5_000 },
-			)
+		)
 			.toBe("/sh echo hello");
+	});
+
+	test("attaches arbitrary files with metadata", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await page.route("**/api/sessions/main/upload", async (route) => {
+			const request = route.request();
+			const body = request.postDataBuffer() || Buffer.alloc(0);
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({
+					ok: true,
+					url: "/api/sessions/main/media/calendar.ics",
+					filename: "calendar.ics",
+					contentType: request.headers()["content-type"] || "text/calendar",
+					size: body.length,
+				}),
+			});
+		});
+		await page.evaluate(() => {
+			window.__fileAttachmentPayloads = [];
+			if (window.__fileAttachmentWsSpyInstalled) return;
+			var originalSend = WebSocket.prototype.send;
+			WebSocket.prototype.send = function (data) {
+				try {
+					var parsed = JSON.parse(data);
+					if (parsed?.method === "chat.send") {
+						window.__fileAttachmentPayloads.push(parsed.params || {});
+					}
+				} catch {
+					// ignore non-JSON payloads
+				}
+				return originalSend.call(this, data);
+			};
+			window.__fileAttachmentWsSpyInstalled = true;
+		});
+
+		await page.locator("#attachInput").setInputFiles({
+			name: "calendar.ics",
+			mimeType: "text/calendar",
+			buffer: Buffer.from("BEGIN:VCALENDAR\nEND:VCALENDAR\n"),
+		});
+		await expect(page.locator(".media-preview-item")).toContainText("calendar.ics");
+		await expect(page.locator(".media-preview-item")).toContainText("30 B");
+
+		await page.locator("#chatInput").fill("please inspect this");
+		await page.locator("#chatInput").press("Enter");
+		await expect(page.locator(".document-container")).toContainText("calendar.ics");
+
+		await expect
+			.poll(
+				async () =>
+					await page.evaluate(() => {
+						var payloads = window.__fileAttachmentPayloads || [];
+						var last = payloads[payloads.length - 1];
+						return last?._document_files?.[0] || null;
+					}),
+				{ timeout: 5_000 },
+			)
+			.toMatchObject({
+				display_name: "calendar.ics",
+				stored_filename: "calendar.ics",
+				mime_type: "text/calendar",
+				size_bytes: 30,
+			});
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("token bar stays visible at zero usage", async ({ page }) => {

@@ -1,6 +1,6 @@
 // ── Chat UI ─────────────────────────────────────────────────
 
-import { formatTokens, parseErrorMessage, sendRpc, updateCountdown } from "./helpers";
+import { formatTokens, parseErrorMessage, renderDocument, sendRpc, updateCountdown } from "./helpers";
 import * as S from "./state";
 
 interface ErrorCardData {
@@ -14,6 +14,14 @@ interface ErrorCardData {
 interface ImageAttachment {
 	dataUrl: string;
 	name: string;
+}
+
+export interface DocumentAttachment {
+	display_name: string;
+	stored_filename: string;
+	mime_type: string;
+	size_bytes?: number;
+	url?: string;
 }
 
 function clearChatEmptyState(): void {
@@ -130,30 +138,52 @@ export function chatAddMsgWithImages(
 	htmlContent: string,
 	images: ImageAttachment[],
 ): HTMLDivElement | null {
+	return chatAddMsgWithAttachments(cls, htmlContent, images, []);
+}
+
+function appendHtmlContent(el: HTMLElement, htmlContent: string): void {
+	if (!htmlContent) return;
+	const textDiv = document.createElement("div");
+	// Safe: htmlContent is produced by renderMarkdown which escapes user
+	// input via esc() first, then only adds our own formatting tags.
+	// This is the same pattern used in chatAddMsg above.
+	textDiv.innerHTML = htmlContent; // eslint-disable-line no-unsanitized/property
+	el.appendChild(textDiv);
+}
+
+function appendImageAttachments(el: HTMLElement, images: ImageAttachment[]): void {
+	if (images.length === 0) return;
+	const thumbRow = document.createElement("div");
+	thumbRow.className = "msg-image-row";
+	for (const img of images) {
+		const thumb = document.createElement("img");
+		thumb.className = "msg-image-thumb";
+		thumb.src = img.dataUrl;
+		thumb.alt = img.name;
+		thumbRow.appendChild(thumb);
+	}
+	el.appendChild(thumbRow);
+}
+
+function appendDocumentAttachments(el: HTMLElement, documents: DocumentAttachment[]): void {
+	for (const doc of documents) {
+		renderDocument(el, doc.url || "#", doc.display_name || doc.stored_filename, doc.mime_type, doc.size_bytes);
+	}
+}
+
+export function chatAddMsgWithAttachments(
+	cls: MessageRole,
+	htmlContent: string,
+	images: ImageAttachment[],
+	documents: DocumentAttachment[],
+): HTMLDivElement | null {
 	if (!S.chatMsgBox) return null;
 	clearChatEmptyState();
 	const el = document.createElement("div");
 	el.className = `msg ${cls}`;
-	if (htmlContent) {
-		const textDiv = document.createElement("div");
-		// Safe: htmlContent is produced by renderMarkdown which escapes user
-		// input via esc() first, then only adds our own formatting tags.
-		// This is the same pattern used in chatAddMsg above.
-		textDiv.innerHTML = htmlContent; // eslint-disable-line no-unsanitized/property
-		el.appendChild(textDiv);
-	}
-	if (images && images.length > 0) {
-		const thumbRow = document.createElement("div");
-		thumbRow.className = "msg-image-row";
-		for (const img of images) {
-			const thumb = document.createElement("img");
-			thumb.className = "msg-image-thumb";
-			thumb.src = img.dataUrl;
-			thumb.alt = img.name;
-			thumbRow.appendChild(thumb);
-		}
-		el.appendChild(thumbRow);
-	}
+	appendHtmlContent(el, htmlContent);
+	appendImageAttachments(el, images);
+	appendDocumentAttachments(el, documents);
 	S.chatMsgBox.appendChild(el);
 	if (!S.chatBatchLoading) {
 		if (cls === "user") scrollChatToBottom(true);

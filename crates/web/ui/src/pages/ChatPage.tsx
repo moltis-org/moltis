@@ -863,6 +863,8 @@ registerPrefix(
 		S.setChatMsgBox(S.$("messages"));
 		S.setChatInput(S.$("chatInput"));
 		S.setChatSendBtn(S.$("sendBtn"));
+		S.$("attachInput")?.removeAttribute("accept");
+		S.$("attachBtn")?.setAttribute("title", "Attach files");
 		updateCommandInputUI();
 		initializeChatControls();
 
