@@ -37,10 +37,10 @@ let boundAttachChange: ((e: Event) => void) | null = null;
 let dragEnterCount = 0;
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
-const INLINE_IMAGE_TYPES = new Set<string>(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const MAX_INLINE_IMAGE_SIZE = 5 * 1024 * 1024; // 5 MB
 
 function isImageFile(file: File): boolean {
-	return INLINE_IMAGE_TYPES.has(file.type);
+	return file.type.split("/", 1)[0] === "image" && file.size <= MAX_INLINE_IMAGE_SIZE;
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
