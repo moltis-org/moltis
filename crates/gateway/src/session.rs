@@ -18,6 +18,7 @@ use {
         store::SessionStore,
     },
     moltis_tools::sandbox::SandboxRouter,
+    moltis_voice::TtsProviderId,
 };
 
 #[allow(unused_imports)]
@@ -96,14 +97,14 @@ pub(crate) async fn dispatch_command_hook(
 struct TtsStatusPayload {
     enabled: bool,
     #[serde(default)]
-    provider: Option<String>,
+    provider: Option<TtsProviderId>,
     #[serde(default)]
     max_text_length: Option<usize>,
 }
 
 fn session_voice_format(status: &TtsStatusPayload) -> &'static str {
-    match status.provider.as_deref() {
-        Some("openai") => "mp3",
+    match status.provider {
+        Some(TtsProviderId::OpenAi) => "mp3",
         _ => "ogg",
     }
 }
