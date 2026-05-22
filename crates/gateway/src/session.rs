@@ -18,7 +18,7 @@ use {
         store::SessionStore,
     },
     moltis_tools::sandbox::SandboxRouter,
-    moltis_voice::TtsProviderId,
+    moltis_voice::{AudioFormat, TtsProviderId},
 };
 
 #[allow(unused_imports)]
@@ -102,10 +102,10 @@ struct TtsStatusPayload {
     max_text_length: Option<usize>,
 }
 
-fn session_voice_format(status: &TtsStatusPayload) -> &'static str {
+fn session_voice_format(status: &TtsStatusPayload) -> AudioFormat {
     match status.provider {
-        Some(TtsProviderId::OpenAi) => "mp3",
-        _ => "ogg",
+        Some(TtsProviderId::OpenAi) => AudioFormat::Mp3,
+        _ => AudioFormat::Opus,
     }
 }
 

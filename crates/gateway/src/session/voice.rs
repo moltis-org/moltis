@@ -110,7 +110,7 @@ impl LiveSessionService {
                 ServiceError::message("invalid base64 audio payload returned by TTS provider")
             })?;
 
-        let filename = format!("voice-msg-{target_index}.{format}");
+        let filename = format!("voice-msg-{target_index}.{}", format.extension());
         let audio_path = self
             .store
             .save_media(key, &filename, &audio_bytes)

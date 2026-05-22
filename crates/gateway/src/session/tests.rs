@@ -802,7 +802,7 @@ mod tests {
             .unwrap()
             .clone()
             .unwrap_or_default();
-        assert_eq!(convert_params["format"].as_str(), Some("ogg"));
+        assert_eq!(convert_params["format"].as_str(), Some("opus"));
     }
 
     #[tokio::test]
