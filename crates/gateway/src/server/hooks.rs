@@ -307,6 +307,7 @@ pub(crate) async fn discover_and_build_hooks(
     let config_path = moltis_config::config_dir()
         .map(|path| path.join("moltis.toml").display().to_string())
         .unwrap_or_else(|| "moltis.toml".to_string());
+    let mut config_hook_names = HashSet::new();
 
     if let Some(hooks_config) = config.hooks.as_ref() {
         for hook in &hooks_config.hooks {
@@ -314,6 +315,14 @@ pub(crate) async fn discover_and_build_hooks(
                 warn!(
                     hook = %hook.name,
                     "config hook conflicts with filesystem hook; keeping filesystem hook"
+                );
+                continue;
+            }
+
+            if !config_hook_names.insert(hook.name.as_str()) {
+                warn!(
+                    hook = %hook.name,
+                    "duplicate config hook name; keeping first config hook"
                 );
                 continue;
             }
