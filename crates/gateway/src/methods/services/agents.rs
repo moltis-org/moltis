@@ -629,11 +629,41 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .find(|p| p.id == id)
                         .map(|p| p.source)
                         .unwrap_or(moltis_config::defaults::ConfigSource::Custom);
+                    // Return structured fields alongside TOML for UI controls.
+                    let preset_fields = config.agents.presets.get(&id).map(|p| {
+                        let mcp = match &p.mcp {
+                            moltis_config::schema::PresetMcpPolicy::All => serde_json::json!({
+                                "mode": "all"
+                            }),
+                            moltis_config::schema::PresetMcpPolicy::Allow(servers) => serde_json::json!({
+                                "mode": "allow",
+                                "servers": servers.iter().map(|s| s.as_str()).collect::<Vec<&str>>()
+                            }),
+                            moltis_config::schema::PresetMcpPolicy::Deny(servers) => serde_json::json!({
+                                "mode": "deny",
+                                "servers": servers.iter().map(|s| s.as_str()).collect::<Vec<&str>>()
+                            }),
+                        };
+                        serde_json::json!({
+                            "model": p.model,
+                            "mcp": mcp,
+                            "sandbox": {
+                                "mode": p.sandbox.mode,
+                                "network": p.sandbox.network,
+                                "workspace_mount": p.sandbox.workspace_mount,
+                            },
+                            "skills": {
+                                "allow": p.skills.allow,
+                                "deny": p.skills.deny,
+                            },
+                        })
+                    });
                     Ok(serde_json::json!({
                         "id": id,
                         "toml": toml_str,
                         "exists": !toml_str.is_empty(),
                         "provenance": source,
+                        "fields": preset_fields,
                     }))
                 })
             }),
