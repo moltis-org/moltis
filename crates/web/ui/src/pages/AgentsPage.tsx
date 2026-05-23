@@ -121,12 +121,26 @@ export function teardownAgents(): void {
 // ── Create / Edit form ──────────────────────────────────────
 
 const PRESET_TOML_PLACEHOLDER = `model = "haiku"
-delegate_only = false
 timeout_secs = 30
 
 [tools]
 allow = ["read_file", "grep", "glob"]
-deny = ["exec"]`;
+deny = ["exec"]
+
+# MCP server access: allow_servers OR deny_servers (not both)
+# [mcp]
+# allow_servers = ["github", "memory"]
+# deny_servers = ["home-assistant"]
+
+# Per-agent sandbox overrides
+# [sandbox]
+# mode = "all"        # "off" | "all" | "non-main"
+# network = "blocked" # "blocked" | "trusted" | "bypass"
+# workspace_mount = "ro"
+
+# Skill access control
+# [skills]
+# deny = ["gaming", "social-media"]`;
 
 function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 	const isEdit = !!agent;
@@ -318,12 +332,13 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 					onClick={() => setPresetOpen(!presetOpen)}
 				>
 					<span style={{ fontSize: "0.6rem" }}>{presetOpen ? "\u25BC" : "\u25B6"}</span>
-					Spawn Settings (TOML)
+					Capabilities (TOML)
 				</button>
 				{presetOpen && (
 					<>
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-							Configure how this agent behaves when spawned as a sub-agent via spawn_agent.
+							Configure this agent's model, tool access, MCP servers, sandbox policy, and skills. Assign agents to
+							channels via <code>agent_id</code> in channel settings.
 						</p>
 						<textarea
 							className="provider-key-input"
@@ -753,8 +768,8 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 					<div className="flex flex-col gap-1">
 						<h3 className="text-xs font-medium text-[var(--muted)]">Chat Agents</h3>
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-							Persistent identities you can select in chat. Each chat agent has its own memory, system prompt, sessions,
-							and fallback setting.
+							Persistent identities with their own memory, system prompt, sessions, and capability boundaries (model,
+							MCP servers, sandbox policy, skills). Assign agents to channels for different users or contexts.
 						</p>
 					</div>
 					<div className="flex flex-col gap-2">
