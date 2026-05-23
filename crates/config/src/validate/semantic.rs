@@ -1108,4 +1108,27 @@ pub(super) fn check_file_references(
             }
         }
     }
+
+    // Agent preset MCP allow/deny server validation — warn on unknown server names.
+    let known_mcp_servers: std::collections::HashSet<&str> =
+        config.mcp.servers.keys().map(|k| k.as_str()).collect();
+    for (preset_name, preset) in &config.agents.presets {
+        let servers = match &preset.mcp {
+            crate::schema::PresetMcpPolicy::Allow(s) | crate::schema::PresetMcpPolicy::Deny(s) => s,
+            crate::schema::PresetMcpPolicy::All => continue,
+        };
+        for server in servers {
+            if !known_mcp_servers.contains(server.as_str()) {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    category: "agents",
+                    path: format!("agents.presets.{preset_name}.mcp"),
+                    message: format!(
+                        "MCP server '{}' referenced in preset but not configured in [mcp.servers]",
+                        server
+                    ),
+                });
+            }
+        }
+    }
 }

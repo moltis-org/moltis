@@ -309,19 +309,20 @@ impl<'de> Deserialize<'de> for PresetMcpPolicy {
     where
         D: Deserializer<'de>,
     {
+        // Use Option to distinguish "field absent" from "field present but empty".
+        // `allow_servers = []` means "allow no MCP servers" (deny all),
+        // while omitting the field entirely means "no restriction" (All).
         #[derive(Deserialize)]
         struct Raw {
-            #[serde(default)]
-            allow_servers: Vec<McpServerId>,
-            #[serde(default)]
-            deny_servers: Vec<McpServerId>,
+            allow_servers: Option<Vec<McpServerId>>,
+            deny_servers: Option<Vec<McpServerId>>,
         }
         let raw = Raw::deserialize(deserializer)?;
-        match (raw.allow_servers.is_empty(), raw.deny_servers.is_empty()) {
-            (true, true) => Ok(Self::All),
-            (false, true) => Ok(Self::Allow(raw.allow_servers)),
-            (true, false) => Ok(Self::Deny(raw.deny_servers)),
-            (false, false) => Err(serde::de::Error::custom(
+        match (raw.allow_servers, raw.deny_servers) {
+            (None, None) => Ok(Self::All),
+            (Some(servers), None) => Ok(Self::Allow(servers)),
+            (None, Some(servers)) => Ok(Self::Deny(servers)),
+            (Some(_), Some(_)) => Err(serde::de::Error::custom(
                 "mcp: allow_servers and deny_servers are mutually exclusive",
             )),
         }

@@ -157,6 +157,14 @@ interface PresetFields {
 	skills?: { allow?: string[]; deny?: string[] };
 }
 
+/** Parse a comma-separated string into a trimmed, non-empty array. */
+function parseCsvList(value: string): string[] {
+	return value
+		.split(",")
+		.map((s) => s.trim())
+		.filter(Boolean);
+}
+
 /** Build TOML from structured capability fields. */
 function buildCapabilitiesToml(fields: PresetFields): string {
 	const lines: string[] = [];
@@ -211,6 +219,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 	const [sandboxMode, setSandboxMode] = useState("");
 	const [sandboxNetwork, setSandboxNetwork] = useState("");
 	const [sandboxMount, setSandboxMount] = useState("");
+	const [skillsAllow, setSkillsAllow] = useState("");
 	const [skillsDeny, setSkillsDeny] = useState("");
 	const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
 	const [advancedTomlOpen, setAdvancedTomlOpen] = useState(false);
@@ -277,8 +286,11 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 					}
 				}
 				if (f.skills) {
+					setSkillsAllow((f.skills.allow || []).join(", "));
 					setSkillsDeny((f.skills.deny || []).join(", "));
-					if (f.skills.deny && f.skills.deny.length > 0) setCapabilitiesOpen(true);
+					if ((f.skills.allow && f.skills.allow.length > 0) || (f.skills.deny && f.skills.deny.length > 0)) {
+						setCapabilitiesOpen(true);
+					}
 				}
 			}
 		});
@@ -307,14 +319,12 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 		if (trimmedSoul) {
 			pending.push(sendRpc("agents.identity.update_soul", { agent_id: agentId, soul: trimmedSoul }));
 		}
-		// Build TOML: use structured fields when capabilities section is open,
-		// otherwise fall back to raw TOML editor content.
+		// Build TOML: merge structured capability fields with any raw TOML.
+		// The raw TOML textarea always preserves user content (tools, model,
+		// timeouts, etc.). Structured fields generate [mcp], [sandbox], [skills]
+		// sections that are prepended.
 		let tomlToSave = presetToml.trim();
 		if (capabilitiesOpen) {
-			const denyList = skillsDeny
-				.split(",")
-				.map((s) => s.trim())
-				.filter(Boolean);
 			const generated = buildCapabilitiesToml({
 				mcp: { mode: mcpMode, servers: mcpServers },
 				sandbox: {
@@ -322,11 +332,16 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 					network: sandboxNetwork || null,
 					workspace_mount: sandboxMount || null,
 				},
-				skills: { deny: denyList },
+				skills: { allow: parseCsvList(skillsAllow), deny: parseCsvList(skillsDeny) },
 			});
-			// If user also has advanced TOML, append it
-			const advancedToml = advancedTomlOpen ? presetToml.trim() : "";
-			tomlToSave = advancedToml ? `${generated}\n\n${advancedToml}` : generated;
+			// Merge: strip existing [mcp], [sandbox], [skills] sections from
+			// raw TOML to avoid duplicates, then prepend generated sections.
+			const rawWithoutStructured = tomlToSave
+				.replace(/^\[mcp\][\s\S]*?(?=^\[|$)/gm, "")
+				.replace(/^\[sandbox\][\s\S]*?(?=^\[|$)/gm, "")
+				.replace(/^\[skills\][\s\S]*?(?=^\[|$)/gm, "")
+				.trim();
+			tomlToSave = rawWithoutStructured ? `${generated}\n\n${rawWithoutStructured}` : generated;
 		}
 		if (tomlToSave) {
 			pending.push(sendRpc("agents.preset.save", { id: agentId, toml: tomlToSave }));
@@ -555,17 +570,31 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 						</fieldset>
 
 						{/* Skills */}
-						<label className="flex flex-col gap-1">
-							<span className="text-xs text-[var(--muted)]">Denied skill categories (comma-separated)</span>
-							<input
-								type="text"
-								className="provider-key-input"
-								value={skillsDeny}
-								onInput={(e) => setSkillsDeny(targetValue(e))}
-								placeholder="gaming, social-media"
-								style={{ fontSize: "0.75rem" }}
-							/>
-						</label>
+						<fieldset className="flex flex-col gap-2 border border-[var(--border)] rounded p-2">
+							<legend className="text-xs font-medium text-[var(--text-strong)] px-1">Skills</legend>
+							<label className="flex flex-col gap-1">
+								<span className="text-xs text-[var(--muted)]">Allowed (comma-separated, empty = all)</span>
+								<input
+									type="text"
+									className="provider-key-input"
+									value={skillsAllow}
+									onInput={(e) => setSkillsAllow(targetValue(e))}
+									placeholder="web_search, research"
+									style={{ fontSize: "0.75rem" }}
+								/>
+							</label>
+							<label className="flex flex-col gap-1">
+								<span className="text-xs text-[var(--muted)]">Denied (comma-separated)</span>
+								<input
+									type="text"
+									className="provider-key-input"
+									value={skillsDeny}
+									onInput={(e) => setSkillsDeny(targetValue(e))}
+									placeholder="gaming, social-media"
+									style={{ fontSize: "0.75rem" }}
+								/>
+							</label>
+						</fieldset>
 
 						{/* Advanced TOML fallback */}
 						<button
