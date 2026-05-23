@@ -81,6 +81,7 @@ test.describe("Code block syntax highlighting", () => {
 			document.documentElement.setAttribute("data-theme", "light");
 			document.documentElement.style.colorScheme = "light";
 			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
 			var appUrl = new URL(appScript.src, window.location.origin);
 			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
 			var helpers = await import(`${prefix}js/helpers.js`);
@@ -99,10 +100,12 @@ test.describe("Code block syntax highlighting", () => {
 
 		var colorInfo = await page.locator("#e2e-shiki-light-fixture code.shiki").evaluate((codeEl) => {
 			var codeColor = getComputedStyle(codeEl).color;
-			var tokenColors = Array.from(codeEl.querySelectorAll("span")).map((span) => getComputedStyle(span).color);
+			var tokenColors = Array.from(codeEl.querySelectorAll("span"))
+				.map((span) => getComputedStyle(span).color)
+				.filter((color) => color !== codeColor && color !== "rgb(0, 0, 0)");
 			return { codeColor, tokenColors };
 		});
-		expect(colorInfo.tokenColors.some((color) => color !== colorInfo.codeColor)).toBe(true);
+		expect(new Set(colorInfo.tokenColors).size).toBeGreaterThanOrEqual(2);
 
 		expect(pageErrors).toEqual([]);
 	});
