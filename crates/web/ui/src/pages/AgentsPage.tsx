@@ -153,7 +153,7 @@ interface McpServer {
 interface PresetFields {
 	model?: string | null;
 	mcp?: { mode: string; servers?: string[] };
-	sandbox?: { mode?: string | null; network?: string | null; workspace_mount?: string | null };
+	sandbox?: { mode?: string | null };
 	skills?: { allow?: string[]; deny?: string[] };
 }
 
@@ -209,14 +209,13 @@ function buildCapabilitiesToml(fields: PresetFields): string {
 		const key = fields.mcp.mode === "allow" ? "allow_servers" : "deny_servers";
 		lines.push(`${key} = ${tomlArray(fields.mcp.servers || [])}`);
 	}
-	// Sandbox
+	// Sandbox (only mode is enforced at runtime; network/workspace_mount
+	// are schema-only until SandboxRouter gains per-session config overlays).
 	const sb = fields.sandbox;
-	if (sb && (sb.mode || sb.network || sb.workspace_mount)) {
+	if (sb?.mode) {
 		lines.push("");
 		lines.push("[sandbox]");
-		if (sb.mode) lines.push(`mode = "${tomlEscape(sb.mode)}"`);
-		if (sb.network) lines.push(`network = "${tomlEscape(sb.network)}"`);
-		if (sb.workspace_mount) lines.push(`workspace_mount = "${tomlEscape(sb.workspace_mount)}"`);
+		lines.push(`mode = "${tomlEscape(sb.mode)}"`);
 	}
 	// Skills
 	const sk = fields.skills;
@@ -245,8 +244,6 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 	const [mcpServers, setMcpServers] = useState<string[]>([]);
 	const [availableMcpServers, setAvailableMcpServers] = useState<McpServer[]>([]);
 	const [sandboxMode, setSandboxMode] = useState("");
-	const [sandboxNetwork, setSandboxNetwork] = useState("");
-	const [sandboxMount, setSandboxMount] = useState("");
 	const [skillsAllow, setSkillsAllow] = useState("");
 	const [skillsDeny, setSkillsDeny] = useState("");
 	const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
@@ -307,11 +304,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 				}
 				if (f.sandbox) {
 					setSandboxMode(f.sandbox.mode || "");
-					setSandboxNetwork(f.sandbox.network || "");
-					setSandboxMount(f.sandbox.workspace_mount || "");
-					if (f.sandbox.mode || f.sandbox.network || f.sandbox.workspace_mount) {
-						setCapabilitiesOpen(true);
-					}
+					if (f.sandbox.mode) setCapabilitiesOpen(true);
 				}
 				if (f.skills) {
 					setSkillsAllow((f.skills.allow || []).join(", "));
@@ -355,11 +348,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 		if (capabilitiesOpen) {
 			const generated = buildCapabilitiesToml({
 				mcp: { mode: mcpMode, servers: mcpServers },
-				sandbox: {
-					mode: sandboxMode || null,
-					network: sandboxNetwork || null,
-					workspace_mount: sandboxMount || null,
-				},
+				sandbox: { mode: sandboxMode || null },
 				skills: { allow: parseCsvList(skillsAllow), deny: parseCsvList(skillsDeny) },
 			});
 			// Merge: strip existing [mcp], [sandbox], [skills] sections from
@@ -545,52 +534,23 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 							)}
 						</fieldset>
 
-						{/* Sandbox Policy */}
+						{/* Sandbox Mode */}
 						<fieldset className="flex flex-col gap-2 border border-[var(--border)] rounded p-2">
 							<legend className="text-xs font-medium text-[var(--text-strong)] px-1">Sandbox</legend>
-							<div className="flex gap-3 flex-wrap">
-								<label className="flex flex-col gap-1 text-xs">
-									<span className="text-[var(--muted)]">Mode</span>
-									<select
-										className="provider-key-input"
-										value={sandboxMode}
-										onChange={(e) => setSandboxMode(targetValue(e))}
-										style={{ fontSize: "0.75rem", padding: "3px 6px" }}
-									>
-										<option value="">Inherit global</option>
-										<option value="all">Always sandbox</option>
-										<option value="off">No sandbox</option>
-										<option value="non-main">Non-main only</option>
-									</select>
-								</label>
-								<label className="flex flex-col gap-1 text-xs">
-									<span className="text-[var(--muted)]">Network</span>
-									<select
-										className="provider-key-input"
-										value={sandboxNetwork}
-										onChange={(e) => setSandboxNetwork(targetValue(e))}
-										style={{ fontSize: "0.75rem", padding: "3px 6px" }}
-									>
-										<option value="">Inherit global</option>
-										<option value="blocked">Blocked</option>
-										<option value="trusted">Trusted (proxy)</option>
-										<option value="bypass">Bypass (unrestricted)</option>
-									</select>
-								</label>
-								<label className="flex flex-col gap-1 text-xs">
-									<span className="text-[var(--muted)]">Workspace</span>
-									<select
-										className="provider-key-input"
-										value={sandboxMount}
-										onChange={(e) => setSandboxMount(targetValue(e))}
-										style={{ fontSize: "0.75rem", padding: "3px 6px" }}
-									>
-										<option value="">Inherit global</option>
-										<option value="ro">Read-only</option>
-										<option value="rw">Read-write</option>
-									</select>
-								</label>
-							</div>
+							<label className="flex flex-col gap-1 text-xs">
+								<span className="text-[var(--muted)]">Mode</span>
+								<select
+									className="provider-key-input"
+									value={sandboxMode}
+									onChange={(e) => setSandboxMode(targetValue(e))}
+									style={{ fontSize: "0.75rem", padding: "3px 6px" }}
+								>
+									<option value="">Inherit global</option>
+									<option value="all">Always sandbox</option>
+									<option value="off">No sandbox</option>
+									<option value="non-main">Non-main only</option>
+								</select>
+							</label>
 						</fieldset>
 
 						{/* Skills */}
