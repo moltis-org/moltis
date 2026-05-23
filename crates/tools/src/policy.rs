@@ -172,9 +172,9 @@ pub fn resolve_effective_policy(
             },
             moltis_config::schema::PresetMcpPolicy::Allow(allowed) => {
                 // Deny every configured MCP server that is NOT in the allow list.
-                for server_name in config.mcp.servers.keys() {
-                    if !allowed.iter().any(|a| a.as_str() == server_name) {
-                        deny.push(moltis_config::schema::McpServerId::from(server_name.as_str()).to_deny_pattern());
+                for server_id in config.mcp.servers.keys() {
+                    if !allowed.contains(server_id) {
+                        deny.push(server_id.to_deny_pattern());
                     }
                 }
             },

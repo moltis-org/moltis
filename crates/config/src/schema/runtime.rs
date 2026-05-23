@@ -121,9 +121,9 @@ pub struct McpConfig {
     /// Default timeout for MCP requests in seconds.
     #[serde(default = "default_mcp_request_timeout_secs")]
     pub request_timeout_secs: u64,
-    /// Configured MCP servers, keyed by server name.
+    /// Configured MCP servers, keyed by server ID.
     #[serde(default)]
-    pub servers: HashMap<String, McpServerEntry>,
+    pub servers: HashMap<McpServerId, McpServerEntry>,
 }
 
 impl Default for McpConfig {

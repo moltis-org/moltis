@@ -312,7 +312,7 @@ pub async fn prepare_gateway_core(
         let mcp_reg = moltis_mcp::McpRegistry::load(&mcp_registry_path).unwrap_or_default();
         let mut merged = mcp_reg;
         for (name, entry) in &config.mcp.servers {
-            if !merged.servers.contains_key(name) {
+            if !merged.servers.contains_key(name.as_str()) {
                 let transport = match entry.transport.as_str() {
                     "sse" => moltis_mcp::registry::TransportType::Sse,
                     "streamable_http" | "streamable-http" | "http" => {
@@ -332,7 +332,7 @@ pub async fn prepare_gateway_core(
                     });
                 merged
                     .servers
-                    .insert(name.clone(), moltis_mcp::McpServerConfig {
+                    .insert(name.to_string(), moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
                         env: entry.env.clone(),

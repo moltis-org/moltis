@@ -57,7 +57,7 @@ pub async fn sync_mcp_tools(
     // Register current bridges with their server name metadata.
     let count = bridges.len();
     for bridge in bridges {
-        let server = bridge.server_name().to_string();
+        let server = bridge.server_name().clone();
         reg.register_mcp(Box::new(McpToolAdapter(bridge)), server);
     }
 
@@ -121,7 +121,7 @@ mod tests {
         // Manually register an MCP tool, then sync (which should clear it).
         {
             let mut reg_guard = registry.write().await;
-            reg_guard.register_mcp(Box::new(FakeTool("stale_tool")), "stale_server".to_string());
+            reg_guard.register_mcp(Box::new(FakeTool("stale_tool")), "stale_server".into());
         }
 
         sync_mcp_tools(&manager, &registry).await;

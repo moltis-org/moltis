@@ -242,6 +242,12 @@ impl From<String> for McpServerId {
     }
 }
 
+impl std::borrow::Borrow<str> for McpServerId {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Per-agent MCP server access control.
 ///
 /// Controls which MCP servers are visible to this agent. Translates to

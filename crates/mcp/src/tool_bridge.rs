@@ -4,10 +4,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::{
-    error::{Error, Result},
-    traits::McpClientTrait,
-    types::{McpToolDef, ToolContent},
+use {
+    crate::{
+        error::{Error, Result},
+        traits::McpClientTrait,
+        types::{McpToolDef, ToolContent},
+    },
+    moltis_config::schema::McpServerId,
 };
 
 /// Recursively strip null values from nested objects and arrays.
@@ -41,7 +44,7 @@ pub struct McpToolBridge {
     /// Original tool name on the MCP server.
     original_name: String,
     /// Name of the MCP server this tool belongs to.
-    server_name: String,
+    server_name: McpServerId,
     description: String,
     input_schema: serde_json::Value,
     client: Arc<tokio::sync::RwLock<dyn McpClientTrait>>,
@@ -57,7 +60,7 @@ impl McpToolBridge {
         Self {
             prefixed_name: format!("mcp__{}__{}", server_name, tool_def.name),
             original_name: tool_def.name.clone(),
-            server_name: server_name.to_string(),
+            server_name: McpServerId::from(server_name),
             description: tool_def
                 .description
                 .clone()
@@ -83,8 +86,8 @@ impl McpToolBridge {
         &self.prefixed_name
     }
 
-    /// The name of the MCP server this tool belongs to.
-    pub fn server_name(&self) -> &str {
+    /// The MCP server this tool belongs to.
+    pub fn server_name(&self) -> &McpServerId {
         &self.server_name
     }
 }
