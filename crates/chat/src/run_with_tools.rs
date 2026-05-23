@@ -242,6 +242,10 @@ pub(crate) async fn run_with_tools(
                 Some("off") => router.set_override(session_key, false).await,
                 _ => router.remove_override(session_key).await,
             }
+        } else {
+            // No preset for this agent — clear any stale override from
+            // a previously assigned agent so the global mode applies.
+            router.remove_override(session_key).await;
         }
         router.is_sandboxed(session_key).await
     } else {
