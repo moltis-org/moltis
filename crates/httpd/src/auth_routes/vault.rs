@@ -57,12 +57,20 @@ pub(super) async fn vault_initialize_handler(
         .initialize_vault_for_current_password(&body.password)
         .await
     {
-        Ok(recovery_key) => {
-            run_vault_env_migration(&state).await;
-            start_stored_channels_on_vault_unseal(&state).await;
+        Ok(outcome) => {
+            let status = if outcome.unsealed {
+                "unsealed"
+            } else {
+                "sealed"
+            };
+            if outcome.unsealed {
+                run_vault_env_migration(&state).await;
+                start_stored_channels_on_vault_unseal(&state).await;
+            }
             Json(serde_json::json!({
                 "ok": true,
-                "recovery_key": recovery_key.phrase(),
+                "recovery_key": outcome.recovery_key.phrase(),
+                "status": status,
             }))
             .into_response()
         },

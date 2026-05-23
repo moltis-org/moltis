@@ -397,6 +397,7 @@ pub(super) async fn vault_initialize_uses_existing_password() {
 
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["ok"], true);
+    assert_eq!(body["status"], "unsealed");
     assert!(
         body["recovery_key"]
             .as_str()

@@ -51,6 +51,12 @@ pub enum VaultInitializeError {
 }
 
 #[cfg(feature = "vault")]
+pub struct VaultInitializeOutcome {
+    pub recovery_key: moltis_vault::RecoveryKey,
+    pub unsealed: bool,
+}
+
+#[cfg(feature = "vault")]
 fn map_vault_password_change_error(error: moltis_vault::VaultError) -> PasswordVaultChangeError {
     match error {
         moltis_vault::VaultError::BadCredential => PasswordVaultChangeError::VaultBadCredential,
@@ -569,7 +575,7 @@ impl CredentialStore {
     pub async fn initialize_vault_for_current_password(
         &self,
         current: &str,
-    ) -> std::result::Result<moltis_vault::RecoveryKey, VaultInitializeError> {
+    ) -> std::result::Result<VaultInitializeOutcome, VaultInitializeError> {
         let Some(ref vault) = self.vault else {
             return Err(moltis_vault::VaultError::NotInitialized.into());
         };
@@ -596,8 +602,17 @@ impl CredentialStore {
         };
 
         tx.commit().await?;
-        vault.unseal(current).await?;
-        Ok(recovery_key)
+        let unsealed = match vault.unseal(current).await {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, "vault initialized but post-commit unseal failed");
+                false
+            },
+        };
+        Ok(VaultInitializeOutcome {
+            recovery_key,
+            unsealed,
+        })
     }
 
     /// Create a new session token (30-day expiry).

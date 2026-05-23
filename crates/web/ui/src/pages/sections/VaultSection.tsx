@@ -288,10 +288,10 @@ export function VaultSection(): VNode {
 		})
 			.then((r) => {
 				if (!r.ok) return r.text().then((t) => setErr(t || "Vault initialization failed"));
-				return r.json().then((data: { recovery_key?: string }) => {
+				return r.json().then((data: { recovery_key?: string; status?: VaultStatus }) => {
 					setInitializePw("");
 					setInitializeRecoveryKey(data.recovery_key || null);
-					setVaultStatus("unsealed");
+					setVaultStatus(data.status || "sealed");
 					setMsg("Vault initialized.");
 					refreshGon();
 				});
