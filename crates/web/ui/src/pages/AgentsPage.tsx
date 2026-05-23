@@ -153,7 +153,7 @@ interface McpServer {
 interface PresetFields {
 	model?: string | null;
 	mcp?: { mode: string; servers?: string[] };
-	sandbox?: { mode?: string | null };
+	sandbox?: { mode?: string | null; network?: string | null; workspace_mount?: string | null };
 	skills?: { allow?: string[]; deny?: string[] };
 }
 
@@ -209,13 +209,15 @@ function buildCapabilitiesToml(fields: PresetFields): string {
 		const key = fields.mcp.mode === "allow" ? "allow_servers" : "deny_servers";
 		lines.push(`${key} = ${tomlArray(fields.mcp.servers || [])}`);
 	}
-	// Sandbox (only mode is enforced at runtime; network/workspace_mount
-	// are schema-only until SandboxRouter gains per-session config overlays).
+	// Sandbox — mode is enforced at runtime; network/workspace_mount are
+	// preserved from existing config but not yet enforced per-session.
 	const sb = fields.sandbox;
-	if (sb?.mode) {
+	if (sb && (sb.mode || sb.network || sb.workspace_mount)) {
 		lines.push("");
 		lines.push("[sandbox]");
-		lines.push(`mode = "${tomlEscape(sb.mode)}"`);
+		if (sb.mode) lines.push(`mode = "${tomlEscape(sb.mode)}"`);
+		if (sb.network) lines.push(`network = "${tomlEscape(sb.network)}"`);
+		if (sb.workspace_mount) lines.push(`workspace_mount = "${tomlEscape(sb.workspace_mount)}"`);
 	}
 	// Skills
 	const sk = fields.skills;
@@ -244,6 +246,9 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 	const [mcpServers, setMcpServers] = useState<string[]>([]);
 	const [availableMcpServers, setAvailableMcpServers] = useState<McpServer[]>([]);
 	const [sandboxMode, setSandboxMode] = useState("");
+	// Preserved from API but not editable — passed through on save.
+	const [sandboxNetwork, setSandboxNetwork] = useState("");
+	const [sandboxMount, setSandboxMount] = useState("");
 	const [skillsAllow, setSkillsAllow] = useState("");
 	const [skillsDeny, setSkillsDeny] = useState("");
 	const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
@@ -304,6 +309,8 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 				}
 				if (f.sandbox) {
 					setSandboxMode(f.sandbox.mode || "");
+					setSandboxNetwork(f.sandbox.network || "");
+					setSandboxMount(f.sandbox.workspace_mount || "");
 					if (f.sandbox.mode) setCapabilitiesOpen(true);
 				}
 				if (f.skills) {
@@ -348,7 +355,11 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 		if (capabilitiesOpen) {
 			const generated = buildCapabilitiesToml({
 				mcp: { mode: mcpMode, servers: mcpServers },
-				sandbox: { mode: sandboxMode || null },
+				sandbox: {
+					mode: sandboxMode || null,
+					network: sandboxNetwork || null,
+					workspace_mount: sandboxMount || null,
+				},
 				skills: { allow: parseCsvList(skillsAllow), deny: parseCsvList(skillsDeny) },
 			});
 			// Merge: strip existing [mcp], [sandbox], [skills] sections from
@@ -356,12 +367,13 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 			const rawWithoutStructured = stripTomlSections(tomlToSave, ["mcp", "sandbox", "skills"]).trim();
 			tomlToSave = rawWithoutStructured ? `${generated}\n\n${rawWithoutStructured}` : generated;
 		}
+		const savingToml = !!tomlToSave;
 		if (tomlToSave) {
 			pending.push(sendRpc("agents.preset.save", { id: agentId, toml: tomlToSave }));
 		}
 		if (pending.length > 0) {
 			Promise.all(pending).then((results) => {
-				const tomlResult = presetToml.trim()
+				const tomlResult = savingToml
 					? (results[results.length - 1] as { ok?: boolean; error?: { message?: string } })
 					: null;
 				if (tomlResult && !tomlResult?.ok) {
