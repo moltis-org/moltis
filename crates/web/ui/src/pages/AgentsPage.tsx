@@ -367,8 +367,11 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 			const rawWithoutStructured = stripTomlSections(tomlToSave, ["mcp", "sandbox", "skills"]).trim();
 			tomlToSave = rawWithoutStructured ? `${generated}\n\n${rawWithoutStructured}` : generated;
 		}
-		const savingToml = !!tomlToSave;
-		if (tomlToSave) {
+		// Always save when capabilities panel is open — an empty TOML string
+		// clears the preset, which is correct when the user has removed all
+		// restrictions. Without this, old restrictions survive silently.
+		const savingToml = capabilitiesOpen || !!tomlToSave;
+		if (savingToml) {
 			pending.push(sendRpc("agents.preset.save", { id: agentId, toml: tomlToSave }));
 		}
 		if (pending.length > 0) {
