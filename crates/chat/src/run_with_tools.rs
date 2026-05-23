@@ -231,11 +231,15 @@ pub(crate) async fn run_with_tools(
     let session_is_sandboxed = if let Some(router) = state.sandbox_router() {
         // If the agent preset has a sandbox mode override, apply it as a
         // per-session override so the exec tool inherits the agent's policy.
-        if let Some(preset) = persona.config.agents.get_preset(agent_id)
-            && let Some(ref mode) = preset.sandbox.mode
-        {
-            let enabled = mode != "off";
-            router.set_override(session_key, enabled).await;
+        // When no override is set, clear any stale override from a previous
+        // agent on this session so the global mode takes effect.
+        if let Some(preset) = persona.config.agents.get_preset(agent_id) {
+            if let Some(ref mode) = preset.sandbox.mode {
+                let enabled = mode != "off";
+                router.set_override(session_key, enabled).await;
+            } else {
+                router.remove_override(session_key).await;
+            }
         }
         router.is_sandboxed(session_key).await
     } else {

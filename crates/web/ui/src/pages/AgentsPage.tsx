@@ -165,38 +165,44 @@ function parseCsvList(value: string): string[] {
 		.filter(Boolean);
 }
 
+/** Escape a string for TOML double-quoted values. */
+function tomlEscape(s: string): string {
+	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/** Build a TOML array literal from strings. */
+function tomlArray(values: string[]): string {
+	return `[${values.map((v) => `"${tomlEscape(v)}"`).join(", ")}]`;
+}
+
 /** Build TOML from structured capability fields. */
 function buildCapabilitiesToml(fields: PresetFields): string {
 	const lines: string[] = [];
-	if (fields.model) lines.push(`model = "${fields.model}"`);
-	// MCP
+	if (fields.model) lines.push(`model = "${tomlEscape(fields.model)}"`);
+	// MCP — always emit allow_servers when mode is "allow" (even if empty,
+	// since allow_servers = [] means "deny all MCP tools").
 	if (fields.mcp && fields.mcp.mode !== "all") {
 		lines.push("");
 		lines.push("[mcp]");
 		const key = fields.mcp.mode === "allow" ? "allow_servers" : "deny_servers";
-		const vals = (fields.mcp.servers || []).map((s) => `"${s}"`).join(", ");
-		lines.push(`${key} = [${vals}]`);
+		lines.push(`${key} = ${tomlArray(fields.mcp.servers || [])}`);
 	}
 	// Sandbox
 	const sb = fields.sandbox;
 	if (sb && (sb.mode || sb.network || sb.workspace_mount)) {
 		lines.push("");
 		lines.push("[sandbox]");
-		if (sb.mode) lines.push(`mode = "${sb.mode}"`);
-		if (sb.network) lines.push(`network = "${sb.network}"`);
-		if (sb.workspace_mount) lines.push(`workspace_mount = "${sb.workspace_mount}"`);
+		if (sb.mode) lines.push(`mode = "${tomlEscape(sb.mode)}"`);
+		if (sb.network) lines.push(`network = "${tomlEscape(sb.network)}"`);
+		if (sb.workspace_mount) lines.push(`workspace_mount = "${tomlEscape(sb.workspace_mount)}"`);
 	}
 	// Skills
 	const sk = fields.skills;
 	if (sk && ((sk.allow && sk.allow.length > 0) || (sk.deny && sk.deny.length > 0))) {
 		lines.push("");
 		lines.push("[skills]");
-		if (sk.allow && sk.allow.length > 0) {
-			lines.push(`allow = [${sk.allow.map((s) => `"${s}"`).join(", ")}]`);
-		}
-		if (sk.deny && sk.deny.length > 0) {
-			lines.push(`deny = [${sk.deny.map((s) => `"${s}"`).join(", ")}]`);
-		}
+		if (sk.allow && sk.allow.length > 0) lines.push(`allow = ${tomlArray(sk.allow)}`);
+		if (sk.deny && sk.deny.length > 0) lines.push(`deny = ${tomlArray(sk.deny)}`);
 	}
 	return lines.join("\n");
 }

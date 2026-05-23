@@ -237,6 +237,10 @@ pub fn resolve_effective_policy(
 mod tests {
     use super::*;
 
+    fn stub_mcp_entry() -> moltis_config::schema::McpServerEntry {
+        serde_json::from_value(serde_json::json!({})).expect("empty MCP entry")
+    }
+
     #[test]
     fn test_allow_all() {
         let policy = ToolPolicy {
@@ -556,13 +560,10 @@ mod tests {
         cfg.tools.policy.allow = vec!["*".into()];
 
         // Register two MCP servers in config.
-        let stub_entry = || -> moltis_config::schema::McpServerEntry {
-            serde_json::from_value(serde_json::json!({})).expect("empty MCP entry")
-        };
-        cfg.mcp.servers.insert("github".into(), stub_entry());
+        cfg.mcp.servers.insert("github".into(), stub_mcp_entry());
         cfg.mcp
             .servers
-            .insert("home-assistant".into(), stub_entry());
+            .insert("home-assistant".into(), stub_mcp_entry());
 
         // Agent only allows "github".
         cfg.agents
@@ -603,6 +604,30 @@ mod tests {
         let policy = resolve_effective_policy(&cfg, &ctx);
         assert!(policy.is_allowed("mcp__github__list_repos"));
         assert!(policy.is_allowed("mcp__home-assistant__turn_on"));
+    }
+
+    #[test]
+    fn test_resolve_agent_mcp_allow_empty_denies_all() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.policy.allow = vec!["*".into()];
+
+        cfg.mcp.servers.insert("github".into(), stub_mcp_entry());
+
+        // allow_servers = [] means "no MCP servers allowed at all".
+        cfg.agents
+            .presets
+            .insert("locked".into(), moltis_config::schema::AgentPreset {
+                mcp: moltis_config::schema::PresetMcpPolicy::Allow(vec![]),
+                ..Default::default()
+            });
+
+        let ctx = PolicyContext {
+            agent_id: "locked".into(),
+            ..Default::default()
+        };
+        let policy = resolve_effective_policy(&cfg, &ctx);
+        assert!(policy.is_allowed("exec")); // Non-MCP tools still work.
+        assert!(!policy.is_allowed("mcp__github__list_repos")); // All MCP blocked.
     }
 
     #[test]

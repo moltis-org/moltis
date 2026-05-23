@@ -1092,3 +1092,66 @@ fn resolve_external_url_returns_none_when_both_unset() {
     let result = ServerConfig::resolve_external_url(None, None);
     assert!(result.is_none());
 }
+
+#[test]
+fn mcp_policy_empty_toml_is_all() {
+    let toml_str = r#"
+[agents.presets.test]
+"#;
+    let config: MoltisConfig = toml::from_str(toml_str).unwrap();
+    let preset = config.agents.presets.get("test").unwrap();
+    assert!(preset.mcp.is_all());
+}
+
+#[test]
+fn mcp_policy_empty_allow_is_not_all() {
+    // allow_servers = [] should parse as Allow(vec![]), NOT as All.
+    let toml_str = r#"
+[agents.presets.test.mcp]
+allow_servers = []
+"#;
+    let config: MoltisConfig = toml::from_str(toml_str).unwrap();
+    let preset = config.agents.presets.get("test").unwrap();
+    assert!(!preset.mcp.is_all());
+    assert_eq!(preset.mcp, PresetMcpPolicy::Allow(vec![]));
+}
+
+#[test]
+fn mcp_policy_both_fields_is_error() {
+    let toml_str = r#"
+[agents.presets.test.mcp]
+allow_servers = ["github"]
+deny_servers = ["home-assistant"]
+"#;
+    let result: Result<MoltisConfig, _> = toml::from_str(toml_str);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("mutually exclusive"),
+        "expected mutual exclusivity error, got: {err}"
+    );
+}
+
+#[test]
+fn mcp_policy_roundtrip_allow() {
+    let policy = PresetMcpPolicy::Allow(vec!["github".into(), "memory".into()]);
+    let toml_str = toml::to_string_pretty(&policy).unwrap();
+    let parsed: PresetMcpPolicy = toml::from_str(&toml_str).unwrap();
+    assert_eq!(parsed, policy);
+}
+
+#[test]
+fn mcp_policy_roundtrip_deny() {
+    let policy = PresetMcpPolicy::Deny(vec!["home-assistant".into()]);
+    let toml_str = toml::to_string_pretty(&policy).unwrap();
+    let parsed: PresetMcpPolicy = toml::from_str(&toml_str).unwrap();
+    assert_eq!(parsed, policy);
+}
+
+#[test]
+fn mcp_policy_roundtrip_all() {
+    let policy = PresetMcpPolicy::All;
+    let toml_str = toml::to_string_pretty(&policy).unwrap();
+    let parsed: PresetMcpPolicy = toml::from_str(&toml_str).unwrap();
+    assert!(parsed.is_all());
+}
