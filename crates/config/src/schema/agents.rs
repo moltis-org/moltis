@@ -263,20 +263,15 @@ impl std::borrow::Borrow<str> for McpServerId {
 /// [agents.presets.my-agent.mcp]
 /// deny_servers = ["home-assistant"]
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum PresetMcpPolicy {
     /// No restrictions — all MCP servers are visible (default).
+    #[default]
     All,
     /// Only the listed servers are visible. All others are denied.
     Allow(Vec<McpServerId>),
     /// All servers except the listed ones are visible.
     Deny(Vec<McpServerId>),
-}
-
-impl Default for PresetMcpPolicy {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 impl PresetMcpPolicy {

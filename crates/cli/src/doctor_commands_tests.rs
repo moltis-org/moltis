@@ -66,10 +66,7 @@ fn check_providers_with_config_key() {
         api_key: Some(secrecy::Secret::new("sk-test-fake".to_string())),
         ..Default::default()
     };
-    config
-        .providers
-        .providers
-        .insert("anthropic".to_string(), entry);
+    config.providers.providers.insert("anthropic".into(), entry);
 
     let section = check_providers(&config);
     let anthropic_item = section
@@ -121,10 +118,7 @@ fn check_providers_disabled_skipped() {
         enabled: false,
         ..Default::default()
     };
-    config
-        .providers
-        .providers
-        .insert("openai".to_string(), entry);
+    config.providers.providers.insert("openai".into(), entry);
 
     let section = check_providers(&config);
     let openai_item = section.items.iter().find(|i| i.message.contains("openai"));
@@ -172,7 +166,7 @@ fn check_mcp_servers_disabled_skipped() {
         display_name: None,
         request_timeout_secs: None,
     };
-    config.mcp.servers.insert("test".to_string(), entry);
+    config.mcp.servers.insert("test".into(), entry);
 
     let section = check_mcp_servers(&config);
     let test_item = section.items.iter().find(|i| i.message.contains("test"));
@@ -195,7 +189,7 @@ fn check_mcp_servers_missing_command_fails() {
         display_name: None,
         request_timeout_secs: None,
     };
-    config.mcp.servers.insert("broken".to_string(), entry);
+    config.mcp.servers.insert("broken".into(), entry);
 
     let section = check_mcp_servers(&config);
     let broken_item = section.items.iter().find(|i| i.message.contains("broken"));
@@ -218,7 +212,7 @@ fn check_mcp_servers_sse_with_url_ok() {
         display_name: None,
         request_timeout_secs: None,
     };
-    config.mcp.servers.insert("remote".to_string(), entry);
+    config.mcp.servers.insert("remote".into(), entry);
 
     let section = check_mcp_servers(&config);
     let remote_item = section.items.iter().find(|i| i.message.contains("remote"));
@@ -241,7 +235,7 @@ fn check_mcp_servers_sse_without_url_fails() {
         display_name: None,
         request_timeout_secs: None,
     };
-    config.mcp.servers.insert("broken-sse".to_string(), entry);
+    config.mcp.servers.insert("broken-sse".into(), entry);
 
     let section = check_mcp_servers(&config);
     let item = section
@@ -267,7 +261,7 @@ fn check_mcp_servers_nonexistent_command_fails() {
         display_name: None,
         request_timeout_secs: None,
     };
-    config.mcp.servers.insert("bad".to_string(), entry);
+    config.mcp.servers.insert("bad".into(), entry);
 
     let section = check_mcp_servers(&config);
     let item = section.items.iter().find(|i| i.message.contains("bad"));
@@ -498,10 +492,7 @@ fn check_security_api_keys_in_config_warns() {
         api_key: Some(secrecy::Secret::new("sk-test".to_string())),
         ..Default::default()
     };
-    config
-        .providers
-        .providers
-        .insert("anthropic".to_string(), entry);
+    config.providers.providers.insert("anthropic".into(), entry);
 
     let temp = tempfile::TempDir::new().unwrap();
     let section = check_security(&config, Some(temp.path()), temp.path());
