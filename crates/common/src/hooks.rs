@@ -7,6 +7,7 @@
 use std::{
     collections::HashMap,
     fmt,
+    str::FromStr,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -49,6 +50,33 @@ pub enum HookEvent {
 impl fmt::Display for HookEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{self:?}")
+    }
+}
+
+impl FromStr for HookEvent {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value {
+            "BeforeAgentStart" => Ok(Self::BeforeAgentStart),
+            "AgentEnd" => Ok(Self::AgentEnd),
+            "BeforeLLMCall" => Ok(Self::BeforeLLMCall),
+            "AfterLLMCall" => Ok(Self::AfterLLMCall),
+            "BeforeCompaction" => Ok(Self::BeforeCompaction),
+            "AfterCompaction" => Ok(Self::AfterCompaction),
+            "MessageReceived" => Ok(Self::MessageReceived),
+            "MessageSending" => Ok(Self::MessageSending),
+            "MessageSent" => Ok(Self::MessageSent),
+            "BeforeToolCall" => Ok(Self::BeforeToolCall),
+            "AfterToolCall" => Ok(Self::AfterToolCall),
+            "ToolResultPersist" => Ok(Self::ToolResultPersist),
+            "SessionStart" => Ok(Self::SessionStart),
+            "SessionEnd" => Ok(Self::SessionEnd),
+            "GatewayStart" => Ok(Self::GatewayStart),
+            "GatewayStop" => Ok(Self::GatewayStop),
+            "Command" => Ok(Self::Command),
+            other => Err(format!("unknown hook event '{other}'")),
+        }
     }
 }
 
