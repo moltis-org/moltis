@@ -264,14 +264,20 @@ export function VaultSection(): VNode {
 	const [initializing, setInitializing] = useState(false);
 
 	useEffect(() => {
-		gon.onChange("vault_status", (val) => {
+		const onVaultStatusChange = (val: VaultStatus | undefined): void => {
 			setVaultStatus(val ?? null);
 			rerender();
-		});
-		gon.onChange("auth_has_password", (val) => {
+		};
+		const onAuthHasPasswordChange = (val: boolean): void => {
 			setHasPassword(val === true);
 			rerender();
-		});
+		};
+		gon.onChange("vault_status", onVaultStatusChange);
+		gon.onChange("auth_has_password", onAuthHasPasswordChange);
+		return () => {
+			gon.offChange("vault_status", onVaultStatusChange);
+			gon.offChange("auth_has_password", onAuthHasPasswordChange);
+		};
 	}, []);
 
 	function onInitializeVault(e: Event): void {
