@@ -95,6 +95,7 @@ pub fn auth_router() -> axum::Router<AuthState> {
 fn vault_routes() -> axum::Router<AuthState> {
     axum::Router::new()
         .route("/vault/status", get(vault::vault_status_handler))
+        .route("/vault/initialize", post(vault::vault_initialize_handler))
         .route("/vault/unlock", post(vault::vault_unlock_handler))
         .route("/vault/recovery", post(vault::vault_recovery_handler))
         .route("/vault/disable", post(vault::vault_disable_handler))

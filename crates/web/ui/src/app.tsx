@@ -40,6 +40,7 @@ import * as _sessionHistoryCache from "./stores/session-history-cache";
 import * as _sessionStoreModule from "./stores/session-store";
 import { insertSessionInOrder, sessionStore } from "./stores/session-store";
 import { initTheme, injectMarkdownStyles } from "./theme";
+import type { VaultStatus } from "./types/gon";
 import { GlobalDialogs, Toasts } from "./ui";
 import { connect } from "./websocket";
 import * as _wsConnect from "./ws-connect";
@@ -196,7 +197,7 @@ gon.onChange("update", showUpdateBanner as (v: unknown) => void);
 onEvent("update.available", showUpdateBanner as (payload: unknown) => void);
 initUpdateBannerDismiss();
 initUpdateNowButton();
-showVaultBanner(gon.get("vault_status") as string | null);
+showVaultBanner(gon.get("vault_status") ?? null);
 gon.onChange("vault_status", showVaultBanner as (v: unknown) => void);
 
 function upsertSessionFromEvent(entry: SessionEntry | null): boolean {
@@ -540,7 +541,7 @@ function initUpdateNowButton(): void {
 	});
 }
 
-function showVaultBanner(status: string | null): void {
+function showVaultBanner(status: VaultStatus | null): void {
 	const el = document.getElementById("vaultBanner");
 	if (!el) return;
 	el.style.display = status === "sealed" ? "" : "none";

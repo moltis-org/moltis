@@ -5,6 +5,7 @@ import { applyIdentityFavicon, formatLoginTitle } from "./branding";
 import { init as initI18n, t } from "./i18n";
 import * as S from "./state";
 import { initTheme } from "./theme";
+import type { VaultStatus } from "./types/gon";
 import * as _wsConnect from "./ws-connect";
 
 // Expose state module for E2E test WS mocking via shims.
@@ -59,9 +60,9 @@ const identity = (gonData.identity as IdentityInfo) || null;
 // Set page branding from identity.
 document.title = formatLoginTitle(identity);
 applyIdentityFavicon(identity);
-showVaultBanner((gonData.vault_status as string) || null);
+showVaultBanner((gonData.vault_status as VaultStatus) || null);
 
-function showVaultBanner(status: string | null): void {
+function showVaultBanner(status: VaultStatus | null): void {
 	const el = document.getElementById("vaultBanner");
 	if (!el) return;
 	el.style.display = status === "sealed" ? "" : "none";
@@ -189,8 +190,11 @@ function renderLoginCard({
 			{showPassword ? (
 				<form onSubmit={onPasswordLogin} className="flex flex-col gap-3">
 					<div>
-						<label className="text-xs text-[var(--muted)] mb-1 block">{t("login:password")}</label>
+						<label htmlFor="login-password" className="text-xs text-[var(--muted)] mb-1 block">
+							{t("login:password")}
+						</label>
 						<input
+							id="login-password"
 							type="password"
 							className="provider-key-input w-full"
 							value={password}

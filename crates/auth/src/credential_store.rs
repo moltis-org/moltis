@@ -27,7 +27,7 @@ pub use {
 };
 
 #[cfg(feature = "vault")]
-pub use sessions::PasswordVaultChangeError;
+pub use sessions::{PasswordVaultChangeError, VaultInitializeError};
 
 /// Single-user credential store backed by SQLite.
 pub struct CredentialStore {

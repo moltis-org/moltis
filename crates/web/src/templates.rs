@@ -95,6 +95,7 @@ pub(crate) struct GonData {
     agents: Vec<serde_json::Value>,
     webhooks: Vec<serde_json::Value>,
     webhook_profiles: Vec<serde_json::Value>,
+    auth_has_password: bool,
     #[cfg(feature = "vault")]
     vault_status: String,
 }
@@ -571,6 +572,10 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         agents,
         webhooks,
         webhook_profiles,
+        auth_has_password: match gw.credential_store.as_ref() {
+            Some(store) => store.has_password().await.unwrap_or(false),
+            None => false,
+        },
         #[cfg(feature = "vault")]
         vault_status: {
             if let Some(ref vault) = gw.vault {

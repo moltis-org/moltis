@@ -36,6 +36,21 @@ pub enum PasswordVaultChangeError {
 }
 
 #[cfg(feature = "vault")]
+#[derive(Debug, thiserror::Error)]
+pub enum VaultInitializeError {
+    #[error("current password is incorrect")]
+    IncorrectCurrentPassword,
+    #[error("vault is already initialized")]
+    AlreadyInitialized,
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+    #[error(transparent)]
+    Auth(#[from] Error),
+    #[error(transparent)]
+    Vault(#[from] moltis_vault::VaultError),
+}
+
+#[cfg(feature = "vault")]
 fn map_vault_password_change_error(error: moltis_vault::VaultError) -> PasswordVaultChangeError {
     match error {
         moltis_vault::VaultError::BadCredential => PasswordVaultChangeError::VaultBadCredential,
@@ -548,6 +563,41 @@ impl CredentialStore {
 
         tx.commit().await?;
         Ok(())
+    }
+
+    #[cfg(feature = "vault")]
+    pub async fn initialize_vault_for_current_password(
+        &self,
+        current: &str,
+    ) -> std::result::Result<moltis_vault::RecoveryKey, VaultInitializeError> {
+        let Some(ref vault) = self.vault else {
+            return Err(moltis_vault::VaultError::NotInitialized.into());
+        };
+
+        let mut tx = self.pool.begin().await?;
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT password_hash FROM auth_password WHERE id = 1")
+                .fetch_optional(&mut *tx)
+                .await?;
+        let Some((current_hash,)) = row else {
+            return Err(VaultInitializeError::IncorrectCurrentPassword);
+        };
+        if !verify_password(current, &current_hash) {
+            return Err(VaultInitializeError::IncorrectCurrentPassword);
+        }
+
+        let recovery_key = match vault.status().await? {
+            moltis_vault::VaultStatus::Uninitialized => {
+                vault.initialize_in_transaction(current, &mut tx).await?
+            },
+            moltis_vault::VaultStatus::Sealed | moltis_vault::VaultStatus::Unsealed => {
+                return Err(VaultInitializeError::AlreadyInitialized);
+            },
+        };
+
+        tx.commit().await?;
+        vault.unseal(current).await?;
+        Ok(recovery_key)
     }
 
     /// Create a new session token (30-day expiry).

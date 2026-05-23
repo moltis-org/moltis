@@ -15,6 +15,7 @@ import {
 import * as gon from "../../gon";
 import { localizedApiErrorMessage } from "../../helpers";
 import { targetValue } from "../../typed-events";
+import type { VaultStatus } from "../../types/gon";
 import { rerender } from "./_shared";
 
 interface EnvVar {
@@ -22,6 +23,61 @@ interface EnvVar {
 	key: string;
 	encrypted?: boolean;
 	updated_at?: string;
+}
+
+interface EnvVaultNoticeProps {
+	vaultStatus: VaultStatus | null;
+	authHasPassword: boolean;
+}
+
+function EnvVaultNotice({ vaultStatus, authHasPassword }: EnvVaultNoticeProps): VNode | null {
+	if (!vaultStatus || vaultStatus === "disabled") return null;
+
+	return (
+		<div
+			className="text-xs"
+			style={{
+				maxWidth: "600px",
+				padding: "8px 12px",
+				borderRadius: "6px",
+				border: "1px solid var(--border)",
+				background: "var(--bg)",
+			}}
+		>
+			{vaultStatus === "unsealed" ? (
+				<>
+					<span style={{ color: "var(--accent)" }}>Vault unlocked.</span> Your keys are stored encrypted.
+				</>
+			) : vaultStatus === "sealed" ? (
+				<>
+					<span style={{ color: "var(--warning,var(--error))" }}>Vault locked.</span> Encrypted keys can{"\u2019"}t be
+					read {"\u2014"} sandbox commands won{"\u2019"}t work.{" "}
+					<a href="/settings/vault" style={{ color: "inherit", textDecoration: "underline" }}>
+						Unlock in Encryption settings.
+					</a>
+				</>
+			) : (
+				<>
+					<span className="text-[var(--muted)]">Vault not set up.</span>{" "}
+					{authHasPassword ? (
+						<>
+							<a href="/settings/vault" style={{ color: "inherit", textDecoration: "underline" }}>
+								Initialize the vault
+							</a>{" "}
+							to encrypt your stored keys.
+						</>
+					) : (
+						<>
+							<a href="/settings/security" style={{ color: "inherit", textDecoration: "underline" }}>
+								Set a password
+							</a>{" "}
+							to encrypt your stored keys.
+						</>
+					)}
+				</>
+			)}
+		</div>
+	);
 }
 
 export function EnvironmentSection(): VNode {
@@ -127,7 +183,8 @@ export function EnvironmentSection(): VNode {
 		});
 	}
 
-	const envVaultStatus = gon.get("vault_status");
+	const envVaultStatus = gon.get("vault_status") ?? null;
+	const authHasPassword = gon.get("auth_has_password") === true;
 
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
@@ -135,40 +192,7 @@ export function EnvironmentSection(): VNode {
 			<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ maxWidth: "600px", margin: 0 }}>
 				Environment variables are injected into sandbox command execution. Values are write-only and never displayed.
 			</p>
-			{envVaultStatus && envVaultStatus !== "disabled" ? (
-				<div
-					className="text-xs"
-					style={{
-						maxWidth: "600px",
-						padding: "8px 12px",
-						borderRadius: "6px",
-						border: "1px solid var(--border)",
-						background: "var(--bg)",
-					}}
-				>
-					{envVaultStatus === "unsealed" ? (
-						<>
-							<span style={{ color: "var(--accent)" }}>Vault unlocked.</span> Your keys are stored encrypted.
-						</>
-					) : envVaultStatus === "sealed" ? (
-						<>
-							<span style={{ color: "var(--warning,var(--error))" }}>Vault locked.</span> Encrypted keys can{"\u2019"}t
-							be read {"\u2014"} sandbox commands won{"\u2019"}t work.{" "}
-							<a href="/settings/vault" style={{ color: "inherit", textDecoration: "underline" }}>
-								Unlock in Encryption settings.
-							</a>
-						</>
-					) : (
-						<>
-							<span className="text-[var(--muted)]">Vault not set up.</span>{" "}
-							<a href="/settings/security" style={{ color: "inherit", textDecoration: "underline" }}>
-								Set a password
-							</a>{" "}
-							to encrypt your stored keys.
-						</>
-					)}
-				</div>
-			) : null}
+			<EnvVaultNotice vaultStatus={envVaultStatus} authHasPassword={authHasPassword} />
 
 			{envLoading ? (
 				<Loading />
@@ -226,6 +250,7 @@ export function EnvironmentSection(): VNode {
 											}
 											actions={[
 												<button
+													type="button"
 													key="update"
 													className="provider-btn provider-btn-sm"
 													onClick={() => onStartUpdate(v.id)}
@@ -233,6 +258,7 @@ export function EnvironmentSection(): VNode {
 													Update
 												</button>,
 												<button
+													type="button"
 													key="delete"
 													className="provider-btn provider-btn-sm provider-btn-danger"
 													onClick={() => onDelete(v.id)}

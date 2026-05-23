@@ -6,6 +6,7 @@ import { SectionHeading, StatusMessage } from "../../components/forms";
 import * as gon from "../../gon";
 import { refresh as refreshGon } from "../../gon";
 import { targetValue } from "../../typed-events";
+import type { VaultStatus } from "../../types/gon";
 import { rerender } from "./_shared";
 
 interface DisabledVaultStateProps {
@@ -172,17 +173,20 @@ function VaultIntro(): VNode {
 }
 
 interface VaultStatusRowProps {
-	vaultStatus: string;
+	vaultStatus: VaultStatus;
+	hasPassword: boolean;
 }
 
-function VaultStatusRow({ vaultStatus }: VaultStatusRowProps): VNode {
+function VaultStatusRow({ vaultStatus, hasPassword }: VaultStatusRowProps): VNode {
 	const label = vaultStatus === "unsealed" ? "Unlocked" : vaultStatus === "sealed" ? "Locked" : "Off";
 	const detail =
 		vaultStatus === "unsealed"
 			? "Your API keys and secrets are encrypted in the database. Everything is working."
 			: vaultStatus === "sealed"
 				? "Log in or unlock below to access your encrypted keys."
-				: "Set a password in Authentication settings to start encrypting your stored keys.";
+				: hasPassword
+					? "Password authentication is configured, but the vault has not been initialized yet."
+					: "Set a password in Authentication settings to start encrypting your stored keys.";
 	return (
 		<div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
 			<span
@@ -195,21 +199,109 @@ function VaultStatusRow({ vaultStatus }: VaultStatusRowProps): VNode {
 	);
 }
 
+interface InitializeVaultFormProps {
+	password: string;
+	initializing: boolean;
+	recoveryKey: string | null;
+	onPasswordInput: (value: string) => void;
+	onInitialize: (event: Event) => void;
+}
+
+function InitializeVaultForm({
+	password,
+	initializing,
+	recoveryKey,
+	onPasswordInput,
+	onInitialize,
+}: InitializeVaultFormProps): VNode {
+	return (
+		<div className="mt-3 rounded border border-[var(--border)] bg-[var(--surface2)] p-3">
+			{recoveryKey ? (
+				<>
+					<div className="text-sm font-semibold text-[var(--text)]">Vault initialized. Save this recovery key.</div>
+					<p className="my-2 text-xs leading-relaxed text-[var(--muted)]">
+						This key is shown once. Store it somewhere safe so you can unlock the vault if you forget your password.
+					</p>
+					<code className="block select-all rounded border border-[var(--border)] bg-[var(--bg)] p-2 font-mono text-xs">
+						{recoveryKey}
+					</code>
+				</>
+			) : (
+				<form onSubmit={onInitialize}>
+					<div className="text-sm font-semibold text-[var(--text)]">Initialize encryption vault</div>
+					<p className="my-2 text-xs leading-relaxed text-[var(--muted)]">
+						Use your current password to create the encrypted vault and receive a one-time recovery key.
+					</p>
+					<div className="flex items-center gap-2">
+						<input
+							type="password"
+							className="provider-key-input flex-1"
+							value={password}
+							onInput={(event: Event) => onPasswordInput(targetValue(event))}
+							placeholder="Current password"
+						/>
+						<button type="submit" className="provider-btn" disabled={initializing || !password.trim()}>
+							{initializing ? "Initializing..." : "Initialize vault"}
+						</button>
+					</div>
+				</form>
+			)}
+		</div>
+	);
+}
+
 export function VaultSection(): VNode {
-	const [vaultStatus, setVaultStatus] = useState(gon.get("vault_status") || null);
+	const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(gon.get("vault_status") ?? null);
+	const [hasPassword, setHasPassword] = useState(gon.get("auth_has_password") === true);
 	const [unlockPw, setUnlockPw] = useState("");
 	const [recoveryKey, setRecoveryKey] = useState("");
+	const [initializePw, setInitializePw] = useState("");
+	const [initializeRecoveryKey, setInitializeRecoveryKey] = useState<string | null>(null);
 	const [msg, setMsg] = useState<string | null>(null);
 	const [err, setErr] = useState<string | null>(null);
 	const [unlockingPw, setUnlockingPw] = useState(false);
 	const [unlockingRk, setUnlockingRk] = useState(false);
+	const [initializing, setInitializing] = useState(false);
 
 	useEffect(() => {
-		return gon.onChange("vault_status", (val: unknown) => {
-			setVaultStatus(val as string);
+		gon.onChange("vault_status", (val) => {
+			setVaultStatus(val ?? null);
+			rerender();
+		});
+		gon.onChange("auth_has_password", (val) => {
+			setHasPassword(val === true);
 			rerender();
 		});
 	}, []);
+
+	function onInitializeVault(e: Event): void {
+		e.preventDefault();
+		if (!initializePw.trim()) return;
+		setErr(null);
+		setMsg(null);
+		setInitializing(true);
+		rerender();
+		fetch("/api/auth/vault/initialize", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ password: initializePw }),
+		})
+			.then((r) => {
+				if (!r.ok) return r.text().then((t) => setErr(t || "Vault initialization failed"));
+				return r.json().then((data: { recovery_key?: string }) => {
+					setInitializePw("");
+					setInitializeRecoveryKey(data.recovery_key || null);
+					setVaultStatus("unsealed");
+					setMsg("Vault initialized.");
+					refreshGon();
+				});
+			})
+			.catch((error: Error) => setErr(error.message))
+			.finally(() => {
+				setInitializing(false);
+				rerender();
+			});
+	}
 
 	function onUnlockPw(e: Event): void {
 		e.preventDefault();
@@ -277,7 +369,7 @@ export function VaultSection(): VNode {
 
 			<div style={{ maxWidth: "600px" }}>
 				<VaultIntro />
-				<VaultStatusRow vaultStatus={vaultStatus} />
+				<VaultStatusRow vaultStatus={vaultStatus} hasPassword={hasPassword} />
 
 				{vaultStatus === "sealed" ? (
 					<UnlockForms
@@ -292,7 +384,17 @@ export function VaultSection(): VNode {
 					/>
 				) : null}
 
-				{vaultStatus === "uninitialized" ? (
+				{vaultStatus === "uninitialized" && hasPassword ? (
+					<InitializeVaultForm
+						password={initializePw}
+						initializing={initializing}
+						recoveryKey={initializeRecoveryKey}
+						onPasswordInput={setInitializePw}
+						onInitialize={onInitializeVault}
+					/>
+				) : null}
+
+				{vaultStatus === "uninitialized" && !hasPassword ? (
 					<div style={{ marginTop: "4px" }}>
 						<a
 							href="/settings/security"

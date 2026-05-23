@@ -201,6 +201,10 @@ secrets:
 
 This lets encrypted environment variables and channel credentials load during
 startup. Treat the secret file as sensitive as the vault recovery key itself.
+If you create the secret file before the vault is initialized, Docker will
+accept the mount but Moltis cannot auto-unseal from an empty file. After you
+initialize the vault in **Settings > Encryption**, copy the one-time recovery
+key into this file before relying on unattended auto-unseal.
 
 ### Coolify (Hetzner/VPS)
 

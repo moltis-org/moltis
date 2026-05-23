@@ -369,6 +369,91 @@ pub(super) async fn password_change_initializes_vault() {
     assert!(store.verify_password(&new_password).await.unwrap());
 }
 
+/// Passwords migrated from the environment can initialize an existing but
+/// uninitialized vault without removing authentication.
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+pub(super) async fn vault_initialize_uses_existing_password() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let password = generated_password();
+    store.set_initial_password(&password).await.unwrap();
+    let token = store.create_session().await.unwrap();
+
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Uninitialized
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/vault/initialize"))
+        .header("Content-Type", "application/json")
+        .header("Cookie", format!("moltis_session={token}"))
+        .body(json_password(&password))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["ok"], true);
+    assert!(
+        body["recovery_key"]
+            .as_str()
+            .is_some_and(|key| !key.is_empty())
+    );
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Unsealed
+    );
+}
+
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+pub(super) async fn vault_initialize_rejects_wrong_password() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let password = generated_password();
+    let wrong_password = different_password(&password);
+    store.set_initial_password(&password).await.unwrap();
+    let token = store.create_session().await.unwrap();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/vault/initialize"))
+        .header("Content-Type", "application/json")
+        .header("Cookie", format!("moltis_session={token}"))
+        .body(json_password(&wrong_password))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+    assert_eq!(
+        vault.status().await.unwrap(),
+        moltis_vault::VaultStatus::Uninitialized
+    );
+}
+
+#[cfg(all(feature = "web-ui", feature = "vault"))]
+#[tokio::test]
+pub(super) async fn vault_initialize_rejects_already_initialized_vault() {
+    let (addr, store, _state, vault) = start_localhost_server_with_vault().await;
+    let password = generated_password();
+    store.set_initial_password(&password).await.unwrap();
+    let token = store.create_session().await.unwrap();
+    let _rk = vault.initialize(&password).await.unwrap();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{addr}/api/auth/vault/initialize"))
+        .header("Content-Type", "application/json")
+        .header("Cookie", format!("moltis_session={token}"))
+        .body(json_password(&password))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+}
+
 /// Setting a password via /api/auth/password/change when the vault is already
 /// initialized should not return a recovery key (no double-init).
 #[cfg(all(feature = "web-ui", feature = "vault"))]

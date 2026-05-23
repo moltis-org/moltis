@@ -67,6 +67,8 @@ export interface SandboxGonInfo {
 	available_backends: SandboxBackendId[];
 }
 
+export type VaultStatus = "disabled" | "error" | "sealed" | "uninitialized" | "unsealed";
+
 // ── Identity ────────────────────────────────────────────────
 
 /**
@@ -249,7 +251,8 @@ export interface GonData {
 	agents: unknown[];
 	webhooks: unknown[];
 	webhook_profiles: unknown[];
-	vault_status?: string;
+	auth_has_password: boolean;
+	vault_status?: VaultStatus;
 }
 
 /** Key of GonData for use with get/set/onChange. */

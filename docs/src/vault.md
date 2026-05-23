@@ -308,6 +308,12 @@ also returns a `recovery_key`. The page keeps the user on Settings long
 enough to copy it, then shows a **Continue to sign in** action when the
 new password makes authentication mandatory.
 
+If password authentication already exists but the vault is still
+uninitialized, **Settings > Encryption** shows an **Initialize vault** form
+instead of sending the user back to Authentication. Submitting the current
+password initializes the vault, migrates plaintext secrets into encrypted
+storage, and returns the one-time recovery key.
+
 Passkey-only setup does not trigger vault initialization (no password to
 derive a KEK from), so the recovery key screen is never shown in that flow.
 
@@ -322,7 +328,7 @@ on restart and unlocks on login.
 |-------------|-------|---------------|
 | **Unsealed** | Green ("Unlocked") | Your API keys and secrets are encrypted in the database. Everything is working. |
 | **Sealed** | Amber ("Locked") | Log in or unlock below to access your encrypted keys. |
-| **Uninitialized** | Gray ("Off") | Set a password in Authentication settings to start encrypting your stored keys. |
+| **Uninitialized** | Gray ("Off") | Set a password, or initialize the vault if password authentication already exists. |
 
 When the vault is **sealed**, both unlock forms are shown in the same
 panel (password and recovery key, separated by an "or" divider). Submitting

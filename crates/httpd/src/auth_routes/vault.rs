@@ -35,6 +35,49 @@ pub(super) async fn vault_status_handler(State(state): State<AuthState>) -> impl
 
 #[cfg(feature = "vault")]
 #[derive(serde::Deserialize)]
+pub(super) struct VaultInitializeRequest {
+    password: String,
+}
+
+#[cfg(feature = "vault")]
+pub(super) async fn vault_initialize_handler(
+    _session: crate::auth_middleware::AuthSession,
+    State(state): State<AuthState>,
+    Json(body): Json<VaultInitializeRequest>,
+) -> impl IntoResponse {
+    if !moltis_gateway::vault_lifecycle::is_vault_encryption_runtime_enabled() {
+        return (StatusCode::NOT_FOUND, "vault not available").into_response();
+    }
+    if state.gateway_state.vault.is_none() {
+        return (StatusCode::NOT_FOUND, "vault not available").into_response();
+    }
+
+    match state
+        .credential_store
+        .initialize_vault_for_current_password(&body.password)
+        .await
+    {
+        Ok(recovery_key) => {
+            run_vault_env_migration(&state).await;
+            start_stored_channels_on_vault_unseal(&state).await;
+            Json(serde_json::json!({
+                "ok": true,
+                "recovery_key": recovery_key.phrase(),
+            }))
+            .into_response()
+        },
+        Err(moltis_gateway::auth::VaultInitializeError::IncorrectCurrentPassword) => {
+            (StatusCode::FORBIDDEN, "current password is incorrect").into_response()
+        },
+        Err(moltis_gateway::auth::VaultInitializeError::AlreadyInitialized) => {
+            (StatusCode::CONFLICT, "vault is already initialized").into_response()
+        },
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+#[cfg(feature = "vault")]
+#[derive(serde::Deserialize)]
 pub(super) struct VaultUnlockRequest {
     password: String,
 }
