@@ -165,6 +165,28 @@ function parseCsvList(value: string): string[] {
 		.filter(Boolean);
 }
 
+/**
+ * Remove named TOML sections (e.g. [mcp], [sandbox], [skills]) and their
+ * key-value lines from a TOML string.  A section runs from its `[name]`
+ * header to the next `[…]` header or end-of-string.
+ */
+function stripTomlSections(toml: string, sectionNames: string[]): string {
+	const lines = toml.split("\n");
+	const result: string[] = [];
+	let skipping = false;
+	const headers = new Set(sectionNames.map((n) => `[${n}]`));
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+			skipping = headers.has(trimmed);
+		}
+		if (!skipping) {
+			result.push(line);
+		}
+	}
+	return result.join("\n");
+}
+
 /** Escape a string for TOML double-quoted values. */
 function tomlEscape(s: string): string {
 	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -342,11 +364,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 			});
 			// Merge: strip existing [mcp], [sandbox], [skills] sections from
 			// raw TOML to avoid duplicates, then prepend generated sections.
-			const rawWithoutStructured = tomlToSave
-				.replace(/^\[mcp\][\s\S]*?(?=^\[|$)/gm, "")
-				.replace(/^\[sandbox\][\s\S]*?(?=^\[|$)/gm, "")
-				.replace(/^\[skills\][\s\S]*?(?=^\[|$)/gm, "")
-				.trim();
+			const rawWithoutStructured = stripTomlSections(tomlToSave, ["mcp", "sandbox", "skills"]).trim();
 			tomlToSave = rawWithoutStructured ? `${generated}\n\n${rawWithoutStructured}` : generated;
 		}
 		if (tomlToSave) {
