@@ -510,7 +510,7 @@ pub struct AgentPreset {
     /// - `All` (default) — no restrictions, all MCP servers visible.
     /// - `Allow(servers)` — only listed servers visible; others denied.
     /// - `Deny(servers)` — all servers visible except listed ones.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "PresetMcpPolicy::is_all")]
     pub mcp: PresetMcpPolicy,
     /// Per-agent sandbox policy overrides.
     ///
