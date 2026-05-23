@@ -162,9 +162,22 @@ pub fn resolve_effective_policy(
     if let Some(preset) = config.agents.get_preset(&context.agent_id) {
         let mut deny = preset.tools.deny.clone();
 
-        // Translate MCP server deny list into tool deny patterns.
-        for server in &preset.mcp.deny_servers {
-            deny.push(format!("mcp__{server}__*"));
+        // Translate MCP server policy into tool deny patterns.
+        match &preset.mcp {
+            moltis_config::schema::PresetMcpPolicy::All => {},
+            moltis_config::schema::PresetMcpPolicy::Deny(servers) => {
+                for server in servers {
+                    deny.push(server.to_deny_pattern());
+                }
+            },
+            moltis_config::schema::PresetMcpPolicy::Allow(allowed) => {
+                // Deny every configured MCP server that is NOT in the allow list.
+                for server_name in config.mcp.servers.keys() {
+                    if !allowed.iter().any(|a| a.as_str() == server_name) {
+                        deny.push(moltis_config::schema::McpServerId::from(server_name.as_str()).to_deny_pattern());
+                    }
+                }
+            },
         }
 
         let p = ToolPolicy {
@@ -517,9 +530,9 @@ mod tests {
         cfg.agents
             .presets
             .insert("restricted".into(), moltis_config::schema::AgentPreset {
-                mcp: moltis_config::schema::PresetMcpPolicy {
-                    deny_servers: vec!["home-assistant".into()],
-                },
+                mcp: moltis_config::schema::PresetMcpPolicy::Deny(vec![
+                    "home-assistant".into(),
+                ]),
                 ..Default::default()
             });
 
@@ -536,6 +549,65 @@ mod tests {
         // MCP tools from denied server are blocked.
         assert!(!policy.is_allowed("mcp__home-assistant__turn_on"));
         assert!(!policy.is_allowed("mcp__home-assistant__get_state"));
+    }
+
+    #[test]
+    fn test_resolve_agent_mcp_allow_servers() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.policy.allow = vec!["*".into()];
+
+        // Register two MCP servers in config.
+        let stub_entry = || -> moltis_config::schema::McpServerEntry {
+            serde_json::from_value(serde_json::json!({})).expect("empty MCP entry")
+        };
+        cfg.mcp
+            .servers
+            .insert("github".into(), stub_entry());
+        cfg.mcp
+            .servers
+            .insert("home-assistant".into(), stub_entry());
+
+        // Agent only allows "github".
+        cfg.agents
+            .presets
+            .insert("allow-only".into(), moltis_config::schema::AgentPreset {
+                mcp: moltis_config::schema::PresetMcpPolicy::Allow(vec![
+                    "github".into(),
+                ]),
+                ..Default::default()
+            });
+
+        let ctx = PolicyContext {
+            agent_id: "allow-only".into(),
+            ..Default::default()
+        };
+        let policy = resolve_effective_policy(&cfg, &ctx);
+        // Regular tools still allowed.
+        assert!(policy.is_allowed("exec"));
+        // Allowed MCP server works.
+        assert!(policy.is_allowed("mcp__github__list_repos"));
+        // Non-allowed MCP server is blocked.
+        assert!(!policy.is_allowed("mcp__home-assistant__turn_on"));
+    }
+
+    #[test]
+    fn test_resolve_agent_mcp_all_is_default() {
+        let mut cfg = moltis_config::MoltisConfig::default();
+        cfg.tools.policy.allow = vec!["*".into()];
+        cfg.agents
+            .presets
+            .insert("open".into(), moltis_config::schema::AgentPreset {
+                mcp: moltis_config::schema::PresetMcpPolicy::All,
+                ..Default::default()
+            });
+
+        let ctx = PolicyContext {
+            agent_id: "open".into(),
+            ..Default::default()
+        };
+        let policy = resolve_effective_policy(&cfg, &ctx);
+        assert!(policy.is_allowed("mcp__github__list_repos"));
+        assert!(policy.is_allowed("mcp__home-assistant__turn_on"));
     }
 
     #[test]

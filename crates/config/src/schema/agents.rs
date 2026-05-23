@@ -192,23 +192,139 @@ fn builtin_agent_preset(
     }
 }
 
+/// Identifies an MCP server by its configuration key.
+///
+/// Wraps the server name used as the key in `[mcp.servers.<name>]` and
+/// in tool names like `mcp__<name>__<tool>`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct McpServerId(String);
+
+impl McpServerId {
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Tool-policy deny pattern that blocks all tools from this server.
+    #[must_use]
+    pub fn to_deny_pattern(&self) -> String {
+        format!("mcp__{}__*", self.0)
+    }
+}
+
+impl std::fmt::Display for McpServerId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for McpServerId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for McpServerId {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for McpServerId {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
 /// Per-agent MCP server access control.
 ///
-/// Excludes specific MCP servers' tools from this agent's sessions.
-/// Translates to tool policy deny patterns (`mcp__<server>__*`) at
-/// resolution time, so the agent never sees those tools in its context.
+/// Controls which MCP servers are visible to this agent. Translates to
+/// tool policy deny patterns (`mcp__<server>__*`) at resolution time,
+/// so the agent never sees excluded servers' tools in its context.
 ///
 /// ```toml
+/// # Allow-list: only these servers are visible
 /// [agents.presets.my-agent.mcp]
-/// deny_servers = ["home-assistant"]  # exclude Home Assistant tools
+/// allow_servers = ["github", "memory"]
+///
+/// # Deny-list: all servers except these
+/// [agents.presets.my-agent.mcp]
+/// deny_servers = ["home-assistant"]
 /// ```
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct PresetMcpPolicy {
-    /// MCP servers to deny. Each entry generates a tool deny pattern
-    /// `mcp__<server>__*` that blocks all tools from that server.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deny_servers: Vec<String>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PresetMcpPolicy {
+    /// No restrictions — all MCP servers are visible (default).
+    All,
+    /// Only the listed servers are visible. All others are denied.
+    Allow(Vec<McpServerId>),
+    /// All servers except the listed ones are visible.
+    Deny(Vec<McpServerId>),
+}
+
+impl Default for PresetMcpPolicy {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+impl PresetMcpPolicy {
+    /// Returns `true` when no MCP restrictions are configured.
+    #[must_use]
+    pub fn is_all(&self) -> bool {
+        matches!(self, Self::All)
+    }
+}
+
+impl Serialize for PresetMcpPolicy {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        match self {
+            Self::All => {
+                let map = serializer.serialize_map(Some(0))?;
+                map.end()
+            },
+            Self::Allow(servers) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("allow_servers", servers)?;
+                map.end()
+            },
+            Self::Deny(servers) => {
+                let mut map = serializer.serialize_map(Some(1))?;
+                map.serialize_entry("deny_servers", servers)?;
+                map.end()
+            },
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PresetMcpPolicy {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            #[serde(default)]
+            allow_servers: Vec<McpServerId>,
+            #[serde(default)]
+            deny_servers: Vec<McpServerId>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        match (raw.allow_servers.is_empty(), raw.deny_servers.is_empty()) {
+            (true, true) => Ok(Self::All),
+            (false, true) => Ok(Self::Allow(raw.allow_servers)),
+            (true, false) => Ok(Self::Deny(raw.deny_servers)),
+            (false, false) => Err(serde::de::Error::custom(
+                "mcp: allow_servers and deny_servers are mutually exclusive",
+            )),
+        }
+    }
 }
 
 /// Tool policy for an agent preset (allow/deny specific tools).
@@ -331,9 +447,10 @@ pub struct AgentPreset {
     pub reasoning_effort: Option<ReasoningEffort>,
     /// Per-agent MCP server access control.
     ///
-    /// Controls which MCP servers are visible to this agent. When set, this
-    /// generates tool policy deny patterns for excluded servers, so the agent
-    /// never sees their tools in the prompt context.
+    /// Controls which MCP servers are visible to this agent:
+    /// - `All` (default) — no restrictions, all MCP servers visible.
+    /// - `Allow(servers)` — only listed servers visible; others denied.
+    /// - `Deny(servers)` — all servers visible except listed ones.
     #[serde(default)]
     pub mcp: PresetMcpPolicy,
 }
