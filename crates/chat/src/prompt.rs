@@ -312,6 +312,38 @@ pub(crate) async fn discover_skills_if_enabled(
     }
 }
 
+/// Apply per-agent skill policy to a discovered skill list.
+///
+/// When the agent preset has a `skills.allow` list, only skills matching
+/// by name or category are kept. Skills in `skills.deny` are then removed.
+pub(crate) fn filter_skills_for_agent(
+    skills: Vec<moltis_skills::types::SkillMetadata>,
+    policy: &moltis_config::schema::PresetSkillPolicy,
+) -> Vec<moltis_skills::types::SkillMetadata> {
+    if policy.is_empty() {
+        return skills;
+    }
+    skills
+        .into_iter()
+        .filter(|s| {
+            // If allow is non-empty, must match by name or category.
+            if !policy.allow.is_empty()
+                && !policy.allow.iter().any(|a| {
+                    a == &s.name
+                        || s.category.as_deref().is_some_and(|cat| a == cat)
+                })
+            {
+                return false;
+            }
+            // Deny by name or category.
+            !policy.deny.iter().any(|d| {
+                d == &s.name
+                    || s.category.as_deref().is_some_and(|cat| d == cat)
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn resolve_channel_runtime_context(
     session_key: &str,
     session_entry: Option<&SessionEntry>,

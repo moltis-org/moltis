@@ -22,8 +22,8 @@ use crate::{
     },
     prompt::{
         apply_request_runtime_context, build_prompt_runtime_context, discover_skills_if_enabled,
-        load_prompt_persona_for_session, resolve_channel_runtime_context, resolve_prompt_agent_id,
-        resolve_prompt_mode_context,
+        filter_skills_for_agent, load_prompt_persona_for_session,
+        resolve_channel_runtime_context, resolve_prompt_agent_id, resolve_prompt_mode_context,
     },
     run_with_tools::run_with_tools,
     streaming::run_streaming,
@@ -837,17 +837,27 @@ impl LiveChatService {
         // Discover enabled skills/plugins for prompt injection (gated on
         // `[skills] enabled` — see #655).
         let discovered_skills = discover_skills_if_enabled(&self.config).await;
-        info!(
-            session = %session_key,
-            skills_len = discovered_skills.len(),
-            client_seq = ?client_seq,
-            "chat.send: skills discovered"
-        );
 
         // Check if MCP tools are disabled for this session and capture
         // per-session sandbox override details for prompt runtime context.
         let session_entry = self.session_metadata.get(&session_key).await;
         let session_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
+
+        // Apply per-agent skill policy (allow/deny by name or category).
+        let discovered_skills = if let Some(preset) =
+            self.config.agents.get_preset(&session_agent_id)
+        {
+            filter_skills_for_agent(discovered_skills, &preset.skills)
+        } else {
+            discovered_skills
+        };
+        info!(
+            session = %session_key,
+            skills_len = discovered_skills.len(),
+            agent_id = %session_agent_id,
+            client_seq = ?client_seq,
+            "chat.send: skills discovered"
+        );
         info!(
             session = %session_key,
             agent_id = %session_agent_id,
