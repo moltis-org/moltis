@@ -299,16 +299,25 @@ pub(crate) async fn discover_and_build_hooks(
         }
     }
 
-    let config_hook_count = config
-        .hooks
-        .as_ref()
-        .map_or(0, |hooks_config| hooks_config.hooks.len());
+    let filesystem_hook_names = discovered
+        .iter()
+        .map(|(parsed, _source)| parsed.metadata.name.as_str())
+        .collect::<HashSet<_>>();
+    let mut config_hook_count = 0;
     let config_path = moltis_config::config_dir()
         .map(|path| path.join("moltis.toml").display().to_string())
         .unwrap_or_else(|| "moltis.toml".to_string());
 
     if let Some(hooks_config) = config.hooks.as_ref() {
         for hook in &hooks_config.hooks {
+            if filesystem_hook_names.contains(hook.name.as_str()) {
+                warn!(
+                    hook = %hook.name,
+                    "config hook conflicts with filesystem hook; keeping filesystem hook"
+                );
+                continue;
+            }
+
             let events = hook
                 .events
                 .iter()
@@ -321,6 +330,7 @@ pub(crate) async fn discover_and_build_hooks(
                 })
                 .collect::<Vec<_>>();
             let is_enabled = !disabled.contains(&hook.name) && !events.is_empty();
+            config_hook_count += 1;
 
             info_list.push(crate::state::DiscoveredHookInfo {
                 name: hook.name.clone(),

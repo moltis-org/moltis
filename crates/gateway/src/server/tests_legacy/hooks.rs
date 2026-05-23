@@ -28,6 +28,24 @@ timeout = 7
     .unwrap();
 }
 
+fn write_filesystem_hook(data_dir: &std::path::Path, name: &str, command: &str) {
+    let hook_dir = data_dir.join("hooks").join(name);
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    std::fs::write(
+        hook_dir.join("HOOK.md"),
+        format!(
+            r#"+++
+name = {name:?}
+command = {command:?}
+events = ["BeforeLLMCall"]
+timeout = 7
++++
+"#
+        ),
+    )
+    .unwrap();
+}
+
 #[tokio::test]
 async fn discover_hooks_registers_builtin_handlers() {
     let _guard = LocalModelConfigTestGuard::new();
@@ -162,6 +180,60 @@ async fn discover_hooks_lists_disabled_config_hooks_without_registering() {
     assert_eq!(hook_info.source, "config");
     assert!(!hook_info.enabled);
     assert!(hook_info.eligible);
+
+    moltis_config::clear_config_dir();
+    moltis_config::clear_data_dir();
+}
+
+#[tokio::test]
+async fn filesystem_hook_takes_precedence_over_same_named_config_hook() {
+    let _guard = LocalModelConfigTestGuard::new();
+    let data_dir = tempfile::tempdir().unwrap();
+    let config_dir = tempfile::tempdir().unwrap();
+    let output_path = data_dir.path().join("collision-output.txt");
+    write_filesystem_hook(
+        data_dir.path(),
+        "config-test-hook",
+        &format!("printf fs > {:?}", output_path),
+    );
+    write_config_hook(
+        config_dir.path(),
+        &format!("printf config > {:?}", output_path),
+        None,
+    );
+    moltis_config::set_data_dir(data_dir.path().to_path_buf());
+    moltis_config::set_config_dir(config_dir.path().to_path_buf());
+
+    let sessions_dir = data_dir.path().join("sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+    let session_store = Arc::new(moltis_sessions::store::SessionStore::new(sessions_dir));
+    let (registry, info) = discover_and_build_hooks(&HashSet::new(), Some(&session_store)).await;
+    let registry = registry.expect("expected hook registry to be created");
+
+    assert!(
+        info.iter()
+            .any(|hook| hook.name == "config-test-hook" && hook.source == "user")
+    );
+    assert!(
+        !info
+            .iter()
+            .any(|hook| hook.name == "config-test-hook" && hook.source == "config")
+    );
+
+    registry
+        .dispatch(&moltis_common::hooks::HookPayload::BeforeLLMCall {
+            session_key: "config-hook-test".to_string(),
+            provider: "test-provider".to_string(),
+            model: "test-model".to_string(),
+            messages: serde_json::json!([]),
+            tool_count: 0,
+            iteration: 1,
+        })
+        .await
+        .unwrap();
+
+    let captured = std::fs::read_to_string(&output_path).unwrap();
+    assert_eq!(captured, "fs");
 
     moltis_config::clear_config_dir();
     moltis_config::clear_data_dir();

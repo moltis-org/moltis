@@ -797,6 +797,17 @@ mod tests {
     }
 
     #[test]
+    fn hook_event_display_and_from_str_roundtrip() {
+        for event in HookEvent::ALL {
+            let parsed = event
+                .to_string()
+                .parse::<HookEvent>()
+                .expect("displayed hook event should parse");
+            assert_eq!(*event, parsed);
+        }
+    }
+
+    #[test]
     fn priority_ordering() {
         let mut registry = HookRegistry::new();
         registry.register(Arc::new(PriorityHandler {
