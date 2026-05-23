@@ -649,8 +649,6 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                             "mcp": mcp,
                             "sandbox": {
                                 "mode": p.sandbox.mode,
-                                "network": p.sandbox.network,
-                                "workspace_mount": p.sandbox.workspace_mount,
                             },
                             "skills": {
                                 "allow": p.skills.allow,

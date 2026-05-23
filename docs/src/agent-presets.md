@@ -134,21 +134,17 @@ deny_servers = ["home-assistant"]
 When `allow_servers` is set, every configured MCP server not in the list is
 denied. An empty `allow_servers = []` blocks all MCP tools.
 
-## Per-Agent Sandbox Policy
+## Per-Agent Sandbox Mode
 
-Override global `[tools.exec.sandbox]` settings per agent. Unset fields
-inherit the global value.
+Override the global sandbox mode per agent.
 
 ```toml
 [agents.presets.kids.sandbox]
-network = "blocked"          # No network access
-workspace_mount = "ro"       # Read-only workspace
-memory_limit = "256M"        # Lower memory limit
-cpu_quota = 0.5              # Half a CPU core
+mode = "all"                 # Always sandbox this agent
 ```
 
-Available override fields: `mode`, `network`, `trusted_domains`,
-`workspace_mount`, `memory_limit`, `cpu_quota`.
+Available values: `"off"`, `"all"`, `"non-main"`. The override is applied
+as a per-session setting on the sandbox router.
 
 ## Per-Agent Skill Policy
 

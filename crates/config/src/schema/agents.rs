@@ -409,37 +409,23 @@ impl Default for SessionAccessPolicyConfig {
     }
 }
 
-/// Per-agent sandbox policy overrides.
+/// Per-agent sandbox mode override.
 ///
-/// Each field, when set, overrides the corresponding field from the global
-/// `[tools.exec.sandbox]` config. Unset fields inherit the global value.
+/// Only `mode` is enforced at runtime (applied as a per-session override
+/// on the `SandboxRouter`). Per-session network/workspace/resource
+/// overrides require deeper `SandboxRouter` changes and will be added
+/// when the router gains per-session config overlays.
 ///
 /// ```toml
 /// [agents.presets.kids.sandbox]
-/// network = "blocked"
-/// workspace_mount = "ro"
+/// mode = "all"
 /// ```
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PresetSandboxPolicy {
     /// Sandbox mode override: "off", "all", "non-main".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
-    /// Network policy override: "blocked", "trusted", "bypass".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub network: Option<String>,
-    /// Domain allowlist override for "trusted" network mode.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trusted_domains: Option<Vec<String>>,
-    /// Workspace mount mode override: "ro" or "rw".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workspace_mount: Option<String>,
-    /// Memory limit override (e.g. "512M", "1G").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_limit: Option<String>,
-    /// CPU quota override (e.g. 0.5 = half core, 2.0 = two cores).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cpu_quota: Option<f64>,
 }
 
 impl PresetSandboxPolicy {
@@ -447,40 +433,8 @@ impl PresetSandboxPolicy {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.mode.is_none()
-            && self.network.is_none()
-            && self.trusted_domains.is_none()
-            && self.workspace_mount.is_none()
-            && self.memory_limit.is_none()
-            && self.cpu_quota.is_none()
-    }
-
-    /// Apply these overrides onto a global `SandboxConfig`, mutating in place.
-    /// Only non-`None` fields are overwritten.
-    pub fn apply_to(&self, target: &mut SandboxConfig) {
-        if let Some(ref mode) = self.mode {
-            target.mode = mode.clone();
-        }
-        if let Some(ref network) = self.network {
-            target.network = network.clone();
-        }
-        if let Some(ref domains) = self.trusted_domains {
-            target.trusted_domains = domains.clone();
-        }
-        if let Some(ref mount) = self.workspace_mount {
-            target.workspace_mount = mount.clone();
-        }
-        if let Some(ref mem) = self.memory_limit {
-            target.resource_limits.memory_limit = Some(mem.clone());
-        }
-        if let Some(cpu) = self.cpu_quota {
-            target.resource_limits.cpu_quota = Some(cpu);
-        }
     }
 }
-
-// Manual Eq impl because f64 doesn't impl Eq, but cpu_quota values are
-// discrete user inputs that compare bitwise.
-impl Eq for PresetSandboxPolicy {}
 
 /// Per-agent skill access control.
 ///

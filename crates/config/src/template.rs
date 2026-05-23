@@ -330,8 +330,7 @@ port = {port}                           # Port number (auto-generated for this i
 # [agents.presets.kids.mcp]
 # allow_servers = []                # No MCP tools at all
 # [agents.presets.kids.sandbox]
-# network = "blocked"               # No network access
-# workspace_mount = "ro"            # Read-only workspace
+# mode = "all"                      # Always sandbox this agent
 # [agents.presets.kids.skills]
 # deny = ["gaming", "social-media"] # Block specific skill categories
 #
@@ -340,8 +339,7 @@ port = {port}                           # Port number (auto-generated for this i
 # [agents.presets.admin.mcp]
 # allow_servers = ["github", "home-assistant", "memory"]
 # [agents.presets.admin.sandbox]
-# network = "trusted"               # Proxy-filtered network
-# workspace_mount = "rw"            # Read-write workspace
+# mode = "all"                      # Always sandbox this agent
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SESSION MODES
