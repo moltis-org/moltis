@@ -186,6 +186,47 @@ async fn discover_hooks_lists_disabled_config_hooks_without_registering() {
 }
 
 #[tokio::test]
+async fn config_hook_info_lists_only_parsed_events() {
+    let _guard = LocalModelConfigTestGuard::new();
+    let data_dir = tempfile::tempdir().unwrap();
+    let config_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        config_dir.path().join("moltis.toml"),
+        r#"[hooks]
+
+[[hooks.hooks]]
+name = "config-test-hook"
+command = "printf ''"
+events = ["BeforeLLMCall", "NotARealEvent"]
+timeout = 7
+"#,
+    )
+    .unwrap();
+    moltis_config::set_data_dir(data_dir.path().to_path_buf());
+    moltis_config::set_config_dir(config_dir.path().to_path_buf());
+
+    let sessions_dir = data_dir.path().join("sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+    let session_store = Arc::new(moltis_sessions::store::SessionStore::new(sessions_dir));
+
+    let (registry, info) = discover_and_build_hooks(&HashSet::new(), Some(&session_store)).await;
+    let registry = registry.expect("expected hook registry to be created");
+    let handler_names = registry.handler_names();
+
+    assert!(handler_names.iter().any(|n| n == "config-test-hook"));
+    let hook_info = info
+        .iter()
+        .find(|hook| hook.name == "config-test-hook")
+        .expect("config hook should be discovered");
+    assert_eq!(hook_info.events, vec!["BeforeLLMCall"]);
+    assert!(hook_info.enabled);
+    assert!(hook_info.eligible);
+
+    moltis_config::clear_config_dir();
+    moltis_config::clear_data_dir();
+}
+
+#[tokio::test]
 async fn filesystem_hook_takes_precedence_over_same_named_config_hook() {
     let _guard = LocalModelConfigTestGuard::new();
     let data_dir = tempfile::tempdir().unwrap();

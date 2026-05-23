@@ -329,6 +329,7 @@ pub(crate) async fn discover_and_build_hooks(
                     },
                 })
                 .collect::<Vec<_>>();
+            let event_names = events.iter().map(|event| event.to_string()).collect();
             let is_enabled = !disabled.contains(&hook.name) && !events.is_empty();
             config_hook_count += 1;
 
@@ -336,7 +337,7 @@ pub(crate) async fn discover_and_build_hooks(
                 name: hook.name.clone(),
                 description: String::new(),
                 emoji: None,
-                events: hook.events.clone(),
+                events: event_names,
                 command: Some(hook.command.clone()),
                 timeout: hook.timeout,
                 priority: 0,
