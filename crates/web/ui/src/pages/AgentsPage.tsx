@@ -347,10 +347,15 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 				sandbox: { mode: sandboxMode || null },
 				skills: { allow: parseCsvList(skillsAllow), deny: parseCsvList(skillsDeny) },
 			});
-			// Merge: strip existing [mcp], [sandbox], [skills] sections from
-			// raw TOML to avoid duplicates, then prepend generated sections.
+			// Merge: strip [mcp], [sandbox], [skills] sections from the raw TOML
+			// to avoid duplicates. Put raw top-level keys FIRST so they stay at
+			// the TOML document root, then APPEND generated sections — this
+			// prevents model/timeout_secs/etc. from being misassigned to the
+			// last generated section header.
 			const rawWithoutStructured = stripTomlSections(tomlToSave, ["mcp", "sandbox", "skills"]).trim();
-			tomlToSave = rawWithoutStructured ? `${generated}\n\n${rawWithoutStructured}` : generated;
+			tomlToSave = rawWithoutStructured
+				? `${rawWithoutStructured}\n\n${generated}`
+				: generated;
 		}
 		// Always save when capabilities panel is open — an empty TOML string
 		// clears the preset, which is correct when the user has removed all

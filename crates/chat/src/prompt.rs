@@ -569,12 +569,36 @@ pub(crate) fn apply_runtime_tool_filters(
     };
 
     let policy = resolve_effective_policy(config, policy_context);
-    // NOTE: Do not globally restrict tools by discovered skill `allowed_tools`.
-    // Skills are always discovered for prompt injection; applying those lists at
-    // runtime can unintentionally remove unrelated tools (for example, leaving
-    // only `web_fetch` and preventing `create_skill` from being called).
-    // Tool availability here is controlled by configured runtime policy.
-    base_registry.clone_allowed_by(|name| policy.is_allowed(name))
+
+    // Resolve MCP allow-list: if the agent preset uses Allow mode, only
+    // tools from listed servers pass through. This is handled here (not
+    // in the policy deny layer) because ToolPolicy's deny-wins-over-allow
+    // semantics can't express "deny all MCP except these servers".
+    let mcp_allow: Option<&[moltis_config::schema::McpServerId]> = config
+        .agents
+        .get_preset(&policy_context.agent_id)
+        .and_then(|p| match &p.mcp {
+            moltis_config::schema::PresetMcpPolicy::Allow(servers) => Some(servers.as_slice()),
+            _ => None,
+        });
+
+    base_registry.clone_allowed_by(|name| {
+        if !policy.is_allowed(name) {
+            return false;
+        }
+        // If MCP allow-list is active, additionally filter MCP tools.
+        if let Some(allowed_servers) = mcp_allow
+            && name.starts_with("mcp__")
+        {
+            // Extract server name from mcp__<server>__<tool>.
+            let server = name
+                .strip_prefix("mcp__")
+                .and_then(|rest| rest.split("__").next())
+                .unwrap_or("");
+            return allowed_servers.iter().any(|s| s.as_str() == server);
+        }
+        true
+    })
 }
 
 /// Build a `PolicyContext` from runtime context and request parameters.
