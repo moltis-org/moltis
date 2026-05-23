@@ -328,18 +328,18 @@ pub(crate) fn filter_skills_for_agent(
         .filter(|s| {
             // If allow is non-empty, must match by name or category.
             if !policy.allow.is_empty()
-                && !policy.allow.iter().any(|a| {
-                    a == &s.name
-                        || s.category.as_deref().is_some_and(|cat| a == cat)
-                })
+                && !policy
+                    .allow
+                    .iter()
+                    .any(|a| a == &s.name || s.category.as_deref().is_some_and(|cat| a == cat))
             {
                 return false;
             }
             // Deny by name or category.
-            !policy.deny.iter().any(|d| {
-                d == &s.name
-                    || s.category.as_deref().is_some_and(|cat| d == cat)
-            })
+            !policy
+                .deny
+                .iter()
+                .any(|d| d == &s.name || s.category.as_deref().is_some_and(|cat| d == cat))
         })
         .collect()
 }

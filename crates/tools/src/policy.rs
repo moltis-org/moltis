@@ -530,9 +530,7 @@ mod tests {
         cfg.agents
             .presets
             .insert("restricted".into(), moltis_config::schema::AgentPreset {
-                mcp: moltis_config::schema::PresetMcpPolicy::Deny(vec![
-                    "home-assistant".into(),
-                ]),
+                mcp: moltis_config::schema::PresetMcpPolicy::Deny(vec!["home-assistant".into()]),
                 ..Default::default()
             });
 
@@ -560,9 +558,7 @@ mod tests {
         let stub_entry = || -> moltis_config::schema::McpServerEntry {
             serde_json::from_value(serde_json::json!({})).expect("empty MCP entry")
         };
-        cfg.mcp
-            .servers
-            .insert("github".into(), stub_entry());
+        cfg.mcp.servers.insert("github".into(), stub_entry());
         cfg.mcp
             .servers
             .insert("home-assistant".into(), stub_entry());
@@ -571,9 +567,7 @@ mod tests {
         cfg.agents
             .presets
             .insert("allow-only".into(), moltis_config::schema::AgentPreset {
-                mcp: moltis_config::schema::PresetMcpPolicy::Allow(vec![
-                    "github".into(),
-                ]),
+                mcp: moltis_config::schema::PresetMcpPolicy::Allow(vec!["github".into()]),
                 ..Default::default()
             });
 

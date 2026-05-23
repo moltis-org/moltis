@@ -62,6 +62,7 @@ Use this when adding a new channel crate or bringing an existing one to parity.
 - Location send and receive.
 - Pairing or OAuth bootstrap for channels that support it.
 - Per-room, per-channel, or per-user model overrides.
+- Per-channel or per-user agent assignment (`agent_id`) for capability boundaries.
 - Rich onboarding help, setup links, and smart defaults like real public-server placeholders.
 
 ## Web UI checklist

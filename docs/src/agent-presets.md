@@ -66,6 +66,9 @@ Per preset (`[agents.presets.<name>]`):
 - `identity.name`, `identity.emoji`, `identity.theme`
 - `model`
 - `tools.allow`, `tools.deny`
+- `mcp` — MCP server access: `allow_servers` or `deny_servers`
+- `sandbox.*` — per-agent sandbox overrides
+- `skills.allow`, `skills.deny`
 - `system_prompt_suffix`
 - `max_iterations`, `timeout_secs`
 - `sessions.*` access policy
@@ -111,6 +114,58 @@ The directory is created automatically so agents can write to it.
 scope = "project"
 max_lines = 100
 ```
+
+## MCP Server Access Control
+
+Each preset can restrict which MCP servers are visible. Use `allow_servers` for
+a positive allow-list, or `deny_servers` for a deny-list. The two are mutually
+exclusive — set one or the other, not both.
+
+```toml
+# Only allow specific MCP servers:
+[agents.presets.restricted.mcp]
+allow_servers = ["github", "memory"]
+
+# Block specific MCP servers:
+[agents.presets.open.mcp]
+deny_servers = ["home-assistant"]
+```
+
+When `allow_servers` is set, every configured MCP server not in the list is
+denied. An empty `allow_servers = []` blocks all MCP tools.
+
+## Per-Agent Sandbox Policy
+
+Override global `[tools.exec.sandbox]` settings per agent. Unset fields
+inherit the global value.
+
+```toml
+[agents.presets.kids.sandbox]
+network = "blocked"          # No network access
+workspace_mount = "ro"       # Read-only workspace
+memory_limit = "256M"        # Lower memory limit
+cpu_quota = 0.5              # Half a CPU core
+```
+
+Available override fields: `mode`, `network`, `trusted_domains`,
+`workspace_mount`, `memory_limit`, `cpu_quota`.
+
+## Per-Agent Skill Policy
+
+Filter which skills are visible to an agent by name or category.
+
+```toml
+# Only allow specific skills:
+[agents.presets.focused.skills]
+allow = ["web_search", "research"]
+
+# Block specific categories:
+[agents.presets.safe.skills]
+deny = ["gaming", "social-media"]
+```
+
+When `allow` is non-empty, only matching skills (by name or category) are
+visible. `deny` is then applied on top.
 
 ## Model Selection Order
 

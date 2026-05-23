@@ -319,6 +319,29 @@ port = {port}                           # Port number (auto-generated for this i
 # identity.theme = "thorough, skeptical, and evidence-oriented"
 # system_prompt_suffix = "..."
 # max_iterations = 16
+#
+# ── Per-agent capability boundaries ──────────────────────────────────────────
+# Each agent can be scoped to specific MCP servers, sandbox policies, and skills.
+# Assign agents to channels via `agent_id` in the channel account config.
+#
+# Example: restricted agent for kids (no MCP, no network, limited skills):
+# [agents.presets.kids]
+# model = "anthropic/claude-haiku-4-5-20251001"
+# [agents.presets.kids.mcp]
+# allow_servers = []                # No MCP tools at all
+# [agents.presets.kids.sandbox]
+# network = "blocked"               # No network access
+# workspace_mount = "ro"            # Read-only workspace
+# [agents.presets.kids.skills]
+# deny = ["gaming", "social-media"] # Block specific skill categories
+#
+# Example: full-access agent for parents:
+# [agents.presets.admin]
+# [agents.presets.admin.mcp]
+# allow_servers = ["github", "home-assistant", "memory"]
+# [agents.presets.admin.sandbox]
+# network = "trusted"               # Proxy-filtered network
+# workspace_mount = "rw"            # Read-write workspace
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SESSION MODES
