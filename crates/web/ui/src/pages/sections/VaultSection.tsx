@@ -384,7 +384,7 @@ export function VaultSection(): VNode {
 					/>
 				) : null}
 
-				{vaultStatus === "uninitialized" && hasPassword ? (
+				{initializeRecoveryKey || (vaultStatus === "uninitialized" && hasPassword) ? (
 					<InitializeVaultForm
 						password={initializePw}
 						initializing={initializing}
