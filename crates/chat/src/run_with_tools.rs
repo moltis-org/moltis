@@ -227,8 +227,16 @@ pub(crate) async fn run_with_tools(
     // Layer 1: instruct the LLM to write speech-friendly output when voice is active.
     let system_prompt = apply_voice_reply_suffix(system_prompt, desired_reply_medium);
 
-    // Determine sandbox mode for this session.
+    // Apply per-agent sandbox mode override, then determine sandbox mode.
     let session_is_sandboxed = if let Some(router) = state.sandbox_router() {
+        // If the agent preset has a sandbox mode override, apply it as a
+        // per-session override so the exec tool inherits the agent's policy.
+        if let Some(preset) = persona.config.agents.get_preset(agent_id)
+            && let Some(ref mode) = preset.sandbox.mode
+        {
+            let enabled = mode != "off";
+            router.set_override(session_key, enabled).await;
+        }
         router.is_sandboxed(session_key).await
     } else {
         false
