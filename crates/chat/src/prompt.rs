@@ -326,20 +326,24 @@ pub(crate) fn filter_skills_for_agent(
     skills
         .into_iter()
         .filter(|s| {
-            // If allow is non-empty, must match by name or category.
-            if !policy.allow.is_empty()
-                && !policy
-                    .allow
+            // If allow is Some, must match by name or category.
+            // Some(vec![]) means "no skills allowed" — filters everything.
+            if let Some(ref allow) = policy.allow
+                && !allow
                     .iter()
                     .any(|a| a == &s.name || s.category.as_deref().is_some_and(|cat| a == cat))
             {
                 return false;
             }
-            // Deny by name or category.
-            !policy
-                .deny
-                .iter()
-                .any(|d| d == &s.name || s.category.as_deref().is_some_and(|cat| d == cat))
+            // Deny by name or category (if present).
+            if let Some(ref deny) = policy.deny
+                && deny
+                    .iter()
+                    .any(|d| d == &s.name || s.category.as_deref().is_some_and(|cat| d == cat))
+            {
+                return false;
+            }
+            true
         })
         .collect()
 }

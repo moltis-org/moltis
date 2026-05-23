@@ -152,7 +152,7 @@ interface PresetFields {
 	model?: string | null;
 	mcp?: { mode: string; servers?: string[] };
 	sandbox?: { mode?: string | null };
-	skills?: { allow?: string[]; deny?: string[] };
+	skills?: { allow?: string[] | null; deny?: string[] | null };
 }
 
 /** Parse a comma-separated string into a trimmed, non-empty array. */
@@ -213,12 +213,13 @@ function buildCapabilitiesToml(fields: PresetFields): string {
 		lines.push("[sandbox]");
 		lines.push(`mode = "${tomlEscape(fields.sandbox.mode)}"`);
 	}
-	// Skills
+	// Skills — emit allow/deny when present (including empty allow = [] which
+	// means "deny all skills", matching the MCP allow_servers = [] semantics).
 	const sk = fields.skills;
-	if (sk && ((sk.allow && sk.allow.length > 0) || (sk.deny && sk.deny.length > 0))) {
+	if (sk && (sk.allow != null || (sk.deny && sk.deny.length > 0))) {
 		lines.push("");
 		lines.push("[skills]");
-		if (sk.allow && sk.allow.length > 0) lines.push(`allow = ${tomlArray(sk.allow)}`);
+		if (sk.allow != null) lines.push(`allow = ${tomlArray(sk.allow)}`);
 		if (sk.deny && sk.deny.length > 0) lines.push(`deny = ${tomlArray(sk.deny)}`);
 	}
 	return lines.join("\n");
@@ -241,6 +242,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 	const [availableMcpServers, setAvailableMcpServers] = useState<McpServer[]>([]);
 	const [sandboxMode, setSandboxMode] = useState("");
 	const [skillsAllow, setSkillsAllow] = useState("");
+	const [skillsAllowSet, setSkillsAllowSet] = useState(false);
 	const [skillsDeny, setSkillsDeny] = useState("");
 	const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
 	const [advancedTomlOpen, setAdvancedTomlOpen] = useState(false);
@@ -303,9 +305,12 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 					if (f.sandbox.mode) setCapabilitiesOpen(true);
 				}
 				if (f.skills) {
-					setSkillsAllow((f.skills.allow || []).join(", "));
+					if (Array.isArray(f.skills.allow)) {
+						setSkillsAllow(f.skills.allow.join(", "));
+						setSkillsAllowSet(true);
+					}
 					setSkillsDeny((f.skills.deny || []).join(", "));
-					if ((f.skills.allow && f.skills.allow.length > 0) || (f.skills.deny && f.skills.deny.length > 0)) {
+					if (Array.isArray(f.skills.allow) || (f.skills.deny && f.skills.deny.length > 0)) {
 						setCapabilitiesOpen(true);
 					}
 				}
@@ -345,7 +350,10 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 			const generated = buildCapabilitiesToml({
 				mcp: { mode: mcpMode, servers: mcpServers },
 				sandbox: { mode: sandboxMode || null },
-				skills: { allow: parseCsvList(skillsAllow), deny: parseCsvList(skillsDeny) },
+				skills: {
+					allow: skillsAllowSet ? parseCsvList(skillsAllow) : null,
+					deny: parseCsvList(skillsDeny),
+				},
 			});
 			// Merge: strip [mcp], [sandbox], [skills] sections from the raw TOML
 			// to avoid duplicates. Put raw top-level keys FIRST so they stay at
@@ -353,9 +361,7 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 			// prevents model/timeout_secs/etc. from being misassigned to the
 			// last generated section header.
 			const rawWithoutStructured = stripTomlSections(tomlToSave, ["mcp", "sandbox", "skills"]).trim();
-			tomlToSave = rawWithoutStructured
-				? `${rawWithoutStructured}\n\n${generated}`
-				: generated;
+			tomlToSave = rawWithoutStructured ? `${rawWithoutStructured}\n\n${generated}` : generated;
 		}
 		// Always save when capabilities panel is open — an empty TOML string
 		// clears the preset, which is correct when the user has removed all
@@ -567,7 +573,10 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 									type="text"
 									className="provider-key-input"
 									value={skillsAllow}
-									onInput={(e) => setSkillsAllow(targetValue(e))}
+									onInput={(e) => {
+										setSkillsAllow(targetValue(e));
+										setSkillsAllowSet(true);
+									}}
 									placeholder="web_search, research"
 									style={{ fontSize: "0.75rem" }}
 								/>

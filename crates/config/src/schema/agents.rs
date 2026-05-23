@@ -450,19 +450,21 @@ impl PresetSandboxPolicy {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PresetSkillPolicy {
-    /// When non-empty, only these skills (by name or category) are available.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allow: Vec<String>,
+    /// When `Some`, only these skills (by name or category) are available.
+    /// `Some(vec![])` means "no skills allowed" (deny all).
+    /// `None` (absent from config) means "no restriction".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow: Option<Vec<String>>,
     /// Skills (by name or category) to deny from this agent.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deny: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deny: Option<Vec<String>>,
 }
 
 impl PresetSkillPolicy {
     /// Returns `true` when no skill filtering is configured.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.allow.is_empty() && self.deny.is_empty()
+        self.allow.is_none() && self.deny.is_none()
     }
 }
 
