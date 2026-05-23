@@ -574,8 +574,9 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 									className="provider-key-input"
 									value={skillsAllow}
 									onInput={(e) => {
-										setSkillsAllow(targetValue(e));
-										setSkillsAllowSet(true);
+										const val = targetValue(e);
+										setSkillsAllow(val);
+										setSkillsAllowSet(val.trim().length > 0);
 									}}
 									placeholder="web_search, research"
 									style={{ fontSize: "0.75rem" }}
