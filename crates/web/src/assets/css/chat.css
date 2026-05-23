@@ -500,10 +500,9 @@
   background-color: transparent !important;
 }
 
-/* Light mode uses default --shiki-light colors */
+/* Light mode uses Shiki's inline default theme colors. */
 [data-theme="light"] .shiki,
 [data-theme="light"] .shiki span {
-  color: var(--shiki-light) !important;
   background-color: transparent !important;
 }
 

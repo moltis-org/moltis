@@ -72,4 +72,38 @@ test.describe("Code block syntax highlighting", () => {
 
 		expect(pageErrors).toEqual([]);
 	});
+
+	test("light theme keeps computed syntax colors", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		await page.evaluate(async () => {
+			document.documentElement.setAttribute("data-theme", "light");
+			document.documentElement.style.colorScheme = "light";
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var helpers = await import(`${prefix}js/helpers.js`);
+			var codeHighlight = await import(`${prefix}js/code-highlight.js`);
+			await codeHighlight.initHighlighter();
+			var markdown = "```javascript\nconst x = 42;\n```";
+			var existing = document.getElementById("e2e-shiki-light-fixture");
+			if (existing) existing.remove();
+			var fixture = document.createElement("div");
+			fixture.id = "e2e-shiki-light-fixture";
+			fixture.className = "msg assistant";
+			fixture.innerHTML = helpers.renderMarkdown(markdown); // eslint-disable-line no-unsanitized/property
+			document.body.appendChild(fixture);
+			await codeHighlight.highlightCodeBlocks(fixture);
+		});
+
+		var colorInfo = await page.locator("#e2e-shiki-light-fixture code.shiki").evaluate((codeEl) => {
+			var codeColor = getComputedStyle(codeEl).color;
+			var tokenColors = Array.from(codeEl.querySelectorAll("span")).map((span) => getComputedStyle(span).color);
+			return { codeColor, tokenColors };
+		});
+		expect(colorInfo.tokenColors.some((color) => color !== colorInfo.codeColor)).toBe(true);
+
+		expect(pageErrors).toEqual([]);
+	});
 });
