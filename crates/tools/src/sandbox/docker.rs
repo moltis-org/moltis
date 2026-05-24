@@ -644,7 +644,7 @@ impl Sandbox for DockerSandbox {
             debug!(
                 tag,
                 stdout = %tail_lines(&stdout, 20),
-                stderr = %stderr.trim(),
+                stderr = %tail_lines(&stderr, 20),
                 "{} build failed",
                 self.cli,
             );
