@@ -1045,8 +1045,8 @@ export function ProviderStep({ onNext, onBack }: { onNext: () => void; onBack?: 
 	if (loading) return <div className="text-sm text-[var(--muted)]">{t("onboarding:provider.loadingLlms")}</div>;
 
 	const configuredProviders = providers.filter((p) => p.configured);
-	const recommendedProviders = providers.filter((p) => RECOMMENDED_PROVIDERS.has(p.name));
-	const otherProviders = providers.filter((p) => !RECOMMENDED_PROVIDERS.has(p.name));
+	const recommendedProviders = providers.filter((p) => p.configured || RECOMMENDED_PROVIDERS.has(p.name));
+	const otherProviders = providers.filter((p) => !(p.configured || RECOMMENDED_PROVIDERS.has(p.name)));
 	const otherIsActive = otherProviders.some(
 		(p) => configuring === p.name || oauthProvider === p.name || localProvider === p.name,
 	);

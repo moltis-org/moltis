@@ -1113,6 +1113,74 @@ test.describe("Onboarding wizard", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("configured non-default LLM providers appear in recommended onboarding list", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+
+		await page.route("**/api/auth/status", async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ authenticated: true, setup_required: false, localhost_only: true }),
+			});
+		});
+
+		await page.addInitScript(() => {
+			class FakeWebSocket {
+				static CONNECTING = 0;
+				static OPEN = 1;
+				static CLOSING = 2;
+				static CLOSED = 3;
+
+				readyState = FakeWebSocket.CONNECTING;
+				onopen = null;
+				onmessage = null;
+				onclose = null;
+
+				constructor() {
+					queueMicrotask(() => {
+						this.readyState = FakeWebSocket.OPEN;
+						this.onopen?.({});
+					});
+				}
+
+				send(raw) {
+					const request = JSON.parse(raw || "{}");
+					let payload = {};
+					if (request.method === "connect") {
+						payload = { type: "hello-ok" };
+					} else if (request.method === "providers.available") {
+						payload = [
+							{ name: "openai", displayName: "OpenAI", authType: "api-key", configured: false },
+							{ name: "perplexity", displayName: "Perplexity", authType: "api-key", configured: true },
+							{ name: "together", displayName: "Together AI", authType: "api-key", configured: false },
+						];
+					}
+					const response = { type: "res", id: request.id, ok: true, payload };
+					queueMicrotask(() => this.onmessage?.({ data: JSON.stringify(response) }));
+				}
+
+				close() {
+					this.readyState = FakeWebSocket.CLOSED;
+					this.onclose?.({});
+				}
+			}
+
+			window.WebSocket = FakeWebSocket;
+		});
+
+		await page.goto("/onboarding");
+		await moveToLlmStep(page);
+
+		const recommendedSection = page
+			.locator(".onboarding-card .flex.flex-col.gap-2")
+			.filter({ has: page.getByText("Recommended", { exact: true }) })
+			.first();
+		await expect(recommendedSection.getByText("Perplexity", { exact: true })).toBeVisible();
+		await expect(page.getByRole("button", { name: /All providers \(1 more\)/ })).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("voice needs-key badge uses dedicated pill styling class", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/onboarding");
