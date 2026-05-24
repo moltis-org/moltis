@@ -19,7 +19,6 @@ interface McpServer {
 	transport?: string;
 	command?: string;
 	args?: string[];
-	env?: Record<string, string>;
 	env_names?: string[];
 	envNames?: string[];
 	url?: string;
@@ -222,7 +221,7 @@ function remoteHeaderSummary(server: McpServer): string {
 }
 
 function stdioEnvNames(server: McpServer): string[] {
-	return (server.env_names || server.envNames || (server.env ? Object.keys(server.env) : []))
+	return (server.env_names || server.envNames || [])
 		.filter((n) => typeof n === "string" && n.trim())
 		.map((n) => n.trim());
 }

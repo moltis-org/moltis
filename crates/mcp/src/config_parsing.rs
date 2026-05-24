@@ -108,7 +108,10 @@ pub fn parse_server_config(
     ) {
         HashMap::new()
     } else if params.get("env").is_some() {
-        parse_secret_string_map(params.get("env").unwrap_or(&Value::Null))
+        parse_env_update(
+            params.get("env").unwrap_or(&Value::Null),
+            existing.map(|cfg| &cfg.env),
+        )
     } else {
         existing.map(|cfg| cfg.env.clone()).unwrap_or_default()
     };
@@ -202,6 +205,24 @@ fn parse_secret_string_map(value: &Value) -> HashMap<String, Secret<String>> {
         .into_iter()
         .map(|(key, value)| (key, Secret::new(value)))
         .collect()
+}
+
+fn parse_env_update(
+    value: &Value,
+    existing: Option<&HashMap<String, Secret<String>>>,
+) -> HashMap<String, Secret<String>> {
+    let updates = parse_secret_string_map(value);
+    let Some(existing) = existing else {
+        return updates;
+    };
+
+    if updates.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut merged = existing.clone();
+    merged.extend(updates);
+    merged
 }
 
 /// Merge environment overrides, keeping base config values authoritative.
@@ -554,5 +575,78 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.request_timeout_secs, Some(120));
+    }
+
+    #[test]
+    fn parse_server_config_merges_partial_stdio_env_updates() {
+        let existing = McpServerConfig {
+            command: "uvx".to_string(),
+            args: vec!["mcp-server".to_string()],
+            env: HashMap::from([
+                ("KEEP".to_string(), Secret::new("old-keep".to_string())),
+                (
+                    "REPLACE".to_string(),
+                    Secret::new("old-replace".to_string()),
+                ),
+            ]),
+            enabled: true,
+            request_timeout_secs: None,
+            transport: TransportType::Stdio,
+            url: None,
+            headers: HashMap::new(),
+            oauth: None,
+            display_name: None,
+        };
+
+        let cfg = parse_server_config(
+            &serde_json::json!({
+                "env": {
+                    "REPLACE": "new-replace"
+                }
+            }),
+            Some(&existing),
+        )
+        .unwrap();
+
+        assert_eq!(
+            cfg.env
+                .get("KEEP")
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("old-keep")
+        );
+        assert_eq!(
+            cfg.env
+                .get("REPLACE")
+                .map(ExposeSecret::expose_secret)
+                .map(String::as_str),
+            Some("new-replace")
+        );
+    }
+
+    #[test]
+    fn parse_server_config_allows_clearing_stdio_env() {
+        let existing = McpServerConfig {
+            command: "uvx".to_string(),
+            args: vec!["mcp-server".to_string()],
+            env: HashMap::from([("TOKEN".to_string(), Secret::new("secret".to_string()))]),
+            enabled: true,
+            request_timeout_secs: None,
+            transport: TransportType::Stdio,
+            url: None,
+            headers: HashMap::new(),
+            oauth: None,
+            display_name: None,
+        };
+
+        let cfg = parse_server_config(
+            &serde_json::json!({
+                "env": {}
+            }),
+            Some(&existing),
+        )
+        .unwrap();
+
+        assert!(cfg.env.is_empty());
     }
 }
