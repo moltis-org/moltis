@@ -20,7 +20,7 @@ use {
             PromptRuntimeContext, build_system_prompt_minimal_runtime_details,
             build_system_prompt_with_session_runtime_details,
         },
-        runner::{RunnerEvent, run_agent_loop_streaming},
+        runner::{AgentLoopLimits, RunnerEvent, run_agent_loop_streaming_with_limits},
         tool_registry::ToolRegistry,
     },
     moltis_config::ToolMode,
@@ -87,6 +87,15 @@ pub(crate) async fn run_with_tools(
     sender_name: Option<String>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
+    let runtime_limits = persona.config.agent_runtime_limits(agent_id);
+    info!(
+        agent_id,
+        timeout_secs = runtime_limits.timeout_secs,
+        timeout_source = runtime_limits.timeout_source.as_str(),
+        max_iterations = runtime_limits.max_iterations,
+        max_iterations_source = runtime_limits.max_iterations_source.as_str(),
+        "resolved agent runtime limits"
+    );
 
     let tool_mode = effective_tool_mode(&*provider);
     let native_tools = matches!(tool_mode, ToolMode::Native);
@@ -865,7 +874,7 @@ pub(crate) async fn run_with_tools(
     });
 
     let provider_ref = provider.clone();
-    let first_result = run_agent_loop_streaming(
+    let first_result = run_agent_loop_streaming_with_limits(
         provider,
         &filtered_registry,
         &system_prompt,
@@ -876,6 +885,9 @@ pub(crate) async fn run_with_tools(
         hook_registry.clone(),
         sender_name.clone(),
         Some(steer_inbox.clone()),
+        AgentLoopLimits {
+            max_iterations: Some(runtime_limits.max_iterations),
+        },
     )
     .await;
 
@@ -964,7 +976,7 @@ pub(crate) async fn run_with_tools(
                     };
 
                     // effective_user_content already carries datetime context.
-                    run_agent_loop_streaming(
+                    run_agent_loop_streaming_with_limits(
                         provider_ref.clone(),
                         &filtered_registry,
                         &system_prompt,
@@ -975,6 +987,9 @@ pub(crate) async fn run_with_tools(
                         hook_registry,
                         sender_name,
                         Some(steer_inbox.clone()),
+                        AgentLoopLimits {
+                            max_iterations: Some(runtime_limits.max_iterations),
+                        },
                     )
                     .await
                 },

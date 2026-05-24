@@ -365,7 +365,68 @@ pub struct ExternalAgentConfig {
     pub use_tmux: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRuntimeLimitSource {
+    GlobalTools,
+    AgentPreset,
+}
+
+impl AgentRuntimeLimitSource {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GlobalTools => "global_tools",
+            Self::AgentPreset => "agent_preset",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentRuntimeLimits {
+    pub timeout_secs: u64,
+    pub timeout_source: AgentRuntimeLimitSource,
+    pub max_iterations: usize,
+    pub max_iterations_source: AgentRuntimeLimitSource,
+}
+
+impl AgentRuntimeLimits {
+    #[must_use]
+    pub fn resolve(tools: &ToolsConfig, preset: Option<&AgentPreset>) -> Self {
+        let (timeout_secs, timeout_source) = preset
+            .and_then(|preset| preset.timeout_secs)
+            .map(|timeout_secs| (timeout_secs, AgentRuntimeLimitSource::AgentPreset))
+            .unwrap_or((
+                tools.agent_timeout_secs,
+                AgentRuntimeLimitSource::GlobalTools,
+            ));
+        let (max_iterations, max_iterations_source) = preset
+            .and_then(|preset| preset.max_iterations)
+            .map(|max_iterations| {
+                (
+                    usize::try_from(max_iterations).unwrap_or(usize::MAX),
+                    AgentRuntimeLimitSource::AgentPreset,
+                )
+            })
+            .unwrap_or((
+                tools.agent_max_iterations,
+                AgentRuntimeLimitSource::GlobalTools,
+            ));
+
+        Self {
+            timeout_secs,
+            timeout_source,
+            max_iterations,
+            max_iterations_source,
+        }
+    }
+}
+
 impl MoltisConfig {
+    #[must_use]
+    pub fn agent_runtime_limits(&self, agent_id: &str) -> AgentRuntimeLimits {
+        AgentRuntimeLimits::resolve(&self.tools, self.agents.get_preset(agent_id))
+    }
+
     /// Returns `true` when both the agent name and user name have been set
     /// (i.e. the onboarding wizard has been completed).
     pub fn is_onboarded(&self) -> bool {

@@ -21,10 +21,11 @@ use crate::{
 };
 
 use super::{
-    AUTO_CONTINUE_NUDGE, AgentRunError, AgentRunResult, MALFORMED_TOOL_RETRY_PROMPT, OnEvent,
-    RunnerEvent, UsageAccumulator, apply_before_llm_call_modify_payload,
-    apply_loop_detector_intervention, channel_binding_from_tool_context,
-    dispatch_after_llm_call_hook, dispatch_before_agent_start_hook, empty_tool_name_retry_prompt,
+    AUTO_CONTINUE_NUDGE, AgentLoopLimits, AgentRunError, AgentRunResult,
+    MALFORMED_TOOL_RETRY_PROMPT, OnEvent, RunnerEvent, UsageAccumulator,
+    apply_before_llm_call_modify_payload, apply_loop_detector_intervention,
+    channel_binding_from_tool_context, dispatch_after_llm_call_hook,
+    dispatch_before_agent_start_hook, empty_tool_name_retry_prompt,
     explicit_shell_command_from_user_content, find_empty_tool_name_call, finish_agent_run,
     has_named_tool_call, is_substantive_answer_text, log_tool_argument_diagnostic,
     record_answer_text, resolve_tool_lookup,
@@ -77,6 +78,33 @@ pub async fn run_agent_loop_with_context(
     hook_registry: Option<Arc<HookRegistry>>,
     sender_name: Option<String>,
 ) -> Result<AgentRunResult, AgentRunError> {
+    run_agent_loop_with_context_and_limits(
+        provider,
+        tools,
+        system_prompt,
+        user_content,
+        on_event,
+        history,
+        tool_context,
+        hook_registry,
+        sender_name,
+        Default::default(),
+    )
+    .await
+}
+
+pub async fn run_agent_loop_with_context_and_limits(
+    provider: Arc<dyn LlmProvider>,
+    tools: &ToolRegistry,
+    system_prompt: &str,
+    user_content: &UserContent,
+    on_event: Option<&OnEvent>,
+    history: Option<Vec<ChatMessage>>,
+    tool_context: Option<serde_json::Value>,
+    hook_registry: Option<Arc<HookRegistry>>,
+    sender_name: Option<String>,
+    limits: AgentLoopLimits,
+) -> Result<AgentRunResult, AgentRunError> {
     let native_tools = provider.supports_tools();
     let config = moltis_config::discover_and_load();
     let max_tool_result_bytes = config.tools.max_tool_result_bytes;
@@ -85,7 +113,10 @@ pub async fn run_agent_loop_with_context(
     let compaction_ratio = config.tools.tool_result_compaction_ratio as usize;
     let overflow_ratio = config.tools.preemptive_overflow_ratio as usize;
     let compaction_min_iterations = config.tools.compaction_min_iterations;
-    let base_max_iterations = resolve_agent_max_iterations(config.tools.agent_max_iterations);
+    let configured_max_iterations = limits
+        .max_iterations
+        .unwrap_or(config.tools.agent_max_iterations);
+    let base_max_iterations = resolve_agent_max_iterations(configured_max_iterations);
     // Lazy mode needs extra iterations for tool_search discovery round-trips.
     let max_iterations = if config.tools.registry_mode == moltis_config::ToolRegistryMode::Lazy {
         base_max_iterations * 3

@@ -315,6 +315,16 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
             message: "tools.agent_max_iterations must be at least 1".into(),
         });
     }
+    for (name, preset) in &config.agents.presets {
+        if preset.max_iterations == Some(0) {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Error,
+                category: "invalid-value",
+                path: format!("agents.presets.{name}.max_iterations"),
+                message: "agents.presets.<name>.max_iterations must be at least 1".into(),
+            });
+        }
+    }
 
     // A zero workspace file limit would silently drop all AGENTS.md / TOOLS.md content.
     if config.chat.workspace_file_max_chars == 0 {

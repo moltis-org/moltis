@@ -860,9 +860,14 @@ impl LiveChatService {
             self.session_state_store.as_deref(),
         )
         .await;
+        let runtime_limits = persona.config.agent_runtime_limits(&session_agent_id);
         info!(
             session = %session_key,
             agent_id = %session_agent_id,
+            timeout_secs = runtime_limits.timeout_secs,
+            timeout_source = runtime_limits.timeout_source.as_str(),
+            max_iterations = runtime_limits.max_iterations,
+            max_iterations_source = runtime_limits.max_iterations_source.as_str(),
             client_seq = ?client_seq,
             "chat.send: persona loaded"
         );
@@ -1099,7 +1104,7 @@ impl LiveChatService {
             }
         }
 
-        let agent_timeout_secs = self.config.tools.agent_timeout_secs;
+        let agent_timeout_secs = runtime_limits.timeout_secs;
 
         let message_queue = Arc::clone(&self.message_queue);
         let state_for_drain = Arc::clone(&self.state);

@@ -70,6 +70,11 @@ pub struct AgentRunResult {
     pub raw_llm_responses: Vec<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AgentLoopLimits {
+    pub max_iterations: Option<usize>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct UsageAccumulator {
     total: Usage,

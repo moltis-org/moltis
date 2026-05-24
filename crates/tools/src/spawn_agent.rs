@@ -13,10 +13,13 @@ use {
     moltis_agents::{
         AgentRunError,
         model::LlmProvider,
-        runner::{RunnerEvent, run_agent_loop_with_context},
+        runner::{AgentLoopLimits, RunnerEvent, run_agent_loop_with_context_and_limits},
         tool_registry::{AgentTool, ToolRegistry},
     },
-    moltis_config::schema::{AgentPreset, AgentsConfig},
+    moltis_config::{
+        AgentRuntimeLimits,
+        schema::{AgentPreset, AgentsConfig},
+    },
     moltis_providers::ProviderRegistry,
     moltis_sessions::{metadata::SqliteSessionMetadata, store::SessionStore},
 };
@@ -367,6 +370,8 @@ impl AgentTool for SpawnAgentTool {
             .ok_or_else(|| Error::message("missing required parameter: task"))?;
         let context = str_param(&params, "context").unwrap_or("");
         let (preset_name, preset) = self.resolve_preset(&params).await?;
+        let config = moltis_config::discover_and_load();
+        let runtime_limits = AgentRuntimeLimits::resolve(&config.tools, preset.as_ref());
         let explicit_model = str_param(&params, "model").map(String::from);
         let model_id = explicit_model
             .clone()
@@ -427,6 +432,10 @@ impl AgentTool for SpawnAgentTool {
             depth = depth,
             model = %model_id,
             preset = ?preset_name,
+            timeout_secs = runtime_limits.timeout_secs,
+            timeout_source = runtime_limits.timeout_source.as_str(),
+            max_iterations = runtime_limits.max_iterations,
+            max_iterations_source = runtime_limits.max_iterations_source.as_str(),
             "spawning sub-agent"
         );
 
@@ -486,7 +495,7 @@ impl AgentTool for SpawnAgentTool {
 
         // Run the sub-agent loop, optionally with a timeout.
         let user_content = moltis_agents::UserContent::text(task);
-        let agent_future = run_agent_loop_with_context(
+        let agent_future = run_agent_loop_with_context_and_limits(
             provider,
             &sub_tools,
             &system_prompt,
@@ -496,9 +505,13 @@ impl AgentTool for SpawnAgentTool {
             Some(tool_context),
             None, // no hooks for sub-agents
             None, // no sender name for spawned agents
+            AgentLoopLimits {
+                max_iterations: Some(runtime_limits.max_iterations),
+            },
         );
 
-        let result = if let Some(timeout_secs) = preset.as_ref().and_then(|p| p.timeout_secs) {
+        let result = if runtime_limits.timeout_secs > 0 {
+            let timeout_secs = runtime_limits.timeout_secs;
             let duration = std::time::Duration::from_secs(timeout_secs);
             match tokio::time::timeout(duration, agent_future).await {
                 Ok(r) => r,

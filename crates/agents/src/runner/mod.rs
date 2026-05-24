@@ -16,9 +16,12 @@ mod tests_legacy;
 // ── Re-exports (preserve public API) ────────────────────────────────────
 
 pub use {
-    helpers::{AgentRunError, AgentRunResult, OnEvent, RunnerEvent},
-    non_streaming::{run_agent, run_agent_loop, run_agent_loop_with_context},
-    streaming::run_agent_loop_streaming,
+    helpers::{AgentLoopLimits, AgentRunError, AgentRunResult, OnEvent, RunnerEvent},
+    non_streaming::{
+        run_agent, run_agent_loop, run_agent_loop_with_context,
+        run_agent_loop_with_context_and_limits,
+    },
+    streaming::{run_agent_loop_streaming, run_agent_loop_streaming_with_limits},
     tool_result::{ExtractedImage, sanitize_tool_result, tool_result_to_content},
 };
 

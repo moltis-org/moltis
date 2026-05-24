@@ -15,12 +15,14 @@ use {
 // Re-export commonly used items for test submodules.
 pub(super) use {
     super::super::{
-        AgentRunError, AgentRunResult, OnEvent, RunnerEvent, TOOL_RESULT_COMPACTION_PLACEHOLDER,
-        apply_before_llm_call_modify_payload, compact_tool_results_oldest_first_in_place,
-        enforce_tool_result_context_budget, explicit_shell_command_from_user_content,
-        is_substantive_answer_text, legacy_public_tool_alias, resolve_tool_lookup,
+        AgentLoopLimits, AgentRunError, AgentRunResult, OnEvent, RunnerEvent,
+        TOOL_RESULT_COMPACTION_PLACEHOLDER, apply_before_llm_call_modify_payload,
+        compact_tool_results_oldest_first_in_place, enforce_tool_result_context_budget,
+        explicit_shell_command_from_user_content, is_substantive_answer_text,
+        legacy_public_tool_alias, resolve_tool_lookup,
         retry::*,
-        run_agent_loop, run_agent_loop_with_context, sanitize_tool_name, sanitize_tool_result,
+        run_agent_loop, run_agent_loop_with_context, run_agent_loop_with_context_and_limits,
+        sanitize_tool_name, sanitize_tool_result,
         streaming::run_agent_loop_streaming,
         tool_result::{ExtractedImage, extract_images_from_text},
         tool_result_to_content,

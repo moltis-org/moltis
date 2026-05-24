@@ -67,7 +67,7 @@ Per preset (`[agents.presets.<name>]`):
 - `model`
 - `tools.allow`, `tools.deny`
 - `system_prompt_suffix`
-- `max_iterations`, `timeout_secs`
+- `max_iterations`, `timeout_secs` (override `[tools]` runtime limits for matching direct sessions and spawned sub-agents)
 - `sessions.*` access policy
 - `memory.scope`, `memory.max_lines`
 - `delegate_only`

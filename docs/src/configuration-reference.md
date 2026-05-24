@@ -321,8 +321,8 @@ User profile collected during onboarding.
 | `tools.deny` | array | `[]` | Tools to deny (blacklist). Applied after `allow`. |
 | `delegate_only` | bool | `false` | Restrict sub-agent to delegation/session/task tools only. |
 | `system_prompt_suffix` | optional string | `null` | Extra instructions appended to the sub-agent system prompt. |
-| `max_iterations` | optional integer | `null` | Maximum iterations for the agent loop. |
-| `timeout_secs` | optional integer | `null` | Timeout in seconds for the sub-agent. |
+| `max_iterations` | optional integer | `null` | Maximum iterations for matching direct agent sessions and spawned sub-agents. Falls back to `tools.agent_max_iterations`. |
+| `timeout_secs` | optional integer | `null` | Timeout in seconds for matching direct agent sessions and spawned sub-agents (`0` = no timeout). Falls back to `tools.agent_timeout_secs`. |
 | `reasoning_effort` | optional enum: `low`, `medium`, `high` | `null` | Reasoning/thinking effort level for models that support extended thinking (e.g. Claude Opus, OpenAI o-series). |
 | `sessions` | optional `SessionAccessPolicyConfig` | `null` | Session access policy for inter-agent communication. |
 | `memory` | optional `PresetMemoryConfig` | `null` | Persistent per-agent memory configuration. |
