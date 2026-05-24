@@ -677,6 +677,7 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 	const editHeaders = useSignal("");
 	const editDisplayName = useSignal("");
 	const clearHeaders = useSignal(false);
+	const clearEnv = useSignal(false);
 	const editTimeout = useSignal("");
 	const saving = useSignal(false);
 	const isSse = (server.transport || "stdio") === "sse" || (server.transport || "stdio") === "streamable-http";
@@ -731,6 +732,7 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 		editUrl.value = "";
 		editHeaders.value = "";
 		clearHeaders.value = false;
+		clearEnv.value = false;
 		editTimeout.value = server.request_timeout_secs == null ? "" : String(server.request_timeout_secs);
 		editDisplayName.value = server.display_name || "";
 		editing.value = true;
@@ -773,8 +775,11 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 					url: null,
 					display_name: editDisplayName.value.trim() || null,
 				};
-				const envUpdates = parseNonEmptyEnvLines(editEnv.value);
-				if (Object.keys(envUpdates).length) payload.env = envUpdates;
+				if (clearEnv.value) payload.env = {};
+				else {
+					const envUpdates = parseNonEmptyEnvLines(editEnv.value);
+					if (Object.keys(envUpdates).length) payload.env = envUpdates;
+				}
 			}
 			const res = await sendRpc("mcp.update", payload);
 			if (res?.ok) {
@@ -998,18 +1003,30 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 								<div className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)] mb-2">
 									{currentEnvSummary}
 								</div>
+								<div className="mb-2">
+									<button
+										onClick={() => {
+											clearEnv.value = !clearEnv.value;
+										}}
+										className="provider-btn provider-btn-secondary provider-btn-sm"
+									>
+										{clearEnv.value ? "Keep stored env vars" : "Clear stored env vars"}
+									</button>
+								</div>
 								<div className="text-xs text-[var(--muted)] mb-1">Replace env values (KEY=VALUE per line)</div>
 								<textarea
 									className="provider-key-input w-full min-h-[40px] resize-y font-mono text-sm"
 									rows={2}
 									value={editEnv.value}
+									disabled={clearEnv.value}
 									onInput={(e) => {
 										editEnv.value = (e.target as HTMLTextAreaElement).value;
 									}}
 								/>
 								<div className="text-xs text-[var(--muted)] mt-1">
-									Stored values are hidden. Leave values blank to preserve existing env vars; enter values only for keys
-									you want to replace.
+									{clearEnv.value
+										? "Saving now removes every stored env var for this stdio server."
+										: "Stored values are hidden. Leave values blank to preserve existing env vars; enter values only for keys you want to replace."}
 								</div>
 							</div>
 						</>
