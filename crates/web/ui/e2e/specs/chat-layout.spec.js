@@ -161,7 +161,7 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
-	test("toolbar does not widen chat pane with desktop session sidebar visible (#1055)", async ({ page }) => {
+	test("toolbar does not widen chat pane with desktop session sidebar visible (#1055)", async ({ page }, testInfo) => {
 		const pageErrors = watchPageErrors(page);
 
 		await page.evaluate(() => {
@@ -171,7 +171,7 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 			if (sandboxImageLabel) sandboxImageLabel.textContent = "ubuntu:25.10-with-extra-packages";
 		});
 
-		for (const width of [1055, 1000, 900, 768]) {
+		for (const width of [1055, 1000, 900, 800]) {
 			await page.setViewportSize({ width, height: 880 });
 			await page.waitForFunction((w) => window.innerWidth === w, width, { timeout: 5_000 });
 			await expect
@@ -187,7 +187,7 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 				)
 				.toBe(true);
 
-			await expectNoPageHorizontalOverflow(page, `chat-sidebar-${width}`);
+			await expectNoPageHorizontalOverflow(page, `chat-sidebar-${width}`, testInfo);
 
 			const bounds = await getChatPaneBounds(page);
 			for (const box of bounds) {

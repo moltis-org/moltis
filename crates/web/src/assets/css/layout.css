@@ -123,8 +123,6 @@
   z-index: 30;
   min-width: 0;
   max-width: 100%;
-  overflow-x: auto;
-  overflow-y: visible;
 }
 
 .chat-toolbar > * {

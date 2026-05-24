@@ -310,7 +310,7 @@ async function expectRpcOk(page, method, params) {
 	return response;
 }
 
-async function expectNoPageHorizontalOverflow(page, label = "page") {
+async function expectNoPageHorizontalOverflow(page, label = "page", testInfo = null) {
 	const overflow = await page.evaluate(() => {
 		const doc = document.documentElement;
 		const viewportWidth = window.innerWidth;
@@ -339,16 +339,11 @@ async function expectNoPageHorizontalOverflow(page, label = "page") {
 		};
 	});
 
-	if (overflow.documentScrollWidth > overflow.documentClientWidth + 1) {
-		try {
-			const testInfo = require("@playwright/test").test.info();
-			await testInfo.attach(`horizontal-overflow-${label}`, {
-				body: Buffer.from(JSON.stringify(overflow, null, 2), "utf-8"),
-				contentType: "application/json",
-			});
-		} catch {
-			// Attachment is best-effort; assertion message still includes the details.
-		}
+	if (overflow.documentScrollWidth > overflow.documentClientWidth + 1 && testInfo) {
+		await testInfo.attach(`horizontal-overflow-${label}`, {
+			body: Buffer.from(JSON.stringify(overflow, null, 2), "utf-8"),
+			contentType: "application/json",
+		});
 	}
 
 	expect(
