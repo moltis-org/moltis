@@ -55,7 +55,7 @@ export function openAiCompatibleBaseUrlError(baseUrl: string | null | undefined)
 	const suffix = COMPLETION_ENDPOINT_SUFFIXES.find((value) => lower.endsWith(value));
 	if (!suffix) return null;
 	const suggested = trimmed.slice(0, -suffix.length) || trimmed;
-	return `Endpoint should be the API base URL, not the completion path. Use ${suggested} instead of ${trimmed}.`;
+	return `Endpoint should be the API base URL, not the completion path. Use '${suggested}' instead of '${trimmed}'.`;
 }
 
 function firstProbeFailure(payload: DetectPayload | undefined): string | null {

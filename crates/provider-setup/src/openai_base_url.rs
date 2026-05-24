@@ -8,7 +8,7 @@ pub(crate) fn openai_compatible_base_url_error(base_url: &str) -> Option<String>
         .iter()
         .find(|suffix| lower.ends_with(**suffix))?;
     let base = trimmed
-        .strip_suffix(suffix)
+        .get(..trimmed.len().saturating_sub(suffix.len()))
         .filter(|base| !base.is_empty())
         .unwrap_or(trimmed);
 
@@ -71,6 +71,17 @@ mod tests {
 
         assert!(error.contains("https://api.deepinfra.com/v1/openai"));
         assert!(error.contains("chat/completions"));
+    }
+
+    #[test]
+    fn rejects_mixed_case_chat_completions_url() {
+        let error = openai_compatible_base_url_error(
+            "https://api.deepinfra.com/v1/openai/Chat/Completions/",
+        )
+        .unwrap_or_default();
+
+        assert!(error.contains("https://api.deepinfra.com/v1/openai"));
+        assert!(error.contains("Chat/Completions"));
     }
 
     #[test]
