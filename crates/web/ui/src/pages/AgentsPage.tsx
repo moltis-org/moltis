@@ -344,9 +344,13 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 		// Build TOML: merge structured capability fields with any raw TOML.
 		// The raw TOML textarea always preserves user content (tools, model,
 		// timeouts, etc.). Structured fields generate [mcp], [sandbox], [skills]
-		// sections that are prepended.
+		// sections that are prepended. Apply structured fields whenever they
+		// contain non-default values, even if the user collapsed the panel before
+		// saving.
+		const capabilitiesConfigured =
+			mcpMode !== "all" || mcpServers.length > 0 || sandboxMode !== "" || skillsAllowSet || skillsDeny.trim() !== "";
 		let tomlToSave = presetToml.trim();
-		if (capabilitiesOpen) {
+		if (capabilitiesOpen || capabilitiesConfigured) {
 			const generated = buildCapabilitiesToml({
 				mcp: { mode: mcpMode, servers: mcpServers },
 				sandbox: { mode: sandboxMode || null },
@@ -363,10 +367,10 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 			const rawWithoutStructured = stripTomlSections(tomlToSave, ["mcp", "sandbox", "skills"]).trim();
 			tomlToSave = rawWithoutStructured ? `${rawWithoutStructured}\n\n${generated}` : generated;
 		}
-		// Always save when capabilities panel is open — an empty TOML string
+		// Always save when capabilities are active — an empty TOML string
 		// clears the preset, which is correct when the user has removed all
 		// restrictions. Without this, old restrictions survive silently.
-		const savingToml = capabilitiesOpen || !!tomlToSave;
+		const savingToml = capabilitiesOpen || capabilitiesConfigured || !!tomlToSave;
 		if (savingToml) {
 			pending.push(sendRpc("agents.preset.save", { id: agentId, toml: tomlToSave }));
 		}
