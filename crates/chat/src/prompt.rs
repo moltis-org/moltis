@@ -58,133 +58,6 @@ pub(crate) async fn clear_prompt_memory_snapshot(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct DummyTool(&'static str);
-
-    #[async_trait::async_trait]
-    impl moltis_agents::tool_registry::AgentTool for DummyTool {
-        fn name(&self) -> &str {
-            self.0
-        }
-
-        fn description(&self) -> &str {
-            "test tool"
-        }
-
-        fn parameters_schema(&self) -> Value {
-            serde_json::json!({"type": "object"})
-        }
-
-        async fn execute(&self, _params: Value) -> anyhow::Result<Value> {
-            Ok(serde_json::json!({}))
-        }
-    }
-
-    fn registry_with_mcp_tools() -> moltis_agents::tool_registry::ToolRegistry {
-        let mut registry = moltis_agents::tool_registry::ToolRegistry::new();
-        registry.register(Box::new(DummyTool("exec")));
-        registry.register(Box::new(DummyTool("mcp__github__builtin_named_like_mcp")));
-        registry.register_mcp(Box::new(DummyTool("mcp__github__search")), "github".into());
-        registry.register_mcp(Box::new(DummyTool("mcp__memory__store")), "memory".into());
-        registry
-    }
-
-    fn unrestricted_policy_context(agent_id: &str) -> PolicyContext {
-        PolicyContext {
-            agent_id: agent_id.to_string(),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn mcp_allow_empty_denies_all_mcp_tools_only() {
-        let mut config = moltis_config::MoltisConfig::default();
-        config.tools.policy.allow = vec!["*".into()];
-        config
-            .agents
-            .presets
-            .insert("locked".into(), moltis_config::schema::AgentPreset {
-                mcp: moltis_config::schema::PresetMcpPolicy::Allow(vec![]),
-                ..Default::default()
-            });
-
-        let filtered = apply_runtime_tool_filters(
-            &registry_with_mcp_tools(),
-            &config,
-            &[],
-            false,
-            &unrestricted_policy_context("locked"),
-        );
-
-        assert!(filtered.get("exec").is_some());
-        assert!(
-            filtered
-                .get("mcp__github__builtin_named_like_mcp")
-                .is_some()
-        );
-        assert!(filtered.get("mcp__github__search").is_none());
-        assert!(filtered.get("mcp__memory__store").is_none());
-    }
-
-    #[test]
-    fn mcp_allow_keeps_only_listed_mcp_server() {
-        let mut config = moltis_config::MoltisConfig::default();
-        config.tools.policy.allow = vec!["*".into()];
-        config
-            .agents
-            .presets
-            .insert("github-only".into(), moltis_config::schema::AgentPreset {
-                mcp: moltis_config::schema::PresetMcpPolicy::Allow(vec!["github".into()]),
-                ..Default::default()
-            });
-
-        let filtered = apply_runtime_tool_filters(
-            &registry_with_mcp_tools(),
-            &config,
-            &[],
-            false,
-            &unrestricted_policy_context("github-only"),
-        );
-
-        assert!(filtered.get("exec").is_some());
-        assert!(filtered.get("mcp__github__search").is_some());
-        assert!(filtered.get("mcp__memory__store").is_none());
-    }
-
-    #[test]
-    fn skill_policy_allows_then_denies_by_name_or_category() {
-        let skills = vec![
-            moltis_skills::types::SkillMetadata {
-                name: "web-search".into(),
-                category: Some("research".into()),
-                ..Default::default()
-            },
-            moltis_skills::types::SkillMetadata {
-                name: "games".into(),
-                category: Some("gaming".into()),
-                ..Default::default()
-            },
-            moltis_skills::types::SkillMetadata {
-                name: "writer".into(),
-                category: Some("creative".into()),
-                ..Default::default()
-            },
-        ];
-        let policy = moltis_config::schema::PresetSkillPolicy {
-            allow: Some(vec!["research".into(), "writer".into()]),
-            deny: Some(vec!["writer".into()]),
-        };
-
-        let filtered = filter_skills_for_agent(skills, &policy);
-
-        assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].name, "web-search");
-    }
-}
-
 pub(crate) fn prompt_memory_status(
     style: MemoryStyle,
     mode: PromptMemoryMode,
@@ -753,5 +626,132 @@ pub(crate) fn build_policy_context(
         sandboxed: runtime_context
             .and_then(|rc| rc.sandbox.as_ref())
             .is_some_and(|s| s.exec_sandboxed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DummyTool(&'static str);
+
+    #[async_trait::async_trait]
+    impl moltis_agents::tool_registry::AgentTool for DummyTool {
+        fn name(&self) -> &str {
+            self.0
+        }
+
+        fn description(&self) -> &str {
+            "test tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        async fn execute(&self, _params: Value) -> anyhow::Result<Value> {
+            Ok(serde_json::json!({}))
+        }
+    }
+
+    fn registry_with_mcp_tools() -> moltis_agents::tool_registry::ToolRegistry {
+        let mut registry = moltis_agents::tool_registry::ToolRegistry::new();
+        registry.register(Box::new(DummyTool("exec")));
+        registry.register(Box::new(DummyTool("mcp__github__builtin_named_like_mcp")));
+        registry.register_mcp(Box::new(DummyTool("mcp__github__search")), "github".into());
+        registry.register_mcp(Box::new(DummyTool("mcp__memory__store")), "memory".into());
+        registry
+    }
+
+    fn unrestricted_policy_context(agent_id: &str) -> PolicyContext {
+        PolicyContext {
+            agent_id: agent_id.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn mcp_allow_empty_denies_all_mcp_tools_only() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.tools.policy.allow = vec!["*".into()];
+        config
+            .agents
+            .presets
+            .insert("locked".into(), moltis_config::schema::AgentPreset {
+                mcp: moltis_config::schema::PresetMcpPolicy::Allow(vec![]),
+                ..Default::default()
+            });
+
+        let filtered = apply_runtime_tool_filters(
+            &registry_with_mcp_tools(),
+            &config,
+            &[],
+            false,
+            &unrestricted_policy_context("locked"),
+        );
+
+        assert!(filtered.get("exec").is_some());
+        assert!(
+            filtered
+                .get("mcp__github__builtin_named_like_mcp")
+                .is_some()
+        );
+        assert!(filtered.get("mcp__github__search").is_none());
+        assert!(filtered.get("mcp__memory__store").is_none());
+    }
+
+    #[test]
+    fn mcp_allow_keeps_only_listed_mcp_server() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.tools.policy.allow = vec!["*".into()];
+        config
+            .agents
+            .presets
+            .insert("github-only".into(), moltis_config::schema::AgentPreset {
+                mcp: moltis_config::schema::PresetMcpPolicy::Allow(vec!["github".into()]),
+                ..Default::default()
+            });
+
+        let filtered = apply_runtime_tool_filters(
+            &registry_with_mcp_tools(),
+            &config,
+            &[],
+            false,
+            &unrestricted_policy_context("github-only"),
+        );
+
+        assert!(filtered.get("exec").is_some());
+        assert!(filtered.get("mcp__github__search").is_some());
+        assert!(filtered.get("mcp__memory__store").is_none());
+    }
+
+    #[test]
+    fn skill_policy_allows_then_denies_by_name_or_category() {
+        let skills = vec![
+            moltis_skills::types::SkillMetadata {
+                name: "web-search".into(),
+                category: Some("research".into()),
+                ..Default::default()
+            },
+            moltis_skills::types::SkillMetadata {
+                name: "games".into(),
+                category: Some("gaming".into()),
+                ..Default::default()
+            },
+            moltis_skills::types::SkillMetadata {
+                name: "writer".into(),
+                category: Some("creative".into()),
+                ..Default::default()
+            },
+        ];
+        let policy = moltis_config::schema::PresetSkillPolicy {
+            allow: Some(vec!["research".into(), "writer".into()]),
+            deny: Some(vec!["writer".into()]),
+        };
+
+        let filtered = filter_skills_for_agent(skills, &policy);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "web-search");
     }
 }
