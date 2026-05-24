@@ -11,6 +11,7 @@ use std::{
 };
 
 use {
+    secrecy::{ExposeSecret, Secret},
     tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
         process::{Child, Command},
@@ -41,7 +42,7 @@ impl StdioTransport {
     pub async fn spawn(
         command: &str,
         args: &[String],
-        env: &HashMap<String, String>,
+        env: &HashMap<String, Secret<String>>,
     ) -> Result<Arc<Self>> {
         Self::spawn_with_timeout(command, args, env, Duration::from_secs(30)).await
     }
@@ -50,7 +51,7 @@ impl StdioTransport {
     pub async fn spawn_with_timeout(
         command: &str,
         args: &[String],
-        env: &HashMap<String, String>,
+        env: &HashMap<String, Secret<String>>,
         request_timeout: Duration,
     ) -> Result<Arc<Self>> {
         info!(
@@ -61,11 +62,13 @@ impl StdioTransport {
 
         let mut cmd = Command::new(command);
         cmd.args(args)
-            .envs(env)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        for (name, value) in env {
+            cmd.env(name, value.expose_secret());
+        }
 
         let mut child = cmd
             .spawn()

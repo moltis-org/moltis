@@ -58,8 +58,13 @@ pub struct McpServerConfig {
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
-    #[serde(default)]
-    pub env: HashMap<String, String>,
+    #[serde(
+        default,
+        skip_serializing_if = "HashMap::is_empty",
+        serialize_with = "serialize_secret_string_map",
+        deserialize_with = "deserialize_secret_string_map"
+    )]
+    pub env: HashMap<String, Secret<String>>,
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -318,14 +323,14 @@ mod tests {
         reg.servers.insert("test".into(), McpServerConfig {
             command: "echo".into(),
             args: vec!["hello".into()],
-            env: HashMap::from([("FOO".into(), "bar".into())]),
+            env: HashMap::from([("FOO".into(), Secret::new("bar".into()))]),
             ..Default::default()
         });
         reg.save().unwrap();
 
         let loaded = McpRegistry::load(&path).unwrap();
         assert_eq!(loaded.servers.len(), 1);
-        assert_eq!(loaded.servers["test"].env["FOO"], "bar");
+        assert_eq!(loaded.servers["test"].env["FOO"].expose_secret(), "bar");
     }
 
     #[test]

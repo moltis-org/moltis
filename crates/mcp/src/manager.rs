@@ -36,7 +36,8 @@ pub struct ServerStatus {
     pub server_info: Option<String>,
     pub command: String,
     pub args: Vec<String>,
-    pub env: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_names: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_timeout_secs: Option<u64>,
     pub configured_request_timeout_secs: u64,
@@ -70,6 +71,19 @@ pub struct McpManagerInner {
 pub struct McpManager {
     pub inner: RwLock<McpManagerInner>,
     request_timeout_secs: AtomicU64,
+}
+
+fn env_names(config: &McpServerConfig) -> Vec<String> {
+    if matches!(
+        config.transport,
+        TransportType::Sse | TransportType::StreamableHttp
+    ) {
+        return Vec::new();
+    }
+
+    let mut names: Vec<String> = config.env.keys().cloned().collect();
+    names.sort();
+    names
 }
 
 impl McpManager {
@@ -617,14 +631,7 @@ impl McpManager {
                 server_info: None,
                 command: config.command.clone(),
                 args: config.args.clone(),
-                env: if matches!(
-                    config.transport,
-                    TransportType::Sse | TransportType::StreamableHttp
-                ) {
-                    HashMap::new()
-                } else {
-                    config.env.clone()
-                },
+                env_names: env_names(config),
                 request_timeout_secs: config.request_timeout_secs,
                 configured_request_timeout_secs: self.effective_timeout_secs_for(config),
                 transport: config.transport,
@@ -837,7 +844,10 @@ mod tests {
                 "X-Workspace".to_string(),
                 secrecy::Secret::new("top-secret".to_string()),
             )]),
-            env: HashMap::from([("SHOULD_NOT_LEAK".to_string(), "value".to_string())]),
+            env: HashMap::from([(
+                "SHOULD_NOT_LEAK".to_string(),
+                secrecy::Secret::new("value".to_string()),
+            )]),
             ..Default::default()
         });
         let mgr = McpManager::new(reg);
@@ -849,7 +859,29 @@ mod tests {
             Some("https://mcp.example.com/mcp?token=[REDACTED]")
         );
         assert_eq!(statuses[0].header_names, vec!["X-Workspace".to_string()]);
-        assert!(statuses[0].env.is_empty());
+        assert!(statuses[0].env_names.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_status_exposes_stdio_env_names_without_values() {
+        let mut reg = McpRegistry::new();
+        reg.servers.insert("stdio".into(), McpServerConfig {
+            command: "echo".into(),
+            env: HashMap::from([(
+                "API_TOKEN".to_string(),
+                secrecy::Secret::new("super-secret-token".to_string()),
+            )]),
+            ..Default::default()
+        });
+        let mgr = McpManager::new(reg);
+
+        let statuses = mgr.status_all().await;
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].env_names, vec!["API_TOKEN".to_string()]);
+
+        let serialized = serde_json::to_string(&statuses).unwrap();
+        assert!(serialized.contains("API_TOKEN"));
+        assert!(!serialized.contains("super-secret-token"));
     }
 
     #[tokio::test]

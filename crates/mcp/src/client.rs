@@ -2,7 +2,10 @@
 
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
-use tracing::{debug, info, warn};
+use {
+    secrecy::Secret,
+    tracing::{debug, info, warn},
+};
 
 #[cfg(feature = "metrics")]
 use std::time::Instant;
@@ -52,7 +55,7 @@ impl McpClient {
         server_name: &str,
         command: &str,
         args: &[String],
-        env: &HashMap<String, String>,
+        env: &HashMap<String, Secret<String>>,
         request_timeout: Duration,
     ) -> Result<Self> {
         info!(server = %server_name, command = %command, args = ?args, "connecting to MCP server");

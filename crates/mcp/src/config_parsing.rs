@@ -108,7 +108,7 @@ pub fn parse_server_config(
     ) {
         HashMap::new()
     } else if params.get("env").is_some() {
-        parse_string_map(params.get("env").unwrap_or(&Value::Null))
+        parse_secret_string_map(params.get("env").unwrap_or(&Value::Null))
     } else {
         existing.map(|cfg| cfg.env.clone()).unwrap_or_default()
     };

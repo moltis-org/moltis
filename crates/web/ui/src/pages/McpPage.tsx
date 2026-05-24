@@ -20,6 +20,8 @@ interface McpServer {
 	command?: string;
 	args?: string[];
 	env?: Record<string, string>;
+	env_names?: string[];
+	envNames?: string[];
 	url?: string;
 	headers?: Record<string, string>;
 	header_names?: string[];
@@ -170,6 +172,10 @@ function parseEnvLines(text: string): Record<string, string> {
 	return env;
 }
 
+function parseNonEmptyEnvLines(text: string): Record<string, string> {
+	return Object.fromEntries(Object.entries(parseEnvLines(text)).filter(([, value]) => value.length > 0));
+}
+
 function transportLabel(transport: string | undefined): string {
 	if (transport === "streamable-http") return "streamable-http remote";
 	return transport === "sse" ? "sse remote" : "stdio local";
@@ -213,6 +219,17 @@ function remoteHeaderSummary(server: McpServer): string {
 	if (!(count || names.length)) return "none configured";
 	if (!names.length) return `${count} configured`;
 	return `${names.join(", ")} (${count} total)`;
+}
+
+function stdioEnvNames(server: McpServer): string[] {
+	return (server.env_names || server.envNames || (server.env ? Object.keys(server.env) : []))
+		.filter((n) => typeof n === "string" && n.trim())
+		.map((n) => n.trim());
+}
+
+function stdioEnvSummary(server: McpServer): string {
+	const names = stdioEnvNames(server);
+	return names.length ? names.join(", ") : "none configured";
 }
 
 // ── Featured MCP servers ────────────────────────────────────
@@ -709,8 +726,8 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 		editTransport.value = server.transport || "stdio";
 		editCmd.value = server.command || "";
 		editArgs.value = (server.args || []).join(" ");
-		editEnv.value = Object.entries(server.env || {})
-			.map(([k, v]) => `${k}=${v}`)
+		editEnv.value = stdioEnvNames(server)
+			.map((k) => `${k}=`)
 			.join("\n");
 		editUrl.value = "";
 		editHeaders.value = "";
@@ -753,11 +770,12 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 					request_timeout_secs: tr.value,
 					command: cmd,
 					args: editArgs.value.split(/\s+/).filter(Boolean),
-					env: parseEnvLines(editEnv.value),
 					headers: {},
 					url: null,
 					display_name: editDisplayName.value.trim() || null,
 				};
+				const envUpdates = parseNonEmptyEnvLines(editEnv.value);
+				if (Object.keys(envUpdates).length) payload.env = envUpdates;
 			}
 			const res = await sendRpc("mcp.update", payload);
 			if (res?.ok) {
@@ -785,6 +803,7 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 	const showTechnical = server.display_name && server.display_name !== server.name;
 	const currentSafeUrl = typeof server.url === "string" ? server.url.trim() : "";
 	const currentHeaderSummary = remoteHeaderSummary(server);
+	const currentEnvSummary = stdioEnvSummary(server);
 
 	return (
 		<div className="skills-repo-card">
@@ -976,7 +995,11 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 								/>
 							</div>
 							<div className="project-edit-group mb-2">
-								<div className="text-xs text-[var(--muted)] mb-1">Env vars (KEY=VALUE per line)</div>
+								<div className="text-xs text-[var(--muted)] mb-1">Current env vars</div>
+								<div className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface2)] px-3 py-2 text-xs font-mono text-[var(--text)] mb-2">
+									{currentEnvSummary}
+								</div>
+								<div className="text-xs text-[var(--muted)] mb-1">Replace env values (KEY=VALUE per line)</div>
 								<textarea
 									className="provider-key-input w-full min-h-[40px] resize-y font-mono text-sm"
 									rows={2}
@@ -985,6 +1008,10 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 										editEnv.value = (e.target as HTMLTextAreaElement).value;
 									}}
 								/>
+								<div className="text-xs text-[var(--muted)] mt-1">
+									Stored values are hidden. Leave values blank to preserve existing env vars; enter values only for keys
+									you want to replace.
+								</div>
 							</div>
 						</>
 					)}
@@ -1031,11 +1058,17 @@ function ServerCard({ server }: { server: McpServer }): VNode {
 							</div>
 						</div>
 					) : (
-						<div className="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
-							<span className="opacity-60">$</span>
-							<code className="font-mono text-[var(--text)]">
-								{server.command} {(server.args || []).join(" ")}
-							</code>
+						<div>
+							<div className="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
+								<span className="opacity-60">$</span>
+								<code className="font-mono text-[var(--text)]">
+									{server.command} {(server.args || []).join(" ")}
+								</code>
+							</div>
+							<div className="flex items-center gap-1.5 py-1.5 text-xs text-[var(--muted)]">
+								<span className="opacity-60">ENV</span>
+								<code className="font-mono text-[var(--text)]">{currentEnvSummary}</code>
+							</div>
 						</div>
 					)}
 					{!tools.value && <div className="text-[var(--muted)] text-sm py-2">Loading tools&hellip;</div>}
