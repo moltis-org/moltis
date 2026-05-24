@@ -48,14 +48,22 @@ export interface ValidateConnectionResult {
 	message: string | null;
 }
 
-export function openAiCompatibleBaseUrlError(baseUrl: string | null | undefined): string | null {
+export function providerBaseUrlError(baseUrl: string | null | undefined): string | null {
 	const trimmed = baseUrl?.trim().replace(/\/+$/, "") || "";
 	if (!trimmed) return null;
+	try {
+		const parsed = new URL(trimmed);
+		if (!(parsed.protocol === "http:" || parsed.protocol === "https:") || !parsed.hostname) {
+			return "Endpoint URL must include an http:// or https:// scheme and a host.";
+		}
+	} catch {
+		return "Endpoint URL must be a valid HTTP(S) URL, such as 'https://api.example.com/v1'.";
+	}
 	const lower = trimmed.toLowerCase();
 	const suffix = COMPLETION_ENDPOINT_SUFFIXES.find((value) => lower.endsWith(value));
 	if (!suffix) return null;
 	const suggested = trimmed.slice(0, -suffix.length) || trimmed;
-	return `Endpoint should be the API base URL, not the completion path. Use '${suggested}' instead of '${trimmed}'.`;
+	return `Endpoint URL should be the API base URL, not the completion path. Use '${suggested}' instead of '${trimmed}'.`;
 }
 
 function firstProbeFailure(payload: DetectPayload | undefined): string | null {

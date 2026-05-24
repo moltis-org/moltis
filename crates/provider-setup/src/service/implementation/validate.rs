@@ -18,9 +18,7 @@ use {
             discover_ollama_models, normalize_ollama_api_base_url, normalize_ollama_model_id,
             normalize_ollama_openai_base_url, ollama_model_matches, ollama_models_payload,
         },
-        openai_base_url::{
-            is_openai_compatible_provider_name, validate_openai_compatible_base_url,
-        },
+        provider_base_url::validate_provider_base_url,
     },
 };
 
@@ -82,9 +80,7 @@ impl LiveProviderSetupService {
         if is_custom && effective_base_url.is_none() {
             return Err("missing 'baseUrl' parameter".into());
         }
-        if is_custom || is_openai_compatible_provider_name(provider_name) {
-            validate_openai_compatible_base_url(effective_base_url)?;
-        }
+        validate_provider_base_url(effective_base_url)?;
 
         let selected_model = preferred_models.first().map(String::as_str);
         let validation_provider_name = validation_provider_name_for_endpoint(

@@ -9,7 +9,7 @@ import {
 	humanizeProbeError,
 	isModelServiceNotConfigured,
 	isTimeoutError,
-	openAiCompatibleBaseUrlError,
+	providerBaseUrlError,
 	saveProviderKey,
 	testModel,
 	validateProviderKey,
@@ -160,7 +160,7 @@ export function showApiKeyForm(provider: ProviderInfo): void {
 		const keyVal = key || provider.name;
 		const endpointVal = endpointInp?.value.trim() || null;
 		const modelVal = modelInp?.value.trim() || null;
-		const endpointError = openAiCompatibleBaseUrlError(endpointVal);
+		const endpointError = providerBaseUrlError(endpointVal);
 		if (endpointError) {
 			saveBtn.disabled = false;
 			saveBtn.textContent = "Save";

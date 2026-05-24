@@ -9,7 +9,7 @@ import { completeProviderOAuth, startProviderOAuth } from "../../provider-oauth"
 import {
 	humanizeProbeError,
 	isModelServiceNotConfigured,
-	openAiCompatibleBaseUrlError,
+	providerBaseUrlError,
 	saveProviderKey,
 	testModel,
 	validateProviderKey,
@@ -748,7 +748,7 @@ export function ProviderStep({ onNext, onBack }: { onNext: () => void; onBack?: 
 		const keyVal = apiKey.trim() || p.name;
 		const endpointVal = endpoint.trim() || null;
 		const modelVal = model.trim() || null;
-		const endpointError = openAiCompatibleBaseUrlError(endpointVal);
+		const endpointError = providerBaseUrlError(endpointVal);
 		if (endpointError) {
 			setPhase("form");
 			setError(endpointError);

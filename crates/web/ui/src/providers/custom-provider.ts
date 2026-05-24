@@ -2,7 +2,7 @@
 
 import { sendRpc } from "../helpers";
 import { fetchModels } from "../models";
-import { openAiCompatibleBaseUrlError, validateProviderKey } from "../provider-validation";
+import { providerBaseUrlError, validateProviderKey } from "../provider-validation";
 import * as S from "../state";
 import type { RpcResponse } from "../types";
 import { showModelSelector } from "./auth-flow";
@@ -97,7 +97,7 @@ export function showCustomProviderForm(): void {
 			setFormError(errorPanel, "API key is required.");
 			return;
 		}
-		const endpointError = openAiCompatibleBaseUrlError(url);
+		const endpointError = providerBaseUrlError(url);
 		if (endpointError) {
 			setFormError(errorPanel, endpointError);
 			return;

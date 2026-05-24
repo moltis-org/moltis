@@ -412,7 +412,7 @@ async fn save_key_rejects_missing_params() {
 }
 
 #[tokio::test]
-async fn save_key_rejects_openai_completion_endpoint_base_url() {
+async fn save_key_rejects_completion_endpoint_base_url_for_any_provider() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),
         HashMap::new(),
@@ -421,7 +421,7 @@ async fn save_key_rejects_openai_completion_endpoint_base_url() {
 
     let error = svc
         .save_key(serde_json::json!({
-            "provider": "openai",
+            "provider": "anthropic",
             "apiKey": "sk-test",
             "baseUrl": "https://api.example.com/v1/chat/completions",
         }))
@@ -431,6 +431,27 @@ async fn save_key_rejects_openai_completion_endpoint_base_url() {
 
     assert!(error.contains("API base URL"));
     assert!(error.contains("https://api.example.com/v1"));
+}
+
+#[tokio::test]
+async fn save_key_rejects_invalid_base_url_for_any_provider() {
+    let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+        &ProvidersConfig::default(),
+        HashMap::new(),
+    )));
+    let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+
+    let error = svc
+        .save_key(serde_json::json!({
+            "provider": "anthropic",
+            "apiKey": "sk-test",
+            "baseUrl": "api.example.com/v1",
+        }))
+        .await
+        .expect_err("invalid endpoint should be rejected")
+        .to_string();
+
+    assert!(error.contains("valid HTTP(S) URL"));
 }
 
 #[tokio::test]
