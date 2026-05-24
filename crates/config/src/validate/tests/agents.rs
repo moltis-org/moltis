@@ -68,7 +68,7 @@ max_iterations = 7
 }
 
 #[test]
-fn spawned_agent_runtime_limits_use_custom_global_timeout() {
+fn spawned_agent_runtime_limits_require_preset_timeout() {
     let config: MoltisConfig = toml::from_str(
         r#"
 [tools]
@@ -82,8 +82,29 @@ max_iterations = 80
 
     let preset = config.agents.get_preset("deep");
     let limits = AgentRuntimeLimits::resolve_for_spawned_agent(&config.tools, preset);
-    assert_eq!(limits.timeout_secs, 1800);
+    assert_eq!(limits.timeout_secs, 0);
     assert_eq!(limits.timeout_source, AgentRuntimeLimitSource::GlobalTools);
+    assert_eq!(limits.max_iterations, 80);
+}
+
+#[test]
+fn spawned_agent_runtime_limits_use_preset_timeout() {
+    let config: MoltisConfig = toml::from_str(
+        r#"
+[tools]
+agent_timeout_secs = 1800
+
+[agents.presets.deep]
+timeout_secs = 600
+max_iterations = 80
+"#,
+    )
+    .unwrap();
+
+    let preset = config.agents.get_preset("deep");
+    let limits = AgentRuntimeLimits::resolve_for_spawned_agent(&config.tools, preset);
+    assert_eq!(limits.timeout_secs, 600);
+    assert_eq!(limits.timeout_source, AgentRuntimeLimitSource::AgentPreset);
     assert_eq!(limits.max_iterations, 80);
 }
 

@@ -423,9 +423,7 @@ impl AgentRuntimeLimits {
     #[must_use]
     pub fn resolve_for_spawned_agent(tools: &ToolsConfig, preset: Option<&AgentPreset>) -> Self {
         let mut limits = Self::resolve(tools, preset);
-        if preset.and_then(|preset| preset.timeout_secs).is_none()
-            && tools.agent_timeout_secs == DEFAULT_AGENT_TIMEOUT_SECS
-        {
+        if preset.and_then(|preset| preset.timeout_secs).is_none() {
             limits.timeout_secs = 0;
             limits.timeout_source = AgentRuntimeLimitSource::GlobalTools;
         }
