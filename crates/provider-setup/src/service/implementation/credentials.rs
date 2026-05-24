@@ -59,7 +59,7 @@ impl LiveProviderSetupService {
             return Err("missing 'apiKey' parameter".into());
         }
 
-        validate_provider_base_url(base_url)?;
+        validate_provider_base_url(base_url).map_err(ServiceError::message)?;
 
         let normalized_base_url = if provider_name == "ollama" {
             base_url.map(|url| normalize_ollama_openai_base_url(Some(url)))

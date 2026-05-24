@@ -38,7 +38,8 @@ impl LiveProviderSetupService {
 
         let base_name = derive_provider_name_from_url(base_url)
             .ok_or_else(|| "could not parse endpoint URL".to_string())?;
-        crate::provider_base_url::validate_provider_base_url(Some(base_url))?;
+        crate::provider_base_url::validate_provider_base_url(Some(base_url))
+            .map_err(ServiceError::message)?;
 
         let existing = self.key_store.load_all_configs();
         let provider_name = existing_custom_provider_for_base_url(base_url, &existing)

@@ -2,7 +2,7 @@
 
 use {secrecy::Secret, serde_json::Value, tracing::info};
 
-use moltis_service_traits::ServiceResult;
+use moltis_service_traits::{ServiceError, ServiceResult};
 
 use {
     super::{
@@ -80,7 +80,7 @@ impl LiveProviderSetupService {
         if is_custom && effective_base_url.is_none() {
             return Err("missing 'baseUrl' parameter".into());
         }
-        validate_provider_base_url(effective_base_url)?;
+        validate_provider_base_url(effective_base_url).map_err(ServiceError::message)?;
 
         let selected_model = preferred_models.first().map(String::as_str);
         let validation_provider_name = validation_provider_name_for_endpoint(
