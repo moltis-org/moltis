@@ -2,6 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    future::Future,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -20,7 +21,9 @@ use {
             PromptRuntimeContext, build_system_prompt_minimal_runtime_details,
             build_system_prompt_with_session_runtime_details,
         },
-        runner::{AgentLoopLimits, RunnerEvent, run_agent_loop_streaming_with_limits},
+        runner::{
+            AgentLoopLimits, AgentRunResult, RunnerEvent, run_agent_loop_streaming_with_limits,
+        },
         tool_registry::ToolRegistry,
     },
     moltis_config::ToolMode,
@@ -889,22 +892,9 @@ pub(crate) async fn run_with_tools(
             max_iterations: Some(runtime_limits.max_iterations),
         },
     );
-    let first_result = if runtime_limits.timeout_secs > 0 {
-        match tokio::time::timeout(
-            Duration::from_secs(runtime_limits.timeout_secs),
-            first_agent_future,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => Err(AgentRunError::Other(anyhow::anyhow!(
-                "agent run timed out after {}s",
-                runtime_limits.timeout_secs
-            ))),
-        }
-    } else {
-        first_agent_future.await
-    };
+    let first_result =
+        await_with_agent_timeout(runtime_limits.timeout_secs, run_started, first_agent_future)
+            .await;
 
     // On context-window overflow, compact the session and retry once.
     let result = match first_result {
@@ -1006,22 +996,12 @@ pub(crate) async fn run_with_tools(
                             max_iterations: Some(runtime_limits.max_iterations),
                         },
                     );
-                    if runtime_limits.timeout_secs > 0 {
-                        match tokio::time::timeout(
-                            Duration::from_secs(runtime_limits.timeout_secs),
-                            retry_agent_future,
-                        )
-                        .await
-                        {
-                            Ok(result) => result,
-                            Err(_) => Err(AgentRunError::Other(anyhow::anyhow!(
-                                "agent run timed out after {}s",
-                                runtime_limits.timeout_secs
-                            ))),
-                        }
-                    } else {
-                        retry_agent_future.await
-                    }
+                    await_with_agent_timeout(
+                        runtime_limits.timeout_secs,
+                        run_started,
+                        retry_agent_future,
+                    )
+                    .await
                 },
                 Err(e) => {
                     warn!(run_id, error = %e, "retry compaction failed");
@@ -1221,6 +1201,33 @@ pub(crate) async fn run_with_tools(
             broadcast(state, "chat", payload_val, BroadcastOpts::default()).await;
             None
         },
+    }
+}
+
+async fn await_with_agent_timeout<F>(
+    timeout_secs: u64,
+    started: Instant,
+    future: F,
+) -> Result<AgentRunResult, AgentRunError>
+where
+    F: Future<Output = Result<AgentRunResult, AgentRunError>>,
+{
+    if timeout_secs == 0 {
+        return future.await;
+    }
+
+    let timeout = Duration::from_secs(timeout_secs);
+    let Some(remaining) = timeout.checked_sub(started.elapsed()) else {
+        return Err(AgentRunError::Other(anyhow::anyhow!(
+            "agent run timed out after {timeout_secs}s"
+        )));
+    };
+
+    match tokio::time::timeout(remaining, future).await {
+        Ok(result) => result,
+        Err(_) => Err(AgentRunError::Other(anyhow::anyhow!(
+            "agent run timed out after {timeout_secs}s"
+        ))),
     }
 }
 
