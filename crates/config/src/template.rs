@@ -304,8 +304,10 @@ port = {port}                           # Port number (auto-generated for this i
 # `spawn_agent` tool.
 #
 # Runtime fields like `timeout_secs` and `max_iterations` apply to matching
-# direct agent sessions and spawned sub-agents. The global `[tools]` values are
-# used as fallbacks when a preset omits them.
+# direct agent sessions and spawned sub-agents. Direct sessions use global
+# `[tools]` values as fallbacks when a preset omits them. Spawned sub-agents
+# preserve no-timeout behavior unless the preset sets `timeout_secs` or the
+# global `[tools].agent_timeout_secs` is changed from the default.
 #
 # ⚠️  SCOPE: `tools.allow` / `tools.deny` under a preset do NOT filter tools
 # for the main agent session. To allow/deny tools for the main session, use

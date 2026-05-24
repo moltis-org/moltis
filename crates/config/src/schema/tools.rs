@@ -203,8 +203,10 @@ pub enum FsBinaryPolicy {
     Base64,
 }
 
+pub const DEFAULT_AGENT_TIMEOUT_SECS: u64 = 600;
+
 fn default_agent_timeout_secs() -> u64 {
-    600
+    DEFAULT_AGENT_TIMEOUT_SECS
 }
 
 fn default_agent_max_iterations() -> usize {

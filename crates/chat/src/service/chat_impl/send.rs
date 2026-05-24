@@ -1104,7 +1104,11 @@ impl LiveChatService {
             }
         }
 
-        let agent_timeout_secs = runtime_limits.timeout_secs;
+        let outer_agent_timeout_secs = if stream_only {
+            runtime_limits.timeout_secs
+        } else {
+            0
+        };
 
         let message_queue = Arc::clone(&self.message_queue);
         let state_for_drain = Arc::clone(&self.state);
@@ -1210,18 +1214,20 @@ impl LiveChatService {
                 }
             };
 
-            let assistant_text = if agent_timeout_secs > 0 {
-                match tokio::time::timeout(Duration::from_secs(agent_timeout_secs), agent_fut).await
+            let assistant_text = if outer_agent_timeout_secs > 0 {
+                match tokio::time::timeout(Duration::from_secs(outer_agent_timeout_secs), agent_fut)
+                    .await
                 {
                     Ok(result) => result,
                     Err(_) => {
                         warn!(
                             run_id = %run_id_clone,
                             session = %session_key_clone,
-                            timeout_secs = agent_timeout_secs,
+                            timeout_secs = outer_agent_timeout_secs,
                             "agent run timed out"
                         );
-                        let detail = format!("Agent run timed out after {agent_timeout_secs}s");
+                        let detail =
+                            format!("Agent run timed out after {outer_agent_timeout_secs}s");
                         let error_obj = serde_json::json!({
                             "type": "timeout",
                             "title": "Timed out",

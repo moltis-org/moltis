@@ -1,4 +1,7 @@
-use {super::*, crate::AgentRuntimeLimitSource};
+use {
+    super::*,
+    crate::{AgentRuntimeLimitSource, AgentRuntimeLimits},
+};
 
 #[test]
 fn agent_runtime_limits_use_global_fallbacks() {
@@ -46,6 +49,42 @@ timeout_secs = 5
         limits.max_iterations_source,
         AgentRuntimeLimitSource::GlobalTools
     );
+}
+
+#[test]
+fn spawned_agent_runtime_limits_preserve_default_no_timeout() {
+    let config: MoltisConfig = toml::from_str(
+        r#"
+[agents.presets.quick]
+max_iterations = 7
+"#,
+    )
+    .unwrap();
+
+    let preset = config.agents.get_preset("quick");
+    let limits = AgentRuntimeLimits::resolve_for_spawned_agent(&config.tools, preset);
+    assert_eq!(limits.timeout_secs, 0);
+    assert_eq!(limits.max_iterations, 7);
+}
+
+#[test]
+fn spawned_agent_runtime_limits_use_custom_global_timeout() {
+    let config: MoltisConfig = toml::from_str(
+        r#"
+[tools]
+agent_timeout_secs = 1800
+
+[agents.presets.deep]
+max_iterations = 80
+"#,
+    )
+    .unwrap();
+
+    let preset = config.agents.get_preset("deep");
+    let limits = AgentRuntimeLimits::resolve_for_spawned_agent(&config.tools, preset);
+    assert_eq!(limits.timeout_secs, 1800);
+    assert_eq!(limits.timeout_source, AgentRuntimeLimitSource::GlobalTools);
+    assert_eq!(limits.max_iterations, 80);
 }
 
 #[test]

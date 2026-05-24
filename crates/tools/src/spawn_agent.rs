@@ -371,7 +371,8 @@ impl AgentTool for SpawnAgentTool {
         let context = str_param(&params, "context").unwrap_or("");
         let (preset_name, preset) = self.resolve_preset(&params).await?;
         let config = moltis_config::discover_and_load();
-        let runtime_limits = AgentRuntimeLimits::resolve(&config.tools, preset.as_ref());
+        let runtime_limits =
+            AgentRuntimeLimits::resolve_for_spawned_agent(&config.tools, preset.as_ref());
         let explicit_model = str_param(&params, "model").map(String::from);
         let model_id = explicit_model
             .clone()
