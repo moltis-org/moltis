@@ -608,7 +608,7 @@ impl Sandbox for DockerSandbox {
 
         // Check if image already exists.
         if sandbox_image_exists(self.cli, &tag).await {
-            info!(
+            debug!(
                 tag,
                 "pre-built sandbox image already exists, skipping build"
             );
@@ -641,17 +641,20 @@ impl Sandbox for DockerSandbox {
             let _ = std::fs::remove_dir_all(&tmp_dir);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(
+            debug!(
                 tag,
-                stdout = %tail_lines(&stdout, 20),
+                stdout = %stdout.trim(),
                 stderr = %stderr.trim(),
                 "{} build failed",
                 self.cli,
             );
+            let status = output.status.code().map_or_else(
+                || output.status.to_string(),
+                |code| format!("exit code {code}"),
+            );
             return Err(Error::message(format!(
                 "{} build failed for {tag}: {}",
-                self.cli,
-                stderr.trim()
+                self.cli, status
             )));
         }
 

@@ -118,12 +118,19 @@ pub(super) fn spawn_sandbox_background_tasks(
                     let backend_name = backend.backend_name();
                     match backend.build_image(&base_image, &packages).await {
                         Ok(Some(result)) => {
-                            info!(
-                                backend = backend_name,
-                                tag = %result.tag,
-                                built = result.built,
-                                "sandbox image pre-build complete"
-                            );
+                            if result.built {
+                                info!(
+                                    backend = backend_name,
+                                    tag = %result.tag,
+                                    "sandbox image pre-build complete"
+                                );
+                            } else {
+                                debug!(
+                                    backend = backend_name,
+                                    tag = %result.tag,
+                                    "sandbox image pre-build skipped: image already exists"
+                                );
+                            }
                             built_any |= result.built;
                             if let Err(error) = router
                                 .set_backend_image(backend_name, result.tag.clone())
@@ -157,9 +164,15 @@ pub(super) fn spawn_sandbox_background_tasks(
                             );
                         },
                         Err(error) => {
+                            debug!(
+                                backend = backend_name,
+                                error = %error,
+                                "sandbox image pre-build failed"
+                            );
                             warn!(
                                 backend = backend_name,
-                                "sandbox image pre-build failed: {error}"
+                                summary = %concise_error_summary(&error),
+                                "sandbox image pre-build failed"
                             );
                             errors.push(serde_json::json!({
                                 "backend": backend_name,
@@ -312,5 +325,27 @@ pub(super) fn spawn_sandbox_background_tasks(
                 }
             }
         });
+    }
+}
+
+fn concise_error_summary(error: &moltis_tools::error::Error) -> String {
+    error
+        .to_string()
+        .lines()
+        .next()
+        .unwrap_or("unknown error")
+        .trim()
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::concise_error_summary;
+
+    #[test]
+    fn concise_error_summary_uses_first_line() {
+        let error = moltis_tools::error::Error::message("exit code 1\n#1 DONE 0.0s");
+
+        assert_eq!(concise_error_summary(&error), "exit code 1");
     }
 }
