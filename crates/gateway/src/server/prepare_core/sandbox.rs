@@ -329,13 +329,20 @@ pub(super) fn spawn_sandbox_background_tasks(
 }
 
 fn concise_error_summary(error: &moltis_tools::error::Error) -> String {
-    error
+    const MAX_SUMMARY_CHARS: usize = 160;
+
+    let mut summary = error
         .to_string()
         .lines()
         .next()
         .unwrap_or("unknown error")
         .trim()
-        .to_string()
+        .to_string();
+    if summary.chars().count() > MAX_SUMMARY_CHARS {
+        summary = summary.chars().take(MAX_SUMMARY_CHARS).collect::<String>();
+        summary.push_str("...");
+    }
+    summary
 }
 
 #[cfg(test)]
@@ -347,5 +354,15 @@ mod tests {
         let error = moltis_tools::error::Error::message("exit code 1\n#1 DONE 0.0s");
 
         assert_eq!(concise_error_summary(&error), "exit code 1");
+    }
+
+    #[test]
+    fn concise_error_summary_truncates_long_single_line_errors() {
+        let error = moltis_tools::error::Error::message("x".repeat(200));
+
+        assert_eq!(
+            concise_error_summary(&error),
+            format!("{}...", "x".repeat(160))
+        );
     }
 }

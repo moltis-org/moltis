@@ -643,7 +643,7 @@ impl Sandbox for DockerSandbox {
             let stderr = String::from_utf8_lossy(&output.stderr);
             debug!(
                 tag,
-                stdout = %stdout.trim(),
+                stdout = %tail_lines(&stdout, 20),
                 stderr = %stderr.trim(),
                 "{} build failed",
                 self.cli,
