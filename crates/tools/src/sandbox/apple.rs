@@ -27,7 +27,7 @@ use super::paths::{
 #[cfg(target_os = "macos")]
 use super::types::{
     BuildImageResult, DEFAULT_SANDBOX_IMAGE, NetworkPolicy, SANDBOX_HOME_DIR, Sandbox,
-    SandboxConfig, SandboxId, canonical_sandbox_packages, truncate_output_for_display,
+    SandboxConfig, SandboxId, canonical_sandbox_packages, tail_lines, truncate_output_for_display,
 };
 #[cfg(target_os = "macos")]
 use crate::error::{Error, Result};
@@ -1175,8 +1175,8 @@ impl Sandbox for AppleContainerSandbox {
             }
             debug!(
                 tag,
-                stdout = %stdout.trim(),
-                stderr = %stderr.trim(),
+                stdout = %tail_lines(&stdout, 20),
+                stderr = %tail_lines(&stderr, 20),
                 "container build failed"
             );
             let status = output.status.code().map_or_else(
