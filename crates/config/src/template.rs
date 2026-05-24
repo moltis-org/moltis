@@ -307,6 +307,10 @@ port = {port}                           # Port number (auto-generated for this i
 # direct agent sessions and spawned sub-agents. The global `[tools]` values are
 # used as fallbacks when a preset omits them.
 #
+# ⚠️  SCOPE: `tools.allow` / `tools.deny` under a preset do NOT filter tools
+# for the main agent session. To allow/deny tools for the main session, use
+# the `[tools.policy]` section further down this file.
+#
 # [agents]
 # default_preset = "research"      # Sub-agent preset used when spawn_agent.preset is omitted
 #

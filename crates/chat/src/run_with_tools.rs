@@ -874,7 +874,7 @@ pub(crate) async fn run_with_tools(
     });
 
     let provider_ref = provider.clone();
-    let first_result = run_agent_loop_streaming_with_limits(
+    let first_agent_future = run_agent_loop_streaming_with_limits(
         provider,
         &filtered_registry,
         &system_prompt,
@@ -888,8 +888,23 @@ pub(crate) async fn run_with_tools(
         AgentLoopLimits {
             max_iterations: Some(runtime_limits.max_iterations),
         },
-    )
-    .await;
+    );
+    let first_result = if runtime_limits.timeout_secs > 0 {
+        match tokio::time::timeout(
+            Duration::from_secs(runtime_limits.timeout_secs),
+            first_agent_future,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(AgentRunError::Other(anyhow::anyhow!(
+                "agent run timed out after {}s",
+                runtime_limits.timeout_secs
+            ))),
+        }
+    } else {
+        first_agent_future.await
+    };
 
     // On context-window overflow, compact the session and retry once.
     let result = match first_result {
@@ -976,7 +991,7 @@ pub(crate) async fn run_with_tools(
                     };
 
                     // effective_user_content already carries datetime context.
-                    run_agent_loop_streaming_with_limits(
+                    let retry_agent_future = run_agent_loop_streaming_with_limits(
                         provider_ref.clone(),
                         &filtered_registry,
                         &system_prompt,
@@ -990,8 +1005,23 @@ pub(crate) async fn run_with_tools(
                         AgentLoopLimits {
                             max_iterations: Some(runtime_limits.max_iterations),
                         },
-                    )
-                    .await
+                    );
+                    if runtime_limits.timeout_secs > 0 {
+                        match tokio::time::timeout(
+                            Duration::from_secs(runtime_limits.timeout_secs),
+                            retry_agent_future,
+                        )
+                        .await
+                        {
+                            Ok(result) => result,
+                            Err(_) => Err(AgentRunError::Other(anyhow::anyhow!(
+                                "agent run timed out after {}s",
+                                runtime_limits.timeout_secs
+                            ))),
+                        }
+                    } else {
+                        retry_agent_future.await
+                    }
                 },
                 Err(e) => {
                     warn!(run_id, error = %e, "retry compaction failed");
