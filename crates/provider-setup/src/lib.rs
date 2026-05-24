@@ -8,6 +8,7 @@ mod key_store;
 mod known_providers;
 mod oauth;
 mod ollama;
+mod openai_base_url;
 mod service;
 
 /// Callback for publishing events to connected clients.

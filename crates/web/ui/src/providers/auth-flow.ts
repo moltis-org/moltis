@@ -9,6 +9,7 @@ import {
 	humanizeProbeError,
 	isModelServiceNotConfigured,
 	isTimeoutError,
+	openAiCompatibleBaseUrlError,
 	saveProviderKey,
 	testModel,
 	validateProviderKey,
@@ -159,6 +160,14 @@ export function showApiKeyForm(provider: ProviderInfo): void {
 		const keyVal = key || provider.name;
 		const endpointVal = endpointInp?.value.trim() || null;
 		const modelVal = modelInp?.value.trim() || null;
+		const endpointError = openAiCompatibleBaseUrlError(endpointVal);
+		if (endpointError) {
+			saveBtn.disabled = false;
+			saveBtn.textContent = "Save";
+			resetValidationProgress(validationProgress);
+			setFormError(errorPanel, endpointError);
+			return;
+		}
 		const requestId = createValidationRequestId();
 		const stopProgressEvents = bindValidationProgressEvents(validationProgress, requestId);
 

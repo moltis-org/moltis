@@ -412,6 +412,73 @@ async fn save_key_rejects_missing_params() {
 }
 
 #[tokio::test]
+async fn save_key_rejects_openai_completion_endpoint_base_url() {
+    let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+        &ProvidersConfig::default(),
+        HashMap::new(),
+    )));
+    let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+
+    let error = svc
+        .save_key(serde_json::json!({
+            "provider": "openai",
+            "apiKey": "sk-test",
+            "baseUrl": "https://api.example.com/v1/chat/completions",
+        }))
+        .await
+        .expect_err("completion endpoint should be rejected")
+        .to_string();
+
+    assert!(error.contains("API base URL"));
+    assert!(error.contains("https://api.example.com/v1"));
+}
+
+#[tokio::test]
+async fn add_custom_rejects_completion_endpoint_base_url() {
+    let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+        &ProvidersConfig::default(),
+        HashMap::new(),
+    )));
+    let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+
+    let error = svc
+        .add_custom(serde_json::json!({
+            "apiKey": "sk-test",
+            "baseUrl": "https://api.deepinfra.com/v1/openai/chat/completions",
+            "model": "Qwen/Qwen3.5-397B-A17B",
+        }))
+        .await
+        .expect_err("custom completion endpoint should be rejected")
+        .to_string();
+
+    assert!(error.contains("API base URL"));
+    assert!(error.contains("https://api.deepinfra.com/v1/openai"));
+}
+
+#[tokio::test]
+async fn validate_key_rejects_custom_completion_endpoint_base_url() {
+    let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
+        &ProvidersConfig::default(),
+        HashMap::new(),
+    )));
+    let svc = LiveProviderSetupService::new(registry, ProvidersConfig::default(), None);
+
+    let error = svc
+        .validate_key(serde_json::json!({
+            "provider": "custom-deepinfra-com",
+            "apiKey": "sk-test",
+            "baseUrl": "https://api.deepinfra.com/v1/openai/chat/completions",
+            "model": "Qwen/Qwen3.5-397B-A17B",
+        }))
+        .await
+        .expect_err("custom completion endpoint validation should be rejected")
+        .to_string();
+
+    assert!(error.contains("API base URL"));
+    assert!(error.contains("https://api.deepinfra.com/v1/openai"));
+}
+
+#[tokio::test]
 async fn oauth_start_rejects_unknown_provider() {
     let registry = Arc::new(RwLock::new(ProviderRegistry::from_env_with_config(
         &ProvidersConfig::default(),

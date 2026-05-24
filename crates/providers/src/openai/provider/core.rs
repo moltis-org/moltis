@@ -195,12 +195,13 @@ impl OpenAiProvider {
         &self,
         body: &serde_json::Value,
     ) -> reqwest::Result<reqwest::Response> {
+        let url = self.chat_completions_url();
         for attempt in 0..3 {
             self.wait_for_mistral_slot().await;
 
             let response = self
                 .client
-                .post(format!("{}/chat/completions", self.base_url))
+                .post(&url)
                 .header(
                     "Authorization",
                     format!("Bearer {}", self.api_key.expose_secret()),
@@ -228,6 +229,10 @@ impl OpenAiProvider {
         }
 
         unreachable!("bounded retry loop always returns from the final attempt")
+    }
+
+    pub(crate) fn chat_completions_url(&self) -> String {
+        format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
     }
 
     /// Return the reasoning effort string if configured.

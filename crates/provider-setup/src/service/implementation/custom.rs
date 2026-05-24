@@ -38,6 +38,7 @@ impl LiveProviderSetupService {
 
         let base_name = derive_provider_name_from_url(base_url)
             .ok_or_else(|| "could not parse endpoint URL".to_string())?;
+        crate::openai_base_url::validate_openai_compatible_base_url(Some(base_url))?;
 
         let existing = self.key_store.load_all_configs();
         let provider_name = existing_custom_provider_for_base_url(base_url, &existing)

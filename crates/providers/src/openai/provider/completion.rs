@@ -68,7 +68,8 @@ impl OpenAiProvider {
         // Keep them cheap instead of mirroring full reasoning budgets.
         self.apply_probe_output_cap_chat(&mut body);
 
-        debug!(model = %self.model, "openai probe request");
+        let url = self.chat_completions_url();
+        debug!(model = %self.model, url = %url, "openai probe request");
         trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai probe request body");
 
         let http_resp = self.send_chat_completions_request(&body).await?;
@@ -82,6 +83,7 @@ impl OpenAiProvider {
                     status = %status,
                     model = %self.model,
                     provider = %self.provider_name,
+                    url = %url,
                     body = %body_text,
                     "openai probe API error"
                 );
@@ -90,6 +92,7 @@ impl OpenAiProvider {
                     status = %status,
                     model = %self.model,
                     provider = %self.provider_name,
+                    url = %url,
                     "openai probe model unsupported for chat/completions endpoint"
                 );
             }
@@ -105,7 +108,7 @@ impl OpenAiProvider {
             anyhow::bail!(
                 "{}",
                 with_retry_after_marker(
-                    format!("OpenAI API error HTTP {status}: {body_text}"),
+                    format!("OpenAI API error at {url} HTTP {status}: {body_text}"),
                     retry_after_ms,
                 )
             );

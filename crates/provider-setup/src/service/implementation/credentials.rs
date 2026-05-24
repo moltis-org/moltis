@@ -16,6 +16,9 @@ use {
         key_store::parse_models_param,
         known_providers::{AuthType, known_providers},
         ollama::normalize_ollama_openai_base_url,
+        openai_base_url::{
+            is_openai_compatible_provider_name, validate_openai_compatible_base_url,
+        },
     },
 };
 
@@ -56,6 +59,10 @@ impl LiveProviderSetupService {
             }
         } else if api_key.is_none() {
             return Err("missing 'apiKey' parameter".into());
+        }
+
+        if is_custom || is_openai_compatible_provider_name(provider_name) {
+            validate_openai_compatible_base_url(base_url)?;
         }
 
         let normalized_base_url = if provider_name == "ollama" {
