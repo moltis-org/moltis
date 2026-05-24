@@ -1,5 +1,5 @@
 const { expect, test } = require("../base-test");
-const { navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
+const { expectNoPageHorizontalOverflow, navigateAndWait, waitForWsConnected, watchPageErrors } = require("../helpers");
 
 /**
  * Wait for the chat session to finish loading so injected DOM elements
@@ -61,6 +61,26 @@ async function getHorizontalOverflow(page) {
 			inputClientWidth: input.clientWidth,
 			viewportWidth: window.innerWidth,
 		};
+	});
+}
+
+async function getChatPaneBounds(page) {
+	return await page.evaluate(() => {
+		var pageContent = document.getElementById("pageContent");
+		if (!pageContent) throw new Error("#pageContent element not found");
+		var pageRect = pageContent.getBoundingClientRect();
+		return [".chat-toolbar", "#messages", ".chat-input-row", "#chatComposer"].map((selector) => {
+			var el = document.querySelector(selector);
+			if (!el) throw new Error(`${selector} element not found`);
+			var rect = el.getBoundingClientRect();
+			return {
+				selector,
+				left: rect.left,
+				right: rect.right,
+				pageLeft: pageRect.left,
+				pageRight: pageRect.right,
+			};
+		});
 	});
 }
 
@@ -136,6 +156,44 @@ test.describe("Chat layout — no horizontal overflow (#945)", () => {
 			expect(overflow.inputScrollWidth, `input scrollWidth at ${width}px`).toBeLessThanOrEqual(
 				overflow.inputClientWidth,
 			);
+		}
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("toolbar does not widen chat pane with desktop session sidebar visible (#1055)", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+
+		await page.evaluate(() => {
+			var modelLabel = document.getElementById("modelComboLabel");
+			if (modelLabel) modelLabel.textContent = "anthropic/claude-sonnet-with-a-very-long-display-name";
+			var sandboxImageLabel = document.getElementById("sandboxImageLabel");
+			if (sandboxImageLabel) sandboxImageLabel.textContent = "ubuntu:25.10-with-extra-packages";
+		});
+
+		for (const width of [1055, 1000, 900, 768]) {
+			await page.setViewportSize({ width, height: 880 });
+			await page.waitForFunction((w) => window.innerWidth === w, width, { timeout: 5_000 });
+			await expect
+				.poll(
+					() =>
+						page.evaluate(() => {
+							var panel = document.getElementById("sessionsPanel");
+							if (!panel) return false;
+							var rect = panel.getBoundingClientRect();
+							return rect.width > 200 && getComputedStyle(panel).display !== "none";
+						}),
+					{ timeout: 5_000 },
+				)
+				.toBe(true);
+
+			await expectNoPageHorizontalOverflow(page, `chat-sidebar-${width}`);
+
+			const bounds = await getChatPaneBounds(page);
+			for (const box of bounds) {
+				expect(box.left, `${box.selector} left edge at ${width}px`).toBeGreaterThanOrEqual(box.pageLeft - 1);
+				expect(box.right, `${box.selector} right edge at ${width}px`).toBeLessThanOrEqual(box.pageRight + 1);
+			}
 		}
 
 		expect(pageErrors).toEqual([]);

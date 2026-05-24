@@ -118,7 +118,33 @@
 /* ── Model Dropdown ── */
 
 /* Toolbar needs a stacking context so dropdowns render above the messages grid row. */
-.chat-toolbar { position: relative; z-index: 30; }
+.chat-toolbar {
+  position: relative;
+  z-index: 30;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.chat-toolbar > * {
+  min-width: 0;
+}
+
+.chat-toolbar #sessionNameMount {
+  flex: 1 1 auto;
+}
+
+.chat-toolbar #sessionHeaderToolbarMount,
+.chat-toolbar #sessionActionsMount {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 1100px) {
+  .chat-toolbar .chat-badge-desktop-only {
+    display: none !important;
+  }
+}
 
 .model-combo { position: relative; }
 .model-combo.hidden { display: none; }
