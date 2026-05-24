@@ -46,11 +46,15 @@ async function deleteAgentByName(page, agentName) {
 	await expect(testCard).toHaveCount(0, { timeout: 10_000 });
 }
 
-async function mockExternalAgentsRpc(page) {
-	await page.addInitScript(() => {
+async function mockExternalAgentsRpc(page, listPayload) {
+	await page.addInitScript((externalAgentsListPayload) => {
 		if (window.__externalAgentE2EPatched) return;
 		window.__externalAgentE2EPatched = true;
 		window.__externalAgentE2ERequests = [];
+		window.__externalAgentE2EListPayload = externalAgentsListPayload || [
+			{ kind: "codex", name: "Codex", installed: true, version: null },
+			{ kind: "claude-code", name: "Claude Code", installed: false, version: null },
+		];
 		const originalSend = WebSocket.prototype.send;
 
 		function respond(socket, id, payload) {
@@ -67,10 +71,7 @@ async function mockExternalAgentsRpc(page) {
 				var parsed = JSON.parse(payload);
 				if (parsed?.method === "external_agents.list") {
 					window.__externalAgentE2ERequests.push({ method: parsed.method, params: parsed.params || {} });
-					respond(this, parsed.id, [
-						{ kind: "codex", name: "Codex", installed: true, version: null },
-						{ kind: "claude-code", name: "Claude Code", installed: false, version: null },
-					]);
+					respond(this, parsed.id, window.__externalAgentE2EListPayload);
 					return;
 				}
 				if (parsed?.method === "external_agents.bind") {
@@ -88,7 +89,7 @@ async function mockExternalAgentsRpc(page) {
 			}
 			return originalSend.call(this, payload);
 		};
-	});
+	}, listPayload);
 }
 
 async function expectActiveSessionExternalAgent(page, kind) {
@@ -367,6 +368,30 @@ test.describe("Agents settings page", () => {
 			)
 			.toBe(true);
 		await expectActiveSessionExternalAgent(page, null);
+
+		expect(pageErrors).toEqual([]);
+	});
+
+	test("external-agent picker is hidden when external agents are disabled", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockExternalAgentsRpc(page, []);
+		await page.goto("/chats");
+		await expectPageContentMounted(page);
+		await waitForWsConnected(page);
+		await createSession(page);
+
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(() =>
+						(window.__externalAgentE2ERequests || []).some((req) => req.method === "external_agents.list"),
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
+		await expect(page.getByTestId("external-agent-picker")).toHaveCount(0);
+		await expect(page.getByText("Claude Code (unavailable)", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("Codex", { exact: true })).toHaveCount(0);
 
 		expect(pageErrors).toEqual([]);
 	});

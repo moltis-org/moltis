@@ -340,6 +340,9 @@ impl SessionService for ExternalAgentSessionService {
 #[async_trait]
 impl ExternalAgentService for GatewayExternalAgentService {
     async fn list(&self) -> ServiceResult {
+        if !self.config.enabled {
+            return Ok(serde_json::json!([]));
+        }
         Ok(serde_json::to_value(self.registry.list_agents().await)
             .unwrap_or_else(|_| serde_json::json!([])))
     }
@@ -426,6 +429,9 @@ impl ExternalAgentChatService {
     }
 
     async fn maybe_send_external(&self, params: &Value) -> Option<ServiceResult> {
+        if !self.external_agents.config.enabled {
+            return None;
+        }
         let session_key = resolve_session_key(params, &self.state).await;
         let entry = self.session_metadata.get(&session_key).await?;
         let kind = entry.external_agent_kind?;
@@ -917,15 +923,25 @@ mod tests {
         metadata: Arc<SqliteSessionMetadata>,
         state: Arc<FakeAgentState>,
     ) -> Arc<GatewayExternalAgentService> {
-        let mut registry = ExternalAgentRegistry::new();
-        registry.register(Box::new(FakeTransport { state }));
-        Arc::new(GatewayExternalAgentService::with_registry(
+        fake_external_agents_with_config(
             ExternalAgentsConfig {
                 enabled: true,
                 ..ExternalAgentsConfig::default()
             },
             metadata,
-            registry,
+            state,
+        )
+    }
+
+    fn fake_external_agents_with_config(
+        config: ExternalAgentsConfig,
+        metadata: Arc<SqliteSessionMetadata>,
+        state: Arc<FakeAgentState>,
+    ) -> Arc<GatewayExternalAgentService> {
+        let mut registry = ExternalAgentRegistry::new();
+        registry.register(Box::new(FakeTransport { state }));
+        Arc::new(GatewayExternalAgentService::with_registry(
+            config, metadata, registry,
         ))
     }
 
@@ -983,6 +999,60 @@ mod tests {
             .expect("status after unbind");
         assert_eq!(status["bound"], false);
         assert!(status["kind"].is_null());
+    }
+
+    #[tokio::test]
+    async fn list_returns_empty_when_external_agents_disabled() {
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let agent_state = Arc::new(FakeAgentState::default());
+        let service = fake_external_agents_with_config(
+            ExternalAgentsConfig::default(),
+            Arc::clone(&metadata),
+            Arc::clone(&agent_state),
+        );
+
+        let agents = service.list().await.expect("list external agents");
+
+        assert_eq!(agents, serde_json::json!([]));
+        assert_eq!(agent_state.starts.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn disabled_external_agents_do_not_route_stale_bindings() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        metadata.upsert("main", None).await.unwrap();
+        metadata
+            .set_external_agent("main", Some(AgentTransportKind::Codex), None)
+            .await;
+        let agent_state = Arc::new(FakeAgentState::default());
+        let external_agents = fake_external_agents_with_config(
+            ExternalAgentsConfig::default(),
+            Arc::clone(&metadata),
+            Arc::clone(&agent_state),
+        );
+        let chat = test_chat_service(
+            Arc::clone(&external_agents),
+            Arc::clone(&metadata),
+            Arc::clone(&session_store),
+        )
+        .await;
+
+        let error = chat
+            .send(serde_json::json!({ "sessionKey": "main", "text": "hello" }))
+            .await
+            .expect_err("disabled external agents should fall back to inner chat");
+
+        assert_eq!(error.to_string(), "chat not configured");
+        assert_eq!(agent_state.starts.load(Ordering::SeqCst), 0);
+        assert!(
+            agent_state
+                .prompts
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_empty()
+        );
     }
 
     #[test]
