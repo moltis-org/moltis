@@ -781,6 +781,14 @@
   bottom: calc(100% + 6px);
 }
 
+.chat-composer-footer #modelDropdown {
+  width: clamp(360px, 56vw, 640px);
+  min-width: 320px;
+  max-width: calc(100vw - 32px);
+  resize: horizontal;
+  overflow: hidden;
+}
+
 .chat-composer-footer .model-combo-btn {
   min-height: 36px;
   border-radius: 14px;
@@ -788,6 +796,16 @@
   background: var(--surface);
   color: var(--text);
   font-size: 0.85rem;
+}
+
+.chat-composer-footer #modelComboBtn {
+  max-width: min(56vw, 360px);
+}
+
+#modelComboLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .chat-composer-icon-btn,

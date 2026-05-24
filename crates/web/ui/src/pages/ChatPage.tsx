@@ -801,10 +801,20 @@ function syncModelComboLabel(): void {
 	const models = S.models as Array<{ id: string; displayName?: string }>;
 	const found = models.find((m) => m.id === S.selectedModelId);
 	if (found) {
-		S.modelComboLabel.textContent = found.displayName || found.id;
+		const label = found.displayName || found.id;
+		S.modelComboLabel.textContent = label;
+		S.modelComboLabel.title =
+			found.displayName && found.displayName !== found.id ? `${found.displayName} (${found.id})` : label;
 		return;
 	}
-	if (models[0]) S.modelComboLabel.textContent = models[0].displayName || models[0].id;
+	if (models[0]) {
+		const label = models[0].displayName || models[0].id;
+		S.modelComboLabel.textContent = label;
+		S.modelComboLabel.title =
+			models[0].displayName && models[0].displayName !== models[0].id
+				? `${models[0].displayName} (${models[0].id})`
+				: label;
+	}
 }
 
 function resolveInitialSessionKey(sessionKeyFromUrl: string | null): string {

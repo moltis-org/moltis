@@ -14,7 +14,11 @@ function setSessionModel(sessionKey: string, modelId: string): void {
 export { setSessionModel };
 
 function updateModelComboLabel(model: ModelInfo): void {
-	if (S.modelComboLabel) S.modelComboLabel.textContent = model.displayName || model.id;
+	if (!S.modelComboLabel) return;
+	const label = model.displayName || model.id;
+	S.modelComboLabel.textContent = label;
+	S.modelComboLabel.title =
+		model.displayName && model.displayName !== model.id ? `${model.displayName} (${model.id})` : label;
 }
 
 export function fetchModels(): Promise<void> {
@@ -73,6 +77,8 @@ function buildModelItem(m: ModelInfo, currentId: string): HTMLDivElement {
 	const label = document.createElement("span");
 	label.className = "model-item-label";
 	label.textContent = m.displayName || m.id;
+	label.title = m.displayName && m.displayName !== m.id ? `${m.displayName} (${m.id})` : label.textContent;
+	el.title = label.title;
 	el.appendChild(label);
 
 	const meta = document.createElement("span");

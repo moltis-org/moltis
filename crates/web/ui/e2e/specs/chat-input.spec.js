@@ -19,6 +19,22 @@ async function waitForWsConnectedIfPossible(page) {
 	await waitForWsConnected(page, 5_000).catch(() => "ignored");
 }
 
+async function setMockModels(page, models, selectedId) {
+	await page.evaluate(
+		async ([models, selectedId]) => {
+			var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			var appUrl = new URL(appScript.src, window.location.origin);
+			var prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			var store = await import(`${prefix}js/stores/model-store.js`);
+
+			store.select(selectedId);
+			store.setAll(models);
+		},
+		[models, selectedId],
+	);
+}
+
 async function mockFullContextRpc(page) {
 	await page.evaluate(async () => {
 		var appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
@@ -426,6 +442,34 @@ test.describe("Chat input and slash commands", () => {
 		await expect(dropdown).toBeVisible();
 		const box = await dropdown.boundingBox();
 		expect(box?.height || 0).toBeGreaterThan(40);
+		expect(box?.width || 0).toBeLessThanOrEqual(390);
+	});
+
+	test("model selector exposes long gateway model names", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		const modelId = "requesty/anthropic/claude-sonnet-4-20250514-thinking-extended-beta";
+		const displayName = "Claude Sonnet 4 20250514 Thinking Extended Beta";
+		const fullTitle = `${displayName} (${modelId})`;
+
+		await setMockModels(
+			page,
+			[{ id: modelId, displayName, provider: "requesty", supportsReasoning: false }],
+			modelId,
+		);
+
+		await page.locator("#modelComboBtn").click();
+		const dropdown = page.locator("#modelDropdown");
+		await expect(dropdown).toBeVisible();
+
+		const box = await dropdown.boundingBox();
+		expect(box?.width || 0).toBeGreaterThan(360);
+
+		const item = page.locator("#modelDropdownList .model-dropdown-item").first();
+		await expect(item).toHaveAttribute("title", fullTitle);
+		await expect(item.locator(".model-item-label")).toHaveAttribute("title", fullTitle);
+		await item.click();
+		await expect(page.locator("#modelComboLabel")).toHaveAttribute("title", fullTitle);
+		expect(pageErrors).toEqual([]);
 	});
 
 	test("send button is present", async ({ page }) => {

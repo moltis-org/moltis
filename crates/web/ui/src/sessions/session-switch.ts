@@ -110,7 +110,12 @@ export function restoreSessionState(entry: SessionMeta, projectId?: string): voi
 		S.setSelectedModelId(baseModelId);
 		localStorage.setItem("moltis-model", baseModelId);
 		const found = modelStore.getById(baseModelId);
-		if (S.modelComboLabel) S.modelComboLabel.textContent = found ? found.displayName || found.id : baseModelId;
+		if (S.modelComboLabel) {
+			const label = found ? found.displayName || found.id : baseModelId;
+			S.modelComboLabel.textContent = label;
+			S.modelComboLabel.title =
+				found?.displayName && found.displayName !== found.id ? `${found.displayName} (${found.id})` : label;
+		}
 	}
 	updateSandboxUI(entry.sandbox_enabled !== false);
 	updateSandboxImageUI(entry.sandbox_image || null);
