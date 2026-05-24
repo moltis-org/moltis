@@ -21,6 +21,10 @@ pub fn parse_chat_error(raw: &str, provider_name: Option<&str>) -> Value {
 }
 
 fn try_parse_known_error(raw: &str) -> Value {
+    if raw.starts_with("agent run timed out after ") {
+        return build_error("timeout", "", "Timed out", raw, None, None, None);
+    }
+
     // Max iterations reached — before JSON parsing since the message is plain text.
     if raw.contains("agent loop exceeded max iterations") {
         let limit = raw
@@ -672,6 +676,17 @@ mod tests {
             "errors:chat.maxIterationsReached.detail"
         );
         assert!(result["detail"].as_str().unwrap().contains("25 iterations"));
+    }
+
+    #[test]
+    fn test_agent_run_timeout() {
+        let raw = "agent run timed out after 600s";
+        let result = parse_chat_error(raw, Some("anthropic"));
+        assert_eq!(result["type"], "timeout");
+        assert_eq!(result["title"], "Timed out");
+        assert_eq!(result["detail"], raw);
+        assert_eq!(result["provider"], "anthropic");
+        assert!(result.get("title_key").is_none());
     }
 
     #[test]
