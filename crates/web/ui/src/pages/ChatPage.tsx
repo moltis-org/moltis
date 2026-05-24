@@ -19,7 +19,7 @@ import {
 import { SessionHeader } from "../components/SessionHeader";
 import { formatTokens, sendRpc } from "../helpers";
 import { initMediaDrop, teardownMediaDrop } from "../media-drop";
-import { bindModelComboEvents } from "../models";
+import { bindModelComboEvents, modelDisplayLabel, modelTitle } from "../models";
 import { bindNodeComboEvents, fetchNodes, unbindNodeEvents } from "../nodes-selector";
 import { bindProjectComboEvents } from "../project-combo";
 import { fetchProjects } from "../projects";
@@ -801,19 +801,15 @@ function syncModelComboLabel(): void {
 	const models = S.models as Array<{ id: string; displayName?: string }>;
 	const found = models.find((m) => m.id === S.selectedModelId);
 	if (found) {
-		const label = found.displayName || found.id;
+		const label = modelDisplayLabel(found);
 		S.modelComboLabel.textContent = label;
-		S.modelComboLabel.title =
-			found.displayName && found.displayName !== found.id ? `${found.displayName} (${found.id})` : label;
+		S.modelComboLabel.title = modelTitle(found);
 		return;
 	}
 	if (models[0]) {
-		const label = models[0].displayName || models[0].id;
+		const label = modelDisplayLabel(models[0]);
 		S.modelComboLabel.textContent = label;
-		S.modelComboLabel.title =
-			models[0].displayName && models[0].displayName !== models[0].id
-				? `${models[0].displayName} (${models[0].id})`
-				: label;
+		S.modelComboLabel.title = modelTitle(models[0]);
 	}
 }
 

@@ -785,7 +785,6 @@
   width: clamp(360px, 56vw, 640px);
   min-width: 320px;
   max-width: calc(100vw - 32px);
-  resize: horizontal;
   overflow: hidden;
 }
 

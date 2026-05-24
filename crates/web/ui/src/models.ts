@@ -13,12 +13,25 @@ function setSessionModel(sessionKey: string, modelId: string): void {
 
 export { setSessionModel };
 
+export interface ModelLabelInfo {
+	id: string;
+	displayName?: string;
+}
+
+export function modelDisplayLabel(model: ModelLabelInfo): string {
+	return model.displayName || model.id;
+}
+
+export function modelTitle(model: ModelLabelInfo): string {
+	const label = modelDisplayLabel(model);
+	return model.displayName && model.displayName !== model.id ? `${model.displayName} (${model.id})` : label;
+}
+
 function updateModelComboLabel(model: ModelInfo): void {
 	if (!S.modelComboLabel) return;
-	const label = model.displayName || model.id;
+	const label = modelDisplayLabel(model);
 	S.modelComboLabel.textContent = label;
-	S.modelComboLabel.title =
-		model.displayName && model.displayName !== model.id ? `${model.displayName} (${model.id})` : label;
+	S.modelComboLabel.title = modelTitle(model);
 }
 
 export function fetchModels(): Promise<void> {
@@ -76,8 +89,8 @@ function buildModelItem(m: ModelInfo, currentId: string): HTMLDivElement {
 
 	const label = document.createElement("span");
 	label.className = "model-item-label";
-	label.textContent = m.displayName || m.id;
-	label.title = m.displayName && m.displayName !== m.id ? `${m.displayName} (${m.id})` : label.textContent;
+	label.textContent = modelDisplayLabel(m);
+	label.title = modelTitle(m);
 	el.title = label.title;
 	el.appendChild(label);
 
