@@ -794,8 +794,9 @@ impl ChatService for LiveChatService {
         let config = moltis_config::discover_and_load();
         let tools: Vec<Value> = if supports_tools {
             let registry_guard = self.tool_registry.read().await;
+            let list_agent_id = resolve_prompt_agent_id(session_entry.as_ref());
             let list_ctx = PolicyContext {
-                agent_id: "main".into(),
+                agent_id: list_agent_id,
                 ..Default::default()
             };
             let effective_registry =

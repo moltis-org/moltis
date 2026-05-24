@@ -420,12 +420,24 @@ impl Default for SessionAccessPolicyConfig {
 /// [agents.presets.kids.sandbox]
 /// mode = "all"
 /// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PresetSandboxMode {
+    /// Disable sandboxing for this agent.
+    Off,
+    /// Sandbox every session for this agent.
+    All,
+    /// Inherit the global non-main session sandbox behavior.
+    NonMain,
+}
+
+/// Per-agent sandbox policy override.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PresetSandboxPolicy {
     /// Sandbox mode override: "off", "all", "non-main".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
+    pub mode: Option<PresetSandboxMode>,
 }
 
 impl PresetSandboxPolicy {

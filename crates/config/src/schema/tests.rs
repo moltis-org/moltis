@@ -1155,3 +1155,24 @@ fn mcp_policy_roundtrip_all() {
     let parsed: PresetMcpPolicy = toml::from_str(&toml_str).unwrap();
     assert!(parsed.is_all());
 }
+
+#[test]
+fn preset_sandbox_mode_parses_typed_values() {
+    let toml_str = r#"
+[agents.presets.test.sandbox]
+mode = "non-main"
+"#;
+    let config: MoltisConfig = toml::from_str(toml_str).unwrap();
+    let preset = config.agents.presets.get("test").unwrap();
+    assert_eq!(preset.sandbox.mode, Some(PresetSandboxMode::NonMain));
+}
+
+#[test]
+fn preset_sandbox_mode_rejects_unknown_values() {
+    let toml_str = r#"
+[agents.presets.test.sandbox]
+mode = "sometimes"
+"#;
+    let result: Result<MoltisConfig, _> = toml::from_str(toml_str);
+    assert!(result.is_err());
+}

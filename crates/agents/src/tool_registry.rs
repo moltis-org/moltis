@@ -278,10 +278,18 @@ impl ToolRegistry {
     where
         F: FnMut(&str) -> bool,
     {
+        self.clone_allowed_entries(|name, _| predicate(name))
+    }
+
+    /// Clone the registry keeping only tools whose name and source metadata match `predicate`.
+    pub fn clone_allowed_entries<F>(&self, mut predicate: F) -> ToolRegistry
+    where
+        F: FnMut(&str, &ToolSource) -> bool,
+    {
         let tools = self
             .tools
             .iter()
-            .filter(|(name, _)| predicate(name))
+            .filter(|(name, entry)| predicate(name, &entry.source))
             .map(|(name, entry)| {
                 (name.clone(), ToolEntry {
                     tool: Arc::clone(&entry.tool),

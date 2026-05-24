@@ -5,9 +5,12 @@ use std::sync::Arc;
 use {serde_json::Value, tracing::warn};
 
 use {
-    moltis_agents::prompt::{
-        PromptBuildLimits, PromptHostRuntimeContext, PromptModeRuntimeContext, PromptNodeInfo,
-        PromptNodesRuntimeContext, PromptRuntimeContext, PromptSandboxRuntimeContext,
+    moltis_agents::{
+        prompt::{
+            PromptBuildLimits, PromptHostRuntimeContext, PromptModeRuntimeContext, PromptNodeInfo,
+            PromptNodesRuntimeContext, PromptRuntimeContext, PromptSandboxRuntimeContext,
+        },
+        tool_registry::ToolSource,
     },
     moltis_config::{AgentMemoryWriteMode, LoadedWorkspaceMarkdown, MemoryStyle, PromptMemoryMode},
     moltis_sessions::{metadata::SessionEntry, state_store::SessionStateStore},
@@ -52,6 +55,133 @@ pub(crate) async fn clear_prompt_memory_snapshot(
             );
             false
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DummyTool(&'static str);
+
+    #[async_trait::async_trait]
+    impl moltis_agents::tool_registry::AgentTool for DummyTool {
+        fn name(&self) -> &str {
+            self.0
+        }
+
+        fn description(&self) -> &str {
+            "test tool"
+        }
+
+        fn parameters_schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+
+        async fn execute(&self, _params: Value) -> anyhow::Result<Value> {
+            Ok(serde_json::json!({}))
+        }
+    }
+
+    fn registry_with_mcp_tools() -> moltis_agents::tool_registry::ToolRegistry {
+        let mut registry = moltis_agents::tool_registry::ToolRegistry::new();
+        registry.register(Box::new(DummyTool("exec")));
+        registry.register(Box::new(DummyTool("mcp__github__builtin_named_like_mcp")));
+        registry.register_mcp(Box::new(DummyTool("mcp__github__search")), "github".into());
+        registry.register_mcp(Box::new(DummyTool("mcp__memory__store")), "memory".into());
+        registry
+    }
+
+    fn unrestricted_policy_context(agent_id: &str) -> PolicyContext {
+        PolicyContext {
+            agent_id: agent_id.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn mcp_allow_empty_denies_all_mcp_tools_only() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.tools.policy.allow = vec!["*".into()];
+        config
+            .agents
+            .presets
+            .insert("locked".into(), moltis_config::schema::AgentPreset {
+                mcp: moltis_config::schema::PresetMcpPolicy::Allow(vec![]),
+                ..Default::default()
+            });
+
+        let filtered = apply_runtime_tool_filters(
+            &registry_with_mcp_tools(),
+            &config,
+            &[],
+            false,
+            &unrestricted_policy_context("locked"),
+        );
+
+        assert!(filtered.get("exec").is_some());
+        assert!(
+            filtered
+                .get("mcp__github__builtin_named_like_mcp")
+                .is_some()
+        );
+        assert!(filtered.get("mcp__github__search").is_none());
+        assert!(filtered.get("mcp__memory__store").is_none());
+    }
+
+    #[test]
+    fn mcp_allow_keeps_only_listed_mcp_server() {
+        let mut config = moltis_config::MoltisConfig::default();
+        config.tools.policy.allow = vec!["*".into()];
+        config
+            .agents
+            .presets
+            .insert("github-only".into(), moltis_config::schema::AgentPreset {
+                mcp: moltis_config::schema::PresetMcpPolicy::Allow(vec!["github".into()]),
+                ..Default::default()
+            });
+
+        let filtered = apply_runtime_tool_filters(
+            &registry_with_mcp_tools(),
+            &config,
+            &[],
+            false,
+            &unrestricted_policy_context("github-only"),
+        );
+
+        assert!(filtered.get("exec").is_some());
+        assert!(filtered.get("mcp__github__search").is_some());
+        assert!(filtered.get("mcp__memory__store").is_none());
+    }
+
+    #[test]
+    fn skill_policy_allows_then_denies_by_name_or_category() {
+        let skills = vec![
+            moltis_skills::types::SkillMetadata {
+                name: "web-search".into(),
+                category: Some("research".into()),
+                ..Default::default()
+            },
+            moltis_skills::types::SkillMetadata {
+                name: "games".into(),
+                category: Some("gaming".into()),
+                ..Default::default()
+            },
+            moltis_skills::types::SkillMetadata {
+                name: "writer".into(),
+                category: Some("creative".into()),
+                ..Default::default()
+            },
+        ];
+        let policy = moltis_config::schema::PresetSkillPolicy {
+            allow: Some(vec!["research".into(), "writer".into()]),
+            deny: Some(vec!["writer".into()]),
+        };
+
+        let filtered = filter_skills_for_agent(skills, &policy);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "web-search");
     }
 }
 
@@ -586,20 +716,12 @@ pub(crate) fn apply_runtime_tool_filters(
             _ => None,
         });
 
-    base_registry.clone_allowed_by(|name| {
+    base_registry.clone_allowed_entries(|name, source| {
         if !policy.is_allowed(name) {
             return false;
         }
-        // If MCP allow-list is active, additionally filter MCP tools.
-        if let Some(allowed_servers) = mcp_allow
-            && name.starts_with("mcp__")
-        {
-            // Extract server name from mcp__<server>__<tool>.
-            let server = name
-                .strip_prefix("mcp__")
-                .and_then(|rest| rest.split("__").next())
-                .unwrap_or("");
-            return allowed_servers.iter().any(|s| s.as_str() == server);
+        if let (Some(allowed_servers), ToolSource::Mcp { server }) = (mcp_allow, source) {
+            return allowed_servers.iter().any(|allowed| allowed == server);
         }
         true
     })

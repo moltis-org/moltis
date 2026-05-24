@@ -237,9 +237,13 @@ pub(crate) async fn run_with_tools(
         //                 logic decide (sandboxes non-main sessions only)
         // - absent     → remove any stale override from a previous agent
         if let Some(preset) = persona.config.agents.get_preset(agent_id) {
-            match preset.sandbox.mode.as_deref() {
-                Some("all") => router.set_override(session_key, true).await,
-                Some("off") => router.set_override(session_key, false).await,
+            match preset.sandbox.mode {
+                Some(moltis_config::schema::PresetSandboxMode::All) => {
+                    router.set_override(session_key, true).await
+                },
+                Some(moltis_config::schema::PresetSandboxMode::Off) => {
+                    router.set_override(session_key, false).await
+                },
                 _ => router.remove_override(session_key).await,
             }
         } else {
