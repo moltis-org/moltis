@@ -149,8 +149,12 @@ pub struct McpServerEntry {
     #[serde(default)]
     pub args: Vec<String>,
     /// Environment variables to set for the process.
-    #[serde(default)]
-    pub env: HashMap<String, String>,
+    #[serde(
+        default,
+        serialize_with = "super::serialize_secret_string_map",
+        deserialize_with = "super::deserialize_secret_string_map"
+    )]
+    pub env: HashMap<String, Secret<String>>,
     /// Whether this server is enabled. Defaults to true.
     #[serde(default = "default_true")]
     pub enabled: bool,

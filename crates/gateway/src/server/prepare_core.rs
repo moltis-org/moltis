@@ -335,11 +335,7 @@ pub async fn prepare_gateway_core(
                     .insert(name.clone(), moltis_mcp::McpServerConfig {
                         command: entry.command.clone(),
                         args: entry.args.clone(),
-                        env: entry
-                            .env
-                            .iter()
-                            .map(|(key, value)| (key.clone(), Secret::new(value.clone())))
-                            .collect(),
+                        env: entry.env.clone(),
                         enabled: entry.enabled,
                         request_timeout_secs: entry.request_timeout_secs,
                         transport,

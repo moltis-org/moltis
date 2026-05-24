@@ -391,6 +391,30 @@ where
     Ok(opt.map(Secret::new))
 }
 
+fn serialize_secret_string_map<S: serde::Serializer>(
+    values: &HashMap<String, Secret<String>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let plain: HashMap<&str, &str> = values
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.expose_secret().as_str()))
+        .collect();
+    plain.serialize(serializer)
+}
+
+fn deserialize_secret_string_map<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<String, Secret<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let plain: HashMap<String, String> = HashMap::deserialize(deserializer)?;
+    Ok(plain
+        .into_iter()
+        .map(|(key, value)| (key, Secret::new(value)))
+        .collect())
+}
+
 fn default_true() -> bool {
     true
 }

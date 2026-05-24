@@ -249,6 +249,31 @@ request_timeout_secs = 75
 }
 
 #[test]
+fn mcp_server_entry_parses_env_values_as_secrets() {
+    let config: MoltisConfig = toml::from_str(
+        r#"
+[mcp.servers.github]
+command = "npx"
+
+[mcp.servers.github.env]
+GITHUB_PERSONAL_ACCESS_TOKEN = "ghp-secret"
+"#,
+    )
+    .unwrap();
+
+    let secret = config
+        .mcp
+        .servers
+        .get("github")
+        .and_then(|entry| entry.env.get("GITHUB_PERSONAL_ACCESS_TOKEN"))
+        .map(ExposeSecret::expose_secret);
+    assert_eq!(secret.map(String::as_str), Some("ghp-secret"));
+
+    let debug = format!("{:?}", config.mcp.servers.get("github").unwrap().env);
+    assert!(!debug.contains("ghp-secret"));
+}
+
+#[test]
 fn mcp_oauth_override_parses_client_secret_as_secret() {
     let config: MoltisConfig = toml::from_str(
         r#"
