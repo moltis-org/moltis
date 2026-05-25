@@ -572,7 +572,9 @@ pub(crate) fn apply_openai_chat_tool_choice(
             }
         },
         Some(ToolChoice::None) => {
-            body["tool_choice"] = serde_json::json!("none");
+            if body.get("tools").is_some() {
+                body["tool_choice"] = serde_json::json!("none");
+            }
         },
         Some(ToolChoice::Tool { name }) => {
             if name.trim().is_empty() {
