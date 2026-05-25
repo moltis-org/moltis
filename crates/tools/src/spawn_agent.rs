@@ -1,6 +1,9 @@
 //! Sub-agent tool: lets the LLM delegate tasks to a child agent loop.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    sync::{Arc, OnceLock},
+};
 
 use {
     async_trait::async_trait,
@@ -97,7 +100,7 @@ impl SpawnAgentTool {
             agents_config: None,
             on_event: None,
             session_deps: None,
-            task_store: Arc::new(SpawnTaskStore::default()),
+            task_store: default_spawn_task_store(),
         }
     }
 
@@ -240,6 +243,11 @@ impl SpawnAgentTool {
         })?;
         Ok((Some(preset_name), Some(preset)))
     }
+}
+
+fn default_spawn_task_store() -> Arc<SpawnTaskStore> {
+    static STORE: OnceLock<Arc<SpawnTaskStore>> = OnceLock::new();
+    Arc::clone(STORE.get_or_init(|| Arc::new(SpawnTaskStore::default())))
 }
 
 /// Resolve the memory directory for a preset based on its scope.
