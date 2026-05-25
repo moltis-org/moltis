@@ -58,7 +58,10 @@ pub struct SpawnTask {
 impl SpawnTask {
     fn is_expired(&self, now: OffsetDateTime, ttl: Duration) -> bool {
         match self.finished_at {
+            // Completed/failed tasks expire after one TTL from completion.
             Some(finished_at) => finished_at + ttl <= now,
+            // Running tasks that never completed get a grace period of 2× TTL
+            // from their start time before being reaped as stale.
             None => self.started_at + ttl + ttl <= now,
         }
     }
@@ -131,6 +134,7 @@ impl SpawnTaskStore {
         }
     }
 
+    #[tracing::instrument(skip(self, task), fields(model = %model))]
     pub async fn insert_running(
         &self,
         task: String,
@@ -159,6 +163,7 @@ impl SpawnTaskStore {
         entry
     }
 
+    #[tracing::instrument(skip(self, update))]
     pub async fn complete(&self, id: &str, update: SpawnTaskUpdate) {
         if let Some(task) = self.tasks.write().await.get_mut(id) {
             task.status = if update.error.is_some() {
@@ -174,6 +179,7 @@ impl SpawnTaskStore {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn status(&self, id: &str, session_key: Option<&str>) -> crate::Result<Value> {
         let now = OffsetDateTime::now_utc();
         self.cleanup_expired(now).await;
@@ -185,6 +191,7 @@ impl SpawnTaskStore {
         Ok(task.status_json(now))
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn result(&self, id: &str, session_key: Option<&str>) -> crate::Result<Value> {
         let now = OffsetDateTime::now_utc();
         self.cleanup_expired(now).await;
@@ -196,12 +203,33 @@ impl SpawnTaskStore {
         Ok(task.result_json(now))
     }
 
+    pub async fn list(&self, session_key: Option<&str>) -> Vec<Value> {
+        let now = OffsetDateTime::now_utc();
+        self.cleanup_expired(now).await;
+        let tasks = self.tasks.read().await;
+        tasks
+            .values()
+            .filter(|task| task.session_key.as_deref() == session_key)
+            .map(|task| task.status_json(now))
+            .collect()
+    }
+
     async fn cleanup_expired(&self, now: OffsetDateTime) {
         if !self.should_cleanup(now) {
             return;
         }
         let mut tasks = self.tasks.write().await;
+        let before = tasks.len();
         tasks.retain(|_, task| !task.is_expired(now, self.ttl));
+        let expired = before - tasks.len();
+
+        #[cfg(feature = "metrics")]
+        if expired > 0 {
+            use moltis_metrics::{counter, spawn as spawn_metrics};
+            counter!(spawn_metrics::TASKS_EXPIRED_TOTAL).increment(expired as u64);
+        }
+
+        let _ = expired; // silence unused warning when metrics feature is off
     }
 
     fn should_cleanup(&self, now: OffsetDateTime) -> bool {
@@ -251,6 +279,7 @@ impl AgentTool for SpawnStatusTool {
         })
     }
 
+    #[tracing::instrument(skip(self, params))]
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let id = str_param(&params, "task_id")
             .ok_or_else(|| Error::message("missing required parameter: task_id"))?;
@@ -293,11 +322,48 @@ impl AgentTool for SpawnResultTool {
         })
     }
 
+    #[tracing::instrument(skip(self, params))]
     async fn execute(&self, params: Value) -> anyhow::Result<Value> {
         let id = str_param(&params, "task_id")
             .ok_or_else(|| Error::message("missing required parameter: task_id"))?;
         let session_key = str_param(&params, "_session_key");
         Ok(self.store.result(id, session_key).await?)
+    }
+}
+
+#[derive(Clone)]
+pub struct SpawnListTool {
+    store: Arc<SpawnTaskStore>,
+}
+
+impl SpawnListTool {
+    pub fn new(store: Arc<SpawnTaskStore>) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl AgentTool for SpawnListTool {
+    fn name(&self) -> &str {
+        "spawn_list"
+    }
+
+    fn description(&self) -> &str {
+        "List all non-blocking spawn_agent tasks visible to the current session. Useful for recovering task IDs after context loss."
+    }
+
+    fn parameters_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {},
+        })
+    }
+
+    #[tracing::instrument(skip(self, params))]
+    async fn execute(&self, params: Value) -> anyhow::Result<Value> {
+        let session_key = str_param(&params, "_session_key");
+        let tasks = self.store.list(session_key).await;
+        Ok(serde_json::json!({ "tasks": tasks }))
     }
 }
 
@@ -360,5 +426,50 @@ mod tests {
 
         assert!(description.contains("check status"));
         assert!(description.contains("running tasks have no final text"));
+    }
+
+    #[tokio::test]
+    async fn list_returns_tasks_for_matching_session() {
+        let store = SpawnTaskStore::default();
+        store
+            .insert_running(
+                "task a".to_string(),
+                Some("session-1".to_string()),
+                "model".to_string(),
+                None,
+            )
+            .await;
+        store
+            .insert_running(
+                "task b".to_string(),
+                Some("session-2".to_string()),
+                "model".to_string(),
+                None,
+            )
+            .await;
+        store
+            .insert_running(
+                "task c".to_string(),
+                Some("session-1".to_string()),
+                "model".to_string(),
+                None,
+            )
+            .await;
+
+        let session_1_tasks = store.list(Some("session-1")).await;
+        assert_eq!(session_1_tasks.len(), 2);
+
+        let session_2_tasks = store.list(Some("session-2")).await;
+        assert_eq!(session_2_tasks.len(), 1);
+
+        let no_session_tasks = store.list(None).await;
+        assert_eq!(no_session_tasks.len(), 0);
+    }
+
+    #[test]
+    fn spawn_list_tool_has_no_required_params() {
+        let tool = SpawnListTool::new(Arc::new(SpawnTaskStore::default()));
+        let schema = tool.parameters_schema();
+        assert!(schema.get("required").is_none());
     }
 }

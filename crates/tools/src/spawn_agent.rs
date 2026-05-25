@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, sync::Arc};
 
-use {async_trait::async_trait, tracing::info};
+use {async_trait::async_trait, futures::FutureExt, tracing::info};
 
 use crate::{
     error::Error,
@@ -41,6 +41,7 @@ const DELEGATE_TOOLS: &[&str] = &[
     "spawn_agent",
     "spawn_status",
     "spawn_result",
+    "spawn_list",
     "sessions_list",
     "sessions_history",
     "sessions_search",
@@ -48,12 +49,6 @@ const DELEGATE_TOOLS: &[&str] = &[
     "task_list",
 ];
 
-/// A tool that spawns a sub-agent running its own agent loop.
-///
-/// The sub-agent executes synchronously (blocks until done) and its result
-/// is returned as the tool output. Sub-agents get a filtered copy of the
-/// parent's tool registry (without the `spawn_agent` tool itself) and a
-/// focused system prompt.
 /// Callback for emitting events from the sub-agent back to the parent UI.
 pub type OnSpawnEvent = Arc<dyn Fn(RunnerEvent) + Send + Sync>;
 
@@ -65,6 +60,15 @@ pub struct SessionDeps {
     pub send_to_session: SendToSessionFn,
 }
 
+/// A tool that spawns a sub-agent running its own agent loop.
+///
+/// By default the sub-agent executes synchronously (blocks until done) and
+/// its result is returned as the tool output. With `nonblocking: true`, the
+/// sub-agent runs in the background and the caller gets a `task_id` to poll
+/// via `spawn_status` / `spawn_result`.
+///
+/// Sub-agents get a filtered copy of the parent's tool registry and a
+/// focused system prompt.
 pub struct SpawnAgentTool {
     provider_registry: Arc<tokio::sync::RwLock<ProviderRegistry>>,
     default_provider: Arc<dyn LlmProvider>,
@@ -503,19 +507,25 @@ impl AgentTool for SpawnAgentTool {
             build_sub_agent_prompt(task, context, preset.as_ref(), preset_name.as_deref());
 
         // Build tool context with incremented depth and propagated session key.
-        let mut tool_context = serde_json::json!({
-            SPAWN_DEPTH_KEY: depth + 1,
-        });
-        if let Some(session_key) = params.get("_session_key") {
-            tool_context["_session_key"] = session_key.clone();
-        }
-
         let session_key = params
             .get("_session_key")
             .and_then(serde_json::Value::as_str)
             .map(String::from);
+        let mut tool_context = serde_json::json!({
+            SPAWN_DEPTH_KEY: depth + 1,
+        });
+        if let Some(ref key) = session_key {
+            tool_context["_session_key"] = serde_json::Value::String(key.clone());
+        }
 
         if nonblocking {
+            #[cfg(feature = "metrics")]
+            {
+                use moltis_metrics::{counter, gauge, labels, spawn as spawn_metrics};
+                counter!(spawn_metrics::SPAWNED_TOTAL, labels::MODE => "nonblocking").increment(1);
+                gauge!(spawn_metrics::TASKS_IN_FLIGHT).increment(1.0);
+            }
+
             let task_entry = self
                 .task_store
                 .insert_running(
@@ -530,18 +540,21 @@ impl AgentTool for SpawnAgentTool {
             let on_event = self.on_event.clone();
             let task_for_run = task.to_string();
             let model_for_run = model_id.clone();
+            let preset_for_log = preset_name.clone();
             tokio::spawn(async move {
-                let result = run_spawned_agent(
+                let result = std::panic::AssertUnwindSafe(run_spawned_agent(
                     provider,
                     sub_tools,
                     system_prompt,
                     task_for_run.clone(),
                     tool_context,
                     runtime_limits,
-                )
+                ))
+                .catch_unwind()
                 .await;
+
                 let (update, iterations, tool_calls_made) = match result {
-                    Ok(result) => {
+                    Ok(Ok(result)) => {
                         let iterations = result.iterations;
                         let tool_calls_made = result.tool_calls_made;
                         (
@@ -555,7 +568,7 @@ impl AgentTool for SpawnAgentTool {
                             tool_calls_made,
                         )
                     },
-                    Err(err) => (
+                    Ok(Err(err)) => (
                         SpawnTaskUpdate {
                             text: None,
                             iterations: 0,
@@ -565,8 +578,56 @@ impl AgentTool for SpawnAgentTool {
                         0,
                         0,
                     ),
+                    Err(_panic) => {
+                        tracing::error!(
+                            task_id = %task_id,
+                            task = %task_for_run,
+                            "nonblocking sub-agent panicked"
+                        );
+                        (
+                            SpawnTaskUpdate {
+                                text: None,
+                                iterations: 0,
+                                tool_calls_made: 0,
+                                error: Some("sub-agent panicked".to_string()),
+                            },
+                            0,
+                            0,
+                        )
+                    },
                 };
+
+                let status_label = if update.error.is_some() {
+                    "failed"
+                } else {
+                    "completed"
+                };
+
                 store.complete(&task_id, update).await;
+
+                info!(
+                    task_id = %task_id,
+                    task = %task_for_run,
+                    model = %model_for_run,
+                    depth = depth,
+                    iterations = iterations,
+                    tool_calls = tool_calls_made,
+                    preset = ?preset_for_log,
+                    status = status_label,
+                    "nonblocking sub-agent finished"
+                );
+
+                #[cfg(feature = "metrics")]
+                {
+                    use moltis_metrics::{counter, gauge, labels, spawn as spawn_metrics};
+                    counter!(
+                        spawn_metrics::COMPLETED_TOTAL,
+                        labels::STATUS => status_label.to_string()
+                    )
+                    .increment(1);
+                    gauge!(spawn_metrics::TASKS_IN_FLIGHT).decrement(1.0);
+                }
+
                 if let Some(cb) = on_event {
                     cb(RunnerEvent::SubAgentEnd {
                         task: task_for_run,
@@ -585,6 +646,12 @@ impl AgentTool for SpawnAgentTool {
                 "model": model_id,
                 "preset": preset_name,
             }));
+        }
+
+        #[cfg(feature = "metrics")]
+        {
+            use moltis_metrics::{counter, labels, spawn as spawn_metrics};
+            counter!(spawn_metrics::SPAWNED_TOTAL, labels::MODE => "blocking").increment(1);
         }
 
         let result = run_spawned_agent(
@@ -610,6 +677,21 @@ impl AgentTool for SpawnAgentTool {
             tool_calls_made,
         });
 
+        #[cfg(feature = "metrics")]
+        {
+            use moltis_metrics::{counter, labels, spawn as spawn_metrics};
+            let status = if result.is_ok() {
+                "completed"
+            } else {
+                "failed"
+            };
+            counter!(
+                spawn_metrics::COMPLETED_TOTAL,
+                labels::STATUS => status.to_string()
+            )
+            .increment(1);
+        }
+
         let result = result?;
 
         info!(
@@ -631,6 +713,7 @@ impl AgentTool for SpawnAgentTool {
     }
 }
 
+#[tracing::instrument(skip(provider, sub_tools, system_prompt, tool_context, runtime_limits), fields(task_len = task.len()))]
 async fn run_spawned_agent(
     provider: Arc<dyn LlmProvider>,
     sub_tools: ToolRegistry,
@@ -1236,6 +1319,7 @@ mod tests {
                 "spawn_agent",
                 "spawn_status",
                 "spawn_result",
+                "spawn_list",
                 "sessions_list",
                 "sessions_history",
                 "sessions_send",
@@ -1248,6 +1332,7 @@ mod tests {
         assert!(filtered.get("spawn_agent").is_some());
         assert!(filtered.get("spawn_status").is_some());
         assert!(filtered.get("spawn_result").is_some());
+        assert!(filtered.get("spawn_list").is_some());
         assert!(filtered.get("sessions_list").is_some());
         assert!(filtered.get("sessions_history").is_some());
         assert!(filtered.get("sessions_send").is_some());

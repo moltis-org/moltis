@@ -554,6 +554,18 @@ pub mod config {
     pub const VALIDATION_ERRORS_TOTAL: &str = "moltis_config_validation_errors_total";
 }
 
+/// Spawn agent (sub-agent) metrics
+pub mod spawn {
+    /// Total sub-agents spawned (label: mode=blocking|nonblocking)
+    pub const SPAWNED_TOTAL: &str = "moltis_spawn_agents_spawned_total";
+    /// Sub-agent completions (label: status=completed|failed)
+    pub const COMPLETED_TOTAL: &str = "moltis_spawn_agents_completed_total";
+    /// Number of currently running background (nonblocking) spawn tasks
+    pub const TASKS_IN_FLIGHT: &str = "moltis_spawn_agents_tasks_in_flight";
+    /// Expired tasks cleaned up from the store
+    pub const TASKS_EXPIRED_TOTAL: &str = "moltis_spawn_agents_tasks_expired_total";
+}
+
 /// Common/shared metrics
 pub mod common {
     /// Application errors by type

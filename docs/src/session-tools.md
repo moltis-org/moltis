@@ -85,8 +85,9 @@ When no policy is configured, all sessions are visible and sendable.
 
 Use `spawn_agent` when work is short-lived and synchronous. For longer delegated
 work, call `spawn_agent` with `nonblocking: true`; it returns a `task_id` while
-the sub-agent continues in the background. Use `spawn_status` to check progress
-and `spawn_result` to fetch the final output.
+the sub-agent continues in the background. Use `spawn_status` to check progress,
+`spawn_result` to fetch the final output, and `spawn_list` to recover task IDs
+after context loss.
 
 Use session tools when you need:
 
