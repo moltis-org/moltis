@@ -72,9 +72,16 @@ impl AgentToolControls {
             })
         });
 
-        let tool_choice = context
-            .get("tool_choice")
-            .and_then(|value| serde_json::from_value::<ToolChoice>(value.clone()).ok());
+        let tool_choice =
+            context.get("tool_choice").and_then(|value| {
+                match serde_json::from_value::<ToolChoice>(value.clone()) {
+                    Ok(choice) => Some(choice),
+                    Err(error) => {
+                        tracing::warn!(%error, "ignoring invalid tool_choice control");
+                        None
+                    },
+                }
+            });
 
         Self {
             active_tools,
