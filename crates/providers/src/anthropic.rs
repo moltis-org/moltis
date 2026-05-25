@@ -898,7 +898,7 @@ impl LlmProvider for AnthropicProvider {
             }
 
             if self.reasoning_effort.is_some()
-                && matches!(options.tool_choice, Some(ToolChoice::Tool { .. }))
+                && matches!(options.tool_choice, Some(ToolChoice::Tool { .. } | ToolChoice::Any))
             {
                 yield StreamEvent::Error(
                     "Anthropic forced tool_choice is not compatible with extended thinking".to_string(),
