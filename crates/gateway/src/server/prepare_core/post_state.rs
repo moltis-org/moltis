@@ -1262,9 +1262,19 @@ pub(super) async fn complete_startup(
         )));
 
         if let Some(default_provider) = registry.read().await.first_with_tools() {
-            let base_tools = Arc::new(tool_registry.clone_without(&[]));
             let spawn_task_store =
                 Arc::new(moltis_tools::spawn_agent_tasks::SpawnTaskStore::default());
+            tool_registry.register(Box::new(
+                moltis_tools::spawn_agent_tasks::SpawnStatusTool::new(Arc::clone(
+                    &spawn_task_store,
+                )),
+            ));
+            tool_registry.register(Box::new(
+                moltis_tools::spawn_agent_tasks::SpawnResultTool::new(Arc::clone(
+                    &spawn_task_store,
+                )),
+            ));
+            let base_tools = Arc::new(tool_registry.clone_without(&[]));
             let state_for_spawn = Arc::clone(&state);
             let on_spawn_event: moltis_tools::spawn_agent::OnSpawnEvent = Arc::new(move |event| {
                 use moltis_agents::runner::RunnerEvent;
@@ -1307,14 +1317,6 @@ pub(super) async fn complete_startup(
             .with_agents_config(agents_config)
             .with_task_store(Arc::clone(&spawn_task_store));
             tool_registry.register(Box::new(spawn_tool));
-            tool_registry.register(Box::new(
-                moltis_tools::spawn_agent_tasks::SpawnStatusTool::new(Arc::clone(
-                    &spawn_task_store,
-                )),
-            ));
-            tool_registry.register(Box::new(
-                moltis_tools::spawn_agent_tasks::SpawnResultTool::new(spawn_task_store),
-            ));
         }
 
         let shared_tool_registry = Arc::new(tokio::sync::RwLock::new(tool_registry));
