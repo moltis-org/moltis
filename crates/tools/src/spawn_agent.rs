@@ -39,6 +39,8 @@ const SPAWN_DEPTH_KEY: &str = "_spawn_depth";
 /// Minimal delegate-only toolset for coordinator-style sub-agents.
 const DELEGATE_TOOLS: &[&str] = &[
     "spawn_agent",
+    "spawn_status",
+    "spawn_result",
     "sessions_list",
     "sessions_history",
     "sessions_search",
@@ -1232,6 +1234,8 @@ mod tests {
             provider,
             registry_with_tools(&[
                 "spawn_agent",
+                "spawn_status",
+                "spawn_result",
                 "sessions_list",
                 "sessions_history",
                 "sessions_send",
@@ -1242,6 +1246,8 @@ mod tests {
 
         let filtered = spawn_tool.build_sub_tools(&[], &[], true);
         assert!(filtered.get("spawn_agent").is_some());
+        assert!(filtered.get("spawn_status").is_some());
+        assert!(filtered.get("spawn_result").is_some());
         assert!(filtered.get("sessions_list").is_some());
         assert!(filtered.get("sessions_history").is_some());
         assert!(filtered.get("sessions_send").is_some());
