@@ -159,7 +159,19 @@ pub fn discover_and_load_readonly() -> MoltisConfig {
     discover_and_load_readonly_with_aliases(true)
 }
 
+/// Load config without merging markdown agent definitions.
+pub fn discover_and_load_readonly_without_agent_defs() -> MoltisConfig {
+    discover_and_load_readonly_with_options(true, false)
+}
+
 fn discover_and_load_readonly_with_aliases(apply_third_party_aliases: bool) -> MoltisConfig {
+    discover_and_load_readonly_with_options(apply_third_party_aliases, true)
+}
+
+fn discover_and_load_readonly_with_options(
+    apply_third_party_aliases: bool,
+    include_agent_defs: bool,
+) -> MoltisConfig {
     let mut cfg = if let Some(path) = find_config_file() {
         debug!(path = %path.display(), "loading config (read-only)");
         match load_layered_config(&path, apply_third_party_aliases) {
@@ -187,9 +199,11 @@ fn discover_and_load_readonly_with_aliases(apply_third_party_aliases: bool) -> M
     };
 
     // Merge markdown agent definitions (TOML presets take precedence).
-    let agent_defs = crate::agent_defs::discover_agent_defs();
-    if !agent_defs.is_empty() {
-        crate::agent_defs::merge_agent_defs(&mut cfg.agents.presets, agent_defs);
+    if include_agent_defs {
+        let agent_defs = crate::agent_defs::discover_agent_defs();
+        if !agent_defs.is_empty() {
+            crate::agent_defs::merge_agent_defs(&mut cfg.agents.presets, agent_defs);
+        }
     }
 
     cfg

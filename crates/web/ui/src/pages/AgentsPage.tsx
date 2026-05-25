@@ -45,6 +45,7 @@ interface ConfigPreset {
 	toml?: string;
 	provenance?: "built_in" | "user_override" | "custom";
 	deletable?: boolean;
+	toml_backed?: boolean;
 	tools_allow?: string[];
 	tools_deny?: string[];
 	delegate_only?: boolean;
@@ -923,7 +924,7 @@ function PresetCard({ preset, creating, onCreate, onEdit, onDelete, onRevert }: 
 	const [expanded, setExpanded] = useState(false);
 	const isOverridden = preset.provenance === "user_override";
 	const canDelete = !!preset.deletable;
-	const canEdit = preset.provenance === "built_in" || !!preset.deletable;
+	const canEdit = preset.provenance === "built_in" || (!!preset.deletable && !preset.toml_backed);
 	return (
 		<div className="backend-card" style={{ opacity: preset.provenance === "built_in" ? 0.7 : 1 }}>
 			<div className="flex items-center justify-between">

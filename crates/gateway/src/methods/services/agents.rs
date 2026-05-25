@@ -814,6 +814,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             Box::new(|ctx| {
                 Box::pin(async move {
                     let config = moltis_config::discover_and_load_readonly();
+                    let toml_config =
+                        moltis_config::discover_and_load_readonly_without_agent_defs();
                     let persona_ids: std::collections::HashSet<String> =
                         if let Some(ref store) = ctx.state.services.agent_persona_store {
                             store
@@ -840,6 +842,9 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 .join("agents")
                                 .join(format!("{name}.md"));
                             let markdown_backed = markdown_path.exists();
+                            let toml_backed = toml_config.agents.presets.get(name).is_some_and(|existing| {
+                                !moltis_config::schema::is_default_agent_preset(name, existing)
+                            });
                             let provenance = all_provenance
                                 .iter()
                                 .find(|p| &p.id == name)
@@ -857,7 +862,8 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "delegate_only": preset.delegate_only,
                                 "toml": toml_str,
                                 "provenance": provenance,
-                                "deletable": markdown_backed,
+                                "deletable": markdown_backed && !toml_backed,
+                                "toml_backed": toml_backed,
                                 "path": markdown_backed.then(|| markdown_path.to_string_lossy().to_string()),
                             })
                         })
@@ -967,13 +973,7 @@ fn preset_from_rpc_params(
 
 #[cfg(feature = "agent")]
 fn reject_toml_backed_preset_update(id: &str) -> Result<(), ErrorShape> {
-    let markdown_path = moltis_config::data_dir()
-        .join("agents")
-        .join(format!("{id}.md"));
-    if markdown_path.exists() {
-        return Ok(());
-    }
-    let config = moltis_config::discover_and_load_readonly();
+    let config = moltis_config::discover_and_load_readonly_without_agent_defs();
     if let Some(existing) = config.agents.presets.get(id)
         && !moltis_config::schema::is_default_agent_preset(id, existing)
     {
@@ -983,6 +983,13 @@ fn reject_toml_backed_preset_update(id: &str) -> Result<(), ErrorShape> {
                 "preset '{id}' is defined in moltis.toml; edit moltis.toml or remove that preset before using Web UI markdown overrides"
             ),
         ));
+    }
+
+    let markdown_path = moltis_config::data_dir()
+        .join("agents")
+        .join(format!("{id}.md"));
+    if markdown_path.exists() {
+        return Ok(());
     }
     Ok(())
 }
