@@ -12,6 +12,7 @@ use {
 use crate::{error::Error, params::str_param};
 
 const DEFAULT_TASK_TTL_HOURS: i64 = 24;
+const CLEANUP_INTERVAL_SECS: i64 = 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpawnTaskStatus {
@@ -56,10 +57,10 @@ pub struct SpawnTask {
 
 impl SpawnTask {
     fn is_expired(&self, now: OffsetDateTime, ttl: Duration) -> bool {
-        let Some(finished_at) = self.finished_at else {
-            return false;
-        };
-        finished_at + ttl <= now
+        match self.finished_at {
+            Some(finished_at) => finished_at + ttl <= now,
+            None => self.started_at + ttl + ttl <= now,
+        }
     }
 
     fn assert_access(&self, session_key: Option<&str>) -> crate::Result<()> {
@@ -100,6 +101,8 @@ impl SpawnTask {
 pub struct SpawnTaskStore {
     tasks: RwLock<HashMap<String, SpawnTask>>,
     ttl: Duration,
+    cleanup_interval: Duration,
+    last_cleanup: std::sync::Mutex<Option<OffsetDateTime>>,
 }
 
 impl Default for SpawnTaskStore {
@@ -113,6 +116,18 @@ impl SpawnTaskStore {
         Self {
             tasks: RwLock::new(HashMap::new()),
             ttl,
+            cleanup_interval: Duration::seconds(CLEANUP_INTERVAL_SECS),
+            last_cleanup: std::sync::Mutex::new(None),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_cleanup_interval(ttl: Duration, cleanup_interval: Duration) -> Self {
+        Self {
+            tasks: RwLock::new(HashMap::new()),
+            ttl,
+            cleanup_interval,
+            last_cleanup: std::sync::Mutex::new(None),
         }
     }
 
@@ -182,8 +197,23 @@ impl SpawnTaskStore {
     }
 
     async fn cleanup_expired(&self, now: OffsetDateTime) {
+        if !self.should_cleanup(now) {
+            return;
+        }
         let mut tasks = self.tasks.write().await;
         tasks.retain(|_, task| !task.is_expired(now, self.ttl));
+    }
+
+    fn should_cleanup(&self, now: OffsetDateTime) -> bool {
+        let mut last_cleanup = self
+            .last_cleanup
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if last_cleanup.is_some_and(|last| last + self.cleanup_interval > now) {
+            return false;
+        }
+        *last_cleanup = Some(now);
+        true
     }
 }
 
@@ -247,7 +277,7 @@ impl AgentTool for SpawnResultTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch the result of a non-blocking spawn_agent task."
+        "Fetch the result of a non-blocking spawn_agent task. Returns the current state; check status before using text because running tasks have no final text yet."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -268,5 +298,67 @@ impl AgentTool for SpawnResultTool {
             .ok_or_else(|| Error::message("missing required parameter: task_id"))?;
         let session_key = str_param(&params, "_session_key");
         Ok(self.store.result(id, session_key).await?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stale_running_tasks_are_cleaned_up() {
+        let store = SpawnTaskStore::with_cleanup_interval(
+            Duration::milliseconds(1),
+            Duration::milliseconds(0),
+        );
+        let task = store
+            .insert_running(
+                "zombie task".to_string(),
+                None,
+                "mock-model".to_string(),
+                None,
+            )
+            .await;
+        tokio::time::sleep(std::time::Duration::from_millis(3)).await;
+
+        let status = store.status(&task.id, None).await;
+
+        assert!(status.is_err());
+        assert!(status.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_is_amortized_between_polls() {
+        let store = SpawnTaskStore::with_cleanup_interval(Duration::hours(1), Duration::minutes(1));
+        let task = store
+            .insert_running(
+                "active task".to_string(),
+                None,
+                "mock-model".to_string(),
+                None,
+            )
+            .await;
+
+        store.status(&task.id, None).await.unwrap();
+        let first_cleanup = *store
+            .last_cleanup
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        store.status(&task.id, None).await.unwrap();
+        let second_cleanup = *store
+            .last_cleanup
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        assert_eq!(first_cleanup, second_cleanup);
+    }
+
+    #[test]
+    fn spawn_result_description_warns_running_results_have_no_text() {
+        let tool = SpawnResultTool::new(Arc::new(SpawnTaskStore::default()));
+        let description = tool.description();
+
+        assert!(description.contains("check status"));
+        assert!(description.contains("running tasks have no final text"));
     }
 }
