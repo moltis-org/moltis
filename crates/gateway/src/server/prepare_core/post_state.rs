@@ -1277,6 +1277,11 @@ pub(super) async fn complete_startup(
             tool_registry.register(Box::new(
                 moltis_tools::spawn_agent_tasks::SpawnListTool::new(Arc::clone(&spawn_task_store)),
             ));
+            tool_registry.register(Box::new(
+                moltis_tools::spawn_agent_tasks::SpawnCancelTool::new(Arc::clone(
+                    &spawn_task_store,
+                )),
+            ));
             let base_tools = Arc::new(tool_registry.clone_without(&[]));
             let state_for_spawn = Arc::clone(&state);
             let on_spawn_event: moltis_tools::spawn_agent::OnSpawnEvent = Arc::new(move |event| {

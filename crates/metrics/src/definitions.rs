@@ -558,7 +558,7 @@ pub mod config {
 pub mod spawn {
     /// Total sub-agents spawned (label: mode=blocking|nonblocking)
     pub const SPAWNED_TOTAL: &str = "moltis_spawn_agents_spawned_total";
-    /// Sub-agent completions (label: status=completed|failed)
+    /// Sub-agent completions (label: status=completed|failed|cancelled)
     pub const COMPLETED_TOTAL: &str = "moltis_spawn_agents_completed_total";
     /// Number of currently running background (nonblocking) spawn tasks
     pub const TASKS_IN_FLIGHT: &str = "moltis_spawn_agents_tasks_in_flight";
