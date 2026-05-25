@@ -985,10 +985,10 @@ impl LlmProvider for OpenAiCodexProvider {
 
                         match evt_type {
                             "response.output_text.delta" => {
-                                if let Some(delta) = evt["delta"].as_str() {
-                                    if !delta.is_empty() {
-                                        yield StreamEvent::Delta(delta.to_string());
-                                    }
+                                if let Some(delta) = evt["delta"].as_str()
+                                    && !delta.is_empty()
+                                {
+                                    yield StreamEvent::Delta(delta.to_string());
                                 }
                             }
                             "response.output_item.added"
@@ -1002,19 +1002,19 @@ impl LlmProvider for OpenAiCodexProvider {
                                 yield StreamEvent::ToolCallStart { id, name, index, metadata: None };
                             }
                             "response.function_call_arguments.delta" => {
-                                if let Some(delta) = evt["delta"].as_str() {
-                                    if !delta.is_empty() {
-                                        // Find the index for this tool call (use the most recent one)
-                                        let index = if current_tool_index > 0 {
-                                            current_tool_index - 1
-                                        } else {
-                                            0
-                                        };
-                                        yield StreamEvent::ToolCallArgumentsDelta {
-                                            index,
-                                            delta: delta.to_string(),
-                                        };
-                                    }
+                                if let Some(delta) = evt["delta"].as_str()
+                                    && !delta.is_empty()
+                                {
+                                    // Find the index for this tool call (use the most recent one)
+                                    let index = if current_tool_index > 0 {
+                                        current_tool_index - 1
+                                    } else {
+                                        0
+                                    };
+                                    yield StreamEvent::ToolCallArgumentsDelta {
+                                        index,
+                                        delta: delta.to_string(),
+                                    };
                                 }
                             }
                             "response.function_call_arguments.done" => {

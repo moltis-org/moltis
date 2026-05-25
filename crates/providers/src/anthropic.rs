@@ -978,8 +978,9 @@ impl LlmProvider for AnthropicProvider {
                     buf = buf[pos + 2..].to_string();
 
                     for line in block.lines() {
-                        if let Some(data) = line.strip_prefix("data: ") {
-                            if let Ok(evt) = serde_json::from_str::<serde_json::Value>(data) {
+                        if let Some(data) = line.strip_prefix("data: ")
+                            && let Ok(evt) = serde_json::from_str::<serde_json::Value>(data)
+                        {
                                 let evt_type = evt["type"].as_str().unwrap_or("");
                                 match evt_type {
                                     "content_block_start" => {
@@ -999,19 +1000,19 @@ impl LlmProvider for AnthropicProvider {
                                         let delta_type = delta["type"].as_str().unwrap_or("");
 
                                         if delta_type == "text_delta" {
-                                            if let Some(text) = delta["text"].as_str() {
-                                                if !text.is_empty() {
-                                                    yield StreamEvent::Delta(text.to_string());
-                                                }
+                                            if let Some(text) = delta["text"].as_str()
+                                                && !text.is_empty()
+                                            {
+                                                yield StreamEvent::Delta(text.to_string());
                                             }
-                                        } else if delta_type == "input_json_delta" {
-                                            if let Some(partial_json) = delta["partial_json"].as_str() {
-                                                let index = evt["index"].as_u64().unwrap_or(0) as usize;
-                                                yield StreamEvent::ToolCallArgumentsDelta {
-                                                    index,
-                                                    delta: partial_json.to_string(),
-                                                };
-                                            }
+                                        } else if delta_type == "input_json_delta"
+                                            && let Some(partial_json) = delta["partial_json"].as_str()
+                                        {
+                                            let index = evt["index"].as_u64().unwrap_or(0) as usize;
+                                            yield StreamEvent::ToolCallArgumentsDelta {
+                                                index,
+                                                delta: partial_json.to_string(),
+                                            };
                                         }
                                     }
                                     "content_block_stop" => {
@@ -1065,7 +1066,6 @@ impl LlmProvider for AnthropicProvider {
                                     }
                                     _ => {}
                                 }
-                            }
                         }
                     }
                 }
