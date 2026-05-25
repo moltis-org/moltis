@@ -183,6 +183,41 @@ async fn tool_choice_auto_with_active_tools_succeeds() {
     assert_eq!(result.tool_calls_made, 1);
 }
 
+#[tokio::test]
+async fn tool_choice_any_with_no_active_tools_errors() {
+    let provider = Arc::new(ToolCallingProvider {
+        call_count: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut tools = ToolRegistry::new();
+    tools.register(Box::new(EchoTool));
+
+    let tool_context = serde_json::json!({
+        "active_tools": ["missing_tool"],
+        "tool_choice": { "type": "any" },
+    });
+
+    let err = run_agent_loop_with_context_and_limits(
+        provider,
+        &tools,
+        "You are a test bot.",
+        &UserContent::text("Hi"),
+        None,
+        None,
+        Some(tool_context),
+        None,
+        None,
+        AgentLoopLimits::default(),
+    )
+    .await
+    .unwrap_err();
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("tool_choice any requires at least one active tool"),
+        "expected any tool_choice active tool error, got: {msg}"
+    );
+}
+
 // ── no tool_context defaults to empty controls ──────────────────────────
 
 #[tokio::test]

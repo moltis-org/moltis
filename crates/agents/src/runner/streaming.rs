@@ -204,6 +204,11 @@ pub async fn run_agent_loop_streaming_with_limits(
             };
             match tool_controls.tool_choice.as_ref() {
                 Some(ToolChoice::None) => vec![],
+                Some(ToolChoice::Any) if schemas.is_empty() => {
+                    return Err(AgentRunError::Other(anyhow::anyhow!(
+                        "tool_choice any requires at least one active tool"
+                    )));
+                },
                 Some(ToolChoice::Tool { name }) => {
                     if !schemas.iter().any(|schema| {
                         schema.get("name").and_then(serde_json::Value::as_str) == Some(name)
