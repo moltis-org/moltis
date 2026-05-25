@@ -210,22 +210,26 @@ impl SpawnTaskStore {
 
     #[tracing::instrument(skip(self, update))]
     pub async fn complete(&self, id: &str, update: SpawnTaskUpdate) {
-        self.abort_handles.write().await.remove(id);
-        if let Some(task) = self.tasks.write().await.get_mut(id) {
-            if task.status == SpawnTaskStatus::Cancelled {
-                return;
-            }
-            task.status = if update.error.is_some() {
-                SpawnTaskStatus::Failed
-            } else {
-                SpawnTaskStatus::Completed
-            };
-            task.finished_at = Some(OffsetDateTime::now_utc());
-            task.text = update.text;
-            task.iterations = update.iterations;
-            task.tool_calls_made = update.tool_calls_made;
-            task.error = update.error;
+        let mut tasks = self.tasks.write().await;
+        let Some(task) = tasks.get_mut(id) else {
+            return;
+        };
+        if task.status == SpawnTaskStatus::Cancelled {
+            return;
         }
+        task.status = if update.error.is_some() {
+            SpawnTaskStatus::Failed
+        } else {
+            SpawnTaskStatus::Completed
+        };
+        task.finished_at = Some(OffsetDateTime::now_utc());
+        task.text = update.text;
+        task.iterations = update.iterations;
+        task.tool_calls_made = update.tool_calls_made;
+        task.error = update.error;
+        drop(tasks);
+
+        self.abort_handles.write().await.remove(id);
     }
 
     pub async fn cancel(&self, id: &str, session_key: Option<&str>) -> crate::Result<Value> {
