@@ -536,8 +536,10 @@ mod tests {
 
         let status = store.status(&task.id, None).await;
 
-        assert!(status.is_err());
-        assert!(status.unwrap_err().to_string().contains("not found"));
+        match status {
+            Ok(value) => panic!("expected stale task to be cleaned up, got {value:?}"),
+            Err(err) => assert!(err.to_string().contains("not found")),
+        }
     }
 
     #[tokio::test]
@@ -558,12 +560,16 @@ mod tests {
             )
             .await;
 
-        store.status(&task.id, None).await.unwrap();
+        if let Err(err) = store.status(&task.id, None).await {
+            panic!("expected status lookup to succeed: {err}");
+        }
         let first_cleanup = *store
             .last_cleanup
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        store.status(&task.id, None).await.unwrap();
+        if let Err(err) = store.status(&task.id, None).await {
+            panic!("expected second status lookup to succeed: {err}");
+        }
         let second_cleanup = *store
             .last_cleanup
             .lock()
@@ -642,7 +648,10 @@ mod tests {
             )
             .await;
 
-        let cancelled = store.cancel(&task.id, Some("session-1")).await.unwrap();
+        let cancelled = match store.cancel(&task.id, Some("session-1")).await {
+            Ok(value) => value,
+            Err(err) => panic!("expected cancellation to succeed: {err}"),
+        };
 
         assert_eq!(cancelled["status"], "cancelled");
         assert_eq!(cancelled["cancelled"], true);
@@ -664,8 +673,10 @@ mod tests {
 
         let denied = store.cancel(&task.id, Some("session-2")).await;
 
-        assert!(denied.is_err());
-        assert!(denied.unwrap_err().to_string().contains("access denied"));
+        match denied {
+            Ok(value) => panic!("expected cancellation to be denied, got {value:?}"),
+            Err(err) => assert!(err.to_string().contains("access denied")),
+        }
     }
 
     #[test]
