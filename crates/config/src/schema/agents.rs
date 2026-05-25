@@ -38,6 +38,7 @@ pub struct AgentsConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolChoice {
     Auto,
+    Any,
     None,
     Tool { name: String },
 }
@@ -624,5 +625,21 @@ mod tests {
                 name: "classify_destination".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn tool_controls_parse_any_variant() {
+        let context = serde_json::json!({
+            "tool_choice": { "type": "any" }
+        });
+        let controls = AgentToolControls::from_tool_context(Some(&context));
+        assert_eq!(controls.tool_choice, Some(ToolChoice::Any));
+        assert!(controls.active_tools.is_none());
+    }
+
+    #[test]
+    fn tool_controls_none_context_returns_default() {
+        let controls = AgentToolControls::from_tool_context(None);
+        assert!(controls.is_empty());
     }
 }

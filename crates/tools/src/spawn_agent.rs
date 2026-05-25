@@ -417,7 +417,7 @@ impl AgentTool for SpawnAgentTool {
                     "type": "object",
                     "description": "Optional provider tool choice for the sub-agent turn, e.g. {type:'tool', name:'classify_destination'}. Overrides preset tool_controls.tool_choice.",
                     "properties": {
-                        "type": { "type": "string", "enum": ["auto", "none", "tool"] },
+                        "type": { "type": "string", "enum": ["auto", "any", "none", "tool"] },
                         "name": { "type": "string" }
                     },
                     "required": ["type"]

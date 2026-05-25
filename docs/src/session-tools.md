@@ -89,20 +89,37 @@ the sub-agent continues in the background. Use `spawn_status` to check progress,
 `spawn_result` to fetch the final output, `spawn_list` to recover task IDs after
 context loss, and `cancel_spawn` to stop work that is no longer needed.
 
-Use `active_tools` and `tool_choice` when a small model must not drift to the
-wrong output path. These controls are available on agent presets, `spawn_agent`,
-and `cron` `agentTurn` payloads. `active_tools` filters the tools visible for a
-turn; `tool_choice = { type = "tool", name = "..." }` forces supported providers
-such as Anthropic and OpenAI Responses to call one visible tool.
+Use `active_tools` and `tool_choice` to prevent model drift on small/cheap
+LLMs. These controls apply **per agent run** (not per iteration within a run)
+and are available on agent presets, `spawn_agent`, and `cron` `agentTurn`
+payloads.
 
-Example forced classifier sub-agent:
+- `active_tools` filters the tool schemas visible to the agent.
+- `tool_choice` controls provider-level tool selection:
+  - `auto` — model decides (default).
+  - `any` — model must call some tool but chooses which one.
+  - `none` — no tools sent; forces text-only output.
+  - `tool` + `name` — model must call the named tool.
+
+Supported on Anthropic, OpenAI (Responses and Chat Completions), and
+OpenAI-compatible providers.
+
+**Classify-then-generate pattern** — use two `spawn_agent` calls, each with
+its own tool controls:
 
 ```json
+// Turn 1: forced classifier
 {
   "task": "Classify whether the reply should be inline, file, or PR.",
   "active_tools": ["classify_destination"],
   "tool_choice": { "type": "tool", "name": "classify_destination" },
   "nonblocking": true
+}
+// Turn 2: scoped generation (parent reads classifier result, spawns again)
+{
+  "task": "Generate the report and send it as a document.",
+  "active_tools": ["write_file", "send_document"],
+  "tool_choice": { "type": "auto" }
 }
 ```
 
@@ -124,7 +141,7 @@ Example scheduled agent turn:
   "kind": "agentTurn",
   "message": "Generate the report and send it as a document.",
   "active_tools": ["write_file", "send_document"],
-  "tool_choice": { "type": "auto" }
+  "tool_choice": { "type": "any" }
 }
 ```
 

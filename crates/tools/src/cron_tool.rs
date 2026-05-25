@@ -728,7 +728,7 @@ impl AgentTool for CronTool {
                                     "type": "object",
                                     "description": "Optional provider tool choice, e.g. {type:'tool', name:'classify_destination'}.",
                                     "properties": {
-                                        "type": { "type": "string", "enum": ["auto", "none", "tool"] },
+                                        "type": { "type": "string", "enum": ["auto", "any", "none", "tool"] },
                                         "name": { "type": "string" }
                                     },
                                     "required": ["type"]

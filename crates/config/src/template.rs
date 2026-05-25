@@ -328,7 +328,7 @@ port = {port}                           # Port number (auto-generated for this i
 # # [agents.presets.research.tool_controls]
 # # active_tools = ["classify_destination"]
 # # [agents.presets.research.tool_controls.tool_choice]
-# # type = "tool"  # auto | none | tool
+# # type = "tool"  # auto | any | none | tool
 # # name = "classify_destination"
 #
 # ── Per-agent capability boundaries ──────────────────────────────────────────

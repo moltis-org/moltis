@@ -226,7 +226,10 @@ fn reject_unsupported_tool_choice(
     provider_name: &str,
     options: &AgentToolControls,
 ) -> anyhow::Result<()> {
-    if matches!(options.tool_choice, Some(ToolChoice::Tool { .. })) {
+    if matches!(
+        options.tool_choice,
+        Some(ToolChoice::Tool { .. } | ToolChoice::Any)
+    ) {
         anyhow::bail!("provider {provider_name} does not support forced tool_choice");
     }
     Ok(())

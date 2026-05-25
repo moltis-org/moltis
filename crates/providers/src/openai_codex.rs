@@ -13,7 +13,7 @@ use {
 
 use moltis_agents::model::{
     AgentToolControls, ChatMessage, CompletionResponse, LlmProvider, ReasoningEffort, StreamEvent,
-    ToolCall, ToolChoice, Usage, UserContent, decode_tool_call_arguments_from_str,
+    ToolCall, Usage, UserContent, decode_tool_call_arguments_from_str,
 };
 
 use crate::openai_compat::to_responses_api_tools;
@@ -514,35 +514,6 @@ fn parse_models_payload(value: &serde_json::Value) -> Vec<super::DiscoveredModel
     models
 }
 
-fn apply_codex_tool_choice(
-    body: &mut serde_json::Value,
-    options: &AgentToolControls,
-) -> anyhow::Result<()> {
-    match options.tool_choice.as_ref() {
-        None | Some(ToolChoice::Auto) => {
-            if body.get("tools").is_some() {
-                body["tool_choice"] = serde_json::json!("auto");
-            }
-        },
-        Some(ToolChoice::None) => {
-            body.as_object_mut().map(|obj| obj.remove("tools"));
-        },
-        Some(ToolChoice::Tool { name }) => {
-            if name.trim().is_empty() {
-                anyhow::bail!("forced Codex tool_choice requires a tool name");
-            }
-            if body.get("tools").is_none() {
-                anyhow::bail!("forced Codex tool_choice requires at least one active tool");
-            }
-            body["tool_choice"] = serde_json::json!({
-                "type": "function",
-                "name": name,
-            });
-        },
-    }
-    Ok(())
-}
-
 async fn fetch_models_from_api(
     access_token: String,
     account_id: String,
@@ -737,7 +708,7 @@ impl LlmProvider for OpenAiCodexProvider {
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
         }
-        apply_codex_tool_choice(&mut body, options)?;
+        crate::openai::provider::core::apply_openai_responses_tool_choice(&mut body, options)?;
 
         trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai-codex request body");
 
@@ -937,7 +908,7 @@ impl LlmProvider for OpenAiCodexProvider {
             if !tools.is_empty() {
                 body["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
             }
-            if let Err(error) = apply_codex_tool_choice(&mut body, &options) {
+            if let Err(error) = crate::openai::provider::core::apply_openai_responses_tool_choice(&mut body, &options) {
                 yield StreamEvent::Error(error.to_string());
                 return;
             }

@@ -164,6 +164,7 @@ impl OpenAiProvider {
         &self,
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
+        options: AgentToolControls,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             let mut openai_messages = self.serialize_messages_for_request(&messages);
@@ -179,6 +180,10 @@ impl OpenAiProvider {
             if !tools.is_empty() {
                 body["tools"] =
                     serde_json::Value::Array(self.prepare_chat_tools(&tools));
+            }
+            if let Err(error) = super::core::apply_openai_chat_tool_choice(&mut body, &options) {
+                yield StreamEvent::Error(error.to_string());
+                return;
             }
 
             self.apply_reasoning_effort_chat(&mut body);

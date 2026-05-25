@@ -16,7 +16,7 @@ use crate::{
 };
 
 use moltis_agents::model::{
-    ChatMessage, CompletionResponse, Usage, decode_tool_call_arguments_from_str,
+    AgentToolControls, ChatMessage, CompletionResponse, Usage, decode_tool_call_arguments_from_str,
 };
 
 use super::OpenAiProvider;
@@ -313,6 +313,7 @@ impl OpenAiProvider {
         &self,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
+        options: &AgentToolControls,
     ) -> anyhow::Result<CompletionResponse> {
         let mut openai_messages = self.serialize_messages_for_request(messages);
         self.apply_openrouter_cache_control(&mut openai_messages);
@@ -325,6 +326,7 @@ impl OpenAiProvider {
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(self.prepare_chat_tools(tools));
         }
+        super::core::apply_openai_chat_tool_choice(&mut body, options)?;
 
         self.apply_reasoning_effort_chat(&mut body);
 
@@ -401,7 +403,7 @@ impl OpenAiProvider {
         &self,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
-        options: &moltis_agents::model::AgentToolControls,
+        options: &AgentToolControls,
     ) -> anyhow::Result<CompletionResponse> {
         let (instructions, input) = split_responses_instructions_and_input(messages.to_vec());
         let mut body = serde_json::json!({

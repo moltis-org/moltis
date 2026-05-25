@@ -7,3 +7,4 @@ mod compaction;
 mod helpers;
 mod image_edge_cases;
 mod parallel;
+mod tool_controls;

@@ -447,10 +447,7 @@ impl LlmProvider for OpenAiProvider {
         if matches!(self.wire_api, WireApi::Responses) {
             return self.complete_responses(messages, tools, options).await;
         }
-        if matches!(options.tool_choice, Some(ToolChoice::Tool { .. })) {
-            anyhow::bail!("forced OpenAI tool_choice requires the responses wire API");
-        }
-        self.complete_chat(messages, tools).await
+        self.complete_chat(messages, tools, options).await
     }
 
     #[allow(clippy::collapsible_if)]
@@ -503,37 +500,25 @@ impl LlmProvider for OpenAiProvider {
                     tools,
                     matches!(self.stream_transport, ProviderStreamTransport::Auto),
                     options,
+                    true,
                 )
             },
             (WireApi::ChatCompletions, ProviderStreamTransport::Sse) => {
-                if matches!(options.tool_choice, Some(ToolChoice::Tool { .. })) {
-                    return Box::pin(tokio_stream::once(StreamEvent::Error(
-                        "forced OpenAI tool_choice requires the responses wire API".to_string(),
-                    )));
-                }
-                self.stream_with_tools_sse(messages, tools)
+                self.stream_with_tools_sse(messages, tools, options)
             },
             (WireApi::ChatCompletions, ProviderStreamTransport::Websocket) => {
-                if matches!(options.tool_choice, Some(ToolChoice::Tool { .. })) {
-                    return Box::pin(tokio_stream::once(StreamEvent::Error(
-                        "forced OpenAI tool_choice requires the responses wire API".to_string(),
-                    )));
-                }
-                self.stream_with_tools_websocket(messages, tools, false, options)
+                // WebSocket always uses Responses wire format; SSE fallback
+                // uses Chat Completions SSE.
+                self.stream_with_tools_websocket(messages, tools, false, options, false)
             },
             (WireApi::ChatCompletions, ProviderStreamTransport::Auto) => {
-                if matches!(options.tool_choice, Some(ToolChoice::Tool { .. })) {
-                    return Box::pin(tokio_stream::once(StreamEvent::Error(
-                        "forced OpenAI tool_choice requires the responses wire API".to_string(),
-                    )));
-                }
-                self.stream_with_tools_websocket(messages, tools, true, options)
+                self.stream_with_tools_websocket(messages, tools, true, options, false)
             },
         }
     }
 }
 
-pub(super) fn apply_openai_responses_tool_choice(
+pub(crate) fn apply_openai_responses_tool_choice(
     body: &mut serde_json::Value,
     options: &AgentToolControls,
 ) -> anyhow::Result<()> {
@@ -543,8 +528,15 @@ pub(super) fn apply_openai_responses_tool_choice(
                 body["tool_choice"] = serde_json::json!("auto");
             }
         },
+        Some(ToolChoice::Any) => {
+            if body.get("tools").is_some() {
+                body["tool_choice"] = serde_json::json!("required");
+            }
+        },
         Some(ToolChoice::None) => {
-            body.as_object_mut().map(|obj| obj.remove("tools"));
+            if let Some(obj) = body.as_object_mut() {
+                obj.remove("tools");
+            }
         },
         Some(ToolChoice::Tool { name }) => {
             if name.trim().is_empty() {
@@ -556,6 +548,42 @@ pub(super) fn apply_openai_responses_tool_choice(
             body["tool_choice"] = serde_json::json!({
                 "type": "function",
                 "name": name,
+            });
+        },
+    }
+    Ok(())
+}
+
+/// Apply `tool_choice` for the OpenAI Chat Completions wire format.
+///
+/// The Chat Completions API uses `{"type": "function", "function": {"name": "..."}}`
+/// instead of the Responses API's `{"type": "function", "name": "..."}`.
+pub(crate) fn apply_openai_chat_tool_choice(
+    body: &mut serde_json::Value,
+    options: &AgentToolControls,
+) -> anyhow::Result<()> {
+    match options.tool_choice.as_ref() {
+        None | Some(ToolChoice::Auto) => {
+            // Chat Completions doesn't require an explicit tool_choice for auto.
+        },
+        Some(ToolChoice::Any) => {
+            if body.get("tools").is_some() {
+                body["tool_choice"] = serde_json::json!("required");
+            }
+        },
+        Some(ToolChoice::None) => {
+            body["tool_choice"] = serde_json::json!("none");
+        },
+        Some(ToolChoice::Tool { name }) => {
+            if name.trim().is_empty() {
+                anyhow::bail!("forced OpenAI tool_choice requires a tool name");
+            }
+            if body.get("tools").is_none() {
+                anyhow::bail!("forced OpenAI tool_choice requires at least one active tool");
+            }
+            body["tool_choice"] = serde_json::json!({
+                "type": "function",
+                "function": { "name": name },
             });
         },
     }

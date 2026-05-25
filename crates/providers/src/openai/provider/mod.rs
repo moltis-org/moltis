@@ -1,5 +1,5 @@
 mod completion;
-mod core;
+pub(crate) mod core;
 mod request;
 mod streaming;
 mod websocket;

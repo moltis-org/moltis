@@ -449,8 +449,15 @@ fn apply_anthropic_tool_choice(
                 body["tool_choice"] = serde_json::json!({ "type": "auto" });
             }
         },
+        Some(ToolChoice::Any) => {
+            if body.get("tools").is_some() {
+                body["tool_choice"] = serde_json::json!({ "type": "any" });
+            }
+        },
         Some(ToolChoice::None) => {
-            body.as_object_mut().map(|obj| obj.remove("tools"));
+            if let Some(obj) = body.as_object_mut() {
+                obj.remove("tools");
+            }
         },
         Some(ToolChoice::Tool { name }) => {
             if name.trim().is_empty() {
@@ -747,7 +754,10 @@ impl LlmProvider for AnthropicProvider {
         }
 
         if self.reasoning_effort.is_some()
-            && matches!(options.tool_choice, Some(ToolChoice::Tool { .. }))
+            && matches!(
+                options.tool_choice,
+                Some(ToolChoice::Tool { .. } | ToolChoice::Any)
+            )
         {
             anyhow::bail!("Anthropic forced tool_choice is not compatible with extended thinking");
         }
