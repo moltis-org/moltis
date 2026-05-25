@@ -886,7 +886,10 @@ pub(crate) async fn run_with_tools(
             tool_context["active_tools"] = serde_json::json!(active_tools);
         }
         if let Some(tool_choice) = controls.tool_choice {
-            tool_context["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
+            match serde_json::to_value(tool_choice) {
+                Ok(value) => tool_context["tool_choice"] = value,
+                Err(error) => warn!(%error, "failed to serialize tool_choice control"),
+            }
         }
     }
 

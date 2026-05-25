@@ -570,9 +570,16 @@ pub async fn run_agent_loop_with_context_and_limits(
 
                 // Pre-dispatch validation against the tool's schema.
                 let validation_error: Option<String> = if tool_hidden {
-                    Some(format!(
-                        "tool `{tc_name}` is not active for this turn; choose one of the currently available tools"
-                    ))
+                    let reason = if matches!(tool_controls.tool_choice, Some(ToolChoice::None)) {
+                        format!(
+                            "tool `{tc_name}` cannot be called: tool use is disabled for this turn"
+                        )
+                    } else {
+                        format!(
+                            "tool `{tc_name}` is not active for this turn; choose one of the currently available tools"
+                        )
+                    };
+                    Some(reason)
                 } else if let Some(ref t) = tool {
                     let schema = t.parameters_schema();
                     match validate_tool_args(&schema, &args) {
