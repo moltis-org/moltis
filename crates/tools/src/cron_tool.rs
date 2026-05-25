@@ -709,7 +709,7 @@ impl AgentTool for CronTool {
                         },
                         "payload": {
                             "type": ["object", "string"],
-                            "description": "What to do. Use {kind:'systemEvent', text} for main-session reminders or {kind:'agentTurn', message, model?, timeout_secs?, deliver?, channel?, to?}. `payload.model` selects the LLM for that job. This tool also accepts a shorthand message string at runtime.",
+                            "description": "What to do. Use {kind:'systemEvent', text} for main-session reminders or {kind:'agentTurn', message, model?, timeout_secs?, active_tools?, tool_choice?, deliver?, channel?, to?}. `payload.model` selects the LLM for that job. This tool also accepts a shorthand message string at runtime.",
                             "properties": {
                                 "kind": { "type": "string", "enum": ["systemEvent", "agentTurn"] },
                                 "text": { "type": "string" },
@@ -718,6 +718,20 @@ impl AgentTool for CronTool {
                                 "timeout_secs": {
                                     "type": ["integer", "string"],
                                     "description": "Optional timeout in seconds. Accepts an integer number of seconds or a duration string like '2m'."
+                                },
+                                "active_tools": {
+                                    "type": "array",
+                                    "items": { "type": "string" },
+                                    "description": "Optional per-turn whitelist of tools visible to the scheduled agent."
+                                },
+                                "tool_choice": {
+                                    "type": "object",
+                                    "description": "Optional provider tool choice, e.g. {type:'tool', name:'classify_destination'}.",
+                                    "properties": {
+                                        "type": { "type": "string", "enum": ["auto", "none", "tool"] },
+                                        "name": { "type": "string" }
+                                    },
+                                    "required": ["type"]
                                 },
                                 "deliver": { "type": "boolean", "description": "Set to true to deliver the agent output to a channel (e.g. Telegram) after the run. Requires channel and to." },
                                 "channel": { "type": "string", "description": "Channel account identifier for delivery (e.g. the Telegram bot username like 'my_telegram_bot'). Required when deliver=true." },

@@ -1,6 +1,6 @@
 //! Streaming variant of the agent loop.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use {
     anyhow::Result,
@@ -16,8 +16,8 @@ use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
 
 use crate::{
     model::{
-        ChatMessage, LlmProvider, StreamEvent, ToolCall, Usage, UserContent,
-        decode_tool_call_arguments_from_str, push_capped_provider_raw_event,
+        AgentToolControls, ChatMessage, LlmProvider, StreamEvent, ToolCall, ToolChoice, Usage,
+        UserContent, decode_tool_call_arguments_from_str, push_capped_provider_raw_event,
     },
     response_sanitizer::recover_tool_calls_from_content,
     tool_arg_validator::validate_tool_args,
@@ -173,6 +173,11 @@ pub async fn run_agent_loop_streaming_with_limits(
         config.tools.agent_loop_detector_strip_tools_on_second_fire,
     );
     let mut strip_tools_next_iter = false;
+    let tool_controls = AgentToolControls::from_tool_context(tool_context.as_ref());
+    let active_tool_names = tool_controls
+        .active_tools
+        .as_ref()
+        .map(|names| names.iter().cloned().collect::<HashSet<_>>());
 
     loop {
         iterations += 1;
@@ -192,7 +197,25 @@ pub async fn run_agent_loop_streaming_with_limits(
         // list for this single turn so the model is forced to respond in text
         // (issue #658).
         let schemas_for_api = if native_tools && !strip_tools_next_iter {
-            tools.list_schemas()
+            let schemas = if let Some(active) = active_tool_names.as_ref() {
+                tools.list_schemas_allowed_by(|name| active.contains(name))
+            } else {
+                tools.list_schemas()
+            };
+            match tool_controls.tool_choice.as_ref() {
+                Some(ToolChoice::None) => vec![],
+                Some(ToolChoice::Tool { name }) => {
+                    if !schemas.iter().any(|schema| {
+                        schema.get("name").and_then(serde_json::Value::as_str) == Some(name)
+                    }) {
+                        return Err(AgentRunError::Other(anyhow::anyhow!(
+                            "forced tool_choice references unavailable tool: {name}"
+                        )));
+                    }
+                    schemas
+                },
+                _ => schemas,
+            }
         } else {
             vec![]
         };
@@ -261,7 +284,11 @@ pub async fn run_agent_loop_streaming_with_limits(
         // Use streaming API.
         #[cfg(feature = "metrics")]
         let iter_start = std::time::Instant::now();
-        let mut stream = provider.stream_with_tools(messages.clone(), schemas_for_api.clone());
+        let mut stream = provider.stream_with_tools_and_options(
+            messages.clone(),
+            schemas_for_api.clone(),
+            tool_controls.clone(),
+        );
 
         // Accumulate answer text, reasoning text, and tool calls from the stream.
         let mut accumulated_text = String::new();
@@ -654,6 +681,10 @@ pub async fn run_agent_loop_streaming_with_limits(
                     debug!(original = %sanitized, resolved = %resolved_name, "resolved legacy tool alias");
                 }
                 let mut args = tc.arguments.clone();
+                let tool_hidden = matches!(tool_controls.tool_choice, Some(ToolChoice::None))
+                    || active_tool_names
+                        .as_ref()
+                        .is_some_and(|active| !active.contains(resolved_name.as_ref()));
 
                 let hook_registry = hook_registry.clone();
                 let session_key = session_key_for_hooks.clone();
@@ -670,7 +701,11 @@ pub async fn run_agent_loop_streaming_with_limits(
                 log_tool_argument_diagnostic(&tc_name, tc.argument_diagnostic.as_ref());
 
                 // Pre-dispatch validation against the tool's schema.
-                let validation_error: Option<String> = if let Some(ref t) = tool {
+                let validation_error: Option<String> = if tool_hidden {
+                    Some(format!(
+                        "tool `{tc_name}` is not active for this turn; choose one of the currently available tools"
+                    ))
+                } else if let Some(ref t) = tool {
                     let schema = t.parameters_schema();
                     match validate_tool_args(&schema, &args) {
                         Ok(()) => None,

@@ -89,6 +89,45 @@ the sub-agent continues in the background. Use `spawn_status` to check progress,
 `spawn_result` to fetch the final output, `spawn_list` to recover task IDs after
 context loss, and `cancel_spawn` to stop work that is no longer needed.
 
+Use `active_tools` and `tool_choice` when a small model must not drift to the
+wrong output path. These controls are available on agent presets, `spawn_agent`,
+and `cron` `agentTurn` payloads. `active_tools` filters the tools visible for a
+turn; `tool_choice = { type = "tool", name = "..." }` forces supported providers
+such as Anthropic and OpenAI Responses to call one visible tool.
+
+Example forced classifier sub-agent:
+
+```json
+{
+  "task": "Classify whether the reply should be inline, file, or PR.",
+  "active_tools": ["classify_destination"],
+  "tool_choice": { "type": "tool", "name": "classify_destination" },
+  "nonblocking": true
+}
+```
+
+Example preset defaults:
+
+```toml
+[agents.presets.destination-router.tool_controls]
+active_tools = ["classify_destination"]
+
+[agents.presets.destination-router.tool_controls.tool_choice]
+type = "tool"
+name = "classify_destination"
+```
+
+Example scheduled agent turn:
+
+```json
+{
+  "kind": "agentTurn",
+  "message": "Generate the report and send it as a document.",
+  "active_tools": ["write_file", "send_document"],
+  "tool_choice": { "type": "auto" }
+}
+```
+
 Use session tools when you need:
 
 - long-lived specialist sessions

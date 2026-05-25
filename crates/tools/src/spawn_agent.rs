@@ -407,6 +407,20 @@ impl AgentTool for SpawnAgentTool {
                 "nonblocking": {
                     "type": "boolean",
                     "description": "If true, return immediately with a task_id and let the sub-agent continue in the background. Use spawn_status and spawn_result to inspect it."
+                },
+                "active_tools": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional per-turn whitelist of tool names visible to the sub-agent. Overrides preset tool_controls.active_tools."
+                },
+                "tool_choice": {
+                    "type": "object",
+                    "description": "Optional provider tool choice for the sub-agent turn, e.g. {type:'tool', name:'classify_destination'}. Overrides preset tool_controls.tool_choice.",
+                    "properties": {
+                        "type": { "type": "string", "enum": ["auto", "none", "tool"] },
+                        "name": { "type": "string" }
+                    },
+                    "required": ["type"]
                 }
             },
             "required": ["task"]
@@ -452,6 +466,19 @@ impl AgentTool for SpawnAgentTool {
             preset.as_ref().map(|p| p.delegate_only).unwrap_or(false),
         );
         let nonblocking = bool_param(&params, "nonblocking", false);
+        let mut tool_controls = preset
+            .as_ref()
+            .map(|p| p.tool_controls.clone())
+            .unwrap_or_default();
+        if params.get("active_tools").is_some() {
+            tool_controls.active_tools = Some(string_array_param(&params, "active_tools")?);
+        }
+        if let Some(value) = params.get("tool_choice") {
+            tool_controls.tool_choice = Some(
+                serde_json::from_value(value.clone())
+                    .map_err(|e| Error::message(format!("invalid tool_choice parameter: {e}")))?,
+            );
+        }
 
         // Check nesting depth.
         let depth = u64_param(&params, SPAWN_DEPTH_KEY, 0);
@@ -545,6 +572,12 @@ impl AgentTool for SpawnAgentTool {
         });
         if let Some(ref key) = session_key {
             tool_context["_session_key"] = serde_json::Value::String(key.clone());
+        }
+        if let Some(active_tools) = tool_controls.active_tools {
+            tool_context["active_tools"] = serde_json::json!(active_tools);
+        }
+        if let Some(tool_choice) = tool_controls.tool_choice {
+            tool_context["tool_choice"] = serde_json::to_value(tool_choice)?;
         }
 
         if nonblocking {

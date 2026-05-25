@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-use moltis_agents::model::{ChatMessage, StreamEvent};
+use moltis_agents::model::{AgentToolControls, ChatMessage, StreamEvent};
 
 use super::OpenAiProvider;
 
@@ -24,6 +24,7 @@ impl OpenAiProvider {
         &self,
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
+        options: AgentToolControls,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         Box::pin(async_stream::stream! {
             let (instructions, input) = split_responses_instructions_and_input(messages);
@@ -39,7 +40,10 @@ impl OpenAiProvider {
 
             if !tools.is_empty() {
                 body["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
-                body["tool_choice"] = serde_json::json!("auto");
+            }
+            if let Err(error) = super::core::apply_openai_responses_tool_choice(&mut body, &options) {
+                yield StreamEvent::Error(error.to_string());
+                return;
             }
 
             self.apply_reasoning_effort_responses(&mut body);

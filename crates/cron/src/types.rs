@@ -48,6 +48,8 @@ pub enum CronPayload {
         agent_id: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         timeout_secs: Option<u64>,
+        #[serde(default, flatten)]
+        tool_controls: moltis_config::schema::AgentToolControls,
         #[serde(default)]
         deliver: bool,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,11 +303,19 @@ mod tests {
             model: None,
             agent_id: None,
             timeout_secs: Some(120),
+            tool_controls: moltis_config::schema::AgentToolControls {
+                active_tools: Some(vec!["classify_destination".into()]),
+                tool_choice: Some(moltis_config::schema::ToolChoice::Tool {
+                    name: "classify_destination".into(),
+                }),
+            },
             deliver: true,
             channel: Some("slack".into()),
             to: None,
         };
         let json = serde_json::to_string(&p).unwrap();
+        assert!(json.contains("active_tools"));
+        assert!(json.contains("tool_choice"));
         let back: CronPayload = serde_json::from_str(&json).unwrap();
         assert_eq!(p, back);
     }
@@ -484,6 +494,7 @@ mod tests {
                 model: None,
                 agent_id: None,
                 timeout_secs: None,
+                tool_controls: Default::default(),
                 deliver: false,
                 channel: None,
                 to: None,

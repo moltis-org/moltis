@@ -15,7 +15,7 @@ use {
     tokio_stream::Stream,
 };
 
-use moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent};
+use moltis_agents::model::{AgentToolControls, ChatMessage, LlmProvider, StreamEvent};
 
 #[allow(unused_imports)]
 use crate::{
@@ -65,6 +65,17 @@ impl LlmProvider for RegistryModelProvider {
         self.inner.complete(messages, tools).await
     }
 
+    async fn complete_with_options(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        options: &AgentToolControls,
+    ) -> anyhow::Result<moltis_agents::model::CompletionResponse> {
+        self.inner
+            .complete_with_options(messages, tools, options)
+            .await
+    }
+
     fn supports_tools(&self) -> bool {
         self.inner.supports_tools()
     }
@@ -94,6 +105,16 @@ impl LlmProvider for RegistryModelProvider {
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.inner.stream_with_tools(messages, tools)
+    }
+
+    fn stream_with_tools_and_options(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+        options: AgentToolControls,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.inner
+            .stream_with_tools_and_options(messages, tools, options)
     }
 
     fn reasoning_effort(&self) -> Option<moltis_agents::model::ReasoningEffort> {

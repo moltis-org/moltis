@@ -388,6 +388,7 @@ async fn heartbeat_update_updates_existing_job() {
             model: None,
             agent_id: None,
             timeout_secs: None,
+            tool_controls: Default::default(),
             deliver: false,
             channel: None,
             to: None,

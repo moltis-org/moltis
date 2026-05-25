@@ -16,7 +16,7 @@ use {
 use {
     moltis_agents::{
         AgentRunError, UserContent,
-        model::values_to_chat_messages,
+        model::{AgentToolControls, values_to_chat_messages},
         prompt::{
             PromptRuntimeContext, build_system_prompt_minimal_runtime_details,
             build_system_prompt_with_session_runtime_details,
@@ -88,6 +88,7 @@ pub(crate) async fn run_with_tools(
     active_event_forwarders: &Arc<RwLock<HashMap<String, tokio::task::JoinHandle<String>>>>,
     terminal_runs: &Arc<RwLock<HashSet<String>>>,
     sender_name: Option<String>,
+    tool_controls: Option<AgentToolControls>,
 ) -> Option<AssistantTurnOutput> {
     let run_started = Instant::now();
     let runtime_limits = persona.config.agent_runtime_limits(agent_id);
@@ -874,12 +875,20 @@ pub(crate) async fn run_with_tools(
 
     // Inject session key and accept-language into tool call params so tools can
     // resolve per-session state and forward the user's locale to web requests.
-    let tool_context = build_tool_context(
+    let mut tool_context = build_tool_context(
         session_key,
         accept_language.as_deref(),
         conn_id.as_deref(),
         runtime_context,
     );
+    if let Some(controls) = tool_controls {
+        if let Some(active_tools) = controls.active_tools {
+            tool_context["active_tools"] = serde_json::json!(active_tools);
+        }
+        if let Some(tool_choice) = controls.tool_choice {
+            tool_context["tool_choice"] = serde_json::to_value(tool_choice).unwrap_or_default();
+        }
+    }
 
     // Create a shared steer inbox that the gateway can push steering text into.
     // A background task polls the ChatRuntime and forwards any `/steer` text.

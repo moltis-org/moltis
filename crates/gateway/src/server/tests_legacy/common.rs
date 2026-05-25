@@ -69,6 +69,7 @@ pub(crate) fn cron_delivery_request() -> moltis_cron::service::AgentTurnRequest 
         model: None,
         agent_id: None,
         timeout_secs: None,
+        tool_controls: Default::default(),
         deliver: true,
         channel: Some("bot-main".to_string()),
         to: Some("123456".to_string()),

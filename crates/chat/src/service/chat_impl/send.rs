@@ -99,6 +99,8 @@ impl LiveChatService {
             .and_then(|v| v.as_str())
             .map(String::from);
         let explicit_model = params.get("model").and_then(|v| v.as_str());
+        let tool_controls =
+            moltis_config::schema::AgentToolControls::from_tool_context(Some(&params));
         // Use streaming-only mode if explicitly requested or if no tools are registered.
         let explicit_stream_only = params
             .get("stream_only")
@@ -1218,6 +1220,7 @@ impl LiveChatService {
                         &active_event_forwarders,
                         &terminal_runs,
                         sender_name,
+                        Some(tool_controls),
                     )
                     .await
                 }

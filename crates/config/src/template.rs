@@ -324,6 +324,12 @@ port = {port}                           # Port number (auto-generated for this i
 # identity.theme = "thorough, skeptical, and evidence-oriented"
 # system_prompt_suffix = "..."
 # max_iterations = 16
+# # Optional drift-resistant per-turn controls for spawned/preset agents:
+# # [agents.presets.research.tool_controls]
+# # active_tools = ["classify_destination"]
+# # [agents.presets.research.tool_controls.tool_choice]
+# # type = "tool"  # auto | none | tool
+# # name = "classify_destination"
 #
 # ── Per-agent capability boundaries ──────────────────────────────────────────
 # Each agent can be scoped to specific MCP servers, sandbox policies, and skills.

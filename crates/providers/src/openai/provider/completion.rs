@@ -401,6 +401,7 @@ impl OpenAiProvider {
         &self,
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
+        options: &moltis_agents::model::AgentToolControls,
     ) -> anyhow::Result<CompletionResponse> {
         let (instructions, input) = split_responses_instructions_and_input(messages.to_vec());
         let mut body = serde_json::json!({
@@ -413,8 +414,8 @@ impl OpenAiProvider {
         }
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
-            body["tool_choice"] = serde_json::json!("auto");
         }
+        super::core::apply_openai_responses_tool_choice(&mut body, options)?;
 
         debug!(
             model = %self.model,

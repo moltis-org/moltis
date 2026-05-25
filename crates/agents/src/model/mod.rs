@@ -1,7 +1,7 @@
 // ── Reasoning effort ──────────────────────────────────────────────────────
 
-/// Re-export from config so downstream crates can use `moltis_agents::model::ReasoningEffort`.
-pub use moltis_config::schema::ReasoningEffort;
+/// Re-export from config so downstream crates can use agent model-level types together.
+pub use moltis_config::schema::{AgentToolControls, ReasoningEffort, ToolChoice};
 
 mod types;
 pub use types::{

@@ -13,7 +13,8 @@ use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
 use {
     async_trait::async_trait,
     moltis_agents::model::{
-        ChatMessage, CompletionResponse, LlmProvider, ModelMetadata, ReasoningEffort, StreamEvent,
+        AgentToolControls, ChatMessage, CompletionResponse, LlmProvider, ModelMetadata,
+        ReasoningEffort, StreamEvent,
     },
     moltis_config::WireApi,
     secrecy::Secret,
@@ -160,6 +161,17 @@ impl LlmProvider for ZenProvider {
         self.inner.complete(messages, tools).await
     }
 
+    async fn complete_with_options(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        options: &AgentToolControls,
+    ) -> anyhow::Result<CompletionResponse> {
+        self.inner
+            .complete_with_options(messages, tools, options)
+            .await
+    }
+
     fn supports_tools(&self) -> bool {
         self.inner.supports_tools()
     }
@@ -189,6 +201,16 @@ impl LlmProvider for ZenProvider {
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.inner.stream_with_tools(messages, tools)
+    }
+
+    fn stream_with_tools_and_options(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+        options: AgentToolControls,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.inner
+            .stream_with_tools_and_options(messages, tools, options)
     }
 
     fn reasoning_effort(&self) -> Option<ReasoningEffort> {

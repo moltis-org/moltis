@@ -1,6 +1,6 @@
 //! Non-streaming agent loop: `run_agent_loop` and `run_agent_loop_with_context`.
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use {
     anyhow::Result,
@@ -10,7 +10,7 @@ use {
 use moltis_common::hooks::{HookAction, HookPayload, HookRegistry};
 
 use crate::{
-    model::{ChatMessage, LlmProvider, ToolCall, UserContent},
+    model::{AgentToolControls, ChatMessage, LlmProvider, ToolCall, ToolChoice, UserContent},
     response_sanitizer::recover_tool_calls_from_content,
     tool_arg_validator::validate_tool_args,
     tool_loop_detector::ToolCallFingerprint,
@@ -179,6 +179,11 @@ pub async fn run_agent_loop_with_context_and_limits(
         config.tools.agent_loop_detector_strip_tools_on_second_fire,
     );
     let mut strip_tools_next_iter = false;
+    let tool_controls = AgentToolControls::from_tool_context(tool_context.as_ref());
+    let active_tool_names = tool_controls
+        .active_tools
+        .as_ref()
+        .map(|names| names.iter().cloned().collect::<HashSet<_>>());
 
     loop {
         iterations += 1;
@@ -194,7 +199,25 @@ pub async fn run_agent_loop_with_context_and_limits(
         // When the loop detector has escalated to stage 2, pass an empty tool
         // list for this single turn so the model is forced to respond in text.
         let schemas_for_api = if native_tools && !strip_tools_next_iter {
-            tools.list_schemas()
+            let schemas = if let Some(active) = active_tool_names.as_ref() {
+                tools.list_schemas_allowed_by(|name| active.contains(name))
+            } else {
+                tools.list_schemas()
+            };
+            match tool_controls.tool_choice.as_ref() {
+                Some(ToolChoice::None) => vec![],
+                Some(ToolChoice::Tool { name }) => {
+                    if !schemas.iter().any(|schema| {
+                        schema.get("name").and_then(serde_json::Value::as_str) == Some(name)
+                    }) {
+                        return Err(AgentRunError::Other(anyhow::anyhow!(
+                            "forced tool_choice references unavailable tool: {name}"
+                        )));
+                    }
+                    schemas
+                },
+                _ => schemas,
+            }
         } else {
             vec![]
         };
@@ -260,7 +283,10 @@ pub async fn run_agent_loop_with_context_and_limits(
             cb(RunnerEvent::Thinking);
         }
 
-        let mut response = match provider.complete(&messages, &schemas_for_api).await {
+        let mut response = match provider
+            .complete_with_options(&messages, &schemas_for_api, &tool_controls)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 let msg = e.to_string();
@@ -521,6 +547,10 @@ pub async fn run_agent_loop_with_context_and_limits(
                     debug!(original = %sanitized, resolved = %resolved_name, "resolved legacy tool alias");
                 }
                 let mut args = tc.arguments.clone();
+                let tool_hidden = matches!(tool_controls.tool_choice, Some(ToolChoice::None))
+                    || active_tool_names
+                        .as_ref()
+                        .is_some_and(|active| !active.contains(resolved_name.as_ref()));
 
                 // Dispatch BeforeToolCall hook — may block or modify arguments.
                 let hook_registry = hook_registry.clone();
@@ -539,7 +569,11 @@ pub async fn run_agent_loop_with_context_and_limits(
                 log_tool_argument_diagnostic(&tc_name, tc.argument_diagnostic.as_ref());
 
                 // Pre-dispatch validation against the tool's schema.
-                let validation_error: Option<String> = if let Some(ref t) = tool {
+                let validation_error: Option<String> = if tool_hidden {
+                    Some(format!(
+                        "tool `{tc_name}` is not active for this turn; choose one of the currently available tools"
+                    ))
+                } else if let Some(ref t) = tool {
                     let schema = t.parameters_schema();
                     match validate_tool_args(&schema, &args) {
                         Ok(()) => None,

@@ -12,8 +12,8 @@ use {
 };
 
 use moltis_agents::model::{
-    ChatMessage, CompletionResponse, LlmProvider, ReasoningEffort, StreamEvent, ToolCall, Usage,
-    UserContent, decode_tool_call_arguments_from_str,
+    AgentToolControls, ChatMessage, CompletionResponse, LlmProvider, ReasoningEffort, StreamEvent,
+    ToolCall, ToolChoice, Usage, UserContent, decode_tool_call_arguments_from_str,
 };
 
 use crate::openai_compat::to_responses_api_tools;
@@ -514,6 +514,35 @@ fn parse_models_payload(value: &serde_json::Value) -> Vec<super::DiscoveredModel
     models
 }
 
+fn apply_codex_tool_choice(
+    body: &mut serde_json::Value,
+    options: &AgentToolControls,
+) -> anyhow::Result<()> {
+    match options.tool_choice.as_ref() {
+        None | Some(ToolChoice::Auto) => {
+            if body.get("tools").is_some() {
+                body["tool_choice"] = serde_json::json!("auto");
+            }
+        },
+        Some(ToolChoice::None) => {
+            body.as_object_mut().map(|obj| obj.remove("tools"));
+        },
+        Some(ToolChoice::Tool { name }) => {
+            if name.trim().is_empty() {
+                anyhow::bail!("forced Codex tool_choice requires a tool name");
+            }
+            if body.get("tools").is_none() {
+                anyhow::bail!("forced Codex tool_choice requires at least one active tool");
+            }
+            body["tool_choice"] = serde_json::json!({
+                "type": "function",
+                "name": name,
+            });
+        },
+    }
+    Ok(())
+}
+
 async fn fetch_models_from_api(
     access_token: String,
     account_id: String,
@@ -662,6 +691,16 @@ impl LlmProvider for OpenAiCodexProvider {
         messages: &[ChatMessage],
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse> {
+        self.complete_with_options(messages, tools, &AgentToolControls::default())
+            .await
+    }
+
+    async fn complete_with_options(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        options: &AgentToolControls,
+    ) -> anyhow::Result<CompletionResponse> {
         self.ensure_supported_stream_transport()?;
 
         let tokens = self.get_valid_tokens().await?;
@@ -697,8 +736,8 @@ impl LlmProvider for OpenAiCodexProvider {
 
         if !tools.is_empty() {
             body["tools"] = serde_json::Value::Array(to_responses_api_tools(tools));
-            body["tool_choice"] = serde_json::json!("auto");
         }
+        apply_codex_tool_choice(&mut body, options)?;
 
         trace!(body = %serde_json::to_string(&body).unwrap_or_default(), "openai-codex request body");
 
@@ -834,6 +873,15 @@ impl LlmProvider for OpenAiCodexProvider {
         messages: Vec<ChatMessage>,
         tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        self.stream_with_tools_and_options(messages, tools, AgentToolControls::default())
+    }
+
+    fn stream_with_tools_and_options(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+        options: AgentToolControls,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         info!(
             tools_received = tools.len(),
             "stream_with_tools entry (before async_stream)"
@@ -888,7 +936,10 @@ impl LlmProvider for OpenAiCodexProvider {
 
             if !tools.is_empty() {
                 body["tools"] = serde_json::Value::Array(to_responses_api_tools(&tools));
-                body["tool_choice"] = serde_json::json!("auto");
+            }
+            if let Err(error) = apply_codex_tool_choice(&mut body, &options) {
+                yield StreamEvent::Error(error.to_string());
+                return;
             }
 
             info!(

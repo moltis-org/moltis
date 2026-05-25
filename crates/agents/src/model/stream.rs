@@ -3,7 +3,7 @@ use std::{pin::Pin, sync::Arc, time::Duration};
 use {async_trait::async_trait, futures::StreamExt, tokio_stream::Stream};
 
 use super::{
-    ReasoningEffort,
+    AgentToolControls, ReasoningEffort, ToolChoice,
     chat::ChatMessage,
     types::{CompletionResponse, ModelMetadata, Usage},
 };
@@ -62,6 +62,16 @@ pub trait LlmProvider: Send + Sync {
         tools: &[serde_json::Value],
     ) -> anyhow::Result<CompletionResponse>;
 
+    async fn complete_with_options(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[serde_json::Value],
+        options: &AgentToolControls,
+    ) -> anyhow::Result<CompletionResponse> {
+        reject_unsupported_tool_choice(self.name(), options)?;
+        self.complete(messages, tools).await
+    }
+
     /// Whether this provider supports tool/function calling.
     /// Defaults to false; providers that handle the `tools` parameter
     /// in `complete()` should override this to return true.
@@ -110,6 +120,18 @@ pub trait LlmProvider: Send + Sync {
         _tools: Vec<serde_json::Value>,
     ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
         self.stream(messages)
+    }
+
+    fn stream_with_tools_and_options(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<serde_json::Value>,
+        options: AgentToolControls,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        if let Err(error) = reject_unsupported_tool_choice(self.name(), &options) {
+            return Box::pin(tokio_stream::once(StreamEvent::Error(error.to_string())));
+        }
+        self.stream_with_tools(messages, tools)
     }
 
     /// Configured reasoning effort for this provider instance, if any.
@@ -198,4 +220,14 @@ pub trait LlmProvider: Send + Sync {
             context_length: self.context_window(),
         })
     }
+}
+
+fn reject_unsupported_tool_choice(
+    provider_name: &str,
+    options: &AgentToolControls,
+) -> anyhow::Result<()> {
+    if matches!(options.tool_choice, Some(ToolChoice::Tool { .. })) {
+        anyhow::bail!("provider {provider_name} does not support forced tool_choice");
+    }
+    Ok(())
 }

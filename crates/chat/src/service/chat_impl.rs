@@ -84,6 +84,8 @@ impl ChatService for LiveChatService {
             .unwrap_or(false);
 
         let explicit_model = params.get("model").and_then(|v| v.as_str());
+        let tool_controls =
+            moltis_config::schema::AgentToolControls::from_tool_context(Some(&params));
         let stream_only = !self.has_tools_sync();
 
         // Resolve session key from explicit override.
@@ -280,6 +282,7 @@ impl ChatService for LiveChatService {
                 &active_event_forwarders,
                 &terminal_runs,
                 None, // send_sync: no sender name
+                Some(tool_controls),
             )
             .await
         };

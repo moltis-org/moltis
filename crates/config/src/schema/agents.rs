@@ -33,6 +33,60 @@ pub struct AgentsConfig {
     pub presets: HashMap<String, AgentPreset>,
 }
 
+/// Per-request tool choice requested by the agent harness.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolChoice {
+    Auto,
+    None,
+    Tool { name: String },
+}
+
+/// Per-agent-run controls for tool visibility and provider tool selection.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentToolControls {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_tools: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+}
+
+impl AgentToolControls {
+    #[must_use]
+    pub fn from_tool_context(tool_context: Option<&serde_json::Value>) -> Self {
+        let Some(context) = tool_context else {
+            return Self::default();
+        };
+
+        let active_tools = context.get("active_tools").and_then(|value| {
+            value.as_array().map(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+        });
+
+        let tool_choice = context
+            .get("tool_choice")
+            .and_then(|value| serde_json::from_value::<ToolChoice>(value.clone()).ok());
+
+        Self {
+            active_tools,
+            tool_choice,
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.active_tools.is_none() && self.tool_choice.is_none()
+    }
+}
+
 impl AgentsConfig {
     /// Return a preset by name.
     pub fn get_preset(&self, name: &str) -> Option<&AgentPreset> {
@@ -502,6 +556,9 @@ pub struct AgentPreset {
     /// Restrict sub-agent to delegation/session/task tools only.
     #[serde(default)]
     pub delegate_only: bool,
+    /// Per-turn tool visibility and provider tool-choice controls.
+    #[serde(default, skip_serializing_if = "AgentToolControls::is_empty")]
+    pub tool_controls: AgentToolControls,
     /// Optional extra instructions appended to sub-agent system prompt.
     pub system_prompt_suffix: Option<String>,
     /// Maximum iterations for agent loop.
@@ -539,4 +596,33 @@ pub struct AgentPreset {
     /// by name or category.
     #[serde(default, skip_serializing_if = "PresetSkillPolicy::is_empty")]
     pub skills: PresetSkillPolicy,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_controls_parse_from_tool_context() {
+        let context = serde_json::json!({
+            "active_tools": ["classify_destination", "send_document"],
+            "tool_choice": { "type": "tool", "name": "classify_destination" }
+        });
+
+        let controls = AgentToolControls::from_tool_context(Some(&context));
+
+        assert_eq!(
+            controls.active_tools,
+            Some(vec![
+                "classify_destination".to_string(),
+                "send_document".to_string(),
+            ])
+        );
+        assert_eq!(
+            controls.tool_choice,
+            Some(ToolChoice::Tool {
+                name: "classify_destination".to_string(),
+            })
+        );
+    }
 }

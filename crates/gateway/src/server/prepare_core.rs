@@ -767,6 +767,13 @@ pub async fn prepare_gateway_core(
             if let Some(ref model) = req.model {
                 params["model"] = serde_json::Value::String(model.clone());
             }
+            if let Some(active_tools) = req.tool_controls.active_tools.clone() {
+                params["active_tools"] = serde_json::json!(active_tools);
+            }
+            if let Some(tool_choice) = req.tool_controls.tool_choice.clone() {
+                params["tool_choice"] = serde_json::to_value(tool_choice)
+                    .map_err(|e| moltis_cron::Error::message(e.to_string()))?;
+            }
             let result = chat
                 .send_sync(params)
                 .await
