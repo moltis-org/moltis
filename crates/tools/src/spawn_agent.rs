@@ -7,6 +7,7 @@ use {async_trait::async_trait, tracing::info};
 use crate::{
     error::Error,
     params::{bool_param, str_param, string_array_param, u64_param},
+    spawn_agent_tasks::{SpawnTaskStore, SpawnTaskUpdate},
 };
 
 use {
@@ -69,6 +70,7 @@ pub struct SpawnAgentTool {
     agents_config: Option<Arc<tokio::sync::RwLock<AgentsConfig>>>,
     on_event: Option<OnSpawnEvent>,
     session_deps: Option<SessionDeps>,
+    task_store: Arc<SpawnTaskStore>,
 }
 
 impl SpawnAgentTool {
@@ -84,6 +86,7 @@ impl SpawnAgentTool {
             agents_config: None,
             on_event: None,
             session_deps: None,
+            task_store: Arc::new(SpawnTaskStore::default()),
         }
     }
 
@@ -105,6 +108,12 @@ impl SpawnAgentTool {
     /// Provide session dependencies so sub-agents can get policy-aware session tools.
     pub fn with_session_deps(mut self, deps: SessionDeps) -> Self {
         self.session_deps = Some(deps);
+        self
+    }
+
+    /// Share background task state with `spawn_status` and `spawn_result`.
+    pub fn with_task_store(mut self, task_store: Arc<SpawnTaskStore>) -> Self {
+        self.task_store = task_store;
         self
     }
 
@@ -359,6 +368,10 @@ impl AgentTool for SpawnAgentTool {
                 "delegate_only": {
                     "type": "boolean",
                     "description": "If true, sub-agent is restricted to delegation/session/task tools."
+                },
+                "nonblocking": {
+                    "type": "boolean",
+                    "description": "If true, return immediately with a task_id and let the sub-agent continue in the background. Use spawn_status and spawn_result to inspect it."
                 }
             },
             "required": ["task"]
@@ -403,6 +416,7 @@ impl AgentTool for SpawnAgentTool {
             "delegate_only",
             preset.as_ref().map(|p| p.delegate_only).unwrap_or(false),
         );
+        let nonblocking = bool_param(&params, "nonblocking", false);
 
         // Check nesting depth.
         let depth = u64_param(&params, SPAWN_DEPTH_KEY, 0);
@@ -494,35 +508,92 @@ impl AgentTool for SpawnAgentTool {
             tool_context["_session_key"] = session_key.clone();
         }
 
-        // Run the sub-agent loop, optionally with a timeout.
-        let user_content = moltis_agents::UserContent::text(task);
-        let agent_future = run_agent_loop_with_context_and_limits(
-            provider,
-            &sub_tools,
-            &system_prompt,
-            &user_content,
-            None,
-            None, // no history
-            Some(tool_context),
-            None, // no hooks for sub-agents
-            None, // no sender name for spawned agents
-            AgentLoopLimits {
-                max_iterations: Some(runtime_limits.max_iterations),
-            },
-        );
+        let session_key = params
+            .get("_session_key")
+            .and_then(serde_json::Value::as_str)
+            .map(String::from);
 
-        let result = if runtime_limits.timeout_secs > 0 {
-            let timeout_secs = runtime_limits.timeout_secs;
-            let duration = std::time::Duration::from_secs(timeout_secs);
-            match tokio::time::timeout(duration, agent_future).await {
-                Ok(r) => r,
-                Err(_) => Err(AgentRunError::Other(anyhow::anyhow!(
-                    "sub-agent timed out after {timeout_secs}s"
-                ))),
-            }
-        } else {
-            agent_future.await
-        };
+        if nonblocking {
+            let task_entry = self
+                .task_store
+                .insert_running(
+                    task.to_string(),
+                    session_key,
+                    model_id.clone(),
+                    preset_name.clone(),
+                )
+                .await;
+            let task_id = task_entry.id.clone();
+            let store = Arc::clone(&self.task_store);
+            let on_event = self.on_event.clone();
+            let task_for_run = task.to_string();
+            let model_for_run = model_id.clone();
+            tokio::spawn(async move {
+                let result = run_spawned_agent(
+                    provider,
+                    sub_tools,
+                    system_prompt,
+                    task_for_run.clone(),
+                    tool_context,
+                    runtime_limits,
+                )
+                .await;
+                let (update, iterations, tool_calls_made) = match result {
+                    Ok(result) => {
+                        let iterations = result.iterations;
+                        let tool_calls_made = result.tool_calls_made;
+                        (
+                            SpawnTaskUpdate {
+                                text: Some(result.text),
+                                iterations,
+                                tool_calls_made,
+                                error: None,
+                            },
+                            iterations,
+                            tool_calls_made,
+                        )
+                    },
+                    Err(err) => (
+                        SpawnTaskUpdate {
+                            text: None,
+                            iterations: 0,
+                            tool_calls_made: 0,
+                            error: Some(err.to_string()),
+                        },
+                        0,
+                        0,
+                    ),
+                };
+                store.complete(&task_id, update).await;
+                if let Some(cb) = on_event {
+                    cb(RunnerEvent::SubAgentEnd {
+                        task: task_for_run,
+                        model: model_for_run,
+                        depth,
+                        iterations,
+                        tool_calls_made,
+                    });
+                }
+            });
+
+            return Ok(serde_json::json!({
+                "task_id": task_entry.id,
+                "status": "running",
+                "started_at": task_entry.started_at,
+                "model": model_id,
+                "preset": preset_name,
+            }));
+        }
+
+        let result = run_spawned_agent(
+            provider,
+            sub_tools,
+            system_prompt,
+            task.to_string(),
+            tool_context,
+            runtime_limits,
+        )
+        .await;
 
         // Emit SubAgentEnd regardless of success/failure.
         let (iterations, tool_calls_made) = match &result {
@@ -558,6 +629,44 @@ impl AgentTool for SpawnAgentTool {
     }
 }
 
+async fn run_spawned_agent(
+    provider: Arc<dyn LlmProvider>,
+    sub_tools: ToolRegistry,
+    system_prompt: String,
+    task: String,
+    tool_context: serde_json::Value,
+    runtime_limits: AgentRuntimeLimits,
+) -> Result<moltis_agents::runner::AgentRunResult, AgentRunError> {
+    let user_content = moltis_agents::UserContent::text(&task);
+    let agent_future = run_agent_loop_with_context_and_limits(
+        provider,
+        &sub_tools,
+        &system_prompt,
+        &user_content,
+        None,
+        None,
+        Some(tool_context),
+        None,
+        None,
+        AgentLoopLimits {
+            max_iterations: Some(runtime_limits.max_iterations),
+        },
+    );
+
+    if runtime_limits.timeout_secs > 0 {
+        let timeout_secs = runtime_limits.timeout_secs;
+        let duration = std::time::Duration::from_secs(timeout_secs);
+        match tokio::time::timeout(duration, agent_future).await {
+            Ok(r) => r,
+            Err(_) => Err(AgentRunError::Other(anyhow::anyhow!(
+                "sub-agent timed out after {timeout_secs}s"
+            ))),
+        }
+    } else {
+        agent_future.await
+    }
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
@@ -566,14 +675,81 @@ mod tests {
         moltis_agents::model::{ChatMessage, CompletionResponse, StreamEvent, Usage},
         moltis_config::schema::{AgentIdentity, PresetToolPolicy},
         std::{pin::Pin, sync::Mutex},
+        tokio::sync::Notify,
         tokio_stream::Stream,
     };
+
+    use crate::spawn_agent_tasks::{SpawnResultTool, SpawnStatusTool};
 
     /// Mock provider that returns a fixed response.
     struct MockProvider {
         response: String,
         model_id: String,
         seen_tool_names: Arc<Mutex<Vec<String>>>,
+    }
+
+    struct NotifyProvider {
+        response: String,
+        notify: Arc<Notify>,
+    }
+
+    #[async_trait]
+    impl LlmProvider for NotifyProvider {
+        fn name(&self) -> &str {
+            "notify"
+        }
+
+        fn id(&self) -> &str {
+            "notify-model"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            self.notify.notified().await;
+            Ok(CompletionResponse {
+                text: Some(self.response.clone()),
+                tool_calls: vec![],
+                usage: Usage::default(),
+            })
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
+    }
+
+    struct FailingProvider;
+
+    #[async_trait]
+    impl LlmProvider for FailingProvider {
+        fn name(&self) -> &str {
+            "failing"
+        }
+
+        fn id(&self) -> &str {
+            "failing-model"
+        }
+
+        async fn complete(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[serde_json::Value],
+        ) -> anyhow::Result<CompletionResponse> {
+            Err(anyhow::anyhow!("provider failed"))
+        }
+
+        fn stream(
+            &self,
+            _messages: Vec<ChatMessage>,
+        ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+            Box::pin(tokio_stream::empty())
+        }
     }
 
     impl MockProvider {
@@ -729,6 +905,167 @@ mod tests {
         let result = spawn_tool.execute(params).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("nesting depth"));
+    }
+
+    #[tokio::test]
+    async fn test_nonblocking_returns_task_handle_before_completion() {
+        let notify = Arc::new(Notify::new());
+        let provider: Arc<dyn LlmProvider> = Arc::new(NotifyProvider {
+            response: "background result".to_string(),
+            notify: Arc::clone(&notify),
+        });
+        let store = Arc::new(SpawnTaskStore::default());
+        let spawn_tool = SpawnAgentTool::new(
+            make_empty_provider_registry(),
+            provider,
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_task_store(Arc::clone(&store));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            spawn_tool.execute(serde_json::json!({
+                "task": "do something later",
+                "nonblocking": true,
+                "_session_key": "session-a",
+            })),
+        )
+        .await
+        .expect("nonblocking spawn should return before provider completes")
+        .unwrap();
+
+        let task_id = result["task_id"].as_str().unwrap();
+        assert_eq!(result["status"], "running");
+
+        let status_tool = SpawnStatusTool::new(Arc::clone(&store));
+        let status = status_tool
+            .execute(serde_json::json!({
+                "task_id": task_id,
+                "_session_key": "session-a",
+            }))
+            .await
+            .unwrap();
+        assert_eq!(status["status"], "running");
+
+        notify.notify_one();
+        let result_tool = SpawnResultTool::new(store);
+        let mut final_result = serde_json::Value::Null;
+        for _ in 0..20 {
+            final_result = result_tool
+                .execute(serde_json::json!({
+                    "task_id": task_id,
+                    "_session_key": "session-a",
+                }))
+                .await
+                .unwrap();
+            if final_result["status"] == "completed" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(final_result["status"], "completed");
+        assert_eq!(final_result["text"], "background result");
+        assert_eq!(final_result["iterations"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_nonblocking_result_enforces_session_key() {
+        let (provider, _) = MockProvider::with_capture("done", "mock");
+        let store = Arc::new(SpawnTaskStore::default());
+        let spawn_tool = SpawnAgentTool::new(
+            make_empty_provider_registry(),
+            provider,
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_task_store(Arc::clone(&store));
+
+        let result = spawn_tool
+            .execute(serde_json::json!({
+                "task": "private task",
+                "nonblocking": true,
+                "_session_key": "session-a",
+            }))
+            .await
+            .unwrap();
+        let task_id = result["task_id"].as_str().unwrap();
+        let status_tool = SpawnStatusTool::new(store);
+        let denied = status_tool
+            .execute(serde_json::json!({
+                "task_id": task_id,
+                "_session_key": "session-b",
+            }))
+            .await;
+
+        assert!(denied.is_err());
+        assert!(denied.unwrap_err().to_string().contains("access denied"));
+    }
+
+    #[tokio::test]
+    async fn test_nonblocking_failure_is_persisted() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(FailingProvider);
+        let store = Arc::new(SpawnTaskStore::default());
+        let spawn_tool = SpawnAgentTool::new(
+            make_empty_provider_registry(),
+            provider,
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_task_store(Arc::clone(&store));
+
+        let result = spawn_tool
+            .execute(serde_json::json!({
+                "task": "fail in background",
+                "nonblocking": true,
+            }))
+            .await
+            .unwrap();
+        let task_id = result["task_id"].as_str().unwrap();
+        let result_tool = SpawnResultTool::new(store);
+
+        let mut final_result = serde_json::Value::Null;
+        for _ in 0..20 {
+            final_result = result_tool
+                .execute(serde_json::json!({ "task_id": task_id }))
+                .await
+                .unwrap();
+            if final_result["status"] == "failed" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        assert_eq!(final_result["status"], "failed");
+        assert!(
+            final_result["error"]
+                .as_str()
+                .unwrap()
+                .contains("provider failed")
+        );
+    }
+
+    #[test]
+    fn test_nonblocking_and_companion_tool_schemas() {
+        let (provider, _) = MockProvider::with_capture("ok", "mock");
+        let store = Arc::new(SpawnTaskStore::default());
+        let spawn_tool = SpawnAgentTool::new(
+            make_empty_provider_registry(),
+            provider,
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_task_store(Arc::clone(&store));
+
+        assert!(
+            spawn_tool.parameters_schema()["properties"]
+                .get("nonblocking")
+                .is_some()
+        );
+        assert_eq!(
+            SpawnStatusTool::new(Arc::clone(&store)).parameters_schema()["required"][0],
+            "task_id"
+        );
+        assert_eq!(
+            SpawnResultTool::new(store).parameters_schema()["required"][0],
+            "task_id"
+        );
     }
 
     #[tokio::test]

@@ -83,7 +83,10 @@ When no policy is configured, all sessions are visible and sendable.
 
 ## Coordination Patterns
 
-Use `spawn_agent` when work is short-lived and synchronous.
+Use `spawn_agent` when work is short-lived and synchronous. For longer delegated
+work, call `spawn_agent` with `nonblocking: true`; it returns a `task_id` while
+the sub-agent continues in the background. Use `spawn_status` to check progress
+and `spawn_result` to fetch the final output.
 
 Use session tools when you need:
 
