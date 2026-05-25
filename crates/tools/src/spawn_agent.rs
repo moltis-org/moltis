@@ -623,7 +623,6 @@ impl AgentTool for SpawnAgentTool {
                     },
                 };
 
-                let result = result;
                 let (update, iterations, tool_calls_made) = match result {
                     Ok(Ok(result)) => {
                         let iterations = result.iterations;

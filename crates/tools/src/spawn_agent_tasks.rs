@@ -197,10 +197,14 @@ impl SpawnTaskStore {
             tool_calls_made: 0,
             error: None,
         };
-        let mut tasks = self.tasks.write().await;
-        let mut abort_handles = self.abort_handles.write().await;
-        abort_handles.insert(entry.id.clone(), abort_handle);
-        tasks.insert(entry.id.clone(), entry.clone());
+        self.tasks
+            .write()
+            .await
+            .insert(entry.id.clone(), entry.clone());
+        self.abort_handles
+            .write()
+            .await
+            .insert(entry.id.clone(), abort_handle);
         entry
     }
 
