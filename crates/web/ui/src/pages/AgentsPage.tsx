@@ -1254,12 +1254,12 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 			<div className="flex items-center gap-3 flex-wrap">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Agents</h2>
 				{activeTab === "chat" && (
-					<button type="button" className="provider-btn px-2.5 py-1 text-xs" onClick={() => setEditing("new")}>
+					<button type="button" className="provider-btn provider-btn-sm" onClick={() => setEditing("new")}>
 						New Agent
 					</button>
 				)}
 				{activeTab === "subagents" && (
-					<button type="button" className="provider-btn px-2.5 py-1 text-xs" onClick={() => setEditingPreset("new")}>
+					<button type="button" className="provider-btn provider-btn-sm" onClick={() => setEditingPreset("new")}>
 						New Sub-Agent
 					</button>
 				)}
