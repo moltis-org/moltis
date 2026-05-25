@@ -8,7 +8,9 @@ use {
             PromptSandboxRuntimeContext, build_system_prompt, build_system_prompt_minimal_runtime,
             build_system_prompt_with_session_runtime,
             build_system_prompt_with_session_runtime_details,
-            formatting::{format_compact_tool_schema, tool_call_guidance},
+            formatting::{
+                format_compact_tool_schema, format_moltis_runtime_line, tool_call_guidance,
+            },
             prepend_datetime_to_user_content, runtime_datetime_message,
         },
         tool_registry::ToolRegistry,
@@ -400,6 +402,8 @@ fn test_runtime_context_injected_when_provided() {
     );
 
     assert!(prompt.contains("## Runtime"));
+    assert!(prompt.contains("Moltis v"));
+    assert!(prompt.contains(&format_moltis_runtime_line()));
     assert!(prompt.contains("Host: host=moltis-devbox"));
     assert!(!prompt.contains("time=2026-02-17 16:18:00 CET"));
     assert!(!prompt.contains("today="));

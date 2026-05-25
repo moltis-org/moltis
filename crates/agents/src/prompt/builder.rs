@@ -5,8 +5,8 @@ use {
         prompt::{
             formatting::{
                 append_truncated_text_block, format_compact_tool_schema, format_host_runtime_line,
-                format_nodes_runtime_section, format_sandbox_runtime_line, tool_call_guidance,
-                truncate_prompt_text,
+                format_moltis_runtime_line, format_nodes_runtime_section,
+                format_sandbox_runtime_line, tool_call_guidance, truncate_prompt_text,
             },
             types::{
                 DEFAULT_WORKSPACE_FILE_MAX_CHARS, PromptBuildLimits, PromptBuildMetadata,
@@ -442,11 +442,10 @@ fn append_runtime_section(
         .nodes
         .as_ref()
         .and_then(format_nodes_runtime_section);
-    if host_line.is_none() && sandbox_line.is_none() && nodes_line.is_none() {
-        return;
-    }
 
     prompt.push_str("## Runtime\n\n");
+    prompt.push_str(&format_moltis_runtime_line());
+    prompt.push('\n');
     if let Some(line) = host_line {
         prompt.push_str(&line);
         prompt.push('\n');
