@@ -26,6 +26,11 @@ COPY crates ./crates
 COPY apps/courier ./apps/courier
 COPY scripts ./scripts
 COPY wit ./wit
+# docs/src is embedded into moltis-agents via include_dir! (crates/agents/src/docs.rs).
+# CHANGELOG.md is the target of the docs/src/changelog.md symlink, so it must be
+# present at the repo root for that symlink to resolve during the embed.
+COPY CHANGELOG.md ./CHANGELOG.md
+COPY docs/src ./docs/src
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Install build dependencies for llama-cpp-sys-2
