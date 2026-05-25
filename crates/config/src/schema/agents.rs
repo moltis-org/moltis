@@ -431,6 +431,19 @@ pub enum PresetSandboxMode {
     NonMain,
 }
 
+impl TryFrom<&str> for PresetSandboxMode {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "off" => Ok(Self::Off),
+            "all" => Ok(Self::All),
+            "non-main" => Ok(Self::NonMain),
+            other => Err(format!("unknown sandbox mode: {other}")),
+        }
+    }
+}
+
 /// Per-agent sandbox policy override.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

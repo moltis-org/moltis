@@ -698,19 +698,20 @@ function PresetForm({ preset, onSave, onCancel }: PresetFormProps): VNode {
 		setSaving(true);
 		setError(null);
 		const method = isEdit ? "agents.preset.update" : "agents.preset.create";
-		const params = advancedDirty && advancedToml.trim()
-			? { id: trimmedId, toml: advancedToml }
-			: {
-					id: trimmedId,
-					name,
-					emoji,
-					theme,
-					model,
-					system_prompt_suffix: systemPrompt,
-					tools_allow: parseCsvList(toolsAllow),
-					tools_deny: parseCsvList(toolsDeny),
-					delegate_only: delegateOnly,
-				};
+		const params =
+			advancedDirty && advancedToml.trim()
+				? { id: trimmedId, toml: advancedToml }
+				: {
+						id: trimmedId,
+						name,
+						emoji,
+						theme,
+						model,
+						system_prompt_suffix: systemPrompt,
+						tools_allow: parseCsvList(toolsAllow),
+						tools_deny: parseCsvList(toolsDeny),
+						delegate_only: delegateOnly,
+					};
 		sendRpc(method, params).then((res) => {
 			setSaving(false);
 			if (!res?.ok) {
@@ -1253,22 +1254,12 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 			<div className="flex items-center gap-3 flex-wrap">
 				<h2 className="text-lg font-medium text-[var(--text-strong)]">Agents</h2>
 				{activeTab === "chat" && (
-					<button
-						type="button"
-						className="provider-btn"
-						style={{ fontSize: "0.75rem", padding: "4px 10px" }}
-						onClick={() => setEditing("new")}
-					>
+					<button type="button" className="provider-btn px-2.5 py-1 text-xs" onClick={() => setEditing("new")}>
 						New Agent
 					</button>
 				)}
 				{activeTab === "subagents" && (
-					<button
-						type="button"
-						className="provider-btn"
-						style={{ fontSize: "0.75rem", padding: "4px 10px" }}
-						onClick={() => setEditingPreset("new")}
-					>
+					<button type="button" className="provider-btn px-2.5 py-1 text-xs" onClick={() => setEditingPreset("new")}>
 						New Sub-Agent
 					</button>
 				)}

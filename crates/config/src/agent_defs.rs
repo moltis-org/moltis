@@ -21,7 +21,7 @@ use tracing::{debug, warn};
 
 use crate::schema::{
     AgentIdentity, AgentPreset, McpServerId, PresetMcpPolicy, PresetSandboxMode, PresetToolPolicy,
-    ReasoningEffort, is_default_agent_preset,
+    is_default_agent_preset,
 };
 
 /// Frontmatter fields parsed from the YAML block.
@@ -118,14 +118,14 @@ pub fn parse_agent_md(content: &str) -> anyhow::Result<(String, AgentPreset)> {
         reasoning_effort: fm
             .reasoning_effort
             .as_deref()
-            .map(parse_reasoning_effort)
+            .map(|value| value.try_into().map_err(anyhow::Error::msg))
             .transpose()?,
         mcp: parse_mcp_policy(fm.mcp_allow_servers, fm.mcp_deny_servers)?,
         sandbox: crate::schema::PresetSandboxPolicy {
             mode: fm
                 .sandbox_mode
                 .as_deref()
-                .map(parse_sandbox_mode)
+                .map(|value| value.try_into().map_err(anyhow::Error::msg))
                 .transpose()?,
         },
         skills: crate::schema::PresetSkillPolicy {
@@ -243,26 +243,6 @@ fn parse_mcp_policy(
         (Some(_), Some(_)) => {
             anyhow::bail!("mcp_allow_servers and mcp_deny_servers are mutually exclusive")
         },
-    }
-}
-
-fn parse_sandbox_mode(value: &str) -> anyhow::Result<PresetSandboxMode> {
-    match value {
-        "off" => Ok(PresetSandboxMode::Off),
-        "all" => Ok(PresetSandboxMode::All),
-        "non-main" => Ok(PresetSandboxMode::NonMain),
-        other => anyhow::bail!("unknown sandbox mode: {other}"),
-    }
-}
-
-fn parse_reasoning_effort(value: &str) -> anyhow::Result<ReasoningEffort> {
-    match value {
-        "minimal" => Ok(ReasoningEffort::Minimal),
-        "low" => Ok(ReasoningEffort::Low),
-        "medium" => Ok(ReasoningEffort::Medium),
-        "high" => Ok(ReasoningEffort::High),
-        "xhigh" => Ok(ReasoningEffort::ExtraHigh),
-        other => anyhow::bail!("unknown reasoning effort: {other}"),
     }
 }
 

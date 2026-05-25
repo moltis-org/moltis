@@ -97,6 +97,21 @@ impl ReasoningEffort {
     }
 }
 
+impl TryFrom<&str> for ReasoningEffort {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "minimal" => Ok(Self::Minimal),
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "xhigh" => Ok(Self::ExtraHigh),
+            other => Err(format!("unknown reasoning effort: {other}")),
+        }
+    }
+}
+
 /// Agent identity (name, emoji, theme).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

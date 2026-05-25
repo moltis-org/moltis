@@ -943,13 +943,13 @@ fn preset_from_rpc_params(
             .and_then(serde_json::Value::as_u64);
     }
     if let Some(re) = optional_string(params, "reasoning_effort") {
-        preset.reasoning_effort = Some(parse_reasoning_effort_param(&re)?);
+        preset.reasoning_effort = Some(re.as_str().try_into().map_err(parse_preset_param_error)?);
     }
     if params.get("mcp_mode").is_some() || params.get("mcp_servers").is_some() {
         preset.mcp = parse_mcp_policy_param(params);
     }
     if let Some(mode) = optional_string(params, "sandbox_mode") {
-        preset.sandbox.mode = Some(parse_sandbox_mode_param(&mode)?);
+        preset.sandbox.mode = Some(mode.as_str().try_into().map_err(parse_preset_param_error)?);
     }
     if params.get("skills_allow").is_some() {
         preset.skills.allow = Some(string_list_param(params, "skills_allow"));
@@ -1015,37 +1015,8 @@ fn string_list_param(params: &serde_json::Value, key: &str) -> Vec<String> {
 }
 
 #[cfg(feature = "agent")]
-fn parse_reasoning_effort_param(
-    value: &str,
-) -> Result<moltis_config::schema::ReasoningEffort, ErrorShape> {
-    use moltis_config::schema::ReasoningEffort;
-    match value {
-        "minimal" => Ok(ReasoningEffort::Minimal),
-        "low" => Ok(ReasoningEffort::Low),
-        "medium" => Ok(ReasoningEffort::Medium),
-        "high" => Ok(ReasoningEffort::High),
-        "xhigh" => Ok(ReasoningEffort::ExtraHigh),
-        other => Err(ErrorShape::new(
-            error_codes::INVALID_REQUEST,
-            format!("unknown reasoning effort: {other}"),
-        )),
-    }
-}
-
-#[cfg(feature = "agent")]
-fn parse_sandbox_mode_param(
-    value: &str,
-) -> Result<moltis_config::schema::PresetSandboxMode, ErrorShape> {
-    use moltis_config::schema::PresetSandboxMode;
-    match value {
-        "off" => Ok(PresetSandboxMode::Off),
-        "all" => Ok(PresetSandboxMode::All),
-        "non-main" => Ok(PresetSandboxMode::NonMain),
-        other => Err(ErrorShape::new(
-            error_codes::INVALID_REQUEST,
-            format!("unknown sandbox mode: {other}"),
-        )),
-    }
+fn parse_preset_param_error(message: String) -> ErrorShape {
+    ErrorShape::new(error_codes::INVALID_REQUEST, message)
 }
 
 #[cfg(feature = "agent")]
