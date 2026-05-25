@@ -181,6 +181,17 @@ Presets can also be defined as markdown files with YAML frontmatter, discovered 
 Project-local files override user-global files with the same `name`.
 TOML presets always take precedence over markdown definitions.
 
+The web UI uses the user-global markdown location for sub-agent preset edits:
+
+- Open **Settings → Agents → Sub-Agents**.
+- Choose **New Sub-Agent** to create `~/.moltis/agents/<id>.md`.
+- Choose **Edit** on a built-in preset to create a user-global markdown override.
+- Choose **Delete** on a custom/overridden preset to remove that markdown file.
+
+This keeps `moltis.toml` small while still leaving every web-created sub-agent
+editable on disk. If a preset with the same name exists in `moltis.toml`, the
+TOML preset wins over the markdown file.
+
 Example `~/.moltis/agents/reviewer.md`:
 
 ```markdown
@@ -197,5 +208,7 @@ You are a code reviewer. Focus on correctness and security.
 ```
 
 Frontmatter fields: `name` (required), `tools`, `deny_tools`, `model`, `emoji`,
-`theme`, `delegate_only`, `max_iterations`, `timeout_secs`.
+`theme`, `delegate_only`, `max_iterations`, `timeout_secs`, `display_name`,
+`reasoning_effort`, `mcp_allow_servers`, `mcp_deny_servers`, `sandbox_mode`,
+`skills_allow`, and `skills_deny`.
 The markdown body becomes `system_prompt_suffix`.

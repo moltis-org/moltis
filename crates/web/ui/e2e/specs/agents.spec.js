@@ -207,6 +207,39 @@ test.describe("Agents settings page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("sub-agent preset can be created edited and deleted", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/settings/agents");
+		await waitForWsConnected(page);
+		await sendRpcFromPage(page, "agents.preset.delete", { id: "e2e-sub-agent" });
+
+		await page.getByRole("tab", { name: /Sub-Agents/ }).click();
+		await page.getByRole("button", { name: "New Sub-Agent", exact: true }).click();
+		await expect(page.getByText("Create Sub-Agent", { exact: true })).toBeVisible();
+		await page.getByPlaceholder("e.g. researcher, reviewer, qa-helper").fill("e2e-sub-agent");
+		await page.getByPlaceholder("Research Specialist").fill("E2E Sub Agent");
+		await page.getByPlaceholder("Give this sub-agent a focused role and constraints...").fill("Answer with concise evidence.");
+		await page.getByPlaceholder("Read, Glob, Grep, web_search").fill("Read, Grep");
+		await page.getByRole("button", { name: "Create", exact: true }).click();
+
+		const presetCard = page.locator(".backend-card").filter({ hasText: "E2E Sub Agent" });
+		await expect(presetCard).toBeVisible({ timeout: 10_000 });
+		await expect(presetCard.getByText("Custom", { exact: true })).toBeVisible();
+
+		await presetCard.getByRole("button", { name: "Edit", exact: true }).click();
+		await expect(page.getByText("Edit E2E Sub Agent", { exact: true })).toBeVisible();
+		await page.getByPlaceholder("Research Specialist").fill("E2E Edited Sub Agent");
+		await page.getByRole("button", { name: "Save", exact: true }).click();
+		const editedCard = page.locator(".backend-card").filter({ hasText: "E2E Edited Sub Agent" });
+		await expect(editedCard).toBeVisible({ timeout: 10_000 });
+
+		await editedCard.getByRole("button", { name: "Delete", exact: true }).click();
+		await page.locator(".provider-modal").getByRole("button", { name: "Delete", exact: true }).click();
+		await expect(editedCard).toHaveCount(0, { timeout: 10_000 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("create form Cancel button returns to list", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/agents");

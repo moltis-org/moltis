@@ -667,6 +667,82 @@ pub(super) fn register(reg: &mut MethodRegistry) {
             }),
         );
         reg.register(
+            "agents.preset.update",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let id = parse_agent_id_param(&ctx.params).ok_or_else(|| {
+                        ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "missing 'id' or 'agent_id' parameter",
+                        )
+                    })?;
+                    validate_preset_id(&id)?;
+                    reject_toml_backed_preset_update(&id)?;
+                    let config = moltis_config::discover_and_load_readonly();
+                    let preset =
+                        preset_from_rpc_params(&id, &ctx.params, config.agents.presets.get(&id))?;
+                    let path = moltis_config::agent_defs::write_user_agent_def(&id, &preset)
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                    refresh_agents_config(&ctx).await;
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "id": id,
+                        "path": path.to_string_lossy(),
+                    }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.preset.create",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let id = parse_agent_id_param(&ctx.params).ok_or_else(|| {
+                        ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "missing 'id' or 'agent_id' parameter",
+                        )
+                    })?;
+                    validate_preset_id(&id)?;
+                    let config = moltis_config::discover_and_load_readonly();
+                    if let Some(existing) = config.agents.presets.get(&id)
+                        && !moltis_config::schema::is_default_agent_preset(&id, existing)
+                    {
+                        return Err(ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            format!("preset '{id}' already exists"),
+                        ));
+                    }
+                    let preset = preset_from_rpc_params(&id, &ctx.params, None)?;
+                    let path = moltis_config::agent_defs::write_user_agent_def(&id, &preset)
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                    refresh_agents_config(&ctx).await;
+                    Ok(serde_json::json!({
+                        "ok": true,
+                        "id": id,
+                        "path": path.to_string_lossy(),
+                    }))
+                })
+            }),
+        );
+        reg.register(
+            "agents.preset.delete",
+            Box::new(|ctx| {
+                Box::pin(async move {
+                    let id = parse_agent_id_param(&ctx.params).ok_or_else(|| {
+                        ErrorShape::new(
+                            error_codes::INVALID_REQUEST,
+                            "missing 'id' or 'agent_id' parameter",
+                        )
+                    })?;
+                    validate_preset_id(&id)?;
+                    let deleted = moltis_config::agent_defs::delete_user_agent_def(&id)
+                        .map_err(|e| ErrorShape::new(error_codes::UNAVAILABLE, e.to_string()))?;
+                    refresh_agents_config(&ctx).await;
+                    Ok(serde_json::json!({ "ok": true, "id": id, "deleted": deleted }))
+                })
+            }),
+        );
+        reg.register(
             "agents.preset.save",
             Box::new(|ctx| {
                 Box::pin(async move {
@@ -760,6 +836,10 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                         .filter(|(name, _)| !persona_ids.contains(*name))
                         .map(|(name, preset)| {
                             let toml_str = toml::to_string_pretty(preset).unwrap_or_default();
+                            let markdown_path = moltis_config::data_dir()
+                                .join("agents")
+                                .join(format!("{name}.md"));
+                            let markdown_backed = markdown_path.exists();
                             let provenance = all_provenance
                                 .iter()
                                 .find(|p| &p.id == name)
@@ -772,8 +852,13 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                                 "theme": preset.identity.theme,
                                 "model": preset.model,
                                 "system_prompt_suffix": preset.system_prompt_suffix,
+                                "tools_allow": preset.tools.allow,
+                                "tools_deny": preset.tools.deny,
+                                "delegate_only": preset.delegate_only,
                                 "toml": toml_str,
                                 "provenance": provenance,
+                                "deletable": markdown_backed,
+                                "path": markdown_backed.then(|| markdown_path.to_string_lossy().to_string()),
                             })
                         })
                         .collect();
@@ -782,5 +867,210 @@ pub(super) fn register(reg: &mut MethodRegistry) {
                 })
             }),
         );
+    }
+}
+
+#[cfg(feature = "agent")]
+fn validate_preset_id(id: &str) -> Result<(), ErrorShape> {
+    let valid = !id.is_empty()
+        && id.len() <= 80
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    if valid {
+        Ok(())
+    } else {
+        Err(ErrorShape::new(
+            error_codes::INVALID_REQUEST,
+            "preset id must use lowercase letters, numbers, and hyphens",
+        ))
+    }
+}
+
+#[cfg(feature = "agent")]
+fn preset_from_rpc_params(
+    id: &str,
+    params: &serde_json::Value,
+    base: Option<&moltis_config::AgentPreset>,
+) -> Result<moltis_config::AgentPreset, ErrorShape> {
+    if let Some(toml_str) = params.get("toml").and_then(|value| value.as_str())
+        && !toml_str.trim().is_empty()
+    {
+        return toml::from_str(toml_str).map_err(|e| {
+            ErrorShape::new(error_codes::INVALID_REQUEST, format!("invalid TOML: {e}"))
+        });
+    }
+
+    let mut preset = base.cloned().unwrap_or_default();
+    if params.get("name").is_some() {
+        preset.identity.name = optional_string(params, "name").or_else(|| Some(id.to_string()));
+    } else if preset.identity.name.is_none() {
+        preset.identity.name = Some(id.to_string());
+    }
+    if params.get("emoji").is_some() {
+        preset.identity.emoji = optional_string(params, "emoji");
+    }
+    if params.get("theme").is_some() {
+        preset.identity.theme = optional_string(params, "theme");
+    }
+    if params.get("model").is_some() {
+        preset.model = optional_string(params, "model");
+    }
+    if params.get("system_prompt_suffix").is_some() || params.get("soul").is_some() {
+        preset.system_prompt_suffix = optional_string(params, "system_prompt_suffix")
+            .or_else(|| optional_string(params, "soul"));
+    }
+    if let Some(delegate_only) = params
+        .get("delegate_only")
+        .and_then(serde_json::Value::as_bool)
+    {
+        preset.delegate_only = delegate_only;
+    }
+    if params.get("tools_allow").is_some() {
+        preset.tools.allow = string_list_param(params, "tools_allow");
+    }
+    if params.get("tools_deny").is_some() {
+        preset.tools.deny = string_list_param(params, "tools_deny");
+    }
+    if params.get("max_iterations").is_some() {
+        preset.max_iterations = params
+            .get("max_iterations")
+            .and_then(serde_json::Value::as_u64);
+    }
+    if params.get("timeout_secs").is_some() {
+        preset.timeout_secs = params
+            .get("timeout_secs")
+            .and_then(serde_json::Value::as_u64);
+    }
+    if let Some(re) = optional_string(params, "reasoning_effort") {
+        preset.reasoning_effort = Some(parse_reasoning_effort_param(&re)?);
+    }
+    if params.get("mcp_mode").is_some() || params.get("mcp_servers").is_some() {
+        preset.mcp = parse_mcp_policy_param(params);
+    }
+    if let Some(mode) = optional_string(params, "sandbox_mode") {
+        preset.sandbox.mode = Some(parse_sandbox_mode_param(&mode)?);
+    }
+    if params.get("skills_allow").is_some() {
+        preset.skills.allow = Some(string_list_param(params, "skills_allow"));
+    }
+    if params.get("skills_deny").is_some() {
+        let skills_deny = string_list_param(params, "skills_deny");
+        preset.skills.deny = if skills_deny.is_empty() {
+            None
+        } else {
+            Some(skills_deny)
+        };
+    }
+    Ok(preset)
+}
+
+#[cfg(feature = "agent")]
+fn reject_toml_backed_preset_update(id: &str) -> Result<(), ErrorShape> {
+    let markdown_path = moltis_config::data_dir()
+        .join("agents")
+        .join(format!("{id}.md"));
+    if markdown_path.exists() {
+        return Ok(());
+    }
+    let config = moltis_config::discover_and_load_readonly();
+    if let Some(existing) = config.agents.presets.get(id)
+        && !moltis_config::schema::is_default_agent_preset(id, existing)
+    {
+        return Err(ErrorShape::new(
+            error_codes::INVALID_REQUEST,
+            format!(
+                "preset '{id}' is defined in moltis.toml; edit moltis.toml or remove that preset before using Web UI markdown overrides"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "agent")]
+fn optional_string(params: &serde_json::Value, key: &str) -> Option<String> {
+    params
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(feature = "agent")]
+fn string_list_param(params: &serde_json::Value, key: &str) -> Vec<String> {
+    params
+        .get(key)
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(feature = "agent")]
+fn parse_reasoning_effort_param(
+    value: &str,
+) -> Result<moltis_config::schema::ReasoningEffort, ErrorShape> {
+    use moltis_config::schema::ReasoningEffort;
+    match value {
+        "minimal" => Ok(ReasoningEffort::Minimal),
+        "low" => Ok(ReasoningEffort::Low),
+        "medium" => Ok(ReasoningEffort::Medium),
+        "high" => Ok(ReasoningEffort::High),
+        "xhigh" => Ok(ReasoningEffort::ExtraHigh),
+        other => Err(ErrorShape::new(
+            error_codes::INVALID_REQUEST,
+            format!("unknown reasoning effort: {other}"),
+        )),
+    }
+}
+
+#[cfg(feature = "agent")]
+fn parse_sandbox_mode_param(
+    value: &str,
+) -> Result<moltis_config::schema::PresetSandboxMode, ErrorShape> {
+    use moltis_config::schema::PresetSandboxMode;
+    match value {
+        "off" => Ok(PresetSandboxMode::Off),
+        "all" => Ok(PresetSandboxMode::All),
+        "non-main" => Ok(PresetSandboxMode::NonMain),
+        other => Err(ErrorShape::new(
+            error_codes::INVALID_REQUEST,
+            format!("unknown sandbox mode: {other}"),
+        )),
+    }
+}
+
+#[cfg(feature = "agent")]
+fn parse_mcp_policy_param(params: &serde_json::Value) -> moltis_config::schema::PresetMcpPolicy {
+    use moltis_config::schema::{McpServerId, PresetMcpPolicy};
+    let mode = params
+        .get("mcp_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("all");
+    let servers: Vec<McpServerId> = string_list_param(params, "mcp_servers")
+        .into_iter()
+        .map(McpServerId::from)
+        .collect();
+    match mode {
+        "allow" => PresetMcpPolicy::Allow(servers),
+        "deny" => PresetMcpPolicy::Deny(servers),
+        _ => PresetMcpPolicy::All,
+    }
+}
+
+#[cfg(feature = "agent")]
+async fn refresh_agents_config(ctx: &MethodContext) {
+    if let Some(ref agents_config) = ctx.state.services.agents_config {
+        let fresh = moltis_config::discover_and_load();
+        let mut guard = agents_config.write().await;
+        *guard = fresh.agents;
     }
 }

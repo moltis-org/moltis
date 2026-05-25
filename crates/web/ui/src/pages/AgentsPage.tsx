@@ -11,7 +11,7 @@ import { EmojiPicker } from "../emoji-picker";
 import { refresh as refreshGon } from "../gon";
 import { parseAgentsListPayload, sendRpc } from "../helpers";
 import { fetchSessions } from "../sessions";
-import { targetValue } from "../typed-events";
+import { targetChecked, targetValue } from "../typed-events";
 import type { RpcResponse } from "../types";
 import { confirmDialog } from "../ui";
 
@@ -44,6 +44,10 @@ interface ConfigPreset {
 	system_prompt_suffix?: string;
 	toml?: string;
 	provenance?: "built_in" | "user_override" | "custom";
+	deletable?: boolean;
+	tools_allow?: string[];
+	tools_deny?: string[];
+	delegate_only?: boolean;
 }
 
 interface ModePreset {
@@ -71,7 +75,15 @@ interface PresetCardProps {
 	preset: ConfigPreset;
 	creating: boolean;
 	onCreate: (preset: ConfigPreset) => void;
+	onEdit: (preset: ConfigPreset) => void;
+	onDelete: (preset: ConfigPreset) => void;
 	onRevert?: (id: string) => void;
+}
+
+interface PresetFormProps {
+	preset: ConfigPreset | null;
+	onSave: () => void;
+	onCancel: () => void;
 }
 
 interface ModeCardProps {
@@ -187,7 +199,7 @@ function stripTomlSections(toml: string, sectionNames: string[]): string {
 
 /** Escape a string for TOML double-quoted values. */
 function tomlEscape(s: string): string {
-	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+	return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r");
 }
 
 /** Build a TOML array literal from strings. */
@@ -646,6 +658,193 @@ function AgentForm({ agent, onSave, onCancel }: AgentFormProps): VNode {
 	);
 }
 
+function PresetForm({ preset, onSave, onCancel }: PresetFormProps): VNode {
+	const isEdit = !!preset;
+	const [id, setId] = useState(preset?.id || "");
+	const [name, setName] = useState(preset?.name || "");
+	const [emoji, setEmoji] = useState(preset?.emoji || "");
+	const [theme, setTheme] = useState(preset?.theme || "");
+	const [model, setModel] = useState(preset?.model || "");
+	const [systemPrompt, setSystemPrompt] = useState(preset?.system_prompt_suffix || "");
+	const [toolsAllow, setToolsAllow] = useState(preset?.tools_allow?.join(", ") || "");
+	const [toolsDeny, setToolsDeny] = useState(preset?.tools_deny?.join(", ") || "");
+	const [delegateOnly, setDelegateOnly] = useState(preset?.delegate_only ?? false);
+	const [advancedToml, setAdvancedToml] = useState("");
+	const [advancedDirty, setAdvancedDirty] = useState(false);
+	const [advancedOpen, setAdvancedOpen] = useState(false);
+	const [saving, setSaving] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!preset?.id) return;
+		sendRpc("agents.preset.get", { id: preset.id }).then((res) => {
+			if (!res?.ok) return;
+			const payload = res.payload as { toml?: string; fields?: PresetFields };
+			if (payload.toml) setAdvancedToml(payload.toml);
+		});
+	}, [preset?.id]);
+
+	function onSubmit(e: Event): void {
+		e.preventDefault();
+		const trimmedId = id.trim();
+		if (!trimmedId) {
+			setError("ID is required.");
+			return;
+		}
+		if (!name.trim()) {
+			setError("Name is required.");
+			return;
+		}
+		setSaving(true);
+		setError(null);
+		const method = isEdit ? "agents.preset.update" : "agents.preset.create";
+		const params = advancedDirty && advancedToml.trim()
+			? { id: trimmedId, toml: advancedToml }
+			: {
+					id: trimmedId,
+					name,
+					emoji,
+					theme,
+					model,
+					system_prompt_suffix: systemPrompt,
+					tools_allow: parseCsvList(toolsAllow),
+					tools_deny: parseCsvList(toolsDeny),
+					delegate_only: delegateOnly,
+				};
+		sendRpc(method, params).then((res) => {
+			setSaving(false);
+			if (!res?.ok) {
+				setError(res?.error?.message || "Failed to save sub-agent");
+				return;
+			}
+			onSave();
+		});
+	}
+
+	return (
+		<form onSubmit={onSubmit} className="flex flex-col gap-3 max-w-lg">
+			<h3 className="text-sm font-medium text-[var(--text-strong)]">
+				{isEdit ? `Edit ${preset?.name || preset?.id}` : "Create Sub-Agent"}
+			</h3>
+			<label className="flex flex-col gap-1">
+				<span className="text-xs text-[var(--muted)]">ID (slug, cannot change later)</span>
+				<input
+					type="text"
+					className="provider-key-input"
+					value={id}
+					disabled={isEdit}
+					onInput={(e) =>
+						setId(
+							targetValue(e)
+								.toLowerCase()
+								.replace(/[^a-z0-9-]/g, ""),
+						)
+					}
+					placeholder="e.g. researcher, reviewer, qa-helper"
+					maxLength={80}
+				/>
+			</label>
+			<label className="flex flex-col gap-1">
+				<span className="text-xs text-[var(--muted)]">Name</span>
+				<input
+					type="text"
+					className="provider-key-input"
+					value={name}
+					onInput={(e) => setName(targetValue(e))}
+					placeholder="Research Specialist"
+				/>
+			</label>
+			<div className="flex flex-col gap-1">
+				<span className="text-xs text-[var(--muted)]">Emoji</span>
+				<EmojiPicker value={emoji} onChange={setEmoji} />
+			</div>
+			<label className="flex flex-col gap-1">
+				<span className="text-xs text-[var(--muted)]">Theme</span>
+				<input
+					type="text"
+					className="provider-key-input"
+					value={theme}
+					onInput={(e) => setTheme(targetValue(e))}
+					placeholder="focused, skeptical, concise"
+				/>
+			</label>
+			<label className="flex flex-col gap-1">
+				<span className="text-xs text-[var(--muted)]">Model override</span>
+				<input
+					type="text"
+					className="provider-key-input"
+					value={model}
+					onInput={(e) => setModel(targetValue(e))}
+					placeholder="optional, e.g. haiku"
+				/>
+			</label>
+			<label className="flex flex-col gap-1">
+				<span className="text-xs text-[var(--muted)]">System prompt</span>
+				<textarea
+					className="provider-key-input font-mono text-xs resize-y"
+					value={systemPrompt}
+					onInput={(e) => setSystemPrompt(targetValue(e))}
+					placeholder="Give this sub-agent a focused role and constraints..."
+					rows={5}
+				/>
+			</label>
+			<label className="flex flex-col gap-1">
+				<span className="text-xs text-[var(--muted)]">Allowed tools (comma-separated, empty = all)</span>
+				<input
+					type="text"
+					className="provider-key-input"
+					value={toolsAllow}
+					onInput={(e) => setToolsAllow(targetValue(e))}
+					placeholder="Read, Glob, Grep, web_search"
+				/>
+			</label>
+			<label className="flex flex-col gap-1">
+				<span className="text-xs text-[var(--muted)]">Denied tools (comma-separated)</span>
+				<input
+					type="text"
+					className="provider-key-input"
+					value={toolsDeny}
+					onInput={(e) => setToolsDeny(targetValue(e))}
+					placeholder="exec, Write"
+				/>
+			</label>
+			<label className="flex items-center gap-2 text-xs text-[var(--text)]">
+				<input type="checkbox" checked={delegateOnly} onChange={(e) => setDelegateOnly(targetChecked(e))} />
+				Delegate-only coordinator tools
+			</label>
+			<button
+				type="button"
+				className="text-xs text-[var(--muted)] text-left flex items-center gap-1"
+				onClick={() => setAdvancedOpen(!advancedOpen)}
+			>
+				<span className="text-[0.6rem]">{advancedOpen ? "\u25BC" : "\u25B6"}</span>
+				Advanced TOML
+			</button>
+			{advancedOpen && (
+				<textarea
+					className="provider-key-input font-mono text-xs resize-y"
+					value={advancedToml}
+					onInput={(e) => {
+						setAdvancedDirty(true);
+						setAdvancedToml(targetValue(e));
+					}}
+					placeholder={PRESET_TOML_PLACEHOLDER}
+					rows={8}
+				/>
+			)}
+			{error && <span className="text-xs text-[var(--error)]">{error}</span>}
+			<div className="flex gap-2">
+				<button type="submit" className="provider-btn" disabled={saving}>
+					{saving ? "Saving..." : isEdit ? "Save" : "Create"}
+				</button>
+				<button type="button" className="provider-btn provider-btn-secondary" onClick={onCancel}>
+					Cancel
+				</button>
+			</div>
+		</form>
+	);
+}
+
 // ── Agent card ──────────────────────────────────────────────
 
 function AgentCard({ agent, defaultId, onEdit, onDelete, onSetDefault }: AgentCardProps): VNode {
@@ -719,9 +918,11 @@ function provenanceBadge(provenance?: string): VNode | null {
 	return null;
 }
 
-function PresetCard({ preset, creating, onCreate, onRevert }: PresetCardProps): VNode {
+function PresetCard({ preset, creating, onCreate, onEdit, onDelete, onRevert }: PresetCardProps): VNode {
 	const [expanded, setExpanded] = useState(false);
 	const isOverridden = preset.provenance === "user_override";
+	const canDelete = !!preset.deletable;
+	const canEdit = preset.provenance === "built_in" || !!preset.deletable;
 	return (
 		<div className="backend-card" style={{ opacity: preset.provenance === "built_in" ? 0.7 : 1 }}>
 			<div className="flex items-center justify-between">
@@ -732,10 +933,19 @@ function PresetCard({ preset, creating, onCreate, onRevert }: PresetCardProps): 
 					{preset.model && <span className="text-xs text-[var(--muted)]">{preset.model}</span>}
 				</div>
 				<div className="flex gap-2">
+					{canEdit && (
+						<button
+							type="button"
+							className="provider-btn provider-btn-secondary provider-btn-sm"
+							onClick={() => onEdit(preset)}
+							title={preset.provenance === "built_in" ? "Creates a user override in ~/.moltis/agents/" : undefined}
+						>
+							{preset.provenance === "built_in" ? "Override" : "Edit"}
+						</button>
+					)}
 					<button
 						type="button"
-						className="provider-btn"
-						style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+						className="provider-btn provider-btn-sm"
 						disabled={creating}
 						onClick={() => onCreate(preset)}
 					>
@@ -743,17 +953,24 @@ function PresetCard({ preset, creating, onCreate, onRevert }: PresetCardProps): 
 					</button>
 					<button
 						type="button"
-						className="provider-btn provider-btn-secondary"
-						style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+						className="provider-btn provider-btn-secondary provider-btn-sm"
 						onClick={() => setExpanded(!expanded)}
 					>
 						{expanded ? "Hide" : "View"}
 					</button>
+					{canDelete && (
+						<button
+							type="button"
+							className="provider-btn provider-btn-danger provider-btn-sm"
+							onClick={() => onDelete(preset)}
+						>
+							Delete
+						</button>
+					)}
 					{isOverridden && onRevert && (
 						<button
 							type="button"
-							className="provider-btn provider-btn-secondary"
-							style={{ fontSize: "0.7rem", padding: "3px 8px" }}
+							className="provider-btn provider-btn-secondary provider-btn-sm"
 							onClick={() => onRevert(preset.id)}
 						>
 							Revert to built-in
@@ -823,6 +1040,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 	const [defaultId, setDefaultId] = useState("main");
 	const [isLoading, setIsLoading] = useState(true);
 	const [editing, setEditing] = useState<null | "new" | AgentPersona>(null);
+	const [editingPreset, setEditingPreset] = useState<null | "new" | ConfigPreset>(null);
 	const [creatingPresetId, setCreatingPresetId] = useState<string | null>(null);
 	const [activeTab, setActiveTab] = useState("chat");
 	const [error, setError] = useState<string | null>(null);
@@ -935,6 +1153,19 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 		});
 	}
 
+	function onDeletePreset(preset: ConfigPreset): void {
+		confirmDialog(`Delete sub-agent preset "${preset.name || preset.id}"?`).then((yes) => {
+			if (!yes) return;
+			sendRpc("agents.preset.delete", { id: preset.id }).then((res) => {
+				if (res?.ok) {
+					fetchConfigPresets();
+				} else {
+					setError(res?.error?.message || "Failed to delete sub-agent preset");
+				}
+			});
+		});
+	}
+
 	function onSetDefault(agent: AgentPersona): void {
 		sendRpc("agents.set_default", { id: agent.id }).then((res) => {
 			if (res?.ok) {
@@ -1002,6 +1233,21 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 		);
 	}
 
+	if (editingPreset) {
+		return (
+			<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
+				<PresetForm
+					preset={editingPreset === "new" ? null : editingPreset}
+					onSave={() => {
+						setEditingPreset(null);
+						fetchConfigPresets();
+					}}
+					onCancel={() => setEditingPreset(null)}
+				/>
+			</div>
+		);
+	}
+
 	return (
 		<div className="flex-1 flex flex-col min-w-0 p-4 gap-4 overflow-y-auto">
 			<div className="flex items-center gap-3 flex-wrap">
@@ -1014,6 +1260,16 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 						onClick={() => setEditing("new")}
 					>
 						New Agent
+					</button>
+				)}
+				{activeTab === "subagents" && (
+					<button
+						type="button"
+						className="provider-btn"
+						style={{ fontSize: "0.75rem", padding: "4px 10px" }}
+						onClick={() => setEditingPreset("new")}
+					>
+						New Sub-Agent
 					</button>
 				)}
 			</div>
@@ -1062,7 +1318,7 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 					<div className="flex flex-col gap-1">
 						<h3 className="text-xs font-medium text-[var(--muted)]">Sub-Agent Presets</h3>
 						<p className="text-xs text-[var(--muted)] leading-relaxed" style={{ margin: 0 }}>
-							Defined in <code>[agents.presets]</code> in <code>moltis.toml</code>. These roles are usable by
+							Web UI edits are stored as markdown files in <code>~/.moltis/agents</code>. These roles are usable by
 							spawn_agent for delegated work. Add one to chat to make it a persistent agent with memory and sessions.
 						</p>
 					</div>
@@ -1073,6 +1329,8 @@ function AgentsPageComponent({ subPath }: { subPath?: string }): VNode {
 								preset={preset}
 								creating={creatingPresetId === preset.id}
 								onCreate={onCreateFromPreset}
+								onEdit={(p) => setEditingPreset(p)}
+								onDelete={onDeletePreset}
 								onRevert={onRevertPreset}
 							/>
 						))

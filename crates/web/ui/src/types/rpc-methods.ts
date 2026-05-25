@@ -19,8 +19,11 @@ export interface RpcMethodMap {
 	"agents.identity.update": Record<string, unknown>;
 	"agents.identity.update_soul": unknown;
 	"agents.list": unknown;
+	"agents.preset.create": unknown;
+	"agents.preset.delete": unknown;
 	"agents.preset.get": unknown;
 	"agents.preset.save": unknown;
+	"agents.preset.update": unknown;
 	"agents.presets_list": unknown;
 	"agents.set_default": unknown;
 	"agents.set_session": unknown;

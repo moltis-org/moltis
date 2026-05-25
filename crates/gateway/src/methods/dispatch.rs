@@ -59,6 +59,10 @@ const READ_METHODS: &[&str] = &[
     "agents.files.list",
     #[cfg(feature = "agent")]
     "agents.files.get",
+    #[cfg(feature = "agent")]
+    "agents.preset.get",
+    #[cfg(feature = "agent")]
+    "agents.presets_list",
     "modes.list",
     "agent.identity.get",
     "skills.list",
@@ -161,6 +165,14 @@ const WRITE_METHODS: &[&str] = &[
     "agents.identity.update_soul",
     #[cfg(feature = "agent")]
     "agents.files.set",
+    #[cfg(feature = "agent")]
+    "agents.preset.create",
+    #[cfg(feature = "agent")]
+    "agents.preset.update",
+    #[cfg(feature = "agent")]
+    "agents.preset.delete",
+    #[cfg(feature = "agent")]
+    "agents.preset.save",
     "modes.set_session",
     "wake",
     "talk.mode",
