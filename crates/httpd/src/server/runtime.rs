@@ -42,7 +42,6 @@ pub(super) fn attach_ngrok_controller_owner(
 ) {
     app_state.ngrok_controller_owner = Some(Arc::clone(ngrok_controller));
 }
-
 #[cfg(feature = "mdns")]
 pub(super) fn instance_slug(config: &moltis_config::MoltisConfig) -> String {
     let mut raw_name = config.identity.name.clone();
