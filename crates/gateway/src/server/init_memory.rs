@@ -345,22 +345,41 @@ async fn build_memory_runtime(
         },
     };
 
-    // ── Dimension change detection ────────────────────────────────────
-    // If the embedding dimensions changed, clear all chunks + cache so
-    // the initial sync regenerates everything with the new dimensions.
+    // ── Dimension / model change detection ────────────────────────────
+    // If dimensions or model changed, clear all chunks + cache so the
+    // initial sync regenerates everything with the new configuration.
+    // Provider changes alone are allowed without reindex (the model is
+    // what determines the embedding space).
     // Only triggers if meta file exists (not a fresh first start).
     let meta_path = data_dir.join(".memory_meta.json");
     let meta_exists = meta_path.exists();
-    let prev_dims = meta_exists.then(|| {
+    let meta_val = meta_exists.then(|| {
         std::fs::read_to_string(&meta_path)
             .ok()
             .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
-            .and_then(|v| v.get("embedding_dimensions").and_then(|d| d.as_u64()))
     }).flatten();
-    let cur_dims = mem_cfg.dimensions.map(|d| d as u64);
 
+    let prev_dims = meta_val.as_ref()
+        .and_then(|v| v.get("embedding_dimensions").and_then(|d| d.as_u64()));
+    let prev_model = meta_val.as_ref()
+        .and_then(|v| v.get("model").and_then(|m| m.as_str()).map(String::from));
+
+    let cur_dims = mem_cfg.dimensions.map(|d| d as u64);
+    let cur_model = mem_cfg.model.clone();
+    let cur_provider = mem_cfg.provider.map(|p| {
+        match p {
+            moltis_config::MemoryProvider::Local => "local",
+            moltis_config::MemoryProvider::Ollama => "ollama",
+            moltis_config::MemoryProvider::OpenAi => "openai",
+            moltis_config::MemoryProvider::Custom => "custom",
+        }
+        .to_string()
+    });
+
+    let mut needs_reindex = false;
+
+    // ── Dimension change ──
     if meta_exists && prev_dims != cur_dims && mem_cfg.reindex_on_dim_change {
-        // Check what dimensions are actually stored in the DB.
         let stored_dims = builtin_manager
             .detect_stored_dimension()
             .await
@@ -377,9 +396,7 @@ async fn build_memory_runtime(
                 stored = ?stored_dims,
                 "memory: embedding dimensions changed, re-indexing all files to {dims_label}"
             );
-            if let Err(e) = builtin_manager.reindex_all().await {
-                tracing::warn!("memory: re-index failed: {e}");
-            }
+            needs_reindex = true;
         } else {
             tracing::info!(
                 dims = ?stored_dims,
@@ -388,8 +405,30 @@ async fn build_memory_runtime(
         }
     }
 
-    // Persist current dimensions for next startup.
-    let meta = serde_json::json!({ "embedding_dimensions": cur_dims });
+    // ── Model change ──
+    // Only triggers once the meta file has a model entry (backward compat).
+    if meta_exists && prev_model.is_some() && prev_model != cur_model {
+        let model_label = cur_model.as_deref().unwrap_or("default");
+        tracing::info!(
+            prev = ?prev_model,
+            cur = ?cur_model,
+            "memory: embedding model changed, re-indexing all files to {model_label}"
+        );
+        needs_reindex = true;
+    }
+
+    if needs_reindex {
+        if let Err(e) = builtin_manager.reindex_all().await {
+            tracing::warn!("memory: re-index failed: {e}");
+        }
+    }
+
+    // Persist current config for next startup.
+    let meta = serde_json::json!({
+        "embedding_dimensions": cur_dims,
+        "provider": cur_provider,
+        "model": cur_model,
+    });
     if let Ok(content) = serde_json::to_string_pretty(&meta) {
         let _ = std::fs::write(&meta_path, &content);
     }
