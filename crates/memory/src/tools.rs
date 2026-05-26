@@ -383,8 +383,8 @@ mod tests {
             "mock-model"
         }
 
-        fn dimensions(&self) -> usize {
-            8
+        fn dimensions(&self) -> Option<usize> {
+            Some(8)
         }
 
         fn provider_key(&self) -> &str {

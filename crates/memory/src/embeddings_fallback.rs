@@ -187,10 +187,9 @@ impl EmbeddingProvider for FallbackEmbeddingProvider {
             .unwrap_or("fallback")
     }
 
-    fn dimensions(&self) -> usize {
+    fn dimensions(&self) -> Option<usize> {
         self.active_entry()
-            .map(|e| e.provider.dimensions())
-            .unwrap_or(0)
+            .and_then(|e| e.provider.dimensions())
     }
 
     fn provider_key(&self) -> &str {
@@ -217,8 +216,8 @@ mod tests {
             "failing"
         }
 
-        fn dimensions(&self) -> usize {
-            8
+        fn dimensions(&self) -> Option<usize> {
+            Some(8)
         }
 
         fn provider_key(&self) -> &str {
@@ -240,8 +239,8 @@ mod tests {
             self.name
         }
 
-        fn dimensions(&self) -> usize {
-            8
+        fn dimensions(&self) -> Option<usize> {
+            Some(8)
         }
 
         fn provider_key(&self) -> &str {

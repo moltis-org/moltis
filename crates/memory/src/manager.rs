@@ -113,9 +113,13 @@ impl MemoryManager {
     /// then re-syncs everything from disk with the current embedding provider.
     /// Useful after changing embedding dimensions or provider.
     pub async fn reindex_all(&self) -> Result<SyncReport> {
-        info!("memory: re-indexing all files (clearing chunks + cache)...");
+        info!("memory: re-indexing all files (clearing chunks + cache + file records)...");
         self.store.clear_all_chunks().await?;
         self.store.clear_embedding_cache().await?;
+        // Clear file records so sync() doesn't skip files due to matching mtime/size.
+        for file in self.store.list_files().await? {
+            self.store.delete_file(&file.path).await?;
+        }
         self.sync().await
     }
 
@@ -567,8 +571,8 @@ mod tests {
             "mock-model"
         }
 
-        fn dimensions(&self) -> usize {
-            8
+        fn dimensions(&self) -> Option<usize> {
+            Some(8)
         }
 
         fn provider_key(&self) -> &str {
@@ -887,8 +891,8 @@ mod tests {
             "mock-model"
         }
 
-        fn dimensions(&self) -> usize {
-            8
+        fn dimensions(&self) -> Option<usize> {
+            Some(8)
         }
 
         fn provider_key(&self) -> &str {
@@ -931,7 +935,7 @@ mod tests {
                 self.0.model_name()
             }
 
-            fn dimensions(&self) -> usize {
+            fn dimensions(&self) -> Option<usize> {
                 self.0.dimensions()
             }
 

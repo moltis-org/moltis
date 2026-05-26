@@ -22,7 +22,8 @@ pub trait EmbeddingProvider: Send + Sync {
     fn model_name(&self) -> &str;
 
     /// The dimensionality of the embeddings produced.
-    fn dimensions(&self) -> usize;
+    /// Returns `None` when dimensions are determined by the server.
+    fn dimensions(&self) -> Option<usize>;
 
     /// A stable key identifying this provider configuration for cache discrimination.
     /// Different providers or the same provider with different settings should return

@@ -222,7 +222,7 @@ impl EmbeddingProvider for BatchEmbeddingProvider {
         self.inner.model_name()
     }
 
-    fn dimensions(&self) -> usize {
+    fn dimensions(&self) -> Option<usize> {
         self.inner.dimensions()
     }
 
@@ -287,8 +287,8 @@ mod tests {
             "mock"
         }
 
-        fn dimensions(&self) -> usize {
-            8
+        fn dimensions(&self) -> Option<usize> {
+            Some(8)
         }
 
         fn provider_key(&self) -> &str {

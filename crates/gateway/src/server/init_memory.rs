@@ -103,7 +103,23 @@ pub(crate) async fn init_memory_system(
                         moltis_config::MemoryProvider::OpenAi => "openai",
                         moltis_config::MemoryProvider::Local => "local",
                     };
-                    embedding_providers.push((provider_name.to_owned(), Box::new(e)));
+                    
+                    // Wrap in BatchEmbeddingProvider if batch_embeddings is enabled
+                    let provider: Box<dyn moltis_memory::embeddings::EmbeddingProvider> = 
+                        if mem_cfg.batch_embeddings {
+                            let api_key = e.api_key();
+                            let base_url = e.base_url();
+                            Box::new(moltis_memory::embeddings_batch::BatchEmbeddingProvider::new(
+                                Box::new(e),
+                                api_key,
+                                base_url,
+                                mem_cfg.batch_threshold,
+                            ))
+                        } else {
+                            Box::new(e)
+                        };
+                    
+                    embedding_providers.push((provider_name.to_owned(), provider));
                 },
             }
         }

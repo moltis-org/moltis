@@ -87,6 +87,16 @@ impl OpenAiEmbeddingProvider {
         self.provider_key = compute_provider_key(&self.base_url, &self.model);
         self
     }
+
+    /// Get the API key for wrapping in BatchEmbeddingProvider
+    pub fn api_key(&self) -> secrecy::Secret<String> {
+        self.api_key.clone()
+    }
+
+    /// Get the base URL for wrapping in BatchEmbeddingProvider
+    pub fn base_url(&self) -> String {
+        self.base_url.clone()
+    }
 }
 
 #[derive(Serialize)]
@@ -130,25 +140,15 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
             dimensions: self.dims,
         };
 
-        let result = self
+        let response = self
             .client
             .post(embeddings_endpoint(&self.base_url))
             .bearer_auth(self.api_key.expose_secret())
             .json(&req)
             .send()
-            .await?
-            .error_for_status()?
-            .json::<EmbeddingResponse>()
-            .await;
+            .await?;
 
-        #[cfg(feature = "metrics")]
-        histogram!(
-            "moltis_memory_embedding_duration_seconds",
-            labels::PROVIDER => "openai"
-        )
-        .record(start.elapsed().as_secs_f64());
-
-        let resp = result.map_err(|e| {
+        let response = response.error_for_status().map_err(|e| {
             if self.dims.is_some() {
                 crate::error::Error::Embedding(format!(
                     "embedding request failed (dimensions={:?}): {e}. \
@@ -161,6 +161,14 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
             }
         })?;
 
+        #[cfg(feature = "metrics")]
+        histogram!(
+            "moltis_memory_embedding_duration_seconds",
+            labels::PROVIDER => "openai"
+        )
+        .record(start.elapsed().as_secs_f64());
+
+        let resp = response.json::<EmbeddingResponse>().await?;
         Ok(resp.data.into_iter().map(|d| d.embedding).collect())
     }
 
@@ -168,8 +176,8 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
         &self.model
     }
 
-    fn dimensions(&self) -> usize {
-        self.dims.unwrap_or(0)
+    fn dimensions(&self) -> Option<usize> {
+        self.dims
     }
 
     fn provider_key(&self) -> &str {

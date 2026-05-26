@@ -187,6 +187,14 @@ impl MemoryRuntime for QmdMemoryRuntime {
         Ok(removed)
     }
 
+    async fn reindex_all(&self) -> MemoryResult<SyncReport> {
+        let report = self.fallback.reindex_all().await?;
+        self.refresh_qmd_index()
+            .await
+            .map_err(|e| moltis_memory::Error::Validation(e.to_string()))?;
+        Ok(report)
+    }
+
     async fn search(&self, query: &str, limit: usize) -> MemoryResult<Vec<SearchResult>> {
         let qmd_results = match self.search_mode() {
             SearchMode::Keyword => self

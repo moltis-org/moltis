@@ -1,7 +1,7 @@
 //! Full gateway preparation: config loading, migration, service wiring,
 //! background task spawning, and the composed axum application.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 #[cfg(any(feature = "msteams", feature = "telephony"))]
 use moltis_channels::ChannelPlugin;

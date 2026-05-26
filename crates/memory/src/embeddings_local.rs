@@ -161,8 +161,8 @@ impl EmbeddingProvider for LocalGgufEmbeddingProvider {
         "local-gguf"
     }
 
-    fn dimensions(&self) -> usize {
-        self.dims
+    fn dimensions(&self) -> Option<usize> {
+        Some(self.dims)
     }
 
     fn provider_key(&self) -> &str {

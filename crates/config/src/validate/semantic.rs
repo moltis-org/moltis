@@ -74,22 +74,6 @@ fn check_deprecated_memory_field(
     false
 }
 
-fn check_deprecated_ignored_memory_field(
-    memory: &toml::map::Map<String, toml::Value>,
-    legacy: &str,
-    message: &str,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
-    if memory.contains_key(legacy) {
-        diagnostics.push(Diagnostic {
-            severity: Severity::Warning,
-            category: "deprecated-field",
-            path: format!("memory.{legacy}"),
-            message: message.into(),
-        });
-    }
-}
-
 /// Check provider names under `[providers]` and warn about unknown ones.
 pub(super) fn check_provider_names(
     providers: &toml::map::Map<String, toml::Value>,
