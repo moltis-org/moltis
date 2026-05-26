@@ -16,7 +16,9 @@ pub struct OpenAiEmbeddingProvider {
     api_key: secrecy::Secret<String>,
     base_url: String,
     model: String,
-    dims: usize,
+    /// Explicit dimensions to send in the request body.
+    /// `None` = omit `dimensions` from the request (server decides).
+    dims: Option<usize>,
     provider_key: String,
 }
 
@@ -64,15 +66,19 @@ impl OpenAiEmbeddingProvider {
             api_key: secrecy::Secret::new(api_key),
             base_url,
             model,
-            dims: 1536,
+            dims: None,
             provider_key,
         }
     }
 
-    pub fn with_model(mut self, model: String, dims: usize) -> Self {
+    pub fn with_model(mut self, model: String) -> Self {
         self.model = model;
-        self.dims = dims;
         self.provider_key = compute_provider_key(&self.base_url, &self.model);
+        self
+    }
+
+    pub fn with_dimensions(mut self, dims: usize) -> Self {
+        self.dims = Some(dims);
         self
     }
 
@@ -87,6 +93,8 @@ impl OpenAiEmbeddingProvider {
 struct EmbeddingRequest {
     model: String,
     input: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -119,6 +127,7 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
         let req = EmbeddingRequest {
             model: self.model.clone(),
             input: texts.to_vec(),
+            dimensions: self.dims,
         };
 
         let result = self
@@ -139,7 +148,19 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
         )
         .record(start.elapsed().as_secs_f64());
 
-        let resp = result?;
+        let resp = result.map_err(|e| {
+            if self.dims.is_some() {
+                crate::error::Error::Embedding(format!(
+                    "embedding request failed (dimensions={:?}): {e}. \
+                     Try removing `dimensions` from your config if the server \
+                     does not support this parameter.",
+                    self.dims
+                ))
+            } else {
+                crate::error::Error::Embedding(format!("embedding request failed: {e}"))
+            }
+        })?;
+
         Ok(resp.data.into_iter().map(|d| d.embedding).collect())
     }
 
@@ -148,7 +169,7 @@ impl EmbeddingProvider for OpenAiEmbeddingProvider {
     }
 
     fn dimensions(&self) -> usize {
-        self.dims
+        self.dims.unwrap_or(0)
     }
 
     fn provider_key(&self) -> &str {

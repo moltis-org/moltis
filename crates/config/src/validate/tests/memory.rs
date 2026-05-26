@@ -176,8 +176,8 @@ embedding_dimensions = 384
     assert!(
         deprecated
             .iter()
-            .any(|d| d.path == "memory.embedding_dimensions" && d.message.contains("ignored")),
-        "expected ignored warning for embedding_dimensions"
+            .any(|d| d.path == "memory.embedding_dimensions" && d.message.contains("memory.dimensions")),
+        "expected replacement warning for embedding_dimensions"
     );
     assert!(
         !result.has_errors(),

@@ -109,6 +109,22 @@ impl MemoryManager {
             .map(|file| file.path))
     }
 
+    /// Re-index all memory: clears all existing chunks + embedding cache,
+    /// then re-syncs everything from disk with the current embedding provider.
+    /// Useful after changing embedding dimensions or provider.
+    pub async fn reindex_all(&self) -> Result<SyncReport> {
+        info!("memory: re-indexing all files (clearing chunks + cache)...");
+        self.store.clear_all_chunks().await?;
+        self.store.clear_embedding_cache().await?;
+        self.sync().await
+    }
+
+    /// Detect the dimension of embeddings already stored in the database.
+    /// Returns `None` when no embeddings exist yet.
+    pub async fn detect_stored_dimension(&self) -> Result<Option<usize>> {
+        self.store.detect_embedding_dimension().await
+    }
+
     /// Synchronize: walk configured directories, detect changed files, re-chunk and re-embed.
     pub async fn sync(&self) -> Result<SyncReport> {
         let mut report = SyncReport::default();

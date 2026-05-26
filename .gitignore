@@ -48,3 +48,4 @@ crates/gateway/ui/test-results/
 .dolt/
 *.db
 .codesight/
+config/

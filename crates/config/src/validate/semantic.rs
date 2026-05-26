@@ -28,12 +28,9 @@ pub(super) fn check_deprecated_fields(
     if check_deprecated_memory_field(memory, "embedding_api_key", "api_key", diagnostics) {
         conflicting_replacements.push("api_key");
     }
-    check_deprecated_ignored_memory_field(
-        memory,
-        "embedding_dimensions",
-        "deprecated field; ignored because embedding dimensions are determined by the provider response",
-        diagnostics,
-    );
+    if check_deprecated_memory_field(memory, "embedding_dimensions", "dimensions", diagnostics) {
+        conflicting_replacements.push("dimensions");
+    }
     conflicting_replacements
 }
 

@@ -39,6 +39,26 @@ pub struct MemoryEmbeddingConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub api_key: Option<Secret<String>>,
+    /// Dimensions for the embedding vectors. Sent as `dimensions` in the
+    /// request body for OpenAI-compatible endpoints. If not set, the server
+    /// decides the dimensionality (which may change across versions).
+    #[serde(alias = "embedding_dimensions")]
+    pub dimensions: Option<usize>,
+    /// Automatically re-index all memory when embedding dimensions change.
+    /// If `true` (default), on startup Moltis detects a dimension change
+    /// and regenerates all chunks + embeddings to match the new dimensions.
+    /// Set to `false` to disable automatic re-indexing.
+    #[serde(default = "default_true")]
+    pub reindex_on_dim_change: bool,
+    /// Enable batch embedding via the OpenAI batch API for large re-indexes.
+    /// When `true` and the number of texts exceeds `batch_threshold`, uses
+    /// the `/v1/batches` endpoint instead of sequential embedding.
+    /// Only applies to OpenAI-compatible providers (custom, openai, ollama).
+    #[serde(default)]
+    pub batch_embeddings: bool,
+    /// Minimum number of texts before switching to batch API. Default: 50.
+    #[serde(default = "default_batch_threshold")]
+    pub batch_threshold: usize,
     /// Citation mode for memory search results.
     pub citations: MemoryCitationsMode,
     /// Enable LLM reranking for hybrid search results.
@@ -84,6 +104,10 @@ impl Default for MemoryEmbeddingConfig {
             base_url: None,
             model: None,
             api_key: None,
+            dimensions: None,
+            reindex_on_dim_change: true,
+            batch_embeddings: false,
+            batch_threshold: default_batch_threshold(),
             citations: MemoryCitationsMode::default(),
             llm_reranking: false,
             search_merge_strategy: MemorySearchMergeStrategy::default(),
@@ -103,6 +127,10 @@ fn default_true() -> bool {
 
 fn default_prefetch_limit() -> usize {
     3
+}
+
+fn default_batch_threshold() -> usize {
+    50
 }
 
 fn default_auto_extract_interval() -> u32 {

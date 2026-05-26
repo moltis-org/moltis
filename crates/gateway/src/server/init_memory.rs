@@ -92,7 +92,10 @@ pub(crate) async fn init_memory_system(
                         e = e.with_base_url(base_url);
                     }
                     if let Some(ref model) = mem_cfg.model {
-                        e = e.with_model(model.clone(), 1536);
+                        e = e.with_model(model.clone());
+                    }
+                    if let Some(dims) = mem_cfg.dimensions {
+                        e = e.with_dimensions(dims);
                     }
                     let provider_name = match provider {
                         moltis_config::MemoryProvider::Ollama => "ollama",
@@ -118,7 +121,8 @@ pub(crate) async fn init_memory_system(
                 let e =
                     moltis_memory::embeddings_openai::OpenAiEmbeddingProvider::new(String::new())
                         .with_base_url("http://localhost:11434".into())
-                        .with_model("nomic-embed-text".into(), 768);
+                        .with_model("nomic-embed-text".into())
+                        .with_dimensions(768);
                 embedding_providers.push(("ollama".into(), Box::new(e)));
                 info!("memory: detected Ollama at localhost:11434");
             }
@@ -340,6 +344,55 @@ async fn build_memory_runtime(
             }
         },
     };
+
+    // ── Dimension change detection ────────────────────────────────────
+    // If the embedding dimensions changed, clear all chunks + cache so
+    // the initial sync regenerates everything with the new dimensions.
+    // Only triggers if meta file exists (not a fresh first start).
+    let meta_path = data_dir.join(".memory_meta.json");
+    let meta_exists = meta_path.exists();
+    let prev_dims = meta_exists.then(|| {
+        std::fs::read_to_string(&meta_path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("embedding_dimensions").and_then(|d| d.as_u64()))
+    }).flatten();
+    let cur_dims = mem_cfg.dimensions.map(|d| d as u64);
+
+    if meta_exists && prev_dims != cur_dims && mem_cfg.reindex_on_dim_change {
+        // Check what dimensions are actually stored in the DB.
+        let stored_dims = builtin_manager
+            .detect_stored_dimension()
+            .await
+            .unwrap_or(None)
+            .map(|d| d as u64);
+        if stored_dims != cur_dims {
+            let dims_label = match cur_dims {
+                Some(d) => format!("{d}"),
+                None => "default".into(),
+            };
+            tracing::info!(
+                prev = ?prev_dims,
+                cur = ?cur_dims,
+                stored = ?stored_dims,
+                "memory: embedding dimensions changed, re-indexing all files to {dims_label}"
+            );
+            if let Err(e) = builtin_manager.reindex_all().await {
+                tracing::warn!("memory: re-index failed: {e}");
+            }
+        } else {
+            tracing::info!(
+                dims = ?stored_dims,
+                "memory: dimensions match stored data, skipping re-index"
+            );
+        }
+    }
+
+    // Persist current dimensions for next startup.
+    let meta = serde_json::json!({ "embedding_dimensions": cur_dims });
+    if let Ok(content) = serde_json::to_string_pretty(&meta) {
+        let _ = std::fs::write(&meta_path, &content);
+    }
 
     // Initial sync + periodic re-sync (15min with watcher, 5min without).
     let sync_manager = Arc::clone(&manager);

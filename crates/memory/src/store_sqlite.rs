@@ -376,6 +376,35 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(result.rows_affected() as usize)
     }
 
+    async fn clear_all_chunks(&self) -> crate::error::Result<()> {
+        sqlx::query("DELETE FROM chunks").execute(&self.pool).await?;
+        Ok(())
+    }
+
+    async fn clear_embedding_cache(&self) -> crate::error::Result<()> {
+        sqlx::query("DELETE FROM embedding_cache")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn detect_embedding_dimension(&self) -> crate::error::Result<Option<usize>> {
+        // Try embedding_cache first (has explicit dims column).
+        let cached: Option<(i64,)> =
+            sqlx::query_as("SELECT dims FROM embedding_cache LIMIT 1")
+                .fetch_optional(&self.pool)
+                .await?;
+        if let Some((dims,)) = cached {
+            return Ok(Some(dims as usize));
+        }
+        // Fall back to chunks — derive dims from BLOB length.
+        let chunk: Option<(Vec<u8>,)> =
+            sqlx::query_as("SELECT embedding FROM chunks WHERE embedding IS NOT NULL LIMIT 1")
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(chunk.map(|(blob,)| blob.len() / 4))
+    }
+
     async fn vector_search(
         &self,
         query_embedding: &[f32],

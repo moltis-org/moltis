@@ -50,6 +50,17 @@ pub trait MemoryStore: Send + Sync {
     /// Batch-insert multiple embedding cache entries in a single transaction.
     async fn put_cached_embeddings_batch(&self, entries: &[CacheEntry<'_>]) -> Result<()>;
 
+    /// Delete all chunks (but keep file records). Used when re-indexing after
+    /// a dimension change.
+    async fn clear_all_chunks(&self) -> Result<()>;
+
+    /// Delete all entries in the embedding cache.
+    async fn clear_embedding_cache(&self) -> Result<()>;
+
+    /// Detect the dimension of stored embeddings by sampling a chunk or cache entry.
+    /// Returns `None` when no embeddings exist yet.
+    async fn detect_embedding_dimension(&self) -> Result<Option<usize>>;
+
     /// Count the number of rows in the embedding cache.
     async fn count_cached_embeddings(&self) -> Result<usize>;
 

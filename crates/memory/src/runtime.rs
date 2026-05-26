@@ -30,6 +30,9 @@ pub trait MemoryRuntime: MemoryWriter + Send + Sync {
 
     async fn remove_path(&self, path: &Path) -> Result<bool>;
 
+    /// Re-index all memory: clear chunks + cache, then re-sync from disk.
+    async fn reindex_all(&self) -> Result<SyncReport>;
+
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>>;
 
     async fn get_chunk(&self, id: &str) -> Result<Option<ChunkRow>>;
@@ -69,6 +72,10 @@ impl MemoryRuntime for MemoryManager {
 
     async fn remove_path(&self, path: &Path) -> Result<bool> {
         MemoryManager::remove_path(self, path).await
+    }
+
+    async fn reindex_all(&self) -> Result<SyncReport> {
+        MemoryManager::reindex_all(self).await
     }
 
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<SearchResult>> {
