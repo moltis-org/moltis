@@ -32,6 +32,9 @@ use crate::{
     anthropic, async_openai_provider, config_helpers::*, discovered_model::*, genai_provider,
     model_capabilities::*, model_catalogs::*, model_id::*, ollama::*, openai, opencode_zen,
 };
+
+const CUSTOM_REASONING_CONTENT_MODEL_PREFIXES: &[&str] = &["kimi-", "deepseek-v4"];
+
 impl ProviderRegistry {
     /// Register models from a [`RediscoveryResult`], skipping those already
     /// present. All I/O (model list fetches, Ollama probes) must be completed
@@ -340,6 +343,7 @@ impl ProviderRegistry {
                     name.clone(),
                 )
                 .with_stream_transport(entry.stream_transport)
+                .with_reasoning_content_model_prefixes(CUSTOM_REASONING_CONTENT_MODEL_PREFIXES)
                 .with_qwen_models_require_single_leading_system(true)
                 .with_context_window_overrides(
                     self.global_cw_overrides.clone(),
@@ -1120,6 +1124,7 @@ impl ProviderRegistry {
                 )
                 .with_stream_transport(entry.stream_transport)
                 .with_cache_retention(entry.cache_retention)
+                .with_reasoning_content_model_prefixes(CUSTOM_REASONING_CONTENT_MODEL_PREFIXES)
                 .with_qwen_models_require_single_leading_system(true)
                 .with_context_window_overrides(
                     self.global_cw_overrides.clone(),
