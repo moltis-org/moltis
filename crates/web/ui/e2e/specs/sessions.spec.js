@@ -333,20 +333,21 @@ test.describe("Session management", () => {
 			window.__capturedForkParams = null;
 			window.__origForkWsSend = ws.send.bind(ws);
 			ws.send = (payload) => {
+				let parsed;
 				try {
-					const parsed = JSON.parse(payload);
-					if (parsed?.method === "sessions.fork") {
-						window.__capturedForkParams = parsed.params;
-						const resolver = stateModule.pending?.[parsed.id];
-						if (typeof resolver !== "function") {
-							throw new Error("sessions.fork test expected a pending RPC resolver function");
-						}
-						delete stateModule.pending[parsed.id];
-						resolver({ ok: true, payload: { sessionKey: "session:fork-capture" } });
-						return;
-					}
+					parsed = JSON.parse(payload);
 				} catch (_err) {
-					// Fall through to the original sender.
+					return window.__origForkWsSend(payload);
+				}
+				if (parsed?.method === "sessions.fork") {
+					window.__capturedForkParams = parsed.params;
+					const resolver = stateModule.pending?.[parsed.id];
+					if (typeof resolver !== "function") {
+						throw new Error("sessions.fork test expected a pending RPC resolver function");
+					}
+					delete stateModule.pending[parsed.id];
+					resolver({ ok: true, payload: { sessionKey: "session:fork-capture" } });
+					return;
 				}
 				return window.__origForkWsSend(payload);
 			};
