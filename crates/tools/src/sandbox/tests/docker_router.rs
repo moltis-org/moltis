@@ -401,6 +401,22 @@ async fn test_sandbox_router_agent_override_falls_back_to_mode() {
 }
 
 #[tokio::test]
+async fn test_sandbox_router_agent_override_beats_global_off() {
+    let config = SandboxConfig {
+        mode: SandboxMode::Off,
+        ..Default::default()
+    };
+    let router = router_with_real_backend(config);
+    assert!(!router.is_sandboxed("main").await);
+
+    router.set_agent_override("main", true).await;
+    assert!(router.is_sandboxed("main").await);
+
+    router.remove_agent_override("main").await;
+    assert!(!router.is_sandboxed("main").await);
+}
+
+#[tokio::test]
 async fn test_sandbox_router_no_runtime_returns_false() {
     let backend: Arc<dyn Sandbox> = Arc::new(NoSandbox);
     let config = SandboxConfig {
