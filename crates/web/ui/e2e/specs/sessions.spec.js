@@ -338,10 +338,11 @@ test.describe("Session management", () => {
 					if (parsed?.method === "sessions.fork") {
 						window.__capturedForkParams = parsed.params;
 						const resolver = stateModule.pending?.[parsed.id];
-						if (typeof resolver === "function") {
-							delete stateModule.pending[parsed.id];
-							resolver({ ok: true, payload: { sessionKey: "session:fork-capture" } });
+						if (typeof resolver !== "function") {
+							throw new Error("sessions.fork test expected a pending RPC resolver function");
 						}
+						delete stateModule.pending[parsed.id];
+						resolver({ ok: true, payload: { sessionKey: "session:fork-capture" } });
 						return;
 					}
 				} catch (_err) {
@@ -361,6 +362,7 @@ test.describe("Session management", () => {
 				{ timeout: 5_000 },
 			)
 			.toEqual({ key: sessionKey, forkPoint: 2 });
+		await expect(page.getByText("Forked into new session", { exact: true })).toBeVisible();
 
 		expect(pageErrors).toEqual([]);
 	});
