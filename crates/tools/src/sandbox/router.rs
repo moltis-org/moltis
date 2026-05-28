@@ -670,8 +670,10 @@ pub struct SandboxRouter {
     /// All available backends, keyed by backend name.
     /// The default backend is also present in this map.
     backends: HashMap<String, Arc<dyn Sandbox>>,
-    /// Per-session overrides: true = sandboxed, false = direct execution.
+    /// Explicit per-session overrides: true = sandboxed, false = direct execution.
     overrides: RwLock<HashMap<String, bool>>,
+    /// Agent preset overrides. Explicit per-session overrides take precedence.
+    agent_overrides: RwLock<HashMap<String, bool>>,
     /// Per-session backend override: session_key -> backend_name.
     backend_overrides: RwLock<HashMap<String, String>>,
     /// Per-session image overrides.
@@ -716,6 +718,7 @@ impl SandboxRouter {
             default_backend,
             backends,
             overrides: RwLock::new(HashMap::new()),
+            agent_overrides: RwLock::new(HashMap::new()),
             backend_overrides: RwLock::new(HashMap::new()),
             image_overrides: RwLock::new(HashMap::new()),
             backend_image_overrides: RwLock::new(HashMap::new()),
@@ -739,6 +742,7 @@ impl SandboxRouter {
             default_backend: backend,
             backends,
             overrides: RwLock::new(HashMap::new()),
+            agent_overrides: RwLock::new(HashMap::new()),
             backend_overrides: RwLock::new(HashMap::new()),
             image_overrides: RwLock::new(HashMap::new()),
             backend_image_overrides: RwLock::new(HashMap::new()),
@@ -840,6 +844,9 @@ impl SandboxRouter {
         if let Some(&override_val) = self.overrides.read().await.get(session_key) {
             return override_val;
         }
+        if let Some(&override_val) = self.agent_overrides.read().await.get(session_key) {
+            return override_val;
+        }
         match self.config.mode {
             SandboxMode::Off => false,
             SandboxMode::All => true,
@@ -858,6 +865,19 @@ impl SandboxRouter {
     /// Remove a per-session override (revert to global mode).
     pub async fn remove_override(&self, session_key: &str) {
         self.overrides.write().await.remove(session_key);
+    }
+
+    /// Set a sandbox override from an agent preset.
+    pub async fn set_agent_override(&self, session_key: &str, enabled: bool) {
+        self.agent_overrides
+            .write()
+            .await
+            .insert(session_key.to_string(), enabled);
+    }
+
+    /// Remove an agent preset override without clearing explicit session policy.
+    pub async fn remove_agent_override(&self, session_key: &str) {
+        self.agent_overrides.write().await.remove(session_key);
     }
 
     /// Derive a SandboxId for a given session key.
@@ -906,6 +926,7 @@ impl SandboxRouter {
 
         backend.cleanup(&id).await?;
         self.remove_override(session_key).await;
+        self.remove_agent_override(session_key).await;
         self.remove_backend_override(session_key).await;
         self.remove_image_override(session_key).await;
         self.clear_prepared_session(session_key).await;

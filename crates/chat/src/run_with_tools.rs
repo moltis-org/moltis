@@ -242,8 +242,8 @@ pub(crate) async fn run_with_tools(
 
     // Apply per-agent sandbox mode override, then determine sandbox mode.
     let session_is_sandboxed = if let Some(router) = state.sandbox_router() {
-        // If the agent preset has a sandbox mode override, apply it as a
-        // per-session override so the exec tool inherits the agent's policy.
+        // If the agent preset has a sandbox mode override, apply it as an
+        // agent-scoped override so explicit session/cron policy still wins.
         // - "all"      → force sandbox on
         // - "off"      → force sandbox off
         // - "non-main" → remove override, let the router's global NonMain
@@ -252,17 +252,17 @@ pub(crate) async fn run_with_tools(
         if let Some(preset) = persona.config.agents.get_preset(agent_id) {
             match preset.sandbox.mode {
                 Some(moltis_config::schema::PresetSandboxMode::All) => {
-                    router.set_override(session_key, true).await
+                    router.set_agent_override(session_key, true).await
                 },
                 Some(moltis_config::schema::PresetSandboxMode::Off) => {
-                    router.set_override(session_key, false).await
+                    router.set_agent_override(session_key, false).await
                 },
-                _ => router.remove_override(session_key).await,
+                _ => router.remove_agent_override(session_key).await,
             }
         } else {
-            // No preset for this agent — clear any stale override from
-            // a previously assigned agent so the global mode applies.
-            router.remove_override(session_key).await;
+            // No preset for this agent — clear only stale agent policy. Explicit
+            // session/cron overrides still control this session.
+            router.remove_agent_override(session_key).await;
         }
         router.is_sandboxed(session_key).await
     } else {

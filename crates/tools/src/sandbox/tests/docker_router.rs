@@ -369,6 +369,38 @@ async fn test_sandbox_router_override_overrides_mode() {
 }
 
 #[tokio::test]
+async fn test_sandbox_router_explicit_override_overrides_agent_override() {
+    let config = SandboxConfig {
+        mode: SandboxMode::NonMain,
+        ..Default::default()
+    };
+    let router = router_with_real_backend(config);
+    assert!(router.is_sandboxed("cron:test").await);
+
+    router.set_override("cron:test", false).await;
+    router.set_agent_override("cron:test", true).await;
+    assert!(!router.is_sandboxed("cron:test").await);
+
+    router.remove_agent_override("cron:test").await;
+    assert!(!router.is_sandboxed("cron:test").await);
+}
+
+#[tokio::test]
+async fn test_sandbox_router_agent_override_falls_back_to_mode() {
+    let config = SandboxConfig {
+        mode: SandboxMode::NonMain,
+        ..Default::default()
+    };
+    let router = router_with_real_backend(config);
+
+    router.set_agent_override("cron:test", false).await;
+    assert!(!router.is_sandboxed("cron:test").await);
+
+    router.remove_agent_override("cron:test").await;
+    assert!(router.is_sandboxed("cron:test").await);
+}
+
+#[tokio::test]
 async fn test_sandbox_router_no_runtime_returns_false() {
     let backend: Arc<dyn Sandbox> = Arc::new(NoSandbox);
     let config = SandboxConfig {
