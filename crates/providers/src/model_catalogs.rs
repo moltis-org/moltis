@@ -186,6 +186,8 @@ pub(crate) struct OpenAiCompatDef {
     pub(crate) default_strict_tools: bool,
     /// Whether assistant tool-call messages need `reasoning_content` on replay.
     pub(crate) default_reasoning_content_on_tool_messages: bool,
+    /// Raw model-id prefixes that need `reasoning_content` on tool-call replay.
+    pub(crate) reasoning_content_model_prefixes: &'static [&'static str],
     /// Whether this provider rejects `null` entries inside JSON Schema enum arrays.
     pub(crate) rejects_null_in_enums: bool,
     /// Whether provider metadata should be nested as Gemini `extra_content`.
@@ -209,6 +211,7 @@ impl OpenAiCompatDef {
         supports_user_name: true,
         default_strict_tools: true,
         default_reasoning_content_on_tool_messages: false,
+        reasoning_content_model_prefixes: &[],
         rejects_null_in_enums: false,
         requires_gemini_tool_call_extra_content: false,
         system_message_rewrite: SystemMessageRewriteStrategy::None,
@@ -300,7 +303,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "DEEPSEEK_BASE_URL",
         default_base_url: "https://api.deepseek.com",
         models: DEEPSEEK_MODELS,
-        default_reasoning_content_on_tool_messages: true,
+        reasoning_content_model_prefixes: &["deepseek-v4"],
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -466,13 +469,14 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_preserves_reasoning_content_for_v4_tool_replay() {
+    fn deepseek_preserves_reasoning_content_only_for_v4_tool_replay() {
         let deepseek = OPENAI_COMPAT_PROVIDERS
             .iter()
             .find(|d| d.config_name == "deepseek")
             .expect("deepseek entry must exist");
 
-        assert!(deepseek.default_reasoning_content_on_tool_messages);
+        assert!(!deepseek.default_reasoning_content_on_tool_messages);
+        assert_eq!(deepseek.reasoning_content_model_prefixes, &["deepseek-v4"]);
     }
 
     #[test]

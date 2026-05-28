@@ -40,6 +40,8 @@ pub struct OpenAiProvider {
     default_strict_tools: bool,
     /// Whether assistant tool-call messages need `reasoning_content` on replay.
     default_reasoning_content_on_tool_messages: bool,
+    /// Raw model-id prefixes that need `reasoning_content` on tool-call replay.
+    reasoning_content_model_prefixes: &'static [&'static str],
     /// Whether this provider rejects `null` entries in JSON Schema enum arrays.
     rejects_null_in_enums: bool,
     /// Whether tool-call metadata should be nested as Gemini extra_content.

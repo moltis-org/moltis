@@ -39,6 +39,7 @@ impl OpenAiProvider {
             reasoning_content_override: None,
             default_strict_tools: true,
             default_reasoning_content_on_tool_messages: false,
+            reasoning_content_model_prefixes: &[],
             rejects_null_in_enums: false,
             requires_gemini_tool_call_extra_content: false,
             system_message_rewrite_strategy: SystemMessageRewriteStrategy::None,
@@ -72,6 +73,7 @@ impl OpenAiProvider {
             reasoning_content_override: None,
             default_strict_tools: true,
             default_reasoning_content_on_tool_messages: false,
+            reasoning_content_model_prefixes: &[],
             rejects_null_in_enums: false,
             requires_gemini_tool_call_extra_content: false,
             system_message_rewrite_strategy: SystemMessageRewriteStrategy::None,
@@ -137,6 +139,15 @@ impl OpenAiProvider {
     #[must_use]
     pub(crate) fn with_default_reasoning_content(mut self, required: bool) -> Self {
         self.default_reasoning_content_on_tool_messages = required;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_reasoning_content_model_prefixes(
+        mut self,
+        prefixes: &'static [&'static str],
+    ) -> Self {
+        self.reasoning_content_model_prefixes = prefixes;
         self
     }
 
@@ -401,6 +412,7 @@ impl LlmProvider for OpenAiProvider {
             default_strict_tools: self.default_strict_tools,
             default_reasoning_content_on_tool_messages: self
                 .default_reasoning_content_on_tool_messages,
+            reasoning_content_model_prefixes: self.reasoning_content_model_prefixes,
             rejects_null_in_enums: self.rejects_null_in_enums,
             requires_gemini_tool_call_extra_content: self.requires_gemini_tool_call_extra_content,
             system_message_rewrite_strategy: self.system_message_rewrite_strategy,

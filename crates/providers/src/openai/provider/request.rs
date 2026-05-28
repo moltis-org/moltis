@@ -97,7 +97,13 @@ impl OpenAiProvider {
         if let Some(explicit) = self.reasoning_content_override {
             return explicit;
         }
-        self.default_reasoning_content_on_tool_messages
+        if self.default_reasoning_content_on_tool_messages {
+            return true;
+        }
+        let raw_model = raw_model_id(&self.model).to_ascii_lowercase();
+        self.reasoning_content_model_prefixes
+            .iter()
+            .any(|prefix| raw_model.starts_with(prefix))
     }
 
     fn requires_gemini_tool_call_extra_content(&self) -> bool {
@@ -720,10 +726,20 @@ mod tests {
     #[test]
     fn deepseek_v4_auto_detects_reasoning_content() {
         let p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com")
-            .with_default_reasoning_content(true);
+            .with_reasoning_content_model_prefixes(&["deepseek-v4"]);
         assert!(
             p.requires_reasoning_content_on_tool_messages(),
             "DeepSeek V4 thinking-mode tool calls require reasoning_content replay (issue #959)"
+        );
+    }
+
+    #[test]
+    fn deepseek_non_v4_does_not_auto_detect_reasoning_content() {
+        let p = provider("deepseek-chat", "deepseek", "https://api.deepseek.com")
+            .with_reasoning_content_model_prefixes(&["deepseek-v4"]);
+        assert!(
+            !p.requires_reasoning_content_on_tool_messages(),
+            "DeepSeek reasoning_content replay should stay scoped to V4 thinking models"
         );
     }
 
@@ -836,7 +852,7 @@ mod tests {
     #[test]
     fn deepseek_v4_replays_persisted_tool_reasoning_content() {
         let p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com")
-            .with_default_reasoning_content(true);
+            .with_reasoning_content_model_prefixes(&["deepseek-v4"]);
         let persisted = vec![
             serde_json::json!({"role": "user", "content": "What is the weather?"}),
             serde_json::json!({
