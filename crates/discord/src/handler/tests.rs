@@ -437,6 +437,25 @@ fn select_media_picks_image_when_no_audio() {
     assert_eq!(picked.filename, "pic.jpg");
 }
 
+#[test]
+fn empty_message_without_attachments_is_droppable() {
+    assert!(should_drop_empty_discord_message("", &[]));
+}
+
+#[test]
+fn attachments_only_message_is_not_droppable() {
+    let doc = make_attachment(Some("application/pdf"), "spec.pdf");
+
+    assert!(!should_drop_empty_discord_message("", &[doc]));
+}
+
+#[test]
+fn voice_attachment_only_message_is_not_droppable() {
+    let voice = make_attachment(Some("audio/ogg"), "voice-message.ogg");
+
+    assert!(!should_drop_empty_discord_message("", &[voice]));
+}
+
 // ── resolve_discord_inbound_media via mock sink ──────────────────
 //
 // These tests exercise the branching logic without hitting the network.
