@@ -50,11 +50,6 @@ impl OpenAiProvider {
         base_url: String,
         provider_name: String,
     ) -> Self {
-        let base_url_lower = base_url.to_ascii_lowercase();
-        let supports_user_name = !provider_name.eq_ignore_ascii_case("mistral")
-            && !base_url_lower.contains("mistral.ai")
-            && !provider_name.eq_ignore_ascii_case("minimax")
-            && !base_url_lower.contains("minimax");
         Self {
             api_key,
             model,
@@ -71,7 +66,7 @@ impl OpenAiProvider {
             reasoning_content_override: None,
             context_window_global: std::collections::HashMap::new(),
             context_window_provider: std::collections::HashMap::new(),
-            supports_user_name,
+            supports_user_name: true,
             probe_timeout_secs: None,
         }
     }

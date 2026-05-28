@@ -261,6 +261,7 @@ impl ProviderRegistry {
                 )
                 .with_stream_transport(stream_transport)
                 .with_cache_retention(cache_retention)
+                .with_supports_user_name(def.supports_user_name)
                 .with_context_window_overrides(
                     self.global_cw_overrides.clone(),
                     config
