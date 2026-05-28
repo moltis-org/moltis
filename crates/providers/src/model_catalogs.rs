@@ -300,6 +300,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "DEEPSEEK_BASE_URL",
         default_base_url: "https://api.deepseek.com",
         models: DEEPSEEK_MODELS,
+        default_reasoning_content_on_tool_messages: true,
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -462,6 +463,16 @@ mod tests {
 
         assert!(!mistral.supports_user_name);
         assert!(!minimax.supports_user_name);
+    }
+
+    #[test]
+    fn deepseek_preserves_reasoning_content_for_v4_tool_replay() {
+        let deepseek = OPENAI_COMPAT_PROVIDERS
+            .iter()
+            .find(|d| d.config_name == "deepseek")
+            .expect("deepseek entry must exist");
+
+        assert!(deepseek.default_reasoning_content_on_tool_messages);
     }
 
     #[test]
