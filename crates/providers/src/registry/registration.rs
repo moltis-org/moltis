@@ -339,6 +339,7 @@ impl ProviderRegistry {
                     name.clone(),
                 )
                 .with_stream_transport(entry.stream_transport)
+                .with_qwen_models_require_single_leading_system(true)
                 .with_context_window_overrides(
                     self.global_cw_overrides.clone(),
                     extract_cw_overrides(&entry.model_overrides),
@@ -1118,6 +1119,7 @@ impl ProviderRegistry {
                 )
                 .with_stream_transport(entry.stream_transport)
                 .with_cache_retention(entry.cache_retention)
+                .with_qwen_models_require_single_leading_system(true)
                 .with_context_window_overrides(
                     self.global_cw_overrides.clone(),
                     extract_cw_overrides(&entry.model_overrides),
