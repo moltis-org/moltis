@@ -957,6 +957,42 @@ mod tests {
         );
     }
 
+    /// MiniMax rejects chat histories containing inconsistent user `name` values.
+    #[test]
+    fn minimax_provider_strips_user_names_from_group_chat_history() {
+        let p = provider("MiniMax-M2.7", "minimax", "https://api.minimax.io/v1");
+        assert!(!p.supports_user_name);
+
+        let messages = vec![
+            ChatMessage::user_named("hello", "Alice"),
+            ChatMessage::assistant("hi"),
+            ChatMessage::user_named("jumping in", "Bob"),
+        ];
+        let serialized = p.serialize_messages_for_request(&messages);
+
+        assert_eq!(serialized.len(), 3);
+        assert!(serialized[0].get("name").is_none());
+        assert!(serialized[2].get("name").is_none());
+    }
+
+    /// Custom-named provider pointing at a MiniMax URL also strips names.
+    #[test]
+    fn minimax_url_detection_strips_user_names() {
+        let p = provider(
+            "MiniMax-M2.7",
+            "custom-minimax",
+            "https://api.minimax.io/v1",
+        );
+        assert!(!p.supports_user_name);
+
+        let messages = vec![ChatMessage::user_named("hello", "Alice")];
+        let serialized = p.serialize_messages_for_request(&messages);
+        assert!(
+            serialized[0].get("name").is_none(),
+            "MiniMax URL-based detection must strip name field"
+        );
+    }
+
     /// OpenAI provider must preserve the (sanitized) `name` field.
     #[test]
     fn openai_provider_preserves_user_name() {
