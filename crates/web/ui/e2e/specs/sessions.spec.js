@@ -294,6 +294,77 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("assistant response fork sends boundary after the clicked response", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+
+		await createSession(page);
+		const sessionPath = new URL(page.url()).pathname;
+		const sessionKey = sessionPath.replace(/^\/chats\//, "").replace(/\//g, ":");
+		const assistantText = "fork should include this assistant response";
+
+		await expectRpcOk(page, "system-event", {
+			event: "chat",
+			payload: {
+				sessionKey,
+				state: "final",
+				text: assistantText,
+				messageIndex: 1,
+				model: "test-model",
+				provider: "test-provider",
+				replyMedium: "text",
+				runId: "run-fork-response",
+			},
+		});
+
+		const assistant = page.locator("#messages .msg.assistant").filter({ hasText: assistantText });
+		await expect(assistant).toBeVisible({ timeout: 5_000 });
+
+		await page.evaluate(async () => {
+			const appScript = document.querySelector('script[type="module"][src*="js/app.js"]');
+			if (!appScript) throw new Error("app module script not found");
+			const appUrl = new URL(appScript.src, window.location.origin);
+			const prefix = appUrl.href.slice(0, appUrl.href.length - "js/app.js".length);
+			const stateModule = await import(`${prefix}js/state.js`);
+			const ws = stateModule.ws;
+			if (!ws) throw new Error("websocket unavailable");
+
+			window.__capturedForkParams = null;
+			window.__origForkWsSend = ws.send.bind(ws);
+			ws.send = (payload) => {
+				try {
+					const parsed = JSON.parse(payload);
+					if (parsed?.method === "sessions.fork") {
+						window.__capturedForkParams = parsed.params;
+						const resolver = stateModule.pending?.[parsed.id];
+						if (typeof resolver === "function") {
+							delete stateModule.pending[parsed.id];
+							resolver({ ok: true, payload: { sessionKey: "session:fork-capture" } });
+						}
+						return;
+					}
+				} catch (_err) {
+					// Fall through to the original sender.
+				}
+				return window.__origForkWsSend(payload);
+			};
+		});
+
+		await assistant.locator('.msg-action-btn[title="Fork into new session"]').click();
+		await expect
+			.poll(
+				() =>
+					page.evaluate(() => {
+						return window.__capturedForkParams || null;
+					}),
+				{ timeout: 5_000 },
+			)
+			.toEqual({ key: sessionKey, forkPoint: 2 });
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("main session shows clear but hides delete, non-main shows delete but hides clear", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await page.goto("/");

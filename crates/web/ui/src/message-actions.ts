@@ -141,9 +141,10 @@ export function appendMessageActions(ctx: MessageActionContext): void {
 	// ── Fork button ──────────────────────────────────────────
 	const forkBtn = actionButton("icon-git-fork", "Fork into new session");
 	forkBtn.addEventListener("click", () => {
+		const forkPoint = Number.isInteger(ctx.messageIndex) ? (ctx.messageIndex as number) + 1 : undefined;
 		sendRpc("sessions.fork", {
 			key: sessionKey,
-			forkPoint: ctx.messageIndex,
+			...(forkPoint !== undefined ? { forkPoint } : {}),
 		}).then((res) => {
 			if (res.ok) {
 				showToast("Forked into new session", "success");
