@@ -658,21 +658,20 @@ fn set_bot_presence(ctx: &Context, account_id: &str, config: &DiscordAccountConf
 #[async_trait]
 impl EventHandler for Handler {
     async fn message(&self, ctx: Context, msg: Message) {
+        // Ignore messages from bots (including ourselves).
+        if msg.author.bot {
+            return;
+        }
+
         info!(
             account_id = %self.account_id,
             message_id = msg.id.get(),
-            author_bot = msg.author.bot,
             content_len = msg.content.len(),
             attachment_count = msg.attachments.len(),
             flags = ?msg.flags,
             kind = ?msg.kind,
             "discord raw message event received"
         );
-
-        // Ignore messages from bots (including ourselves).
-        if msg.author.bot {
-            return;
-        }
 
         let accounts_lock_wait_start = std::time::Instant::now();
         let (config, event_sink, message_log, bot_user_id) = {
@@ -733,6 +732,7 @@ impl EventHandler for Handler {
                 message_id,
                 chat_id,
                 peer_id,
+                text_len = text.len(),
                 content_len = msg.content.len(),
                 attachment_count = msg.attachments.len(),
                 flags = ?msg.flags,
