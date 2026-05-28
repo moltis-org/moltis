@@ -1,5 +1,7 @@
 //! Static model catalogs and OpenAI-compatible provider definitions.
 
+use crate::openai::SystemMessageRewriteStrategy;
+
 /// Known Anthropic Claude models (model_id, display_name).
 /// Current models listed first, then legacy models.
 pub(crate) const ANTHROPIC_MODELS: &[(&str, &str)] = &[
@@ -180,6 +182,18 @@ pub(crate) struct OpenAiCompatDef {
     pub(crate) local_only: bool,
     /// Whether this provider accepts the OpenAI-compatible `name` field on user messages.
     pub(crate) supports_user_name: bool,
+    /// Default strict tool schema mode before config overrides.
+    pub(crate) default_strict_tools: bool,
+    /// Whether assistant tool-call messages need `reasoning_content` on replay.
+    pub(crate) default_reasoning_content_on_tool_messages: bool,
+    /// Whether this provider rejects `null` entries inside JSON Schema enum arrays.
+    pub(crate) rejects_null_in_enums: bool,
+    /// Whether provider metadata should be nested as Gemini `extra_content`.
+    pub(crate) requires_gemini_tool_call_extra_content: bool,
+    /// Provider-specific system-message rewrite behavior.
+    pub(crate) system_message_rewrite: SystemMessageRewriteStrategy,
+    /// Whether Qwen-family models on this provider need one leading system message.
+    pub(crate) qwen_models_require_single_leading_system: bool,
 }
 
 impl OpenAiCompatDef {
@@ -193,6 +207,12 @@ impl OpenAiCompatDef {
         requires_api_key: true,
         local_only: false,
         supports_user_name: true,
+        default_strict_tools: true,
+        default_reasoning_content_on_tool_messages: false,
+        rejects_null_in_enums: false,
+        requires_gemini_tool_call_extra_content: false,
+        system_message_rewrite: SystemMessageRewriteStrategy::None,
+        qwen_models_require_single_leading_system: false,
     };
 }
 
@@ -211,6 +231,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_key: "OPENROUTER_API_KEY",
         env_base_url_key: "OPENROUTER_BASE_URL",
         default_base_url: "https://openrouter.ai/api/v1",
+        default_strict_tools: false,
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -230,6 +251,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         // MiniMax API does not expose a /models endpoint (returns 404).
         supports_model_discovery: false,
         supports_user_name: false,
+        system_message_rewrite: SystemMessageRewriteStrategy::InlineIntoFirstUser,
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -238,6 +260,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "MOONSHOT_BASE_URL",
         default_base_url: "https://api.moonshot.ai/v1",
         models: MOONSHOT_MODELS,
+        default_reasoning_content_on_tool_messages: true,
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -285,6 +308,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "FIREWORKS_BASE_URL",
         default_base_url: "https://api.fireworks.ai/inference/v1",
         models: FIREWORKS_MODELS,
+        rejects_null_in_enums: true,
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -294,6 +318,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "http://localhost:11434/v1",
         requires_api_key: false,
         local_only: true,
+        qwen_models_require_single_leading_system: true,
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -311,6 +336,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "ALIBABA_CODING_BASE_URL",
         default_base_url: "https://coding-intl.dashscope.aliyuncs.com/v1",
         models: ALIBABA_CODING_MODELS,
+        qwen_models_require_single_leading_system: true,
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -319,6 +345,8 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "GEMINI_BASE_URL",
         default_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
         models: GEMINI_MODELS,
+        default_strict_tools: false,
+        requires_gemini_tool_call_extra_content: true,
         ..OpenAiCompatDef::DEFAULT
     },
 ];

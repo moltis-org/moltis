@@ -4,14 +4,7 @@ use tracing::warn;
 
 use {crate::raw_model_id, moltis_agents::model::ChatMessage};
 
-use super::OpenAiProvider;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SystemMessageRewriteStrategy {
-    None,
-    MergeLeadingSystem,
-    InlineIntoFirstUser,
-}
+use {super::OpenAiProvider, crate::openai::SystemMessageRewriteStrategy};
 
 impl OpenAiProvider {
     /// Returns `true` when this provider targets an Anthropic model via
@@ -97,40 +90,18 @@ impl OpenAiProvider {
         if let Some(explicit) = self.strict_tools_override {
             return explicit;
         }
-        if self.base_url.contains("openrouter.ai") {
-            return false;
-        }
-        if self.provider_name.eq_ignore_ascii_case("gemini")
-            || self.base_url.contains("googleapis.com")
-        {
-            return false;
-        }
-        true
+        self.default_strict_tools
     }
 
     fn requires_reasoning_content_on_tool_messages(&self) -> bool {
         if let Some(explicit) = self.reasoning_content_override {
             return explicit;
         }
-        self.provider_name.eq_ignore_ascii_case("moonshot")
-            || self.base_url.contains("moonshot.ai")
-            || self.base_url.contains("moonshot.cn")
-            || self.model.starts_with("kimi-")
-            || self.model.to_ascii_lowercase().starts_with("deepseek-v4")
-    }
-
-    /// Some providers (e.g. MiniMax) reject `role: "system"` in the messages
-    /// array. System content must be extracted and prepended to the first user
-    /// message instead (MiniMax silently ignores a top-level `"system"` field).
-    fn rejects_system_role(&self) -> bool {
-        self.model.starts_with("MiniMax-")
-            || self.provider_name.eq_ignore_ascii_case("minimax")
-            || self.base_url.to_ascii_lowercase().contains("minimax")
+        self.default_reasoning_content_on_tool_messages
     }
 
     fn requires_gemini_tool_call_extra_content(&self) -> bool {
-        self.provider_name.eq_ignore_ascii_case("gemini")
-            || self.base_url.contains("generativelanguage.googleapis.com")
+        self.requires_gemini_tool_call_extra_content
     }
 
     /// Whether this provider rejects `null` in JSON Schema `enum` arrays.
@@ -141,8 +112,7 @@ impl OpenAiProvider {
     /// patching so type-level nullability (`["string", "null"]`) remains
     /// but the redundant null is removed from enum arrays (issue #848).
     fn rejects_null_in_enums(&self) -> bool {
-        self.provider_name.eq_ignore_ascii_case("fireworks")
-            || self.base_url.to_ascii_lowercase().contains("fireworks.ai")
+        self.rejects_null_in_enums
     }
 
     /// Convert raw tool schemas into the provider-compatible Chat
@@ -165,43 +135,23 @@ impl OpenAiProvider {
         converted
     }
 
-    fn is_custom_openai_compatible_provider(&self) -> bool {
-        self.provider_name.starts_with("custom-")
-    }
-
-    fn is_alibaba_qwen_backend(&self) -> bool {
-        self.provider_name.eq_ignore_ascii_case("alibaba-coding")
-            || self.provider_name.eq_ignore_ascii_case("alibaba")
-            || self.provider_name.eq_ignore_ascii_case("dashscope-coding")
-            || self.base_url.contains("dashscope.aliyuncs.com")
-            || self.base_url.contains("alibabacloud.com")
-    }
-
-    fn is_qwen_single_system_backend(&self) -> bool {
-        self.provider_name.eq_ignore_ascii_case("ollama")
-            || self.provider_name.to_ascii_lowercase().contains("ollama")
-            || self.is_custom_openai_compatible_provider()
-            || self.is_alibaba_qwen_backend()
-    }
-
     /// Some backends ship chat templates that only accept a single system
     /// message at the front of the conversation. Qwen-based OpenAI-compatible
     /// backends commonly behave this way (e.g. llama.cpp chat templates).
     fn requires_single_leading_system_message(&self) -> bool {
+        if !self.qwen_models_require_single_leading_system {
+            return false;
+        }
         raw_model_id(&self.model)
             .to_ascii_lowercase()
             .contains("qwen")
-            && self.is_qwen_single_system_backend()
     }
 
     fn system_message_rewrite_strategy(&self) -> SystemMessageRewriteStrategy {
-        if self.rejects_system_role() {
-            return SystemMessageRewriteStrategy::InlineIntoFirstUser;
-        }
         if self.requires_single_leading_system_message() {
             return SystemMessageRewriteStrategy::MergeLeadingSystem;
         }
-        SystemMessageRewriteStrategy::None
+        self.system_message_rewrite_strategy
     }
 
     /// Rewrite system messages for providers with stricter chat template rules.
@@ -519,7 +469,8 @@ mod tests {
             "qwen3:0.6b",
             "custom-ollama-qwen",
             "http://127.0.0.1:11435/v1",
-        );
+        )
+        .with_qwen_models_require_single_leading_system(true);
         let mut body = serde_json::json!({
             "messages": [
                 {"role": "system", "content": "You are a helpful assistant."},
@@ -546,7 +497,8 @@ mod tests {
 
     #[test]
     fn system_message_rewrite_minimax_inlines_messages_into_first_user_message() {
-        let provider = provider("MiniMax-M2.7", "minimax", "https://api.minimax.io/v1");
+        let provider = provider("MiniMax-M2.7", "minimax", "https://api.minimax.io/v1")
+            .with_system_message_rewrite(SystemMessageRewriteStrategy::InlineIntoFirstUser);
         let mut body = serde_json::json!({
             "messages": [
                 {"role": "system", "content": "You are a helpful assistant."},
@@ -614,7 +566,8 @@ mod tests {
             "qwen3.5-plus",
             "alibaba-coding",
             "https://coding-intl.dashscope.aliyuncs.com/v1",
-        );
+        )
+        .with_qwen_models_require_single_leading_system(true);
         let mut body = serde_json::json!({
             "messages": [
                 {"role": "system", "content": "sys1"},
@@ -670,7 +623,8 @@ mod tests {
             "accounts/fireworks/models/glm-5p1",
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
-        );
+        )
+        .with_rejects_null_in_enums(true);
         assert!(
             p.needs_strict_tools(),
             "Native Fireworks models should use strict tools by default"
@@ -683,7 +637,8 @@ mod tests {
             "accounts/fireworks/models/glm-5p1",
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
-        );
+        )
+        .with_rejects_null_in_enums(true);
         assert!(
             p.rejects_null_in_enums(),
             "Fireworks should reject null in enums (issue #848)"
@@ -691,15 +646,16 @@ mod tests {
     }
 
     #[test]
-    fn custom_fireworks_rejects_null_in_enums_via_base_url() {
+    fn fireworks_rejects_null_in_enums_from_provider_flag() {
         let p = provider(
             "accounts/fireworks/routers/kimi-k2p5-turbo",
-            "custom-fireworks-ai",
+            "fireworks",
             "https://api.fireworks.ai/inference/v1",
-        );
+        )
+        .with_rejects_null_in_enums(true);
         assert!(
             p.rejects_null_in_enums(),
-            "Custom Fireworks provider should be detected via base URL (issue #848)"
+            "Fireworks provider flag should reject null in enums (issue #848)"
         );
     }
 
@@ -718,7 +674,8 @@ mod tests {
             "gemini-3.1-flash-lite-preview",
             "gemini",
             "https://generativelanguage.googleapis.com/v1beta/openai",
-        );
+        )
+        .with_gemini_tool_call_extra_content(true);
         let mut metadata = serde_json::Map::new();
         metadata.insert("thought_signature".to_string(), serde_json::json!("sig123"));
         let messages =
@@ -755,13 +712,15 @@ mod tests {
 
     #[test]
     fn moonshot_direct_auto_detects_reasoning_content() {
-        let p = provider("kimi-k2.5", "moonshot", "https://api.moonshot.ai/v1");
+        let p = provider("kimi-k2.5", "moonshot", "https://api.moonshot.ai/v1")
+            .with_default_reasoning_content(true);
         assert!(p.requires_reasoning_content_on_tool_messages());
     }
 
     #[test]
     fn deepseek_v4_auto_detects_reasoning_content() {
-        let p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com");
+        let p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com")
+            .with_default_reasoning_content(true);
         assert!(
             p.requires_reasoning_content_on_tool_messages(),
             "DeepSeek V4 thinking-mode tool calls require reasoning_content replay (issue #959)"
@@ -876,7 +835,8 @@ mod tests {
 
     #[test]
     fn deepseek_v4_replays_persisted_tool_reasoning_content() {
-        let p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com");
+        let p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com")
+            .with_default_reasoning_content(true);
         let persisted = vec![
             serde_json::json!({"role": "user", "content": "What is the weather?"}),
             serde_json::json!({
@@ -991,7 +951,8 @@ mod tests {
             "accounts/fireworks/models/glm-5p1",
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
-        );
+        )
+        .with_rejects_null_in_enums(true);
 
         let messages = vec![
             ChatMessage::user("What's the weather?"),

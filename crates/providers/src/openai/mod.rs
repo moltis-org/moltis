@@ -11,6 +11,13 @@ pub use {
 
 use moltis_agents::model::ModelMetadata;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SystemMessageRewriteStrategy {
+    None,
+    MergeLeadingSystem,
+    InlineIntoFirstUser,
+}
+
 pub struct OpenAiProvider {
     api_key: secrecy::Secret<String>,
     model: String,
@@ -29,6 +36,18 @@ pub struct OpenAiProvider {
     strict_tools_override: Option<bool>,
     /// Explicit override for reasoning_content requirement. `None` = auto-detect.
     reasoning_content_override: Option<bool>,
+    /// Default strict tool schema mode for this provider.
+    default_strict_tools: bool,
+    /// Whether assistant tool-call messages need `reasoning_content` on replay.
+    default_reasoning_content_on_tool_messages: bool,
+    /// Whether this provider rejects `null` entries in JSON Schema enum arrays.
+    rejects_null_in_enums: bool,
+    /// Whether tool-call metadata should be nested as Gemini extra_content.
+    requires_gemini_tool_call_extra_content: bool,
+    /// Provider-specific system-message rewrite behavior.
+    system_message_rewrite_strategy: SystemMessageRewriteStrategy,
+    /// Whether Qwen-family models on this provider need one leading system message.
+    qwen_models_require_single_leading_system: bool,
     /// Global per-model context window overrides from `[models.<id>]` config.
     context_window_global: std::collections::HashMap<String, u32>,
     /// Provider-scoped per-model context window overrides from

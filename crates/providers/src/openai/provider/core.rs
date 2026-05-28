@@ -19,7 +19,7 @@ use moltis_agents::model::{
     ToolChoice,
 };
 
-use super::super::OpenAiProvider;
+use super::super::{OpenAiProvider, SystemMessageRewriteStrategy};
 
 impl OpenAiProvider {
     pub fn new(api_key: secrecy::Secret<String>, model: String, base_url: String) -> Self {
@@ -37,6 +37,12 @@ impl OpenAiProvider {
             cache_retention: moltis_config::CacheRetention::Short,
             strict_tools_override: None,
             reasoning_content_override: None,
+            default_strict_tools: true,
+            default_reasoning_content_on_tool_messages: false,
+            rejects_null_in_enums: false,
+            requires_gemini_tool_call_extra_content: false,
+            system_message_rewrite_strategy: SystemMessageRewriteStrategy::None,
+            qwen_models_require_single_leading_system: false,
             context_window_global: std::collections::HashMap::new(),
             context_window_provider: std::collections::HashMap::new(),
             supports_user_name: true,
@@ -64,6 +70,12 @@ impl OpenAiProvider {
             cache_retention: moltis_config::CacheRetention::Short,
             strict_tools_override: None,
             reasoning_content_override: None,
+            default_strict_tools: true,
+            default_reasoning_content_on_tool_messages: false,
+            rejects_null_in_enums: false,
+            requires_gemini_tool_call_extra_content: false,
+            system_message_rewrite_strategy: SystemMessageRewriteStrategy::None,
+            qwen_models_require_single_leading_system: false,
             context_window_global: std::collections::HashMap::new(),
             context_window_provider: std::collections::HashMap::new(),
             supports_user_name: true,
@@ -113,6 +125,45 @@ impl OpenAiProvider {
     #[must_use]
     pub fn with_supports_user_name(mut self, supported: bool) -> Self {
         self.supports_user_name = supported;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_default_strict_tools(mut self, strict: bool) -> Self {
+        self.default_strict_tools = strict;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_default_reasoning_content(mut self, required: bool) -> Self {
+        self.default_reasoning_content_on_tool_messages = required;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_rejects_null_in_enums(mut self, rejects: bool) -> Self {
+        self.rejects_null_in_enums = rejects;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_gemini_tool_call_extra_content(mut self, required: bool) -> Self {
+        self.requires_gemini_tool_call_extra_content = required;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_system_message_rewrite(
+        mut self,
+        strategy: SystemMessageRewriteStrategy,
+    ) -> Self {
+        self.system_message_rewrite_strategy = strategy;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_qwen_models_require_single_leading_system(mut self, required: bool) -> Self {
+        self.qwen_models_require_single_leading_system = required;
         self
     }
 
@@ -347,6 +398,14 @@ impl LlmProvider for OpenAiProvider {
             context_window_provider: self.context_window_provider.clone(),
             strict_tools_override: self.strict_tools_override,
             reasoning_content_override: self.reasoning_content_override,
+            default_strict_tools: self.default_strict_tools,
+            default_reasoning_content_on_tool_messages: self
+                .default_reasoning_content_on_tool_messages,
+            rejects_null_in_enums: self.rejects_null_in_enums,
+            requires_gemini_tool_call_extra_content: self.requires_gemini_tool_call_extra_content,
+            system_message_rewrite_strategy: self.system_message_rewrite_strategy,
+            qwen_models_require_single_leading_system: self
+                .qwen_models_require_single_leading_system,
             supports_user_name: self.supports_user_name,
             probe_timeout_secs: self.probe_timeout_secs,
         }))
