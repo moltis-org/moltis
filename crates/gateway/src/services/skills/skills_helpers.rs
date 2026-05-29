@@ -211,6 +211,11 @@ pub(super) fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResu
                 cfg.skills
                     .disabled_bundled_skills
                     .retain(|name| name != &skill_name);
+                if let Some(category) = &category {
+                    cfg.skills
+                        .disabled_bundled_categories
+                        .retain(|name| name != category);
+                }
             } else if !cfg
                 .skills
                 .disabled_bundled_skills

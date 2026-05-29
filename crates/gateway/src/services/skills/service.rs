@@ -1224,12 +1224,8 @@ mod tests {
             .expect("enable bundled skill while category is disabled");
         assert_eq!(
             still_disabled.get("enabled").and_then(Value::as_bool),
-            Some(false)
+            Some(true)
         );
-        service
-            .bundled_toggle_category(serde_json::json!({ "category": "apple", "enabled": true }))
-            .await
-            .expect("enable bundled category");
 
         let config = moltis_config::discover_and_load();
         assert!(config.skills.disabled_bundled_categories.is_empty());
