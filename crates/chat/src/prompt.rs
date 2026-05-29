@@ -291,10 +291,11 @@ pub(crate) async fn discover_skills_if_enabled(
         fs_discoverer.discover().await
     };
 
-    let disabled_cats = &config.skills.disabled_bundled_categories;
+    let has_bundled_disables = !config.skills.disabled_bundled_categories.is_empty()
+        || !config.skills.disabled_bundled_skills.is_empty();
 
     match skills {
-        Ok(skills) if disabled_cats.is_empty() => skills,
+        Ok(skills) if !has_bundled_disables => skills,
         Ok(skills) => skills
             .into_iter()
             .filter(|s| {
@@ -302,10 +303,9 @@ pub(crate) async fn discover_skills_if_enabled(
                 if s.source != Some(moltis_skills::types::SkillSource::Bundled) {
                     return true;
                 }
-                // Keep the skill if its category is not in the disabled list.
-                s.category
-                    .as_deref()
-                    .is_none_or(|cat| !disabled_cats.iter().any(|d| d == cat))
+                config
+                    .skills
+                    .is_bundled_skill_enabled(&s.name, s.category.as_deref())
             })
             .collect(),
         Err(e) => {

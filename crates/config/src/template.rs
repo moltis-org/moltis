@@ -511,6 +511,8 @@ port = {port}                           # Port number (auto-generated for this i
 # enabled = true                    # Enable skills system
 # search_paths = []                 # Additional directories to search for skills
 # auto_load = []                    # Skills to always load
+# disabled_bundled_categories = []   # Bundled skill categories to disable
+# disabled_bundled_skills = []       # Individual bundled skills to disable by name
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MCP SERVERS

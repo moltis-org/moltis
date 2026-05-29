@@ -159,13 +159,9 @@ pub(super) fn skill_detail_bundled(skill_name: &str) -> ServiceResult {
     let elig = check_requirements(meta);
 
     let config = moltis_config::discover_and_load();
-    let enabled = meta.category.as_deref().is_none_or(|cat| {
-        !config
-            .skills
-            .disabled_bundled_categories
-            .iter()
-            .any(|c| c == cat)
-    });
+    let enabled = config
+        .skills
+        .is_bundled_skill_enabled(&meta.name, meta.category.as_deref());
 
     Ok(serde_json::json!({
         "name": meta.name,
@@ -188,8 +184,8 @@ pub(super) fn skill_detail_bundled(skill_name: &str) -> ServiceResult {
     }))
 }
 
-/// Toggle a bundled skill by adding/removing its category from
-/// `disabled_bundled_categories` in config. Bundled skills are not tracked
+/// Toggle a bundled skill by adding/removing its name from
+/// `disabled_bundled_skills` in config. Bundled skills are not tracked
 /// in the manifest, so `toggle_skill()` cannot handle them.
 pub(super) fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResult {
     let skill_name = params
@@ -211,19 +207,19 @@ pub(super) fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResu
             .clone()
             .ok_or_else(|| format!("bundled skill '{skill_name}' has no category"))?;
 
-        let cat_clone = category.clone();
+        let skill_name = skill_name.to_string();
         if let Err(e) = moltis_config::update_config(|cfg| {
             if enabled {
                 cfg.skills
-                    .disabled_bundled_categories
-                    .retain(|c| c != &cat_clone);
+                    .disabled_bundled_skills
+                    .retain(|name| name != &skill_name);
             } else if !cfg
                 .skills
-                .disabled_bundled_categories
+                .disabled_bundled_skills
                 .iter()
-                .any(|c| c == &cat_clone)
+                .any(|name| name == &skill_name)
             {
-                cfg.skills.disabled_bundled_categories.push(cat_clone);
+                cfg.skills.disabled_bundled_skills.push(skill_name.clone());
             }
         }) {
             return Err(format!("failed to save config: {e}").into());

@@ -602,8 +602,6 @@ pub async fn api_skills_handler(State(state): State<AppState>) -> impl IntoRespo
         .unwrap_or_default();
 
     let config = moltis_config::discover_and_load();
-    let disabled_cats = &config.skills.disabled_bundled_categories;
-
     let mut skills = enabled_from_manifest(moltis_skills::manifest::ManifestStore::default_path());
 
     {
@@ -638,10 +636,9 @@ pub async fn api_skills_handler(State(state): State<AppState>) -> impl IntoRespo
                 let protected = moltis_gateway::services::is_protected_discovered_skill(&s.name);
                 let is_bundled = s.source == Some(moltis_skills::types::SkillSource::Bundled);
                 let enabled = if is_bundled {
-                    // Bundled skills are enabled unless their category is disabled.
-                    s.category
-                        .as_deref()
-                        .is_none_or(|cat| !disabled_cats.iter().any(|d| d == cat))
+                    config
+                        .skills
+                        .is_bundled_skill_enabled(&s.name, s.category.as_deref())
                 } else {
                     true
                 };

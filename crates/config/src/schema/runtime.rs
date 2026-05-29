@@ -99,6 +99,9 @@ pub struct SkillsConfig {
     /// `crates/skills/src/assets/` (e.g. `"gaming"`, `"social-media"`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub disabled_bundled_categories: Vec<String>,
+    /// Bundled skill names that the user has explicitly disabled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disabled_bundled_skills: Vec<String>,
 }
 
 impl Default for SkillsConfig {
@@ -110,7 +113,26 @@ impl Default for SkillsConfig {
             enable_agent_sidecar_files: false,
             enable_self_improvement: true,
             disabled_bundled_categories: Vec::new(),
+            disabled_bundled_skills: Vec::new(),
         }
+    }
+}
+
+impl SkillsConfig {
+    #[must_use]
+    pub fn is_bundled_skill_enabled(&self, name: &str, category: Option<&str>) -> bool {
+        let category_enabled = category.is_none_or(|cat| {
+            !self
+                .disabled_bundled_categories
+                .iter()
+                .any(|disabled| disabled == cat)
+        });
+        let skill_enabled = !self
+            .disabled_bundled_skills
+            .iter()
+            .any(|disabled| disabled == name);
+
+        category_enabled && skill_enabled
     }
 }
 

@@ -1142,7 +1142,15 @@ impl SkillsService for NoopSkillsService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use {super::*, serial_test::serial};
+
+    struct ConfigDirGuard;
+
+    impl Drop for ConfigDirGuard {
+        fn drop(&mut self) {
+            moltis_config::clear_config_dir();
+        }
+    }
 
     #[test]
     fn risky_install_pattern_detects_piped_shell() {
@@ -1155,5 +1163,80 @@ mod tests {
     #[test]
     fn risky_install_pattern_allows_plain_package_install() {
         assert_eq!(risky_install_pattern("cargo install ripgrep"), None);
+    }
+
+    #[cfg(feature = "bundled-skills")]
+    #[tokio::test]
+    #[serial]
+    async fn disabling_one_bundled_skill_does_not_disable_category() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        moltis_config::set_config_dir(dir.path().to_path_buf());
+        let _guard = ConfigDirGuard;
+
+        let service = NoopSkillsService;
+        let result = service
+            .skill_disable(serde_json::json!({ "source": "bundled", "skill": "apple-notes" }))
+            .await
+            .expect("disable bundled skill");
+
+        assert_eq!(
+            result.get("skill").and_then(Value::as_str),
+            Some("apple-notes")
+        );
+
+        let config = moltis_config::discover_and_load();
+        assert!(config.skills.disabled_bundled_categories.is_empty());
+        assert_eq!(config.skills.disabled_bundled_skills, vec![
+            "apple-notes".to_string()
+        ]);
+        assert!(
+            !config
+                .skills
+                .is_bundled_skill_enabled("apple-notes", Some("apple"))
+        );
+        assert!(
+            config
+                .skills
+                .is_bundled_skill_enabled("apple-reminders", Some("apple"))
+        );
+    }
+
+    #[cfg(feature = "bundled-skills")]
+    #[tokio::test]
+    #[serial]
+    async fn bundled_category_toggle_preserves_individual_disables() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        moltis_config::set_config_dir(dir.path().to_path_buf());
+        let _guard = ConfigDirGuard;
+
+        let service = NoopSkillsService;
+        service
+            .skill_disable(serde_json::json!({ "source": "bundled", "skill": "apple-notes" }))
+            .await
+            .expect("disable bundled skill");
+        service
+            .bundled_toggle_category(serde_json::json!({ "category": "apple", "enabled": false }))
+            .await
+            .expect("disable bundled category");
+        service
+            .bundled_toggle_category(serde_json::json!({ "category": "apple", "enabled": true }))
+            .await
+            .expect("enable bundled category");
+
+        let config = moltis_config::discover_and_load();
+        assert!(config.skills.disabled_bundled_categories.is_empty());
+        assert_eq!(config.skills.disabled_bundled_skills, vec![
+            "apple-notes".to_string()
+        ]);
+        assert!(
+            !config
+                .skills
+                .is_bundled_skill_enabled("apple-notes", Some("apple"))
+        );
+        assert!(
+            config
+                .skills
+                .is_bundled_skill_enabled("apple-reminders", Some("apple"))
+        );
     }
 }
