@@ -202,10 +202,7 @@ pub(super) fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResu
             .iter()
             .find(|s| s.name == skill_name)
             .ok_or_else(|| format!("bundled skill '{skill_name}' not found"))?;
-        let category = skill
-            .category
-            .clone()
-            .ok_or_else(|| format!("bundled skill '{skill_name}' has no category"))?;
+        let category = skill.category.clone();
 
         let skill_name = skill_name.to_string();
         if let Err(e) = moltis_config::update_config(|cfg| {
