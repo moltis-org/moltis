@@ -205,6 +205,7 @@ pub(super) fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResu
         let category = skill.category.clone();
 
         let skill_name = skill_name.to_string();
+        let mut effective_enabled = enabled;
         if let Err(e) = moltis_config::update_config(|cfg| {
             if enabled {
                 cfg.skills
@@ -218,6 +219,9 @@ pub(super) fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResu
             {
                 cfg.skills.disabled_bundled_skills.push(skill_name.clone());
             }
+            effective_enabled = cfg
+                .skills
+                .is_bundled_skill_enabled(&skill_name, category.as_deref());
         }) {
             return Err(format!("failed to save config: {e}").into());
         }
@@ -228,12 +232,12 @@ pub(super) fn toggle_bundled_skill(params: &Value, enabled: bool) -> ServiceResu
                 "source": "bundled",
                 "skill": skill_name,
                 "category": category,
-                "enabled": enabled,
+                "enabled": effective_enabled,
             }),
         );
 
         Ok(
-            serde_json::json!({ "source": "bundled", "skill": skill_name, "category": category, "enabled": enabled }),
+            serde_json::json!({ "source": "bundled", "skill": skill_name, "category": category, "enabled": effective_enabled }),
         )
     }
     #[cfg(not(feature = "bundled-skills"))]

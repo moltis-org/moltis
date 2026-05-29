@@ -1218,6 +1218,14 @@ mod tests {
             .bundled_toggle_category(serde_json::json!({ "category": "apple", "enabled": false }))
             .await
             .expect("disable bundled category");
+        let still_disabled = service
+            .skill_enable(serde_json::json!({ "source": "bundled", "skill": "apple-reminders" }))
+            .await
+            .expect("enable bundled skill while category is disabled");
+        assert_eq!(
+            still_disabled.get("enabled").and_then(Value::as_bool),
+            Some(false)
+        );
         service
             .bundled_toggle_category(serde_json::json!({ "category": "apple", "enabled": true }))
             .await
