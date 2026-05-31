@@ -468,7 +468,6 @@ pub async fn run_agent_loop_streaming_with_limits(
             );
             if let Some(&vec_pos) = stream_idx_to_vec_pos.get(stream_idx)
                 && vec_pos < tool_calls.len()
-                && !args_str.is_empty()
             {
                 let decoded = decode_tool_call_arguments_from_str(args_str);
                 tool_calls[vec_pos].arguments = decoded.arguments;

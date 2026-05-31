@@ -47,6 +47,25 @@ const DEFAULT_CODEX_MODELS: &[(&str, &str)] = &[
     ("gpt-5.1-codex-mini", "GPT-5.1 Codex Mini"),
 ];
 
+fn codex_done_arguments(evt: &serde_json::Value) -> Option<&str> {
+    evt.get("arguments")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+}
+
+fn record_codex_done_arguments(fn_call_args: &mut [String], evt: &serde_json::Value) {
+    let Some(arguments) = codex_done_arguments(evt) else {
+        return;
+    };
+    debug!(
+        raw_len = arguments.len(),
+        "openai-codex function call arguments completed"
+    );
+    if let Some(last) = fn_call_args.last_mut() {
+        *last = arguments.to_string();
+    }
+}
+
 impl OpenAiCodexProvider {
     pub fn new(model: String) -> Self {
         Self::new_with_transport(model, ProviderStreamTransport::Sse)
@@ -772,7 +791,7 @@ impl LlmProvider for OpenAiCodexProvider {
                         }
                     },
                     "response.function_call_arguments.done" => {
-                        // function call complete — will be collected at the end
+                        record_codex_done_arguments(&mut fn_call_args, &evt);
                     },
                     "response.completed" => {
                         if let Some(u) = evt["response"]["usage"].as_object() {
@@ -942,6 +961,7 @@ impl LlmProvider for OpenAiCodexProvider {
             let mut tool_calls: std::collections::HashMap<usize, (String, String)> =
                 std::collections::HashMap::new();
             let mut current_tool_index: usize = 0;
+            let mut current_tool_has_arg_delta = false;
 
             while let Some(chunk) = byte_stream.next().await {
                 let chunk = match chunk {
@@ -998,6 +1018,7 @@ impl LlmProvider for OpenAiCodexProvider {
                                 let name = evt["item"]["name"].as_str().unwrap_or("").to_string();
                                 let index = current_tool_index;
                                 current_tool_index += 1;
+                                current_tool_has_arg_delta = false;
                                 tool_calls.insert(index, (id.clone(), name.clone()));
                                 yield StreamEvent::ToolCallStart { id, name, index, metadata: None };
                             }
@@ -1005,6 +1026,7 @@ impl LlmProvider for OpenAiCodexProvider {
                                 if let Some(delta) = evt["delta"].as_str()
                                     && !delta.is_empty()
                                 {
+                                    current_tool_has_arg_delta = true;
                                     // Find the index for this tool call (use the most recent one)
                                     let index = if current_tool_index > 0 {
                                         current_tool_index - 1
@@ -1018,7 +1040,24 @@ impl LlmProvider for OpenAiCodexProvider {
                                 }
                             }
                             "response.function_call_arguments.done" => {
-                                // Function call arguments complete - tool call will be finalized at [DONE]
+                                if let Some(arguments) = codex_done_arguments(&evt) {
+                                    debug!(
+                                        raw_len = arguments.len(),
+                                        had_delta = current_tool_has_arg_delta,
+                                        "openai-codex streaming function call arguments completed"
+                                    );
+                                    if !current_tool_has_arg_delta {
+                                        let index = if current_tool_index > 0 {
+                                            current_tool_index - 1
+                                        } else {
+                                            0
+                                        };
+                                        yield StreamEvent::ToolCallArgumentsDelta {
+                                            index,
+                                            delta: arguments.to_string(),
+                                        };
+                                    }
+                                }
                             }
                             "response.completed" => {
                                 if let Some(u) = evt["response"]["usage"].as_object() {
@@ -1132,6 +1171,32 @@ mod tests {
                 "apply_reasoning must not disturb include when effort is set, got: {body}"
             );
         }
+    }
+
+    #[test]
+    fn codex_done_arguments_extracts_final_arguments() {
+        let evt = serde_json::json!({
+            "type": "response.function_call_arguments.done",
+            "arguments": "{\"command\":\"echo ok\"}"
+        });
+
+        assert_eq!(
+            codex_done_arguments(&evt),
+            Some("{\"command\":\"echo ok\"}")
+        );
+    }
+
+    #[test]
+    fn record_codex_done_arguments_overwrites_empty_accumulator() {
+        let evt = serde_json::json!({
+            "type": "response.function_call_arguments.done",
+            "arguments": "{\"command\":\"echo ok\"}"
+        });
+        let mut args = vec![String::new()];
+
+        record_codex_done_arguments(&mut args, &evt);
+
+        assert_eq!(args, vec!["{\"command\":\"echo ok\"}".to_string()]);
     }
 
     #[tokio::test]
