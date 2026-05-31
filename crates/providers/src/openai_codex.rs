@@ -57,12 +57,15 @@ fn record_codex_done_arguments(fn_call_args: &mut [String], evt: &serde_json::Va
     let Some(arguments) = codex_done_arguments(evt) else {
         return;
     };
-    debug!(
-        raw_len = arguments.len(),
-        "openai-codex function call arguments completed"
-    );
     if let Some(last) = fn_call_args.last_mut() {
-        *last = arguments.to_string();
+        let had_delta = !last.is_empty();
+        debug!(
+            raw_len = arguments.len(),
+            had_delta, "openai-codex function call arguments completed"
+        );
+        if !had_delta {
+            *last = arguments.to_string();
+        }
     }
 }
 
@@ -1187,7 +1190,7 @@ mod tests {
     }
 
     #[test]
-    fn record_codex_done_arguments_overwrites_empty_accumulator() {
+    fn record_codex_done_arguments_fills_empty_accumulator() {
         let evt = serde_json::json!({
             "type": "response.function_call_arguments.done",
             "arguments": "{\"command\":\"echo ok\"}"
@@ -1197,6 +1200,19 @@ mod tests {
         record_codex_done_arguments(&mut args, &evt);
 
         assert_eq!(args, vec!["{\"command\":\"echo ok\"}".to_string()]);
+    }
+
+    #[test]
+    fn record_codex_done_arguments_preserves_existing_delta_accumulator() {
+        let evt = serde_json::json!({
+            "type": "response.function_call_arguments.done",
+            "arguments": "{\"command\":\"echo done\"}"
+        });
+        let mut args = vec!["{\"command\":\"echo delta\"}".to_string()];
+
+        record_codex_done_arguments(&mut args, &evt);
+
+        assert_eq!(args, vec!["{\"command\":\"echo delta\"}".to_string()]);
     }
 
     #[tokio::test]
