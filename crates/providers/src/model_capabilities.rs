@@ -283,6 +283,8 @@ pub fn supports_reasoning_for_model(model_id: &str) -> bool {
 /// without a provider instance or re-running the heuristic.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct ModelCapabilities {
+    /// Supports chat/text-generation requests.
+    pub text_generation: bool,
     /// Supports OpenAI-style function/tool calling.
     pub tools: bool,
     /// Supports image/vision inputs.
@@ -296,6 +298,7 @@ impl ModelCapabilities {
     #[must_use]
     pub fn infer(model_id: &str) -> Self {
         Self {
+            text_generation: is_chat_capable_model(model_id),
             tools: supports_tools_for_model(model_id),
             vision: supports_vision_for_model(model_id),
             reasoning: supports_reasoning_for_model(model_id),
