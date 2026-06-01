@@ -834,11 +834,12 @@ mod tests {
 
     #[test]
     fn moonshot_direct_auto_detects_reasoning_content() {
-        let p = provider("kimi-k2.5", "moonshot", "https://api.moonshot.ai/v1")
-            .with_capabilities(OpenAiProviderCapabilities {
+        let p = provider("kimi-k2.5", "moonshot", "https://api.moonshot.ai/v1").with_capabilities(
+            OpenAiProviderCapabilities {
                 default_reasoning_content_on_tool_messages: true,
                 ..OpenAiProviderCapabilities::DEFAULT
-            });
+            },
+        );
         assert!(p.requires_reasoning_content_on_tool_messages());
     }
 

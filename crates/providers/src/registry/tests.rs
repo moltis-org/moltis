@@ -1,6 +1,6 @@
 use {
     super::ProviderRegistry,
-    moltis_agents::model::ChatMessage,
+    moltis_agents::model::{ChatMessage, ToolCall},
     moltis_config::schema::{ProviderEntry, ProvidersConfig},
     secrecy::Secret,
     serde_json::Value,
@@ -11,6 +11,8 @@ use {
         sync::mpsc,
     },
 };
+
+const FIREWORKS_KIMI_ROUTER: &str = "accounts/fireworks/routers/kimi-k2p5-turbo";
 
 fn capture_one_json_request() -> (String, mpsc::Receiver<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
@@ -53,6 +55,56 @@ fn capture_one_json_request() -> (String, mpsc::Receiver<Value>) {
     (base_url, rx)
 }
 
+async fn capture_fireworks_kimi_request(strict_tools: Option<bool>) -> Value {
+    let (base_url, body_rx) = capture_one_json_request();
+    let mut config = ProvidersConfig {
+        offered: vec!["fireworks".into()],
+        ..ProvidersConfig::default()
+    };
+    config.providers.insert("fireworks".into(), ProviderEntry {
+        api_key: Some(Secret::new("test-key".into())),
+        base_url: Some(base_url),
+        models: vec![FIREWORKS_KIMI_ROUTER.into()],
+        strict_tools,
+        ..ProviderEntry::default()
+    });
+
+    let mut registry = ProviderRegistry::empty();
+    registry.register_openai_compatible_providers(&config, &HashMap::new(), &HashMap::new());
+    let provider = registry
+        .get(&format!("fireworks::{FIREWORKS_KIMI_ROUTER}"))
+        .expect("registered Fireworks Kimi router model");
+    provider
+        .complete(
+            &[
+                ChatMessage::user("weather?"),
+                ChatMessage::assistant_with_tools(Some("need weather".into()), vec![ToolCall {
+                    id: "call_1".into(),
+                    name: "get_weather".into(),
+                    arguments: serde_json::json!({"location": "Berlin"}),
+                    argument_diagnostic: None,
+                    metadata: None,
+                }]),
+                ChatMessage::tool("call_1", r#"{"temperature":20}"#),
+            ],
+            &[serde_json::json!({
+                "name": "get_weather",
+                "description": "Get weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": { "type": "string" }
+                    },
+                    "required": ["location"]
+                }
+            })],
+        )
+        .await
+        .expect("completion succeeds");
+
+    body_rx.recv().expect("captured request body")
+}
+
 #[tokio::test]
 async fn initial_openai_compat_registration_applies_provider_rewrite_quirks() {
     let (base_url, body_rx) = capture_one_json_request();
@@ -92,4 +144,24 @@ async fn initial_openai_compat_registration_applies_provider_rewrite_quirks() {
         messages[0]["content"],
         "[System Instructions]\nsys\n[End System Instructions]\n\nhello"
     );
+}
+
+#[tokio::test]
+async fn initial_fireworks_kimi_router_registration_applies_model_scoped_quirks() {
+    let body = capture_fireworks_kimi_request(None).await;
+
+    assert_eq!(body["tools"][0]["function"]["strict"], false);
+    let messages = body["messages"].as_array().expect("messages array");
+    let assistant_tool_message = messages
+        .iter()
+        .find(|message| message.get("tool_calls").is_some())
+        .expect("assistant tool-call message");
+    assert_eq!(assistant_tool_message["reasoning_content"], "need weather");
+}
+
+#[tokio::test]
+async fn explicit_strict_tools_overrides_fireworks_kimi_router_default() {
+    let body = capture_fireworks_kimi_request(Some(true)).await;
+
+    assert_eq!(body["tools"][0]["function"]["strict"], true);
 }

@@ -484,11 +484,14 @@ mod tests {
             .find(|d| d.config_name == "deepseek")
             .expect("deepseek entry must exist");
 
-        assert!(!deepseek.capabilities.default_reasoning_content_on_tool_messages);
-        assert_eq!(
-            deepseek.capabilities.reasoning_content_model_prefixes,
-            &["deepseek-v4"]
+        assert!(
+            !deepseek
+                .capabilities
+                .default_reasoning_content_on_tool_messages
         );
+        assert_eq!(deepseek.capabilities.reasoning_content_model_prefixes, &[
+            "deepseek-v4"
+        ]);
     }
 
     #[test]
