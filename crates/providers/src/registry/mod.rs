@@ -2,5 +2,7 @@
 
 mod core;
 pub mod registration;
+#[cfg(test)]
+mod tests;
 
 pub use self::core::*;
