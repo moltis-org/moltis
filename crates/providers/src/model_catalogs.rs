@@ -247,6 +247,10 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         // MiniMax API does not expose a /models endpoint (returns 404).
         supports_model_discovery: false,
         supports_user_name: false,
+        capabilities: OpenAiProviderCapabilities {
+            supports_user_name: false,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         system_message_rewrite: SystemMessageRewriteStrategy::InlineIntoFirstUser,
         ..OpenAiCompatDef::DEFAULT
     },
@@ -493,6 +497,8 @@ mod tests {
 
         assert!(!mistral.supports_user_name);
         assert!(!minimax.supports_user_name);
+        assert!(!mistral.capabilities.supports_user_name);
+        assert!(!minimax.capabilities.supports_user_name);
     }
 
     #[test]
