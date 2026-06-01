@@ -1,6 +1,9 @@
 //! Static model catalogs and OpenAI-compatible provider definitions.
 
-use crate::openai::SystemMessageRewriteStrategy;
+use crate::openai::{
+    CacheControlPolicy, OpenAiProviderCapabilities, ProbeFallbackPolicy, RateLimitPolicy,
+    ReasoningEffortPolicy, SystemMessageRewriteStrategy,
+};
 
 /// Known Anthropic Claude models (model_id, display_name).
 /// Current models listed first, then legacy models.
@@ -173,6 +176,8 @@ pub(crate) struct OpenAiCompatDef {
     pub(crate) system_message_rewrite: SystemMessageRewriteStrategy,
     /// Whether Qwen-family models on this provider need one leading system message.
     pub(crate) qwen_models_require_single_leading_system: bool,
+    /// Explicit provider behavior policies. Never inferred from provider name or URL.
+    pub(crate) capabilities: OpenAiProviderCapabilities,
 }
 
 impl OpenAiCompatDef {
@@ -193,6 +198,7 @@ impl OpenAiCompatDef {
         requires_gemini_tool_call_extra_content: false,
         system_message_rewrite: SystemMessageRewriteStrategy::None,
         qwen_models_require_single_leading_system: false,
+        capabilities: OpenAiProviderCapabilities::DEFAULT,
     };
 }
 
@@ -204,6 +210,11 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.mistral.ai/v1",
         models: MISTRAL_MODELS,
         supports_user_name: false,
+        capabilities: OpenAiProviderCapabilities {
+            supports_user_name: false,
+            rate_limit_policy: RateLimitPolicy::Mistral,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -212,6 +223,11 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "OPENROUTER_BASE_URL",
         default_base_url: "https://openrouter.ai/api/v1",
         default_strict_tools: false,
+        capabilities: OpenAiProviderCapabilities {
+            default_strict_tools: false,
+            cache_control_policy: CacheControlPolicy::OpenRouterAnthropic,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -275,6 +291,12 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         supports_model_discovery: true,
         // NEAR AI does not support the `strict` field in tool schemas.
         default_strict_tools: false,
+        capabilities: OpenAiProviderCapabilities {
+            default_strict_tools: false,
+            omits_strict_tool_field: true,
+            reasoning_effort_policy: ReasoningEffortPolicy::Unsupported,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -292,6 +314,10 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.deepseek.com",
         models: DEEPSEEK_MODELS,
         reasoning_content_model_prefixes: &["deepseek-v4"],
+        capabilities: OpenAiProviderCapabilities {
+            reasoning_effort_policy: ReasoningEffortPolicy::DeepSeek,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -301,6 +327,10 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://api.fireworks.ai/inference/v1",
         models: FIREWORKS_MODELS,
         rejects_null_in_enums: true,
+        capabilities: OpenAiProviderCapabilities {
+            rejects_null_in_enums: true,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -311,6 +341,10 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         requires_api_key: false,
         local_only: true,
         qwen_models_require_single_leading_system: true,
+        capabilities: OpenAiProviderCapabilities {
+            probe_fallback_policy: ProbeFallbackPolicy::OllamaNativeShow,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -339,6 +373,11 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         models: GEMINI_MODELS,
         default_strict_tools: false,
         requires_gemini_tool_call_extra_content: true,
+        capabilities: OpenAiProviderCapabilities {
+            default_strict_tools: false,
+            requires_gemini_tool_call_extra_content: true,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
 ];
@@ -495,6 +534,11 @@ mod tests {
         assert!(nearai.requires_api_key);
         assert!(!nearai.local_only);
         assert!(nearai.supports_model_discovery);
+        assert!(nearai.capabilities.omits_strict_tool_field);
+        assert_eq!(
+            nearai.capabilities.reasoning_effort_policy,
+            ReasoningEffortPolicy::Unsupported
+        );
     }
 
     #[test]

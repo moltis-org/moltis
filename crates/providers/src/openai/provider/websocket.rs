@@ -21,14 +21,14 @@ use crate::{
 
 use moltis_agents::model::{AgentToolControls, ChatMessage, StreamEvent, Usage};
 
-use super::OpenAiProvider;
+use {super::OpenAiProvider, crate::openai::ResponsesWebSocketPolicy};
 
 impl OpenAiProvider {
-    pub(super) fn is_openai_platform_base_url(&self) -> bool {
-        reqwest::Url::parse(&self.base_url)
-            .ok()
-            .and_then(|url| url.host_str().map(ToString::to_string))
-            .is_some_and(|host| host.eq_ignore_ascii_case("api.openai.com"))
+    pub(super) fn supports_responses_websocket(&self) -> bool {
+        matches!(
+            self.capabilities.responses_websocket_policy,
+            ResponsesWebSocketPolicy::OpenAiPlatform
+        )
     }
 
     pub(super) fn responses_websocket_url(&self) -> crate::error::Result<String> {
@@ -62,9 +62,9 @@ impl OpenAiProvider {
         // Fail fast and fall back to SSE before entering the async generator,
         // which avoids cloning messages/tools for the four sync-check paths.
         let (request, pool_key) = match (|| -> crate::error::Result<_> {
-            if !self.is_openai_platform_base_url() {
+            if !self.supports_responses_websocket() {
                 return Err(crate::error::Error::message(format!(
-                    "websocket mode is only supported for api.openai.com (got {})",
+                    "websocket mode is not supported for this provider (base_url: {})",
                     self.base_url
                 )));
             }

@@ -113,6 +113,11 @@ impl ProviderRegistry {
                         provider_label.clone(),
                     )
                     .with_stream_transport(stream_transport)
+                    .with_capabilities(openai::OpenAiProviderCapabilities {
+                        responses_websocket_policy:
+                            openai::ResponsesWebSocketPolicy::OpenAiPlatform,
+                        ..openai::OpenAiProviderCapabilities::DEFAULT
+                    })
                     .with_context_window_overrides(
                         self.global_cw_overrides.clone(),
                         config
@@ -263,6 +268,7 @@ impl ProviderRegistry {
                     provider_label.clone(),
                 )
                 .with_stream_transport(stream_transport)
+                .with_capabilities(def.capabilities)
                 .with_cache_retention(cache_retention)
                 .with_supports_user_name(def.supports_user_name)
                 .with_default_strict_tools(def.default_strict_tools)
@@ -846,6 +852,11 @@ impl ProviderRegistry {
                         provider_label.clone(),
                     )
                     .with_stream_transport(stream_transport)
+                    .with_capabilities(openai::OpenAiProviderCapabilities {
+                        responses_websocket_policy:
+                            openai::ResponsesWebSocketPolicy::OpenAiPlatform,
+                        ..openai::OpenAiProviderCapabilities::DEFAULT
+                    })
                     .with_context_window_overrides(
                         self.global_cw_overrides.clone(),
                         config
@@ -1004,6 +1015,7 @@ impl ProviderRegistry {
                     provider_label.clone(),
                 )
                 .with_stream_transport(stream_transport)
+                .with_capabilities(def.capabilities)
                 .with_cache_retention(cache_retention)
                 .with_context_window_overrides(
                     self.global_cw_overrides.clone(),
