@@ -11,7 +11,7 @@ use {
 const MODEL_LIST_PATH: &str = "/model/list";
 
 #[derive(Debug, Error)]
-pub enum NearAiError {
+pub enum Error {
     #[error("failed to request NEAR AI model list from {endpoint}: {source}")]
     Request {
         endpoint: String,
@@ -179,7 +179,7 @@ fn capabilities_for(model: &NearAiModel) -> ModelCapabilities {
     }
 }
 
-fn parse_models_payload(payload: &str) -> Result<Vec<DiscoveredModel>, NearAiError> {
+fn parse_models_payload(payload: &str) -> Result<Vec<DiscoveredModel>, Error> {
     let parsed: NearAiModelList = serde_json::from_str(payload)?;
     let mut seen = HashSet::new();
     let mut models: Vec<DiscoveredModel> = parsed
@@ -205,7 +205,7 @@ fn parse_models_payload(payload: &str) -> Result<Vec<DiscoveredModel>, NearAiErr
 }
 
 /// Fetch available chat models from NEAR AI Cloud's public model catalog.
-pub async fn fetch_models_from_api(base_url: String) -> Result<Vec<DiscoveredModel>, NearAiError> {
+pub async fn fetch_models_from_api(base_url: String) -> Result<Vec<DiscoveredModel>, Error> {
     let client = crate::shared_http_client();
     let endpoint = model_list_endpoint(&base_url);
     let response = client
@@ -214,7 +214,7 @@ pub async fn fetch_models_from_api(base_url: String) -> Result<Vec<DiscoveredMod
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|source| NearAiError::Request {
+        .map_err(|source| Error::Request {
             endpoint: endpoint.clone(),
             source,
         })?;
@@ -222,16 +222,16 @@ pub async fn fetch_models_from_api(base_url: String) -> Result<Vec<DiscoveredMod
     let body = response
         .text()
         .await
-        .map_err(|source| NearAiError::ResponseBody {
+        .map_err(|source| Error::ResponseBody {
             endpoint: endpoint.clone(),
             source,
         })?;
     if !status.is_success() {
-        return Err(NearAiError::HttpStatus { endpoint, status });
+        return Err(Error::HttpStatus { endpoint, status });
     }
     let models = parse_models_payload(&body)?;
     if models.is_empty() {
-        return Err(NearAiError::NoChatModels);
+        return Err(Error::NoChatModels);
     }
     Ok(models)
 }
@@ -239,13 +239,13 @@ pub async fn fetch_models_from_api(base_url: String) -> Result<Vec<DiscoveredMod
 /// Spawn NEAR AI model discovery in a background thread and return immediately.
 pub fn start_model_discovery(
     base_url: String,
-) -> mpsc::Receiver<Result<Vec<DiscoveredModel>, NearAiError>> {
+) -> mpsc::Receiver<Result<Vec<DiscoveredModel>, Error>> {
     let (tx, rx) = mpsc::sync_channel(1);
     std::thread::spawn(move || {
         let result = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(NearAiError::from)
+            .map_err(Error::from)
             .and_then(|rt| rt.block_on(fetch_models_from_api(base_url)));
         let _ = tx.send(result);
     });
