@@ -1,5 +1,6 @@
 use {
-    super::ProviderRegistry,
+    super::{ProviderRegistry, registration::openai_builtin_capabilities},
+    crate::openai::ResponsesWebSocketPolicy,
     moltis_agents::model::{ChatMessage, ToolCall},
     moltis_config::schema::{ProviderEntry, ProvidersConfig},
     secrecy::Secret,
@@ -13,6 +14,22 @@ use {
 };
 
 const FIREWORKS_KIMI_ROUTER: &str = "accounts/fireworks/routers/kimi-k2p5-turbo";
+
+#[test]
+fn openai_default_base_url_enables_responses_websocket() {
+    assert_eq!(
+        openai_builtin_capabilities(false).responses_websocket_policy,
+        ResponsesWebSocketPolicy::OpenAiPlatform,
+    );
+}
+
+#[test]
+fn openai_custom_base_url_disables_responses_websocket() {
+    assert_eq!(
+        openai_builtin_capabilities(true).responses_websocket_policy,
+        ResponsesWebSocketPolicy::Unsupported,
+    );
+}
 
 fn capture_one_json_request() -> (String, mpsc::Receiver<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
