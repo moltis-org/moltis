@@ -96,11 +96,12 @@ impl OpenAiProvider {
         if let Some(explicit) = self.reasoning_content_override {
             return explicit;
         }
-        if self.default_reasoning_content_on_tool_messages {
+        if self.capabilities.default_reasoning_content_on_tool_messages {
             return true;
         }
         let raw_model = raw_model_id(&self.model).to_ascii_lowercase();
-        self.reasoning_content_model_prefixes
+        self.capabilities
+            .reasoning_content_model_prefixes
             .iter()
             .any(|prefix| raw_model.starts_with(prefix))
     }
@@ -158,7 +159,7 @@ impl OpenAiProvider {
     /// message at the front of the conversation. Qwen-based OpenAI-compatible
     /// backends commonly behave this way (e.g. llama.cpp chat templates).
     fn requires_single_leading_system_message(&self) -> bool {
-        if !self.qwen_models_require_single_leading_system {
+        if !self.capabilities.qwen_models_require_single_leading_system {
             return false;
         }
         raw_model_id(&self.model)
@@ -170,7 +171,7 @@ impl OpenAiProvider {
         if self.requires_single_leading_system_message() {
             return SystemMessageRewriteStrategy::MergeLeadingSystem;
         }
-        self.system_message_rewrite_strategy
+        self.capabilities.system_message_rewrite
     }
 
     /// Rewrite system messages for providers with stricter chat template rules.
@@ -491,7 +492,10 @@ mod tests {
             "custom-ollama-qwen",
             "http://127.0.0.1:11435/v1",
         )
-        .with_qwen_models_require_single_leading_system(true);
+        .with_capabilities(OpenAiProviderCapabilities {
+            qwen_models_require_single_leading_system: true,
+            ..OpenAiProviderCapabilities::DEFAULT
+        });
         let mut body = serde_json::json!({
             "messages": [
                 {"role": "system", "content": "You are a helpful assistant."},
@@ -519,7 +523,10 @@ mod tests {
     #[test]
     fn system_message_rewrite_minimax_inlines_messages_into_first_user_message() {
         let provider = provider("MiniMax-M2.7", "minimax", "https://api.minimax.io/v1")
-            .with_system_message_rewrite(SystemMessageRewriteStrategy::InlineIntoFirstUser);
+            .with_capabilities(OpenAiProviderCapabilities {
+                system_message_rewrite: SystemMessageRewriteStrategy::InlineIntoFirstUser,
+                ..OpenAiProviderCapabilities::DEFAULT
+            });
         let mut body = serde_json::json!({
             "messages": [
                 {"role": "system", "content": "You are a helpful assistant."},
@@ -588,7 +595,10 @@ mod tests {
             "alibaba-coding",
             "https://coding-intl.dashscope.aliyuncs.com/v1",
         )
-        .with_qwen_models_require_single_leading_system(true);
+        .with_capabilities(OpenAiProviderCapabilities {
+            qwen_models_require_single_leading_system: true,
+            ..OpenAiProviderCapabilities::DEFAULT
+        });
         let mut body = serde_json::json!({
             "messages": [
                 {"role": "system", "content": "sys1"},
@@ -814,14 +824,20 @@ mod tests {
     #[test]
     fn moonshot_direct_auto_detects_reasoning_content() {
         let p = provider("kimi-k2.5", "moonshot", "https://api.moonshot.ai/v1")
-            .with_default_reasoning_content(true);
+            .with_capabilities(OpenAiProviderCapabilities {
+                default_reasoning_content_on_tool_messages: true,
+                ..OpenAiProviderCapabilities::DEFAULT
+            });
         assert!(p.requires_reasoning_content_on_tool_messages());
     }
 
     #[test]
     fn deepseek_v4_auto_detects_reasoning_content() {
         let p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com")
-            .with_reasoning_content_model_prefixes(&["deepseek-v4"]);
+            .with_capabilities(OpenAiProviderCapabilities {
+                reasoning_content_model_prefixes: &["deepseek-v4"],
+                ..OpenAiProviderCapabilities::DEFAULT
+            });
         assert!(
             p.requires_reasoning_content_on_tool_messages(),
             "DeepSeek V4 thinking-mode tool calls require reasoning_content replay (issue #959)"
@@ -831,7 +847,10 @@ mod tests {
     #[test]
     fn deepseek_non_v4_does_not_auto_detect_reasoning_content() {
         let p = provider("deepseek-chat", "deepseek", "https://api.deepseek.com")
-            .with_reasoning_content_model_prefixes(&["deepseek-v4"]);
+            .with_capabilities(OpenAiProviderCapabilities {
+                reasoning_content_model_prefixes: &["deepseek-v4"],
+                ..OpenAiProviderCapabilities::DEFAULT
+            });
         assert!(
             !p.requires_reasoning_content_on_tool_messages(),
             "DeepSeek reasoning_content replay should stay scoped to V4 thinking models"
@@ -1008,7 +1027,10 @@ mod tests {
     #[test]
     fn deepseek_v4_replays_persisted_tool_reasoning_content() {
         let p = provider("deepseek-v4-flash", "deepseek", "https://api.deepseek.com")
-            .with_reasoning_content_model_prefixes(&["deepseek-v4"]);
+            .with_capabilities(OpenAiProviderCapabilities {
+                reasoning_content_model_prefixes: &["deepseek-v4"],
+                ..OpenAiProviderCapabilities::DEFAULT
+            });
         let persisted = vec![
             serde_json::json!({"role": "user", "content": "What is the weather?"}),
             serde_json::json!({

@@ -20,7 +20,6 @@ use moltis_agents::model::{
 
 use super::super::{
     OpenAiProvider, OpenAiProviderCapabilities, RateLimitPolicy, ReasoningEffortPolicy,
-    SystemMessageRewriteStrategy,
 };
 
 impl OpenAiProvider {
@@ -56,10 +55,6 @@ impl OpenAiProvider {
             reasoning_content_override: None,
             capabilities: OpenAiProviderCapabilities::DEFAULT,
             model_capabilities,
-            default_reasoning_content_on_tool_messages: false,
-            reasoning_content_model_prefixes: &[],
-            system_message_rewrite_strategy: SystemMessageRewriteStrategy::None,
-            qwen_models_require_single_leading_system: false,
             context_window_global: std::collections::HashMap::new(),
             context_window_provider: std::collections::HashMap::new(),
             probe_timeout_secs: None,
@@ -114,36 +109,6 @@ impl OpenAiProvider {
         self
     }
 
-    #[must_use]
-    pub(crate) fn with_default_reasoning_content(mut self, required: bool) -> Self {
-        self.default_reasoning_content_on_tool_messages = required;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn with_reasoning_content_model_prefixes(
-        mut self,
-        prefixes: &'static [&'static str],
-    ) -> Self {
-        self.reasoning_content_model_prefixes = prefixes;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn with_system_message_rewrite(
-        mut self,
-        strategy: SystemMessageRewriteStrategy,
-    ) -> Self {
-        self.system_message_rewrite_strategy = strategy;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn with_qwen_models_require_single_leading_system(mut self, required: bool) -> Self {
-        self.qwen_models_require_single_leading_system = required;
-        self
-    }
-
     /// Set the completion-based probe timeout override (seconds).
     #[must_use]
     pub fn with_probe_timeout_secs(mut self, secs: Option<u64>) -> Self {
@@ -172,12 +137,6 @@ impl OpenAiProvider {
             reasoning_content_override: self.reasoning_content_override,
             capabilities: self.capabilities,
             model_capabilities: self.model_capabilities,
-            default_reasoning_content_on_tool_messages: self
-                .default_reasoning_content_on_tool_messages,
-            reasoning_content_model_prefixes: self.reasoning_content_model_prefixes,
-            system_message_rewrite_strategy: self.system_message_rewrite_strategy,
-            qwen_models_require_single_leading_system: self
-                .qwen_models_require_single_leading_system,
             context_window_global: self.context_window_global.clone(),
             context_window_provider: self.context_window_provider.clone(),
             probe_timeout_secs: self.probe_timeout_secs,

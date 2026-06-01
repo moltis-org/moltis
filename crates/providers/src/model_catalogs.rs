@@ -160,14 +160,6 @@ pub(crate) struct OpenAiCompatDef {
     /// Also ensures model discovery is always attempted (never short-circuited
     /// by the empty-catalog heuristic).
     pub(crate) local_only: bool,
-    /// Whether assistant tool-call messages need `reasoning_content` on replay.
-    pub(crate) default_reasoning_content_on_tool_messages: bool,
-    /// Raw model-id prefixes that need `reasoning_content` on tool-call replay.
-    pub(crate) reasoning_content_model_prefixes: &'static [&'static str],
-    /// Provider-specific system-message rewrite behavior.
-    pub(crate) system_message_rewrite: SystemMessageRewriteStrategy,
-    /// Whether Qwen-family models on this provider need one leading system message.
-    pub(crate) qwen_models_require_single_leading_system: bool,
     /// Explicit provider behavior policies. Never inferred from provider name or URL.
     pub(crate) capabilities: OpenAiProviderCapabilities,
 }
@@ -182,10 +174,6 @@ impl OpenAiCompatDef {
         supports_model_discovery: true,
         requires_api_key: true,
         local_only: false,
-        default_reasoning_content_on_tool_messages: false,
-        reasoning_content_model_prefixes: &[],
-        system_message_rewrite: SystemMessageRewriteStrategy::None,
-        qwen_models_require_single_leading_system: false,
         capabilities: OpenAiProviderCapabilities::DEFAULT,
     };
 }
@@ -234,9 +222,9 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         supports_model_discovery: false,
         capabilities: OpenAiProviderCapabilities {
             supports_user_name: false,
+            system_message_rewrite: SystemMessageRewriteStrategy::InlineIntoFirstUser,
             ..OpenAiProviderCapabilities::DEFAULT
         },
-        system_message_rewrite: SystemMessageRewriteStrategy::InlineIntoFirstUser,
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -245,7 +233,10 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "MOONSHOT_BASE_URL",
         default_base_url: "https://api.moonshot.ai/v1",
         models: MOONSHOT_MODELS,
-        default_reasoning_content_on_tool_messages: true,
+        capabilities: OpenAiProviderCapabilities {
+            default_reasoning_content_on_tool_messages: true,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -302,9 +293,9 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "DEEPSEEK_BASE_URL",
         default_base_url: "https://api.deepseek.com",
         models: DEEPSEEK_MODELS,
-        reasoning_content_model_prefixes: &["deepseek-v4"],
         capabilities: OpenAiProviderCapabilities {
             reasoning_effort_policy: ReasoningEffortPolicy::DeepSeek,
+            reasoning_content_model_prefixes: &["deepseek-v4"],
             ..OpenAiProviderCapabilities::DEFAULT
         },
         ..OpenAiCompatDef::DEFAULT
@@ -328,9 +319,9 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "http://localhost:11434/v1",
         requires_api_key: false,
         local_only: true,
-        qwen_models_require_single_leading_system: true,
         capabilities: OpenAiProviderCapabilities {
             probe_fallback_policy: ProbeFallbackPolicy::OllamaNativeShow,
+            qwen_models_require_single_leading_system: true,
             ..OpenAiProviderCapabilities::DEFAULT
         },
         ..OpenAiCompatDef::DEFAULT
@@ -350,7 +341,10 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "ALIBABA_CODING_BASE_URL",
         default_base_url: "https://coding-intl.dashscope.aliyuncs.com/v1",
         models: ALIBABA_CODING_MODELS,
-        qwen_models_require_single_leading_system: true,
+        capabilities: OpenAiProviderCapabilities {
+            qwen_models_require_single_leading_system: true,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
@@ -488,8 +482,11 @@ mod tests {
             .find(|d| d.config_name == "deepseek")
             .expect("deepseek entry must exist");
 
-        assert!(!deepseek.default_reasoning_content_on_tool_messages);
-        assert_eq!(deepseek.reasoning_content_model_prefixes, &["deepseek-v4"]);
+        assert!(!deepseek.capabilities.default_reasoning_content_on_tool_messages);
+        assert_eq!(
+            deepseek.capabilities.reasoning_content_model_prefixes,
+            &["deepseek-v4"]
+        );
     }
 
     #[test]

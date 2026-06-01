@@ -55,6 +55,10 @@ pub(crate) struct OpenAiProviderCapabilities {
     pub(crate) omits_strict_tool_field: bool,
     pub(crate) rejects_null_in_enums: bool,
     pub(crate) requires_gemini_tool_call_extra_content: bool,
+    pub(crate) default_reasoning_content_on_tool_messages: bool,
+    pub(crate) reasoning_content_model_prefixes: &'static [&'static str],
+    pub(crate) system_message_rewrite: SystemMessageRewriteStrategy,
+    pub(crate) qwen_models_require_single_leading_system: bool,
     pub(crate) rate_limit_policy: RateLimitPolicy,
     pub(crate) reasoning_effort_policy: ReasoningEffortPolicy,
     pub(crate) cache_control_policy: CacheControlPolicy,
@@ -70,6 +74,10 @@ impl OpenAiProviderCapabilities {
         omits_strict_tool_field: false,
         rejects_null_in_enums: false,
         requires_gemini_tool_call_extra_content: false,
+        default_reasoning_content_on_tool_messages: false,
+        reasoning_content_model_prefixes: &[],
+        system_message_rewrite: SystemMessageRewriteStrategy::None,
+        qwen_models_require_single_leading_system: false,
         rate_limit_policy: RateLimitPolicy::None,
         reasoning_effort_policy: ReasoningEffortPolicy::OpenAi,
         cache_control_policy: CacheControlPolicy::None,
@@ -108,14 +116,6 @@ pub struct OpenAiProvider {
     capabilities: OpenAiProviderCapabilities,
     /// Resolved model capabilities. Never inferred from provider name or URL.
     model_capabilities: ModelCapabilities,
-    /// Whether assistant tool-call messages need `reasoning_content` on replay.
-    default_reasoning_content_on_tool_messages: bool,
-    /// Raw model-id prefixes that need `reasoning_content` on tool-call replay.
-    reasoning_content_model_prefixes: &'static [&'static str],
-    /// Provider-specific system-message rewrite behavior.
-    system_message_rewrite_strategy: SystemMessageRewriteStrategy,
-    /// Whether Qwen-family models on this provider need one leading system message.
-    qwen_models_require_single_leading_system: bool,
     /// Global per-model context window overrides from `[models.<id>]` config.
     context_window_global: std::collections::HashMap<String, u32>,
     /// Provider-scoped per-model context window overrides from
