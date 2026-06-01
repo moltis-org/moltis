@@ -273,8 +273,9 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://cloud-api.near.ai/v1",
         models: &[],
         supports_model_discovery: true,
-        requires_api_key: true,
-        local_only: false,
+        // NEAR AI does not support the `strict` field in tool schemas.
+        default_strict_tools: false,
+        ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
         config_name: "deepinfra",
