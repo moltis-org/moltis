@@ -63,14 +63,12 @@ pub(crate) const ZAI_MODELS: &[(&str, &str)] = &[
     ("glm-4-32b-0414-128k", "GLM-4 32B 128K"),
 ];
 
-/// Whether a model is a Fireworks Fire Pass router for Kimi/Moonshot.
+/// Fireworks Kimi router model-ID prefixes.
 ///
 /// These models proxy through Fireworks to Moonshot's Kimi API, which has
 /// different schema and message requirements (no strict tools, needs
 /// `reasoning_content`). Issue #810.
-pub(crate) fn is_fireworks_kimi_router(def: &OpenAiCompatDef, model_id: &str) -> bool {
-    def.config_name == "fireworks" && model_id.contains("/routers/") && model_id.contains("kimi")
-}
+const FIREWORKS_KIMI_ROUTER_PREFIXES: &[&str] = &["accounts/fireworks/routers/kimi"];
 
 /// Known Fireworks models.
 pub(crate) const FIREWORKS_MODELS: &[(&str, &str)] = &[
@@ -308,6 +306,10 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         models: FIREWORKS_MODELS,
         capabilities: OpenAiProviderCapabilities {
             rejects_null_in_enums: true,
+            // Kimi router models proxy to Moonshot which requires
+            // reasoning_content and rejects strict tool schemas (#810).
+            reasoning_content_model_prefixes: FIREWORKS_KIMI_ROUTER_PREFIXES,
+            non_strict_tools_model_prefixes: FIREWORKS_KIMI_ROUTER_PREFIXES,
             ..OpenAiProviderCapabilities::DEFAULT
         },
         ..OpenAiCompatDef::DEFAULT
@@ -561,43 +563,24 @@ mod tests {
     }
 
     #[test]
-    fn is_fireworks_kimi_router_detects_router_model() {
+    fn fireworks_kimi_router_prefixes_cover_router_models() {
         let fireworks = OPENAI_COMPAT_PROVIDERS
             .iter()
             .find(|d| d.config_name == "fireworks")
             .expect("fireworks entry must exist");
-        assert!(is_fireworks_kimi_router(
-            fireworks,
-            "accounts/fireworks/routers/kimi-k2p5-turbo"
-        ));
-    }
 
-    #[test]
-    fn is_fireworks_kimi_router_rejects_native_model() {
-        let fireworks = OPENAI_COMPAT_PROVIDERS
-            .iter()
-            .find(|d| d.config_name == "fireworks")
-            .expect("fireworks entry must exist");
-        assert!(!is_fireworks_kimi_router(
-            fireworks,
-            "accounts/fireworks/models/glm-5p1"
-        ));
-        assert!(!is_fireworks_kimi_router(
-            fireworks,
-            "accounts/fireworks/models/kimi-k2p5"
-        ));
-    }
+        let prefixes = fireworks.capabilities.reasoning_content_model_prefixes;
+        let matches = |id: &str| prefixes.iter().any(|p| id.starts_with(p));
 
-    #[test]
-    fn is_fireworks_kimi_router_rejects_other_providers() {
-        let deepseek = OPENAI_COMPAT_PROVIDERS
-            .iter()
-            .find(|d| d.config_name == "deepseek")
-            .expect("deepseek entry must exist");
-        assert!(!is_fireworks_kimi_router(
-            deepseek,
-            "accounts/fireworks/routers/kimi-k2p5-turbo"
-        ));
+        assert!(matches("accounts/fireworks/routers/kimi-k2p5-turbo"));
+        assert!(!matches("accounts/fireworks/models/glm-5p1"));
+        assert!(!matches("accounts/fireworks/models/kimi-k2p5"));
+
+        // non_strict_tools_model_prefixes should use the same prefixes
+        assert_eq!(
+            fireworks.capabilities.reasoning_content_model_prefixes,
+            fireworks.capabilities.non_strict_tools_model_prefixes,
+        );
     }
 
     /// Cross-validate that every provider registered in this crate appears in

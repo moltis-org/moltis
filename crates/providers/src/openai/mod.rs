@@ -57,6 +57,12 @@ pub(crate) struct OpenAiProviderCapabilities {
     pub(crate) requires_gemini_tool_call_extra_content: bool,
     pub(crate) default_reasoning_content_on_tool_messages: bool,
     pub(crate) reasoning_content_model_prefixes: &'static [&'static str],
+    /// Model-id prefixes that should disable strict tool schemas.
+    ///
+    /// Checked by `needs_strict_tools()` before falling back to
+    /// `default_strict_tools`. Used for Fireworks Kimi router models
+    /// that proxy to Moonshot (which rejects strict schemas).
+    pub(crate) non_strict_tools_model_prefixes: &'static [&'static str],
     pub(crate) system_message_rewrite: SystemMessageRewriteStrategy,
     pub(crate) qwen_models_require_single_leading_system: bool,
     pub(crate) rate_limit_policy: RateLimitPolicy,
@@ -76,6 +82,7 @@ impl OpenAiProviderCapabilities {
         requires_gemini_tool_call_extra_content: false,
         default_reasoning_content_on_tool_messages: false,
         reasoning_content_model_prefixes: &[],
+        non_strict_tools_model_prefixes: &[],
         system_message_rewrite: SystemMessageRewriteStrategy::None,
         qwen_models_require_single_leading_system: false,
         rate_limit_policy: RateLimitPolicy::None,

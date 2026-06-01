@@ -89,6 +89,17 @@ impl OpenAiProvider {
         if let Some(explicit) = self.strict_tools_override {
             return explicit;
         }
+        if !self.capabilities.non_strict_tools_model_prefixes.is_empty() {
+            let raw_model = raw_model_id(&self.model).to_ascii_lowercase();
+            if self
+                .capabilities
+                .non_strict_tools_model_prefixes
+                .iter()
+                .any(|prefix| raw_model.starts_with(prefix))
+            {
+                return false;
+            }
+        }
         self.capabilities.default_strict_tools
     }
 
