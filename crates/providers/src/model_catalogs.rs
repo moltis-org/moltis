@@ -160,18 +160,10 @@ pub(crate) struct OpenAiCompatDef {
     /// Also ensures model discovery is always attempted (never short-circuited
     /// by the empty-catalog heuristic).
     pub(crate) local_only: bool,
-    /// Whether this provider accepts the OpenAI-compatible `name` field on user messages.
-    pub(crate) supports_user_name: bool,
-    /// Default strict tool schema mode before config overrides.
-    pub(crate) default_strict_tools: bool,
     /// Whether assistant tool-call messages need `reasoning_content` on replay.
     pub(crate) default_reasoning_content_on_tool_messages: bool,
     /// Raw model-id prefixes that need `reasoning_content` on tool-call replay.
     pub(crate) reasoning_content_model_prefixes: &'static [&'static str],
-    /// Whether this provider rejects `null` entries inside JSON Schema enum arrays.
-    pub(crate) rejects_null_in_enums: bool,
-    /// Whether provider metadata should be nested as Gemini `extra_content`.
-    pub(crate) requires_gemini_tool_call_extra_content: bool,
     /// Provider-specific system-message rewrite behavior.
     pub(crate) system_message_rewrite: SystemMessageRewriteStrategy,
     /// Whether Qwen-family models on this provider need one leading system message.
@@ -190,12 +182,8 @@ impl OpenAiCompatDef {
         supports_model_discovery: true,
         requires_api_key: true,
         local_only: false,
-        supports_user_name: true,
-        default_strict_tools: true,
         default_reasoning_content_on_tool_messages: false,
         reasoning_content_model_prefixes: &[],
-        rejects_null_in_enums: false,
-        requires_gemini_tool_call_extra_content: false,
         system_message_rewrite: SystemMessageRewriteStrategy::None,
         qwen_models_require_single_leading_system: false,
         capabilities: OpenAiProviderCapabilities::DEFAULT,
@@ -209,7 +197,6 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "MISTRAL_BASE_URL",
         default_base_url: "https://api.mistral.ai/v1",
         models: MISTRAL_MODELS,
-        supports_user_name: false,
         capabilities: OpenAiProviderCapabilities {
             supports_user_name: false,
             rate_limit_policy: RateLimitPolicy::Mistral,
@@ -222,7 +209,6 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_key: "OPENROUTER_API_KEY",
         env_base_url_key: "OPENROUTER_BASE_URL",
         default_base_url: "https://openrouter.ai/api/v1",
-        default_strict_tools: false,
         capabilities: OpenAiProviderCapabilities {
             default_strict_tools: false,
             cache_control_policy: CacheControlPolicy::OpenRouterAnthropic,
@@ -246,7 +232,6 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         models: MINIMAX_MODELS,
         // MiniMax API does not expose a /models endpoint (returns 404).
         supports_model_discovery: false,
-        supports_user_name: false,
         capabilities: OpenAiProviderCapabilities {
             supports_user_name: false,
             ..OpenAiProviderCapabilities::DEFAULT
@@ -293,9 +278,8 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         default_base_url: "https://cloud-api.near.ai/v1",
         models: &[],
         supports_model_discovery: true,
-        // NEAR AI does not support the `strict` field in tool schemas.
-        default_strict_tools: false,
         capabilities: OpenAiProviderCapabilities {
+            // NEAR AI does not support the `strict` field in tool schemas.
             default_strict_tools: false,
             omits_strict_tool_field: true,
             reasoning_effort_policy: ReasoningEffortPolicy::Unsupported,
@@ -330,7 +314,6 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "FIREWORKS_BASE_URL",
         default_base_url: "https://api.fireworks.ai/inference/v1",
         models: FIREWORKS_MODELS,
-        rejects_null_in_enums: true,
         capabilities: OpenAiProviderCapabilities {
             rejects_null_in_enums: true,
             ..OpenAiProviderCapabilities::DEFAULT
@@ -375,8 +358,6 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         env_base_url_key: "GEMINI_BASE_URL",
         default_base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
         models: GEMINI_MODELS,
-        default_strict_tools: false,
-        requires_gemini_tool_call_extra_content: true,
         capabilities: OpenAiProviderCapabilities {
             default_strict_tools: false,
             requires_gemini_tool_call_extra_content: true,
@@ -495,8 +476,6 @@ mod tests {
             .find(|d| d.config_name == "minimax")
             .expect("minimax entry must exist");
 
-        assert!(!mistral.supports_user_name);
-        assert!(!minimax.supports_user_name);
         assert!(!mistral.capabilities.supports_user_name);
         assert!(!minimax.capabilities.supports_user_name);
     }

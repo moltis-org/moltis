@@ -644,8 +644,7 @@ mod tests {
             "accounts/fireworks/models/glm-5p1",
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
-        )
-        .with_rejects_null_in_enums(true);
+        );
         assert!(
             p.needs_strict_tools(),
             "Native Fireworks models should use strict tools by default"
@@ -659,7 +658,10 @@ mod tests {
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
         )
-        .with_rejects_null_in_enums(true);
+        .with_capabilities(OpenAiProviderCapabilities {
+            rejects_null_in_enums: true,
+            ..OpenAiProviderCapabilities::DEFAULT
+        });
         assert!(
             p.rejects_null_in_enums(),
             "Fireworks should reject null in enums (issue #848)"
@@ -673,7 +675,10 @@ mod tests {
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
         )
-        .with_rejects_null_in_enums(true);
+        .with_capabilities(OpenAiProviderCapabilities {
+            rejects_null_in_enums: true,
+            ..OpenAiProviderCapabilities::DEFAULT
+        });
         assert!(
             p.rejects_null_in_enums(),
             "Fireworks provider flag should reject null in enums (issue #848)"
@@ -1054,7 +1059,10 @@ mod tests {
             "mistral",
             "https://api.mistral.ai/v1",
         )
-        .with_supports_user_name(false);
+        .with_capabilities(OpenAiProviderCapabilities {
+            supports_user_name: false,
+            ..OpenAiProviderCapabilities::DEFAULT
+        });
         assert!(!p.capabilities.supports_user_name);
 
         let messages = vec![ChatMessage::user_named("hello", "rokku")];
@@ -1070,8 +1078,12 @@ mod tests {
     /// MiniMax rejects chat histories containing inconsistent user `name` values.
     #[test]
     fn minimax_provider_strips_user_names_from_group_chat_history() {
-        let p = provider("MiniMax-M2.7", "minimax", "https://api.minimax.io/v1")
-            .with_supports_user_name(false);
+        let p = provider("MiniMax-M2.7", "minimax", "https://api.minimax.io/v1").with_capabilities(
+            OpenAiProviderCapabilities {
+                supports_user_name: false,
+                ..OpenAiProviderCapabilities::DEFAULT
+            },
+        );
         assert!(!p.capabilities.supports_user_name);
 
         let messages = vec![
@@ -1114,11 +1126,15 @@ mod tests {
         assert_eq!(p.bearer_auth_header(), "Bearer test-key");
     }
 
-    /// `with_supports_user_name(false)` overrides the default.
+    /// Explicit capabilities can override the default.
     #[test]
     fn supports_user_name_can_be_overridden() {
-        let p = provider("gpt-4o", "openai", "https://api.openai.com/v1")
-            .with_supports_user_name(false);
+        let p = provider("gpt-4o", "openai", "https://api.openai.com/v1").with_capabilities(
+            OpenAiProviderCapabilities {
+                supports_user_name: false,
+                ..OpenAiProviderCapabilities::DEFAULT
+            },
+        );
 
         let messages = vec![ChatMessage::user_named("hello", "Alice")];
         let serialized = p.serialize_messages_for_request(&messages);
@@ -1136,7 +1152,10 @@ mod tests {
             "fireworks",
             "https://api.fireworks.ai/inference/v1",
         )
-        .with_rejects_null_in_enums(true);
+        .with_capabilities(OpenAiProviderCapabilities {
+            rejects_null_in_enums: true,
+            ..OpenAiProviderCapabilities::DEFAULT
+        });
 
         let messages = vec![
             ChatMessage::user("What's the weather?"),

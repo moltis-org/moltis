@@ -136,21 +136,6 @@ impl OpenAiProvider {
         self
     }
 
-    /// Set whether this provider accepts the `name` field on user messages.
-    ///
-    /// Defaults to `true` for most providers; auto-set to `false` for Mistral.
-    #[must_use]
-    pub fn with_supports_user_name(mut self, supported: bool) -> Self {
-        self.capabilities.supports_user_name = supported;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn with_default_strict_tools(mut self, strict: bool) -> Self {
-        self.capabilities.default_strict_tools = strict;
-        self
-    }
-
     #[must_use]
     pub(crate) fn with_default_reasoning_content(mut self, required: bool) -> Self {
         self.default_reasoning_content_on_tool_messages = required;
@@ -163,18 +148,6 @@ impl OpenAiProvider {
         prefixes: &'static [&'static str],
     ) -> Self {
         self.reasoning_content_model_prefixes = prefixes;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn with_rejects_null_in_enums(mut self, rejects: bool) -> Self {
-        self.capabilities.rejects_null_in_enums = rejects;
-        self
-    }
-
-    #[must_use]
-    pub(crate) fn with_gemini_tool_call_extra_content(mut self, required: bool) -> Self {
-        self.capabilities.requires_gemini_tool_call_extra_content = required;
         self
     }
 
