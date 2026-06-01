@@ -37,6 +37,12 @@ pub(crate) enum ProbeFallbackPolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProbeOutputCapPolicy {
+    MaxTokens,
+    ReasoningModelsUseMaxCompletionTokens,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResponsesWebSocketPolicy {
     Unsupported,
     OpenAiPlatform,
@@ -53,6 +59,7 @@ pub(crate) struct OpenAiProviderCapabilities {
     pub(crate) reasoning_effort_policy: ReasoningEffortPolicy,
     pub(crate) cache_control_policy: CacheControlPolicy,
     pub(crate) probe_fallback_policy: ProbeFallbackPolicy,
+    pub(crate) probe_output_cap_policy: ProbeOutputCapPolicy,
     pub(crate) responses_websocket_policy: ResponsesWebSocketPolicy,
 }
 
@@ -67,6 +74,7 @@ impl OpenAiProviderCapabilities {
         reasoning_effort_policy: ReasoningEffortPolicy::OpenAi,
         cache_control_policy: CacheControlPolicy::None,
         probe_fallback_policy: ProbeFallbackPolicy::None,
+        probe_output_cap_policy: ProbeOutputCapPolicy::ReasoningModelsUseMaxCompletionTokens,
         responses_websocket_policy: ResponsesWebSocketPolicy::Unsupported,
     };
 }

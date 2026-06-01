@@ -20,7 +20,7 @@ use moltis_agents::model::{
 
 use {
     super::OpenAiProvider,
-    crate::openai::{ProbeFallbackPolicy, ReasoningEffortPolicy},
+    crate::openai::{ProbeFallbackPolicy, ProbeOutputCapPolicy},
 };
 
 fn is_chat_endpoint_unsupported_model_error(body_text: &str) -> bool {
@@ -42,11 +42,11 @@ fn should_warn_on_api_error(status: reqwest::StatusCode, body_text: &str) -> boo
 
 impl OpenAiProvider {
     fn apply_probe_output_cap_chat(&self, body: &mut serde_json::Value) {
-        let uses_max_completion_tokens = !matches!(
-            self.capabilities.reasoning_effort_policy,
-            ReasoningEffortPolicy::Unsupported
-        ) && self.model_capabilities.reasoning;
-        if uses_max_completion_tokens {
+        if matches!(
+            self.capabilities.probe_output_cap_policy,
+            ProbeOutputCapPolicy::ReasoningModelsUseMaxCompletionTokens
+        ) && self.model_capabilities.reasoning
+        {
             // GPT-5 and reasoning models need a higher minimum output cap.
             // Values below ~10 can trigger 400 errors on some models.
             body["max_completion_tokens"] = serde_json::json!(16);
@@ -606,7 +606,7 @@ mod tests {
             "https://cloud-api.near.ai/v1",
         )
         .with_capabilities(crate::openai::OpenAiProviderCapabilities {
-            reasoning_effort_policy: ReasoningEffortPolicy::Unsupported,
+            probe_output_cap_policy: ProbeOutputCapPolicy::MaxTokens,
             ..crate::openai::OpenAiProviderCapabilities::DEFAULT
         });
         let mut body = serde_json::json!({

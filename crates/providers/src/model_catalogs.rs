@@ -1,8 +1,8 @@
 //! Static model catalogs and OpenAI-compatible provider definitions.
 
 use crate::openai::{
-    CacheControlPolicy, OpenAiProviderCapabilities, ProbeFallbackPolicy, RateLimitPolicy,
-    ReasoningEffortPolicy, SystemMessageRewriteStrategy,
+    CacheControlPolicy, OpenAiProviderCapabilities, ProbeFallbackPolicy, ProbeOutputCapPolicy,
+    RateLimitPolicy, ReasoningEffortPolicy, SystemMessageRewriteStrategy,
 };
 
 /// Known Anthropic Claude models (model_id, display_name).
@@ -282,6 +282,7 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
             // NEAR AI does not support the `strict` field in tool schemas.
             default_strict_tools: false,
             omits_strict_tool_field: true,
+            probe_output_cap_policy: ProbeOutputCapPolicy::MaxTokens,
             reasoning_effort_policy: ReasoningEffortPolicy::Unsupported,
             ..OpenAiProviderCapabilities::DEFAULT
         },
@@ -520,6 +521,10 @@ mod tests {
         assert!(!nearai.local_only);
         assert!(nearai.supports_model_discovery);
         assert!(nearai.capabilities.omits_strict_tool_field);
+        assert_eq!(
+            nearai.capabilities.probe_output_cap_policy,
+            ProbeOutputCapPolicy::MaxTokens
+        );
         assert_eq!(
             nearai.capabilities.reasoning_effort_policy,
             ReasoningEffortPolicy::Unsupported
