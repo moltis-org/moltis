@@ -143,7 +143,7 @@ mod tests {
             mode: CompactionMode::RecencyPreserving,
             ..Default::default()
         };
-        let err = super::super::run_compaction(&history, &config, None)
+        let err = super::super::run_compaction(&history, &config, None, 50_000)
             .await
             .unwrap_err();
         match err {
@@ -229,7 +229,7 @@ mod tests {
             tool_prune_char_threshold: 20,
             ..Default::default()
         };
-        let outcome = super::super::run_compaction(&history, &config, None)
+        let outcome = super::super::run_compaction(&history, &config, None, 50_000)
             .await
             .unwrap();
         let result = outcome.history;

@@ -6,7 +6,10 @@
 //! the pre-PR behaviour or need maximum token reduction.
 
 use {
-    moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent, Usage, values_to_chat_messages},
+    moltis_agents::model::{
+        ChatMessage, LlmProvider, StreamEvent, Usage,
+        values_to_chat_messages_with_tool_result_limit,
+    },
     moltis_config::{CompactionConfig, CompactionMode},
     serde_json::Value,
     tokio_stream::StreamExt,
@@ -27,6 +30,7 @@ pub(super) async fn run(
     history: &[Value],
     config: &CompactionConfig,
     provider: &dyn LlmProvider,
+    max_tool_result_bytes: usize,
 ) -> Result<CompactionOutcome, CompactionRunError> {
     let mut summary_messages = vec![ChatMessage::system(
         "You are a conversation summarizer. The messages that follow are a \
@@ -34,7 +38,10 @@ pub(super) async fn run(
          and context. After the conversation, you will receive a final \
          instruction.",
     )];
-    summary_messages.extend(values_to_chat_messages(history));
+    summary_messages.extend(values_to_chat_messages_with_tool_result_limit(
+        history,
+        max_tool_result_bytes,
+    ));
     summary_messages.push(ChatMessage::user(
         "Summarize the conversation above into a concise form. Output only \
          the summary, no preamble.",
@@ -108,13 +115,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn llm_replace_uses_provider_cap_for_summary_input_tool_results() {
+        const NEEDLE: &str = "summary-input-needle-after-prune-threshold";
+        let history = vec![
+            json!({"role": "user", "content": "inspect tool output"}),
+            json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "exec", "arguments": "{}"}
+                }]
+            }),
+            json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "exec",
+                "success": true,
+                "result": format!("{}{}", "x".repeat(240), NEEDLE)
+            }),
+            json!({"role": "user", "content": "summarize that"}),
+        ];
+        let config = CompactionConfig {
+            mode: CompactionMode::LlmReplace,
+            tool_prune_char_threshold: 20,
+            ..Default::default()
+        };
+        let provider = StubProvider::new_ok("stubbed summary body").with_needle(NEEDLE);
+
+        let outcome = super::super::run_compaction(&history, &config, Some(&provider), 1024)
+            .await
+            .expect("llm_replace succeeds with stub provider");
+
+        assert_eq!(outcome.effective_mode, CompactionMode::LlmReplace);
+        assert!(
+            provider.saw_needle(),
+            "llm_replace summary prompt should use provider cap, not the stored-history prune threshold"
+        );
+    }
+
+    #[tokio::test]
     async fn llm_replace_mode_without_provider_returns_provider_required() {
         let history = sample_history();
         let config = CompactionConfig {
             mode: CompactionMode::LlmReplace,
             ..Default::default()
         };
-        let err = super::super::run_compaction(&history, &config, None)
+        let err = super::super::run_compaction(&history, &config, None, 50_000)
             .await
             .unwrap_err();
         match err {
@@ -131,7 +178,7 @@ mod tests {
             ..Default::default()
         };
         let provider = StubProvider::new_ok("stubbed summary body");
-        let outcome = super::super::run_compaction(&history, &config, Some(&provider))
+        let outcome = super::super::run_compaction(&history, &config, Some(&provider), 50_000)
             .await
             .expect("llm_replace succeeds with stub provider");
         assert_eq!(outcome.effective_mode, CompactionMode::LlmReplace);

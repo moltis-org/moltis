@@ -14,7 +14,10 @@
 //! `safeguard` compaction.
 
 use {
-    moltis_agents::model::{ChatMessage, LlmProvider, StreamEvent, Usage, values_to_chat_messages},
+    moltis_agents::model::{
+        ChatMessage, LlmProvider, StreamEvent, Usage,
+        values_to_chat_messages_with_tool_result_limit,
+    },
     moltis_config::{CompactionConfig, CompactionMode},
     serde_json::Value,
     tokio_stream::StreamExt,
@@ -206,6 +209,7 @@ pub(super) async fn run(
     config: &CompactionConfig,
     context_window: u32,
     provider: &dyn LlmProvider,
+    max_tool_result_bytes: usize,
 ) -> Result<CompactionOutcome, CompactionRunError> {
     // Warn once if the user configured `summary_model` or a non-default
     // `max_summary_tokens`: those fields are reserved for the auxiliary
@@ -251,7 +255,10 @@ pub(super) async fn run(
     // (prevents prompt injection via role prefixes in user content), and a
     // final user directive selects the template.
     let mut summary_messages = vec![ChatMessage::system(STRUCTURED_SYSTEM_INSTRUCTIONS)];
-    summary_messages.extend(values_to_chat_messages(middle));
+    summary_messages.extend(values_to_chat_messages_with_tool_result_limit(
+        middle,
+        max_tool_result_bytes,
+    ));
     summary_messages.push(match previous_summary {
         Some(prev) => ChatMessage::user(iterative_instructions(prev)),
         None => ChatMessage::user(first_compaction_instructions()),
@@ -365,13 +372,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn structured_mode_uses_provider_cap_for_summary_input_tool_results() {
+        const NEEDLE: &str = "structured-summary-input-needle-after-prune-threshold";
+        let mut history = vec![
+            mk_user("inspect tool output"),
+            json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_1",
+                    "function": {"name": "exec", "arguments": "{}"}
+                }]
+            }),
+            json!({
+                "role": "tool_result",
+                "tool_call_id": "call_1",
+                "tool_name": "exec",
+                "success": true,
+                "result": format!("{}{}", "x".repeat(240), NEEDLE)
+            }),
+        ];
+        for i in 0..5 {
+            history.push(mk_user(&format!("tail user {i}")));
+            history.push(mk_assistant(&format!("tail assistant {i}")));
+        }
+
+        let config = CompactionConfig {
+            mode: CompactionMode::Structured,
+            protect_head: 1,
+            protect_tail_min: 2,
+            tool_prune_char_threshold: 20,
+            ..Default::default()
+        };
+        let provider = StubProvider::new_ok("## Goal\nstub output").with_needle(NEEDLE);
+
+        let outcome = super::super::run_compaction(&history, &config, Some(&provider), 1024)
+            .await
+            .expect("structured succeeds with stub provider");
+
+        assert_eq!(outcome.effective_mode, CompactionMode::Structured);
+        assert!(
+            provider.saw_needle(),
+            "structured summary prompt should use provider cap, not the stored-history prune threshold"
+        );
+    }
+
+    #[tokio::test]
     async fn structured_mode_without_provider_returns_provider_required() {
         let history = sample_history();
         let config = CompactionConfig {
             mode: CompactionMode::Structured,
             ..Default::default()
         };
-        let err = super::super::run_compaction(&history, &config, None)
+        let err = super::super::run_compaction(&history, &config, None, 50_000)
             .await
             .unwrap_err();
         match err {
@@ -396,7 +449,7 @@ mod tests {
         };
         let provider =
             StubProvider::new_ok("## Goal\nTest compaction\n## Progress\n### Done\nAll the things");
-        let outcome = super::super::run_compaction(&history, &config, Some(&provider))
+        let outcome = super::super::run_compaction(&history, &config, Some(&provider), 50_000)
             .await
             .expect("structured succeeds with stub provider");
 
@@ -459,7 +512,7 @@ mod tests {
             ..Default::default()
         };
         let provider = StubProvider::new_ok("## Goal\nstub output").with_needle(NEEDLE);
-        let _ = super::super::run_compaction(&history, &config, Some(&provider))
+        let _ = super::super::run_compaction(&history, &config, Some(&provider), 50_000)
             .await
             .expect("structured succeeds with stub provider");
 
@@ -484,7 +537,7 @@ mod tests {
             ..Default::default()
         };
         let provider = StubProvider::new_error("simulated provider outage");
-        let outcome = super::super::run_compaction(&history, &config, Some(&provider))
+        let outcome = super::super::run_compaction(&history, &config, Some(&provider), 50_000)
             .await
             .expect("structured falls back to recency_preserving on llm error");
 
@@ -526,7 +579,7 @@ mod tests {
             ..Default::default()
         };
         let provider = StubProvider::new_empty_summary();
-        let outcome = super::super::run_compaction(&history, &config, Some(&provider))
+        let outcome = super::super::run_compaction(&history, &config, Some(&provider), 50_000)
             .await
             .expect("structured falls back on empty summary");
         assert_eq!(outcome.effective_mode, CompactionMode::RecencyPreserving);

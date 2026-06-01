@@ -32,7 +32,10 @@ use crate::{
 
 use {super::*, crate::service::build_persisted_assistant_message};
 
-use {crate::memory_tools::AgentScopedMemoryWriter, moltis_agents::model::values_to_chat_messages};
+use {
+    crate::memory_tools::AgentScopedMemoryWriter,
+    moltis_agents::model::values_to_chat_messages_with_tool_result_limit,
+};
 
 impl LiveChatService {
     #[tracing::instrument(skip(self, params), fields(session_id))]
@@ -1162,6 +1165,7 @@ impl LiveChatService {
             // Capture config values before persona is moved into the agent future.
             let auto_extract_interval = persona.config.memory.auto_extract_interval;
             let extraction_write_mode = persona.config.memory.agent_write_mode;
+            let extraction_max_tool_result_bytes = persona.config.tools.max_tool_result_bytes;
             let auto_title_enabled = persona.config.chat.auto_title;
             let agent_fut = async {
                 if stream_only {
@@ -1292,6 +1296,7 @@ impl LiveChatService {
                     // Uses config values captured before persona was moved.
                     let interval = auto_extract_interval;
                     let write_mode = extraction_write_mode;
+                    let max_tool_result_bytes = extraction_max_tool_result_bytes;
                     // A "turn" = user + assistant = 2 messages.
                     let turn_number = count / 2;
                     if interval > 0
@@ -1315,7 +1320,10 @@ impl LiveChatService {
                                 Vec::new()
                             };
                         if !recent.is_empty() {
-                            let chat_msgs = values_to_chat_messages(&recent);
+                            let chat_msgs = values_to_chat_messages_with_tool_result_limit(
+                                &recent,
+                                max_tool_result_bytes,
+                            );
                             let agent_id = session_agent_id_clone.clone();
                             let mm = Arc::clone(mm);
                             let prov = Arc::clone(&provider_for_extraction);

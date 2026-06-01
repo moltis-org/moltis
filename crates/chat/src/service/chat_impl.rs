@@ -18,7 +18,7 @@ use {
 use {
     moltis_agents::{
         ChatMessage, UserContent,
-        model::values_to_chat_messages,
+        model::values_to_chat_messages_with_tool_result_limit,
         prompt::{
             build_system_prompt_minimal_runtime_details,
             build_system_prompt_with_session_runtime_details,
@@ -517,13 +517,17 @@ impl ChatService for LiveChatService {
         if let Some(mm) = self.state.memory_manager()
             && let Ok(provider) = self.resolve_provider(&session_key, &history).await
         {
-            let write_mode = moltis_config::discover_and_load().memory.agent_write_mode;
+            let config = moltis_config::discover_and_load();
+            let write_mode = config.memory.agent_write_mode;
             if !memory_write_mode_allows_save(write_mode) {
                 debug!(
                     "compact: agent-authored memory writes disabled, skipping silent memory turn"
                 );
             } else {
-                let chat_history_for_memory = values_to_chat_messages(&history);
+                let chat_history_for_memory = values_to_chat_messages_with_tool_result_limit(
+                    &history,
+                    config.tools.max_tool_result_bytes,
+                );
                 let writer: Arc<dyn moltis_agents::memory_writer::MemoryWriter> =
                     Arc::new(AgentScopedMemoryWriter::new(
                         Arc::clone(mm),
@@ -563,10 +567,14 @@ impl ChatService for LiveChatService {
         // error in that case.
         let provider_arc = self.resolve_provider(&session_key, &history).await.ok();
 
-        let outcome =
-            compaction_run::run_compaction(&history, compaction_config, provider_arc.as_deref())
-                .await
-                .map_err(|e| ServiceError::message(e.to_string()))?;
+        let outcome = compaction_run::run_compaction(
+            &history,
+            compaction_config,
+            provider_arc.as_deref(),
+            persona.config.tools.max_tool_result_bytes,
+        )
+        .await
+        .map_err(|e| ServiceError::message(e.to_string()))?;
 
         let compacted = outcome.history.clone();
 
@@ -1233,10 +1241,14 @@ impl ChatService for LiveChatService {
             .collect();
 
         // Build the full messages array: system prompt + conversation history.
-        // `values_to_chat_messages` handles `tool_result` → `tool` conversion.
+        // `values_to_chat_messages_with_tool_result_limit` handles `tool_result` →
+        // `tool` conversion and keeps persisted tool output within provider limits.
         let mut messages = Vec::with_capacity(1 + history.len());
         messages.push(ChatMessage::system(system_prompt));
-        messages.extend(values_to_chat_messages(&history));
+        messages.extend(values_to_chat_messages_with_tool_result_limit(
+            &history,
+            persona.config.tools.max_tool_result_bytes,
+        ));
 
         let openai_messages: Vec<Value> = messages.iter().map(|m| m.to_openai_value()).collect();
         let message_count = openai_messages.len();
