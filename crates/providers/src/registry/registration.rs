@@ -102,6 +102,9 @@ impl ProviderRegistry {
                 .unwrap_or(ProviderStreamTransport::Sse);
 
             for model in models {
+                let caps = model
+                    .capabilities
+                    .unwrap_or_else(|| ModelCapabilities::infer(&model.id));
                 if self.has_provider_model(&provider_label, &model.id) {
                     continue;
                 }
@@ -118,6 +121,7 @@ impl ProviderRegistry {
                             openai::ResponsesWebSocketPolicy::OpenAiPlatform,
                         ..openai::OpenAiProviderCapabilities::DEFAULT
                     })
+                    .with_model_capabilities(caps)
                     .with_context_window_overrides(
                         self.global_cw_overrides.clone(),
                         config
@@ -133,9 +137,7 @@ impl ProviderRegistry {
                         display_name: model.display_name.clone(),
                         created_at: model.created_at,
                         recommended: model.recommended,
-                        capabilities: model
-                            .capabilities
-                            .unwrap_or_else(|| ModelCapabilities::infer(&model.id)),
+                        capabilities: caps,
                     },
                     provider,
                 );
@@ -167,6 +169,9 @@ impl ProviderRegistry {
                 .unwrap_or_default();
 
             for model in models {
+                let caps = model
+                    .capabilities
+                    .unwrap_or_else(|| ModelCapabilities::infer(&model.id));
                 if self.has_provider_model(&provider_label, &model.id) {
                     continue;
                 }
@@ -184,9 +189,7 @@ impl ProviderRegistry {
                         display_name: model.display_name.clone(),
                         created_at: model.created_at,
                         recommended: model.recommended,
-                        capabilities: model
-                            .capabilities
-                            .unwrap_or_else(|| ModelCapabilities::infer(&model.id)),
+                        capabilities: caps,
                     },
                     provider,
                 );
@@ -246,6 +249,9 @@ impl ProviderRegistry {
             };
 
             for model in models {
+                let caps = model
+                    .capabilities
+                    .unwrap_or_else(|| ModelCapabilities::infer(&model.id));
                 if self.has_provider_model(&provider_label, &model.id) {
                     continue;
                 }
@@ -269,6 +275,7 @@ impl ProviderRegistry {
                 )
                 .with_stream_transport(stream_transport)
                 .with_capabilities(def.capabilities)
+                .with_model_capabilities(caps)
                 .with_cache_retention(cache_retention)
                 .with_supports_user_name(def.supports_user_name)
                 .with_default_strict_tools(def.default_strict_tools)
@@ -308,9 +315,7 @@ impl ProviderRegistry {
                         display_name: model.display_name.clone(),
                         created_at: model.created_at,
                         recommended: model.recommended,
-                        capabilities: model
-                            .capabilities
-                            .unwrap_or_else(|| ModelCapabilities::infer(&model.id)),
+                        capabilities: caps,
                     },
                     Arc::new(oai),
                 );
@@ -339,6 +344,9 @@ impl ProviderRegistry {
             let custom_tool_mode = entry.tool_mode;
 
             for model in models {
+                let caps = model
+                    .capabilities
+                    .unwrap_or_else(|| ModelCapabilities::infer(&model.id));
                 if self.has_provider_model(name, &model.id) {
                     continue;
                 }
@@ -349,6 +357,7 @@ impl ProviderRegistry {
                     name.clone(),
                 )
                 .with_stream_transport(entry.stream_transport)
+                .with_model_capabilities(caps)
                 .with_reasoning_content_model_prefixes(CUSTOM_REASONING_CONTENT_MODEL_PREFIXES)
                 .with_qwen_models_require_single_leading_system(true)
                 .with_context_window_overrides(
@@ -368,9 +377,7 @@ impl ProviderRegistry {
                         display_name: model.display_name.clone(),
                         created_at: model.created_at,
                         recommended: model.recommended,
-                        capabilities: model
-                            .capabilities
-                            .unwrap_or_else(|| ModelCapabilities::infer(&model.id)),
+                        capabilities: caps,
                     },
                     Arc::new(oai),
                 );
@@ -857,6 +864,7 @@ impl ProviderRegistry {
                             openai::ResponsesWebSocketPolicy::OpenAiPlatform,
                         ..openai::OpenAiProviderCapabilities::DEFAULT
                     })
+                    .with_model_capabilities(caps)
                     .with_context_window_overrides(
                         self.global_cw_overrides.clone(),
                         config
@@ -1016,6 +1024,7 @@ impl ProviderRegistry {
                 )
                 .with_stream_transport(stream_transport)
                 .with_capabilities(def.capabilities)
+                .with_model_capabilities(caps)
                 .with_cache_retention(cache_retention)
                 .with_context_window_overrides(
                     self.global_cw_overrides.clone(),
@@ -1136,6 +1145,7 @@ impl ProviderRegistry {
                 )
                 .with_stream_transport(entry.stream_transport)
                 .with_cache_retention(entry.cache_retention)
+                .with_model_capabilities(caps)
                 .with_reasoning_content_model_prefixes(CUSTOM_REASONING_CONTENT_MODEL_PREFIXES)
                 .with_qwen_models_require_single_leading_system(true)
                 .with_context_window_overrides(

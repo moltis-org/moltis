@@ -10,8 +10,7 @@ use {
 use tracing::debug;
 
 use crate::{
-    context_window_for_model_with_config, http::retry_after_ms_from_headers,
-    supports_tools_for_model, supports_vision_for_model,
+    ModelCapabilities, context_window_for_model_with_config, http::retry_after_ms_from_headers,
 };
 
 use moltis_agents::model::{
@@ -26,6 +25,7 @@ use super::super::{
 
 impl OpenAiProvider {
     pub fn new(api_key: secrecy::Secret<String>, model: String, base_url: String) -> Self {
+        let model_capabilities = ModelCapabilities::infer(&model);
         Self {
             api_key,
             model,
@@ -44,6 +44,7 @@ impl OpenAiProvider {
                 responses_websocket_policy: super::super::ResponsesWebSocketPolicy::OpenAiPlatform,
                 ..OpenAiProviderCapabilities::DEFAULT
             },
+            model_capabilities,
             default_reasoning_content_on_tool_messages: false,
             reasoning_content_model_prefixes: &[],
             system_message_rewrite_strategy: SystemMessageRewriteStrategy::None,
@@ -60,6 +61,7 @@ impl OpenAiProvider {
         base_url: String,
         provider_name: String,
     ) -> Self {
+        let model_capabilities = ModelCapabilities::infer(&model);
         Self {
             api_key,
             model,
@@ -75,6 +77,7 @@ impl OpenAiProvider {
             strict_tools_override: None,
             reasoning_content_override: None,
             capabilities: OpenAiProviderCapabilities::DEFAULT,
+            model_capabilities,
             default_reasoning_content_on_tool_messages: false,
             reasoning_content_model_prefixes: &[],
             system_message_rewrite_strategy: SystemMessageRewriteStrategy::None,
@@ -88,6 +91,12 @@ impl OpenAiProvider {
     #[must_use]
     pub(crate) fn with_capabilities(mut self, capabilities: OpenAiProviderCapabilities) -> Self {
         self.capabilities = capabilities;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn with_model_capabilities(mut self, capabilities: ModelCapabilities) -> Self {
+        self.model_capabilities = capabilities;
         self
     }
 
@@ -418,6 +427,7 @@ impl LlmProvider for OpenAiProvider {
             strict_tools_override: self.strict_tools_override,
             reasoning_content_override: self.reasoning_content_override,
             capabilities: self.capabilities,
+            model_capabilities: self.model_capabilities,
             default_reasoning_content_on_tool_messages: self
                 .default_reasoning_content_on_tool_messages,
             reasoning_content_model_prefixes: self.reasoning_content_model_prefixes,
@@ -436,7 +446,7 @@ impl LlmProvider for OpenAiProvider {
         match self.tool_mode_override {
             Some(moltis_config::ToolMode::Native) => true,
             Some(moltis_config::ToolMode::Text | moltis_config::ToolMode::Off) => false,
-            Some(moltis_config::ToolMode::Auto) | None => supports_tools_for_model(&self.model),
+            Some(moltis_config::ToolMode::Auto) | None => self.model_capabilities.tools,
         }
     }
 
@@ -453,7 +463,7 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn supports_vision(&self) -> bool {
-        supports_vision_for_model(&self.model)
+        self.model_capabilities.vision
     }
 
     async fn model_metadata(&self) -> anyhow::Result<ModelMetadata> {

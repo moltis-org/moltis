@@ -12,7 +12,6 @@ use crate::{
         parse_tool_calls, split_responses_instructions_and_input, strip_think_tags,
         to_responses_api_tools,
     },
-    raw_model_id,
 };
 
 use moltis_agents::model::{
@@ -43,15 +42,10 @@ fn should_warn_on_api_error(status: reqwest::StatusCode, body_text: &str) -> boo
 
 impl OpenAiProvider {
     fn apply_probe_output_cap_chat(&self, body: &mut serde_json::Value) {
-        let raw = raw_model_id(&self.model).to_ascii_lowercase();
-        let capability = raw.rsplit('/').next().unwrap_or(raw.as_str());
         let uses_max_completion_tokens = !matches!(
             self.capabilities.reasoning_effort_policy,
             ReasoningEffortPolicy::Unsupported
-        ) && (capability.starts_with("gpt-5")
-            || capability.starts_with("o1")
-            || capability.starts_with("o3")
-            || capability.starts_with("o4"));
+        ) && self.model_capabilities.reasoning;
         if uses_max_completion_tokens {
             // GPT-5 and reasoning models need a higher minimum output cap.
             // Values below ~10 can trigger 400 errors on some models.
@@ -642,6 +636,42 @@ mod tests {
 
         assert_eq!(body["max_completion_tokens"], 16);
         assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn probe_output_cap_uses_resolved_model_reasoning_capability() {
+        let provider = provider("custom-reasoner", "custom", "https://example.invalid/v1")
+            .with_model_capabilities(crate::ModelCapabilities {
+                reasoning: true,
+                ..crate::ModelCapabilities::infer("custom-reasoner")
+            });
+        let mut body = serde_json::json!({
+            "model": "custom-reasoner",
+            "messages": [{"role": "user", "content": "ping"}],
+        });
+
+        provider.apply_probe_output_cap_chat(&mut body);
+
+        assert_eq!(body["max_completion_tokens"], 16);
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn probe_output_cap_does_not_infer_reasoning_from_model_name_when_capability_false() {
+        let provider = provider("gpt-5.2", "custom", "https://example.invalid/v1")
+            .with_model_capabilities(crate::ModelCapabilities {
+                reasoning: false,
+                ..crate::ModelCapabilities::infer("gpt-5.2")
+            });
+        let mut body = serde_json::json!({
+            "model": "gpt-5.2",
+            "messages": [{"role": "user", "content": "ping"}],
+        });
+
+        provider.apply_probe_output_cap_chat(&mut body);
+
+        assert_eq!(body["max_tokens"], 1);
+        assert!(body.get("max_completion_tokens").is_none());
     }
 
     #[test]

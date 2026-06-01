@@ -9,7 +9,7 @@ pub use {
     },
 };
 
-use moltis_agents::model::ModelMetadata;
+use {crate::ModelCapabilities, moltis_agents::model::ModelMetadata};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RateLimitPolicy {
@@ -98,6 +98,8 @@ pub struct OpenAiProvider {
     reasoning_content_override: Option<bool>,
     /// Explicit provider behavior policies. Never inferred from provider name or URL.
     capabilities: OpenAiProviderCapabilities,
+    /// Resolved model capabilities. Never inferred from provider name or URL.
+    model_capabilities: ModelCapabilities,
     /// Whether assistant tool-call messages need `reasoning_content` on replay.
     default_reasoning_content_on_tool_messages: bool,
     /// Raw model-id prefixes that need `reasoning_content` on tool-call replay.
