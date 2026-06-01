@@ -21,7 +21,7 @@ Configure providers through the web UI or directly in configuration files.
 | **MiniMax** | `minimax` | `MINIMAX_API_KEY` | Streaming, tools |
 | **Moonshot (Kimi)** | `moonshot` | `MOONSHOT_API_KEY` | Streaming, tools, model discovery |
 | **Venice** | `venice` | `VENICE_API_KEY` | Streaming, tools, model discovery |
-| **NEAR AI Cloud** | `nearai` | `NEARAI_API_KEY` | Streaming, tools, TEE-aware model discovery |
+| **NEAR AI Cloud** | `nearai` | `NEARAI_API_KEY` | Streaming, TEE-aware model discovery |
 | **Z.AI (Zhipu)** | `zai` | `Z_API_KEY` | Streaming, tools, model discovery |
 | **Z.AI Coding Plan** | `zai-code` | `Z_CODE_API_KEY` | Streaming, tools, model discovery (Coding plan billing endpoint) |
 
@@ -136,6 +136,9 @@ Gemini supports native tool calling, vision/multimodal inputs, streaming, and au
 
 NEAR AI Cloud exposes an OpenAI-compatible chat completions API with a public
 model catalog that includes TEE and attestation metadata.
+The API accepts OpenAI-compatible tool schemas, but the public model catalog does
+not currently expose per-model tool capability metadata. Moltis therefore does
+not mark auto-discovered NEAR AI Cloud models as tool-capable.
 
 1. Get an API key from [cloud.near.ai](https://cloud.near.ai/).
 2. Set `NEARAI_API_KEY` in your environment.
