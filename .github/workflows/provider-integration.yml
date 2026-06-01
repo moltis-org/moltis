@@ -29,6 +29,8 @@ on:
         required: false
       OPENAI_API_KEY:
         required: false
+      NEARAI_API_KEY:
+        required: false
       MISTRAL_API_KEY:
         required: false
       OPENROUTER_API_KEY:
