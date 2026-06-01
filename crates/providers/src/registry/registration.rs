@@ -1022,6 +1022,12 @@ impl ProviderRegistry {
                 .with_capabilities(def.capabilities)
                 .with_model_capabilities(caps)
                 .with_cache_retention(cache_retention)
+                .with_default_reasoning_content(def.default_reasoning_content_on_tool_messages)
+                .with_reasoning_content_model_prefixes(def.reasoning_content_model_prefixes)
+                .with_system_message_rewrite(def.system_message_rewrite)
+                .with_qwen_models_require_single_leading_system(
+                    def.qwen_models_require_single_leading_system,
+                )
                 .with_context_window_overrides(
                     self.global_cw_overrides.clone(),
                     config

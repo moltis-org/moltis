@@ -25,34 +25,12 @@ use super::super::{
 
 impl OpenAiProvider {
     pub fn new(api_key: secrecy::Secret<String>, model: String, base_url: String) -> Self {
-        let model_capabilities = ModelCapabilities::infer(&model);
-        Self {
-            api_key,
-            model,
-            base_url,
-            provider_name: "openai".into(),
-            client: crate::shared_http_client(),
-            stream_transport: ProviderStreamTransport::Sse,
-            wire_api: WireApi::ChatCompletions,
-            metadata_cache: tokio::sync::OnceCell::new(),
-            tool_mode_override: None,
-            reasoning_effort: None,
-            cache_retention: moltis_config::CacheRetention::Short,
-            strict_tools_override: None,
-            reasoning_content_override: None,
-            capabilities: OpenAiProviderCapabilities {
+        Self::new_with_name(api_key, model, base_url, "openai".into()).with_capabilities(
+            OpenAiProviderCapabilities {
                 responses_websocket_policy: super::super::ResponsesWebSocketPolicy::OpenAiPlatform,
                 ..OpenAiProviderCapabilities::DEFAULT
             },
-            model_capabilities,
-            default_reasoning_content_on_tool_messages: false,
-            reasoning_content_model_prefixes: &[],
-            system_message_rewrite_strategy: SystemMessageRewriteStrategy::None,
-            qwen_models_require_single_leading_system: false,
-            context_window_global: std::collections::HashMap::new(),
-            context_window_provider: std::collections::HashMap::new(),
-            probe_timeout_secs: None,
-        }
+        )
     }
 
     pub fn new_with_name(
@@ -173,6 +151,39 @@ impl OpenAiProvider {
         self
     }
 
+    /// Create a copy of this provider with a fresh metadata cache.
+    ///
+    /// Centralises the field-by-field copy so callers like
+    /// `with_reasoning_effort` stay in sync when new fields are added.
+    fn fork(&self) -> Self {
+        Self {
+            api_key: self.api_key.clone(),
+            model: self.model.clone(),
+            base_url: self.base_url.clone(),
+            provider_name: self.provider_name.clone(),
+            client: self.client,
+            stream_transport: self.stream_transport,
+            wire_api: self.wire_api,
+            metadata_cache: tokio::sync::OnceCell::new(),
+            tool_mode_override: self.tool_mode_override,
+            reasoning_effort: self.reasoning_effort,
+            cache_retention: self.cache_retention,
+            strict_tools_override: self.strict_tools_override,
+            reasoning_content_override: self.reasoning_content_override,
+            capabilities: self.capabilities,
+            model_capabilities: self.model_capabilities,
+            default_reasoning_content_on_tool_messages: self
+                .default_reasoning_content_on_tool_messages,
+            reasoning_content_model_prefixes: self.reasoning_content_model_prefixes,
+            system_message_rewrite_strategy: self.system_message_rewrite_strategy,
+            qwen_models_require_single_leading_system: self
+                .qwen_models_require_single_leading_system,
+            context_window_global: self.context_window_global.clone(),
+            context_window_provider: self.context_window_provider.clone(),
+            probe_timeout_secs: self.probe_timeout_secs,
+        }
+    }
+
     /// Set context window override maps extracted from config.
     ///
     /// `global` comes from `[models.<id>].context_window` and
@@ -194,12 +205,12 @@ impl OpenAiProvider {
             RateLimitPolicy::Mistral => {},
         }
 
-        static LAST_MISTRAL_REQUEST: std::sync::OnceLock<
+        static LAST_RATE_LIMITED_REQUEST: std::sync::OnceLock<
             tokio::sync::Mutex<Option<tokio::time::Instant>>,
         > = std::sync::OnceLock::new();
         const MIN_INTERVAL: Duration = Duration::from_millis(1_250);
 
-        let mut last_request = LAST_MISTRAL_REQUEST
+        let mut last_request = LAST_RATE_LIMITED_REQUEST
             .get_or_init(|| tokio::sync::Mutex::new(None))
             .lock()
             .await;
@@ -254,7 +265,7 @@ impl OpenAiProvider {
                     model = %self.model,
                     attempt = attempt + 1,
                     delay_ms = delay.as_millis(),
-                    "retrying Mistral request after rate limit"
+                    "retrying request after rate limit"
                 );
                 tokio::time::sleep(delay).await;
                 continue;
@@ -383,32 +394,9 @@ impl LlmProvider for OpenAiProvider {
         ) {
             return None;
         }
-        Some(std::sync::Arc::new(Self {
-            api_key: self.api_key.clone(),
-            model: self.model.clone(),
-            base_url: self.base_url.clone(),
-            provider_name: self.provider_name.clone(),
-            client: self.client,
-            stream_transport: self.stream_transport,
-            metadata_cache: tokio::sync::OnceCell::new(),
-            tool_mode_override: self.tool_mode_override,
-            reasoning_effort: Some(effort),
-            wire_api: self.wire_api,
-            cache_retention: self.cache_retention,
-            context_window_global: self.context_window_global.clone(),
-            context_window_provider: self.context_window_provider.clone(),
-            strict_tools_override: self.strict_tools_override,
-            reasoning_content_override: self.reasoning_content_override,
-            capabilities: self.capabilities,
-            model_capabilities: self.model_capabilities,
-            default_reasoning_content_on_tool_messages: self
-                .default_reasoning_content_on_tool_messages,
-            reasoning_content_model_prefixes: self.reasoning_content_model_prefixes,
-            system_message_rewrite_strategy: self.system_message_rewrite_strategy,
-            qwen_models_require_single_leading_system: self
-                .qwen_models_require_single_leading_system,
-            probe_timeout_secs: self.probe_timeout_secs,
-        }))
+        let mut forked = self.fork();
+        forked.reasoning_effort = Some(effort);
+        Some(std::sync::Arc::new(forked))
     }
 
     fn id(&self) -> &str {

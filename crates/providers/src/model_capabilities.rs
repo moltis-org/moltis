@@ -174,6 +174,9 @@ pub fn is_chat_capable_model(model_id: &str) -> bool {
 /// exposing mixed catalogs report accurate tool support.
 pub fn supports_tools_for_model(model_id: &str) -> bool {
     let id = capability_model_id(model_id);
+    if !is_chat_capable_model(model_id) {
+        return false;
+    }
     // Legacy completions-only models — no tool support
     if id.starts_with("babbage") || id.starts_with("davinci") {
         return false;
@@ -538,6 +541,10 @@ mod tests {
         assert!(!supports_tools_for_model("tts-1"));
         assert!(!supports_tools_for_model("tts-1-hd"));
         assert!(!supports_tools_for_model("whisper-1"));
+        assert!(!supports_tools_for_model("chatgpt-image-latest"));
+        assert!(!supports_tools_for_model("gpt-4o-audio-preview"));
+        assert!(!supports_tools_for_model("gemini-3.1-flash-live-preview"));
+        assert!(!supports_tools_for_model("gemini-3.1-flash-image-preview"));
         assert!(!supports_tools_for_model("text-embedding-3-large"));
         assert!(!supports_tools_for_model("claude-embeddings-v1"));
         assert!(!supports_tools_for_model("omni-moderation-latest"));
