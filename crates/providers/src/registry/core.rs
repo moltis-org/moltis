@@ -267,7 +267,11 @@ pub async fn fetch_discoverable_models(
         } else if def.config_name == "nearai" {
             tasks.push((
                 def.config_name.into(),
-                Box::pin(nearai::fetch_models_from_api(base_url)),
+                Box::pin(async move {
+                    nearai::fetch_models_from_api(base_url)
+                        .await
+                        .map_err(anyhow::Error::from)
+                }),
             ));
         } else {
             tasks.push((
@@ -484,6 +488,21 @@ pub type PendingDiscoveries = Vec<(
     String,
     std::sync::mpsc::Receiver<anyhow::Result<Vec<DiscoveredModel>>>,
 )>;
+
+fn start_nearai_discovery(
+    base_url: String,
+) -> std::sync::mpsc::Receiver<anyhow::Result<Vec<DiscoveredModel>>> {
+    let typed_rx = nearai::start_model_discovery(base_url);
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let result = typed_rx
+            .recv()
+            .map_err(anyhow::Error::from)
+            .and_then(|result| result.map_err(anyhow::Error::from));
+        let _ = tx.send(result);
+    });
+    rx
+}
 
 impl ProviderRegistry {
     #[must_use]
@@ -1021,10 +1040,7 @@ impl ProviderRegistry {
                         ollama::start_ollama_discovery(&base_url),
                     ));
                 } else if def.config_name == "nearai" {
-                    pending.push((
-                        def.config_name.into(),
-                        nearai::start_model_discovery(base_url),
-                    ));
+                    pending.push((def.config_name.into(), start_nearai_discovery(base_url)));
                 } else {
                     pending.push((
                         def.config_name.into(),
