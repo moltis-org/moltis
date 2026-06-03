@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use {async_trait::async_trait, serde_json::Value};
 
-use {moltis_channels::ChannelReplyTarget, moltis_tools::sandbox::SandboxRouter};
+use {
+    moltis_channels::{ChannelReplyTarget, ChannelStatusLogEntry},
+    moltis_tools::sandbox::SandboxRouter,
+};
 
 use crate::state::GatewayState;
 
@@ -55,13 +58,11 @@ impl ChatRuntime for GatewayChatRuntime {
 
     // ── Channel status log ──────────────────────────────────────────────────
 
-    async fn push_channel_status_log(&self, session_key: &str, message: String) {
-        self.state
-            .push_channel_status_log(session_key, message)
-            .await;
+    async fn push_channel_status_log(&self, session_key: &str, entry: ChannelStatusLogEntry) {
+        self.state.push_channel_status_log(session_key, entry).await;
     }
 
-    async fn drain_channel_status_log(&self, session_key: &str) -> Vec<String> {
+    async fn drain_channel_status_log(&self, session_key: &str) -> Vec<ChannelStatusLogEntry> {
         self.state.drain_channel_status_log(session_key).await
     }
 

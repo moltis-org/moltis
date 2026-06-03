@@ -265,6 +265,8 @@ pub async fn handle_verified_interaction_webhook(
             chat_id: channel_id.to_string(),
             message_id: None,
             thread_id: None,
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         };
         match sink.dispatch_interaction(action_id, reply_to).await {
             Ok(_) => {},
@@ -315,6 +317,8 @@ pub async fn handle_verified_command_webhook(
             chat_id: channel_id,
             message_id: None,
             thread_id: None,
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         };
         let sender = if user_id.is_empty() {
             None
@@ -496,6 +500,8 @@ pub async fn handle_interaction_webhook(
             chat_id: channel_id.to_string(),
             message_id: None,
             thread_id: None,
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         };
         match sink.dispatch_interaction(action_id, reply_to).await {
             Ok(_) => {},

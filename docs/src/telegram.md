@@ -84,6 +84,7 @@ offered = ["telegram"]
 | `stream_mode` | no | `"edit_in_place"` | Streaming mode: `"edit_in_place"` or `"off"` |
 | `edit_throttle_ms` | no | `300` | Minimum milliseconds between streaming edit updates |
 | `stream_notify_on_complete` | no | `false` | Send a completion notification after streaming finishes |
+| `activity_log` | no | `"all"` | Show tool/status Activity log entries after replies: `"all"`, `"errors_only"`, or `"off"` |
 | `stream_min_initial_chars` | no | `30` | Minimum characters before sending the first streamed message |
 
 ```admonish important title="Allowlist values are strings"
@@ -113,31 +114,39 @@ agent_id = "research"
 otp_self_approval = true
 stream_mode = "edit_in_place"
 edit_throttle_ms = 300
+activity_log = "errors_only"
 ```
 
-### Per-User and Per-Channel Model and Agent Overrides
+### Per-User and Per-Channel Overrides
 
-You can override the model or agent for specific users or group chats:
+You can override the model, agent, or Activity log visibility for specific users
+or group chats:
 
 ```toml
 [channels.telegram.my-bot]
 token = "..."
 model = "claude-sonnet-4-20250514"
 model_provider = "anthropic"
+activity_log = "all"
 
 [channels.telegram.my-bot.channel_overrides."-1001234567890"]
 model = "gpt-4o"
 model_provider = "openai"
 agent_id = "triage"
+activity_log = "off"
 
 [channels.telegram.my-bot.user_overrides."123456789"]
 model = "claude-opus-4-20250514"
 model_provider = "anthropic"
 agent_id = "research"
+activity_log = "errors_only"
 ```
 
+`activity_log = "all"` preserves the default behavior, `"errors_only"` sends
+only failed tool/status entries, and `"off"` disables Activity log messages.
 User overrides take priority over channel overrides, which take priority over
-the account default, for both model selection and agent selection.
+the account default, for model selection, agent selection, and Activity log
+visibility.
 
 ## Access Control
 

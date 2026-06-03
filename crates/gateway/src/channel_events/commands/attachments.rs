@@ -18,7 +18,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
     state: &Arc<tokio::sync::OnceCell<Arc<GatewayState>>>,
     text: &str,
     attachments: Vec<ChannelAttachment>,
-    reply_to: ChannelReplyTarget,
+    mut reply_to: ChannelReplyTarget,
     meta: ChannelMessageMeta,
 ) {
     if attachments.is_empty() {
@@ -31,6 +31,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
         warn!("channel dispatch_to_chat_with_attachments: gateway not ready");
         return;
     };
+    reply_to.sender_id = meta.sender_id.clone();
 
     // Start typing immediately so image preprocessing/session setup doesn't
     // delay channel feedback.
@@ -90,7 +91,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
 
     // Persist channel binding (ensure session row exists first --
     // set_channel_binding is an UPDATE so the row must already be present).
-    if let Ok(binding_json) = serde_json::to_string(&reply_to)
+    if let Ok(binding_json) = serde_json::to_string(&reply_to.for_persistence())
         && let Some(ref session_meta) = state.services.session_metadata
     {
         let entry = session_meta.get(&session_key).await;
@@ -177,7 +178,12 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
                 model.clone()
             };
             let msg = format!("Using {display}. Use /model to change.");
-            state.push_channel_status_log(&session_key, msg).await;
+            state
+                .push_channel_status_log(
+                    &session_key,
+                    moltis_channels::ChannelStatusLogEntry::info(msg),
+                )
+                .await;
         }
     } else {
         let session_has_model = if let Some(ref sm) = state.services.session_metadata {
@@ -206,7 +212,12 @@ pub(in crate::channel_events) async fn dispatch_to_chat_with_attachments(
                 .and_then(|v| v.as_str())
                 .unwrap_or(id);
             let msg = format!("Using {display}. Use /model to change.");
-            state.push_channel_status_log(&session_key, msg).await;
+            state
+                .push_channel_status_log(
+                    &session_key,
+                    moltis_channels::ChannelStatusLogEntry::info(msg),
+                )
+                .await;
         }
     }
 

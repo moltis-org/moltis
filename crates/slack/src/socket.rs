@@ -277,6 +277,8 @@ async fn command_events_callback(
             chat_id: event.channel_id.to_string(),
             message_id: None,
             thread_id: None,
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         };
         match sink
             .dispatch_command(&full_command, reply_to, Some(&sender_id))
@@ -344,6 +346,8 @@ async fn interaction_events_callback(
             chat_id: channel_id,
             message_id: None,
             thread_id: None,
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         };
         match sink.dispatch_interaction(&action_id, reply_to).await {
             Ok(_response) => {
@@ -558,6 +562,8 @@ pub(crate) async fn handle_inbound(
             chat_id: channel_id.to_string(),
             message_id: thread_ts,
             thread_id: None,
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         };
 
         let meta = ChannelMessageMeta {

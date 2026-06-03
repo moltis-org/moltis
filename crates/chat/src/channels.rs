@@ -8,10 +8,20 @@ use {
     tracing::{debug, info, warn},
 };
 
-use moltis_sessions::store::SessionStore;
+use {
+    moltis_channels::{ChannelReplyTarget, ChannelStatusLogEntry, plugin::ChannelOutbound},
+    moltis_sessions::store::SessionStore,
+};
 
 use crate::{
-    agent_loop::ChannelReplyTargetKey, compaction_run, error, runtime::ChatRuntime, types::*,
+    agent_loop::ChannelReplyTargetKey,
+    channel_logbook::{
+        ChannelLogbookFollowUp, format_channel_logbook_follow_up, format_logbook_html_for_mode,
+        send_channel_logbook_follow_up, send_channel_logbook_follow_up_to_targets,
+    },
+    compaction_run, error,
+    runtime::ChatRuntime,
+    types::*,
 };
 
 /// Build the SPA URL for a push notification click-through.
@@ -130,12 +140,11 @@ pub(crate) async fn deliver_channel_replies(
     };
     // Drain buffered status log entries to build a logbook suffix.
     let status_log = state.drain_channel_status_log(session_key).await;
-    let logbook_html = format_logbook_html(&status_log);
-    if !streamed_targets.is_empty() && !logbook_html.is_empty() {
+    if !streamed_targets.is_empty() {
         send_channel_logbook_follow_up_to_targets(
             Arc::clone(&outbound),
             streamed_targets,
-            &logbook_html,
+            &status_log,
         )
         .await;
     }
@@ -161,62 +170,6 @@ pub(crate) async fn deliver_channel_replies(
         streamed_target_keys,
     )
     .await;
-}
-
-/// Format buffered status log entries into a Telegram expandable blockquote HTML.
-/// Returns an empty string if there are no entries.
-fn format_logbook_html(entries: &[String]) -> String {
-    if entries.is_empty() {
-        return String::new();
-    }
-    let mut html = String::from("<blockquote expandable>\n\u{1f4cb} <b>Activity log</b>\n");
-    for entry in entries {
-        // Escape HTML entities in the entry text.
-        let escaped = entry
-            .replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;");
-        html.push_str(&format!("\u{2022} {escaped}\n"));
-    }
-    html.push_str("</blockquote>");
-    html
-}
-
-async fn send_channel_logbook_follow_up_to_targets(
-    outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
-    targets: Vec<moltis_channels::ChannelReplyTarget>,
-    logbook_html: &str,
-) {
-    if targets.is_empty() || logbook_html.is_empty() {
-        return;
-    }
-
-    let html = logbook_html.to_string();
-    let mut tasks = Vec::with_capacity(targets.len());
-    for target in targets {
-        let outbound = Arc::clone(&outbound);
-        let html = html.clone();
-        let to = target.outbound_to().into_owned();
-        tasks.push(tokio::spawn(async move {
-            if let Err(e) = outbound
-                .send_html(&target.account_id, &to, &html, None)
-                .await
-            {
-                warn!(
-                    account_id = target.account_id,
-                    chat_id = target.chat_id,
-                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                    "failed to send logbook follow-up: {e}"
-                );
-            }
-        }));
-    }
-
-    for task in tasks {
-        if let Err(e) = task.await {
-            warn!(error = %e, "channel logbook follow-up task join failed");
-        }
-    }
 }
 
 fn format_channel_retry_message(error_obj: &Value, retry_after: Duration) -> String {
@@ -413,12 +366,11 @@ pub(crate) async fn deliver_channel_error(
     };
 
     let error_text = format_channel_error_message(error_obj);
-    let logbook_html = format_logbook_html(&status_log);
     let mut tasks = Vec::with_capacity(targets.len());
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let error_text = error_text.clone();
-        let logbook_html = logbook_html.clone();
+        let logbook_html = format_logbook_html_for_mode(&status_log, target.activity_log);
         let to = target.outbound_to().into_owned();
         tasks.push(tokio::spawn(async move {
             let reply_to = target.message_id.as_deref();
@@ -456,25 +408,25 @@ pub(crate) async fn deliver_channel_error(
 }
 
 async fn deliver_channel_replies_to_targets(
-    outbound: Arc<dyn moltis_channels::plugin::ChannelOutbound>,
-    targets: Vec<moltis_channels::ChannelReplyTarget>,
+    outbound: Arc<dyn ChannelOutbound>,
+    targets: Vec<ChannelReplyTarget>,
     session_key: &str,
     text: &str,
     state: Arc<dyn ChatRuntime>,
     desired_reply_medium: ReplyMedium,
-    status_log: Vec<String>,
+    status_log: Vec<ChannelStatusLogEntry>,
     streamed_target_keys: &HashSet<ChannelReplyTargetKey>,
 ) {
     let session_key = session_key.to_string();
     let text = text.to_string();
-    let logbook_html = format_logbook_html(&status_log);
     let mut tasks = Vec::with_capacity(targets.len());
     for target in targets {
         let outbound = Arc::clone(&outbound);
         let state = Arc::clone(&state);
         let session_key = session_key.clone();
         let text = text.clone();
-        let logbook_html = logbook_html.clone();
+        let logbook_html = format_logbook_html_for_mode(&status_log, target.activity_log);
+        let logbook_follow_up = format_channel_logbook_follow_up(&status_log, &target);
         // Text was already delivered via edit-in-place streaming — skip text
         // caption/follow-up and only send the TTS voice audio.
         let text_already_streamed =
@@ -504,19 +456,13 @@ async fn deliver_channel_replies_to_targets(
                                     "failed to send channel voice reply: {e}"
                                 );
                             }
-                            // Send logbook as a follow-up if present.
-                            if !logbook_html.is_empty()
-                                && let Err(e) = outbound
-                                    .send_html(&target.account_id, &to, &logbook_html, None)
-                                    .await
-                            {
-                                warn!(
-                                    account_id = target.account_id,
-                                    chat_id = target.chat_id,
-                                    thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                    "failed to send logbook follow-up: {e}"
-                                );
-                            }
+                            send_logbook_follow_up_if_present(
+                                outbound.as_ref(),
+                                &target,
+                                &to,
+                                logbook_follow_up.clone(),
+                            )
+                            .await;
                         } else {
                             // Check if transcript fits as Telegram caption (when feature enabled).
                             // When telegram feature is disabled, this evaluates to false and we
@@ -541,19 +487,13 @@ async fn deliver_channel_replies_to_targets(
                                         "failed to send channel voice reply: {e}"
                                     );
                                 }
-                                // Send logbook as a follow-up if present.
-                                if !logbook_html.is_empty()
-                                    && let Err(e) = outbound
-                                        .send_html(&target.account_id, &to, &logbook_html, None)
-                                        .await
-                                {
-                                    warn!(
-                                        account_id = target.account_id,
-                                        chat_id = target.chat_id,
-                                        thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                        "failed to send logbook follow-up: {e}"
-                                    );
-                                }
+                                send_logbook_follow_up_if_present(
+                                    outbound.as_ref(),
+                                    &target,
+                                    &to,
+                                    logbook_follow_up.clone(),
+                                )
+                                .await;
                             } else {
                                 // Transcript too long for a caption — send voice
                                 // without caption, then the full text as a follow-up.
@@ -597,18 +537,13 @@ async fn deliver_channel_replies_to_targets(
                     None if text_already_streamed => {
                         // TTS disabled/failed but text was already streamed —
                         // only send logbook follow-up if present.
-                        if !logbook_html.is_empty()
-                            && let Err(e) = outbound
-                                .send_html(&target.account_id, &to, &logbook_html, None)
-                                .await
-                        {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                "failed to send logbook follow-up: {e}"
-                            );
-                        }
+                        send_logbook_follow_up_if_present(
+                            outbound.as_ref(),
+                            &target,
+                            &to,
+                            logbook_follow_up.clone(),
+                        )
+                        .await;
                     },
                     None => {
                         let result = if logbook_html.is_empty() {
@@ -653,18 +588,13 @@ async fn deliver_channel_replies_to_targets(
                     None if text_already_streamed => {
                         // TTS disabled/failed but text was already streamed —
                         // only send logbook follow-up if present.
-                        if !logbook_html.is_empty()
-                            && let Err(e) = outbound
-                                .send_html(&target.account_id, &to, &logbook_html, None)
-                                .await
-                        {
-                            warn!(
-                                account_id = target.account_id,
-                                chat_id = target.chat_id,
-                                thread_id = target.thread_id.as_deref().unwrap_or("-"),
-                                "failed to send logbook follow-up: {e}"
-                            );
-                        }
+                        send_logbook_follow_up_if_present(
+                            outbound.as_ref(),
+                            &target,
+                            &to,
+                            logbook_follow_up.clone(),
+                        )
+                        .await;
                     },
                     None => {
                         let result = if logbook_html.is_empty() {
@@ -700,6 +630,25 @@ async fn deliver_channel_replies_to_targets(
         if let Err(e) = task.await {
             warn!(error = %e, "channel reply task join failed");
         }
+    }
+}
+
+async fn send_logbook_follow_up_if_present(
+    outbound: &dyn ChannelOutbound,
+    target: &ChannelReplyTarget,
+    to: &str,
+    follow_up: Option<ChannelLogbookFollowUp>,
+) {
+    let Some(follow_up) = follow_up else {
+        return;
+    };
+    if let Err(e) = send_channel_logbook_follow_up(outbound, target, to, follow_up).await {
+        warn!(
+            account_id = target.account_id,
+            chat_id = target.chat_id,
+            thread_id = target.thread_id.as_deref().unwrap_or("-"),
+            "failed to send logbook follow-up: {e}"
+        );
     }
 }
 
@@ -786,7 +735,7 @@ pub(crate) async fn generate_tts_audio(
 async fn build_tts_payload(
     state: &Arc<dyn ChatRuntime>,
     session_key: &str,
-    target: &moltis_channels::ChannelReplyTarget,
+    target: &ChannelReplyTarget,
     text: &str,
 ) -> Option<moltis_common::types::ReplyPayload> {
     use moltis_common::types::{MediaAttachment, ReplyPayload};
@@ -853,7 +802,9 @@ pub(crate) async fn send_tool_status_to_channels(
 
     // Buffer the status message for the logbook
     let message = format_tool_status_message(tool_name, arguments);
-    state.push_channel_status_log(session_key, message).await;
+    state
+        .push_channel_status_log(session_key, ChannelStatusLogEntry::info(message))
+        .await;
 }
 
 /// Buffer a tool error result into the channel status log for a session.
@@ -876,7 +827,9 @@ pub(crate) async fn send_tool_result_to_channels(
     }
 
     let message = format_tool_result_message(tool_name, error, result);
-    state.push_channel_status_log(session_key, message).await;
+    state
+        .push_channel_status_log(session_key, ChannelStatusLogEntry::error(message))
+        .await;
 }
 
 /// Format a human-readable error summary for a failed tool call.
@@ -1091,8 +1044,8 @@ fn build_screenshot_reply_payload(
 }
 
 async fn dispatch_screenshot_to_targets(
-    outbound: Arc<dyn moltis_channels::ChannelOutbound>,
-    targets: Vec<moltis_channels::ChannelReplyTarget>,
+    outbound: Arc<dyn ChannelOutbound>,
+    targets: Vec<ChannelReplyTarget>,
     screenshot_data: &str,
     caption: Option<&str>,
 ) {
@@ -1344,7 +1297,7 @@ mod tests {
     use {
         super::*,
         async_trait::async_trait,
-        moltis_channels::{ChannelReplyTarget, ChannelType},
+        moltis_channels::{ActivityLogMode, ChannelReplyTarget, ChannelType},
         moltis_common::types::ReplyPayload,
         std::sync::{Arc, Mutex},
     };
@@ -1363,7 +1316,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl moltis_channels::ChannelOutbound for RecordingOutbound {
+    impl ChannelOutbound for RecordingOutbound {
         async fn send_text(
             &self,
             _account_id: &str,
@@ -1413,6 +1366,30 @@ mod tests {
         assert_eq!(push_notification_url("main"), "/chats/main");
     }
 
+    #[test]
+    fn logbook_filters_entries_by_activity_log_mode() {
+        use moltis_channels::{ActivityLogMode, ChannelStatusLogEntry};
+
+        let entries = vec![
+            ChannelStatusLogEntry::info("Running: `date`"),
+            ChannelStatusLogEntry::error("exit 1 -- failed"),
+        ];
+
+        let all = format_logbook_html_for_mode(&entries, ActivityLogMode::All);
+        assert!(all.contains("Running: `date`"));
+        assert!(all.contains("exit 1"));
+
+        let errors_only = format_logbook_html_for_mode(&entries, ActivityLogMode::ErrorsOnly);
+        assert!(!errors_only.contains("Running: `date`"));
+        assert!(errors_only.contains("exit 1"));
+
+        let off = format_logbook_html_for_mode(&entries, ActivityLogMode::Off);
+        assert!(off.is_empty());
+
+        let no_matching = format_logbook_html_for_mode(&entries[..1], ActivityLogMode::ErrorsOnly);
+        assert!(no_matching.is_empty());
+    }
+
     #[tokio::test]
     async fn generated_image_payload_dispatches_to_telegram_as_media() {
         let outbound = Arc::new(RecordingOutbound::default());
@@ -1422,6 +1399,8 @@ mod tests {
             chat_id: "-100123".into(),
             message_id: Some("42".into()),
             thread_id: Some("7".into()),
+            sender_id: None,
+            activity_log: ActivityLogMode::All,
         }];
 
         dispatch_screenshot_to_targets(
@@ -1457,6 +1436,8 @@ mod tests {
             chat_id: "!room:example.org".into(),
             message_id: Some("$event".into()),
             thread_id: None,
+            sender_id: None,
+            activity_log: ActivityLogMode::All,
         }];
 
         dispatch_screenshot_to_targets(

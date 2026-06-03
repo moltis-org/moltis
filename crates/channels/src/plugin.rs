@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use {
+    crate::activity_log::ActivityLogMode,
     async_trait::async_trait,
     moltis_common::{hooks::ChannelBinding, types::ReplyPayload},
     tokio::sync::mpsc,
@@ -645,6 +646,16 @@ pub struct ChannelReplyTarget {
     /// top-level chat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
+    /// User/sender ID associated with this target, when known.
+    ///
+    /// This is persisted with channel bindings so later web-originated replies
+    /// can re-evaluate per-user channel settings without storing stale effective
+    /// runtime decisions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_id: Option<String>,
+    /// Effective activity log visibility for this reply target.
+    #[serde(default, skip_serializing_if = "ActivityLogMode::is_all")]
+    pub activity_log: ActivityLogMode,
 }
 
 impl ChannelReplyTarget {
@@ -659,6 +670,16 @@ impl ChannelReplyTarget {
             None => std::borrow::Cow::Borrowed(&self.chat_id),
         }
     }
+
+    /// Returns the route data safe to persist in session metadata.
+    ///
+    /// Effective settings such as `activity_log` are intentionally reset so
+    /// active channel-bound sessions pick up later config changes.
+    pub fn for_persistence(&self) -> Self {
+        let mut target = self.clone();
+        target.activity_log = ActivityLogMode::All;
+        target
+    }
 }
 
 impl From<&ChannelReplyTarget> for ChannelBinding {
@@ -671,7 +692,7 @@ impl From<&ChannelReplyTarget> for ChannelBinding {
             account_id: Some(target.account_id.clone()),
             chat_id: Some(target.chat_id.clone()),
             chat_type: target.channel_type.classify_chat(&target.chat_id),
-            sender_id: None,
+            sender_id: target.sender_id.clone(),
         }
     }
 }
@@ -1101,6 +1122,8 @@ mod tests {
             chat_id: "42".into(),
             message_id: None,
             thread_id: None,
+            sender_id: None,
+            activity_log: ActivityLogMode::All,
         };
         assert!(!sink.update_location(&target, 48.8566, 2.3522).await);
     }
@@ -1113,6 +1136,8 @@ mod tests {
             chat_id: "12345".into(),
             message_id: None,
             thread_id: None,
+            sender_id: None,
+            activity_log: ActivityLogMode::All,
         };
         assert_eq!(target.outbound_to().as_ref(), "12345");
     }
@@ -1125,6 +1150,8 @@ mod tests {
             chat_id: "-100999".into(),
             message_id: None,
             thread_id: Some("42".into()),
+            sender_id: None,
+            activity_log: ActivityLogMode::All,
         };
         assert_eq!(target.outbound_to().as_ref(), "-100999:42");
     }
@@ -1137,6 +1164,8 @@ mod tests {
             chat_id: "-100999".into(),
             message_id: None,
             thread_id: Some("42".into()),
+            sender_id: None,
+            activity_log: ActivityLogMode::All,
         };
         let json = serde_json::to_string(&target).unwrap();
         assert!(json.contains("\"thread_id\":\"42\""));
@@ -1438,6 +1467,8 @@ mod tests {
             chat_id: "-100999".into(),
             message_id: Some("7".into()),
             thread_id: Some("42".into()),
+            sender_id: None,
+            activity_log: ActivityLogMode::All,
         };
 
         let binding: ChannelBinding = (&target).into();

@@ -400,6 +400,8 @@ async fn handle_message(
             chat_id: chat_id.clone(),
             message_id: Some(info.id.to_string()),
             thread_id: None,
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         };
         if let Some(ref sink) = state.event_sink {
             match sink.dispatch_command(cmd, reply_to, Some(&peer_id)).await {
@@ -431,6 +433,8 @@ async fn handle_message(
         chat_id: chat_id.clone(),
         message_id: Some(info.id.to_string()),
         thread_id: None,
+        sender_id: None,
+        activity_log: moltis_channels::ActivityLogMode::All,
     };
     let meta = ChannelMessageMeta {
         channel_type: ChannelType::Whatsapp,

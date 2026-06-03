@@ -1,4 +1,7 @@
-use crate::gating::{DmPolicy, GroupPolicy};
+use crate::{
+    activity_log::ActivityLogMode,
+    gating::{DmPolicy, GroupPolicy},
+};
 
 /// Typed read-only view of common channel account config fields.
 ///
@@ -26,6 +29,11 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
 
     /// Provider name associated with the model.
     fn model_provider(&self) -> Option<&str>;
+
+    /// Default activity log visibility for this channel account.
+    fn activity_log(&self) -> ActivityLogMode {
+        ActivityLogMode::All
+    }
 
     /// Default agent id for this channel account.
     fn agent_id(&self) -> Option<&str> {
@@ -56,6 +64,16 @@ pub trait ChannelConfigView: Send + Sync + std::fmt::Debug {
 
     /// Agent override for a specific channel/chat ID.
     fn channel_agent_id(&self, _channel_id: &str) -> Option<&str> {
+        None
+    }
+
+    /// Activity log override for a specific channel/chat ID.
+    fn channel_activity_log(&self, _channel_id: &str) -> Option<ActivityLogMode> {
+        None
+    }
+
+    /// Activity log override for a specific user.
+    fn user_activity_log(&self, _user_id: &str) -> Option<ActivityLogMode> {
         None
     }
 

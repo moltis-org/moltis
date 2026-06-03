@@ -58,6 +58,8 @@ fn reply_target_for_msg(account_id: &str, msg: &Message) -> ChannelReplyTarget {
         chat_id: msg.chat.id.0.to_string(),
         message_id: Some(msg.id.0.to_string()),
         thread_id: extract_thread_id(msg),
+        sender_id: None,
+        activity_log: moltis_channels::ActivityLogMode::All,
     }
 }
 
@@ -458,6 +460,8 @@ pub async fn handle_message_direct(
                 chat_id: msg.chat.id.0.to_string(),
                 message_id: Some(msg.id.0.to_string()),
                 thread_id: extract_thread_id(&msg),
+                sender_id: None,
+                activity_log: moltis_channels::ActivityLogMode::All,
             };
             sink.update_location(&reply_target, lat, lon).await
         } else {
@@ -839,6 +843,8 @@ pub async fn handle_edited_location(
             chat_id: msg.chat.id.0.to_string(),
             message_id: Some(msg.id.0.to_string()),
             thread_id: extract_thread_id(&msg),
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         };
         sink.update_location(&reply_target, lat, lon).await;
     }
@@ -931,6 +937,8 @@ pub async fn handle_callback_query(
         chat_id: chat_id.clone(),
         message_id: None, // Callback queries don't have a message to reply-thread to.
         thread_id: callback_thread_id,
+        sender_id: None,
+        activity_log: moltis_channels::ActivityLogMode::All,
     };
     let outbound_to = reply_target.outbound_to().into_owned();
 

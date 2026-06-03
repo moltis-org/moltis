@@ -314,6 +314,8 @@ async fn handle_event(
         chat_id: sender_hex.clone(),
         message_id: Some(event.id.to_hex()),
         thread_id: None,
+        sender_id: None,
+        activity_log: moltis_channels::ActivityLogMode::All,
     };
 
     if let Some(cmd_text) = text.strip_prefix('/') {

@@ -3,10 +3,12 @@ use super::*;
 pub(in crate::channel_events) async fn dispatch_to_chat(
     state: &Arc<tokio::sync::OnceCell<Arc<GatewayState>>>,
     text: &str,
-    reply_to: ChannelReplyTarget,
+    mut reply_to: ChannelReplyTarget,
     meta: ChannelMessageMeta,
 ) {
     if let Some(state) = state.get() {
+        reply_to.sender_id = meta.sender_id.clone();
+
         // Start typing immediately so pre-run setup (session/model resolution)
         // does not delay channel feedback.
         let typing_done = start_channel_typing_loop(state, &reply_to);
@@ -45,7 +47,7 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
 
         // Persist channel binding so web UI messages on this session
         // can be echoed back to the channel.
-        if let Ok(binding_json) = serde_json::to_string(&reply_to)
+        if let Ok(binding_json) = serde_json::to_string(&reply_to.for_persistence())
             && let Some(ref session_meta) = state.services.session_metadata
         {
             // Ensure the session row exists and label it on first use.
@@ -184,7 +186,12 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
                     model.clone()
                 };
                 let msg = format!("Using {display}. Use /model to change.");
-                state.push_channel_status_log(&session_key, msg).await;
+                state
+                    .push_channel_status_log(
+                        &session_key,
+                        moltis_channels::ChannelStatusLogEntry::info(msg),
+                    )
+                    .await;
             }
         } else {
             let session_has_model = if let Some(ref sm) = state.services.session_metadata {
@@ -214,7 +221,12 @@ pub(in crate::channel_events) async fn dispatch_to_chat(
                     .and_then(|v| v.as_str())
                     .unwrap_or(id);
                 let msg = format!("Using {display}. Use /model to change.");
-                state.push_channel_status_log(&session_key, msg).await;
+                state
+                    .push_channel_status_log(
+                        &session_key,
+                        moltis_channels::ChannelStatusLogEntry::info(msg),
+                    )
+                    .await;
             }
         }
 

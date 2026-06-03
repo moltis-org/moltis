@@ -3,6 +3,7 @@ use {
     async_trait::async_trait,
     moltis_agents::tool_registry::AgentTool,
     moltis_channels::{
+        ActivityLogMode,
         gating::{DmPolicy, GroupPolicy, MentionMode},
         plugin::ChannelType,
         store::{ChannelStore, StoredChannel},
@@ -101,6 +102,7 @@ struct ChannelSettingsPatch {
     reply_to_message: Option<bool>,
     thread_replies: Option<bool>,
     stream_mode: Option<ChannelSettingsStreamMode>,
+    activity_log: Option<ActivityLogMode>,
     allowlist_add: Vec<String>,
     allowlist_remove: Vec<String>,
     group_allowlist_add: Vec<String>,
@@ -118,6 +120,8 @@ struct ModelOverridePatch {
     model_provider: Option<Option<String>>,
     #[serde(default)]
     agent_id: Option<Option<String>>,
+    #[serde(default)]
+    activity_log: Option<Option<ActivityLogMode>>,
     #[serde(default)]
     clear: bool,
 }
@@ -137,6 +141,37 @@ impl ChannelSettingsStreamMode {
             Self::Native => "native",
             Self::Off => "off",
         }
+    }
+}
+
+fn validate_activity_log_patch_values(settings: &Value) -> Result<()> {
+    if let Some(value) = settings.get("activity_log") {
+        validate_activity_log_value("settings.activity_log", value, false)?;
+    }
+    for override_key in ["channel_override", "user_override"] {
+        let Some(override_value) = settings.get(override_key) else {
+            continue;
+        };
+        if let Some(value) = override_value.get("activity_log") {
+            validate_activity_log_value(
+                &format!("settings.{override_key}.activity_log"),
+                value,
+                true,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_activity_log_value(path: &str, value: &Value, allow_null: bool) -> Result<()> {
+    if allow_null && value.is_null() {
+        return Ok(());
+    }
+    match value.as_str() {
+        Some("all" | "errors_only" | "off") => Ok(()),
+        _ => Err(anyhow!(
+            "invalid '{path}': activity_log must be one of 'all', 'errors_only', or 'off'"
+        )),
     }
 }
 
@@ -172,6 +207,37 @@ impl AgentTool for UpdateChannelSettingsTool {
     }
 
     fn parameters_schema(&self) -> Value {
+        let override_activity_log_schema = json!({
+            "type": ["string", "null"],
+            "enum": ["all", "errors_only", "off", null],
+        });
+        let channel_override_schema = json!({
+            "type": "object",
+            "description": "Set or clear model, provider, agent, or Activity log overrides for a specific Telegram/Discord/Slack/WhatsApp channel or chat id. Activity log overrides are currently supported by Telegram only.",
+            "required": ["target_id"],
+            "properties": {
+                "target_id": { "type": "string" },
+                "model": { "type": ["string", "null"] },
+                "model_provider": { "type": ["string", "null"] },
+                "agent_id": { "type": ["string", "null"] },
+                "activity_log": override_activity_log_schema.clone(),
+                "clear": { "type": "boolean", "default": false }
+            }
+        });
+        let user_override_schema = json!({
+            "type": "object",
+            "description": "Set or clear model, provider, agent, or Activity log overrides for a specific Telegram/Discord/Slack/WhatsApp user id. Activity log overrides are currently supported by Telegram only.",
+            "required": ["target_id"],
+            "properties": {
+                "target_id": { "type": "string" },
+                "model": { "type": ["string", "null"] },
+                "model_provider": { "type": ["string", "null"] },
+                "agent_id": { "type": ["string", "null"] },
+                "activity_log": override_activity_log_schema,
+                "clear": { "type": "boolean", "default": false }
+            }
+        });
+
         json!({
             "type": "object",
             "required": ["account_id", "settings"],
@@ -256,30 +322,13 @@ impl AgentTool for UpdateChannelSettingsTool {
                             "enum": ["edit_in_place", "native", "off"],
                             "description": "Supported by Telegram (`edit_in_place`, `off`) and Slack (`edit_in_place`, `native`, `off`)."
                         },
-                        "channel_override": {
-                            "type": "object",
-                            "description": "Set or clear model, provider, or agent overrides for a specific Telegram/Discord/Slack/WhatsApp channel or chat id.",
-                            "required": ["target_id"],
-                            "properties": {
-                                "target_id": { "type": "string" },
-                                "model": { "type": ["string", "null"] },
-                                "model_provider": { "type": ["string", "null"] },
-                                "agent_id": { "type": ["string", "null"] },
-                                "clear": { "type": "boolean", "default": false }
-                            }
+                        "activity_log": {
+                            "type": "string",
+                            "enum": ["all", "errors_only", "off"],
+                            "description": "Controls user-facing Activity log delivery for this channel account. Currently supported by Telegram only. Defaults to all."
                         },
-                        "user_override": {
-                            "type": "object",
-                            "description": "Set or clear model, provider, or agent overrides for a specific Telegram/Discord/Slack/WhatsApp user id.",
-                            "required": ["target_id"],
-                            "properties": {
-                                "target_id": { "type": "string" },
-                                "model": { "type": ["string", "null"] },
-                                "model_provider": { "type": ["string", "null"] },
-                                "agent_id": { "type": ["string", "null"] },
-                                "clear": { "type": "boolean", "default": false }
-                            }
-                        }
+                        "channel_override": channel_override_schema,
+                        "user_override": user_override_schema
                     }
                 }
             }
@@ -306,6 +355,7 @@ impl AgentTool for UpdateChannelSettingsTool {
             .get("settings")
             .cloned()
             .ok_or_else(|| anyhow!("missing 'settings'"))?;
+        validate_activity_log_patch_values(&settings)?;
         let patch: ChannelSettingsPatch =
             serde_json::from_value(settings).map_err(|e| anyhow!("invalid 'settings': {e}"))?;
 
@@ -459,6 +509,15 @@ fn apply_channel_settings_patch(
         config.insert("stream_mode".into(), json!(stream_mode));
         changes.push("stream_mode".to_string());
     }
+    if let Some(activity_log) = patch.activity_log {
+        ensure_supported(
+            channel_type,
+            "activity_log",
+            supports_activity_log(channel_type),
+        )?;
+        config.insert("activity_log".into(), json!(activity_log));
+        changes.push("activity_log".to_string());
+    }
     if update_string_array(
         config,
         "allowlist",
@@ -481,6 +540,13 @@ fn apply_channel_settings_patch(
             "channel_override",
             supports_model_overrides(channel_type),
         )?;
+        if override_patch.activity_log.is_some() {
+            ensure_supported(
+                channel_type,
+                "activity_log",
+                supports_activity_log(channel_type),
+            )?;
+        }
         apply_model_override_patch(config, "channel_overrides", override_patch)?;
         changes.push(format!("channel_override:{}", override_patch.target_id));
     }
@@ -490,6 +556,13 @@ fn apply_channel_settings_patch(
             "user_override",
             supports_model_overrides(channel_type),
         )?;
+        if override_patch.activity_log.is_some() {
+            ensure_supported(
+                channel_type,
+                "activity_log",
+                supports_activity_log(channel_type),
+            )?;
+        }
         apply_model_override_patch(config, "user_overrides", override_patch)?;
         changes.push(format!("user_override:{}", override_patch.target_id));
     }
@@ -543,6 +616,10 @@ fn supports_model_overrides(channel_type: ChannelType) -> bool {
         channel_type,
         ChannelType::Telegram | ChannelType::Discord | ChannelType::Slack | ChannelType::Whatsapp
     )
+}
+
+fn supports_activity_log(channel_type: ChannelType) -> bool {
+    matches!(channel_type, ChannelType::Telegram)
 }
 
 fn validate_stream_mode(
@@ -667,9 +744,13 @@ fn apply_model_override_patch(
         return Ok(());
     }
 
-    if patch.model.is_none() && patch.model_provider.is_none() && patch.agent_id.is_none() {
+    if patch.model.is_none()
+        && patch.model_provider.is_none()
+        && patch.agent_id.is_none()
+        && patch.activity_log.is_none()
+    {
         return Err(anyhow!(
-            "'{key}' for '{}' must set 'model', 'model_provider', or 'agent_id', or use clear=true",
+            "'{key}' for '{}' must set 'model', 'model_provider', 'agent_id', or 'activity_log', or use clear=true",
             patch.target_id
         ));
     }
@@ -690,6 +771,16 @@ fn apply_model_override_patch(
     }
     if let Some(agent_id) = &patch.agent_id {
         set_optional_string(&mut override_value, "agent_id", agent_id);
+    }
+    if let Some(activity_log) = patch.activity_log {
+        match activity_log {
+            Some(activity_log) => {
+                override_value.insert("activity_log".to_string(), json!(activity_log));
+            },
+            None => {
+                override_value.remove("activity_log");
+            },
+        }
     }
 
     if override_value.is_empty() {
@@ -1112,6 +1203,119 @@ mod tests {
             updated["config"]["channel_overrides"]["chat-1"]["agent_id"],
             "new-agent"
         );
+    }
+
+    #[tokio::test]
+    async fn update_channel_settings_merges_activity_log_overrides() {
+        let service = Arc::new(RecordingChannelService::new());
+        let store = Arc::new(MemoryChannelStore::new(vec![stored_channel(
+            "telegram-main",
+            "telegram",
+            json!({
+                "token": "telegram-secret",
+                "allowlist": [],
+                "group_allowlist": [],
+                "channel_overrides": {
+                    "chat-1": { "model": "old-model" }
+                }
+            }),
+        )]));
+        let tool = UpdateChannelSettingsTool::new(
+            service.clone() as Arc<dyn ChannelService>,
+            Some(store as Arc<dyn ChannelStore>),
+        );
+
+        tool.execute(json!({
+            "account_id": "telegram-main",
+            "settings": {
+                "activity_log": "errors_only",
+                "channel_override": {
+                    "target_id": "chat-1",
+                    "activity_log": "off"
+                },
+                "user_override": {
+                    "target_id": "user-1",
+                    "activity_log": "all"
+                }
+            }
+        }))
+        .await
+        .expect("activity log settings update");
+
+        let updated = service
+            .updated
+            .lock()
+            .await
+            .clone()
+            .expect("captured update payload");
+        assert_eq!(updated["config"]["activity_log"], "errors_only");
+        assert_eq!(
+            updated["config"]["channel_overrides"]["chat-1"]["model"],
+            "old-model"
+        );
+        assert_eq!(
+            updated["config"]["channel_overrides"]["chat-1"]["activity_log"],
+            "off"
+        );
+        assert_eq!(
+            updated["config"]["user_overrides"]["user-1"]["activity_log"],
+            "all"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_channel_settings_rejects_invalid_activity_log_mode() {
+        let service = Arc::new(RecordingChannelService::new());
+        let store = Arc::new(MemoryChannelStore::new(vec![stored_channel(
+            "telegram-main",
+            "telegram",
+            json!({ "token": "telegram-secret", "allowlist": [], "group_allowlist": [] }),
+        )]));
+        let tool = UpdateChannelSettingsTool::new(
+            service as Arc<dyn ChannelService>,
+            Some(store as Arc<dyn ChannelStore>),
+        );
+
+        let err = tool
+            .execute(json!({
+                "account_id": "telegram-main",
+                "settings": { "activity_log": "verbose" }
+            }))
+            .await
+            .expect_err("invalid activity_log should fail");
+
+        assert!(err.to_string().contains("activity_log"));
+    }
+
+    #[tokio::test]
+    async fn update_channel_settings_rejects_activity_log_for_unsupported_channel() {
+        let service = Arc::new(RecordingChannelService::new());
+        let store = Arc::new(MemoryChannelStore::new(vec![stored_channel(
+            "slack-main",
+            "slack",
+            json!({ "bot_token": "secret", "app_token": "secret" }),
+        )]));
+        let tool = UpdateChannelSettingsTool::new(
+            service as Arc<dyn ChannelService>,
+            Some(store as Arc<dyn ChannelStore>),
+        );
+
+        let err = tool
+            .execute(json!({
+                "account_id": "slack-main",
+                "type": "slack",
+                "settings": {
+                    "channel_override": {
+                        "target_id": "C123",
+                        "activity_log": "off"
+                    }
+                }
+            }))
+            .await
+            .expect_err("unsupported activity_log should fail");
+
+        assert!(err.to_string().contains("activity_log"));
+        assert!(err.to_string().contains("slack"));
     }
 
     #[test]

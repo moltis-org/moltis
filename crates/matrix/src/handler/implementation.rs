@@ -304,11 +304,13 @@ pub async fn handle_room_message(
         account_id: account_id.clone(),
         chat_id: room_id.clone(),
         thread_id: None,
+        sender_id: None,
         message_id: if config.reply_to_message {
             Some(event_id.clone())
         } else {
             None
         },
+        activity_log: moltis_channels::ActivityLogMode::All,
     };
 
     let meta = ChannelMessageMeta {
@@ -573,7 +575,9 @@ pub async fn handle_poll_response(
         account_id: account_id.clone(),
         chat_id: room_id,
         thread_id: None,
+        sender_id: None,
         message_id: None,
+        activity_log: moltis_channels::ActivityLogMode::All,
     };
 
     if let Err(error) = sink.dispatch_interaction(&callback_data, reply_to).await {

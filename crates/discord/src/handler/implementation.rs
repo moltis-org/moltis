@@ -905,6 +905,8 @@ impl EventHandler for Handler {
             chat_id: chat_id.clone(),
             message_id: Some(msg.id.to_string()),
             thread_id: None,
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         };
 
         let Some(sink) = event_sink else {

@@ -4,6 +4,7 @@
 //! ChannelPlugin trait with sub-traits for config, auth, inbound/outbound
 //! messaging, status, and gateway lifecycle.
 
+pub mod activity_log;
 pub mod channel_webhook_middleware;
 pub mod commands;
 pub mod config_view;
@@ -18,6 +19,7 @@ pub mod registry;
 pub mod store;
 
 pub use {
+    activity_log::{ActivityLogMode, ChannelStatusLogEntry, ChannelStatusLogKind},
     channel_webhook_middleware::{
         ChannelWebhookDedupeResult, ChannelWebhookRatePolicy, ChannelWebhookRejection,
         ChannelWebhookVerifier, TimestampGuard, VerifiedChannelWebhook,

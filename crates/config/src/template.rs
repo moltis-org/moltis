@@ -723,6 +723,17 @@ port = {port}                           # Port number (auto-generated for this i
 
 # See docs or defaults.toml for full channel configuration examples
 # (WhatsApp, Telegram, Teams, Discord, Slack, Matrix, Nostr, Signal).
+#
+# Example Telegram Activity log controls:
+# [channels.telegram.my-bot]
+# token = "..."
+# activity_log = "all"        # "all", "errors_only", or "off"
+#
+# [channels.telegram.my-bot.channel_overrides."-1001234567890"]
+# activity_log = "off"
+#
+# [channels.telegram.my-bot.user_overrides."123456789"]
+# activity_log = "errors_only"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # HOOKS

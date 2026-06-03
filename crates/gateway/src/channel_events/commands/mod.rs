@@ -5,7 +5,7 @@ pub(in crate::channel_events) mod formatting;
 mod location;
 mod media;
 mod quick_actions;
-mod session_handlers;
+pub(in crate::channel_events) mod session_handlers;
 
 // Re-export everything that `channel_events.rs` uses via `commands::*`.
 pub(super) use {

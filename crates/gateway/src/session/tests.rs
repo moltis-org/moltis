@@ -990,6 +990,8 @@ mod tests {
             chat_id: "-100123".to_string(),
             message_id: Some("9".to_string()),
             thread_id: None,
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         })
         .unwrap();
         metadata.set_channel_binding(key, Some(binding_json)).await;

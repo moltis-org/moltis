@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use {
     moltis_channels::{
+        ActivityLogMode,
         config_view::ChannelConfigView,
         gating::{DmPolicy, GroupPolicy, MentionMode},
     },
@@ -19,6 +20,8 @@ pub struct ChannelOverride {
     pub model_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity_log: Option<ActivityLogMode>,
 }
 
 /// Per-user model/provider override.
@@ -30,6 +33,8 @@ pub struct UserOverride {
     pub model_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity_log: Option<ActivityLogMode>,
 }
 
 /// How streaming responses are delivered.
@@ -79,6 +84,9 @@ pub struct TelegramAccountConfig {
     /// Minimum number of characters to accumulate before sending the first
     /// streamed message. Helps avoid early push notifications with tiny drafts.
     pub stream_min_initial_chars: usize,
+
+    /// User-facing activity log visibility for replies from this account.
+    pub activity_log: ActivityLogMode,
 
     /// Default model ID for this bot's sessions (e.g. "claude-sonnet-4-5-20250929").
     /// When set, channel messages use this model instead of the first registered provider.
@@ -132,7 +140,7 @@ pub struct RedactedConfig<'a>(pub &'a TelegramAccountConfig);
 impl Serialize for RedactedConfig<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let c = self.0;
-        let mut count = 13; // always-present fields
+        let mut count = 14; // always-present fields
         count += c.model.is_some() as usize;
         count += c.model_provider.is_some() as usize;
         count += c.agent_id.is_some() as usize;
@@ -149,6 +157,7 @@ impl Serialize for RedactedConfig<'_> {
         s.serialize_field("edit_throttle_ms", &c.edit_throttle_ms)?;
         s.serialize_field("stream_notify_on_complete", &c.stream_notify_on_complete)?;
         s.serialize_field("stream_min_initial_chars", &c.stream_min_initial_chars)?;
+        s.serialize_field("activity_log", &c.activity_log)?;
         if c.model.is_some() {
             s.serialize_field("model", &c.model)?;
         }
@@ -200,6 +209,10 @@ impl ChannelConfigView for TelegramAccountConfig {
         self.agent_id.as_deref()
     }
 
+    fn activity_log(&self) -> ActivityLogMode {
+        self.activity_log
+    }
+
     fn channel_model(&self, channel_id: &str) -> Option<&str> {
         self.channel_overrides
             .get(channel_id)
@@ -216,6 +229,12 @@ impl ChannelConfigView for TelegramAccountConfig {
         self.channel_overrides
             .get(channel_id)
             .and_then(|o| o.agent_id.as_deref())
+    }
+
+    fn channel_activity_log(&self, channel_id: &str) -> Option<ActivityLogMode> {
+        self.channel_overrides
+            .get(channel_id)
+            .and_then(|o| o.activity_log)
     }
 
     fn user_model(&self, user_id: &str) -> Option<&str> {
@@ -235,6 +254,12 @@ impl ChannelConfigView for TelegramAccountConfig {
             .get(user_id)
             .and_then(|o| o.agent_id.as_deref())
     }
+
+    fn user_activity_log(&self, user_id: &str) -> Option<ActivityLogMode> {
+        self.user_overrides
+            .get(user_id)
+            .and_then(|o| o.activity_log)
+    }
 }
 
 impl Default for TelegramAccountConfig {
@@ -250,6 +275,7 @@ impl Default for TelegramAccountConfig {
             edit_throttle_ms: 300,
             stream_notify_on_complete: false,
             stream_min_initial_chars: 30,
+            activity_log: ActivityLogMode::All,
             model: None,
             model_provider: None,
             agent_id: None,
@@ -279,6 +305,7 @@ mod tests {
         assert_eq!(cfg.edit_throttle_ms, 300);
         assert!(!cfg.stream_notify_on_complete);
         assert_eq!(cfg.stream_min_initial_chars, 30);
+        assert_eq!(cfg.activity_log, ActivityLogMode::All);
     }
 
     #[test]
@@ -361,14 +388,46 @@ mod tests {
     }
 
     #[test]
+    fn resolve_activity_log_user_overrides_channel() {
+        use moltis_channels::ActivityLogMode;
+
+        let mut cfg = TelegramAccountConfig {
+            activity_log: ActivityLogMode::All,
+            ..Default::default()
+        };
+        cfg.channel_overrides
+            .insert("-100123".into(), ChannelOverride {
+                activity_log: Some(ActivityLogMode::ErrorsOnly),
+                ..Default::default()
+            });
+        cfg.user_overrides.insert("456".into(), UserOverride {
+            activity_log: Some(ActivityLogMode::Off),
+            ..Default::default()
+        });
+
+        assert_eq!(cfg.user_activity_log("456"), Some(ActivityLogMode::Off));
+        assert_eq!(
+            cfg.channel_activity_log("-100123"),
+            Some(ActivityLogMode::ErrorsOnly)
+        );
+        assert_eq!(cfg.activity_log(), ActivityLogMode::All);
+    }
+
+    #[test]
     fn overrides_round_trip() {
         let json = serde_json::json!({
             "token": "123:ABC",
+            "activity_log": "errors_only",
             "channel_overrides": {
                 "-100123": { "model": "gpt-4", "agent_id": "group-agent" }
             },
             "user_overrides": {
-                "456": { "model": "claude-sonnet", "model_provider": "anthropic", "agent_id": "user-agent" }
+                "456": {
+                    "model": "claude-sonnet",
+                    "model_provider": "anthropic",
+                    "agent_id": "user-agent",
+                    "activity_log": "off"
+                }
             }
         });
         let cfg: TelegramAccountConfig = serde_json::from_value(json).unwrap();
@@ -376,6 +435,8 @@ mod tests {
         assert!(cfg.channel_model_provider("-100123").is_none());
         assert_eq!(cfg.channel_agent_id("-100123"), Some("group-agent"));
         assert_eq!(cfg.user_model("456"), Some("claude-sonnet"));
+        assert_eq!(cfg.activity_log, ActivityLogMode::ErrorsOnly);
+        assert_eq!(cfg.user_activity_log("456"), Some(ActivityLogMode::Off));
         assert_eq!(cfg.user_model_provider("456"), Some("anthropic"));
         assert_eq!(cfg.user_agent_id("456"), Some("user-agent"));
 

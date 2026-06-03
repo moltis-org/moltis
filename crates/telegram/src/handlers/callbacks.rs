@@ -394,6 +394,8 @@ pub(super) async fn handle_callback_query(
         chat_id: chat_id.clone(),
         message_id: None,
         thread_id: callback_thread_id,
+        sender_id: None,
+        activity_log: moltis_channels::ActivityLogMode::All,
     };
     let outbound_to = reply_target.outbound_to().into_owned();
 

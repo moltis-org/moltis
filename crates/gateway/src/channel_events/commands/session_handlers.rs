@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tracing::info;
+use tracing::{info, warn};
 
 use {
     moltis_channels::{ChannelReplyTarget, Error as ChannelError, Result as ChannelResult},
@@ -28,7 +28,7 @@ pub(in crate::channel_events) async fn handle_new(
 ) -> ChannelResult<String> {
     // Create a new session with a fresh UUID key.
     let new_key = format!("session:{}", uuid::Uuid::new_v4());
-    let binding_json = serde_json::to_string(reply_to)
+    let binding_json = serde_json::to_string(&reply_to.for_persistence())
         .map_err(|e| ChannelError::external("serialize channel binding", e))?;
 
     // Sequential label: count existing sessions for this chat.
@@ -372,6 +372,29 @@ pub(in crate::channel_events) async fn handle_sessions(
         }
         let target_session = &sessions[n - 1];
 
+        let mut refreshed_binding = target_session
+            .channel_binding
+            .as_deref()
+            .and_then(|binding_json| match serde_json::from_str::<ChannelReplyTarget>(binding_json)
+            {
+                Ok(binding) => Some(binding),
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        session = %target_session.key,
+                        "failed to parse channel binding while switching sessions; rebuilding from current target"
+                    );
+                    None
+                },
+            })
+            .unwrap_or_else(|| reply_to.for_persistence());
+        refreshed_binding.sender_id = reply_to.sender_id.clone();
+        let binding_json = serde_json::to_string(&refreshed_binding.for_persistence())
+            .map_err(|e| ChannelError::external("serialize channel binding", e))?;
+        session_metadata
+            .set_channel_binding(&target_session.key, Some(binding_json))
+            .await;
+
         // Update forward mapping.
         session_metadata
             .set_active_session(
@@ -441,7 +464,7 @@ pub(in crate::channel_events) async fn handle_attach(
     }
 
     let target_session = &sessions[n - 1];
-    let binding_json = serde_json::to_string(reply_to)
+    let binding_json = serde_json::to_string(&reply_to.for_persistence())
         .map_err(|e| ChannelError::external("serialize channel binding", e))?;
 
     session_metadata

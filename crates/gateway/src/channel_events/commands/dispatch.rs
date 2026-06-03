@@ -37,9 +37,12 @@ pub(in crate::channel_events) async fn dispatch_interaction(
 pub(in crate::channel_events) async fn dispatch_command(
     state: &Arc<tokio::sync::OnceCell<Arc<GatewayState>>>,
     command: &str,
-    reply_to: ChannelReplyTarget,
+    mut reply_to: ChannelReplyTarget,
     sender_id: Option<&str>,
 ) -> ChannelResult<String> {
+    if let Some(sender_id) = sender_id {
+        reply_to.sender_id = Some(sender_id.to_string());
+    }
     let state = state
         .get()
         .ok_or_else(|| ChannelError::unavailable("gateway not ready"))?;

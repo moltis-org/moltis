@@ -123,6 +123,8 @@ pub async fn handle_event(
         chat_id: chat_id.clone(),
         message_id,
         thread_id: None,
+        sender_id: None,
+        activity_log: moltis_channels::ActivityLogMode::All,
     };
 
     if let Some(cmd_text) = text.strip_prefix('/') {

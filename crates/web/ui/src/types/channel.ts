@@ -35,6 +35,12 @@ export const ChannelType = {
 } satisfies Record<string, ChannelType>;
 
 /**
+ * User-facing Activity log visibility.
+ * Serialised as snake_case via `#[serde(rename_all = "snake_case")]`.
+ */
+export type ActivityLogMode = "all" | "errors_only" | "off";
+
+/**
  * How a channel receives inbound messages.
  * Serialised as snake_case via `#[serde(rename_all = "snake_case")]`.
  */
@@ -76,6 +82,8 @@ export interface ChannelReplyTarget {
 	chat_id: string;
 	message_id?: string;
 	thread_id?: string;
+	sender_id?: string;
+	activity_log?: ActivityLogMode;
 }
 
 /**

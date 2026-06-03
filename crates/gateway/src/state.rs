@@ -76,7 +76,10 @@ use moltis_protocol::{ConnectParams, EventFrame};
 
 use moltis_tools::sandbox::SandboxRouter;
 
-use {moltis_channels::ChannelReplyTarget, moltis_sessions::session_events::SessionEventBus};
+use {
+    moltis_channels::{ChannelReplyTarget, ChannelStatusLogEntry},
+    moltis_sessions::session_events::SessionEventBus,
+};
 
 use crate::{
     auth::{CredentialStore, ResolvedAuth},
@@ -323,7 +326,7 @@ pub struct GatewayInner {
     pub cached_location: Option<moltis_config::GeoLocation>,
     /// Per-session buffer for channel status messages (tool use, model selection).
     /// Drained when the final response is delivered to the channel.
-    pub channel_status_log: HashMap<String, Vec<String>>,
+    pub channel_status_log: HashMap<String, Vec<ChannelStatusLogEntry>>,
     /// Sessions currently in channel command mode (/sh passthrough).
     pub channel_command_mode_sessions: HashSet<String>,
     /// Sessions with fast/priority mode enabled.
@@ -706,7 +709,14 @@ impl GatewayState {
     }
 
     /// Push a reply target for a session (used when a channel message triggers chat.send).
-    pub async fn push_channel_reply(&self, session_key: &str, target: ChannelReplyTarget) {
+    pub async fn push_channel_reply(&self, session_key: &str, mut target: ChannelReplyTarget) {
+        let sender_id = target.sender_id.clone();
+        target.activity_log = crate::channel_events::resolve_channel_activity_log(
+            self,
+            &target,
+            sender_id.as_deref(),
+        )
+        .await;
         self.inner
             .write()
             .await
@@ -767,7 +777,7 @@ impl GatewayState {
     /// status log for a session. These are drained and appended as a logbook
     /// when the final response is delivered. Capped at 100 entries per session
     /// to prevent unbounded growth.
-    pub async fn push_channel_status_log(&self, session_key: &str, message: String) {
+    pub async fn push_channel_status_log(&self, session_key: &str, entry: ChannelStatusLogEntry) {
         const MAX_STATUS_LOG_ENTRIES: usize = 100;
         let mut inner = self.inner.write().await;
         let log = inner
@@ -777,11 +787,11 @@ impl GatewayState {
         if log.len() >= MAX_STATUS_LOG_ENTRIES {
             log.drain(..log.len() - MAX_STATUS_LOG_ENTRIES + 1);
         }
-        log.push(message);
+        log.push(entry);
     }
 
     /// Drain all buffered status log entries for a session.
-    pub async fn drain_channel_status_log(&self, session_key: &str) -> Vec<String> {
+    pub async fn drain_channel_status_log(&self, session_key: &str) -> Vec<ChannelStatusLogEntry> {
         self.inner
             .write()
             .await

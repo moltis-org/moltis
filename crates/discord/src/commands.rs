@@ -112,6 +112,8 @@ async fn handle_slash_command(
         chat_id: command.channel_id.to_string(),
         message_id: None,
         thread_id: None,
+        sender_id: None,
+        activity_log: moltis_channels::ActivityLogMode::All,
     };
     let sender_id = command.user.id.to_string();
 
@@ -171,6 +173,8 @@ async fn handle_component_interaction(
         chat_id: component.channel_id.to_string(),
         message_id: None,
         thread_id: None,
+        sender_id: None,
+        activity_log: moltis_channels::ActivityLogMode::All,
     };
 
     match sink.dispatch_interaction(callback_data, reply_to).await {

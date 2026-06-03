@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use {moltis_channels::ChannelReplyTarget, moltis_tools::sandbox::SandboxRouter};
+use {
+    moltis_channels::{ChannelReplyTarget, ChannelStatusLogEntry},
+    moltis_tools::sandbox::SandboxRouter,
+};
 
 /// TTS runtime override configuration (provider/voice/model).
 ///
@@ -62,11 +65,11 @@ pub trait ChatRuntime: Send + Sync {
 
     // ── Channel status log ───────────────────────────────────────────────
 
-    /// Append a status line (tool use, model selection) to a session's log.
-    async fn push_channel_status_log(&self, session_key: &str, message: String);
+    /// Append a status entry (tool use, model selection, or error) to a session's log.
+    async fn push_channel_status_log(&self, session_key: &str, entry: ChannelStatusLogEntry);
 
     /// Drain all buffered status log entries for a session.
-    async fn drain_channel_status_log(&self, session_key: &str) -> Vec<String>;
+    async fn drain_channel_status_log(&self, session_key: &str) -> Vec<ChannelStatusLogEntry>;
 
     // ── Run error tracking ───────────────────────────────────────────────
 

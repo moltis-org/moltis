@@ -1,4 +1,5 @@
 mod agent_loop;
+mod channel_logbook;
 mod channels;
 mod compaction;
 mod compaction_run;

@@ -8,8 +8,8 @@ use {
 
 use {
     moltis_channels::{
-        ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta, ChannelReplyTarget,
-        Error as ChannelError, Result as ChannelResult, SavedChannelFile,
+        ActivityLogMode, ChannelAttachment, ChannelEvent, ChannelEventSink, ChannelMessageMeta,
+        ChannelReplyTarget, Error as ChannelError, Result as ChannelResult, SavedChannelFile,
     },
     moltis_sessions::metadata::{SessionEntry, SqliteSessionMetadata},
     moltis_tools::approval::PendingApprovalView,
@@ -234,6 +234,22 @@ fn config_string(value: Option<&serde_json::Value>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn config_activity_log(path: &str, value: Option<&serde_json::Value>) -> Option<ActivityLogMode> {
+    let value = value?;
+    match serde_json::from_value(value.clone()) {
+        Ok(mode) => Some(mode),
+        Err(error) if !value.is_null() => {
+            warn!(
+                path,
+                error = %error,
+                "invalid channel activity_log config value; falling back"
+            );
+            None
+        },
+        Err(_) => None,
+    }
+}
+
 fn override_map<'a>(
     config: &'a serde_json::Value,
     key: &str,
@@ -246,35 +262,50 @@ fn override_map<'a>(
         .and_then(serde_json::Value::as_object)
 }
 
+async fn channel_account_config(
+    state: &GatewayState,
+    reply_to: &ChannelReplyTarget,
+) -> Option<serde_json::Value> {
+    if let Some(registry) = state.services.channel_registry.as_ref()
+        && registry
+            .resolve_channel_type(&reply_to.account_id)
+            .as_deref()
+            == Some(reply_to.channel_type.as_str())
+        && let Some(config) = registry.account_config_json(&reply_to.account_id).await
+    {
+        return Some(config);
+    }
+
+    if let Some(store) = state.services.channel_store.as_ref() {
+        match store
+            .get(reply_to.channel_type.as_str(), &reply_to.account_id)
+            .await
+        {
+            Ok(Some(channel)) => return Some(channel.config),
+            Ok(None) => {},
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    channel_type = reply_to.channel_type.as_str(),
+                    account_id = %reply_to.account_id,
+                    "failed to read stored channel config; falling back to defaults"
+                );
+            },
+        }
+    }
+    None
+}
+
 async fn resolve_channel_session_defaults(
     state: &Arc<GatewayState>,
     reply_to: &ChannelReplyTarget,
     sender_id: Option<&str>,
 ) -> ChannelSessionDefaults {
-    let Ok(status) = state.services.channel.status().await else {
-        return ChannelSessionDefaults::default();
-    };
-    let Some(channel) = status
-        .get("channels")
-        .and_then(serde_json::Value::as_array)
-        .and_then(|channels| {
-            channels.iter().find(|channel| {
-                channel
-                    .get("account_id")
-                    .and_then(serde_json::Value::as_str)
-                    == Some(reply_to.account_id.as_str())
-                    && channel.get("type").and_then(serde_json::Value::as_str)
-                        == Some(reply_to.channel_type.as_str())
-            })
-        })
-    else {
-        return ChannelSessionDefaults::default();
-    };
-    let Some(config) = channel.get("config") else {
+    let Some(config) = channel_account_config(state, reply_to).await else {
         return ChannelSessionDefaults::default();
     };
 
-    resolve_channel_session_defaults_from_config(config, &reply_to.chat_id, sender_id)
+    resolve_channel_session_defaults_from_config(&config, &reply_to.chat_id, sender_id)
 }
 
 fn resolve_channel_session_defaults_from_config(
@@ -307,6 +338,51 @@ fn resolve_channel_session_defaults_from_config(
             })
             .or_else(|| config_string(config.get("agent_id"))),
     }
+}
+
+pub(crate) async fn resolve_channel_activity_log(
+    state: &GatewayState,
+    reply_to: &ChannelReplyTarget,
+    sender_id: Option<&str>,
+) -> ActivityLogMode {
+    let Some(config) = channel_account_config(state, reply_to).await else {
+        return ActivityLogMode::All;
+    };
+
+    resolve_channel_activity_log_from_config(&config, &reply_to.chat_id, sender_id)
+}
+
+fn resolve_channel_activity_log_from_config(
+    config: &serde_json::Value,
+    chat_id: &str,
+    sender_id: Option<&str>,
+) -> ActivityLogMode {
+    let user_override = override_map(
+        config,
+        "user_overrides",
+        sender_id
+            .filter(|sender_id| *sender_id != chat_id)
+            .unwrap_or(chat_id),
+    );
+    let channel_override = override_map(config, "channel_overrides", chat_id);
+
+    user_override
+        .and_then(|override_value| {
+            config_activity_log(
+                "user_overrides.<sender>.activity_log",
+                override_value.get("activity_log"),
+            )
+        })
+        .or_else(|| {
+            channel_override.and_then(|override_value| {
+                config_activity_log(
+                    "channel_overrides.<chat>.activity_log",
+                    override_value.get("activity_log"),
+                )
+            })
+        })
+        .or_else(|| config_activity_log("activity_log", config.get("activity_log")))
+        .unwrap_or(ActivityLogMode::All)
 }
 
 fn start_channel_typing_loop(

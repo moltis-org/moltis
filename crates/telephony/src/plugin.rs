@@ -99,6 +99,8 @@ impl TelephonyPlugin {
             chat_id: call_id.to_string(),
             message_id: None,
             thread_id: None,
+            sender_id: None,
+            activity_log: moltis_channels::ActivityLogMode::All,
         };
 
         let meta = moltis_channels::ChannelMessageMeta {
