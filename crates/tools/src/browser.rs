@@ -264,10 +264,11 @@ impl AgentTool for BrowserTool {
 
         // Inject saved session_id if LLM didn't provide one (or provided empty string)
         if let Some(obj) = params.as_object_mut() {
+            // `strip_null_params` already removed an explicit `session_id: null`,
+            // so only an absent key or an empty string needs the saved session.
             let needs_session = match obj.get("session_id") {
                 None => true,
                 Some(serde_json::Value::String(s)) if s.is_empty() => true,
-                Some(serde_json::Value::Null) => true,
                 _ => false,
             };
 
