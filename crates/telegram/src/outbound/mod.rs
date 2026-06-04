@@ -22,7 +22,7 @@ use {
     teloxide::{prelude::*, types::ReplyParameters},
 };
 
-use crate::state::AccountStateMap;
+use crate::{config::DEFAULT_STREAM_PROGRESS_MAX_CHARS, state::AccountStateMap};
 
 /// Outbound message sender for Telegram.
 pub struct TelegramOutbound {
@@ -39,6 +39,7 @@ const TYPING_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 struct StreamSendConfig {
     edit_throttle_ms: u64,
     min_initial_chars: usize,
+    progress_max_chars: usize,
 }
 
 impl Default for StreamSendConfig {
@@ -46,6 +47,7 @@ impl Default for StreamSendConfig {
         Self {
             edit_throttle_ms: 2000,
             min_initial_chars: 30,
+            progress_max_chars: DEFAULT_STREAM_PROGRESS_MAX_CHARS,
         }
     }
 }
@@ -83,6 +85,7 @@ impl TelegramOutbound {
             .map(|s| StreamSendConfig {
                 edit_throttle_ms: s.config.edit_throttle_ms,
                 min_initial_chars: s.config.stream_min_initial_chars,
+                progress_max_chars: s.config.stream_progress_max_chars,
             })
             .unwrap_or_default()
     }

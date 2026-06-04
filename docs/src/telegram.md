@@ -85,6 +85,7 @@ offered = ["telegram"]
 | `edit_throttle_ms` | no | `300` | Minimum milliseconds between streaming edit updates |
 | `stream_notify_on_complete` | no | `false` | Send a completion notification after streaming finishes |
 | `stream_min_initial_chars` | no | `30` | Minimum characters before sending the first streamed message |
+| `stream_progress_max_chars` | no | `3500` | Maximum recent progress characters kept visible in the temporary streamed message |
 
 ```admonish important title="Allowlist values are strings"
 All allowlist entries must be **strings**, even for numeric Telegram user IDs.

@@ -24,6 +24,7 @@ use {
 
 use crate::{
     config::TelegramAccountConfig,
+    markdown::TELEGRAM_MAX_MESSAGE_LEN,
     otp::OtpState,
     state::{AccountState, AccountStateMap},
 };
@@ -363,20 +364,18 @@ fn is_message_not_modified_error_ignores_other_errors() {
 
 #[test]
 fn stream_min_initial_chars_uses_character_count() {
-    assert!(has_reached_stream_min_initial_chars("hello", 5));
     assert!(has_reached_stream_min_initial_chars(
-        "\u{1F642}\u{1F642}\u{1F642}",
-        3
+        "hello".chars().count(),
+        5
     ));
-    assert!(!has_reached_stream_min_initial_chars(
-        "\u{1F642}\u{1F642}\u{1F642}",
-        4
-    ));
+    let emoji_count = "\u{1F642}\u{1F642}\u{1F642}".chars().count();
+    assert!(has_reached_stream_min_initial_chars(emoji_count, 3));
+    assert!(!has_reached_stream_min_initial_chars(emoji_count, 4));
 }
 
 #[test]
 fn stream_progress_html_marks_text_as_progress() {
-    let html = format_stream_progress_html("working");
+    let html = format_stream_progress_html("working", false);
 
     assert!(html.contains("Progress update"));
     assert!(html.contains("working"));
@@ -384,7 +383,7 @@ fn stream_progress_html_marks_text_as_progress() {
 
 #[test]
 fn stream_progress_state_flushes_pending_text_after_throttle() {
-    let mut state = StreamProgressState::new(3);
+    let mut state = StreamProgressState::new(3, 3500);
     let now = Instant::now();
 
     state.push_delta("hel");
@@ -398,7 +397,7 @@ fn stream_progress_state_flushes_pending_text_after_throttle() {
 
 #[test]
 fn stream_progress_state_suppresses_flush_until_backoff_expires() {
-    let mut state = StreamProgressState::new(3);
+    let mut state = StreamProgressState::new(3, 3500);
     let now = Instant::now();
 
     state.push_delta("hel");
@@ -414,7 +413,7 @@ fn stream_progress_state_suppresses_flush_until_backoff_expires() {
 
 #[test]
 fn stream_progress_state_resets_throttle_when_rendered_html_is_unchanged() {
-    let mut state = StreamProgressState::new(3);
+    let mut state = StreamProgressState::new(3, 3500);
     let now = Instant::now();
 
     state.push_delta("hel");
@@ -426,6 +425,31 @@ fn stream_progress_state_resets_throttle_when_rendered_html_is_unchanged() {
 
     assert!(!state.should_flush_progress(now + Duration::from_secs(3), Duration::from_secs(2)));
     assert!(!state.should_flush_progress(now + Duration::from_secs(4), Duration::from_secs(2)));
+}
+
+#[test]
+fn stream_progress_state_keeps_recent_tail_when_progress_exceeds_limit() {
+    let mut state = StreamProgressState::new(1, 12);
+
+    state.push_delta("old-prefix ");
+    state.push_delta("fresh-tail");
+    let html = state.current_progress_html();
+
+    assert!(html.contains("Older progress hidden"));
+    assert!(html.contains("fresh-tail"));
+    assert!(!html.contains("old-prefix"));
+}
+
+#[test]
+fn stream_progress_tail_escapes_html_and_stays_under_telegram_limit() {
+    let mut state = StreamProgressState::new(1, TELEGRAM_MAX_MESSAGE_LEN);
+
+    state.push_delta(&"<".repeat(TELEGRAM_MAX_MESSAGE_LEN));
+    let html = state.current_progress_html();
+
+    assert!(html.contains("&lt;"));
+    assert!(!html.contains("<".repeat(10).as_str()));
+    assert!(html.len() <= TELEGRAM_MAX_MESSAGE_LEN);
 }
 
 #[test]
