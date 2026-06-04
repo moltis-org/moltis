@@ -92,6 +92,8 @@ enum StreamApiRequest {
 #[derive(Clone)]
 struct MockTelegramStreamApi {
     requests: Arc<Mutex<Vec<StreamApiRequest>>>,
+    fail_delete: bool,
+    fail_cleanup_edit: bool,
 }
 
 async fn send_message_handler(
@@ -136,13 +138,16 @@ async fn stream_lifecycle_handler(
     State(state): State<MockTelegramStreamApi>,
     uri: Uri,
     Json(body): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
     let path = uri.path();
     if path.ends_with("/sendChatAction")
         || path.ends_with("/send_chat_action")
         || path.ends_with("/SendChatAction")
     {
-        return Json(serde_json::json!({ "ok": true, "result": true }));
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "ok": true, "result": true })),
+        );
     }
 
     if path.ends_with("/sendMessage")
@@ -164,64 +169,75 @@ async fn stream_lifecycle_handler(
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(false),
             });
-        return Json(serde_json::json!(TelegramApiResponse {
-            ok: true,
-            result: TelegramMessageResult {
-                message_id: 10,
-                date: 0,
-                chat: TelegramChat {
-                    id: body
-                        .get("chat_id")
-                        .and_then(serde_json::Value::as_i64)
-                        .unwrap_or(42),
-                    chat_type: "private".to_string(),
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!(TelegramApiResponse {
+                ok: true,
+                result: TelegramMessageResult {
+                    message_id: 10,
+                    date: 0,
+                    chat: TelegramChat {
+                        id: body
+                            .get("chat_id")
+                            .and_then(serde_json::Value::as_i64)
+                            .unwrap_or(42),
+                        chat_type: "private".to_string(),
+                    },
+                    text: body
+                        .get("text")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
                 },
-                text: body
-                    .get("text")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            },
-        }));
+            })),
+        );
     }
 
     if path.ends_with("/editMessageText")
         || path.ends_with("/edit_message_text")
         || path.ends_with("/EditMessageText")
     {
+        let text = body
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         state
             .requests
             .lock()
             .expect("lock stream requests")
-            .push(StreamApiRequest::EditMessage {
-                text: body
-                    .get("text")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            });
-        return Json(serde_json::json!(TelegramApiResponse {
-            ok: true,
-            result: TelegramMessageResult {
-                message_id: body
-                    .get("message_id")
-                    .and_then(serde_json::Value::as_i64)
-                    .unwrap_or(10),
-                date: 0,
-                chat: TelegramChat {
-                    id: body
-                        .get("chat_id")
+            .push(StreamApiRequest::EditMessage { text: text.clone() });
+        if state.fail_cleanup_edit && text == stream_progress_cleanup_html() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": "Bad Request: cleanup edit failed"
+                })),
+            );
+        }
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!(TelegramApiResponse {
+                ok: true,
+                result: TelegramMessageResult {
+                    message_id: body
+                        .get("message_id")
                         .and_then(serde_json::Value::as_i64)
-                        .unwrap_or(42),
-                    chat_type: "private".to_string(),
+                        .unwrap_or(10),
+                    date: 0,
+                    chat: TelegramChat {
+                        id: body
+                            .get("chat_id")
+                            .and_then(serde_json::Value::as_i64)
+                            .unwrap_or(42),
+                        chat_type: "private".to_string(),
+                    },
+                    text,
                 },
-                text: body
-                    .get("text")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-            },
-        }));
+            })),
+        );
     }
 
     if path.ends_with("/deleteMessage")
@@ -236,7 +252,20 @@ async fn stream_lifecycle_handler(
                     .unwrap_or_default(),
             },
         );
-        return Json(serde_json::json!({ "ok": true, "result": true }));
+        if state.fail_delete {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error_code": 400,
+                    "description": "Bad Request: delete failed"
+                })),
+            );
+        }
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({ "ok": true, "result": true })),
+        );
     }
 
     state
@@ -246,7 +275,10 @@ async fn stream_lifecycle_handler(
         .push(StreamApiRequest::Unknown {
             path: path.to_string(),
         });
-    Json(serde_json::json!({ "ok": true, "result": true }))
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({ "ok": true, "result": true })),
+    )
 }
 
 #[tokio::test]
@@ -381,6 +413,22 @@ fn stream_progress_state_suppresses_flush_until_backoff_expires() {
 }
 
 #[test]
+fn stream_progress_state_resets_throttle_when_rendered_html_is_unchanged() {
+    let mut state = StreamProgressState::new(3);
+    let now = Instant::now();
+
+    state.push_delta("hel");
+    state.mark_progress_sent(now, "same");
+    state.push_delta("lo");
+    assert!(state.should_flush_progress(now + Duration::from_secs(2), Duration::from_secs(2)));
+
+    state.mark_progress_observed(now + Duration::from_secs(2), "same");
+
+    assert!(!state.should_flush_progress(now + Duration::from_secs(3), Duration::from_secs(2)));
+    assert!(!state.should_flush_progress(now + Duration::from_secs(4), Duration::from_secs(2)));
+}
+
+#[test]
 fn stream_progress_cleanup_marker_points_to_final_answer() {
     let html = stream_progress_cleanup_html();
 
@@ -397,10 +445,71 @@ async fn telegram_streaming_does_not_replace_final_delivery() {
 }
 
 #[tokio::test]
+async fn cleanup_progress_message_reports_failed_delete_and_failed_marker_edit() {
+    let recorded_requests = Arc::new(Mutex::new(Vec::<StreamApiRequest>::new()));
+    let mock_api = MockTelegramStreamApi {
+        requests: Arc::clone(&recorded_requests),
+        fail_delete: true,
+        fail_cleanup_edit: true,
+    };
+    let app = Router::new()
+        .route("/{*path}", post(stream_lifecycle_handler))
+        .with_state(mock_api);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test listener");
+    let addr = listener.local_addr().expect("local addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .expect("serve mock telegram api");
+    });
+
+    let api_url = reqwest::Url::parse(&format!("http://{addr}/")).expect("parse api url");
+    let bot = teloxide::Bot::new("test-token").set_api_url(api_url);
+    let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
+    let outbound = TelegramOutbound { accounts };
+
+    let cleaned_up = outbound
+        .cleanup_progress_message(
+            &bot,
+            "test-account",
+            "42",
+            teloxide::types::ChatId(42),
+            teloxide::types::MessageId(10),
+        )
+        .await;
+
+    assert!(!cleaned_up);
+    {
+        let requests = recorded_requests.lock().expect("requests lock");
+        assert!(
+            requests.iter().any(
+                |request| matches!(request, StreamApiRequest::DeleteMessage { message_id: 10 })
+            )
+        );
+        assert!(requests.iter().any(|request| matches!(
+            request,
+            StreamApiRequest::EditMessage { text } if text == stream_progress_cleanup_html()
+        )));
+    }
+
+    let _ = shutdown_tx.send(());
+    server.await.expect("server join");
+}
+
+#[tokio::test]
 async fn send_stream_edits_then_deletes_temporary_progress_message() {
     let recorded_requests = Arc::new(Mutex::new(Vec::<StreamApiRequest>::new()));
     let mock_api = MockTelegramStreamApi {
         requests: Arc::clone(&recorded_requests),
+        fail_delete: false,
+        fail_cleanup_edit: false,
     };
     let app = Router::new()
         .route("/{*path}", post(stream_lifecycle_handler))

@@ -107,6 +107,14 @@ impl StreamProgressState {
         self.dirty = false;
     }
 
+    pub(super) fn mark_progress_observed(
+        &mut self,
+        now: tokio::time::Instant,
+        rendered_html: &str,
+    ) {
+        self.mark_progress_sent(now, rendered_html);
+    }
+
     pub(super) fn defer_progress_until(&mut self, until: tokio::time::Instant) {
         self.defer_until = match self.defer_until {
             Some(existing) if existing > until => Some(existing),
@@ -163,36 +171,36 @@ impl TelegramOutbound {
         }
     }
 
-    async fn cleanup_progress_message(
+    pub(super) async fn cleanup_progress_message(
         &self,
         bot: &Bot,
         account_id: &str,
         to: &str,
         chat_id: ChatId,
         message_id: teloxide::types::MessageId,
-    ) {
+    ) -> bool {
         match bot.delete_message(chat_id, message_id).await {
-            Ok(_) => return,
+            Ok(_) => return true,
             Err(error) => {
                 if let Some(wait) = super::retry::retry_after_duration(&error) {
                     warn!(
                         account_id,
                         chat_id = to,
                         retry_after_secs = wait.as_secs(),
-                        "telegram progress delete rate limited; marking progress obsolete"
+                        "telegram progress delete rate limited; trying cleanup marker edit"
                     );
                 } else {
                     warn!(
                         account_id,
                         chat_id = to,
                         error = %error,
-                        "telegram progress delete failed; marking progress obsolete"
+                        "telegram progress delete failed; trying cleanup marker edit"
                     );
                 }
             },
         }
 
-        let _ = self
+        match self
             .edit_progress_chunk_once(
                 bot,
                 account_id,
@@ -201,7 +209,27 @@ impl TelegramOutbound {
                 message_id,
                 stream_progress_cleanup_html(),
             )
-            .await;
+            .await
+        {
+            ProgressEditResult::Applied => true,
+            ProgressEditResult::RateLimited(wait) => {
+                warn!(
+                    account_id,
+                    chat_id = to,
+                    retry_after_secs = wait.as_secs(),
+                    "telegram progress cleanup edit also rate limited; message may remain visible"
+                );
+                false
+            },
+            ProgressEditResult::Failed => {
+                warn!(
+                    account_id,
+                    chat_id = to,
+                    "telegram progress cleanup edit also failed; message may remain visible"
+                );
+                false
+            },
+        }
     }
 }
 
@@ -294,6 +322,8 @@ impl ChannelStreamOutbound for TelegramOutbound {
                                         throttle,
                                         result,
                                     );
+                                } else {
+                                    progress.mark_progress_observed(now, &display);
                                 }
                             }
                         },
@@ -330,6 +360,8 @@ impl ChannelStreamOutbound for TelegramOutbound {
                                 throttle,
                                 result,
                             );
+                        } else {
+                            progress.mark_progress_observed(now, &display);
                         }
                     }
                 }
@@ -337,7 +369,8 @@ impl ChannelStreamOutbound for TelegramOutbound {
         }
 
         if let Some(msg_id) = progress_message_id {
-            self.cleanup_progress_message(&bot, account_id, to, chat_id, msg_id)
+            let _ = self
+                .cleanup_progress_message(&bot, account_id, to, chat_id, msg_id)
                 .await;
         }
 
