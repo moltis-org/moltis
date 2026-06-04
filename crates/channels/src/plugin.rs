@@ -1047,6 +1047,14 @@ pub trait ChannelStreamOutbound: Send + Sync {
     async fn is_stream_enabled(&self, _account_id: &str) -> bool {
         true
     }
+
+    /// Whether this stream already delivered the final reply text.
+    ///
+    /// Some channels use streaming for temporary progress updates only. Those
+    /// streams should not suppress the normal final reply delivery path.
+    async fn streams_final_replies(&self, _account_id: &str) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

@@ -1,7 +1,15 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 use {
-    axum::{Json, Router, extract::State, http::StatusCode, routing::post},
-    moltis_channels::{gating::DmPolicy, plugin::ChannelOutbound},
+    axum::{
+        Json, Router,
+        extract::State,
+        http::{StatusCode, Uri},
+        routing::post,
+    },
+    moltis_channels::{
+        gating::DmPolicy,
+        plugin::{ChannelOutbound, ChannelStreamOutbound, StreamEvent},
+    },
     secrecy::Secret,
     serde::{Deserialize, Serialize},
     std::{
@@ -10,7 +18,7 @@ use {
         time::Duration,
     },
     teloxide::{ApiError, RequestError},
-    tokio::sync::oneshot,
+    tokio::{sync::oneshot, time::Instant},
     tokio_util::sync::CancellationToken,
 };
 
@@ -24,7 +32,10 @@ use super::{
     TelegramOutbound,
     formatting::telegram_html_to_plain_text,
     retry::{is_message_not_modified_error, retry_after_duration},
-    stream::{has_reached_stream_min_initial_chars, should_send_stream_completion_notification},
+    stream::{
+        StreamProgressState, format_stream_progress_html, has_reached_stream_min_initial_chars,
+        stream_progress_cleanup_html,
+    },
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -59,6 +70,28 @@ struct TelegramChat {
 #[derive(Clone)]
 struct MockTelegramApi {
     requests: Arc<Mutex<Vec<SendMessageRequest>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum StreamApiRequest {
+    Unknown {
+        path: String,
+    },
+    SendMessage {
+        text: String,
+        disable_notification: bool,
+    },
+    EditMessage {
+        text: String,
+    },
+    DeleteMessage {
+        message_id: i64,
+    },
+}
+
+#[derive(Clone)]
+struct MockTelegramStreamApi {
+    requests: Arc<Mutex<Vec<StreamApiRequest>>>,
 }
 
 async fn send_message_handler(
@@ -97,6 +130,123 @@ async fn send_message_handler(
             },
         })),
     )
+}
+
+async fn stream_lifecycle_handler(
+    State(state): State<MockTelegramStreamApi>,
+    uri: Uri,
+    Json(body): Json<serde_json::Value>,
+) -> Json<serde_json::Value> {
+    let path = uri.path();
+    if path.ends_with("/sendChatAction")
+        || path.ends_with("/send_chat_action")
+        || path.ends_with("/SendChatAction")
+    {
+        return Json(serde_json::json!({ "ok": true, "result": true }));
+    }
+
+    if path.ends_with("/sendMessage")
+        || path.ends_with("/send_message")
+        || path.ends_with("/SendMessage")
+    {
+        state
+            .requests
+            .lock()
+            .expect("lock stream requests")
+            .push(StreamApiRequest::SendMessage {
+                text: body
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                disable_notification: body
+                    .get("disable_notification")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+            });
+        return Json(serde_json::json!(TelegramApiResponse {
+            ok: true,
+            result: TelegramMessageResult {
+                message_id: 10,
+                date: 0,
+                chat: TelegramChat {
+                    id: body
+                        .get("chat_id")
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(42),
+                    chat_type: "private".to_string(),
+                },
+                text: body
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            },
+        }));
+    }
+
+    if path.ends_with("/editMessageText")
+        || path.ends_with("/edit_message_text")
+        || path.ends_with("/EditMessageText")
+    {
+        state
+            .requests
+            .lock()
+            .expect("lock stream requests")
+            .push(StreamApiRequest::EditMessage {
+                text: body
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            });
+        return Json(serde_json::json!(TelegramApiResponse {
+            ok: true,
+            result: TelegramMessageResult {
+                message_id: body
+                    .get("message_id")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(10),
+                date: 0,
+                chat: TelegramChat {
+                    id: body
+                        .get("chat_id")
+                        .and_then(serde_json::Value::as_i64)
+                        .unwrap_or(42),
+                    chat_type: "private".to_string(),
+                },
+                text: body
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            },
+        }));
+    }
+
+    if path.ends_with("/deleteMessage")
+        || path.ends_with("/delete_message")
+        || path.ends_with("/DeleteMessage")
+    {
+        state.requests.lock().expect("lock stream requests").push(
+            StreamApiRequest::DeleteMessage {
+                message_id: body
+                    .get("message_id")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or_default(),
+            },
+        );
+        return Json(serde_json::json!({ "ok": true, "result": true }));
+    }
+
+    state
+        .requests
+        .lock()
+        .expect("lock stream requests")
+        .push(StreamApiRequest::Unknown {
+            path: path.to_string(),
+        });
+    Json(serde_json::json!({ "ok": true, "result": true }))
 }
 
 #[tokio::test]
@@ -193,17 +343,174 @@ fn stream_min_initial_chars_uses_character_count() {
 }
 
 #[test]
-fn stream_completion_notification_requires_opt_in() {
-    assert!(!should_send_stream_completion_notification(
-        false, true, false
-    ));
+fn stream_progress_html_marks_text_as_progress() {
+    let html = format_stream_progress_html("working");
+
+    assert!(html.contains("Progress update"));
+    assert!(html.contains("working"));
 }
 
 #[test]
-fn stream_completion_notification_skips_when_no_text() {
-    assert!(!should_send_stream_completion_notification(
-        true, false, false
-    ));
+fn stream_progress_state_flushes_pending_text_after_throttle() {
+    let mut state = StreamProgressState::new(3);
+    let now = Instant::now();
+
+    state.push_delta("hel");
+    assert!(state.should_send_initial_progress());
+    state.mark_progress_sent(now, "initial");
+    state.push_delta("lo");
+
+    assert!(!state.should_flush_progress(now, Duration::from_secs(2)));
+    assert!(state.should_flush_progress(now + Duration::from_secs(2), Duration::from_secs(2)));
+}
+
+#[test]
+fn stream_progress_state_suppresses_flush_until_backoff_expires() {
+    let mut state = StreamProgressState::new(3);
+    let now = Instant::now();
+
+    state.push_delta("hel");
+    state.mark_progress_sent(now, "initial");
+    state.push_delta("lo");
+    assert!(state.should_flush_progress(now + Duration::from_secs(2), Duration::from_secs(2)));
+
+    state.defer_progress_until(now + Duration::from_secs(10));
+
+    assert!(!state.should_flush_progress(now + Duration::from_secs(5), Duration::from_secs(2)));
+    assert!(state.should_flush_progress(now + Duration::from_secs(10), Duration::from_secs(2)));
+}
+
+#[test]
+fn stream_progress_cleanup_marker_points_to_final_answer() {
+    let html = stream_progress_cleanup_html();
+
+    assert!(html.contains("Progress update complete"));
+    assert!(html.contains("final answer follows"));
+}
+
+#[tokio::test]
+async fn telegram_streaming_does_not_replace_final_delivery() {
+    let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
+    let outbound = TelegramOutbound { accounts };
+
+    assert!(!outbound.streams_final_replies("missing").await);
+}
+
+#[tokio::test]
+async fn send_stream_edits_then_deletes_temporary_progress_message() {
+    let recorded_requests = Arc::new(Mutex::new(Vec::<StreamApiRequest>::new()));
+    let mock_api = MockTelegramStreamApi {
+        requests: Arc::clone(&recorded_requests),
+    };
+    let app = Router::new()
+        .route("/{*path}", post(stream_lifecycle_handler))
+        .with_state(mock_api);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind test listener");
+    let addr = listener.local_addr().expect("local addr");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .expect("serve mock telegram api");
+    });
+
+    let api_url = reqwest::Url::parse(&format!("http://{addr}/")).expect("parse api url");
+    let bot = teloxide::Bot::new("test-token").set_api_url(api_url);
+
+    let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
+    let outbound = Arc::new(TelegramOutbound {
+        accounts: Arc::clone(&accounts),
+    });
+    let account_id = "test-account";
+
+    {
+        let mut map = accounts.write().expect("accounts write lock");
+        map.insert(account_id.to_string(), AccountState {
+            bot: bot.clone(),
+            bot_username: Some("test_bot".to_string()),
+            account_id: account_id.to_string(),
+            config: TelegramAccountConfig {
+                token: Secret::new("test-token".to_string()),
+                dm_policy: DmPolicy::Open,
+                edit_throttle_ms: 250,
+                stream_min_initial_chars: 3,
+                ..Default::default()
+            },
+            outbound: Arc::clone(&outbound),
+            cancel: CancellationToken::new(),
+            message_log: None,
+            event_sink: None,
+            otp: Mutex::new(OtpState::new(300)),
+        });
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let outbound_for_stream = Arc::clone(&outbound);
+    let stream_task = tokio::spawn(async move {
+        outbound_for_stream
+            .send_stream(account_id, "42", None, rx)
+            .await
+    });
+
+    tx.send(StreamEvent::Delta("hel".to_string()))
+        .await
+        .expect("send initial delta");
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    if let Err(err) = tx.send(StreamEvent::Delta("lo".to_string())).await {
+        let stream_result = stream_task
+            .await
+            .expect("stream task joins after early close");
+        let requests = recorded_requests.lock().expect("requests lock").clone();
+        panic!(
+            "send second delta failed: {err:?}; stream_result={stream_result:?}; requests={requests:?}"
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    tx.send(StreamEvent::Done).await.expect("send done");
+    drop(tx);
+
+    stream_task
+        .await
+        .expect("stream task joins")
+        .expect("stream completes");
+
+    {
+        let requests = recorded_requests.lock().expect("requests lock");
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| matches!(request, StreamApiRequest::SendMessage { .. }))
+                .count(),
+            1,
+            "stream worker should only send the temporary progress message"
+        );
+        assert!(matches!(
+            &requests[0],
+            StreamApiRequest::SendMessage {
+                text,
+                disable_notification: true,
+            } if text.contains("Progress update") && text.contains("hel")
+        ));
+        assert!(requests.iter().any(|request| matches!(
+            request,
+            StreamApiRequest::EditMessage { text }
+                if text.contains("Progress update") && text.contains("hello")
+        )));
+        assert!(
+            requests.iter().any(
+                |request| matches!(request, StreamApiRequest::DeleteMessage { message_id: 10 })
+            )
+        );
+    }
+
+    let _ = shutdown_tx.send(());
+    server.await.expect("server join");
 }
 
 #[tokio::test]
@@ -388,18 +695,4 @@ async fn send_document_to_topic_chat_does_not_panic() {
 
     let _ = shutdown_tx.send(());
     server.await.expect("server join");
-}
-
-#[test]
-fn stream_completion_notification_skips_when_already_notified_by_chunks() {
-    assert!(!should_send_stream_completion_notification(
-        true, true, true
-    ));
-}
-
-#[test]
-fn stream_completion_notification_enabled_when_needed() {
-    assert!(should_send_stream_completion_notification(
-        true, true, false
-    ));
 }

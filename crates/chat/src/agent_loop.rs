@@ -210,6 +210,10 @@ impl ChannelStreamDispatcher {
             }
 
             let key = ChannelReplyTargetKey::from(&target);
+            let streams_final_replies = self
+                .outbound
+                .streams_final_replies(&target.account_id)
+                .await;
             let (tx, rx) = mpsc::channel(CHANNEL_STREAM_BUFFER_SIZE);
             let outbound = Arc::clone(&self.outbound);
             let completed = Arc::clone(&self.completed);
@@ -228,7 +232,9 @@ impl ChannelStreamDispatcher {
                     .await
                 {
                     Ok(()) => {
-                        completed.lock().await.insert(key_for_insert);
+                        if streams_final_replies {
+                            completed.lock().await.insert(key_for_insert);
+                        }
                     },
                     Err(e) => {
                         warn!(

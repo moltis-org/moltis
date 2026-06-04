@@ -38,15 +38,13 @@ const TYPING_REFRESH_INTERVAL: Duration = Duration::from_secs(4);
 #[derive(Debug, Clone, Copy)]
 struct StreamSendConfig {
     edit_throttle_ms: u64,
-    notify_on_complete: bool,
     min_initial_chars: usize,
 }
 
 impl Default for StreamSendConfig {
     fn default() -> Self {
         Self {
-            edit_throttle_ms: 300,
-            notify_on_complete: false,
+            edit_throttle_ms: 2000,
             min_initial_chars: 30,
         }
     }
@@ -84,7 +82,6 @@ impl TelegramOutbound {
             .get(account_id)
             .map(|s| StreamSendConfig {
                 edit_throttle_ms: s.config.edit_throttle_ms,
-                notify_on_complete: s.config.stream_notify_on_complete,
                 min_initial_chars: s.config.stream_min_initial_chars,
             })
             .unwrap_or_default()

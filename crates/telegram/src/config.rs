@@ -247,7 +247,7 @@ impl Default for TelegramAccountConfig {
             allowlist: Vec::new(),
             group_allowlist: Vec::new(),
             stream_mode: StreamMode::default(),
-            edit_throttle_ms: 300,
+            edit_throttle_ms: 2000,
             stream_notify_on_complete: false,
             stream_min_initial_chars: 30,
             model: None,
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(cfg.group_policy, GroupPolicy::Open);
         assert_eq!(cfg.mention_mode, MentionMode::Mention);
         assert_eq!(cfg.stream_mode, StreamMode::EditInPlace);
-        assert_eq!(cfg.edit_throttle_ms, 300);
+        assert_eq!(cfg.edit_throttle_ms, 2000);
         assert!(!cfg.stream_notify_on_complete);
         assert_eq!(cfg.stream_min_initial_chars, 30);
     }
