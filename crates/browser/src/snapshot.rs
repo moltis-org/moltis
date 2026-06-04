@@ -21,13 +21,13 @@ use crate::{
 pub(crate) const DEEP_FIND_FN: &str = r#"
 window.__mDeepFind = window.__mDeepFind || ((sel) => {
   const visit = (root) => {
-    let el = null;
-    try { el = root.querySelector(sel); } catch (e) { el = null; }
-    if (el) return el;
     let all = [];
     try { all = root.querySelectorAll('*'); } catch (e) { all = []; }
-    for (const h of all) {
-      if (h.shadowRoot) { const f = visit(h.shadowRoot); if (f) return f; }
+    for (const el of all) {
+      let isMatch = false;
+      try { isMatch = el.matches(sel); } catch (e) { isMatch = false; }
+      if (isMatch) return el;
+      if (el.shadowRoot) { const f = visit(el.shadowRoot); if (f) return f; }
     }
     return null;
   };
@@ -392,6 +392,13 @@ mod tests {
         // the global eval scope does not throw a redeclaration error.
         assert!(DEEP_FIND_FN.contains("window.__mDeepFind = window.__mDeepFind ||"));
         assert!(DEEP_COLLECT_FN.contains("window.__mDeepCollect = window.__mDeepCollect ||"));
+    }
+
+    #[test]
+    fn deep_find_uses_one_dom_walk_for_matches_and_shadow_hosts() {
+        assert!(!DEEP_FIND_FN.contains("root.querySelector(sel)"));
+        assert!(DEEP_FIND_FN.contains("el.matches(sel)"));
+        assert!(DEEP_FIND_FN.contains("if (isMatch) return el;"));
     }
 
     #[test]
