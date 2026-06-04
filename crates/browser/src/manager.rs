@@ -641,7 +641,7 @@ impl BrowserManager {
 
         let check_js = if let Some(ref selector) = selector {
             format!(
-                r#"document.querySelector({}) !== null"#,
+                r#"{DEEP_FIND_FN}__mDeepFind({}) !== null"#,
                 serde_json::to_string(selector).map_err(|e| Error::Cdp(e.to_string()))?
             )
         } else if let Some(ref_) = ref_ {
@@ -985,6 +985,17 @@ mod tests {
         assert_eq!(prefix.len(), 99);
         assert!(!prefix.contains('л'));
         assert!(prefix.ends_with('a'));
+    }
+
+    #[test]
+    fn wait_selector_path_uses_shadow_piercing_lookup() {
+        let source = include_str!("manager.rs");
+
+        let flat_query = concat!("document.", "querySelector({}) !== null");
+        let deep_query = concat!("{DEEP_FIND_FN}", "__mDeepFind({}) !== null");
+
+        assert!(!source.contains(flat_query));
+        assert!(source.contains(deep_query));
     }
 
     #[tokio::test]

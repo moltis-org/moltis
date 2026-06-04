@@ -42,11 +42,13 @@ window.__mDeepCollect = window.__mDeepCollect || ((sel) => {
   const out = [];
   const visit = (root) => {
     let matches = [];
-    try { matches = root.querySelectorAll(sel); } catch (e) { matches = []; }
-    for (const m of matches) out.push(m);
-    let all = [];
-    try { all = root.querySelectorAll('*'); } catch (e) { all = []; }
-    for (const el of all) { if (el.shadowRoot) visit(el.shadowRoot); }
+    try { matches = root.querySelectorAll('*'); } catch (e) { matches = []; }
+    for (const el of matches) {
+      let isMatch = false;
+      try { isMatch = el.matches(sel); } catch (e) { isMatch = false; }
+      if (isMatch) out.push(el);
+      if (el.shadowRoot) visit(el.shadowRoot);
+    }
   };
   visit(document);
   return out;
@@ -390,6 +392,16 @@ mod tests {
         // the global eval scope does not throw a redeclaration error.
         assert!(DEEP_FIND_FN.contains("window.__mDeepFind = window.__mDeepFind ||"));
         assert!(DEEP_COLLECT_FN.contains("window.__mDeepCollect = window.__mDeepCollect ||"));
+    }
+
+    #[test]
+    fn deep_collect_uses_one_dom_walk_for_matches_and_shadow_hosts() {
+        assert_eq!(
+            DEEP_COLLECT_FN.matches("querySelectorAll(").count(),
+            1,
+            "deep collection should not walk each root twice"
+        );
+        assert!(DEEP_COLLECT_FN.contains("el.matches(sel)"));
     }
 
     #[test]
