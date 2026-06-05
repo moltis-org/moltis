@@ -19,7 +19,7 @@ use crate::{
         AgentToolControls, ChatMessage, LlmProvider, StreamEvent, ToolCall, ToolChoice, Usage,
         UserContent, decode_tool_call_arguments_from_str, push_capped_provider_raw_event,
     },
-    response_sanitizer::recover_tool_calls_from_content,
+    response_sanitizer::{clean_response, recover_tool_calls_from_content},
     tool_arg_validator::validate_tool_args,
     tool_loop_detector::ToolCallFingerprint,
     tool_parsing::{
@@ -316,7 +316,8 @@ pub async fn run_agent_loop_streaming_with_limits(
                 StreamEvent::Delta(text) => {
                     accumulated_text.push_str(&text);
                     if let Some(cb) = on_event {
-                        cb(RunnerEvent::TextDelta(text));
+                        cb(RunnerEvent::TextDelta(text.clone()));
+                        cb(RunnerEvent::FinalText(text));
                     }
                 },
                 StreamEvent::ProviderRaw(raw) => {
@@ -616,11 +617,20 @@ pub async fn run_agent_loop_streaming_with_limits(
 
             // When the final iteration produced no text but a previous iteration
             // streamed answer text alongside tool calls, use that as the response.
-            let final_text = if accumulated_text.is_empty() && !last_answer_text.is_empty() {
+            let used_fallback_text = accumulated_text.is_empty() && !last_answer_text.is_empty();
+            let final_text = if used_fallback_text {
                 std::mem::take(&mut last_answer_text)
             } else {
                 accumulated_text
             };
+            if used_fallback_text {
+                let streamed_final_text = clean_response(&final_text);
+                if let Some(cb) = on_event
+                    && !streamed_final_text.is_empty()
+                {
+                    cb(RunnerEvent::FinalText(streamed_final_text));
+                }
+            }
             info!(
                 iterations,
                 tool_calls = total_tool_calls,
@@ -653,10 +663,13 @@ pub async fn run_agent_loop_streaming_with_limits(
             (None, false)
         };
         if let Some(ref text) = text_for_msg
-            && is_actual_reasoning
             && let Some(cb) = on_event
         {
-            cb(RunnerEvent::ThinkingText(text.clone()));
+            if is_actual_reasoning {
+                cb(RunnerEvent::ThinkingText(text.clone()));
+            } else {
+                cb(RunnerEvent::ProgressText(text.clone()));
+            }
         }
         messages.push(ChatMessage::assistant_with_tools(
             text_for_msg,

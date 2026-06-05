@@ -695,7 +695,7 @@ impl ChannelStreamOutbound for DiscordOutbound {
                 event = stream.recv() => {
                     let Some(event) = event else { break };
                     match event {
-                        StreamEvent::Delta(delta) => {
+                        StreamEvent::Delta(delta) | StreamEvent::ProgressDelta(delta) => {
                             accumulated.push_str(&delta);
 
                             // Phase 1: initial send once we have enough text.

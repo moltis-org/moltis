@@ -713,9 +713,6 @@ pub(crate) async fn run_with_tools(
                     {
                         draft.append_text(&text);
                     }
-                    if let Some(ref dispatcher) = channel_stream_for_events {
-                        dispatcher.lock().await.send_delta(&text).await;
-                    }
                     serde_json::json!({
                         "runId": run_id,
                         "sessionKey": sk,
@@ -723,6 +720,18 @@ pub(crate) async fn run_with_tools(
                         "text": text,
                         "seq": seq,
                     })
+                },
+                RunnerEvent::ProgressText(text) => {
+                    if let Some(ref dispatcher) = channel_stream_for_events {
+                        dispatcher.lock().await.send_progress_delta(&text).await;
+                    }
+                    continue;
+                },
+                RunnerEvent::FinalText(text) => {
+                    if let Some(ref dispatcher) = channel_stream_for_events {
+                        dispatcher.lock().await.send_delta(&text).await;
+                    }
+                    continue;
                 },
                 RunnerEvent::Iteration(n) => serde_json::json!({
                     "runId": run_id,

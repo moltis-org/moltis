@@ -284,7 +284,9 @@ impl ChannelStreamOutbound for WhatsAppOutbound {
         let mut text = String::new();
         while let Some(event) = stream.recv().await {
             match event {
-                StreamEvent::Delta(delta) => text.push_str(&delta),
+                StreamEvent::Delta(delta) | StreamEvent::ProgressDelta(delta) => {
+                    text.push_str(&delta)
+                },
                 StreamEvent::Done => break,
                 StreamEvent::Error(err) => {
                     debug!(account_id, chat_id = to, "WhatsApp stream error: {err}");

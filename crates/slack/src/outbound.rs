@@ -121,7 +121,7 @@ impl SlackOutbound {
 
         loop {
             match stream.recv().await {
-                Some(StreamEvent::Delta(chunk)) => {
+                Some(StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk)) => {
                     pending.push_str(&chunk);
 
                     // Throttle appends to avoid rate limits.
@@ -180,7 +180,7 @@ impl SlackOutbound {
 
         loop {
             match stream.recv().await {
-                Some(StreamEvent::Delta(chunk)) => {
+                Some(StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk)) => {
                     accumulated.push_str(&chunk);
 
                     match &sent_ts {
@@ -786,7 +786,9 @@ impl ChannelStreamOutbound for SlackOutbound {
                 let mut accumulated = String::new();
                 loop {
                     match stream.recv().await {
-                        Some(StreamEvent::Delta(chunk)) => accumulated.push_str(&chunk),
+                        Some(StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk)) => {
+                            accumulated.push_str(&chunk)
+                        },
                         Some(StreamEvent::Error(e)) => {
                             accumulated.push_str(&format!("\n\n:warning: {e}"));
                             break;

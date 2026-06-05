@@ -163,7 +163,7 @@ pub(crate) struct ChannelStreamDispatcher {
     tasks: Vec<tokio::task::JoinHandle<()>>,
     completed: Arc<Mutex<HashSet<ChannelReplyTargetKey>>>,
     started: bool,
-    sent_delta: bool,
+    sent_final_delta: bool,
 }
 
 impl ChannelStreamDispatcher {
@@ -187,7 +187,7 @@ impl ChannelStreamDispatcher {
             tasks: Vec::new(),
             completed: Arc::new(Mutex::new(HashSet::new())),
             started: false,
-            sent_delta: false,
+            sent_final_delta: false,
         };
         dispatcher.ensure_started().await;
         Some(dispatcher)
@@ -253,12 +253,31 @@ impl ChannelStreamDispatcher {
         if delta.is_empty() {
             return;
         }
-        self.sent_delta = true;
+        self.sent_final_delta = true;
         self.ensure_started().await;
-        let event = moltis_channels::StreamEvent::Delta(delta.to_string());
+        self.send_to_workers(
+            moltis_channels::StreamEvent::Delta(delta.to_string()),
+            "delta",
+        )
+        .await;
+    }
+
+    pub(crate) async fn send_progress_delta(&mut self, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        self.ensure_started().await;
+        self.send_to_workers(
+            moltis_channels::StreamEvent::ProgressDelta(delta.to_string()),
+            "progress delta",
+        )
+        .await;
+    }
+
+    async fn send_to_workers(&mut self, event: moltis_channels::StreamEvent, label: &str) {
         for worker in &self.workers {
             if worker.sender.send(event.clone()).await.is_err() {
-                debug!("channel stream delta dropped: worker closed");
+                debug!("channel stream {label} dropped: worker closed");
             }
         }
     }
@@ -290,7 +309,7 @@ impl ChannelStreamDispatcher {
     }
 
     pub(crate) async fn completed_target_keys(&self) -> HashSet<ChannelReplyTargetKey> {
-        if !self.sent_delta {
+        if !self.sent_final_delta {
             return HashSet::new();
         }
         self.completed.lock().await.clone()

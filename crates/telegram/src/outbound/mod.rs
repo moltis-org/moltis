@@ -40,6 +40,7 @@ struct StreamSendConfig {
     edit_throttle_ms: u64,
     min_initial_chars: usize,
     progress_max_chars: usize,
+    notify_on_complete: bool,
 }
 
 impl Default for StreamSendConfig {
@@ -48,6 +49,7 @@ impl Default for StreamSendConfig {
             edit_throttle_ms: 2000,
             min_initial_chars: 30,
             progress_max_chars: DEFAULT_STREAM_PROGRESS_MAX_CHARS,
+            notify_on_complete: false,
         }
     }
 }
@@ -86,6 +88,7 @@ impl TelegramOutbound {
                 edit_throttle_ms: s.config.edit_throttle_ms,
                 min_initial_chars: s.config.stream_min_initial_chars,
                 progress_max_chars: s.config.stream_progress_max_chars,
+                notify_on_complete: s.config.stream_notify_on_complete,
             })
             .unwrap_or_default()
     }

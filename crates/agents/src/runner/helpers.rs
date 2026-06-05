@@ -122,6 +122,10 @@ pub enum RunnerEvent {
     /// LLM returned reasoning/status text alongside tool calls.
     ThinkingText(String),
     TextDelta(String),
+    /// Text from an iteration that continued into tool calls.
+    ProgressText(String),
+    /// Text from the final iteration of the run.
+    FinalText(String),
     Iteration(usize),
     SubAgentStart {
         task: String,

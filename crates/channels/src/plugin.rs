@@ -1017,8 +1017,10 @@ pub struct ChannelHealthSnapshot {
 /// Stream event for edit-in-place streaming.
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
-    /// A chunk of text to append.
+    /// A chunk of final reply text to append.
     Delta(String),
+    /// A chunk of intermediate progress text to append.
+    ProgressDelta(String),
     /// Stream is complete.
     Done,
     /// An error occurred.

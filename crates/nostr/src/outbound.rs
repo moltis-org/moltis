@@ -118,7 +118,9 @@ impl ChannelStreamOutbound for NostrOutbound {
 
         while let Some(event) = stream.recv().await {
             match event {
-                StreamEvent::Delta(chunk) => buffer.push_str(&chunk),
+                StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk) => {
+                    buffer.push_str(&chunk)
+                },
                 StreamEvent::Done => break,
                 StreamEvent::Error(e) => {
                     tracing::warn!(account_id, "stream error: {e}");

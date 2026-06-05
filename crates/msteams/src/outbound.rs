@@ -347,7 +347,7 @@ impl MsTeamsOutbound {
             };
 
             match event {
-                Some(StreamEvent::Delta(delta)) => {
+                Some(StreamEvent::Delta(delta) | StreamEvent::ProgressDelta(delta)) => {
                     session.push_delta(&delta);
 
                     if session.ready_for_initial_post() {
@@ -708,7 +708,9 @@ impl ChannelStreamOutbound for MsTeamsOutbound {
                 let mut text = String::new();
                 while let Some(event) = stream.recv().await {
                     match event {
-                        StreamEvent::Delta(delta) => text.push_str(&delta),
+                        StreamEvent::Delta(delta) | StreamEvent::ProgressDelta(delta) => {
+                            text.push_str(&delta)
+                        },
                         StreamEvent::Done => break,
                         StreamEvent::Error(err) => {
                             debug!(account_id, chat_id = to, "Teams stream error: {err}");

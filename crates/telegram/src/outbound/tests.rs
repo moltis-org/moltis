@@ -374,10 +374,10 @@ fn stream_min_initial_chars_uses_character_count() {
 }
 
 #[test]
-fn stream_progress_html_marks_text_as_progress() {
+fn stream_progress_html_omits_progress_heading() {
     let html = format_stream_progress_html("working", false);
 
-    assert!(html.contains("Progress update"));
+    assert!(!html.contains("Progress update"));
     assert!(html.contains("working"));
 }
 
@@ -456,8 +456,8 @@ fn stream_progress_tail_escapes_html_and_stays_under_telegram_limit() {
 fn stream_progress_cleanup_marker_points_to_final_answer() {
     let html = stream_progress_cleanup_html();
 
-    assert!(html.contains("Progress update complete"));
-    assert!(html.contains("final answer follows"));
+    assert!(!html.contains("Progress update"));
+    assert!(html.contains("Final answer follows"));
 }
 
 #[tokio::test]
@@ -527,8 +527,10 @@ async fn cleanup_progress_message_reports_failed_delete_and_failed_marker_edit()
     server.await.expect("server join");
 }
 
-#[tokio::test]
-async fn send_stream_edits_then_deletes_temporary_progress_message() {
+async fn run_stream_lifecycle(
+    notify_on_complete: bool,
+    events: Vec<(StreamEvent, Duration)>,
+) -> Vec<StreamApiRequest> {
     let recorded_requests = Arc::new(Mutex::new(Vec::<StreamApiRequest>::new()));
     let mock_api = MockTelegramStreamApi {
         requests: Arc::clone(&recorded_requests),
@@ -572,6 +574,7 @@ async fn send_stream_edits_then_deletes_temporary_progress_message() {
                 token: Secret::new("test-token".to_string()),
                 dm_policy: DmPolicy::Open,
                 edit_throttle_ms: 250,
+                stream_notify_on_complete: notify_on_complete,
                 stream_min_initial_chars: 3,
                 ..Default::default()
             },
@@ -583,7 +586,7 @@ async fn send_stream_edits_then_deletes_temporary_progress_message() {
         });
     }
 
-    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let (tx, rx) = tokio::sync::mpsc::channel(16);
     let outbound_for_stream = Arc::clone(&outbound);
     let stream_task = tokio::spawn(async move {
         outbound_for_stream
@@ -591,21 +594,12 @@ async fn send_stream_edits_then_deletes_temporary_progress_message() {
             .await
     });
 
-    tx.send(StreamEvent::Delta("hel".to_string()))
-        .await
-        .expect("send initial delta");
-    tokio::time::sleep(Duration::from_millis(25)).await;
-    if let Err(err) = tx.send(StreamEvent::Delta("lo".to_string())).await {
-        let stream_result = stream_task
-            .await
-            .expect("stream task joins after early close");
-        let requests = recorded_requests.lock().expect("requests lock").clone();
-        panic!(
-            "send second delta failed: {err:?}; stream_result={stream_result:?}; requests={requests:?}"
-        );
+    for (event, delay) in events {
+        tx.send(event).await.expect("send stream event");
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
     }
-    tokio::time::sleep(Duration::from_millis(600)).await;
-    tx.send(StreamEvent::Done).await.expect("send done");
     drop(tx);
 
     stream_task
@@ -613,37 +607,224 @@ async fn send_stream_edits_then_deletes_temporary_progress_message() {
         .expect("stream task joins")
         .expect("stream completes");
 
-    {
-        let requests = recorded_requests.lock().expect("requests lock");
-        assert_eq!(
-            requests
-                .iter()
-                .filter(|request| matches!(request, StreamApiRequest::SendMessage { .. }))
-                .count(),
-            1,
-            "stream worker should only send the temporary progress message"
-        );
-        assert!(matches!(
-            &requests[0],
-            StreamApiRequest::SendMessage {
-                text,
-                disable_notification: true,
-            } if text.contains("Progress update") && text.contains("hel")
-        ));
-        assert!(requests.iter().any(|request| matches!(
-            request,
-            StreamApiRequest::EditMessage { text }
-                if text.contains("Progress update") && text.contains("hello")
-        )));
-        assert!(
-            requests.iter().any(
-                |request| matches!(request, StreamApiRequest::DeleteMessage { message_id: 10 })
-            )
-        );
-    }
-
     let _ = shutdown_tx.send(());
     server.await.expect("server join");
+
+    recorded_requests.lock().expect("requests lock").clone()
+}
+
+#[tokio::test]
+async fn send_stream_reuses_progress_message_for_final_when_notify_disabled() {
+    let requests = run_stream_lifecycle(false, vec![
+        (
+            StreamEvent::ProgressDelta("hel".to_string()),
+            Duration::from_millis(25),
+        ),
+        (
+            StreamEvent::ProgressDelta("lo".to_string()),
+            Duration::from_millis(600),
+        ),
+        (
+            StreamEvent::Delta("**done**".to_string()),
+            Duration::from_millis(25),
+        ),
+        (StreamEvent::Done, Duration::ZERO),
+    ])
+    .await;
+
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| matches!(request, StreamApiRequest::SendMessage { .. }))
+            .count(),
+        1,
+        "notify=false should reuse the progress message for the final stream"
+    );
+    assert!(matches!(
+        &requests[0],
+        StreamApiRequest::SendMessage {
+            text,
+            disable_notification: true,
+        } if !text.contains("Progress update") && text.contains("hel")
+    ));
+    assert!(
+        !requests
+            .iter()
+            .any(|request| matches!(request, StreamApiRequest::DeleteMessage { .. }))
+    );
+
+    let final_edit = requests
+        .iter()
+        .rev()
+        .find_map(|request| match request {
+            StreamApiRequest::EditMessage { text } if text.contains("done") => Some(text),
+            _ => None,
+        })
+        .expect("final edit message");
+    assert!(final_edit.contains("<b>done</b>"));
+    assert!(!final_edit.contains("**done**"));
+    assert!(!final_edit.contains("hello"));
+    assert!(!final_edit.contains("Progress update"));
+}
+
+#[tokio::test]
+async fn send_stream_sends_remaining_final_chunks_on_done() {
+    let long_final = format!("{}tail-marker", "word ".repeat(TELEGRAM_MAX_MESSAGE_LEN));
+    let requests = run_stream_lifecycle(false, vec![
+        (StreamEvent::Delta(long_final), Duration::from_millis(25)),
+        (StreamEvent::Done, Duration::ZERO),
+    ])
+    .await;
+
+    let sent_texts: Vec<&str> = requests
+        .iter()
+        .filter_map(|request| match request {
+            StreamApiRequest::SendMessage { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        sent_texts.len() >= 2,
+        "long streamed finals must continue after the edited first message"
+    );
+    assert!(sent_texts.iter().any(|text| text.contains("tail-marker")));
+}
+
+#[tokio::test]
+async fn send_stream_reclassifies_live_draft_as_progress_then_reuses_for_final_when_notify_disabled()
+ {
+    let requests = run_stream_lifecycle(false, vec![
+        (
+            StreamEvent::Delta("**thinking**".to_string()),
+            Duration::from_millis(600),
+        ),
+        (
+            StreamEvent::ProgressDelta("**thinking**".to_string()),
+            Duration::from_millis(600),
+        ),
+        (
+            StreamEvent::Delta("**done**".to_string()),
+            Duration::from_millis(600),
+        ),
+        (StreamEvent::Done, Duration::ZERO),
+    ])
+    .await;
+
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| matches!(request, StreamApiRequest::SendMessage { .. }))
+            .count(),
+        1,
+        "notify=false should keep draft, progress, and final in one message"
+    );
+    assert!(matches!(
+        &requests[0],
+        StreamApiRequest::SendMessage {
+            text,
+            disable_notification: true,
+        } if text.contains("<b>thinking</b>")
+    ));
+    assert!(
+        !requests
+            .iter()
+            .any(|request| matches!(request, StreamApiRequest::DeleteMessage { .. }))
+    );
+
+    let edit_texts: Vec<&str> = requests
+        .iter()
+        .filter_map(|request| match request {
+            StreamApiRequest::EditMessage { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        edit_texts
+            .iter()
+            .any(|text| text.contains("<b>thinking</b>") && !text.contains("**thinking**"))
+    );
+    let final_edit = edit_texts
+        .iter()
+        .rev()
+        .find(|text| text.contains("done"))
+        .expect("final edit message");
+    assert!(final_edit.contains("<b>done</b>"));
+    assert!(!final_edit.contains("**done**"));
+    assert!(!final_edit.contains("thinking"));
+}
+
+#[tokio::test]
+async fn send_stream_keeps_code_fence_rendered_when_live_draft_becomes_progress() {
+    let json = "JSON arguments:\n\n```json\n{\n  \"action\": \"add\"\n}\n```";
+    let requests = run_stream_lifecycle(false, vec![
+        (
+            StreamEvent::Delta(json.to_string()),
+            Duration::from_millis(600),
+        ),
+        (
+            StreamEvent::ProgressDelta(json.to_string()),
+            Duration::from_millis(600),
+        ),
+        (
+            StreamEvent::Delta("done".to_string()),
+            Duration::from_millis(600),
+        ),
+        (StreamEvent::Done, Duration::ZERO),
+    ])
+    .await;
+
+    let progress_edit = requests
+        .iter()
+        .filter_map(|request| match request {
+            StreamApiRequest::EditMessage { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .find(|text| text.contains("action"))
+        .expect("progress edit containing JSON");
+
+    assert!(progress_edit.contains("<pre"));
+    assert!(progress_edit.contains("<code"));
+    assert!(!progress_edit.contains("```json"));
+}
+
+#[tokio::test]
+async fn send_stream_deletes_progress_and_sends_new_final_when_notify_enabled() {
+    let requests = run_stream_lifecycle(true, vec![
+        (
+            StreamEvent::ProgressDelta("hel".to_string()),
+            Duration::from_millis(25),
+        ),
+        (
+            StreamEvent::Delta("**done**".to_string()),
+            Duration::from_millis(25),
+        ),
+        (StreamEvent::Done, Duration::ZERO),
+    ])
+    .await;
+
+    let sends: Vec<_> = requests
+        .iter()
+        .filter_map(|request| match request {
+            StreamApiRequest::SendMessage {
+                text,
+                disable_notification,
+            } => Some((text, *disable_notification)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sends.len(), 2);
+    assert!(sends[0].1, "progress message should be silent");
+    assert!(!sends[0].0.contains("Progress update"));
+    assert!(sends[0].0.contains("hel"));
+    assert!(
+        requests
+            .iter()
+            .any(|request| matches!(request, StreamApiRequest::DeleteMessage { message_id: 10 }))
+    );
+    assert!(!sends[1].1, "notify=true final message should notify");
+    assert!(sends[1].0.contains("<b>done</b>"));
+    assert!(!sends[1].0.contains("**done**"));
+    assert!(!sends[1].0.contains("hel"));
 }
 
 #[tokio::test]

@@ -282,7 +282,9 @@ impl MatrixOutbound {
 
         while let Some(event) = stream.recv().await {
             match event {
-                StreamEvent::Delta(chunk) => buffer.push_str(&chunk),
+                StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk) => {
+                    buffer.push_str(&chunk)
+                },
                 StreamEvent::Done => break,
                 StreamEvent::Error(error) => {
                     warn!("stream error: {error}");
@@ -608,7 +610,7 @@ impl ChannelStreamOutbound for MatrixOutbound {
                 }
                 event = stream.recv() => {
                     match event {
-                        Some(StreamEvent::Delta(chunk)) => {
+                        Some(StreamEvent::Delta(chunk) | StreamEvent::ProgressDelta(chunk)) => {
                             buffer.push_str(&chunk);
 
                             if sent_event_id.is_none() && buffer.len() >= min_initial_chars {

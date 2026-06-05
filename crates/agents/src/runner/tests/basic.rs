@@ -407,6 +407,92 @@ impl LlmProvider for StreamingUsageProvider {
     }
 }
 
+struct StreamingChunksProvider;
+
+#[async_trait]
+impl LlmProvider for StreamingChunksProvider {
+    fn name(&self) -> &str {
+        "streaming-chunks"
+    }
+
+    fn id(&self) -> &str {
+        "streaming-chunks-model"
+    }
+
+    async fn complete(
+        &self,
+        _messages: &[ChatMessage],
+        _tools: &[serde_json::Value],
+    ) -> Result<CompletionResponse> {
+        Ok(CompletionResponse {
+            text: Some("unused".into()),
+            tool_calls: vec![],
+            usage: Usage::default(),
+        })
+    }
+
+    fn stream(
+        &self,
+        _messages: Vec<ChatMessage>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(tokio_stream::empty())
+    }
+
+    fn stream_with_tools(
+        &self,
+        _messages: Vec<ChatMessage>,
+        _tools: Vec<serde_json::Value>,
+    ) -> Pin<Box<dyn Stream<Item = StreamEvent> + Send + '_>> {
+        Box::pin(tokio_stream::iter(vec![
+            StreamEvent::Delta("cached ".into()),
+            StreamEvent::Delta("reply".into()),
+            StreamEvent::Done(Usage::default()),
+        ]))
+    }
+}
+
+#[tokio::test]
+async fn test_streaming_runner_emits_final_text_chunks_live() {
+    let provider = Arc::new(StreamingChunksProvider);
+    let tools = ToolRegistry::new();
+    let events: Arc<std::sync::Mutex<Vec<RunnerEvent>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let events_clone = Arc::clone(&events);
+    let on_event: OnEvent = Box::new(move |event| {
+        events_clone.lock().unwrap().push(event);
+    });
+
+    let result = run_agent_loop_streaming(
+        provider,
+        &tools,
+        "You are a test bot.",
+        &UserContent::text("another"),
+        Some(&on_event),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.text, "cached reply");
+    let final_chunks: Vec<String> = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|event| match event {
+            RunnerEvent::FinalText(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(final_chunks, vec![
+        "cached ".to_string(),
+        "reply".to_string()
+    ]);
+}
+
 #[tokio::test]
 async fn test_streaming_runner_preserves_cache_usage() {
     let provider = Arc::new(StreamingUsageProvider);
