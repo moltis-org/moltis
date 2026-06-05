@@ -1057,6 +1057,15 @@ pub trait ChannelStreamOutbound: Send + Sync {
     async fn streams_final_replies(&self, _account_id: &str) -> bool {
         true
     }
+
+    /// Whether this stream consumes progress deltas separately from final text.
+    ///
+    /// Channels that only append streamed text should leave this disabled to
+    /// avoid receiving the same pre-tool draft once as final text and again as
+    /// reclassified progress.
+    async fn receives_progress_deltas(&self, _account_id: &str) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

@@ -95,6 +95,7 @@ struct MockTelegramStreamApi {
     requests: Arc<Mutex<Vec<StreamApiRequest>>>,
     fail_delete: bool,
     fail_cleanup_edit: bool,
+    fail_edit_text: Option<String>,
 }
 
 async fn send_message_handler(
@@ -208,7 +209,9 @@ async fn stream_lifecycle_handler(
             .lock()
             .expect("lock stream requests")
             .push(StreamApiRequest::EditMessage { text: text.clone() });
-        if state.fail_cleanup_edit && text == stream_progress_cleanup_html() {
+        if (state.fail_cleanup_edit && text == stream_progress_cleanup_html())
+            || state.fail_edit_text.as_deref() == Some(text.as_str())
+        {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({
@@ -475,6 +478,7 @@ async fn cleanup_progress_message_reports_failed_delete_and_failed_marker_edit()
         requests: Arc::clone(&recorded_requests),
         fail_delete: true,
         fail_cleanup_edit: true,
+        fail_edit_text: None,
     };
     let app = Router::new()
         .route("/{*path}", post(stream_lifecycle_handler))
@@ -531,11 +535,20 @@ async fn run_stream_lifecycle(
     notify_on_complete: bool,
     events: Vec<(StreamEvent, Duration)>,
 ) -> Vec<StreamApiRequest> {
+    run_stream_lifecycle_with_edit_failure(notify_on_complete, events, None).await
+}
+
+async fn run_stream_lifecycle_with_edit_failure(
+    notify_on_complete: bool,
+    events: Vec<(StreamEvent, Duration)>,
+    fail_edit_text: Option<String>,
+) -> Vec<StreamApiRequest> {
     let recorded_requests = Arc::new(Mutex::new(Vec::<StreamApiRequest>::new()));
     let mock_api = MockTelegramStreamApi {
         requests: Arc::clone(&recorded_requests),
         fail_delete: false,
         fail_cleanup_edit: false,
+        fail_edit_text,
     };
     let app = Router::new()
         .route("/{*path}", post(stream_lifecycle_handler))
@@ -688,6 +701,36 @@ async fn send_stream_sends_remaining_final_chunks_on_done() {
         "long streamed finals must continue after the edited first message"
     );
     assert!(sent_texts.iter().any(|text| text.contains("tail-marker")));
+}
+
+#[tokio::test]
+async fn send_stream_sends_fallback_final_message_when_completion_edit_fails() {
+    let final_text = "part one part two";
+    let requests = run_stream_lifecycle_with_edit_failure(
+        false,
+        vec![
+            (
+                StreamEvent::Delta("part one".to_string()),
+                Duration::from_millis(600),
+            ),
+            (
+                StreamEvent::Delta(" part two".to_string()),
+                Duration::from_millis(25),
+            ),
+            (StreamEvent::Done, Duration::ZERO),
+        ],
+        Some(final_text.to_string()),
+    )
+    .await;
+
+    assert!(requests.iter().any(|request| matches!(
+        request,
+        StreamApiRequest::EditMessage { text } if text == final_text
+    )));
+    assert!(requests.iter().any(|request| matches!(
+        request,
+        StreamApiRequest::SendMessage { text, .. } if text == final_text
+    )));
 }
 
 #[tokio::test]

@@ -409,6 +409,7 @@ impl TelegramOutbound {
         rendered_html: &str,
         now: tokio::time::Instant,
         throttle: Duration,
+        final_delivery: bool,
     ) -> Result<()> {
         if rendered_html.is_empty() {
             final_state.mark_final_observed(now, rendered_html);
@@ -419,6 +420,28 @@ impl TelegramOutbound {
             let result = self
                 .edit_progress_chunk_once(bot, account_id, to, chat_id, msg_id, rendered_html)
                 .await;
+            if final_delivery && result != ProgressEditResult::Applied {
+                warn!(
+                    account_id,
+                    chat_id = to,
+                    "telegram final stream edit failed at completion; sending fallback final message"
+                );
+                let message_id = self
+                    .send_chunk_with_fallback(
+                        bot,
+                        account_id,
+                        to,
+                        chat_id,
+                        thread_id,
+                        rendered_html,
+                        reply_params,
+                        !stream_cfg.notify_on_complete,
+                    )
+                    .await?;
+                final_state.message_id = Some(message_id);
+                final_state.mark_final_sent(now, rendered_html);
+                return Ok(());
+            }
             record_final_edit_result(final_state, now, rendered_html, throttle, result);
             return Ok(());
         }
@@ -515,6 +538,55 @@ impl TelegramOutbound {
             .await?;
         }
         Ok(())
+    }
+
+    async fn finish_final_stream_message(
+        &self,
+        bot: &Bot,
+        account_id: &str,
+        to: &str,
+        chat_id: ChatId,
+        thread_id: Option<ThreadId>,
+        reply_params: Option<&ReplyParameters>,
+        stream_cfg: StreamSendConfig,
+        progress_message_id: &mut Option<MessageId>,
+        final_state: &mut StreamFinalState,
+        throttle: Duration,
+    ) -> Result<()> {
+        if final_state.accumulated.is_empty() {
+            return Ok(());
+        }
+
+        let display = final_state.current_final_html();
+        let now = tokio::time::Instant::now();
+        if final_state.message_id.is_none() || final_state.rendered_html_changed(&display) {
+            self.flush_final_stream_message(
+                bot,
+                account_id,
+                to,
+                chat_id,
+                thread_id,
+                reply_params,
+                stream_cfg,
+                progress_message_id,
+                final_state,
+                &display,
+                now,
+                throttle,
+                true,
+            )
+            .await?;
+        }
+        self.send_remaining_final_chunks(
+            bot,
+            account_id,
+            to,
+            chat_id,
+            thread_id,
+            reply_params,
+            final_state,
+        )
+        .await
     }
 }
 
@@ -625,7 +697,22 @@ impl ChannelStreamOutbound for TelegramOutbound {
         loop {
             tokio::select! {
                 event = stream.recv() => {
-                    let Some(event) = event else { break };
+                    let Some(event) = event else {
+                        self.finish_final_stream_message(
+                            &bot,
+                            account_id,
+                            to,
+                            chat_id,
+                            thread_id,
+                            rp.as_ref(),
+                            stream_cfg,
+                            &mut progress_message_id,
+                            &mut final_state,
+                            throttle,
+                        )
+                        .await?;
+                        break;
+                    };
                     match event {
                         StreamEvent::ProgressDelta(delta) => {
                             if final_state.message_id.is_some() || !final_state.accumulated.is_empty() {
@@ -717,6 +804,7 @@ impl ChannelStreamOutbound for TelegramOutbound {
                                         &display,
                                         now,
                                         throttle,
+                                        false,
                                     )
                                     .await?;
                                 }
@@ -739,6 +827,7 @@ impl ChannelStreamOutbound for TelegramOutbound {
                                         &display,
                                         now,
                                         throttle,
+                                        false,
                                     )
                                     .await?;
                                 } else {
@@ -747,39 +836,19 @@ impl ChannelStreamOutbound for TelegramOutbound {
                             }
                         },
                         StreamEvent::Done => {
-                            if !final_state.accumulated.is_empty() {
-                                let display = final_state.current_final_html();
-                                let now = tokio::time::Instant::now();
-                                if final_state.message_id.is_none()
-                                    || final_state.rendered_html_changed(&display)
-                                {
-                                    self.flush_final_stream_message(
-                                        &bot,
-                                        account_id,
-                                        to,
-                                        chat_id,
-                                        thread_id,
-                                        rp.as_ref(),
-                                        stream_cfg,
-                                        &mut progress_message_id,
-                                        &mut final_state,
-                                        &display,
-                                        now,
-                                        throttle,
-                                    )
-                                    .await?;
-                                }
-                                self.send_remaining_final_chunks(
-                                    &bot,
-                                    account_id,
-                                    to,
-                                    chat_id,
-                                    thread_id,
-                                    rp.as_ref(),
-                                    &final_state,
-                                )
-                                .await?;
-                            }
+                            self.finish_final_stream_message(
+                                &bot,
+                                account_id,
+                                to,
+                                chat_id,
+                                thread_id,
+                                rp.as_ref(),
+                                stream_cfg,
+                                &mut progress_message_id,
+                                &mut final_state,
+                                throttle,
+                            )
+                            .await?;
                             break;
                         },
                         StreamEvent::Error(e) => {
@@ -809,6 +878,7 @@ impl ChannelStreamOutbound for TelegramOutbound {
                                 &display,
                                 now,
                                 throttle,
+                                false,
                             )
                             .await?;
                         } else {
@@ -856,6 +926,10 @@ impl ChannelStreamOutbound for TelegramOutbound {
     }
 
     async fn streams_final_replies(&self, account_id: &str) -> bool {
+        self.is_stream_enabled(account_id).await
+    }
+
+    async fn receives_progress_deltas(&self, account_id: &str) -> bool {
         self.is_stream_enabled(account_id).await
     }
 }

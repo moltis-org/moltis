@@ -149,6 +149,7 @@ impl From<&moltis_channels::ChannelReplyTarget> for ChannelReplyTargetKey {
 
 struct ChannelStreamWorker {
     sender: moltis_channels::StreamSender,
+    receives_progress_deltas: bool,
 }
 
 /// Fan out model deltas to channel stream workers (Telegram/Discord edit-in-place).
@@ -214,6 +215,10 @@ impl ChannelStreamDispatcher {
                 .outbound
                 .streams_final_replies(&target.account_id)
                 .await;
+            let receives_progress_deltas = self
+                .outbound
+                .receives_progress_deltas(&target.account_id)
+                .await;
             let (tx, rx) = mpsc::channel(CHANNEL_STREAM_BUFFER_SIZE);
             let outbound = Arc::clone(&self.outbound);
             let completed = Arc::clone(&self.completed);
@@ -225,7 +230,10 @@ impl ChannelStreamDispatcher {
             let chat_for_log = target.chat_id.clone();
             let thread_for_log = target.thread_id.clone();
 
-            self.workers.push(ChannelStreamWorker { sender: tx });
+            self.workers.push(ChannelStreamWorker {
+                sender: tx,
+                receives_progress_deltas,
+            });
             self.tasks.push(tokio::spawn(async move {
                 match outbound
                     .send_stream(&account_id, &to, reply_to.as_deref(), rx)
@@ -267,11 +275,12 @@ impl ChannelStreamDispatcher {
             return;
         }
         self.ensure_started().await;
-        self.send_to_workers(
-            moltis_channels::StreamEvent::ProgressDelta(delta.to_string()),
-            "progress delta",
-        )
-        .await;
+        let event = moltis_channels::StreamEvent::ProgressDelta(delta.to_string());
+        for worker in &self.workers {
+            if worker.receives_progress_deltas && worker.sender.send(event.clone()).await.is_err() {
+                debug!("channel stream progress delta dropped: worker closed");
+            }
+        }
     }
 
     async fn send_to_workers(&mut self, event: moltis_channels::StreamEvent, label: &str) {
