@@ -925,8 +925,8 @@ impl ChannelStreamOutbound for TelegramOutbound {
             .is_some_and(|s| s.config.stream_mode != StreamMode::Off)
     }
 
-    async fn streams_final_replies(&self, _account_id: &str) -> bool {
-        false
+    async fn streams_final_replies(&self, account_id: &str) -> bool {
+        self.is_stream_enabled(account_id).await
     }
 
     async fn receives_progress_deltas(&self, account_id: &str) -> bool {

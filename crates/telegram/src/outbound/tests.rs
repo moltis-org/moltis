@@ -464,7 +464,7 @@ fn stream_progress_cleanup_marker_points_to_final_answer() {
 }
 
 #[tokio::test]
-async fn telegram_streaming_does_not_replace_final_delivery() {
+async fn telegram_streaming_delivers_progress_and_final_streams_without_notify() {
     let accounts: AccountStateMap = Arc::new(std::sync::RwLock::new(HashMap::new()));
     let outbound = Arc::new(TelegramOutbound {
         accounts: Arc::clone(&accounts),
@@ -478,6 +478,7 @@ async fn telegram_streaming_does_not_replace_final_delivery() {
             bot_username: Some("test_bot".to_string()),
             account_id: account_id.to_string(),
             config: TelegramAccountConfig {
+                stream_notify_on_complete: false,
                 token: Secret::new("test-token".to_string()),
                 dm_policy: DmPolicy::Open,
                 ..Default::default()
@@ -491,7 +492,8 @@ async fn telegram_streaming_does_not_replace_final_delivery() {
     }
 
     assert!(outbound.is_stream_enabled(account_id).await);
-    assert!(!outbound.streams_final_replies(account_id).await);
+    assert!(outbound.receives_progress_deltas(account_id).await);
+    assert!(outbound.streams_final_replies(account_id).await);
 }
 
 #[tokio::test]
