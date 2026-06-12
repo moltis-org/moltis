@@ -1,12 +1,12 @@
 use {
     async_trait::async_trait,
     base64::Engine,
-    tracing::{debug, info},
+    tracing::{debug, info, warn},
 };
 
 use {
     wacore::download::MediaType,
-    wacore_binary::jid::Jid,
+    wacore_binary::jid::{HIDDEN_USER_SERVER, Jid},
     waproto::whatsapp as wa,
     whatsapp_rust::{ChatStateType, upload::UploadResponse},
 };
@@ -28,6 +28,42 @@ fn resolve_jid(to: &str) -> ChannelResult<Jid> {
             .map_err(|e| moltis_channels::Error::invalid_input(format!("invalid JID: {e:?}")))
     } else {
         Ok(Jid::pn(to))
+    }
+}
+
+/// Whether a destination JID is keyed by LID and must be re-addressed to its
+/// phone number before sending.
+fn needs_lid_resolution(jid: &Jid) -> bool {
+    jid.server == HIDDEN_USER_SERVER
+}
+
+/// Rewrite a `@lid` destination to its phone-number JID when a mapping exists.
+///
+/// Stanzas addressed to `@lid` chats are accepted by the server but never
+/// delivered (no `Delivered` receipt), while the same message sent to the
+/// mapped PN JID arrives normally. Inbound chats from privacy-enabled senders
+/// are keyed by LID, so replies must be re-addressed before sending. When no
+/// mapping is known the JID is returned unchanged so behaviour matches the
+/// pre-fix path.
+async fn to_deliverable_jid(client: &whatsapp_rust::client::Client, jid: Jid) -> Jid {
+    if !needs_lid_resolution(&jid) {
+        return jid;
+    }
+    match client.get_phone_number_from_lid(&jid.user).await {
+        Some(pn) => {
+            debug!(lid = %jid, pn = %pn, "rewriting LID destination to PN JID");
+            Jid::pn(pn)
+        },
+        None => {
+            // No mapping known: the message goes to the `@lid` JID, which the
+            // server is likely to drop without a `Delivered` receipt. Warn so
+            // the undelivered reply is visible without enabling debug logging.
+            warn!(
+                lid = %jid,
+                "no PN mapping for LID destination; reply may not be delivered"
+            );
+            jid
+        },
     }
 }
 
@@ -161,7 +197,7 @@ impl ChannelOutbound for WhatsAppOutbound {
         _reply_to: Option<&str>,
     ) -> ChannelResult<()> {
         let client = self.get_client(account_id)?;
-        let jid = resolve_jid(to)?;
+        let jid = to_deliverable_jid(&client, resolve_jid(to)?).await;
 
         debug!(
             account_id,
@@ -234,7 +270,7 @@ impl ChannelOutbound for WhatsAppOutbound {
         );
 
         let client = self.get_client(account_id)?;
-        let jid = resolve_jid(to)?;
+        let jid = to_deliverable_jid(&client, resolve_jid(to)?).await;
 
         let upload = client.upload(bytes, media_type).await.map_err(|e| {
             moltis_channels::Error::unavailable(format!("whatsapp media upload: {e}"))
@@ -260,7 +296,7 @@ impl ChannelOutbound for WhatsAppOutbound {
 
     async fn send_typing(&self, account_id: &str, to: &str) -> ChannelResult<()> {
         let client = self.get_client(account_id)?;
-        let jid = resolve_jid(to)?;
+        let jid = to_deliverable_jid(&client, resolve_jid(to)?).await;
         client
             .chatstate()
             .send(&jid, ChatStateType::Composing)
@@ -311,6 +347,37 @@ impl ChannelStreamOutbound for WhatsAppOutbound {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn needs_lid_resolution_true_for_lid_jid() {
+        let jid: Jid = "111111111111111@lid"
+            .parse()
+            .unwrap_or_else(|e| panic!("parse lid jid: {e:?}"));
+        assert!(needs_lid_resolution(&jid));
+    }
+
+    #[test]
+    fn needs_lid_resolution_false_for_phone_number_jid() {
+        let jid: Jid = "15551234567@s.whatsapp.net"
+            .parse()
+            .unwrap_or_else(|e| panic!("parse pn jid: {e:?}"));
+        assert!(!needs_lid_resolution(&jid));
+    }
+
+    #[test]
+    fn needs_lid_resolution_false_for_group_jid() {
+        let jid: Jid = "120363456789@g.us"
+            .parse()
+            .unwrap_or_else(|e| panic!("parse group jid: {e:?}"));
+        assert!(!needs_lid_resolution(&jid));
+    }
+
+    #[test]
+    fn needs_lid_resolution_false_for_bare_phone_number() {
+        // `resolve_jid` turns bare numbers into PN JIDs, which must not be rewritten.
+        let jid = resolve_jid("15551234567").unwrap_or_else(|e| panic!("resolve: {e:?}"));
+        assert!(!needs_lid_resolution(&jid));
+    }
 
     #[test]
     fn decode_data_url_valid() {
