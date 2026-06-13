@@ -41,11 +41,32 @@ pub async fn fetch_resource_metadata(
     resource_url: &Url,
 ) -> Result<ProtectedResourceMetadata> {
     let well_known = build_well_known_url(resource_url, "oauth-protected-resource")?;
+    fetch_resource_metadata_from_url(client, &well_known).await
+}
 
-    debug!(url = %well_known, "fetching protected resource metadata");
+/// Fetch protected resource metadata from an already-known URL.
+///
+/// Unlike [`fetch_resource_metadata`], this does NOT append
+/// `/.well-known/oauth-protected-resource`.  Use this when the URL was
+/// already extracted from a `WWW-Authenticate: Bearer resource_metadata=…`
+/// header (RFC 9728 §5.1), which is the complete metadata endpoint.
+pub async fn fetch_resource_metadata_direct(
+    client: &Client,
+    metadata_url: &Url,
+) -> Result<ProtectedResourceMetadata> {
+    fetch_resource_metadata_from_url(client, metadata_url).await
+}
+
+/// Shared implementation: fetch and parse protected resource metadata from
+/// the given URL.
+async fn fetch_resource_metadata_from_url(
+    client: &Client,
+    url: &Url,
+) -> Result<ProtectedResourceMetadata> {
+    debug!(url = %url, "fetching protected resource metadata");
 
     let resp = client
-        .get(well_known.as_str())
+        .get(url.as_str())
         .header("Accept", "application/json")
         .send()
         .await
@@ -531,5 +552,58 @@ mod tests {
         let url = Url::parse("http://127.0.0.1:1").unwrap();
         let result = fetch_resource_metadata(&client, &url).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_resource_metadata_direct_success() {
+        let mut server = mockito::Server::new_async().await;
+        // The resource_metadata URL from WWW-Authenticate is already the
+        // complete endpoint (RFC 9728 origin-based layout).
+        // fetch_resource_metadata_direct must use it as-is without appending
+        // /.well-known/oauth-protected-resource.
+        let mock = server
+            .mock("GET", "/.well-known/oauth-protected-resource/mcp")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "resource": format!("{}/mcp", server.url()),
+                    "authorization_servers": ["https://auth.example.com"]
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        let client = Client::new();
+        let url = Url::parse(&format!(
+            "{}/.well-known/oauth-protected-resource/mcp",
+            server.url()
+        ))
+        .unwrap();
+        let meta = fetch_resource_metadata_direct(&client, &url)
+            .await
+            .unwrap();
+
+        assert_eq!(meta.resource, format!("{}/mcp", server.url()));
+        assert_eq!(meta.authorization_servers, vec!["https://auth.example.com"]);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn fetch_resource_metadata_direct_not_found() {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/some/metadata/path")
+            .with_status(404)
+            .with_body("not found")
+            .create_async()
+            .await;
+
+        let client = Client::new();
+        let url = Url::parse(&format!("{}/some/metadata/path", server.url())).unwrap();
+        let result = fetch_resource_metadata_direct(&client, &url).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("404"));
     }
 }
