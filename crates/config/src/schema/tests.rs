@@ -972,6 +972,23 @@ enabled = true
 }
 
 #[test]
+fn external_agent_models_from_toml() {
+    let toml_str = r#"
+[external_agents]
+enabled = true
+
+[external_agents.agents.claude-code]
+binary = "claude"
+models = ["claude-opus-4-8", "claude-sonnet-4-6"]
+efforts = ["high", "xhigh"]
+"#;
+    let config: MoltisConfig = toml::from_str(toml_str).unwrap();
+    let entry = config.external_agents.agents.get("claude-code").unwrap();
+    assert_eq!(entry.models, vec!["claude-opus-4-8", "claude-sonnet-4-6"]);
+    assert_eq!(entry.efforts, vec!["high", "xhigh"]);
+}
+
+#[test]
 fn provider_entry_wire_api_skip_serializing_default() {
     let entry = ProviderEntry::default();
     let serialized = toml::to_string(&entry).unwrap();

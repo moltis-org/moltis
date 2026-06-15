@@ -3,6 +3,7 @@ use std::sync::Arc;
 use {
     moltis_channels::{ChannelReplyTarget, Error as ChannelError, Result as ChannelResult},
     moltis_config::ModePreset,
+    moltis_external_agents::AgentTransportKind,
     moltis_sessions::metadata::SqliteSessionMetadata,
     moltis_tools::image_cache::ImageBuilder,
 };
@@ -19,6 +20,9 @@ use super::{
     },
     formatting::{format_model_list, unique_providers},
 };
+
+const EXTERNAL_AGENT_PROVIDER: &str = "external-agent";
+const EXTERNAL_AGENT_MODEL_PREFIX: &str = "external-agent::";
 
 // ── Control command handlers ─────────────────────────────────────
 
@@ -357,25 +361,41 @@ pub(in crate::channel_events) async fn handle_model(
     let models = models_val
         .as_array()
         .ok_or_else(|| ChannelError::invalid_input("bad model list"))?;
+    let mut choices = models.clone();
+    choices.extend(external_agent_model_entries(state).await?);
 
-    let current_model = {
+    let (current_model, current_external_agent) = {
         let entry = session_metadata.get(session_key).await;
-        entry.and_then(|e| e.model.clone())
+        (
+            entry.as_ref().and_then(|e| e.model.clone()),
+            entry.and_then(|e| e.external_agent_kind),
+        )
+    };
+    let current_choice = if let Some(kind) = current_external_agent {
+        current_model
+            .as_deref()
+            .and_then(|model| {
+                parse_external_agent_model_id(model)
+                    .and_then(|choice| (choice.kind == kind.as_str()).then(|| model.to_string()))
+            })
+            .or_else(|| Some(external_agent_model_id(kind.as_str(), None, None)))
+    } else {
+        current_model
     };
 
     if args.is_empty() {
         // List unique providers (sorted, deduplicated).
-        let providers = unique_providers(models);
+        let providers = unique_providers(&choices);
 
         if providers.len() <= 1 {
             // Single provider -- list models directly.
-            return Ok(format_model_list(models, current_model.as_deref(), None));
+            return Ok(format_model_list(&choices, current_choice.as_deref(), None));
         }
 
         // Multiple providers -- list them for selection.
         // Prefix with "providers:" so Telegram handler knows.
-        let current_provider = current_model.as_deref().and_then(|cm| {
-            models.iter().find_map(|m| {
+        let current_provider = current_choice.as_deref().and_then(|cm| {
+            choices.iter().find_map(|m| {
                 let id = m.get("id").and_then(|v| v.as_str())?;
                 if id == cm {
                     m.get("provider").and_then(|v| v.as_str()).map(String::from)
@@ -386,7 +406,7 @@ pub(in crate::channel_events) async fn handle_model(
         });
         let mut lines = vec!["providers:".to_string()];
         for (i, p) in providers.iter().enumerate() {
-            let count = models
+            let count = choices
                 .iter()
                 .filter(|m| m.get("provider").and_then(|v| v.as_str()) == Some(p))
                 .count();
@@ -401,8 +421,8 @@ pub(in crate::channel_events) async fn handle_model(
     } else if let Some(provider) = args.strip_prefix("provider:") {
         // List models for a specific provider.
         Ok(format_model_list(
-            models,
-            current_model.as_deref(),
+            &choices,
+            current_choice.as_deref(),
             Some(provider),
         ))
     } else {
@@ -410,13 +430,13 @@ pub(in crate::channel_events) async fn handle_model(
         let n: usize = args
             .parse()
             .map_err(|_| ChannelError::invalid_input("usage: /model [number]"))?;
-        if n == 0 || n > models.len() {
+        if n == 0 || n > choices.len() {
             return Err(ChannelError::invalid_input(format!(
                 "invalid model number. Use 1\u{2013}{}.",
-                models.len()
+                choices.len()
             )));
         }
-        let chosen = &models[n - 1];
+        let chosen = &choices[n - 1];
         let model_id = chosen
             .get("id")
             .and_then(|v| v.as_str())
@@ -425,6 +445,48 @@ pub(in crate::channel_events) async fn handle_model(
             .get("displayName")
             .and_then(|v| v.as_str())
             .unwrap_or(model_id);
+        if let Some(selection) = chosen
+            .get("externalAgentKind")
+            .and_then(|v| v.as_str())
+            .map(|kind| ExternalAgentModelSelection {
+                kind,
+                model: chosen.get("externalAgentModel").and_then(|v| v.as_str()),
+                effort: chosen.get("externalAgentEffort").and_then(|v| v.as_str()),
+            })
+            .or_else(|| parse_external_agent_model_id(model_id))
+        {
+            let kind = selection
+                .kind
+                .parse::<AgentTransportKind>()
+                .map_err(ChannelError::invalid_input)?;
+            state
+                .services
+                .external_agent
+                .bind(serde_json::json!({
+                    "sessionKey": session_key,
+                    "kind": kind.as_str(),
+                    "model": selection.model,
+                    "effort": selection.effort,
+                }))
+                .await
+                .map_err(ChannelError::unavailable)?;
+
+            broadcast(
+                state,
+                "session",
+                serde_json::json!({
+                    "kind": "patched",
+                    "sessionKey": session_key,
+                }),
+                BroadcastOpts {
+                    drop_if_slow: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+
+            return Ok(format!("Backend switched to: {display}"));
+        }
 
         let patch_res = state
             .services
@@ -439,6 +501,7 @@ pub(in crate::channel_events) async fn handle_model(
             .get("version")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
+        unbind_external_agent_if_bound(state, session_key).await?;
 
         broadcast(
             state,
@@ -456,6 +519,154 @@ pub(in crate::channel_events) async fn handle_model(
         .await;
 
         Ok(format!("Model switched to: {display}"))
+    }
+}
+
+async fn external_agent_model_entries(
+    state: &GatewayState,
+) -> ChannelResult<Vec<serde_json::Value>> {
+    let agents = state
+        .services
+        .external_agent
+        .list()
+        .await
+        .map_err(ChannelError::unavailable)?;
+    let Some(agents) = agents.as_array() else {
+        return Ok(Vec::new());
+    };
+    Ok(agents
+        .iter()
+        .filter(|agent| {
+            agent
+                .get("installed")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+        })
+        .filter_map(|agent| {
+            let kind = agent
+                .get("kind")
+                .and_then(|value| value.as_str())
+                .or_else(|| agent.get("name").and_then(|value| value.as_str()))?;
+            let mut entries = vec![serde_json::json!({
+                "id": external_agent_model_id(kind, None, None),
+                "provider": external_agent_provider(kind),
+                "displayName": format!("{} (default)", external_agent_display_name(kind)),
+                "externalAgentKind": kind,
+            })];
+            let models = agent
+                .get("models")
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|value| value.as_str())
+                .filter(|model| !model.trim().is_empty())
+                .collect::<Vec<_>>();
+            let efforts = agent
+                .get("efforts")
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|value| value.as_str())
+                .filter(|effort| !effort.trim().is_empty())
+                .collect::<Vec<_>>();
+            for model in models {
+                if efforts.is_empty() {
+                    entries.push(serde_json::json!({
+                        "id": external_agent_model_id(kind, Some(model), None),
+                        "provider": external_agent_provider(kind),
+                        "displayName": format!("{}: {model}", external_agent_display_name(kind)),
+                        "externalAgentKind": kind,
+                        "externalAgentModel": model,
+                    }));
+                } else {
+                    for effort in &efforts {
+                        entries.push(serde_json::json!({
+                            "id": external_agent_model_id(kind, Some(model), Some(effort)),
+                            "provider": external_agent_provider(kind),
+                            "displayName": format!(
+                                "{}: {model} ({effort})",
+                                external_agent_display_name(kind)
+                            ),
+                            "externalAgentKind": kind,
+                            "externalAgentModel": model,
+                            "externalAgentEffort": effort,
+                        }));
+                    }
+                }
+            }
+            Some(entries)
+        })
+        .flatten()
+        .collect())
+}
+
+async fn unbind_external_agent_if_bound(
+    state: &GatewayState,
+    session_key: &str,
+) -> ChannelResult<()> {
+    let status = state
+        .services
+        .external_agent
+        .status(serde_json::json!({ "sessionKey": session_key }))
+        .await
+        .map_err(ChannelError::unavailable)?;
+    if status
+        .get("bound")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        state
+            .services
+            .external_agent
+            .unbind(serde_json::json!({ "sessionKey": session_key }))
+            .await
+            .map_err(ChannelError::unavailable)?;
+    }
+    Ok(())
+}
+
+struct ExternalAgentModelSelection<'a> {
+    kind: &'a str,
+    model: Option<&'a str>,
+    effort: Option<&'a str>,
+}
+
+fn external_agent_model_id(kind: &str, model: Option<&str>, effort: Option<&str>) -> String {
+    match (model, effort) {
+        (Some(model), Some(effort)) => {
+            format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::{model}::{effort}")
+        },
+        (Some(model), None) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::{model}"),
+        (None, Some(effort)) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::default::{effort}"),
+        (None, None) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}"),
+    }
+}
+
+fn parse_external_agent_model_id(model_id: &str) -> Option<ExternalAgentModelSelection<'_>> {
+    let suffix = model_id.strip_prefix(EXTERNAL_AGENT_MODEL_PREFIX)?;
+    let mut parts = suffix.split("::");
+    let kind = parts.next()?;
+    let model = parts.next();
+    let effort = parts.next();
+    Some(ExternalAgentModelSelection {
+        kind,
+        model: model.filter(|model| *model != "default"),
+        effort,
+    })
+}
+
+fn external_agent_provider(kind: &str) -> String {
+    format!("{EXTERNAL_AGENT_PROVIDER}/{kind}")
+}
+
+fn external_agent_display_name(kind: &str) -> &'static str {
+    match kind {
+        "claude-code" => "Claude Code CLI",
+        "codex" => "Codex CLI",
+        "acp" => "ACP Agent",
+        "opencode" => "OpenCode CLI",
+        "pi-agent" => "Pi Agent",
+        _ => "External Agent",
     }
 }
 

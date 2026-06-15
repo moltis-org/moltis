@@ -693,6 +693,8 @@ port = {port}                           # Port number (auto-generated for this i
 # [external_agents.agents.claude-code]
 # binary = "claude"                 # Override binary path (default: look up on $PATH)
 # args = ["-p", "--output-format", "json"]
+# models = ["claude-opus-4-8", "claude-sonnet-4-6"] # Optional model choices shown in /model
+# efforts = ["high", "xhigh"]       # Optional effort choices shown in /model
 # working_dir = "."                 # Override working directory
 # timeout_secs = 300                # Session timeout
 # use_tmux = false                  # Force tmux backend (vs direct PTY)
@@ -702,6 +704,8 @@ port = {port}                           # Port number (auto-generated for this i
 # [external_agents.agents.codex]
 # binary = "codex"
 # args = ["app-server"]
+# models = ["gpt-5.5", "gpt-5.4"]
+# efforts = ["medium", "high", "xhigh"]
 
 # [external_agents.agents.acp]
 # binary = "/path/to/acp-agent"

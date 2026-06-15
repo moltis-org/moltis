@@ -57,6 +57,8 @@ pub(super) fn build_schema_map() -> KnownKeys {
         Struct(HashMap::from([
             ("binary", Leaf),
             ("args", Array(Box::new(Leaf))),
+            ("models", Array(Box::new(Leaf))),
+            ("efforts", Array(Box::new(Leaf))),
             ("env", Map(Box::new(Leaf))),
             ("working_dir", Leaf),
             ("timeout_secs", Leaf),

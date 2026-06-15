@@ -74,6 +74,8 @@ impl ExternalAgentTransport for ClaudeCodeTransport {
             spec.working_dir.clone(),
             spec.timeout_secs,
             spec.external_session_id.clone(),
+            spec.model.clone(),
+            spec.effort.clone(),
         )))
     }
 }
@@ -85,6 +87,8 @@ struct ClaudeCodeSession {
     working_dir: Option<PathBuf>,
     timeout: Duration,
     session_id: Option<String>,
+    model: Option<String>,
+    effort: Option<String>,
     status: ExternalAgentStatus,
 }
 
@@ -96,6 +100,8 @@ impl ClaudeCodeSession {
         working_dir: Option<PathBuf>,
         timeout_secs: Option<u64>,
         session_id: Option<String>,
+        model: Option<String>,
+        effort: Option<String>,
     ) -> Self {
         Self {
             binary,
@@ -104,12 +110,26 @@ impl ClaudeCodeSession {
             working_dir,
             timeout: Duration::from_secs(timeout_secs.unwrap_or(300)),
             session_id,
+            model,
+            effort,
             status: ExternalAgentStatus::Idle,
         }
     }
 
     fn args_for_turn(&self) -> Vec<String> {
         let mut args = self.base_args.clone();
+        if let Some(model) = &self.model
+            && !has_model_arg(&args)
+        {
+            args.push("--model".to_string());
+            args.push(model.clone());
+        }
+        if let Some(effort) = &self.effort
+            && !has_effort_arg(&args)
+        {
+            args.push("--effort".to_string());
+            args.push(effort.clone());
+        }
         if let Some(session_id) = &self.session_id
             && !has_resume_arg(&args)
         {
@@ -221,6 +241,15 @@ fn has_resume_arg(args: &[String]) -> bool {
         .any(|arg| matches!(arg.as_str(), "--resume" | "-r" | "--continue" | "-c"))
 }
 
+fn has_model_arg(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| matches!(arg.as_str(), "--model" | "-m"))
+}
+
+fn has_effort_arg(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--effort")
+}
+
 #[cfg(test)]
 mod tests {
     use {
@@ -256,6 +285,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            None,
         );
         assert!(!session.args_for_turn().iter().any(|arg| arg == "--resume"));
         session.session_id = Some("sid".to_string());
@@ -277,6 +308,8 @@ mod tests {
             None,
             None,
             Some("persisted".to_string()),
+            None,
+            None,
         );
 
         assert_eq!(session.external_session_id(), Some("persisted"));
@@ -314,6 +347,8 @@ printf '%s\n' '{"result":"ok","session_id":"sid-1"}'
             None,
             Some(5),
             None,
+            None,
+            None,
         );
 
         let first = session
@@ -337,5 +372,35 @@ printf '%s\n' '{"result":"ok","session_id":"sid-1"}'
         assert_eq!(lines, vec!["", "--resume sid-1"]);
         fs::remove_dir_all(dir)?;
         Ok(())
+    }
+
+    #[test]
+    fn adds_model_arg_when_model_is_selected() {
+        let session = ClaudeCodeSession::new(
+            "claude".to_string(),
+            vec![
+                "-p".to_string(),
+                "--output-format".to_string(),
+                "json".to_string(),
+            ],
+            HashMap::new(),
+            None,
+            None,
+            Some("sid".to_string()),
+            Some("opus".to_string()),
+            Some("xhigh".to_string()),
+        );
+
+        assert_eq!(session.args_for_turn(), vec![
+            "-p",
+            "--output-format",
+            "json",
+            "--model",
+            "opus",
+            "--effort",
+            "xhigh",
+            "--resume",
+            "sid"
+        ]);
     }
 }

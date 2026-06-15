@@ -77,6 +77,8 @@
   - [`mcp`](#mcp)
   - [`mcp.servers.<name>`](#mcpserversname)
   - [`mcp.servers.<name>.oauth`](#mcpserversnameoauth)
+  - [`external_agents`](#external-agents)
+  - [`external_agents.agents.<kind>`](#external-agentsagentskind)
 - **Memory**
   - [`memory`](#memory)
   - [`memory.qmd`](#memoryqmd)
@@ -699,6 +701,34 @@ Each channel account (`channels.<channel_type>.<account_name>`) is an arbitrary 
 | `scopes` | array of string | `[]` | OAuth scopes to request. |
 
 ---
+
+
+---
+
+### `external_agents`
+
+**Struct:** `ExternalAgentsConfig`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable the external CLI agent bridge. |
+| `agents` | map | `{}` | Per-agent configuration keyed by agent kind, such as `claude-code` or `codex`. |
+
+
+### `external_agents.agents.<kind>`
+
+**Struct:** `ExternalAgentConfig`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `binary` | optional string | `null` | Override the CLI binary path. |
+| `args` | array of strings | `[]` | Override CLI arguments for the external agent runtime. |
+| `models` | array of strings | `[]` | Optional model choices shown in `/model`; selected values are passed to the external CLI runtime. |
+| `efforts` | array of strings | `[]` | Optional thinking/reasoning effort choices shown in `/model`; selected values are passed to runtimes that support effort. |
+| `env` | map | `{}` | Environment variables for this external agent runtime. |
+| `working_dir` | optional string | `null` | Working directory for this external agent runtime. |
+| `timeout_secs` | optional integer | `null` | Timeout for external agent startup or turns. |
+| `use_tmux` | optional bool | `null` | Force tmux-backed runtime when supported. |
 
 
 ---

@@ -347,9 +347,13 @@ enabled = true
 
 [external_agents.agents.claude-code]
 binary = "claude"
+models = ["claude-opus-4-8", "claude-sonnet-4-6"]
+efforts = ["high", "xhigh"]
 
 [external_agents.agents.codex]
 binary = "codex"
+models = ["gpt-5.5", "gpt-5.4"]
+efforts = ["medium", "high", "xhigh"]
 "#;
     let result = validate_toml_str(toml);
     let warning = result
