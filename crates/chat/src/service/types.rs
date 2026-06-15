@@ -594,6 +594,33 @@ impl LiveChatService {
         };
         Some(ctx.to_prompt_section())
     }
+
+    /// Resolve all dynamic prompt context for a turn.
+    pub(in crate::service) async fn resolve_turn_context(
+        &self,
+        session_key: &str,
+        conn_id: Option<&str>,
+    ) -> Option<String> {
+        let project_context = self.resolve_project_context(session_key, conn_id).await;
+        let command_context = moltis_common::context_command::run_context_command(
+            self.config.chat.context_command.as_deref(),
+            None,
+        )
+        .await;
+        merge_context_sections(project_context, command_context)
+    }
+}
+
+pub(in crate::service) fn merge_context_sections(
+    project_context: Option<String>,
+    command_context: Option<String>,
+) -> Option<String> {
+    match (project_context, command_context) {
+        (Some(project), Some(command)) => Some(format!("{project}\n\n{command}")),
+        (Some(project), None) => Some(project),
+        (None, Some(command)) => Some(command),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
@@ -601,7 +628,7 @@ mod tests {
     use {
         super::{
             ActiveAssistantDraft, build_persisted_assistant_message,
-            build_tool_call_assistant_message,
+            build_tool_call_assistant_message, merge_context_sections,
         },
         crate::types::AssistantTurnOutput,
         moltis_sessions::PersistedMessage,
@@ -634,6 +661,26 @@ mod tests {
             },
             _ => panic!("expected assistant message"),
         }
+    }
+
+    #[test]
+    fn merge_context_sections_combines_project_and_command_context() {
+        let merged = merge_context_sections(Some("project".into()), Some("dynamic".into()))
+            .expect("merged context");
+        assert_eq!(merged, "project\n\ndynamic");
+    }
+
+    #[test]
+    fn merge_context_sections_keeps_single_context() {
+        assert_eq!(
+            merge_context_sections(Some("project".into()), None).as_deref(),
+            Some("project")
+        );
+        assert_eq!(
+            merge_context_sections(None, Some("dynamic".into())).as_deref(),
+            Some("dynamic")
+        );
+        assert_eq!(merge_context_sections(None, None), None);
     }
 
     #[test]

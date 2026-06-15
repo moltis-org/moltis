@@ -1003,9 +1003,9 @@ impl ChatService for LiveChatService {
         runtime_context.mode = resolve_prompt_mode_context(&persona.config, session_entry.as_ref());
         apply_request_runtime_context(&mut runtime_context.host, &params);
 
-        // Resolve project context.
+        // Resolve project context plus optional command-generated context.
         let project_context = self
-            .resolve_project_context(&session_key, conn_id.as_deref())
+            .resolve_turn_context(&session_key, conn_id.as_deref())
             .await;
 
         // Discover skills (gated on `[skills] enabled` — see #655).
@@ -1143,9 +1143,9 @@ impl ChatService for LiveChatService {
         runtime_context.mode = resolve_prompt_mode_context(&persona.config, session_entry.as_ref());
         apply_request_runtime_context(&mut runtime_context.host, &params);
 
-        // Resolve project context.
+        // Resolve project context plus optional command-generated context.
         let project_context = self
-            .resolve_project_context(&session_key, conn_id.as_deref())
+            .resolve_turn_context(&session_key, conn_id.as_deref())
             .await;
 
         // Discover skills (gated on `[skills] enabled` — see #655).

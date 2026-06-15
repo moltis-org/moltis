@@ -602,9 +602,9 @@ impl LiveChatService {
             }
         }
 
-        // Resolve project context for this connection's active project.
+        // Resolve project context plus optional command-generated context.
         let project_context = self
-            .resolve_project_context(&session_key, conn_id.as_deref())
+            .resolve_turn_context(&session_key, conn_id.as_deref())
             .await;
 
         // Generate run_id early so we can link the user message to its agent run.

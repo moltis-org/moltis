@@ -491,7 +491,12 @@ impl ExternalAgentChatService {
         )
         .await;
 
-        let context = context_from_history(&history);
+        let context_command_output = moltis_common::context_command::run_context_command(
+            self.state.config.chat.context_command.as_deref(),
+            None,
+        )
+        .await;
+        let context = context_from_history_with_project_context(&history, context_command_output);
         let start = std::time::Instant::now();
         let live_session = self
             .external_agents
@@ -727,7 +732,10 @@ async fn resolve_session_key(params: &Value, state: &GatewayState) -> String {
     "main".to_string()
 }
 
-fn context_from_history(history: &[Value]) -> ContextSnapshot {
+fn context_from_history_with_project_context(
+    history: &[Value],
+    project_context: Option<String>,
+) -> ContextSnapshot {
     let recent_turns = history
         .iter()
         .rev()
@@ -754,6 +762,7 @@ fn context_from_history(history: &[Value]) -> ContextSnapshot {
         .collect();
     ContextSnapshot {
         recent_turns,
+        project_context,
         ..ContextSnapshot::default()
     }
 }
@@ -910,6 +919,28 @@ mod tests {
                 ExternalAgentStatus::Stopped
             }
         }
+    }
+
+    #[test]
+    fn context_from_history_includes_project_context() {
+        let history = vec![
+            PersistedMessage::User {
+                content: MessageContent::Text("hello".to_string()),
+                created_at: None,
+                audio: None,
+                documents: None,
+                channel: None,
+                seq: None,
+                run_id: None,
+            }
+            .to_value(),
+        ];
+
+        let context =
+            context_from_history_with_project_context(&history, Some("dynamic context".into()));
+
+        assert_eq!(context.project_context.as_deref(), Some("dynamic context"));
+        assert_eq!(context.recent_turns.len(), 1);
     }
 
     async fn sqlite_pool() -> sqlx::SqlitePool {

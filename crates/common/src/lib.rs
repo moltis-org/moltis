@@ -1,5 +1,6 @@
 //! Shared types, error definitions, and utilities used across all moltis crates.
 
+pub mod context_command;
 pub mod error;
 pub mod hooks;
 pub mod http_client;

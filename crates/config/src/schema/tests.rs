@@ -525,6 +525,12 @@ fn chat_config_toml_parses_workspace_file_limit() {
 }
 
 #[test]
+fn chat_config_toml_parses_context_command() {
+    let cfg: ChatConfig = toml::from_str(r#"context_command = "thomas context""#).unwrap();
+    assert_eq!(cfg.context_command.as_deref(), Some("thomas context"));
+}
+
+#[test]
 fn providers_config_local_alias_maps_local_llm_to_local() {
     let mut config = ProvidersConfig::default();
     config.providers.insert("local-llm".into(), ProviderEntry {
