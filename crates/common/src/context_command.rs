@@ -54,7 +54,7 @@ pub async fn run_context_command(
 
     let text = String::from_utf8_lossy(&output.stdout).to_string();
     if text.trim().is_empty() {
-        warn!("context_command produced no output");
+        debug!("context_command produced no output");
         None
     } else {
         debug!(len = text.len(), "context_command produced dynamic context");

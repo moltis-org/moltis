@@ -601,12 +601,13 @@ impl LiveChatService {
         session_key: &str,
         conn_id: Option<&str>,
     ) -> Option<String> {
-        let project_context = self.resolve_project_context(session_key, conn_id).await;
-        let command_context = moltis_common::context_command::run_context_command(
-            self.config.chat.context_command.as_deref(),
-            None,
-        )
-        .await;
+        let (project_context, command_context) = tokio::join!(
+            self.resolve_project_context(session_key, conn_id),
+            moltis_common::context_command::run_context_command(
+                self.config.chat.context_command.as_deref(),
+                None,
+            ),
+        );
         merge_context_sections(project_context, command_context)
     }
 }
