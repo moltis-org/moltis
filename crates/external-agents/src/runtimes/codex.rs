@@ -412,7 +412,7 @@ fn args_with_model_and_effort(
 fn has_model_arg(args: &[String]) -> bool {
     let mut iter = args.iter().peekable();
     while let Some(arg) = iter.next() {
-        if matches!(arg.as_str(), "--model" | "-m") {
+        if matches!(arg.as_str(), "--model" | "-m") || arg.starts_with("--model=") {
             return true;
         }
         if matches!(arg.as_str(), "--config" | "-c")
@@ -619,5 +619,47 @@ done
         session.shutdown().await?;
         fs::remove_dir_all(dir)?;
         Ok(())
+    }
+
+    #[test]
+    fn has_model_arg_detects_equals_form() {
+        let args = vec!["--model=gpt-4".to_string()];
+        assert!(has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_model_arg_detects_flag_form() {
+        let args = vec!["--model".to_string(), "gpt-4".to_string()];
+        assert!(has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_model_arg_detects_config_form() {
+        let args = vec!["-c".to_string(), "model=gpt-4".to_string()];
+        assert!(has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_model_arg_false_when_absent() {
+        let args = vec!["--some-flag".to_string()];
+        assert!(!has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_effort_arg_detects_config_form() {
+        let args = vec!["-c".to_string(), "model_reasoning_effort=high".to_string()];
+        assert!(has_effort_arg(&args));
+    }
+
+    #[test]
+    fn has_effort_arg_detects_config_equals_form() {
+        let args = vec!["--config=model_reasoning_effort=high".to_string()];
+        assert!(has_effort_arg(&args));
+    }
+
+    #[test]
+    fn has_effort_arg_false_when_absent() {
+        let args = vec!["--model".to_string()];
+        assert!(!has_effort_arg(&args));
     }
 }

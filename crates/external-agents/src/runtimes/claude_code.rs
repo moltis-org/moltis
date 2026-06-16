@@ -243,11 +243,12 @@ fn has_resume_arg(args: &[String]) -> bool {
 
 fn has_model_arg(args: &[String]) -> bool {
     args.iter()
-        .any(|arg| matches!(arg.as_str(), "--model" | "-m"))
+        .any(|arg| matches!(arg.as_str(), "--model" | "-m") || arg.starts_with("--model="))
 }
 
 fn has_effort_arg(args: &[String]) -> bool {
-    args.iter().any(|arg| arg == "--effort")
+    args.iter()
+        .any(|arg| arg == "--effort" || arg.starts_with("--effort="))
 }
 
 #[cfg(test)]
@@ -402,5 +403,47 @@ printf '%s\n' '{"result":"ok","session_id":"sid-1"}'
             "--resume",
             "sid"
         ]);
+    }
+
+    #[test]
+    fn has_model_arg_detects_equals_form() {
+        let args = vec!["--model=opus".to_string()];
+        assert!(has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_model_arg_detects_flag_form() {
+        let args = vec!["--model".to_string(), "opus".to_string()];
+        assert!(has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_model_arg_detects_short_form() {
+        let args = vec!["-m".to_string(), "opus".to_string()];
+        assert!(has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_model_arg_false_when_absent() {
+        let args = vec!["-p".to_string(), "--output-format".to_string()];
+        assert!(!has_model_arg(&args));
+    }
+
+    #[test]
+    fn has_effort_arg_detects_equals_form() {
+        let args = vec!["--effort=high".to_string()];
+        assert!(has_effort_arg(&args));
+    }
+
+    #[test]
+    fn has_effort_arg_detects_flag_form() {
+        let args = vec!["--effort".to_string(), "high".to_string()];
+        assert!(has_effort_arg(&args));
+    }
+
+    #[test]
+    fn has_effort_arg_false_when_absent() {
+        let args = vec!["-p".to_string()];
+        assert!(!has_effort_arg(&args));
     }
 }

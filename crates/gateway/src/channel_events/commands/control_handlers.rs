@@ -10,6 +10,9 @@ use {
 
 use crate::{
     broadcast::{BroadcastOpts, broadcast},
+    external_agents::{
+        ExternalAgentModelSelection, external_agent_model_id, parse_external_agent_model_id,
+    },
     state::GatewayState,
 };
 
@@ -22,7 +25,6 @@ use super::{
 };
 
 const EXTERNAL_AGENT_PROVIDER: &str = "external-agent";
-const EXTERNAL_AGENT_MODEL_PREFIX: &str = "external-agent::";
 
 // ── Control command handlers ─────────────────────────────────────
 
@@ -625,35 +627,6 @@ async fn unbind_external_agent_if_bound(
     Ok(())
 }
 
-struct ExternalAgentModelSelection<'a> {
-    kind: &'a str,
-    model: Option<&'a str>,
-    effort: Option<&'a str>,
-}
-
-fn external_agent_model_id(kind: &str, model: Option<&str>, effort: Option<&str>) -> String {
-    match (model, effort) {
-        (Some(model), Some(effort)) => {
-            format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::{model}::{effort}")
-        },
-        (Some(model), None) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::{model}"),
-        (None, Some(effort)) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::default::{effort}"),
-        (None, None) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}"),
-    }
-}
-
-fn parse_external_agent_model_id(model_id: &str) -> Option<ExternalAgentModelSelection<'_>> {
-    let suffix = model_id.strip_prefix(EXTERNAL_AGENT_MODEL_PREFIX)?;
-    let mut parts = suffix.split("::");
-    let kind = parts.next()?;
-    let model = parts.next();
-    let effort = parts.next();
-    Some(ExternalAgentModelSelection {
-        kind,
-        model: model.filter(|model| *model != "default"),
-        effort,
-    })
-}
 
 fn external_agent_provider(kind: &str) -> String {
     format!("{EXTERNAL_AGENT_PROVIDER}/{kind}")

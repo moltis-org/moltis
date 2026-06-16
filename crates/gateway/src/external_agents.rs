@@ -410,7 +410,8 @@ impl ExternalAgentService for GatewayExternalAgentService {
         self.session_metadata
             .set_external_agent(session_key, Some(kind), None)
             .await;
-        let selected_model_id = external_agent_model_id(kind, model.as_deref(), effort.as_deref());
+        let selected_model_id =
+            external_agent_model_id(kind.as_str(), model.as_deref(), effort.as_deref());
         self.session_metadata
             .set_model(session_key, Some(selected_model_id.clone()))
             .await;
@@ -462,42 +463,61 @@ impl ExternalAgentService for GatewayExternalAgentService {
     }
 }
 
+pub(crate) const EXTERNAL_AGENT_MODEL_PREFIX: &str = "external-agent::";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SelectedExternalAgent {
     model: Option<String>,
     effort: Option<String>,
 }
 
-fn external_agent_model_id(
-    kind: AgentTransportKind,
+pub(crate) fn external_agent_model_id(
+    kind: &str,
     model: Option<&str>,
     effort: Option<&str>,
 ) -> String {
     match (model, effort) {
         (Some(model), Some(effort)) => {
-            format!("external-agent::{}::{model}::{effort}", kind.as_str())
+            format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::{model}::{effort}")
         },
-        (Some(model), None) => format!("external-agent::{}::{model}", kind.as_str()),
-        (None, Some(effort)) => format!("external-agent::{}::default::{effort}", kind.as_str()),
-        (None, None) => format!("external-agent::{}", kind.as_str()),
+        (Some(model), None) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::{model}"),
+        (None, Some(effort)) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::default::{effort}"),
+        (None, None) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}"),
     }
+}
+
+pub(crate) struct ExternalAgentModelSelection<'a> {
+    pub kind: &'a str,
+    pub model: Option<&'a str>,
+    pub effort: Option<&'a str>,
+}
+
+pub(crate) fn parse_external_agent_model_id(
+    model_id: &str,
+) -> Option<ExternalAgentModelSelection<'_>> {
+    let suffix = model_id.strip_prefix(EXTERNAL_AGENT_MODEL_PREFIX)?;
+    let mut parts = suffix.split("::");
+    let kind = parts.next()?;
+    let model = parts.next();
+    let effort = parts.next();
+    Some(ExternalAgentModelSelection {
+        kind,
+        model: model.filter(|m| *m != "default"),
+        effort,
+    })
 }
 
 fn selected_external_agent(
     selection_id: Option<&str>,
     kind: AgentTransportKind,
 ) -> Option<SelectedExternalAgent> {
-    let suffix = selection_id?.strip_prefix("external-agent::")?;
-    let mut parts = suffix.split("::");
-    let selection_kind = parts.next()?;
-    if selection_kind != kind.as_str() {
+    let sel = parse_external_agent_model_id(selection_id?)?;
+    if sel.kind != kind.as_str() {
         return None;
     }
-    let model = parts.next().map(ToOwned::to_owned);
-    let effort = parts.next().map(ToOwned::to_owned);
     Some(SelectedExternalAgent {
-        model: model.filter(|model| model != "default"),
-        effort,
+        model: sel.model.map(ToOwned::to_owned),
+        effort: sel.effort.map(ToOwned::to_owned),
     })
 }
 
@@ -1648,5 +1668,58 @@ mod tests {
 
         assert_eq!(agent_state.shutdowns.load(Ordering::SeqCst), 1);
         assert!(external_agents.live_sessions.lock().await.is_empty());
+    }
+
+    #[test]
+    fn model_id_round_trips_through_parse() {
+        let id = external_agent_model_id("claude-code", Some("opus"), Some("high"));
+        let parsed = parse_external_agent_model_id(&id).unwrap();
+        assert_eq!(parsed.kind, "claude-code");
+        assert_eq!(parsed.model, Some("opus"));
+        assert_eq!(parsed.effort, Some("high"));
+    }
+
+    #[test]
+    fn model_id_kind_only() {
+        let id = external_agent_model_id("codex", None, None);
+        assert_eq!(id, "external-agent::codex");
+        let parsed = parse_external_agent_model_id(&id).unwrap();
+        assert_eq!(parsed.kind, "codex");
+        assert!(parsed.model.is_none());
+        assert!(parsed.effort.is_none());
+    }
+
+    #[test]
+    fn model_id_with_model_only() {
+        let id = external_agent_model_id("claude-code", Some("sonnet"), None);
+        let parsed = parse_external_agent_model_id(&id).unwrap();
+        assert_eq!(parsed.kind, "claude-code");
+        assert_eq!(parsed.model, Some("sonnet"));
+        assert!(parsed.effort.is_none());
+    }
+
+    #[test]
+    fn model_id_effort_only_uses_default_placeholder() {
+        let id = external_agent_model_id("codex", None, Some("low"));
+        assert!(id.contains("::default::"));
+        let parsed = parse_external_agent_model_id(&id).unwrap();
+        assert_eq!(parsed.kind, "codex");
+        assert!(parsed.model.is_none());
+        assert_eq!(parsed.effort, Some("low"));
+    }
+
+    #[test]
+    fn parse_rejects_non_external_agent_prefix() {
+        assert!(parse_external_agent_model_id("openai::gpt-4").is_none());
+    }
+
+    #[test]
+    fn selected_external_agent_filters_by_kind() {
+        let id = external_agent_model_id("claude-code", Some("opus"), None);
+        let sel =
+            selected_external_agent(Some(&id), AgentTransportKind::ClaudeCode).unwrap();
+        assert_eq!(sel.model.as_deref(), Some("opus"));
+
+        assert!(selected_external_agent(Some(&id), AgentTransportKind::Codex).is_none());
     }
 }
