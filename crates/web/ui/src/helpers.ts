@@ -1,5 +1,7 @@
 // ── Helpers ──────────────────────────────────────────────────
+
 import { Marked, Renderer, type Token } from "marked";
+import * as gon from "./gon";
 import { hasTranslation, t } from "./i18n";
 import * as S from "./state";
 import type { RpcResponse } from "./types";
@@ -272,7 +274,10 @@ const markedInstance = new Marked({ renderer: mdRenderer, breaks: true, gfm: tru
 const RPC_TIMEOUT_MS = 5_000;
 
 function rpcTimeoutMs(): number {
-	return window.__moltisTestRpcTimeoutMs ?? RPC_TIMEOUT_MS;
+	if (typeof window.__moltisTestRpcTimeoutMs === "number") return window.__moltisTestRpcTimeoutMs;
+	// server.rpc_timeout_ms via gon; ignore a misconfigured 0/negative.
+	const configured = gon.get("rpc_timeout_ms");
+	return typeof configured === "number" && configured > 0 ? configured : RPC_TIMEOUT_MS;
 }
 
 export function renderMarkdown(raw: string): string {

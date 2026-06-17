@@ -1018,6 +1018,18 @@ fn terminal_disabled_via_config_reflects_in_helper() {
 }
 
 #[test]
+fn rpc_timeout_ms_defaults_to_5000() {
+    let cfg: MoltisConfig = toml::from_str("").unwrap();
+    assert_eq!(cfg.server.rpc_timeout_ms, 5000);
+}
+
+#[test]
+fn rpc_timeout_ms_parsed_from_config() {
+    let cfg: MoltisConfig = toml::from_str("[server]\nrpc_timeout_ms = 8000\n").unwrap();
+    assert_eq!(cfg.server.rpc_timeout_ms, 8000);
+}
+
+#[test]
 fn voice_openai_and_whisper_base_url_parse_from_toml() {
     let toml_str = r#"
 [voice.tts.openai]

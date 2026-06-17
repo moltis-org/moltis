@@ -38,6 +38,7 @@ port = {port}                           # Port number (auto-generated for this i
 # bind = "127.0.0.1"                # Address to bind to ("0.0.0.0" for all interfaces)
 # http_request_logs = false              # Enable verbose Axum HTTP request/response logs (debugging)
 # ws_request_logs = false                # Enable WebSocket RPC request/response logs (debugging)
+# rpc_timeout_ms = 5000                  # Web UI WebSocket RPC reply timeout (milliseconds)
 # terminal_enabled = true                # Enable interactive host terminal in Settings > Terminal
                                          # Set to false to disable the unsandboxed shell in the web UI.
                                          # NOTE: this can be re-enabled via the web UI config editor.

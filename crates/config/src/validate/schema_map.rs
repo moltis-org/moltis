@@ -374,6 +374,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
                 ("log_buffer_size", Leaf),
                 ("update_releases_url", Leaf),
                 ("db_pool_max_connections", Leaf),
+                ("rpc_timeout_ms", Leaf),
                 ("shiki_cdn_url", Leaf),
                 ("terminal_enabled", Leaf),
                 ("external_url", Leaf),
