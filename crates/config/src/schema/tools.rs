@@ -495,9 +495,11 @@ pub struct BrowserConfig {
     #[serde(default = "default_browserless_api_version")]
     pub browserless_api_version: BrowserlessApiVersion,
     /// Automatically capture a screenshot after each state-changing browser
-    /// action (navigate, click, type, scroll, etc.) and attach it to that
-    /// action's result, so chat clients can show a per-step screenshot timeline.
-    /// Has no effect for renderless browsers that cannot take screenshots.
+    /// action (navigate, click, type, scroll, etc.) — on both success and
+    /// failure — and attach it to that action's result, so chat clients can
+    /// show a per-step screenshot timeline. Opt-in (default `false`) to avoid
+    /// adding a screenshot round-trip to every action on upgrade. Has no effect
+    /// for renderless browsers that cannot take screenshots.
     #[serde(default = "default_screenshot_each_step")]
     pub screenshot_each_step: bool,
 }
@@ -531,7 +533,7 @@ const fn default_browserless_api_version() -> BrowserlessApiVersion {
 }
 
 const fn default_screenshot_each_step() -> bool {
-    true
+    false
 }
 
 impl Default for BrowserConfig {

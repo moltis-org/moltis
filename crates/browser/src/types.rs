@@ -501,8 +501,9 @@ pub struct BrowserConfig {
     /// Browserless API compatibility mode (`v1` or `v2`).
     pub browserless_api_version: BrowserlessApiVersion,
     /// Automatically capture a screenshot after each state-changing browser
-    /// action and attach it to that action's response. Ignored for renderless
-    /// browser kinds that cannot take screenshots.
+    /// action — on both success and failure — and attach it to that action's
+    /// response. Opt-in (default `false`). Ignored for renderless browser kinds
+    /// that cannot take screenshots.
     pub screenshot_each_step: bool,
 }
 
@@ -557,7 +558,7 @@ impl Default for BrowserConfig {
             container_host: "127.0.0.1".to_string(),
             host_data_dir: None,
             browserless_api_version: BrowserlessApiVersion::V1,
-            screenshot_each_step: true,
+            screenshot_each_step: false,
         }
     }
 }
@@ -755,7 +756,10 @@ mod tests {
             BrowserAction::Refresh,
         ];
         for action in &state_changing {
-            assert!(action.is_state_changing(), "{action} should be state-changing");
+            assert!(
+                action.is_state_changing(),
+                "{action} should be state-changing"
+            );
         }
 
         // Read-only / meta actions are excluded (Screenshot already carries one).
@@ -770,13 +774,18 @@ mod tests {
             BrowserAction::Close,
         ];
         for action in &read_only {
-            assert!(!action.is_state_changing(), "{action} should not be state-changing");
+            assert!(
+                !action.is_state_changing(),
+                "{action} should not be state-changing"
+            );
         }
     }
 
     #[test]
-    fn screenshot_each_step_defaults_on() {
-        assert!(BrowserConfig::default().screenshot_each_step);
+    fn screenshot_each_step_defaults_off() {
+        // Opt-in: upgrading installs must not silently gain a screenshot
+        // round-trip after every browser action.
+        assert!(!BrowserConfig::default().screenshot_each_step);
     }
 
     #[test]
