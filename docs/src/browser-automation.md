@@ -51,6 +51,7 @@ headless = true             # Run without visible window (default)
 viewport_width = 2560       # Default viewport width
 viewport_height = 1440      # Default viewport height
 device_scale_factor = 2.0   # HiDPI/Retina scaling (1.0 = standard, 2.0 = Retina)
+screenshot_each_step = true # Auto-capture a screenshot after each action (per-step timeline)
 
 # Pool management
 max_instances = 0           # 0 = unlimited (limited by memory), >0 = hard limit

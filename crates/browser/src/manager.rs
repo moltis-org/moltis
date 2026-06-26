@@ -214,9 +214,18 @@ impl BrowserManager {
         // Navigate has its own retry-with-fresh-session logic, so handle it
         // separately to avoid double-cleanup.
         if let BrowserAction::Navigate { ref url } = action {
-            return self.navigate(session_id, url, sandbox, browser).await;
+            let (sid, response) = self.navigate(session_id, url, sandbox, browser).await?;
+            let response = if self.config.screenshot_each_step {
+                self.attach_step_screenshot(&sid, response, sandbox, browser)
+                    .await
+            } else {
+                response
+            };
+            return Ok((sid, response));
         }
 
+        // Capture before `action` is consumed by the match below.
+        let wants_step_screenshot = self.config.screenshot_each_step && action.is_state_changing();
         let action_name = action.to_string();
 
         let result = match action {
@@ -254,12 +263,58 @@ impl BrowserManager {
         };
 
         // Detect stale connections for all non-Navigate actions
-        match result {
+        let (sid, response) = match result {
             Err(ref e) if e.is_connection_error() => {
                 let sid = session_id.unwrap_or("unknown");
-                Err(self.cleanup_stale_session(sid, &action_name).await)
+                return Err(self.cleanup_stale_session(sid, &action_name).await);
             },
-            other => other,
+            other => other?,
+        };
+
+        let response = if wants_step_screenshot {
+            self.attach_step_screenshot(&sid, response, sandbox, browser)
+                .await
+        } else {
+            response
+        };
+
+        Ok((sid, response))
+    }
+
+    /// Capture a screenshot after a state-changing action and attach it to the
+    /// action's response so chat clients can render a per-step timeline.
+    ///
+    /// Best-effort: if the response already carries a screenshot it is returned
+    /// unchanged, and any capture error (e.g. renderless browser kinds whose
+    /// `supports_screenshots()` is false) is ignored so the action never fails
+    /// because the auto-screenshot failed.
+    async fn attach_step_screenshot(
+        &self,
+        sid: &str,
+        response: BrowserResponse,
+        sandbox: bool,
+        browser: Option<BrowserPreference>,
+    ) -> BrowserResponse {
+        if response.screenshot.is_some() {
+            return response;
+        }
+
+        match self
+            .screenshot(Some(sid), false, None, sandbox, browser)
+            .await
+        {
+            Ok((_, shot)) => match (shot.screenshot, shot.screenshot_scale) {
+                (Some(data), Some(scale)) => response.with_screenshot(data, scale),
+                _ => response,
+            },
+            Err(e) => {
+                debug!(
+                    session_id = sid,
+                    error = %e,
+                    "auto step screenshot failed; returning response without screenshot"
+                );
+                response
+            },
         }
     }
 

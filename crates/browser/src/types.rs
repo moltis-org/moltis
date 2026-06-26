@@ -78,6 +78,27 @@ fn default_wait_timeout_ms() -> u64 {
     30000
 }
 
+impl BrowserAction {
+    /// Whether this action can change the rendered page and is therefore worth
+    /// auto-capturing a screenshot for. Read-only/meta actions (`Screenshot`,
+    /// `Snapshot`, `GetUrl`, `GetTitle`, `Close`) return `false`.
+    #[must_use]
+    pub fn is_state_changing(&self) -> bool {
+        matches!(
+            self,
+            Self::Navigate { .. }
+                | Self::Click { .. }
+                | Self::Type { .. }
+                | Self::Scroll { .. }
+                | Self::Evaluate { .. }
+                | Self::Wait { .. }
+                | Self::Back
+                | Self::Forward
+                | Self::Refresh
+        )
+    }
+}
+
 /// Known Chromium-family browser engines we can launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -479,6 +500,10 @@ pub struct BrowserConfig {
     pub host_data_dir: Option<PathBuf>,
     /// Browserless API compatibility mode (`v1` or `v2`).
     pub browserless_api_version: BrowserlessApiVersion,
+    /// Automatically capture a screenshot after each state-changing browser
+    /// action and attach it to that action's response. Ignored for renderless
+    /// browser kinds that cannot take screenshots.
+    pub screenshot_each_step: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -532,6 +557,7 @@ impl Default for BrowserConfig {
             container_host: "127.0.0.1".to_string(),
             host_data_dir: None,
             browserless_api_version: BrowserlessApiVersion::V1,
+            screenshot_each_step: true,
         }
     }
 }
@@ -582,6 +608,7 @@ impl From<&moltis_config::schema::BrowserConfig> for BrowserConfig {
                 moltis_config::schema::BrowserlessApiVersion::V1 => BrowserlessApiVersion::V1,
                 moltis_config::schema::BrowserlessApiVersion::V2 => BrowserlessApiVersion::V2,
             },
+            screenshot_each_step: cfg.screenshot_each_step,
         }
     }
 }
@@ -698,6 +725,58 @@ mod tests {
             ..BrowserConfig::default()
         };
         assert!(config.resolved_profile_dir().is_none());
+    }
+
+    #[test]
+    fn state_changing_actions_request_step_screenshots() {
+        // State-changing actions opt in to auto-screenshots.
+        let state_changing = [
+            BrowserAction::Navigate {
+                url: "https://example.com".into(),
+            },
+            BrowserAction::Click { ref_: 1 },
+            BrowserAction::Type {
+                ref_: 1,
+                text: "hi".into(),
+            },
+            BrowserAction::Scroll {
+                ref_: None,
+                x: 0,
+                y: 100,
+            },
+            BrowserAction::Evaluate { code: "1".into() },
+            BrowserAction::Wait {
+                selector: None,
+                ref_: None,
+                timeout_ms: 0,
+            },
+            BrowserAction::Back,
+            BrowserAction::Forward,
+            BrowserAction::Refresh,
+        ];
+        for action in &state_changing {
+            assert!(action.is_state_changing(), "{action} should be state-changing");
+        }
+
+        // Read-only / meta actions are excluded (Screenshot already carries one).
+        let read_only = [
+            BrowserAction::Screenshot {
+                full_page: false,
+                highlight_ref: None,
+            },
+            BrowserAction::Snapshot,
+            BrowserAction::GetUrl,
+            BrowserAction::GetTitle,
+            BrowserAction::Close,
+        ];
+        for action in &read_only {
+            assert!(!action.is_state_changing(), "{action} should not be state-changing");
+        }
+    }
+
+    #[test]
+    fn screenshot_each_step_defaults_on() {
+        assert!(BrowserConfig::default().screenshot_each_step);
     }
 
     #[test]
