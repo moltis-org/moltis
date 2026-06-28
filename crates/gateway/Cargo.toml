@@ -179,7 +179,7 @@ metrics = [
   "dep:moltis-metrics",
   "moltis-chat/metrics",
   "moltis-discord?/metrics",
-  "moltis-matrix/metrics",
+  "moltis-matrix?/metrics",
   "moltis-metrics/sqlite",
   "moltis-msteams?/metrics",
   "moltis-nostr?/metrics",
