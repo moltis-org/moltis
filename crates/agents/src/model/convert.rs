@@ -1,4 +1,4 @@
-use crate::multimodal::parse_data_uri;
+use crate::multimodal::{downscale_base64_image, parse_data_uri};
 
 use super::{
     chat::{ChatMessage, ContentPart, UserContent},
@@ -155,10 +155,15 @@ fn values_to_chat_messages_inner(
                                 "image_url" => {
                                     let url = block["image_url"]["url"].as_str()?;
                                     let (media_type, data) = parse_data_uri(url)?;
-                                    Some(ContentPart::Image {
-                                        media_type: media_type.to_string(),
-                                        data: data.to_string(),
-                                    })
+                                    // Cap oversized images before they reach token
+                                    // estimation or the provider — a single full-res
+                                    // photo as base64 can exceed the whole context
+                                    // budget and is downsampled by vision models anyway.
+                                    let (media_type, data) = match downscale_base64_image(data) {
+                                        Some((mt, shrunk)) => (mt, shrunk),
+                                        None => (media_type.to_string(), data.to_string()),
+                                    };
+                                    Some(ContentPart::Image { media_type, data })
                                 },
                                 _ => None,
                             }
