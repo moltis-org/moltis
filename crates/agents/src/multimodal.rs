@@ -195,6 +195,59 @@ pub fn build_data_uri(media_type: &str, data: &str) -> String {
     format!("data:{media_type};base64,{data}")
 }
 
+/// Longest-edge pixel cap for images embedded into model context.
+///
+/// Vision models downsample internally (Claude effectively caps the long edge
+/// near ~1568px / ~1.15 MP), so a 4032×3024 phone photo embedded at full
+/// resolution is pure token waste — as base64 a single such image can exceed
+/// the entire context budget on its own. Capping the long edge keeps one image
+/// to roughly tens of thousands of tokens instead of hundreds of thousands.
+pub const MAX_IMAGE_EDGE: u32 = 1568;
+
+/// Skip the decode/resize cost for images whose base64 is already small enough
+/// that they cannot meaningfully threaten the context budget (~64K tokens).
+const DOWNSCALE_SKIP_BELOW_BASE64_LEN: usize = 256 * 1024;
+
+/// Downscale an oversized base64 image so it doesn't blow the context window.
+///
+/// When the decoded image's longest edge exceeds [`MAX_IMAGE_EDGE`], resize it
+/// down (preserving aspect ratio), re-encode as JPEG, and return the new
+/// `(media_type, base64_data)` — the media type is always `image/jpeg`.
+///
+/// Returns `None` (caller keeps the original) when the image is already within
+/// budget, is too small to bother decoding, can't be decoded, or re-encoding
+/// would not shrink it. Failures are swallowed deliberately: a botched
+/// downscale must never drop the image — better an oversized image than none.
+#[must_use]
+pub fn downscale_base64_image(b64: &str) -> Option<(String, String)> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    // Cheap guard: small payloads are already well under budget — never pay the
+    // decode cost for them (this runs on every history load).
+    if b64.len() < DOWNSCALE_SKIP_BELOW_BASE64_LEN {
+        return None;
+    }
+    let bytes = STANDARD.decode(b64).ok()?;
+    let decoded = image::load_from_memory(&bytes).ok()?;
+    if decoded.width().max(decoded.height()) <= MAX_IMAGE_EDGE {
+        return None;
+    }
+    let resized = decoded.resize(
+        MAX_IMAGE_EDGE,
+        MAX_IMAGE_EDGE,
+        image::imageops::FilterType::Triangle,
+    );
+    // JPEG has no alpha channel — flatten to RGB before encoding.
+    let rgb = image::DynamicImage::ImageRgb8(resized.to_rgb8());
+    let mut out = std::io::Cursor::new(Vec::new());
+    rgb.write_to(&mut out, image::ImageFormat::Jpeg).ok()?;
+    let shrunk = out.into_inner();
+    if shrunk.len() >= bytes.len() {
+        return None; // re-encode didn't actually help; keep the original
+    }
+    Some(("image/jpeg".to_string(), STANDARD.encode(shrunk)))
+}
+
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 #[cfg(test)]
 mod tests {
@@ -539,5 +592,77 @@ mod tests {
         let url = json["image_url"]["url"].as_str().unwrap();
         assert!(url.len() > 10_000);
         assert!(url.contains(&large_data));
+    }
+
+    /// Encode a high-entropy `w`×`h` image as PNG, base64. High entropy keeps PNG
+    /// from compressing it away, so the payload reliably clears the skip
+    /// threshold — mirroring a real phone photo.
+    fn noisy_png_base64(w: u32, h: u32) -> String {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let buf = image::RgbImage::from_fn(w, h, |x, y| {
+            image::Rgb([
+                (x.wrapping_mul(73).wrapping_add(y.wrapping_mul(151)) & 0xFF) as u8,
+                (x.wrapping_mul(199).wrapping_add(y.wrapping_mul(37)) & 0xFF) as u8,
+                (x.wrapping_add(y).wrapping_mul(91) & 0xFF) as u8,
+            ])
+        });
+        let dynimg = image::DynamicImage::ImageRgb8(buf);
+        let mut out = std::io::Cursor::new(Vec::new());
+        dynimg.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        STANDARD.encode(out.into_inner())
+    }
+
+    fn decode_dims(b64: &str) -> (u32, u32) {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let bytes = STANDARD.decode(b64).unwrap();
+        let img = image::load_from_memory(&bytes).unwrap();
+        (img.width(), img.height())
+    }
+
+    #[test]
+    fn downscale_caps_oversized_image_to_max_edge() {
+        let original = noisy_png_base64(2400, 1800);
+        assert!(
+            original.len() >= DOWNSCALE_SKIP_BELOW_BASE64_LEN,
+            "test fixture must exceed the skip threshold"
+        );
+
+        let (media_type, shrunk) =
+            downscale_base64_image(&original).expect("oversized image should downscale");
+
+        assert_eq!(media_type, "image/jpeg");
+        assert!(
+            shrunk.len() < original.len(),
+            "downscaled payload must be smaller"
+        );
+        let (w, h) = decode_dims(&shrunk);
+        assert!(
+            w.max(h) <= MAX_IMAGE_EDGE,
+            "long edge {}px must be capped at {MAX_IMAGE_EDGE}",
+            w.max(h)
+        );
+        // Aspect ratio (4:3) preserved within rounding.
+        assert_eq!(w, MAX_IMAGE_EDGE);
+        assert_eq!(h, 1176);
+    }
+
+    #[test]
+    fn downscale_skips_small_payloads_without_decoding() {
+        // Below the skip threshold → returns None even though it isn't valid image
+        // bytes (proves we never attempted a decode).
+        let small = "A".repeat(1_000);
+        assert!(downscale_base64_image(&small).is_none());
+    }
+
+    #[test]
+    fn downscale_leaves_already_small_dimension_images_alone() {
+        // A large *payload* but within the edge cap: must not be re-encoded.
+        let within_cap = noisy_png_base64(1500, 1200);
+        if within_cap.len() >= DOWNSCALE_SKIP_BELOW_BASE64_LEN {
+            assert!(
+                downscale_base64_image(&within_cap).is_none(),
+                "image within MAX_IMAGE_EDGE must be left untouched"
+            );
+        }
     }
 }
