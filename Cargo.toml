@@ -148,6 +148,19 @@ resolver = "2"
 # Remove once sqlx ≥ 0.9 ships stable.
 sqlx-core   = { git = "https://github.com/moltis-org/sqlx", rev = "33747ad2e2d0c7962c6450faf31591c4e0782c23" }
 sqlx-sqlite = { git = "https://github.com/moltis-org/sqlx", rev = "33747ad2e2d0c7962c6450faf31591c4e0782c23" }
+# whatsapp-rust 0.6.0 plus the DM LID-migration gate (oxidezap/whatsapp-rust#943,
+# merged upstream): accounts the server has not migrated to LID 1:1 get their
+# LID-addressed DMs silently 400-nacked; the gate keeps wire addressing on PN
+# until the account migrates. Pinned to the merge commit of #943; drop this
+# patch section for a plain version bump once a whatsapp-rust release includes
+# it. The whole family is patched to the same rev so wacore/waproto types stay
+# unified (mixing crates.io and git copies makes them incompatible).
+wacore                         = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
+wacore-binary                  = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
+waproto                        = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
+whatsapp-rust                  = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
+whatsapp-rust-tokio-transport  = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "96686eac65460b3bc8e10e3c37f27c0a602c3f54" }
 
 [workspace.lints.rust]
 unsafe_code           = "deny"
@@ -175,10 +188,11 @@ askama     = "0.15"
 axum       = { features = ["ws"], version = "0.8" }
 axum-extra = "0.10"
 # Serialization
-postcard   = { features = ["alloc"], version = "1.1" }
-schemars   = "1.2"
-serde      = { features = ["derive"], version = "1" }
-serde_json = "1"
+postcard        = { features = ["alloc"], version = "1.1" }
+schemars        = "1.2"
+serde           = { features = ["derive"], version = "1" }
+serde-big-array = "0.5"
+serde_json      = "1"
 # Error handling
 anyhow    = "1"
 thiserror = "2"
@@ -251,12 +265,12 @@ sysinfo            = "0.34"
 teloxide           = { features = ["macros"], version = "0.17" }
 # WhatsApp (sqlite-storage disabled to avoid libsqlite3-sys conflict with sqlx;
 # re-enable once sqlx 0.9 stabilises).
-wacore                         = { default-features = false, version = "0.5" }
-wacore-binary                  = { default-features = false, version = "0.5" }
-waproto                        = "0.5"
-whatsapp-rust                  = { default-features = false, features = ["tokio-native", "tokio-runtime", "tokio-transport", "ureq-client"], version = "0.5" }
-whatsapp-rust-tokio-transport  = "0.5"
-whatsapp-rust-ureq-http-client = "0.5"
+wacore                         = { default-features = false, version = "0.6" }
+wacore-binary                  = { default-features = false, version = "0.6" }
+waproto                        = "0.6"
+whatsapp-rust                  = { default-features = false, features = ["tokio-native", "tokio-runtime", "tokio-transport", "ureq-client"], version = "0.6" }
+whatsapp-rust-tokio-transport  = "0.6"
+whatsapp-rust-ureq-http-client = "0.6"
 # QR code rendering
 qrcode = "0.14"
 # TLS / certificate generation

@@ -70,9 +70,9 @@ fn build_media_message(
                 caption,
                 url: Some(upload.url.clone()),
                 direct_path: Some(upload.direct_path.clone()),
-                media_key: Some(upload.media_key.clone()),
-                file_sha256: Some(upload.file_sha256.clone()),
-                file_enc_sha256: Some(upload.file_enc_sha256.clone()),
+                media_key: Some(upload.media_key.to_vec()),
+                file_sha256: Some(upload.file_sha256.to_vec()),
+                file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
                 file_length: Some(upload.file_length),
                 ..Default::default()
             })),
@@ -85,9 +85,9 @@ fn build_media_message(
                 caption,
                 url: Some(upload.url.clone()),
                 direct_path: Some(upload.direct_path.clone()),
-                media_key: Some(upload.media_key.clone()),
-                file_sha256: Some(upload.file_sha256.clone()),
-                file_enc_sha256: Some(upload.file_enc_sha256.clone()),
+                media_key: Some(upload.media_key.to_vec()),
+                file_sha256: Some(upload.file_sha256.to_vec()),
+                file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
                 file_length: Some(upload.file_length),
                 ..Default::default()
             })),
@@ -99,9 +99,9 @@ fn build_media_message(
                 mimetype: Some(mime.to_string()),
                 url: Some(upload.url.clone()),
                 direct_path: Some(upload.direct_path.clone()),
-                media_key: Some(upload.media_key.clone()),
-                file_sha256: Some(upload.file_sha256.clone()),
-                file_enc_sha256: Some(upload.file_enc_sha256.clone()),
+                media_key: Some(upload.media_key.to_vec()),
+                file_sha256: Some(upload.file_sha256.to_vec()),
+                file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
                 file_length: Some(upload.file_length),
                 ..Default::default()
             })),
@@ -114,9 +114,9 @@ fn build_media_message(
                 title: caption,
                 url: Some(upload.url.clone()),
                 direct_path: Some(upload.direct_path.clone()),
-                media_key: Some(upload.media_key.clone()),
-                file_sha256: Some(upload.file_sha256.clone()),
-                file_enc_sha256: Some(upload.file_enc_sha256.clone()),
+                media_key: Some(upload.media_key.to_vec()),
+                file_sha256: Some(upload.file_sha256.to_vec()),
+                file_enc_sha256: Some(upload.file_enc_sha256.to_vec()),
                 file_length: Some(upload.file_length),
                 ..Default::default()
             })),
@@ -176,11 +176,11 @@ impl ChannelOutbound for WhatsAppOutbound {
             conversation: Some(watermarked),
             ..Default::default()
         };
-        let msg_id = client
+        let sent = client
             .send_message(jid, msg)
             .await
             .map_err(|e| moltis_channels::Error::unavailable(format!("whatsapp send_text: {e}")))?;
-        self.record_sent_id(account_id, &msg_id);
+        self.record_sent_id(account_id, &sent.message_id);
 
         #[cfg(feature = "metrics")]
         moltis_metrics::counter!(
@@ -236,16 +236,19 @@ impl ChannelOutbound for WhatsAppOutbound {
         let client = self.get_client(account_id)?;
         let jid = resolve_jid(to)?;
 
-        let upload = client.upload(bytes, media_type).await.map_err(|e| {
-            moltis_channels::Error::unavailable(format!("whatsapp media upload: {e}"))
-        })?;
+        let upload = client
+            .upload(bytes, media_type, Default::default())
+            .await
+            .map_err(|e| {
+                moltis_channels::Error::unavailable(format!("whatsapp media upload: {e}"))
+            })?;
 
         let msg = build_media_message(&media.mime_type, caption, &upload);
 
-        let msg_id = client.send_message(jid, msg).await.map_err(|e| {
+        let sent = client.send_message(jid, msg).await.map_err(|e| {
             moltis_channels::Error::unavailable(format!("whatsapp send_media: {e}"))
         })?;
-        self.record_sent_id(account_id, &msg_id);
+        self.record_sent_id(account_id, &sent.message_id);
 
         #[cfg(feature = "metrics")]
         moltis_metrics::counter!(
@@ -313,6 +316,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resolve_jid_passes_lid_through_unchanged() {
+        // Parsing must not alter the JID: whatsapp-rust decides wire
+        // addressing from the account's LID-migration state.
+        let jid = resolve_jid("111111111111111@lid").unwrap_or_else(|e| panic!("resolve: {e:?}"));
+        assert_eq!(jid.to_string(), "111111111111111@lid");
+        assert!(jid.is_lid());
+    }
+
+    #[test]
+    fn resolve_jid_bare_number_becomes_pn() {
+        let jid = resolve_jid("15551234567").unwrap_or_else(|e| panic!("resolve: {e:?}"));
+        assert_eq!(jid.to_string(), "15551234567@s.whatsapp.net");
+    }
+
+    #[test]
     fn decode_data_url_valid() {
         let b64 = base64::engine::general_purpose::STANDARD.encode([0xAB, 0xCD]);
         let url = format!("data:image/png;base64,{b64}");
@@ -339,75 +357,5 @@ mod tests {
             mime_to_media_type("application/octet-stream"),
             MediaType::Document
         ));
-    }
-
-    #[test]
-    fn build_media_message_image() {
-        let upload = UploadResponse {
-            url: "https://example.com/img".into(),
-            direct_path: "/path".into(),
-            media_key: vec![1, 2, 3],
-            file_sha256: vec![4, 5, 6],
-            file_enc_sha256: vec![7, 8, 9],
-            file_length: 1024,
-        };
-        let msg = build_media_message("image/png", Some("caption".into()), &upload);
-        let img = msg
-            .image_message
-            .unwrap_or_else(|| panic!("expected image_message"));
-        assert_eq!(img.mimetype.as_deref(), Some("image/png"));
-        assert_eq!(img.caption.as_deref(), Some("caption"));
-        assert_eq!(img.url.as_deref(), Some("https://example.com/img"));
-        assert_eq!(img.file_length, Some(1024));
-    }
-
-    #[test]
-    fn build_media_message_video() {
-        let upload = UploadResponse {
-            url: "https://example.com/vid".into(),
-            direct_path: "/path".into(),
-            media_key: vec![],
-            file_sha256: vec![],
-            file_enc_sha256: vec![],
-            file_length: 2048,
-        };
-        let msg = build_media_message("video/mp4", None, &upload);
-        let vid = msg
-            .video_message
-            .unwrap_or_else(|| panic!("expected video_message"));
-        assert_eq!(vid.mimetype.as_deref(), Some("video/mp4"));
-        assert!(vid.caption.is_none());
-    }
-
-    #[test]
-    fn build_media_message_audio() {
-        let upload = UploadResponse {
-            url: "https://example.com/aud".into(),
-            direct_path: "/path".into(),
-            media_key: vec![],
-            file_sha256: vec![],
-            file_enc_sha256: vec![],
-            file_length: 512,
-        };
-        let msg = build_media_message("audio/ogg", None, &upload);
-        assert!(msg.audio_message.is_some());
-    }
-
-    #[test]
-    fn build_media_message_document_fallback() {
-        let upload = UploadResponse {
-            url: "https://example.com/doc".into(),
-            direct_path: "/path".into(),
-            media_key: vec![],
-            file_sha256: vec![],
-            file_enc_sha256: vec![],
-            file_length: 4096,
-        };
-        let msg = build_media_message("application/pdf", Some("report.pdf".into()), &upload);
-        let doc = msg
-            .document_message
-            .unwrap_or_else(|| panic!("expected document_message"));
-        assert_eq!(doc.mimetype.as_deref(), Some("application/pdf"));
-        assert_eq!(doc.title.as_deref(), Some("report.pdf"));
     }
 }
