@@ -203,6 +203,18 @@ pub(crate) const OPENAI_COMPAT_PROVIDERS: &[OpenAiCompatDef] = &[
         ..OpenAiCompatDef::DEFAULT
     },
     OpenAiCompatDef {
+        config_name: "requesty",
+        env_key: "REQUESTY_API_KEY",
+        env_base_url_key: "REQUESTY_BASE_URL",
+        default_base_url: "https://router.requesty.ai/v1",
+        capabilities: OpenAiProviderCapabilities {
+            default_strict_tools: false,
+            cache_control_policy: CacheControlPolicy::OpenRouterAnthropic,
+            ..OpenAiProviderCapabilities::DEFAULT
+        },
+        ..OpenAiCompatDef::DEFAULT
+    },
+    OpenAiCompatDef {
         config_name: "cerebras",
         env_key: "CEREBRAS_API_KEY",
         env_base_url_key: "CEREBRAS_BASE_URL",

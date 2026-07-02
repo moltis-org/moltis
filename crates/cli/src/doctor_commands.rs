@@ -120,6 +120,7 @@ const PROVIDER_ENV_MAP: &[(&str, &str, bool)] = &[
     ("deepseek", "DEEPSEEK_API_KEY", false),
     ("mistral", "MISTRAL_API_KEY", false),
     ("openrouter", "OPENROUTER_API_KEY", false),
+    ("requesty", "REQUESTY_API_KEY", false),
     ("cerebras", "CEREBRAS_API_KEY", false),
     ("minimax", "MINIMAX_API_KEY", false),
     ("moonshot", "MOONSHOT_API_KEY", false),
