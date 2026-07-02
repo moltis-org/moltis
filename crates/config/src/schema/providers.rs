@@ -37,6 +37,7 @@ pub const KNOWN_PROVIDER_NAMES: &[&str] = &[
     "nearai",
     "ollama",
     "openrouter",
+    "requesty",
     "venice",
     "zai",
     "zai-code",

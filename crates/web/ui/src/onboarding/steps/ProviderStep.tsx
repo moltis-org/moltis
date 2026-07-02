@@ -35,6 +35,7 @@ const OPENAI_COMPATIBLE = [
 	"openai",
 	"mistral",
 	"openrouter",
+	"requesty",
 	"cerebras",
 	"minimax",
 	"moonshot",
