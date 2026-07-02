@@ -11,6 +11,7 @@ use {
     async_trait::async_trait,
     bytes::Bytes,
     serde::{Serialize, de::DeserializeOwned},
+    tracing::{debug, info, warn},
     wacore::{
         appstate::{hash::HashState, processor::AppStateMutationMAC},
         store::{
@@ -666,7 +667,12 @@ impl ProtocolStore for SledStore {
             // decode, so treat them as missing and let usync repopulate.
             Some(v) => match decode_persistent(&v) {
                 Ok(record) => Ok(Some(record)),
-                Err(_) => {
+                Err(e) => {
+                    debug!(
+                        user,
+                        error = %e,
+                        "evicting undecodable device-list record; usync repopulates it"
+                    );
                     self.device_list_records
                         .remove(user.as_bytes())
                         .map_err(db_err)?;
@@ -874,11 +880,20 @@ impl DeviceStore for SledStore {
         };
         match decode_persistent::<wacore::store::Device>(&v) {
             Ok(device) => Ok(Some(device)),
-            Err(_) => {
+            Err(primary) => {
                 // Pre-0.6 record: decode with the legacy shim and upgrade the
                 // stored bytes so subsequent loads use the current layout.
-                let device: wacore::store::Device = decode_persistent::<LegacyDevice05>(&v)?.into();
+                let legacy = decode_persistent::<LegacyDevice05>(&v).map_err(|fallback| {
+                    warn!(
+                        primary = %primary,
+                        fallback = %fallback,
+                        "device record failed both the current and the legacy 0.5 decode"
+                    );
+                    fallback
+                })?;
+                let device: wacore::store::Device = legacy.into();
                 self.save(&device).await?;
+                info!("migrated a pre-0.6 device record to the current layout");
                 Ok(Some(device))
             },
         }
