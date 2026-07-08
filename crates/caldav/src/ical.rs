@@ -140,7 +140,7 @@ fn normalise_datetime(raw: &str) -> String {
     if raw.len() == 8 && raw.chars().all(|c| c.is_ascii_digit()) {
         // DATE value: YYYYMMDD -> YYYY-MM-DD
         format!("{}-{}-{}", &raw[..4], &raw[4..6], &raw[6..8])
-    } else if raw.is_ascii() && raw.len() >= 15 && raw.contains('T') {
+    } else if raw.len() >= 15 && raw.is_ascii() && raw.contains('T') {
         // DATETIME value: YYYYMMDDTHHMMSS -> YYYY-MM-DDTHH:MM:SS
         // (require ASCII, like the DATE branch above, so the fixed byte-index
         // slicing below cannot land inside a multi-byte UTF-8 char and panic)
