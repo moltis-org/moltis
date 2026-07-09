@@ -75,7 +75,7 @@ enabled = true
 
 [providers.openai]
 enabled = true
-models = ["gpt-5.3", "gpt-5.2"]
+models = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
 stream_transport = "sse"              # "sse", "websocket", or "auto"
 
 [providers.gemini]
@@ -86,7 +86,7 @@ models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 # base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 [chat]
-priority_models = ["gpt-5.2"]
+priority_models = ["gpt-5.6-sol"]
 ```
 
 ### Provider Entry Options

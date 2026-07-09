@@ -60,6 +60,13 @@ pub fn context_window_for_model_with_config(
 /// Inner heuristic — kept private so callers go through the public wrappers.
 fn context_window_for_model_inner(model_id: &str) -> u32 {
     let model_id = capability_model_id(model_id);
+    // GPT-5.6 Sol, Terra, Luna, and the Sol alias support a 1.05M-token context window.
+    if matches!(
+        model_id,
+        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+    ) {
+        return 1_050_000;
+    }
     // Codestral has the largest window at 256k.
     if model_id.starts_with("codestral") {
         return 256_000;
@@ -342,6 +349,10 @@ mod tests {
         assert_eq!(context_window_for_model("gpt-4o"), 128_000);
         assert_eq!(context_window_for_model("gpt-4o-mini"), 128_000);
         assert_eq!(context_window_for_model("gpt-4-turbo"), 128_000);
+        assert_eq!(context_window_for_model("gpt-5.6"), 1_050_000);
+        assert_eq!(context_window_for_model("gpt-5.6-sol"), 1_050_000);
+        assert_eq!(context_window_for_model("gpt-5.6-terra"), 1_050_000);
+        assert_eq!(context_window_for_model("gpt-5.6-luna"), 1_050_000);
         assert_eq!(context_window_for_model("o3"), 200_000);
         assert_eq!(context_window_for_model("o3-mini"), 200_000);
         assert_eq!(context_window_for_model("o4-mini"), 200_000);

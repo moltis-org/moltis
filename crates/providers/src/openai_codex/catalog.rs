@@ -19,6 +19,9 @@ const CODEX_MODELS_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/model
 pub(super) const CODEX_MODELS_CLIENT_VERSION: &str = "1.0.0";
 
 pub(super) const DEFAULT_CODEX_MODELS: &[(&str, &str)] = &[
+    ("gpt-5.6-sol", "GPT-5.6 Sol"),
+    ("gpt-5.6-terra", "GPT-5.6 Terra"),
+    ("gpt-5.6-luna", "GPT-5.6 Luna"),
     ("gpt-5.4", "GPT-5.4"),
     ("gpt-5.3-codex-spark", "GPT-5.3 Codex Spark"),
     ("gpt-5.3-codex", "GPT-5.3 Codex"),

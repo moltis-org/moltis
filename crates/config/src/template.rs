@@ -159,7 +159,7 @@ port = {port}                           # Port number (auto-generated for this i
 # [providers.openai]
 # enabled = true
 # api_key = "sk-..."                          # Or set OPENAI_API_KEY env var
-# models = ["gpt-5.3", "gpt-5.2"]            # Preferred models shown first
+# models = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]  # Preferred models shown first
 # fetch_models = true
 # stream_transport = "sse"                     # "sse" | "websocket" | "auto"
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
@@ -272,7 +272,7 @@ port = {port}                           # Port number (auto-generated for this i
                                       #   "live-reload"            - Re-read MEMORY.md before each turn
                                       #   "frozen-at-session-start" - Freeze the first MEMORY.md snapshot per session
 # workspace_file_max_chars = 32000  # Optional: per-file prompt cap for AGENTS.md / TOOLS.md before truncation.
-# priority_models = ["claude-opus-4-5", "gpt-5.2", "gemini-3-flash"]  # Optional: models to pin first in selectors
+# priority_models = ["claude-opus-4-5", "gpt-5.6-sol", "gemini-3-flash"]  # Optional: models to pin first in selectors
 
 # ── Compaction ─────────────────────────────────────────────────────────────
 # Strategy used to shrink a session when its context window fills up, or when

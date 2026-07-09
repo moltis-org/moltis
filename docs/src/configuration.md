@@ -97,7 +97,7 @@ enabled = true
 
 [providers.openai]
 enabled = true
-models = ["gpt-5.3", "gpt-5.2"]
+models = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
 stream_transport = "sse"        # "sse", "websocket", or "auto"
 
 [providers.gemini]
@@ -109,7 +109,7 @@ enabled = true
 models = ["qwen2.5-coder-7b-q4_k_m"]
 
 [chat]
-priority_models = ["gpt-5.2"]
+priority_models = ["gpt-5.6-sol"]
 ```
 
 See [Providers](providers.md) for the full list of supported providers and configuration options.

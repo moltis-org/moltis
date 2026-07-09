@@ -40,6 +40,20 @@ pub struct OpenAiCodexProvider {
     reasoning_effort: Option<ReasoningEffort>,
 }
 
+// The ChatGPT Codex backend advertises 372K for GPT-5.6 and its variants,
+// distinct from the 1.05M context window exposed by the OpenAI API.
+const GPT_5_6_CODEX_CONTEXT_WINDOW: u32 = 372_000;
+
+fn codex_context_window(model_id: &str) -> u32 {
+    if matches!(
+        model_id,
+        "gpt-5.6" | "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+    ) {
+        return GPT_5_6_CODEX_CONTEXT_WINDOW;
+    }
+    200_000
+}
+
 fn codex_done_arguments(evt: &serde_json::Value) -> Option<&str> {
     evt.get("arguments")
         .and_then(|v| v.as_str())
@@ -371,6 +385,10 @@ impl LlmProvider for OpenAiCodexProvider {
 
     fn supports_tools(&self) -> bool {
         super::supports_tools_for_model(&self.model)
+    }
+
+    fn context_window(&self) -> u32 {
+        codex_context_window(&self.model)
     }
 
     fn reasoning_effort(&self) -> Option<ReasoningEffort> {
@@ -843,6 +861,17 @@ mod tests {
     }
 
     #[test]
+    fn gpt_5_6_models_use_codex_context_window() {
+        for model_id in ["gpt-5.6", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            let provider = OpenAiCodexProvider::new(model_id.to_string());
+            assert_eq!(provider.context_window(), GPT_5_6_CODEX_CONTEXT_WINDOW);
+        }
+
+        let existing_model = OpenAiCodexProvider::new("gpt-5.4".to_string());
+        assert_eq!(existing_model.context_window(), 200_000);
+    }
+
+    #[test]
     fn apply_reasoning_is_noop_when_effort_not_configured() {
         let provider = OpenAiCodexProvider::new("gpt-5.4".to_string());
         let mut body = serde_json::json!({
@@ -1256,6 +1285,9 @@ mod tests {
     #[test]
     fn default_codex_models_includes_latest() {
         let ids: Vec<&str> = DEFAULT_CODEX_MODELS.iter().map(|(id, _)| *id).collect();
+        for model_id in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            assert!(ids.contains(&model_id), "missing {model_id} in defaults");
+        }
         assert!(ids.contains(&"gpt-5.4"), "missing gpt-5.4 in defaults");
         assert!(
             ids.contains(&"gpt-5.3-codex-spark"),

@@ -412,6 +412,19 @@ mod tests {
     }
 
     #[test]
+    fn openai_catalog_includes_gpt_5_6_models() {
+        let models = crate::openai::default_model_catalog();
+        let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
+
+        for model_id in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            assert!(
+                ids.contains(&model_id),
+                "missing {model_id} in OpenAI defaults"
+            );
+        }
+    }
+
+    #[test]
     fn anthropic_catalog_uses_documented_claude_46_aliases() {
         let anthropic_ids: Vec<&str> = ANTHROPIC_MODELS.iter().map(|(id, _)| *id).collect();
 
