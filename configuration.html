@@ -116,7 +116,7 @@ enabled = true
 
 [providers.openai]
 enabled = true
-models = [&#x22;gpt-5.3&#x22;, &#x22;gpt-5.2&#x22;]
+models = [&#x22;gpt-5.6-sol&#x22;, &#x22;gpt-5.6-terra&#x22;, &#x22;gpt-5.6-luna&#x22;]
 stream_transport = &#x22;sse&#x22;        # &#x22;sse&#x22;, &#x22;websocket&#x22;, or &#x22;auto&#x22;
 
 [providers.gemini]
@@ -128,7 +128,7 @@ enabled = true
 models = [&#x22;qwen2.5-coder-7b-q4_k_m&#x22;]
 
 [chat]
-priority_models = [&#x22;gpt-5.2&#x22;]"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">providers</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+priority_models = [&#x22;gpt-5.6-sol&#x22;]"><code><span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">providers</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">offered </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"anthropic"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "openai"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "gemini"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">providers</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">anthropic</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
@@ -136,7 +136,7 @@ priority_models = [&#x22;gpt-5.2&#x22;]"><code><span class="line"><span style="c
 <span class="line"></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">providers</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">openai</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">enabled </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#1976D2;--shiki-dark:#79B8FF"> true</span></span>
-<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">models </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"gpt-5.3"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "gpt-5.2"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">models </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"gpt-5.6-sol"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "gpt-5.6-terra"</span><span style="color:#212121;--shiki-dark:#E1E4E8">,</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "gpt-5.6-luna"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">stream_transport </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#22863A;--shiki-dark:#9ECBFF"> "sse"</span><span style="color:#C2C3C5;--shiki-dark:#6A737D">        # "sse", "websocket", or "auto"</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">providers</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">.</span><span style="color:#24292EFF;--shiki-dark:#B392F0">gemini</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
@@ -148,7 +148,7 @@ priority_models = [&#x22;gpt-5.2&#x22;]"><code><span class="line"><span style="c
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">models </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"qwen2.5-coder-7b-q4_k_m"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
 <span class="line"></span>
 <span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">[</span><span style="color:#24292EFF;--shiki-dark:#B392F0">chat</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span>
-<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">priority_models </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"gpt-5.2"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span></code></pre>
+<span class="line"><span style="color:#24292EFF;--shiki-dark:#E1E4E8">priority_models </span><span style="color:#D32F2F;--shiki-dark:#E1E4E8">=</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8"> [</span><span style="color:#22863A;--shiki-dark:#9ECBFF">"gpt-5.6-sol"</span><span style="color:#24292EFF;--shiki-dark:#E1E4E8">]</span></span></code></pre>
 <p>See <a href="/providers.html">Providers</a> for the full list of supported providers and configuration options.</p>
 <h2 id="remote-execution">Remote Execution</h2>
 <p>Command execution can stay local, route to a paired node, or use SSH:</p>
