@@ -8,8 +8,8 @@
     "preview": "astro preview --host 127.0.0.1"
   },
   "dependencies": {
-    "@astrojs/mdx": "^5.0.6",
-    "astro": "^6.3.3"
+    "@astrojs/mdx": "^7.0.3",
+    "astro": "^7.0.9"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
