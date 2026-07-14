@@ -2,6 +2,8 @@
 
 Moltis can bind a chat session to an external CLI coding agent. When a session is bound, `chat.send` persists the user turn in Moltis, sends the prompt and recent session context to the external process, streams the CLI output back to the web UI, and persists the assistant response.
 
+ACP, the Agent Client Protocol, is a JSON-RPC protocol for connecting editor or coding agents to a host application. Moltis can run ACP-compatible command-line agents as external agents, route their permission prompts through Moltis approvals, and show them in the session header selector as `ACP: <agent>`.
+
 Supported agent kinds:
 
 | Kind | Default command | Notes |
@@ -14,7 +16,68 @@ Supported agent kinds:
 | `acp-claude` | `claude` | Named ACP session shown as `ACP: Claude` in the session header. |
 | `acp-pi` | `pi` | Named ACP session shown as `ACP: Pi` in the session header. |
 
-Enable the bridge in `moltis.toml`:
+## Enable external agents
+
+Enable the bridge in `moltis.toml` before adding any ACP entries:
+
+```toml
+[external_agents]
+enabled = true
+```
+
+After changing `moltis.toml`, restart Moltis so the gateway reloads the external agent registry.
+
+## Add ACP agents
+
+Use the named ACP keys when you want the session header to clearly show which ACP-compatible agent is bound. Each entry can override the executable path, startup args, environment variables, working directory, timeout, and tmux behavior.
+
+```toml
+[external_agents]
+enabled = true
+
+[external_agents.agents.acp-copilot]
+binary = "copilot"                  # or an absolute path
+args = []
+
+[external_agents.agents.acp-codex]
+binary = "codex"
+args = []
+
+[external_agents.agents.acp-claude]
+binary = "claude"
+args = []
+
+[external_agents.agents.acp-pi]
+binary = "pi"
+args = []
+```
+
+If your ACP server is not one of the named options, use the generic `acp` kind:
+
+```toml
+[external_agents]
+enabled = true
+
+[external_agents.agents.acp]
+binary = "/path/to/acp-agent"
+args = ["--stdio"]
+```
+
+You can pass additional environment variables to an ACP agent without putting them in the global process environment:
+
+```toml
+[external_agents.agents.acp-copilot]
+binary = "/opt/acp/copilot-agent"
+working_dir = "/srv/my-project"
+timeout_secs = 300
+
+[external_agents.agents.acp-copilot.env]
+COPILOT_AGENT_MODE = "workspace"
+```
+
+## Add native CLI agents
+
+Moltis also supports native, non-ACP external agent integrations:
 
 ```toml
 [external_agents]
@@ -26,30 +89,30 @@ timeout_secs = 300
 
 [external_agents.agents.codex]
 binary = "codex"
-
-[external_agents.agents.acp]
-binary = "/path/to/acp-agent"
-args = []
-
-[external_agents.agents.acp-copilot]
-binary = "copilot"
-
-[external_agents.agents.acp-codex]
-binary = "codex"
-
-[external_agents.agents.acp-claude]
-binary = "claude"
-
-[external_agents.agents.acp-pi]
-binary = "pi"
 ```
+
+## Select an ACP agent for a session
 
 The session header in the web UI exposes an external-agent selector when agents are configured. ACP entries are labeled with the protocol and agent name, such as `ACP: Copilot`. Select `Moltis agent` to unbind and return the session to the normal provider-backed Moltis agent.
 
+Binding is per session. You can bind one chat session to `ACP: Copilot`, another to `ACP: Claude`, and leave other sessions on the normal Moltis agent.
+
 Moltis keeps live external sessions in memory while the gateway process is running. Binding, unbinding, clearing, resetting, deleting, or clearing all sessions shuts down the matching live external process. Persisted external session IDs are stored in session metadata for UI/status visibility and for runtimes that can resume from their own IDs.
+
+## ACP permissions and capabilities
+
+ACP agents can ask Moltis for permission before running tools. Moltis converts ACP permission requests into normal Moltis approval prompts and selects the matching ACP allow or reject option based on the user decision.
+
+Moltis advertises ACP file-system and terminal capabilities to agents. File reads and writes are handled through the ACP client bridge. Terminal requests are supported by the ACP bridge but run inside the Moltis gateway environment, so configure `working_dir` and environment variables deliberately.
+
+## Troubleshooting ACP agents
+
+- If an ACP agent does not appear in the selector, confirm `[external_agents] enabled = true`, restart Moltis, and verify the configured `binary` exists on `$PATH` or is an absolute path.
+- If an ACP entry appears as unavailable, run the configured command manually from the same shell or service environment that starts Moltis.
+- If the wrong ACP agent is bound, use the session header selector and choose the desired `ACP: <agent>` entry; choose `Moltis agent` to unbind.
+- If the agent needs project-local context, set `working_dir` in that agent's config entry.
 
 Current limitations:
 
 - Claude Code persistence uses print-mode `--resume`; it does not yet keep an interactive PTY alive.
-- ACP terminal capability is not enabled yet; ACP servers can read/write text files through the client bridge, but terminal requests are rejected.
 - Live external processes are not restored automatically after a Moltis gateway restart.
