@@ -563,7 +563,17 @@ pub(super) fn check_semantic_warnings(config: &MoltisConfig, diagnostics: &mut V
         }
     }
 
-    let valid_agent_kinds = ["claude-code", "opencode", "codex", "pi-agent", "acp"];
+    let valid_agent_kinds = [
+        "claude-code",
+        "opencode",
+        "codex",
+        "pi-agent",
+        "acp",
+        "acp-copilot",
+        "acp-codex",
+        "acp-claude",
+        "acp-pi",
+    ];
     for agent_kind in config.external_agents.agents.keys() {
         if !valid_agent_kinds.contains(&agent_kind.as_str()) {
             let suggestion = suggest(agent_kind, &valid_agent_kinds, 3)

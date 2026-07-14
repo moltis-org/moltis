@@ -32,6 +32,8 @@ use crate::{
 
 /// Transport for ACP (Agent Client Protocol) agents over JSON-RPC stdio.
 pub struct AcpTransport {
+    kind: AgentTransportKind,
+    name: String,
     binary: String,
     permission_handler: Option<Arc<dyn AcpPermissionHandler>>,
 }
@@ -39,7 +41,14 @@ pub struct AcpTransport {
 impl AcpTransport {
     #[must_use]
     pub fn new(binary: String) -> Self {
+        Self::for_kind(AgentTransportKind::Acp, "ACP", binary)
+    }
+
+    #[must_use]
+    pub fn for_kind(kind: AgentTransportKind, name: impl Into<String>, binary: String) -> Self {
         Self {
+            kind,
+            name: name.into(),
             binary,
             permission_handler: None,
         }
@@ -58,7 +67,7 @@ impl AcpTransport {
 #[async_trait]
 impl ExternalAgentTransport for AcpTransport {
     fn name(&self) -> &str {
-        "acp"
+        &self.name
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self)))]
@@ -67,7 +76,7 @@ impl ExternalAgentTransport for AcpTransport {
     }
 
     fn supported_kinds(&self) -> &[AgentTransportKind] {
-        &[AgentTransportKind::Acp]
+        std::slice::from_ref(&self.kind)
     }
 
     #[cfg_attr(feature = "tracing", tracing::instrument(skip(self, spec)))]
@@ -814,6 +823,20 @@ mod tests {
         let client = AcpClient::new(Arc::clone(&state), Some("main".to_string()), None);
         client.set_session_id("session-1".to_string());
         (client, state)
+    }
+
+    #[test]
+    fn transport_can_target_named_acp_kind() {
+        let transport = AcpTransport::for_kind(
+            AgentTransportKind::AcpCopilot,
+            "ACP: Copilot",
+            "copilot".to_string(),
+        );
+
+        assert_eq!(transport.name(), "ACP: Copilot");
+        assert_eq!(transport.supported_kinds(), &[
+            AgentTransportKind::AcpCopilot
+        ]);
     }
 
     #[tokio::test]

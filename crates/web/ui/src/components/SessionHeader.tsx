@@ -176,6 +176,7 @@ export function SessionHeader({
 	const currentExternalAgent = currentExternalAgentKind
 		? externalAgentOptions.find((agent) => agent.kind === currentExternalAgentKind) || null
 		: null;
+	const currentExternalAgentName = currentExternalAgent?.name || currentExternalAgentKind;
 
 	useEffect(() => {
 		let cancelled = false;
@@ -533,10 +534,10 @@ export function SessionHeader({
 	const shouldShowExternalAgentPicker = !isCron && externalAgentOptions.length > 0;
 	const externalAgentStatus = currentExternalAgentKind
 		? currentExternalAgent?.installed === false
-			? "External agent unavailable"
+			? `${currentExternalAgentName} unavailable`
 			: session?.externalSessionId
-				? `External session ${session.externalSessionId}`
-				: "External agent bound"
+				? `${currentExternalAgentName} session ${session.externalSessionId}`
+				: `${currentExternalAgentName} bound`
 		: "";
 	const hasCurrentNodeOption = currentNodeId === "" || nodeOptions.some((node) => node.nodeId === currentNodeId);
 	let nodeSelectOptions: SelectOption[] = [

@@ -350,6 +350,18 @@ binary = "claude"
 
 [external_agents.agents.codex]
 binary = "codex"
+
+[external_agents.agents.acp-copilot]
+binary = "copilot"
+
+[external_agents.agents.acp-codex]
+binary = "codex"
+
+[external_agents.agents.acp-claude]
+binary = "claude"
+
+[external_agents.agents.acp-pi]
+binary = "pi"
 "#;
     let result = validate_toml_str(toml);
     let warning = result

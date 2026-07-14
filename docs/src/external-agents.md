@@ -9,6 +9,10 @@ Supported agent kinds:
 | `claude-code` | `claude -p --output-format json` | Print mode with `session_id` capture; later turns add `--resume <id>`. |
 | `codex` | `codex app-server` | Persistent app-server process; Moltis reuses the Codex `threadId` across turns. |
 | `acp` | `acp` | Persistent ACP JSON-RPC stdio session configured by `[external_agents.agents.acp]`. |
+| `acp-copilot` | `copilot` | Named ACP session shown as `ACP: Copilot` in the session header. |
+| `acp-codex` | `codex` | Named ACP session shown as `ACP: Codex` in the session header. |
+| `acp-claude` | `claude` | Named ACP session shown as `ACP: Claude` in the session header. |
+| `acp-pi` | `pi` | Named ACP session shown as `ACP: Pi` in the session header. |
 
 Enable the bridge in `moltis.toml`:
 
@@ -26,9 +30,21 @@ binary = "codex"
 [external_agents.agents.acp]
 binary = "/path/to/acp-agent"
 args = []
+
+[external_agents.agents.acp-copilot]
+binary = "copilot"
+
+[external_agents.agents.acp-codex]
+binary = "codex"
+
+[external_agents.agents.acp-claude]
+binary = "claude"
+
+[external_agents.agents.acp-pi]
+binary = "pi"
 ```
 
-The session header in the web UI exposes an external-agent selector when agents are configured. Select `Moltis agent` to unbind and return the session to the normal provider-backed Moltis agent.
+The session header in the web UI exposes an external-agent selector when agents are configured. ACP entries are labeled with the protocol and agent name, such as `ACP: Copilot`. Select `Moltis agent` to unbind and return the session to the normal provider-backed Moltis agent.
 
 Moltis keeps live external sessions in memory while the gateway process is running. Binding, unbinding, clearing, resetting, deleting, or clearing all sessions shuts down the matching live external process. Persisted external session IDs are stored in session metadata for UI/status visibility and for runtimes that can resume from their own IDs.
 

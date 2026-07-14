@@ -75,6 +75,21 @@ fn test_remove() {
     assert!(meta.get("main").is_none());
 }
 
+#[test]
+fn external_agent_kind_parses_named_acp_variants() {
+    for (raw, kind, display_name) in [
+        ("acp-copilot", ExternalAgentKind::AcpCopilot, "ACP: Copilot"),
+        ("acp-codex", ExternalAgentKind::AcpCodex, "ACP: Codex"),
+        ("acp-claude", ExternalAgentKind::AcpClaude, "ACP: Claude"),
+        ("acp-pi", ExternalAgentKind::AcpPi, "ACP: Pi"),
+    ] {
+        assert_eq!(raw.parse::<ExternalAgentKind>(), Ok(kind));
+        assert_eq!(kind.as_str(), raw);
+        assert_eq!(kind.display_name(), display_name);
+        assert!(kind.is_acp());
+    }
+}
+
 async fn sqlite_pool() -> sqlx::SqlitePool {
     let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
     // sessions table references projects, so create a stub projects table.

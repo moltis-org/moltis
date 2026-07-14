@@ -407,6 +407,45 @@ test.describe("Agents settings page", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("external-agent picker labels named ACP agents", async ({ page }) => {
+		const pageErrors = watchPageErrors(page);
+		await mockExternalAgentsRpc(page, [
+			{ kind: "acp-copilot", name: "ACP: Copilot", installed: true, version: null },
+			{ kind: "acp-codex", name: "ACP: Codex", installed: true, version: null },
+			{ kind: "acp-claude", name: "ACP: Claude", installed: true, version: null },
+			{ kind: "acp-pi", name: "ACP: Pi", installed: true, version: null },
+		]);
+		await page.goto("/chats");
+		await expectPageContentMounted(page);
+		await waitForWsConnected(page);
+		await createSession(page);
+
+		const picker = page.getByTestId("external-agent-picker");
+		await expect(picker).toBeVisible({ timeout: 10_000 });
+		await picker.locator("button").click();
+		await expect(page.getByText("ACP: Copilot", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Codex", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Claude", { exact: true })).toBeVisible();
+		await expect(page.getByText("ACP: Pi", { exact: true })).toBeVisible();
+
+		await page.getByText("ACP: Copilot", { exact: true }).click();
+		await expect
+			.poll(
+				async () =>
+					page.evaluate(() =>
+						(window.__externalAgentE2ERequests || []).some(
+							(req) => req.method === "external_agents.bind" && req.params?.kind === "acp-copilot",
+						),
+					),
+				{ timeout: 10_000 },
+			)
+			.toBe(true);
+		await expectActiveSessionExternalAgent(page, "acp-copilot");
+		await expect(picker.getByText("ACP: Copilot bound", { exact: true })).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("external-agent picker is hidden when external agents are disabled", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
 		await mockExternalAgentsRpc(page, []);

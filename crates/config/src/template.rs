@@ -707,6 +707,23 @@ port = {port}                           # Port number (auto-generated for this i
 # binary = "/path/to/acp-agent"
 # args = []
 
+# Named ACP agents shown separately in the session header selector.
+# [external_agents.agents.acp-copilot]
+# binary = "copilot"
+# args = []
+
+# [external_agents.agents.acp-codex]
+# binary = "codex"
+# args = []
+
+# [external_agents.agents.acp-claude]
+# binary = "claude"
+# args = []
+
+# [external_agents.agents.acp-pi]
+# binary = "pi"
+# args = []
+
 # [external_agents.agents.opencode]
 # binary = "opencode"
 # use_tmux = true                   # opencode requires tmux (TUI app)

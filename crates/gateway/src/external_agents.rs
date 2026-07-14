@@ -121,11 +121,20 @@ impl GatewayExternalAgentService {
         let mut registry = ExternalAgentRegistry::new();
         registry.register(Box::new(ClaudeCodeTransport::new()));
         registry.register(Box::new(CodexTransport::new()));
-        registry.register(Box::new(
-            AcpTransport::new("acp".to_string()).with_permission_handler(Arc::new(
-                GatewayAcpPermissionHandler::new(approval_manager),
-            )),
-        ));
+        let acp_permission_handler: Arc<dyn AcpPermissionHandler> =
+            Arc::new(GatewayAcpPermissionHandler::new(approval_manager));
+        for (kind, binary) in [
+            (AgentTransportKind::Acp, "acp"),
+            (AgentTransportKind::AcpCopilot, "copilot"),
+            (AgentTransportKind::AcpCodex, "codex"),
+            (AgentTransportKind::AcpClaude, "claude"),
+            (AgentTransportKind::AcpPi, "pi"),
+        ] {
+            registry.register(Box::new(
+                AcpTransport::for_kind(kind, kind.display_name(), binary.to_string())
+                    .with_permission_handler(acp_permission_handler.clone()),
+            ));
+        }
         Self {
             registry,
             config,
