@@ -3,6 +3,10 @@ use std::sync::Arc;
 use {
     moltis_channels::{ChannelReplyTarget, Error as ChannelError, Result as ChannelResult},
     moltis_config::ModePreset,
+    moltis_external_agents::tmux::{
+        TmuxController, TmuxDeliveryReceipt, TmuxDeliveryStatus, TmuxPaneState, TmuxTarget,
+        classify_pane_state,
+    },
     moltis_sessions::metadata::SqliteSessionMetadata,
     moltis_tools::image_cache::ImageBuilder,
 };
@@ -39,6 +43,87 @@ fn sorted_mode_presets(config: &moltis_config::MoltisConfig) -> Vec<(String, Mod
             .then_with(|| left_id.cmp(right_id))
     });
     modes
+}
+
+enum TmuxChannelCommand {
+    Status { target: TmuxTarget },
+    Capture { target: TmuxTarget },
+    Send { target: TmuxTarget, text: String },
+}
+
+fn parse_tmux_channel_command(args: &str) -> ChannelResult<TmuxChannelCommand> {
+    let args = args.trim();
+    let Some((action, rest)) = args.split_once(char::is_whitespace) else {
+        return Err(ChannelError::invalid_input(
+            "usage: /tmux status <target>, /tmux capture <target>, or /tmux send <target> <text>",
+        ));
+    };
+    let rest = rest.trim_start();
+    let (target, text) = rest
+        .split_once(char::is_whitespace)
+        .map(|(target, text)| (target, text.trim_start()))
+        .unwrap_or((rest, ""));
+    if action.is_empty() || target.is_empty() {
+        return Err(ChannelError::invalid_input(
+            "usage: /tmux status <target>, /tmux capture <target>, or /tmux send <target> <text>",
+        ));
+    }
+    let target = TmuxTarget::new(target).map_err(ChannelError::invalid_input)?;
+    match action {
+        "status" => Ok(TmuxChannelCommand::Status { target }),
+        "capture" => Ok(TmuxChannelCommand::Capture { target }),
+        "send" => {
+            let text = text.trim();
+            if text.is_empty() {
+                return Err(ChannelError::invalid_input(
+                    "usage: /tmux send <target> <text>",
+                ));
+            }
+            Ok(TmuxChannelCommand::Send {
+                target,
+                text: text.to_string(),
+            })
+        },
+        _ => Err(ChannelError::invalid_input(
+            "unknown /tmux action. Use status, capture, or send.",
+        )),
+    }
+}
+
+fn format_tmux_pane_state(state: TmuxPaneState) -> &'static str {
+    match state {
+        TmuxPaneState::ReadyPrompt => "ready",
+        TmuxPaneState::PermissionPrompt => "permission_prompt",
+        TmuxPaneState::Busy => "busy",
+        TmuxPaneState::Unknown => "unknown",
+    }
+}
+
+fn format_tmux_delivery_status(status: TmuxDeliveryStatus) -> &'static str {
+    match status {
+        TmuxDeliveryStatus::Applied => "applied",
+        TmuxDeliveryStatus::Busy => "busy",
+        TmuxDeliveryStatus::Unknown => "unknown",
+    }
+}
+
+fn format_tmux_receipt(receipt: &TmuxDeliveryReceipt) -> String {
+    format!(
+        "tmux delivery: {}\nbefore: {}\nafter: {}",
+        format_tmux_delivery_status(receipt.status),
+        format_tmux_pane_state(receipt.pane_state_before),
+        format_tmux_pane_state(receipt.pane_state_after),
+    )
+}
+
+fn truncate_tmux_capture(mut capture: String) -> String {
+    const LIMIT: usize = 3500;
+    if capture.len() <= LIMIT {
+        return capture;
+    }
+    let keep_from = capture.floor_char_boundary(capture.len() - LIMIT);
+    capture = capture[keep_from..].to_string();
+    format!("[truncated]\n{capture}")
 }
 
 pub(in crate::channel_events) async fn handle_approvals(
@@ -793,6 +878,58 @@ pub(in crate::channel_events) async fn handle_peek(
     }
 }
 
+pub(in crate::channel_events) async fn handle_tmux(
+    state: &Arc<GatewayState>,
+    reply_to: &ChannelReplyTarget,
+    sender_id: Option<&str>,
+    args: &str,
+) -> ChannelResult<String> {
+    if !state.config.external_agents.enabled || !state.config.external_agents.channel_tmux_control {
+        return Err(ChannelError::invalid_input(
+            "/tmux is disabled. Set external_agents.enabled = true and external_agents.channel_tmux_control = true to enable it.",
+        ));
+    }
+    let authorized = match sender_id {
+        Some(sid) => is_sender_on_allowlist(state, &reply_to.account_id, sid).await,
+        None => false,
+    };
+    if !authorized {
+        return Err(ChannelError::invalid_input(
+            "You are not authorized to control tmux. Only users on this bot's allowlist can use /tmux.",
+        ));
+    }
+
+    let command = parse_tmux_channel_command(args)?;
+    let controller = TmuxController::moltis_host_terminal();
+    if !controller.is_available() {
+        return Err(ChannelError::unavailable("tmux is not installed"));
+    }
+
+    tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+        match command {
+            TmuxChannelCommand::Status { target } => {
+                let capture = controller.capture_pane(&target)?;
+                Ok(format!(
+                    "tmux pane {}: {}",
+                    target.as_str(),
+                    format_tmux_pane_state(classify_pane_state(&capture))
+                ))
+            },
+            TmuxChannelCommand::Capture { target } => {
+                let capture = controller.capture_pane(&target)?;
+                Ok(truncate_tmux_capture(capture))
+            },
+            TmuxChannelCommand::Send { target, text } => {
+                let receipt = controller.send_text_with_receipt(&target, &text)?;
+                Ok(format_tmux_receipt(&receipt))
+            },
+        }
+    })
+    .await
+    .map_err(|e| ChannelError::external("tmux worker", e))?
+    .map_err(ChannelError::unavailable)
+}
+
 /// Handle `/tts` commands.
 ///
 /// Subcommands:
@@ -1026,5 +1163,43 @@ async fn handle_tts_chat(
         other => Err(ChannelError::invalid_input(format!(
             "unknown /tts chat mode: {other}\nUsage: /tts chat [on|off|default]"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_tmux_command_ok(input: &str) -> TmuxChannelCommand {
+        match parse_tmux_channel_command(input) {
+            Ok(command) => command,
+            Err(error) => panic!("expected valid /tmux command {input}: {error}"),
+        }
+    }
+
+    #[test]
+    fn parse_tmux_status_command() {
+        let parsed = parse_tmux_command_ok("status moltis:0.1");
+        match parsed {
+            TmuxChannelCommand::Status { target } => assert_eq!(target.as_str(), "moltis:0.1"),
+            _ => panic!("expected status command"),
+        }
+    }
+
+    #[test]
+    fn parse_tmux_send_keeps_message_spaces() {
+        let parsed = parse_tmux_command_ok("send   %12   hello from telegram");
+        match parsed {
+            TmuxChannelCommand::Send { target, text } => {
+                assert_eq!(target.as_str(), "%12");
+                assert_eq!(text, "hello from telegram");
+            },
+            _ => panic!("expected send command"),
+        }
+    }
+
+    #[test]
+    fn parse_tmux_rejects_missing_text() {
+        assert!(parse_tmux_channel_command("send %12").is_err());
     }
 }

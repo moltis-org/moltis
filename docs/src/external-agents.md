@@ -15,6 +15,9 @@ Enable the bridge in `moltis.toml`:
 ```toml
 [external_agents]
 enabled = true
+# Disabled by default. When true, allowlisted channel users can use /tmux
+# to inspect or send input to a live tmux pane.
+channel_tmux_control = false
 
 [external_agents.agents.claude-code]
 binary = "claude"
@@ -35,5 +38,16 @@ Moltis keeps live external sessions in memory while the gateway process is runni
 Current limitations:
 
 - Claude Code persistence uses print-mode `--resume`; it does not yet keep an interactive PTY alive.
-- ACP terminal capability is not enabled yet; ACP servers can read/write text files through the client bridge, but terminal requests are rejected.
+- ACP terminal requests run bounded commands and capture output; they are not interactive PTY sessions.
+- `/tmux` channel control is an explicit opt-in for live terminal control. It requires `external_agents.enabled = true`, `external_agents.channel_tmux_control = true`, and an allowlisted channel sender.
 - Live external processes are not restored automatically after a Moltis gateway restart.
+
+Channel tmux control supports:
+
+```text
+/tmux status <target>
+/tmux capture <target>
+/tmux send <target> <text>
+```
+
+Use tmux target strings such as `moltis:0.1`, `@12`, or `%34`. Delivery returns an explicit receipt (`applied`, `busy`, or `unknown`) instead of assuming `tmux send-keys` means the application consumed the input.

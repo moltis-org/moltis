@@ -422,6 +422,7 @@ pub(super) fn build_schema_map() -> KnownKeys {
             "external_agents",
             Struct(HashMap::from([
                 ("enabled", Leaf),
+                ("channel_tmux_control", Leaf),
                 ("agents", Map(Box::new(external_agent_entry()))),
             ])),
         ),

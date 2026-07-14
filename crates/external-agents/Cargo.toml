@@ -16,21 +16,22 @@ tracing     = ["dep:tracing"]
 
 [dependencies]
 agent-client-protocol = { workspace = true }
-anyhow          = { workspace = true }
-async-trait     = { workspace = true }
-futures         = { workspace = true }
-moltis-config   = { workspace = true }
-moltis-metrics  = { optional = true, workspace = true }
-moltis-sessions = { workspace = true }
-serde           = { workspace = true }
-serde_json      = { workspace = true }
-sha2            = { workspace = true }
-thiserror       = { workspace = true }
-tokio           = { workspace = true }
-tokio-stream    = { workspace = true }
-tokio-util      = { features = ["compat"], workspace = true }
-tracing         = { optional = true, workspace = true }
-which           = { workspace = true }
+anyhow                = { workspace = true }
+async-trait           = { workspace = true }
+futures               = { workspace = true }
+moltis-config         = { workspace = true }
+moltis-metrics        = { optional = true, workspace = true }
+moltis-sessions       = { workspace = true }
+serde                 = { workspace = true }
+serde_json            = { workspace = true }
+sha2                  = { workspace = true }
+thiserror             = { workspace = true }
+time                  = { workspace = true }
+tokio                 = { workspace = true }
+tokio-stream          = { workspace = true }
+tokio-util            = { features = ["compat"], workspace = true }
+tracing               = { optional = true, workspace = true }
+which                 = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

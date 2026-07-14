@@ -362,6 +362,9 @@ pub struct MoltisConfig {
 #[serde(default)]
 pub struct ExternalAgentsConfig {
     pub enabled: bool,
+    /// Allow approved channel users to control tmux panes with `/tmux`.
+    /// Disabled by default because channel input becomes terminal input.
+    pub channel_tmux_control: bool,
     #[serde(default)]
     pub agents: HashMap<String, ExternalAgentConfig>,
 }

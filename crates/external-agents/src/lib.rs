@@ -10,6 +10,7 @@ pub mod bridge;
 pub mod error;
 pub mod registry;
 pub mod runtimes;
+pub mod tmux;
 pub mod transport;
 pub mod types;
 

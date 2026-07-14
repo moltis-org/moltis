@@ -192,6 +192,16 @@ pub fn all_commands() -> &'static [CommandDef] {
             arg: None,
         },
         CommandDef {
+            name: "tmux",
+            description: "Control an attached tmux pane",
+            arg: Some(CommandArg {
+                name: "action",
+                description: "status, capture, or send",
+                choices: &[],
+                required: true,
+            }),
+        },
+        CommandDef {
             name: "update",
             description: "Update moltis to latest or specified version",
             arg: Some(CommandArg {
@@ -378,6 +388,7 @@ mod tests {
             "sh",
             "stop",
             "peek",
+            "tmux",
             "update",
             "rollback",
             "btw",

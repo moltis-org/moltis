@@ -688,6 +688,7 @@ port = {port}                           # Port number (auto-generated for this i
 
 [external_agents]
 # enabled = false                   # Enable external agent bridge
+# channel_tmux_control = false      # Allow allowlisted channel users to run /tmux
 
 # Per-agent configuration (key = agent kind)
 # [external_agents.agents.claude-code]
