@@ -95,6 +95,10 @@ fn context_window_for_model_inner(model_id: &str) -> u32 {
     if model_id.starts_with("kimi-") {
         return 128_000;
     }
+    // MiniMax M3: 1M.
+    if model_id == "MiniMax-M3" {
+        return 1_000_000;
+    }
     // MiniMax M2/M2.1/M2.5/M2.7: 204,800.
     if model_id.starts_with("MiniMax-") {
         return 204_800;
@@ -219,6 +223,10 @@ pub fn supports_vision_for_model(model_id: &str) -> bool {
     let id = capability_model_id(model_id);
 
     // ── Known text-only models ──────────────────────────────────────
+    if id == "MiniMax-M2.7" {
+        return false;
+    }
+
     // Code-focused models
     if id.starts_with("codestral") {
         return false;
@@ -363,6 +371,8 @@ mod tests {
         assert_eq!(context_window_for_model("mistral-large-latest"), 128_000);
         assert_eq!(context_window_for_model("gemini-2.0-flash"), 1_000_000);
         assert_eq!(context_window_for_model("kimi-k2.5"), 128_000);
+        assert_eq!(context_window_for_model("MiniMax-M3"), 1_000_000);
+        assert_eq!(context_window_for_model("MiniMax-M2.7"), 204_800);
         // Z.AI GLM models
         assert_eq!(context_window_for_model("glm-5"), 128_000);
         assert_eq!(context_window_for_model("glm-4.7"), 128_000);
@@ -408,6 +418,9 @@ mod tests {
 
         // GPT-5 supports vision
         assert!(supports_vision_for_model("gpt-5.2-codex"));
+
+        // MiniMax M3 supports image inputs.
+        assert!(supports_vision_for_model("MiniMax-M3"));
 
         // o3/o4 series supports vision
         assert!(supports_vision_for_model("o3"));
@@ -457,6 +470,9 @@ mod tests {
         assert!(!supports_vision_for_model("glm-5"));
         assert!(!supports_vision_for_model("glm-4.7"));
         assert!(!supports_vision_for_model("glm-4.5"));
+
+        // MiniMax M2.7 accepts text input only.
+        assert!(!supports_vision_for_model("MiniMax-M2.7"));
     }
 
     #[test]

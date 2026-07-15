@@ -29,7 +29,7 @@ supported by Moltis so you can pick the best fit for your use case.
 | **Mistral** | Mistral Large, Medium | Full | Yes | 128K | $$ | Fast | European provider, multilingual |
 | **OpenRouter** | Any (aggregator) | Varies | Yes | Varies | Varies | Varies | Access 100+ models with one key |
 | **Cerebras** | Llama 3 | Partial | Yes | 128K | $ | Very fast | Wafer-scale inference hardware |
-| **MiniMax** | MiniMax-Text-01, abab7 | Full | Yes | 1M | $ | Fast | Strong multilingual, long context |
+| **MiniMax** | MiniMax M3, M2.7 | Full | Yes | 204.8K-1M | $ | Fast | Strong multilingual, long context |
 | **Z.AI (Zhipu)** | GLM-4, GLM-4 Air | Full | Yes | 128K | $ | Fast | GLM-4 series, competitive quality |
 | **Z.AI Coding** | CodeGeeX, GLM-4 Code | Full | Yes | 128K | $ | Fast | Optimized for code tasks |
 | **Moonshot** | Kimi | Full | Yes | 200K | $ | Medium | Long context, Chinese/English |

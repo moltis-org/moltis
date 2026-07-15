@@ -154,6 +154,10 @@ port = {port}                           # Port number (auto-generated for this i
 # policy.allow = []                            # Restrict to only these tools (empty = all allowed)
 # [providers.anthropic.model_overrides.claude-opus-4-6]
 # context_window = 1_000_000                   # Provider-scoped model override
+# For a MiniMax Anthropic-compatible endpoint, keep the `/anthropic` suffix:
+# base_url = "https://api.minimax.io/anthropic" # Use https://api.minimaxi.com/anthropic for China
+# models = ["MiniMax-M3", "MiniMax-M2.7"]
+# alias = "minimax-anthropic"
 
 # ── OpenAI ────────────────────────────────────────────────────
 # [providers.openai]
@@ -164,6 +168,15 @@ port = {port}                           # Port number (auto-generated for this i
 # stream_transport = "sse"                     # "sse" | "websocket" | "auto"
 # base_url = "https://api.openai.com/v1"     # API endpoint (change for Azure, etc.)
 # alias = "openai"
+
+# ── MiniMax ────────────────────────────────────────────────────
+# [providers.minimax]
+# enabled = true
+# api_key = "..."                             # Or set MINIMAX_API_KEY
+# models = ["MiniMax-M3", "MiniMax-M2.7"]
+# fetch_models = false                         # MiniMax uses the static model catalog by default
+# base_url = "https://api.minimax.io/v1"     # OpenAI-compatible global endpoint
+# For China, use "https://api.minimaxi.com/v1".
 
 # ── Google Gemini ─────────────────────────────────────────────
 # [providers.gemini]

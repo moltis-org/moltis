@@ -18,7 +18,7 @@ Configure providers through the web UI or directly in configuration files.
 | **xAI (Grok)** | `xai` | `XAI_API_KEY` | Streaming |
 | **OpenRouter** | `openrouter` | `OPENROUTER_API_KEY` | Streaming, tools, model discovery |
 | **Cerebras** | `cerebras` | `CEREBRAS_API_KEY` | Streaming, tools, model discovery |
-| **MiniMax** | `minimax` | `MINIMAX_API_KEY` | Streaming, tools |
+| **MiniMax** | `minimax` | `MINIMAX_API_KEY` | Streaming, tools, M3 vision |
 | **Moonshot (Kimi)** | `moonshot` | `MOONSHOT_API_KEY` | Streaming, tools, model discovery |
 | **Venice** | `venice` | `VENICE_API_KEY` | Streaming, tools, model discovery |
 | **NEAR AI Cloud** | `nearai` | `NEARAI_API_KEY` | Streaming, TEE-aware model discovery |
@@ -131,6 +131,38 @@ Gemini supports native tool calling, vision/multimodal inputs, streaming, and au
 
 1. Get an API key from [platform.openai.com](https://platform.openai.com/).
 2. Set `OPENAI_API_KEY` in your environment.
+
+### MiniMax
+
+The built-in `minimax` provider uses the OpenAI-compatible chat completions
+API and includes `MiniMax-M3` and `MiniMax-M2.7` in the static model catalog.
+
+```toml
+[providers.minimax]
+enabled = true
+api_key = "..."                         # Or set MINIMAX_API_KEY
+models = ["MiniMax-M3", "MiniMax-M2.7"]
+fetch_models = false
+base_url = "https://api.minimax.io/v1"  # Global endpoint
+# For China, use "https://api.minimaxi.com/v1".
+```
+
+MiniMax also provides an Anthropic-compatible messages API. Use the existing
+Anthropic adapter when that protocol is required:
+
+```toml
+[providers.anthropic]
+enabled = true
+api_key = "..."
+models = ["MiniMax-M3", "MiniMax-M2.7"]
+fetch_models = false
+base_url = "https://api.minimax.io/anthropic" # Global endpoint
+alias = "minimax-anthropic"
+# For China, use "https://api.minimaxi.com/anthropic".
+```
+
+The adapter appends `/v1/messages` to the configured base URL. Keep the
+`/anthropic` suffix and do not add `/v1` to the configured Anthropic base URL.
 
 ### NEAR AI Cloud
 

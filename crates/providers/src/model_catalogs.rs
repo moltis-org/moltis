@@ -36,6 +36,7 @@ pub(crate) const CEREBRAS_MODELS: &[(&str, &str)] =
 /// Known MiniMax models.
 /// See: <https://platform.minimax.io/docs/api-reference/text-anthropic-api>
 pub(crate) const MINIMAX_MODELS: &[(&str, &str)] = &[
+    ("MiniMax-M3", "MiniMax M3"),
     ("MiniMax-M2.7", "MiniMax M2.7"),
     ("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
     ("MiniMax-M2.5", "MiniMax M2.5"),
@@ -411,6 +412,14 @@ mod tests {
             ids.dedup();
             assert_eq!(ids.len(), models.len(), "duplicate model IDs found");
         }
+    }
+
+    #[test]
+    fn minimax_catalog_starts_with_target_models() {
+        assert_eq!(&MINIMAX_MODELS[..2], &[
+            ("MiniMax-M3", "MiniMax M3"),
+            ("MiniMax-M2.7", "MiniMax M2.7"),
+        ]);
     }
 
     #[test]
